@@ -879,7 +879,7 @@
         });
     }
 
-    window.updateReaderStyles = function (fontSizeEm, lineHeight, fontFamily, textAlign, paragraphGap, imageSize, horizontalMargin, verticalMargin) {
+    window.updateReaderStyles = function (fontSizeEm, lineHeight, fontFamily, textAlign, paragraphGap, imageSize, horizontalMargin, verticalMargin, fontWeight, letterSpacing) {
         var logTag = "ReaderFontDiagnosis";
         console.log(
             logTag +
@@ -916,6 +916,8 @@
         var newImageSize = parseFloat(imageSize);
         var newHorizontalMargin = parseFloat(horizontalMargin);
         var newVerticalMargin = parseFloat(verticalMargin);
+        var newFontWeight = parseInt(fontWeight, 10);
+        var newLetterSpacing = parseFloat(letterSpacing);
 
         if (isNaN(newFontSize) || newFontSize < 0.5 || newFontSize > 5.0) newFontSize = 1.0;
         if (isNaN(newLineHeight) || newLineHeight < 1.0 || newLineHeight > 3.0) newLineHeight = 1.0;
@@ -923,6 +925,8 @@
         if (isNaN(newImageSize) || newImageSize < 0.5 || newImageSize > 2.0) newImageSize = 1.0;
         if (isNaN(newHorizontalMargin) || newHorizontalMargin < 0.0 || newHorizontalMargin > 3.0) newHorizontalMargin = 1.0;
         if (isNaN(newVerticalMargin) || newVerticalMargin < 0.0 || newVerticalMargin > 3.0) newVerticalMargin = 1.0;
+        if (isNaN(newFontWeight) || newFontWeight < 0 || newFontWeight > 1000) newFontWeight = 0;
+        if (isNaN(newLetterSpacing) || newLetterSpacing < -0.1 || newLetterSpacing > 0.5) newLetterSpacing = 0;
 
         var styleSignature = [
             newFontSize,
@@ -933,6 +937,8 @@
             newImageSize,
             newHorizontalMargin,
             newVerticalMargin,
+            newFontWeight,
+            newLetterSpacing,
         ].join("|");
 
         if (window.__readerStyleSignature === styleSignature && dynamicStyleElement.innerHTML.trim().length > 0) {
@@ -1001,6 +1007,13 @@
             }
             `;
         }
+
+        var typographyOverrideCss = `
+            body, p, div, span, li, a, h1, h2, h3, h4, h5, h6, blockquote, td, th {
+                ${newFontWeight > 0 ? `font-weight: ${newFontWeight} !important;` : ""}
+                letter-spacing: ${newLetterSpacing}em !important;
+            }
+        `;
 
         var horizontalPaddingPx = Math.max(0, 16 * newHorizontalMargin);
         var verticalPaddingPx = Math.max(0, 16 * newVerticalMargin);
@@ -1074,7 +1087,7 @@
             }
         `;
 
-        dynamicStyleElement.innerHTML = [sizeCss, lineHeightCss, fontCss, alignCss, gapCss, viewportContainmentCss, imageCss, horizontalMarginCss].join("\n");
+        dynamicStyleElement.innerHTML = [sizeCss, lineHeightCss, typographyOverrideCss, fontCss, alignCss, gapCss, viewportContainmentCss, imageCss, horizontalMarginCss].join("\n");
         applyReaderImageAnchors();
         setTimeout(applyReaderImageAnchors, 80);
         logVerticalJitter(

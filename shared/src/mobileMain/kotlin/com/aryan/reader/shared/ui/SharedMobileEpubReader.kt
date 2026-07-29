@@ -133,6 +133,8 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
+import androidx.compose.ui.unit.sp
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.BuiltInReaderThemes
 import com.aryan.reader.shared.CustomFontItem
@@ -2627,6 +2629,7 @@ private fun SharedMobileEpubFormatSheet(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var showModeMenu by remember { mutableStateOf(false) }
     var showFontSheet by remember { mutableStateOf(false) }
+    var activeAdjustment by remember { mutableStateOf<SharedMobileReaderFormatAdjustment?>(null) }
     var alignmentChoice by remember(settings.textAlign) {
         mutableStateOf(
             when (settings.textAlign) {
@@ -2661,7 +2664,7 @@ private fun SharedMobileEpubFormatSheet(
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     TextButton(onClick = {
-                        onSettingsChange(settings.copy(fontSize = defaults.fontSize, lineSpacing = defaults.lineSpacing, paragraphSpacing = defaults.paragraphSpacing, imageScale = defaults.imageScale, horizontalMargin = defaults.resolvedHorizontalMargin, verticalMargin = defaults.resolvedVerticalMargin, fontFamily = defaults.fontFamily, customFontPath = null, textAlign = defaults.textAlign))
+                        onSettingsChange(settings.copy(fontSize = defaults.fontSize, fontWeight = defaults.fontWeight, letterSpacing = defaults.letterSpacing, lineSpacing = defaults.lineSpacing, paragraphSpacing = defaults.paragraphSpacing, imageScale = defaults.imageScale, horizontalMargin = defaults.resolvedHorizontalMargin, verticalMargin = defaults.resolvedVerticalMargin, fontFamily = defaults.fontFamily, customFontPath = null, textAlign = defaults.textAlign))
                         alignmentChoice = "Default"
                     }) { Text("Reset") }
                     IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) { Icon(Icons.Default.Close, contentDescription = "Close", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp)) }
@@ -2712,15 +2715,23 @@ private fun SharedMobileEpubFormatSheet(
                     }
                 }
             }
+            Spacer(Modifier.height(16.dp))
+            SharedMobileEpubFormatPreview(settings)
+            Spacer(Modifier.height(24.dp))
+            Text("TYPOGRAPHY", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 4.dp, bottom = 12.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                SharedMobileEpubFormatStepperRow("Font Size", sharedMobileFormatMultiplier(settings.fontSize / defaults.fontSize.toFloat()), { onSettingsChange(settings.copy(fontSize = (settings.fontSize - 1).coerceAtLeast((defaults.fontSize * 0.5f).roundToInt()))) }, { onSettingsChange(settings.copy(fontSize = (settings.fontSize + 1).coerceAtMost(defaults.fontSize * 3))) }, { activeAdjustment = SharedMobileReaderFormatAdjustment.FONT_SIZE })
+                SharedMobileEpubFormatStepperRow("Font Weight", sharedMobileFormatWeight(settings.fontWeight), { onSettingsChange(settings.copy(fontWeight = sharedMobilePreviousWeight(settings.fontWeight))) }, { onSettingsChange(settings.copy(fontWeight = sharedMobileNextWeight(settings.fontWeight))) }, { activeAdjustment = SharedMobileReaderFormatAdjustment.FONT_WEIGHT })
+                SharedMobileEpubFormatStepperRow("Letter Spacing", sharedMobileFormatLetterSpacing(settings.letterSpacing), { onSettingsChange(settings.copy(letterSpacing = sharedMobileStep(settings.letterSpacing, -0.01f, -0.10f, 0.50f, 100f))) }, { onSettingsChange(settings.copy(letterSpacing = sharedMobileStep(settings.letterSpacing, 0.01f, -0.10f, 0.50f, 100f))) }, { activeAdjustment = SharedMobileReaderFormatAdjustment.LETTER_SPACING })
+            }
             Spacer(Modifier.height(24.dp))
             Text("LAYOUT & SPACING", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 4.dp, bottom = 12.dp))
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                SharedMobileEpubFormatSlider("Font Size", settings.fontSize / defaults.fontSize.toFloat(), 0.5f..3f) { onSettingsChange(settings.copy(fontSize = (defaults.fontSize * it).roundToInt())) }
-                SharedMobileEpubFormatSlider("Line Height", settings.lineSpacing / defaults.lineSpacing, 1f..3f) { onSettingsChange(settings.copy(lineSpacing = defaults.lineSpacing * it)) }
-                SharedMobileEpubFormatSlider("Paragraph Gap", settings.paragraphSpacing / defaults.paragraphSpacing, 0f..3f) { onSettingsChange(settings.copy(paragraphSpacing = defaults.paragraphSpacing * it)) }
-                SharedMobileEpubFormatSlider("Image Size", settings.imageScale / defaults.imageScale, 0.5f..2f) { onSettingsChange(settings.copy(imageScale = defaults.imageScale * it)) }
-                SharedMobileEpubFormatSlider("Horizontal Margin", settings.resolvedHorizontalMargin / defaults.resolvedHorizontalMargin.toFloat(), 0f..3f, allowNone = true) { onSettingsChange(settings.copy(horizontalMargin = (defaults.resolvedHorizontalMargin * it).roundToInt())) }
-                SharedMobileEpubFormatSlider("Vertical Margin", settings.resolvedVerticalMargin / defaults.resolvedVerticalMargin.toFloat(), 0f..3f, allowNone = true) { onSettingsChange(settings.copy(verticalMargin = (defaults.resolvedVerticalMargin * it).roundToInt())) }
+                SharedMobileEpubFormatStepperRow("Line Height", sharedMobileFormatMultiplier(settings.lineSpacing / defaults.lineSpacing), { onSettingsChange(settings.copy(lineSpacing = sharedMobileStep(settings.lineSpacing / defaults.lineSpacing, -0.1f, 1f, 3f) * defaults.lineSpacing)) }, { onSettingsChange(settings.copy(lineSpacing = sharedMobileStep(settings.lineSpacing / defaults.lineSpacing, 0.1f, 1f, 3f) * defaults.lineSpacing)) }, { activeAdjustment = SharedMobileReaderFormatAdjustment.LINE_HEIGHT })
+                SharedMobileEpubFormatStepperRow("Paragraph Gap", sharedMobileFormatMultiplier(settings.paragraphSpacing / defaults.paragraphSpacing), { onSettingsChange(settings.copy(paragraphSpacing = sharedMobileStep(settings.paragraphSpacing / defaults.paragraphSpacing, -0.1f, 0f, 3f) * defaults.paragraphSpacing)) }, { onSettingsChange(settings.copy(paragraphSpacing = sharedMobileStep(settings.paragraphSpacing / defaults.paragraphSpacing, 0.1f, 0f, 3f) * defaults.paragraphSpacing)) }, { activeAdjustment = SharedMobileReaderFormatAdjustment.PARAGRAPH_GAP })
+                SharedMobileEpubFormatStepperRow("Image Size", sharedMobileFormatMultiplier(settings.imageScale / defaults.imageScale), { onSettingsChange(settings.copy(imageScale = sharedMobileStep(settings.imageScale / defaults.imageScale, -0.1f, 0.5f, 2f) * defaults.imageScale)) }, { onSettingsChange(settings.copy(imageScale = sharedMobileStep(settings.imageScale / defaults.imageScale, 0.1f, 0.5f, 2f) * defaults.imageScale)) }, { activeAdjustment = SharedMobileReaderFormatAdjustment.IMAGE_SIZE })
+                SharedMobileEpubFormatStepperRow("Horizontal Margin", sharedMobileFormatMargin(settings.resolvedHorizontalMargin / defaults.resolvedHorizontalMargin.toFloat()), { onSettingsChange(settings.copy(horizontalMargin = (sharedMobileStep(settings.resolvedHorizontalMargin / defaults.resolvedHorizontalMargin.toFloat(), -0.1f, 0f, 3f) * defaults.resolvedHorizontalMargin).roundToInt())) }, { onSettingsChange(settings.copy(horizontalMargin = (sharedMobileStep(settings.resolvedHorizontalMargin / defaults.resolvedHorizontalMargin.toFloat(), 0.1f, 0f, 3f) * defaults.resolvedHorizontalMargin).roundToInt())) }, { activeAdjustment = SharedMobileReaderFormatAdjustment.HORIZONTAL_MARGIN })
+                SharedMobileEpubFormatStepperRow("Vertical Margin", sharedMobileFormatMargin(settings.resolvedVerticalMargin / defaults.resolvedVerticalMargin.toFloat()), { onSettingsChange(settings.copy(verticalMargin = (sharedMobileStep(settings.resolvedVerticalMargin / defaults.resolvedVerticalMargin.toFloat(), -0.1f, 0f, 3f) * defaults.resolvedVerticalMargin).roundToInt())) }, { onSettingsChange(settings.copy(verticalMargin = (sharedMobileStep(settings.resolvedVerticalMargin / defaults.resolvedVerticalMargin.toFloat(), 0.1f, 0f, 3f) * defaults.resolvedVerticalMargin).roundToInt())) }, { activeAdjustment = SharedMobileReaderFormatAdjustment.VERTICAL_MARGIN })
             }
         }
     }
@@ -2770,7 +2781,191 @@ private fun SharedMobileEpubFormatSheet(
             }
         }
     }
+    activeAdjustment?.let {
+        SharedMobileEpubFormatAdjustmentDialog(
+            adjustment = it,
+            settings = settings,
+            defaults = defaults,
+            onSettingsChange = onSettingsChange,
+            onDismiss = { activeAdjustment = null }
+        )
+    }
 }
+
+private enum class SharedMobileReaderFormatAdjustment(val title: String) {
+    FONT_SIZE("Font size"),
+    FONT_WEIGHT("Font weight"),
+    LETTER_SPACING("Letter spacing"),
+    LINE_HEIGHT("Line height"),
+    PARAGRAPH_GAP("Paragraph gap"),
+    IMAGE_SIZE("Image size"),
+    HORIZONTAL_MARGIN("Horizontal margin"),
+    VERTICAL_MARGIN("Vertical margin")
+}
+
+@Composable
+private fun SharedMobileEpubFormatPreview(settings: ReaderSettings) {
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(horizontal = 18.dp, vertical = 16.dp)) {
+            val previewWeight = settings.fontWeight.takeIf { it > 0 }?.let(::FontWeight)
+            Text(
+                "The art of reading, perfected",
+                fontFamily = settings.toSharedReaderFontFamily(),
+                fontSize = settings.fontSize.sp,
+                fontWeight = previewWeight,
+                letterSpacing = settings.letterSpacing.em,
+                lineHeight = (settings.fontSize * settings.lineSpacing).sp,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "0123456789  ·  Aa Bb Cc",
+                fontFamily = settings.toSharedReaderFontFamily(),
+                fontSize = (settings.fontSize * 0.72f).sp,
+                fontWeight = previewWeight,
+                letterSpacing = settings.letterSpacing.em,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1
+            )
+        }
+    }
+}
+
+@Composable
+private fun SharedMobileEpubFormatStepperRow(
+    label: String,
+    valueLabel: String,
+    onDecrease: () -> Unit,
+    onIncrease: () -> Unit,
+    onClick: () -> Unit
+) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            Modifier.padding(start = 16.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(label, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                Text(valueLabel, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+            }
+            IconButton(onClick = onDecrease, modifier = Modifier.size(40.dp)) {
+                Icon(Icons.Default.Remove, contentDescription = "Decrease $label")
+            }
+            IconButton(onClick = onIncrease, modifier = Modifier.size(40.dp)) {
+                Icon(Icons.Default.Add, contentDescription = "Increase $label")
+            }
+        }
+    }
+}
+
+@Composable
+private fun SharedMobileEpubFormatAdjustmentDialog(
+    adjustment: SharedMobileReaderFormatAdjustment,
+    settings: ReaderSettings,
+    defaults: ReaderSettings,
+    onSettingsChange: (ReaderSettings) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val value = when (adjustment) {
+        SharedMobileReaderFormatAdjustment.FONT_SIZE -> settings.fontSize / defaults.fontSize.toFloat()
+        SharedMobileReaderFormatAdjustment.FONT_WEIGHT -> settings.fontWeight.takeIf { it > 0 }?.toFloat() ?: 400f
+        SharedMobileReaderFormatAdjustment.LETTER_SPACING -> settings.letterSpacing
+        SharedMobileReaderFormatAdjustment.LINE_HEIGHT -> settings.lineSpacing / defaults.lineSpacing
+        SharedMobileReaderFormatAdjustment.PARAGRAPH_GAP -> settings.paragraphSpacing / defaults.paragraphSpacing
+        SharedMobileReaderFormatAdjustment.IMAGE_SIZE -> settings.imageScale / defaults.imageScale
+        SharedMobileReaderFormatAdjustment.HORIZONTAL_MARGIN -> settings.resolvedHorizontalMargin / defaults.resolvedHorizontalMargin.toFloat()
+        SharedMobileReaderFormatAdjustment.VERTICAL_MARGIN -> settings.resolvedVerticalMargin / defaults.resolvedVerticalMargin.toFloat()
+    }
+    val range = when (adjustment) {
+        SharedMobileReaderFormatAdjustment.FONT_SIZE -> 0.5f..3f
+        SharedMobileReaderFormatAdjustment.FONT_WEIGHT -> 100f..1000f
+        SharedMobileReaderFormatAdjustment.LETTER_SPACING -> -0.10f..0.50f
+        SharedMobileReaderFormatAdjustment.LINE_HEIGHT,
+        SharedMobileReaderFormatAdjustment.PARAGRAPH_GAP,
+        SharedMobileReaderFormatAdjustment.HORIZONTAL_MARGIN,
+        SharedMobileReaderFormatAdjustment.VERTICAL_MARGIN -> 0f..3f
+        SharedMobileReaderFormatAdjustment.IMAGE_SIZE -> 0.5f..2f
+    }
+    fun update(raw: Float) {
+        onSettingsChange(
+            when (adjustment) {
+                SharedMobileReaderFormatAdjustment.FONT_SIZE -> settings.copy(fontSize = (defaults.fontSize * sharedMobileStep(raw, 0f, 0.5f, 3f)).roundToInt())
+                SharedMobileReaderFormatAdjustment.FONT_WEIGHT -> settings.copy(fontWeight = ((raw / 100f).roundToInt() * 100).coerceIn(100, 1000))
+                SharedMobileReaderFormatAdjustment.LETTER_SPACING -> settings.copy(letterSpacing = sharedMobileStep(raw, 0f, -0.10f, 0.50f, 100f))
+                SharedMobileReaderFormatAdjustment.LINE_HEIGHT -> settings.copy(lineSpacing = defaults.lineSpacing * sharedMobileStep(raw, 0f, 1f, 3f))
+                SharedMobileReaderFormatAdjustment.PARAGRAPH_GAP -> settings.copy(paragraphSpacing = defaults.paragraphSpacing * sharedMobileStep(raw, 0f, 0f, 3f))
+                SharedMobileReaderFormatAdjustment.IMAGE_SIZE -> settings.copy(imageScale = defaults.imageScale * sharedMobileStep(raw, 0f, 0.5f, 2f))
+                SharedMobileReaderFormatAdjustment.HORIZONTAL_MARGIN -> settings.copy(horizontalMargin = (defaults.resolvedHorizontalMargin * sharedMobileStep(raw, 0f, 0f, 3f)).roundToInt())
+                SharedMobileReaderFormatAdjustment.VERTICAL_MARGIN -> settings.copy(verticalMargin = (defaults.resolvedVerticalMargin * sharedMobileStep(raw, 0f, 0f, 3f)).roundToInt())
+            }
+        )
+    }
+    val valueLabel = when (adjustment) {
+        SharedMobileReaderFormatAdjustment.FONT_WEIGHT -> sharedMobileFormatWeight(settings.fontWeight)
+        SharedMobileReaderFormatAdjustment.LETTER_SPACING -> sharedMobileFormatLetterSpacing(settings.letterSpacing)
+        SharedMobileReaderFormatAdjustment.HORIZONTAL_MARGIN -> sharedMobileFormatMargin(value)
+        SharedMobileReaderFormatAdjustment.VERTICAL_MARGIN -> sharedMobileFormatMargin(value)
+        else -> sharedMobileFormatMultiplier(value)
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(adjustment.title) },
+        text = {
+            Column {
+                Text(valueLabel, style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.height(12.dp))
+                Slider(value = value.coerceIn(range), onValueChange = ::update, valueRange = range)
+                if (adjustment == SharedMobileReaderFormatAdjustment.FONT_WEIGHT && settings.fontWeight == 0) {
+                    Text("Original uses the weight supplied by the book or selected font.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } },
+        dismissButton = {
+            TextButton(onClick = {
+                onSettingsChange(
+                    when (adjustment) {
+                        SharedMobileReaderFormatAdjustment.FONT_SIZE -> settings.copy(fontSize = defaults.fontSize)
+                        SharedMobileReaderFormatAdjustment.FONT_WEIGHT -> settings.copy(fontWeight = defaults.fontWeight)
+                        SharedMobileReaderFormatAdjustment.LETTER_SPACING -> settings.copy(letterSpacing = defaults.letterSpacing)
+                        SharedMobileReaderFormatAdjustment.LINE_HEIGHT -> settings.copy(lineSpacing = defaults.lineSpacing)
+                        SharedMobileReaderFormatAdjustment.PARAGRAPH_GAP -> settings.copy(paragraphSpacing = defaults.paragraphSpacing)
+                        SharedMobileReaderFormatAdjustment.IMAGE_SIZE -> settings.copy(imageScale = defaults.imageScale)
+                        SharedMobileReaderFormatAdjustment.HORIZONTAL_MARGIN -> settings.copy(horizontalMargin = defaults.resolvedHorizontalMargin)
+                        SharedMobileReaderFormatAdjustment.VERTICAL_MARGIN -> settings.copy(verticalMargin = defaults.resolvedVerticalMargin)
+                    }
+                )
+            }) { Text("Reset") }
+        }
+    )
+}
+
+private fun sharedMobileStep(value: Float, delta: Float, minimum: Float, maximum: Float, precision: Float = 10f): Float =
+    (((value + delta).coerceIn(minimum, maximum) * precision).roundToInt() / precision)
+
+private fun sharedMobileNextWeight(value: Int): Int = if (value <= 0) 500 else (value + 100).coerceAtMost(1000)
+private fun sharedMobilePreviousWeight(value: Int): Int = if (value <= 100) 0 else (value - 100).coerceAtLeast(100)
+private fun sharedMobileFormatWeight(value: Int): String = if (value <= 0) "Original" else value.toString()
+private fun sharedMobileFormatLetterSpacing(value: Float): String =
+    if (kotlin.math.abs(value) < 0.001f) "Original" else "${if (value > 0f) "+" else ""}${(value * 100).roundToInt() / 100f}em"
+private fun sharedMobileFormatMultiplier(value: Float): String =
+    if (value in 0.99f..1.01f) "Original" else "${(value * 10).roundToInt() / 10f}x"
+private fun sharedMobileFormatMargin(value: Float): String =
+    when {
+        value <= 0.01f -> "None"
+        value in 0.99f..1.01f -> "Original"
+        else -> "${(value * 10).roundToInt() / 10f}x"
+    }
 
 @Composable
 private fun SharedMobileEpubFormatSlider(label: String, value: Float, range: ClosedFloatingPointRange<Float>, allowNone: Boolean = false, onValueChange: (Float) -> Unit) {

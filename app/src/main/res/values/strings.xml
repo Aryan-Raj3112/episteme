@@ -1238,6 +1238,9 @@
     <!-- Color picker tab/slider label — "Spectrum" = full color spectrum picker. -->
     <string name="label_spectrum">Spectrum</string>
     <string name="action_done">Done</string>
+    <string name="section_typography">TYPOGRAPHY</string>
+    <string name="label_font_weight">Font weight</string>
+    <string name="label_letter_spacing">Letter spacing</string>
     <string name="color_red">Red</string>
     <string name="color_green">Green</string>
     <string name="color_blue">Blue</string>

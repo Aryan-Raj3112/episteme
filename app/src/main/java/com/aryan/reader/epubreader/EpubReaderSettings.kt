@@ -65,6 +65,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -104,6 +105,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import androidx.core.content.edit
 import com.aryan.reader.R
@@ -138,6 +140,8 @@ private const val PARAGRAPH_GAP_KEY = "reader_paragraph_gap"
 private const val IMAGE_SIZE_KEY = "reader_image_size"
 private const val AUTO_SCROLL_SPEED_KEY = "reader_auto_scroll_speed"
 private const val FONT_FAMILY_KEY = "reader_font_family"
+private const val FONT_WEIGHT_KEY = "reader_font_weight"
+private const val LETTER_SPACING_KEY = "reader_letter_spacing"
 private const val TAP_TO_NAVIGATE_ENABLED_KEY = "tap_to_navigate_enabled"
 private const val VOLUME_SCROLL_ENABLED_KEY = "volume_scroll_enabled"
 private const val SYSTEM_UI_MODE_KEY = "reader_system_ui_mode"
@@ -152,6 +156,8 @@ const val DEFAULT_PARAGRAPH_GAP_VAL = 1.0f
 const val DEFAULT_IMAGE_SIZE_VAL = 1.0f
 const val DEFAULT_HORIZONTAL_MARGIN_VAL = 1.0f
 const val DEFAULT_VERTICAL_MARGIN_VAL = 1.0f
+const val DEFAULT_FONT_WEIGHT_VAL = 0
+const val DEFAULT_LETTER_SPACING_VAL = 0f
 private const val TTS_SPEECH_RATE_KEY = "tts_speech_rate"
 private const val TTS_PITCH_KEY = "tts_pitch"
 
@@ -224,6 +230,8 @@ private const val LOCAL_HORIZONTAL_MARGIN_PREFIX = "local_horizontal_margin_"
 private const val LOCAL_VERTICAL_MARGIN_PREFIX = "local_vertical_margin_"
 private const val LOCAL_FONT_FAMILY_PREFIX = "local_font_family_"
 private const val LOCAL_TEXT_ALIGN_PREFIX = "local_text_align_"
+private const val LOCAL_FONT_WEIGHT_PREFIX = "local_font_weight_"
+private const val LOCAL_LETTER_SPACING_PREFIX = "local_letter_spacing_"
 private const val HORIZONTAL_MARGIN_KEY = "reader_horizontal_margin"
 private const val VERTICAL_MARGIN_KEY = "reader_vertical_margin"
 
@@ -248,7 +256,9 @@ fun saveLocalReaderSettings(
     verticalMargin: Float,
     fontFamily: ReaderFont,
     customFontPath: String?,
-    textAlign: ReaderTextAlign
+    textAlign: ReaderTextAlign,
+    fontWeight: Int = DEFAULT_FONT_WEIGHT_VAL,
+    letterSpacing: Float = DEFAULT_LETTER_SPACING_VAL
 ) {
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
     prefs.edit {
@@ -264,6 +274,8 @@ fun saveLocalReaderSettings(
             putString(LOCAL_FONT_FAMILY_PREFIX + bookId, fontFamily.id)
         }
         putString(LOCAL_TEXT_ALIGN_PREFIX + bookId, textAlign.id)
+        putInt(LOCAL_FONT_WEIGHT_PREFIX + bookId, fontWeight)
+        putFloat(LOCAL_LETTER_SPACING_PREFIX + bookId, letterSpacing)
     }
 }
 
@@ -402,6 +414,16 @@ fun loadFormatSettings(context: Context, bookId: String, isLocal: Boolean): Form
         prefs.getString(TEXT_ALIGN_KEY, ReaderTextAlign.DEFAULT.id)
     }
     val textAlign = ReaderTextAlign.entries.find { it.id == alignId } ?: ReaderTextAlign.DEFAULT
+    val fontWeight = if (isLocal && prefs.contains(LOCAL_FONT_WEIGHT_PREFIX + bookId)) {
+        prefs.getInt(LOCAL_FONT_WEIGHT_PREFIX + bookId, DEFAULT_FONT_WEIGHT_VAL)
+    } else {
+        prefs.getInt(FONT_WEIGHT_KEY, DEFAULT_FONT_WEIGHT_VAL)
+    }
+    val letterSpacing = if (isLocal && prefs.contains(LOCAL_LETTER_SPACING_PREFIX + bookId)) {
+        prefs.getFloat(LOCAL_LETTER_SPACING_PREFIX + bookId, DEFAULT_LETTER_SPACING_VAL)
+    } else {
+        prefs.getFloat(LETTER_SPACING_KEY, DEFAULT_LETTER_SPACING_VAL)
+    }
 
     return FormatSettings(
         fontSize = fontSize,
@@ -412,7 +434,9 @@ fun loadFormatSettings(context: Context, bookId: String, isLocal: Boolean): Form
         verticalMargin = verticalMargin,
         font = font,
         customPath = customPath,
-        textAlign = textAlign
+        textAlign = textAlign,
+        fontWeight = fontWeight.coerceIn(0, 1000),
+        letterSpacing = letterSpacing.coerceIn(-0.10f, 0.50f)
     )
 }
 
@@ -525,7 +549,9 @@ fun saveReaderSettings(
     verticalMargin: Float,
     fontFamily: ReaderFont,
     customFontPath: String?,
-    textAlign: ReaderTextAlign
+    textAlign: ReaderTextAlign,
+    fontWeight: Int = DEFAULT_FONT_WEIGHT_VAL,
+    letterSpacing: Float = DEFAULT_LETTER_SPACING_VAL
 ) {
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
     prefs.edit {
@@ -541,6 +567,8 @@ fun saveReaderSettings(
             putString(FONT_FAMILY_KEY, fontFamily.id)
         }
         putString(TEXT_ALIGN_KEY, textAlign.id)
+        putInt(FONT_WEIGHT_KEY, fontWeight)
+        putFloat(LETTER_SPACING_KEY, letterSpacing)
     }
 }
 
@@ -591,6 +619,11 @@ fun ReaderTextFormatPanel(
     currentVerticalMargin: Float,
     onVerticalMarginChange: (Float) -> Unit,
     currentFont: ReaderFont,
+    currentFontWeight: Int,
+    onFontWeightChange: (Int) -> Unit,
+    currentLetterSpacing: Float,
+    onLetterSpacingChange: (Float) -> Unit,
+    previewFontFamily: FontFamily,
     currentCustomFontName: String?,
     onFontOptionClick: () -> Unit,
     currentTextAlign: ReaderTextAlign,
@@ -602,6 +635,7 @@ fun ReaderTextFormatPanel(
 ) {
     if (isVisible) {
         val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        var activeAdjustment by remember { mutableStateOf<ReaderFormatAdjustment?>(null) }
 
         ModalBottomSheet(
             onDismissRequest = onClose,
@@ -685,6 +719,16 @@ fun ReaderTextFormatPanel(
                 }
 
                 Spacer(Modifier.height(16.dp))
+
+                ReaderFormatPreview(
+                    fontFamily = previewFontFamily,
+                    fontSizeMultiplier = currentFontSize,
+                    fontWeight = currentFontWeight,
+                    letterSpacing = currentLetterSpacing,
+                    lineHeightMultiplier = currentLineHeight
+                )
+
+                Spacer(Modifier.height(20.dp))
 
                 // FONT & ALIGNMENT SECTION
                 Text(
@@ -780,6 +824,38 @@ fun ReaderTextFormatPanel(
 
                 Spacer(Modifier.height(24.dp))
 
+                Text(
+                    text = stringResource(R.string.section_typography),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(start = 4.dp, bottom = 8.dp)
+                )
+
+                FormatStepperRow(
+                    label = stringResource(R.string.label_font_size),
+                    valueLabel = formatMultiplier(currentFontSize),
+                    onDecrease = { onFontSizeChange(stepFormatValue(currentFontSize, -0.1f, 0.5f, 3f)) },
+                    onIncrease = { onFontSizeChange(stepFormatValue(currentFontSize, 0.1f, 0.5f, 3f)) },
+                    onClick = { activeAdjustment = ReaderFormatAdjustment.FONT_SIZE }
+                )
+                FormatStepperRow(
+                    label = stringResource(R.string.label_font_weight),
+                    valueLabel = formatFontWeight(currentFontWeight),
+                    onDecrease = { onFontWeightChange(previousFontWeight(currentFontWeight)) },
+                    onIncrease = { onFontWeightChange(nextFontWeight(currentFontWeight)) },
+                    onClick = { activeAdjustment = ReaderFormatAdjustment.FONT_WEIGHT }
+                )
+                FormatStepperRow(
+                    label = stringResource(R.string.label_letter_spacing),
+                    valueLabel = formatLetterSpacing(currentLetterSpacing),
+                    onDecrease = { onLetterSpacingChange(stepFormatValue(currentLetterSpacing, -0.01f, -0.10f, 0.50f, 100f)) },
+                    onIncrease = { onLetterSpacingChange(stepFormatValue(currentLetterSpacing, 0.01f, -0.10f, 0.50f, 100f)) },
+                    onClick = { activeAdjustment = ReaderFormatAdjustment.LETTER_SPACING }
+                )
+
+                Spacer(Modifier.height(20.dp))
+
                 // LAYOUT & SPACING SECTION
                 Text(
                     text = stringResource(R.string.section_layout_spacing),
@@ -789,76 +865,280 @@ fun ReaderTextFormatPanel(
                     modifier = Modifier.padding(start = 4.dp, bottom = 12.dp)
                 )
 
-                // Resolve the string once outside the lambdas
-                val originalLabel = stringResource(R.string.label_original)
-                val noneLabel = stringResource(R.string.label_none)
-
-                // Wide, smooth sliders without dots
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FormatSlider(
-                        label = stringResource(R.string.label_font_size),
-                        value = currentFontSize,
-                        onValueChange = onFontSizeChange,
-                        valueRange = 0.5f..3.0f,
-                        formatValue = { if (it in 0.99f..1.01f) originalLabel else "%.1fx".format(it) }
-                    )
-
-                    FormatSlider(
+                    FormatStepperRow(
                         label = stringResource(R.string.label_line_height),
-                        value = currentLineHeight,
-                        onValueChange = onLineHeightChange,
-                        valueRange = 1.0f..3.0f,
-                        formatValue = { if (it <= 1.01f) originalLabel else "%.1fx".format(it) }
+                        valueLabel = formatMultiplier(currentLineHeight),
+                        onDecrease = { onLineHeightChange(stepFormatValue(currentLineHeight, -0.1f, 1f, 3f)) },
+                        onIncrease = { onLineHeightChange(stepFormatValue(currentLineHeight, 0.1f, 1f, 3f)) },
+                        onClick = { activeAdjustment = ReaderFormatAdjustment.LINE_HEIGHT }
                     )
 
-                    FormatSlider(
+                    FormatStepperRow(
                         label = stringResource(R.string.label_paragraph_gap),
-                        value = currentParagraphGap,
-                        onValueChange = onParagraphGapChange,
-                        valueRange = 0.0f..3.0f,
-                        formatValue = { if (it in 0.99f..1.01f) originalLabel else "%.1fx".format(it) }
+                        valueLabel = formatMultiplier(currentParagraphGap),
+                        onDecrease = { onParagraphGapChange(stepFormatValue(currentParagraphGap, -0.1f, 0f, 3f)) },
+                        onIncrease = { onParagraphGapChange(stepFormatValue(currentParagraphGap, 0.1f, 0f, 3f)) },
+                        onClick = { activeAdjustment = ReaderFormatAdjustment.PARAGRAPH_GAP }
                     )
 
-                    FormatSlider(
+                    FormatStepperRow(
                         label = stringResource(R.string.label_image_size),
-                        value = currentImageSize,
-                        onValueChange = onImageSizeChange,
-                        valueRange = 0.5f..2.0f,
-                        formatValue = { if (it in 0.99f..1.01f) originalLabel else "%.1fx".format(it) }
+                        valueLabel = formatMultiplier(currentImageSize),
+                        onDecrease = { onImageSizeChange(stepFormatValue(currentImageSize, -0.1f, 0.5f, 2f)) },
+                        onIncrease = { onImageSizeChange(stepFormatValue(currentImageSize, 0.1f, 0.5f, 2f)) },
+                        onClick = { activeAdjustment = ReaderFormatAdjustment.IMAGE_SIZE }
                     )
 
-                    FormatSlider(
+                    FormatStepperRow(
                         label = stringResource(R.string.label_horizontal_margin),
-                        value = currentHorizontalMargin,
-                        onValueChange = onHorizontalMarginChange,
-                        valueRange = 0.0f..3.0f,
-                        formatValue = {
-                            when {
-                                it <= 0.01f -> noneLabel
-                                it in 0.99f..1.01f -> originalLabel
-                                else -> "%.1fx".format(it)
-                            }
-                        }
+                        valueLabel = formatMargin(currentHorizontalMargin),
+                        onDecrease = { onHorizontalMarginChange(stepFormatValue(currentHorizontalMargin, -0.1f, 0f, 3f)) },
+                        onIncrease = { onHorizontalMarginChange(stepFormatValue(currentHorizontalMargin, 0.1f, 0f, 3f)) },
+                        onClick = { activeAdjustment = ReaderFormatAdjustment.HORIZONTAL_MARGIN }
                     )
 
-                    FormatSlider(
+                    FormatStepperRow(
                         label = stringResource(R.string.label_vertical_margin),
-                        value = currentVerticalMargin,
-                        onValueChange = onVerticalMarginChange,
-                        valueRange = 0.0f..3.0f,
-                        formatValue = {
-                            when {
-                                it <= 0.01f -> noneLabel
-                                it in 0.99f..1.01f -> originalLabel
-                                else -> "%.1fx".format(it)
-                            }
-                        }
+                        valueLabel = formatMargin(currentVerticalMargin),
+                        onDecrease = { onVerticalMarginChange(stepFormatValue(currentVerticalMargin, -0.1f, 0f, 3f)) },
+                        onIncrease = { onVerticalMarginChange(stepFormatValue(currentVerticalMargin, 0.1f, 0f, 3f)) },
+                        onClick = { activeAdjustment = ReaderFormatAdjustment.VERTICAL_MARGIN }
                     )
                 }
             }
         }
+
+        activeAdjustment?.let { adjustment ->
+            ReaderFormatAdjustmentDialog(
+                adjustment = adjustment,
+                fontSize = currentFontSize,
+                fontWeight = currentFontWeight,
+                letterSpacing = currentLetterSpacing,
+                lineHeight = currentLineHeight,
+                paragraphGap = currentParagraphGap,
+                imageSize = currentImageSize,
+                horizontalMargin = currentHorizontalMargin,
+                verticalMargin = currentVerticalMargin,
+                onFontSizeChange = onFontSizeChange,
+                onFontWeightChange = onFontWeightChange,
+                onLetterSpacingChange = onLetterSpacingChange,
+                onLineHeightChange = onLineHeightChange,
+                onParagraphGapChange = onParagraphGapChange,
+                onImageSizeChange = onImageSizeChange,
+                onHorizontalMarginChange = onHorizontalMarginChange,
+                onVerticalMarginChange = onVerticalMarginChange,
+                onDismiss = { activeAdjustment = null }
+            )
+        }
     }
 }
+
+private enum class ReaderFormatAdjustment(val title: String) {
+    FONT_SIZE("Font size"),
+    FONT_WEIGHT("Font weight"),
+    LETTER_SPACING("Letter spacing"),
+    LINE_HEIGHT("Line height"),
+    PARAGRAPH_GAP("Paragraph gap"),
+    IMAGE_SIZE("Image size"),
+    HORIZONTAL_MARGIN("Horizontal margin"),
+    VERTICAL_MARGIN("Vertical margin")
+}
+
+@Composable
+private fun ReaderFormatPreview(
+    fontFamily: FontFamily,
+    fontSizeMultiplier: Float,
+    fontWeight: Int,
+    letterSpacing: Float,
+    lineHeightMultiplier: Float
+) {
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(horizontal = 18.dp, vertical = 16.dp)) {
+            Text(
+                text = "The art of reading, perfected",
+                fontFamily = fontFamily,
+                fontSize = (18f * fontSizeMultiplier).sp,
+                fontWeight = fontWeight.takeIf { it > 0 }?.let(::FontWeight),
+                letterSpacing = letterSpacing.em,
+                lineHeight = (22f * fontSizeMultiplier * lineHeightMultiplier).sp,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = "0123456789  ·  Aa Bb Cc",
+                fontFamily = fontFamily,
+                fontSize = (13f * fontSizeMultiplier).sp,
+                fontWeight = fontWeight.takeIf { it > 0 }?.let(::FontWeight),
+                letterSpacing = letterSpacing.em,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1
+            )
+        }
+    }
+}
+
+@Composable
+private fun FormatStepperRow(
+    label: String,
+    valueLabel: String,
+    onDecrease: () -> Unit,
+    onIncrease: () -> Unit,
+    onClick: () -> Unit
+) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier.padding(start = 16.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(label, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                Text(
+                    valueLabel,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+            IconButton(onClick = onDecrease, modifier = Modifier.size(40.dp)) {
+                Icon(Icons.Default.Remove, contentDescription = "Decrease $label")
+            }
+            IconButton(onClick = onIncrease, modifier = Modifier.size(40.dp)) {
+                Icon(Icons.Default.Add, contentDescription = "Increase $label")
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReaderFormatAdjustmentDialog(
+    adjustment: ReaderFormatAdjustment,
+    fontSize: Float,
+    fontWeight: Int,
+    letterSpacing: Float,
+    lineHeight: Float,
+    paragraphGap: Float,
+    imageSize: Float,
+    horizontalMargin: Float,
+    verticalMargin: Float,
+    onFontSizeChange: (Float) -> Unit,
+    onFontWeightChange: (Int) -> Unit,
+    onLetterSpacingChange: (Float) -> Unit,
+    onLineHeightChange: (Float) -> Unit,
+    onParagraphGapChange: (Float) -> Unit,
+    onImageSizeChange: (Float) -> Unit,
+    onHorizontalMarginChange: (Float) -> Unit,
+    onVerticalMarginChange: (Float) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val isWeight = adjustment == ReaderFormatAdjustment.FONT_WEIGHT
+    val value = when (adjustment) {
+        ReaderFormatAdjustment.FONT_SIZE -> fontSize
+        ReaderFormatAdjustment.FONT_WEIGHT -> fontWeight.takeIf { it > 0 }?.toFloat() ?: 400f
+        ReaderFormatAdjustment.LETTER_SPACING -> letterSpacing
+        ReaderFormatAdjustment.LINE_HEIGHT -> lineHeight
+        ReaderFormatAdjustment.PARAGRAPH_GAP -> paragraphGap
+        ReaderFormatAdjustment.IMAGE_SIZE -> imageSize
+        ReaderFormatAdjustment.HORIZONTAL_MARGIN -> horizontalMargin
+        ReaderFormatAdjustment.VERTICAL_MARGIN -> verticalMargin
+    }
+    val range = when (adjustment) {
+        ReaderFormatAdjustment.FONT_SIZE -> 0.5f..3f
+        ReaderFormatAdjustment.FONT_WEIGHT -> 100f..1000f
+        ReaderFormatAdjustment.LETTER_SPACING -> -0.10f..0.50f
+        ReaderFormatAdjustment.LINE_HEIGHT -> 1f..3f
+        ReaderFormatAdjustment.PARAGRAPH_GAP -> 0f..3f
+        ReaderFormatAdjustment.IMAGE_SIZE -> 0.5f..2f
+        ReaderFormatAdjustment.HORIZONTAL_MARGIN,
+        ReaderFormatAdjustment.VERTICAL_MARGIN -> 0f..3f
+    }
+    fun update(raw: Float) {
+        when (adjustment) {
+            ReaderFormatAdjustment.FONT_SIZE -> onFontSizeChange(stepFormatValue(raw, 0f, 0.5f, 3f))
+            ReaderFormatAdjustment.FONT_WEIGHT -> onFontWeightChange(((raw / 100f).roundToInt() * 100).coerceIn(100, 1000))
+            ReaderFormatAdjustment.LETTER_SPACING -> onLetterSpacingChange(stepFormatValue(raw, 0f, -0.10f, 0.50f, 100f))
+            ReaderFormatAdjustment.LINE_HEIGHT -> onLineHeightChange(stepFormatValue(raw, 0f, 1f, 3f))
+            ReaderFormatAdjustment.PARAGRAPH_GAP -> onParagraphGapChange(stepFormatValue(raw, 0f, 0f, 3f))
+            ReaderFormatAdjustment.IMAGE_SIZE -> onImageSizeChange(stepFormatValue(raw, 0f, 0.5f, 2f))
+            ReaderFormatAdjustment.HORIZONTAL_MARGIN -> onHorizontalMarginChange(stepFormatValue(raw, 0f, 0f, 3f))
+            ReaderFormatAdjustment.VERTICAL_MARGIN -> onVerticalMarginChange(stepFormatValue(raw, 0f, 0f, 3f))
+        }
+    }
+    fun reset() {
+        when (adjustment) {
+            ReaderFormatAdjustment.FONT_SIZE -> onFontSizeChange(DEFAULT_FONT_SIZE_VAL)
+            ReaderFormatAdjustment.FONT_WEIGHT -> onFontWeightChange(DEFAULT_FONT_WEIGHT_VAL)
+            ReaderFormatAdjustment.LETTER_SPACING -> onLetterSpacingChange(DEFAULT_LETTER_SPACING_VAL)
+            ReaderFormatAdjustment.LINE_HEIGHT -> onLineHeightChange(DEFAULT_LINE_HEIGHT_VAL)
+            ReaderFormatAdjustment.PARAGRAPH_GAP -> onParagraphGapChange(DEFAULT_PARAGRAPH_GAP_VAL)
+            ReaderFormatAdjustment.IMAGE_SIZE -> onImageSizeChange(DEFAULT_IMAGE_SIZE_VAL)
+            ReaderFormatAdjustment.HORIZONTAL_MARGIN -> onHorizontalMarginChange(DEFAULT_HORIZONTAL_MARGIN_VAL)
+            ReaderFormatAdjustment.VERTICAL_MARGIN -> onVerticalMarginChange(DEFAULT_VERTICAL_MARGIN_VAL)
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(adjustment.title) },
+        text = {
+            Column {
+                Text(
+                    when (adjustment) {
+                        ReaderFormatAdjustment.FONT_WEIGHT -> formatFontWeight(fontWeight)
+                        ReaderFormatAdjustment.LETTER_SPACING -> formatLetterSpacing(letterSpacing)
+                        ReaderFormatAdjustment.HORIZONTAL_MARGIN -> formatMargin(horizontalMargin)
+                        ReaderFormatAdjustment.VERTICAL_MARGIN -> formatMargin(verticalMargin)
+                        else -> formatMultiplier(value)
+                    },
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Spacer(Modifier.height(12.dp))
+                Slider(value = value.coerceIn(range), onValueChange = ::update, valueRange = range)
+                if (isWeight && fontWeight == 0) {
+                    Text(
+                        "Original uses the weight supplied by the book or selected font.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_done)) } },
+        dismissButton = { TextButton(onClick = ::reset) { Text(stringResource(R.string.action_reset)) } }
+    )
+}
+
+internal fun stepFormatValue(
+    value: Float,
+    delta: Float,
+    minimum: Float,
+    maximum: Float,
+    precision: Float = 10f
+): Float = (((value + delta).coerceIn(minimum, maximum) * precision).roundToInt() / precision)
+
+internal fun nextFontWeight(value: Int): Int = if (value <= 0) 500 else (value + 100).coerceAtMost(1000)
+internal fun previousFontWeight(value: Int): Int = if (value <= 100) 0 else (value - 100).coerceAtLeast(100)
+internal fun formatFontWeight(value: Int): String = if (value <= 0) "Original" else value.toString()
+internal fun formatLetterSpacing(value: Float): String =
+    if (kotlin.math.abs(value) < 0.001f) "Original" else "%+.2fem".format(value)
+internal fun formatMultiplier(value: Float): String =
+    if (value in 0.99f..1.01f) "Original" else "%.1fx".format(value)
+internal fun formatMargin(value: Float): String =
+    when {
+        value <= 0.01f -> "None"
+        value in 0.99f..1.01f -> "Original"
+        else -> "%.1fx".format(value)
+    }
 
 @Composable
 fun FontSelectionSheetContent(

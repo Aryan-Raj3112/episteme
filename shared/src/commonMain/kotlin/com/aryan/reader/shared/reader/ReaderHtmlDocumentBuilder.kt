@@ -343,6 +343,8 @@ object ReaderHtmlDocumentBuilder {
               root.style.setProperty('--reader-link-bg', ${appearance.linkColors.background.toJsStringLiteral()});
               root.style.setProperty('--reader-highlight', ${appearance.highlight.toJsStringLiteral()});
               root.style.setProperty('--reader-font-size', ${"${settings.fontSize}px".toJsStringLiteral()});
+              root.style.setProperty('--reader-font-weight', ${settings.readerFontWeightCss().toJsStringLiteral()});
+              root.style.setProperty('--reader-letter-spacing', ${"${settings.letterSpacing}em".toJsStringLiteral()});
               root.style.setProperty('--reader-line-height', ${settings.lineSpacing.toString().toJsStringLiteral()});
               root.style.setProperty('--reader-page-width', ${"${settings.pageWidth}px".toJsStringLiteral()});
               root.style.setProperty('--reader-margin', ${"${settings.margin}px".toJsStringLiteral()});
@@ -506,6 +508,8 @@ object ReaderHtmlDocumentBuilder {
                   --reader-scrollbar-thumb: color-mix(in srgb, var(--reader-fg) 48%, var(--reader-bg));
                   --reader-scrollbar-thumb-hover: var(--reader-link);
                   --reader-font-size: ${settings.fontSize}px;
+                  --reader-font-weight: ${settings.readerFontWeightCss()};
+                  --reader-letter-spacing: ${settings.letterSpacing}em;
                   --reader-line-height: ${settings.lineSpacing};
                   --reader-page-width: ${settings.pageWidth}px;
                   --reader-margin: ${settings.margin}px;
@@ -526,6 +530,8 @@ object ReaderHtmlDocumentBuilder {
                   color: var(--reader-fg);
                   font-family: var(--reader-family);
                   font-size: var(--reader-font-size);
+                  font-weight: var(--reader-font-weight);
+                  letter-spacing: var(--reader-letter-spacing);
                   line-height: var(--reader-line-height);
                 }
                 html {
@@ -4807,6 +4813,10 @@ object ReaderHtmlDocumentBuilder {
                 else -> "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
             }
         }
+    }
+
+    private fun ReaderSettings.readerFontWeightCss(): String {
+        return fontWeight.takeIf { it > 0 }?.coerceIn(1, 1000)?.toString() ?: "normal"
     }
 
     private fun ReaderSettings.readerVerticalMarginY(): Int {

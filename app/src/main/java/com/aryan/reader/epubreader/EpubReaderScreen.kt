@@ -1305,6 +1305,8 @@ fun EpubReaderHost(
     var currentImageSize by remember(initialFormatSettings) { mutableFloatStateOf(initialFormatSettings.imageSize) }
     var currentHorizontalMargin by remember(initialFormatSettings) { mutableFloatStateOf(initialFormatSettings.horizontalMargin) }
     var currentVerticalMargin by remember(initialFormatSettings) { mutableFloatStateOf(initialFormatSettings.verticalMargin) }
+    var currentFontWeight by remember(initialFormatSettings) { mutableIntStateOf(initialFormatSettings.fontWeight) }
+    var currentLetterSpacing by remember(initialFormatSettings) { mutableFloatStateOf(initialFormatSettings.letterSpacing) }
     var currentTextAlign by remember(initialFormatSettings) { mutableStateOf(initialFormatSettings.textAlign) }
     var currentFontFamily by remember(initialFormatSettings) { mutableStateOf(initialFormatSettings.font) }
     var currentCustomFontPath by remember(initialFormatSettings) { mutableStateOf(initialFormatSettings.customPath) }
@@ -1320,14 +1322,14 @@ fun EpubReaderHost(
     var showFontSelectionSheet by remember { mutableStateOf(false) }
     val fontSheetState = rememberModalBottomSheetState()
 
-    LaunchedEffect(currentFontSizeEm, currentLineHeight, currentParagraphGap, currentImageSize, currentHorizontalMargin, currentVerticalMargin, currentFontFamily, currentCustomFontPath, currentTextAlign, isFormatLocal) {
+    LaunchedEffect(currentFontSizeEm, currentLineHeight, currentParagraphGap, currentImageSize, currentHorizontalMargin, currentVerticalMargin, currentFontFamily, currentCustomFontPath, currentTextAlign, currentFontWeight, currentLetterSpacing, isFormatLocal) {
         if (isFormatLocal) {
             saveLocalReaderSettings(
-                context, bookId, currentFontSizeEm, currentLineHeight, currentParagraphGap, currentImageSize, currentHorizontalMargin, currentVerticalMargin, currentFontFamily, currentCustomFontPath, currentTextAlign
+                context, bookId, currentFontSizeEm, currentLineHeight, currentParagraphGap, currentImageSize, currentHorizontalMargin, currentVerticalMargin, currentFontFamily, currentCustomFontPath, currentTextAlign, currentFontWeight, currentLetterSpacing
             )
         } else {
             saveReaderSettings(
-                context, currentFontSizeEm, currentLineHeight, currentParagraphGap, currentImageSize, currentHorizontalMargin, currentVerticalMargin, currentFontFamily, currentCustomFontPath, currentTextAlign
+                context, currentFontSizeEm, currentLineHeight, currentParagraphGap, currentImageSize, currentHorizontalMargin, currentVerticalMargin, currentFontFamily, currentCustomFontPath, currentTextAlign, currentFontWeight, currentLetterSpacing
             )
         }
     }
@@ -4684,6 +4686,8 @@ fun EpubReaderHost(
                                     horizontalMarginMultiplier = currentHorizontalMargin,
                                     verticalMarginMultiplier = currentVerticalMargin,
                                     fontFamily = activeFontFamily,
+                                    fontWeight = currentFontWeight,
+                                    letterSpacing = currentLetterSpacing,
                                     textAlign = currentTextAlign,
                                     bookReplacementPreferences = bookReplacementPreferences,
                                     bookReplacementFileId = bookId,
@@ -5280,6 +5284,8 @@ fun EpubReaderHost(
                                             currentHorizontalMargin = currentHorizontalMargin,
                                             currentVerticalMargin = currentVerticalMargin,
                                             currentFontFamily = currentFontFamily,
+                                            currentFontWeight = currentFontWeight,
+                                            currentLetterSpacing = currentLetterSpacing,
                                             customFontPath = currentCustomFontPath,
                                             epubFontFaceCss = listOf(epubFontFaceCss, chapterFontFaceCss)
                                                 .filter { it.isNotBlank() }
@@ -5866,6 +5872,8 @@ fun EpubReaderHost(
                                 horizontalMarginMultiplier = currentHorizontalMargin,
                                 verticalMarginMultiplier = currentVerticalMargin,
                                 fontFamily = activeFontFamily,
+                                fontWeight = currentFontWeight,
+                                letterSpacing = currentLetterSpacing,
                                 textAlign = currentTextAlign,
                                 bookReplacementPreferences = bookReplacementPreferences,
                                 bookReplacementFileId = bookId,
@@ -7179,6 +7187,11 @@ fun EpubReaderHost(
                     currentVerticalMargin = currentVerticalMargin,
                     onVerticalMarginChange = { currentVerticalMargin = it },
                     currentFont = currentFontFamily,
+                    currentFontWeight = currentFontWeight,
+                    onFontWeightChange = { currentFontWeight = it },
+                    currentLetterSpacing = currentLetterSpacing,
+                    onLetterSpacingChange = { currentLetterSpacing = it },
+                    previewFontFamily = activeFontFamily,
                     currentCustomFontName = if(currentCustomFontPath != null) {
                         customFonts.find { it.path == currentCustomFontPath }?.displayName ?: stringResource(R.string.custom_font_fallback)
                     } else null,
@@ -7197,6 +7210,8 @@ fun EpubReaderHost(
                         currentImageSize = DEFAULT_IMAGE_SIZE_VAL
                         currentHorizontalMargin = DEFAULT_HORIZONTAL_MARGIN_VAL
                         currentVerticalMargin = DEFAULT_VERTICAL_MARGIN_VAL
+                        currentFontWeight = DEFAULT_FONT_WEIGHT_VAL
+                        currentLetterSpacing = DEFAULT_LETTER_SPACING_VAL
                         currentFontFamily = ReaderFont.ORIGINAL
                         currentCustomFontPath = null
                         currentTextAlign = ReaderTextAlign.DEFAULT

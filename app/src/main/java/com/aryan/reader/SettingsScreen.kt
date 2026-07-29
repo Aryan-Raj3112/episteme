@@ -425,6 +425,8 @@ private fun loadAndroidEpubReaderDefaultSettings(
     val verticalMargin = (48f * format.verticalMargin).roundToInt().coerceIn(0, 160)
     val base = ReaderSettings(
         fontSize = (18f * format.fontSize).roundToInt().coerceIn(12, 42),
+        fontWeight = format.fontWeight,
+        letterSpacing = format.letterSpacing,
         lineSpacing = (1.45f * format.lineHeight).coerceIn(1.0f, 2.8f),
         margin = max(horizontalMargin, verticalMargin),
         readingMode = renderMode.toSharedReaderReadingMode(),
@@ -473,7 +475,9 @@ private fun saveAndroidEpubReaderDefaultSettings(
         verticalMargin = (settings.resolvedVerticalMargin / 48f).coerceIn(0f, 3.4f),
         fontFamily = settings.toAndroidReaderFont(),
         customFontPath = settings.customFontPath,
-        textAlign = settings.textAlign.toAndroidTextAlign()
+        textAlign = settings.textAlign.toAndroidTextAlign(),
+        fontWeight = settings.fontWeight,
+        letterSpacing = settings.letterSpacing
     )
     saveSystemUiMode(context, settings.systemUiMode)
     savePageInfoMode(context, settings.pageInfoMode)

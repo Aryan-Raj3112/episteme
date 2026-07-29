@@ -685,6 +685,8 @@ class ReaderHtmlDocumentBuilderTest {
         val script = ReaderHtmlDocumentBuilder.appearanceUpdateScript(
             settings = ReaderSettings(
                 fontSize = 24,
+                fontWeight = 800,
+                letterSpacing = 0.12f,
                 lineSpacing = 1.8f,
                 margin = 60,
                 horizontalMargin = 72,
@@ -698,6 +700,8 @@ class ReaderHtmlDocumentBuilderTest {
         )
 
         assertTrue(script.contains("root.style.setProperty('--reader-font-size', \"24px\");"))
+        assertTrue(script.contains("root.style.setProperty('--reader-font-weight', \"800\");"))
+        assertTrue(script.contains("root.style.setProperty('--reader-letter-spacing', \"0.12em\");"))
         assertTrue(script.contains("root.style.setProperty('--reader-line-height', \"1.8\");"))
         assertTrue(script.contains("root.style.setProperty('--reader-page-width', \"940px\");"))
         assertTrue(script.contains("root.style.setProperty('--reader-margin-x', \"72px\");"))

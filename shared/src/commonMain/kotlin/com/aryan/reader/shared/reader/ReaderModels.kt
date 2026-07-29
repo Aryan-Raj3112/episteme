@@ -71,6 +71,8 @@ enum class SharedReaderTextAlign {
 
 data class ReaderSettings(
     val fontSize: Int = 18,
+    val fontWeight: Int = 0,
+    val letterSpacing: Float = 0f,
     val lineSpacing: Float = 1.45f,
     val margin: Int = 48,
     val darkMode: Boolean = false,
@@ -107,6 +109,8 @@ data class ReaderSettings(
 
 data class ReaderLayoutSignature(
     val fontSize: Int,
+    val fontWeight: Int,
+    val letterSpacing: Float,
     val lineSpacing: Float,
     val horizontalMargin: Int,
     val verticalMargin: Int,
@@ -132,6 +136,8 @@ data class ReaderAppearanceSignature(
 fun ReaderSettings.layoutSignature(): ReaderLayoutSignature {
     return ReaderLayoutSignature(
         fontSize = fontSize,
+        fontWeight = fontWeight,
+        letterSpacing = letterSpacing,
         lineSpacing = lineSpacing,
         horizontalMargin = resolvedHorizontalMargin,
         verticalMargin = resolvedVerticalMargin,

@@ -153,6 +153,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.toSize
 import androidx.compose.ui.window.Popup
@@ -2496,6 +2497,8 @@ fun PaginatedReaderScreen(
     horizontalMarginMultiplier: Float,
     verticalMarginMultiplier: Float,
     fontFamily: FontFamily,
+    fontWeight: Int,
+    letterSpacing: Float,
     textAlign: ReaderTextAlign,
     bookReplacementPreferences: ReaderBookReplacementPreferences = ReaderBookReplacementPreferences(),
     bookReplacementFileId: String? = bookId,
@@ -2569,6 +2572,8 @@ fun PaginatedReaderScreen(
         var debouncedHorizontalMarginMult by remember { mutableFloatStateOf(horizontalMarginMultiplier) }
         var debouncedVerticalMarginMult by remember { mutableFloatStateOf(verticalMarginMultiplier) }
         var debouncedFontFamily by remember { mutableStateOf(fontFamily) }
+        var debouncedFontWeight by remember { mutableIntStateOf(fontWeight) }
+        var debouncedLetterSpacing by remember { mutableFloatStateOf(letterSpacing) }
         var debouncedTextAlign by remember { mutableStateOf(textAlign) }
         var debouncedBookReplacementSignature by remember { mutableStateOf(bookReplacementSignature) }
         var debouncedBookReplacementPreferences by remember { mutableStateOf(bookReplacementPreferences) }
@@ -2604,7 +2609,9 @@ fun PaginatedReaderScreen(
             baseTextStyle,
             debouncedFontSizeMult,
             debouncedLineHeightMult,
-            debouncedFontFamily
+            debouncedFontFamily,
+            debouncedFontWeight,
+            debouncedLetterSpacing
         ) {
             val adjustedFontSize = baseTextStyle.fontSize * debouncedFontSizeMult
             val adjustedLineHeight = adjustedFontSize * paginationLineHeightMultiplierForWebViewSetting(debouncedLineHeightMult)
@@ -2614,8 +2621,9 @@ fun PaginatedReaderScreen(
                 fontSize = adjustedFontSize,
                 lineHeight = adjustedLineHeight,
                 fontFamily = debouncedFontFamily,
+                fontWeight = debouncedFontWeight.takeIf { it > 0 }?.let(::FontWeight),
                 lineBreak = LineBreak.Simple,
-                letterSpacing = TextUnit.Unspecified,
+                letterSpacing = debouncedLetterSpacing.em,
                 platformStyle = PlatformTextStyle(includeFontPadding = false),
                 lineHeightStyle = LineHeightStyle(
                     alignment = LineHeightStyle.Alignment.Proportional,
@@ -2641,7 +2649,7 @@ fun PaginatedReaderScreen(
             }
         }
 
-        LaunchedEffect(fontSizeMultiplier, lineHeightMultiplier, paragraphGapMultiplier, imageSizeMultiplier, horizontalMarginMultiplier, verticalMarginMultiplier, fontFamily, textAlign, bookReplacementSignature, bookReplacementFileId) {
+        LaunchedEffect(fontSizeMultiplier, lineHeightMultiplier, paragraphGapMultiplier, imageSizeMultiplier, horizontalMarginMultiplier, verticalMarginMultiplier, fontFamily, fontWeight, letterSpacing, textAlign, bookReplacementSignature, bookReplacementFileId) {
             if (fontSizeMultiplier != debouncedFontSizeMult ||
                 lineHeightMultiplier != debouncedLineHeightMult ||
                 paragraphGapMultiplier != debouncedParagraphGapMult ||
@@ -2649,6 +2657,8 @@ fun PaginatedReaderScreen(
                 horizontalMarginMultiplier != debouncedHorizontalMarginMult ||
                 verticalMarginMultiplier != debouncedVerticalMarginMult ||
                 fontFamily != debouncedFontFamily ||
+                fontWeight != debouncedFontWeight ||
+                letterSpacing != debouncedLetterSpacing ||
                 textAlign != debouncedTextAlign ||
                 bookReplacementSignature != debouncedBookReplacementSignature ||
                 bookReplacementFileId != debouncedBookReplacementFileId
@@ -2673,6 +2683,8 @@ fun PaginatedReaderScreen(
                 debouncedHorizontalMarginMult = horizontalMarginMultiplier
                 debouncedVerticalMarginMult = verticalMarginMultiplier
                 debouncedFontFamily = fontFamily
+                debouncedFontWeight = fontWeight
+                debouncedLetterSpacing = letterSpacing
                 debouncedTextAlign = textAlign
                 debouncedBookReplacementSignature = bookReplacementSignature
                 debouncedBookReplacementPreferences = bookReplacementPreferences
@@ -3250,6 +3262,8 @@ fun NativeVerticalReaderScreen(
     horizontalMarginMultiplier: Float,
     verticalMarginMultiplier: Float,
     fontFamily: FontFamily,
+    fontWeight: Int,
+    letterSpacing: Float,
     textAlign: ReaderTextAlign,
     bookReplacementPreferences: ReaderBookReplacementPreferences = ReaderBookReplacementPreferences(),
     bookReplacementFileId: String? = bookId,
@@ -3331,7 +3345,9 @@ fun NativeVerticalReaderScreen(
             baseTextStyle,
             fontSizeMultiplier,
             lineHeightMultiplier,
-            fontFamily
+            fontFamily,
+            fontWeight,
+            letterSpacing
         ) {
             val adjustedFontSize = baseTextStyle.fontSize * fontSizeMultiplier
             val adjustedLineHeight =
@@ -3342,8 +3358,9 @@ fun NativeVerticalReaderScreen(
                 fontSize = adjustedFontSize,
                 lineHeight = adjustedLineHeight,
                 fontFamily = fontFamily,
+                fontWeight = fontWeight.takeIf { it > 0 }?.let(::FontWeight),
                 lineBreak = LineBreak.Simple,
-                letterSpacing = TextUnit.Unspecified,
+                letterSpacing = letterSpacing.em,
                 platformStyle = PlatformTextStyle(includeFontPadding = false),
                 lineHeightStyle = LineHeightStyle(
                     alignment = LineHeightStyle.Alignment.Proportional,

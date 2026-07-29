@@ -59,7 +59,9 @@ data class FormatSettings(
     val font: ReaderFont,
     val customPath: String?,
     val textAlign: ReaderTextAlign,
-    val verticalMargin: Float = 1.0f
+    val verticalMargin: Float = 1.0f,
+    val fontWeight: Int = 0,
+    val letterSpacing: Float = 0f
 )
 
 enum class ReaderTexture(val id: String, val displayName: String, val assetPath: String) {
@@ -170,6 +172,8 @@ fun FormatSettings.toReaderSettings(base: ReaderSettings = ReaderSettings()): Re
     return base.copy(
         fontSize = (ReaderAppearanceDefaults.fontSizePx * fontSize).roundToInt()
             .coerceIn(ReaderAppearanceDefaults.minFontSizePx, ReaderAppearanceDefaults.maxFontSizePx),
+        fontWeight = fontWeight.coerceIn(0, 1000),
+        letterSpacing = letterSpacing.coerceIn(-0.10f, 0.50f),
         lineSpacing = (ReaderAppearanceDefaults.lineSpacing * lineHeight)
             .coerceIn(ReaderAppearanceDefaults.minLineSpacing, ReaderAppearanceDefaults.maxLineSpacing),
         margin = max(horizontalMarginPx, verticalMarginPx),
@@ -192,6 +196,8 @@ fun FormatSettings.toReaderSettings(base: ReaderSettings = ReaderSettings()): Re
 /** Replaces only Android's Global/Local Format fields, preserving reader mode and visual options. */
 fun ReaderSettings.withReaderFormatFrom(format: ReaderSettings): ReaderSettings = copy(
     fontSize = format.fontSize,
+    fontWeight = format.fontWeight,
+    letterSpacing = format.letterSpacing,
     lineSpacing = format.lineSpacing,
     margin = format.margin,
     horizontalMargin = format.horizontalMargin,
@@ -217,6 +223,8 @@ fun ReaderSettings.resetReaderFormatSettings(): ReaderSettings {
     val defaults = ReaderSettings()
     return copy(
         fontSize = defaults.fontSize,
+        fontWeight = defaults.fontWeight,
+        letterSpacing = defaults.letterSpacing,
         lineSpacing = defaults.lineSpacing,
         margin = defaults.margin,
         horizontalMargin = defaults.horizontalMargin,

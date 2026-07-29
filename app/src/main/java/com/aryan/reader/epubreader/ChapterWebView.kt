@@ -569,6 +569,8 @@ fun ChapterWebView(
     currentImageSize: Float,
     currentHorizontalMargin: Float,
     currentVerticalMargin: Float,
+    currentFontWeight: Int,
+    currentLetterSpacing: Float,
     onChapterInitiallyScrolled: () -> Unit,
     modifier: Modifier = Modifier,
     onTap: () -> Unit,
@@ -699,6 +701,8 @@ fun ChapterWebView(
             currentImageSize,
             currentHorizontalMargin,
             currentVerticalMargin,
+            currentFontWeight,
+            currentLetterSpacing,
             currentFontFamily,
             currentTextAlign
         ) {
@@ -1053,13 +1057,15 @@ fun ChapterWebView(
                                 currentParagraphGap,
                                 currentImageSize,
                                 currentHorizontalMargin,
-                                currentVerticalMargin
+                                currentVerticalMargin,
+                                currentFontWeight,
+                                currentLetterSpacing
                             ).joinToString(separator = "|")
                             runtimeApplierState.tocFragmentsJson = fragmentsJson
                             runtimeApplierState.highlightsJson = highlightsJson
 
                             view?.evaluateJavascript(
-                                "javascript:window.updateReaderStyles($currentFontSize, $currentLineHeight, '$fontNameForJs', '${currentTextAlign.cssValue}', $currentParagraphGap, $currentImageSize, $currentHorizontalMargin, $currentVerticalMargin);",
+                                "javascript:window.updateReaderStyles($currentFontSize, $currentLineHeight, '$fontNameForJs', '${currentTextAlign.cssValue}', $currentParagraphGap, $currentImageSize, $currentHorizontalMargin, $currentVerticalMargin, $currentFontWeight, $currentLetterSpacing);",
                                 null
                             )
 
@@ -1274,7 +1280,9 @@ fun ChapterWebView(
                         currentParagraphGap,
                         currentImageSize,
                         currentHorizontalMargin,
-                        currentVerticalMargin
+                        currentVerticalMargin,
+                        currentFontWeight,
+                        currentLetterSpacing
                     ).joinToString(separator = "|")
                     val fontCssChanged = runtimeApplierState.fontCss != combinedCss
                     val styleChanged = runtimeApplierState.styleSignature != styleSignature
@@ -1313,7 +1321,7 @@ fun ChapterWebView(
                     if (styleChanged) {
                         runtimeApplierState.styleSignature = styleSignature
                         webView.evaluateJavascript(
-                            "javascript:window.updateReaderStyles($currentFontSize, $currentLineHeight, '$fontNameForJs', '${currentTextAlign.cssValue}', $currentParagraphGap, $currentImageSize, $currentHorizontalMargin, $currentVerticalMargin);",
+                            "javascript:window.updateReaderStyles($currentFontSize, $currentLineHeight, '$fontNameForJs', '${currentTextAlign.cssValue}', $currentParagraphGap, $currentImageSize, $currentHorizontalMargin, $currentVerticalMargin, $currentFontWeight, $currentLetterSpacing);",
                             null
                         )
                     }

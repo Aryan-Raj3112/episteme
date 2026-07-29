@@ -618,6 +618,8 @@ private fun JsonElement.asReaderSettingsOrNull(): ReaderSettings? {
     val defaults = ReaderSettings()
     return ReaderSettings(
         fontSize = obj.int("fontSize") ?: defaults.fontSize,
+        fontWeight = obj.int("fontWeight") ?: defaults.fontWeight,
+        letterSpacing = obj.float("letterSpacing") ?: defaults.letterSpacing,
         lineSpacing = obj.float("lineSpacing") ?: defaults.lineSpacing,
         margin = obj.int("margin") ?: defaults.margin,
         darkMode = obj.boolean("darkMode", defaults.darkMode),
@@ -789,6 +791,8 @@ private fun ReaderSettings?.asJson(): JsonElement {
     return JsonObject(
         mapOf(
             "fontSize" to JsonPrimitive(settings.fontSize),
+            "fontWeight" to JsonPrimitive(settings.fontWeight),
+            "letterSpacing" to JsonPrimitive(settings.letterSpacing),
             "lineSpacing" to JsonPrimitive(settings.lineSpacing),
             "margin" to JsonPrimitive(settings.margin),
             "darkMode" to JsonPrimitive(settings.darkMode),

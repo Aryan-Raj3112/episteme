@@ -102,6 +102,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.sp
 import com.aryan.reader.paginatedreader.CssStyle
@@ -715,8 +716,10 @@ fun SharedNativeVerticalReader(
                                     style = MaterialTheme.typography.bodyLarge.copy(
                                         fontSize = renderPlan.settings.fontSize.sp,
                                         lineHeight = (renderPlan.settings.fontSize * renderPlan.settings.lineSpacing).sp,
-                                        fontFamily = readerFontFamily
-                                    ).withAndroidPaginationTextMetrics(),
+                                        fontFamily = readerFontFamily,
+                                        fontWeight = renderPlan.settings.fontWeight.takeIf { it > 0 }?.let(::FontWeight),
+                                        letterSpacing = renderPlan.settings.letterSpacing.em
+                                    ).withAndroidPaginationTextMetrics(renderPlan.settings.letterSpacing),
                                     activeSelection = activeSelection,
                                     onReaderTap = onReaderTap,
                                     onSelectionChange = ::updateActiveSelection,
@@ -1025,8 +1028,10 @@ private fun SharedNativePaginatedPage(
                     style = MaterialTheme.typography.bodyLarge.copy(
                         fontSize = settings.fontSize.sp,
                         lineHeight = (settings.fontSize * settings.lineSpacing).sp,
-                        fontFamily = readerFontFamily
-                    ).withAndroidPaginationTextMetrics(),
+                        fontFamily = readerFontFamily,
+                        fontWeight = settings.fontWeight.takeIf { it > 0 }?.let(::FontWeight),
+                        letterSpacing = settings.letterSpacing.em
+                    ).withAndroidPaginationTextMetrics(settings.letterSpacing),
                     activeSelection = activeSelection,
                     onReaderTap = onReaderTap,
                     onSelectionChange = onSelectionChange,
@@ -3307,7 +3312,8 @@ private fun SemanticTextBlock.renderedTextStyle(
         fontSize = fontSize,
         lineHeight = lineHeight,
         fontFamily = style.spanStyle.fontFamily ?: fallbackFontFamily,
-        fontWeight = fontWeight
+        fontWeight = settings.fontWeight.takeIf { it > 0 }?.let(::FontWeight)
+            ?: fontWeight
             ?: style.spanStyle.fontWeight
             ?: if (this is SemanticHeader) FontWeight.Bold else MaterialTheme.typography.bodyLarge.fontWeight,
         fontStyle = style.spanStyle.fontStyle ?: MaterialTheme.typography.bodyLarge.fontStyle,
@@ -3316,13 +3322,13 @@ private fun SemanticTextBlock.renderedTextStyle(
             cssTextAlign = style.paragraphStyle.textAlign,
             fallbackTextAlign = fallbackTextAlign
         )
-    ).withAndroidPaginationTextMetrics()
+    ).withAndroidPaginationTextMetrics(settings.letterSpacing)
 }
 
-private fun TextStyle.withAndroidPaginationTextMetrics(): TextStyle {
+private fun TextStyle.withAndroidPaginationTextMetrics(readerLetterSpacing: Float = 0f): TextStyle {
     return copy(
         lineBreak = LineBreak.Paragraph,
-        letterSpacing = TextUnit.Unspecified,
+        letterSpacing = readerLetterSpacing.em,
         lineHeightStyle = LineHeightStyle(
             alignment = LineHeightStyle.Alignment.Proportional,
             trim = LineHeightStyle.Trim.None
