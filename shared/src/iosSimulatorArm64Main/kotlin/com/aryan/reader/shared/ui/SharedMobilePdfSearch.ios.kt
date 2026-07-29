@@ -4,7 +4,6 @@ package com.aryan.reader.shared.ui
 
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.pdf.SharedPdfSearchResult
-import com.aryan.reader.shared.pdf.SharedPdfSearchEngine
 import com.aryan.reader.shared.pdf.IosPdfiumRuntime
 import com.aryan.reader.shared.pdfium.c.FPDF_CloseDocument
 import com.aryan.reader.shared.pdfium.c.FPDF_ClosePage
@@ -20,6 +19,8 @@ import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.UShortVar
 import kotlinx.cinterop.get
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import platform.Foundation.NSFileManager
@@ -31,11 +32,21 @@ private fun String?.resolvedIosPdfPath(): String? {
     return NSURL.URLWithString(value)?.path ?: value.removePrefix("file://")
 }
 
+private data class IosPdfSearchCacheKey(
+    val path: String,
+    val fileSize: Long,
+    val modifiedAt: Long,
+    val passwordHash: Int,
+)
+
+private var iosPdfSearchCacheKey: IosPdfSearchCacheKey? = null
+private var iosPdfSearchIndex: com.aryan.reader.shared.pdf.SharedPdfSearchIndex? = null
+
 internal actual suspend fun searchSharedMobilePdf(
     book: BookItem,
     query: String,
     password: String?,
-): List<SharedPdfSearchResult> = withContext(Dispatchers.Main) {
+): List<SharedPdfSearchResult> = withContext(Dispatchers.Default) {
     val resolvedPath = book.path.resolvedIosPdfPath() ?: return@withContext emptyList()
     if (!NSFileManager.defaultManager.fileExistsAtPath(resolvedPath)) {
         return@withContext emptyList()
@@ -43,22 +54,32 @@ internal actual suspend fun searchSharedMobilePdf(
 
     IosPdfiumRuntime.mutex.withLock {
         IosPdfiumRuntime.ensureInitialized()
+        val cacheKey = IosPdfSearchCacheKey(
+            path = resolvedPath,
+            fileSize = book.fileSize,
+            modifiedAt = book.fileContentModifiedTimestamp,
+            passwordHash = password?.hashCode() ?: 0,
+        )
+        if (iosPdfSearchCacheKey == cacheKey) {
+            iosPdfSearchIndex?.let { return@withLock it.search(query) }
+        }
 
         val document = FPDF_LoadDocument(resolvedPath, password) ?: return@withLock emptyList()
         try {
         val pageCount = FPDF_GetPageCount(document)
-        val pageTexts = mutableListOf<String>()
+        val index = com.aryan.reader.shared.pdf.SharedPdfSearchIndex(pageCount)
 
         for (pageIndex in 0 until pageCount) {
+            currentCoroutineContext().ensureActive()
             val page = FPDF_LoadPage(document, pageIndex)
             if (page == null) {
-                pageTexts.add("")
+                index.putPage(pageIndex, "")
                 continue
             }
             try {
                 val textPage = FPDFText_LoadPage(page)
                 if (textPage == null) {
-                    pageTexts.add("")
+                    index.putPage(pageIndex, "")
                     continue
                 }
                 try {
@@ -71,13 +92,13 @@ internal actual suspend fun searchSharedMobilePdf(
                                 val chars = CharArray(written) { index ->
                                     buffer[index].toInt().toChar()
                                 }
-                                pageTexts.add(chars.concatToString().trimEnd('\u0000'))
+                                index.putPage(pageIndex, chars.concatToString().trimEnd('\u0000'))
                             } else {
-                                pageTexts.add("")
+                                index.putPage(pageIndex, "")
                             }
                         }
                     } else {
-                        pageTexts.add("")
+                        index.putPage(pageIndex, "")
                     }
                 } finally {
                     FPDFText_ClosePage(textPage)
@@ -87,7 +108,9 @@ internal actual suspend fun searchSharedMobilePdf(
             }
         }
 
-            SharedPdfSearchEngine.search(pageTexts, query)
+            iosPdfSearchCacheKey = cacheKey
+            iosPdfSearchIndex = index
+            index.search(query)
         } finally {
             FPDF_CloseDocument(document)
         }

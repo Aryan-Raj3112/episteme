@@ -112,6 +112,7 @@ internal fun SharedMobilePdfTextSelectionOverlay(
     book: BookItem,
     pageIndex: Int,
     password: String? = null,
+    textSession: com.aryan.reader.shared.pdf.PdfTextPageSession?,
     canvasSize: IntSize,
     selectedTool: PdfInkTool,
     onExternalLink: (String) -> Unit,
@@ -123,7 +124,7 @@ internal fun SharedMobilePdfTextSelectionOverlay(
     modifier: Modifier = Modifier
 ) {
     if (canvasSize.width <= 0 || canvasSize.height <= 0) return
-    val session = rememberPdfTextPageSession(book, pageIndex, password)
+    val session = textSession
     val linkBounds = remember(session) { session?.linkBoundsNormalized().orEmpty() }
     val scope = rememberCoroutineScope()
     val clipboard = LocalClipboardManager.current

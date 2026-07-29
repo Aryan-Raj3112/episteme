@@ -40,6 +40,70 @@ fun enqueueMobileFolderScan(
     return queue.filterNot { it.folderName == folderName } + result.copy(folderName = folderName)
 }
 
+/**
+ * Android's folder worker only includes locally enabled folders. Native iOS
+ * discovery can still deliver a queued result for a disabled bookmark, so the
+ * shared state boundary must discard it.
+ *
+ * A missing configuration is accepted because it represents the first scan of
+ * a newly selected folder.
+ */
+fun shouldApplyMobileFolderScan(configuredFolder: SyncedFolder?): Boolean =
+    configuredFolder?.localSyncEnabled != false
+
+data class SharedMobileFolderFileTypesUpdate(
+    val state: SharedReaderScreenState,
+    val removedBookIds: Set<String>,
+)
+
+/**
+ * Android removes books excluded by a folder filter before scheduling the
+ * rescan. Doing the mutation here keeps iOS correct even when native folder
+ * discovery subsequently fails.
+ */
+fun SharedReaderScreenState.withMobileFolderFileTypes(
+    folder: SyncedFolder,
+    allowedFileTypes: Set<FileType>,
+): SharedMobileFolderFileTypesUpdate {
+    val removedBookIds = rawLibraryBooks
+        .asSequence()
+        .filter { it.sourceFolder == folder.uriString || it.sourceFolder == folder.name }
+        .filter { it.type !in allowedFileTypes }
+        .mapTo(linkedSetOf()) { it.id }
+    fun List<BookItem>.withoutRemoved(): List<BookItem> =
+        filterNot { it.id in removedBookIds }
+    val updatedState = copy(
+        syncedFolders = syncedFolders.map { configured ->
+            if (configured.uriString == folder.uriString) {
+                configured.copy(allowedFileTypes = allowedFileTypes)
+            } else {
+                configured
+            }
+        },
+        rawLibraryBooks = rawLibraryBooks.withoutRemoved(),
+        libraryBooks = libraryBooks.withoutRemoved(),
+        recentBooks = recentBooks.withoutRemoved(),
+        openTabs = openTabs.withoutRemoved(),
+        openTabIds = openTabIds.filterNot { it in removedBookIds },
+        activeTabBookId = activeTabBookId?.takeUnless { it in removedBookIds },
+        selectedBookId = selectedBookId?.takeUnless { it in removedBookIds },
+        selectedBookIds = selectedBookIds - removedBookIds,
+        booksSelectedForAdding = booksSelectedForAdding - removedBookIds,
+        pinnedHomeBookIds = pinnedHomeBookIds - removedBookIds,
+        pinnedLibraryBookIds = pinnedLibraryBookIds - removedBookIds,
+        shelves = shelves.map { shelf ->
+            shelf.copy(
+                books = shelf.books.withoutRemoved(),
+                directBooks = shelf.directBooks.withoutRemoved(),
+            )
+        },
+    )
+    return SharedMobileFolderFileTypesUpdate(
+        state = updatedState,
+        removedBookIds = removedBookIds,
+    )
+}
+
 fun canOpenMobilePdfTab(openTabIds: Collection<String>, bookId: String): Boolean {
     val normalizedBookId = bookId.trim()
     if (normalizedBookId.isBlank()) return false
@@ -67,6 +131,94 @@ data class SharedMobileImportBatchOutcome(
     val plan: SharedImportPlan,
     val counts: SharedImportOutcomeCounts,
 )
+
+/**
+ * Android routes a one-item picker result through its regular open/import path:
+ * a new book opens after import, while selecting the same content again opens
+ * the existing library item. Multi-select remains a library-only bulk import.
+ */
+fun SharedMobileImportBatchOutcome.singleSelectionOpenBook(
+    existingBooks: List<BookItem>,
+): BookItem? {
+    val selectedCount = counts.addedCount +
+        counts.duplicateCount +
+        counts.unsupportedCount +
+        counts.failedCount
+    if (selectedCount != 1) return null
+
+    val decision = plan.decisions.singleOrNull() ?: return null
+    return when (decision.status) {
+        SharedImportDecisionStatus.IMPORTABLE ->
+            plan.importedBooks.singleOrNull { it.id == decision.id }
+        SharedImportDecisionStatus.DUPLICATE ->
+            existingBooks.firstOrNull { it.id == decision.id }
+        SharedImportDecisionStatus.UNSUPPORTED -> null
+    }
+}
+
+enum class MobileBookOpenPreflightAction {
+    OPEN,
+    REMOVE_MISSING_FOLDER_BOOK,
+    SHOW_MISSING_LOCATION,
+    DOWNLOAD,
+    SHOW_UNAVAILABLE,
+}
+
+/**
+ * Mirrors Android's recent-item click ordering. Folder-backed entries are
+ * checked before availability so a file removed outside the app is cleaned
+ * from the library instead of being mistaken for a cloud-only download.
+ */
+fun mobileBookOpenPreflightAction(
+    book: BookItem,
+    localFileExists: Boolean,
+    canDownload: Boolean,
+): MobileBookOpenPreflightAction {
+    if (
+        !book.sourceFolder.isNullOrBlank() &&
+        !book.path.isNullOrBlank() &&
+        !localFileExists
+    ) {
+        return MobileBookOpenPreflightAction.REMOVE_MISSING_FOLDER_BOOK
+    }
+    if (book.isAvailable) {
+        return if (book.path.isNullOrBlank()) {
+            MobileBookOpenPreflightAction.SHOW_MISSING_LOCATION
+        } else {
+            MobileBookOpenPreflightAction.OPEN
+        }
+    }
+    return if (canDownload) {
+        MobileBookOpenPreflightAction.DOWNLOAD
+    } else {
+        MobileBookOpenPreflightAction.SHOW_UNAVAILABLE
+    }
+}
+
+fun SharedReaderScreenState.withMobileLibrarySearchActive(
+    active: Boolean,
+): SharedReaderScreenState {
+    return if (active) {
+        copy(isSearchActive = true)
+    } else {
+        copy(isSearchActive = false, searchQuery = "")
+    }
+}
+
+/**
+ * Android discards IME callbacks delivered after search has closed. Keeping
+ * this guard shared prevents a hidden query from being restored by a late
+ * native text-field event on iOS.
+ */
+fun SharedReaderScreenState.withMobileLibrarySearchQuery(
+    query: String,
+): SharedReaderScreenState {
+    return if (isSearchActive) {
+        reduce(LibraryAction.SearchChanged(query))
+    } else {
+        this
+    }
+}
 
 fun planMobileImportBatch(
     files: List<ImportedBookFile>,

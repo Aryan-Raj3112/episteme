@@ -34,6 +34,14 @@ fun BookItem.isOpdsStream(): Boolean {
     return path?.startsWith("opds-pse://") == true
 }
 
+/**
+ * Mirrors Android's original-file action gate. Save/share require a concrete
+ * local source and are not meaningful for streamed OPDS entries.
+ */
+fun BookItem.canExportOriginalFile(): Boolean {
+    return path != null && !isOpdsStream()
+}
+
 fun BookItem.matchesSourceFolders(sourceFolders: Set<String>): Boolean {
     if (sourceFolders.isEmpty()) return true
     val matchesInAppStorage = IN_APP_STORAGE_SOURCE in sourceFolders &&

@@ -8,6 +8,74 @@ import kotlin.test.assertTrue
 
 class SharedMobileLibraryMutationsTest {
     @Test
+    fun `mobile folder scans apply only to new or locally enabled folders`() {
+        val enabled = SyncedFolder(
+            uriString = "folder://enabled",
+            name = "Enabled",
+            lastScanTime = 0L,
+            localSyncEnabled = true,
+        )
+        val disabled = enabled.copy(
+            uriString = "folder://disabled",
+            name = "Disabled",
+            localSyncEnabled = false,
+        )
+
+        assertTrue(shouldApplyMobileFolderScan(null))
+        assertTrue(shouldApplyMobileFolderScan(enabled))
+        assertFalse(shouldApplyMobileFolderScan(disabled))
+    }
+
+    @Test
+    fun `mobile folder file type changes immediately remove excluded books everywhere`() {
+        val folder = SyncedFolder(
+            uriString = "folder://library",
+            name = "Library",
+            lastScanTime = 1L,
+            allowedFileTypes = setOf(FileType.PDF, FileType.EPUB),
+        )
+        val pdf = BookItem("pdf", "/managed/pdf", FileType.PDF, "book.pdf", timestamp = 1L, sourceFolder = folder.name)
+        val epub = BookItem("epub", "/managed/epub", FileType.EPUB, "book.epub", timestamp = 2L, sourceFolder = folder.name)
+        val independent = BookItem("local", "/imports/local", FileType.EPUB, "local.epub", timestamp = 3L)
+        val shelf = Shelf(
+            id = "shelf",
+            name = "Shelf",
+            type = ShelfType.MANUAL,
+            books = listOf(pdf, epub, independent),
+            directBooks = listOf(pdf, epub, independent),
+        )
+        val state = SharedReaderScreenState(
+            syncedFolders = listOf(folder),
+            rawLibraryBooks = listOf(pdf, epub, independent),
+            libraryBooks = listOf(pdf, epub, independent),
+            recentBooks = listOf(pdf, epub, independent),
+            openTabs = listOf(pdf, epub),
+            openTabIds = listOf(pdf.id, epub.id),
+            activeTabBookId = pdf.id,
+            selectedBookId = pdf.id,
+            selectedBookIds = setOf(pdf.id, independent.id),
+            booksSelectedForAdding = setOf(pdf.id, independent.id),
+            pinnedHomeBookIds = setOf(pdf.id, independent.id),
+            pinnedLibraryBookIds = setOf(pdf.id, independent.id),
+            shelves = listOf(shelf),
+        )
+
+        val update = state.withMobileFolderFileTypes(folder, setOf(FileType.EPUB))
+
+        assertEquals(setOf(pdf.id), update.removedBookIds)
+        assertEquals(listOf(epub.id, independent.id), update.state.rawLibraryBooks.map { it.id })
+        assertEquals(listOf(epub.id), update.state.openTabIds)
+        assertNull(update.state.activeTabBookId)
+        assertNull(update.state.selectedBookId)
+        assertEquals(setOf(independent.id), update.state.selectedBookIds)
+        assertEquals(setOf(independent.id), update.state.booksSelectedForAdding)
+        assertEquals(setOf(independent.id), update.state.pinnedHomeBookIds)
+        assertEquals(setOf(independent.id), update.state.pinnedLibraryBookIds)
+        assertEquals(listOf(epub.id, independent.id), update.state.shelves.single().books.map { it.id })
+        assertEquals(setOf(FileType.EPUB), update.state.syncedFolders.single().allowedFileTypes)
+    }
+
+    @Test
     fun `mobile import batch reports added duplicate unsupported and native copy failures`() {
         val outcome = planMobileImportBatch(
             files = listOf(
@@ -25,6 +93,147 @@ class SharedMobileLibraryMutationsTest {
         assertEquals(1, outcome.counts.unsupportedCount)
         assertEquals(2, outcome.counts.failedCount)
         assertEquals(listOf("new"), outcome.plan.importedBooks.map { it.id })
+    }
+
+    @Test
+    fun `single mobile selection opens a new import or its existing duplicate`() {
+        val existing = BookItem(
+            id = "existing",
+            path = "/library/existing.epub",
+            type = FileType.EPUB,
+            displayName = "Existing",
+            timestamp = 1L,
+        )
+        val imported = planMobileImportBatch(
+            files = listOf(
+                ImportedBookFile(
+                    name = "new.epub",
+                    uriString = null,
+                    localPath = "/imports/new.epub",
+                    size = 1L,
+                    id = "new",
+                )
+            ),
+            existingBookIds = setOf(existing.id),
+        )
+        val duplicate = planMobileImportBatch(
+            files = listOf(
+                ImportedBookFile(
+                    name = "existing-copy.epub",
+                    uriString = null,
+                    localPath = "/imports/existing-copy.epub",
+                    size = 1L,
+                    id = existing.id,
+                )
+            ),
+            existingBookIds = setOf(existing.id),
+        )
+
+        assertEquals("new", imported.singleSelectionOpenBook(listOf(existing))?.id)
+        assertEquals(existing, duplicate.singleSelectionOpenBook(listOf(existing)))
+    }
+
+    @Test
+    fun `bulk or failed mobile selections do not auto open a book`() {
+        val bulk = planMobileImportBatch(
+            files = listOf(
+                ImportedBookFile("one.epub", null, "/imports/one.epub", 1L, id = "one"),
+                ImportedBookFile("two.epub", null, "/imports/two.epub", 1L, id = "two"),
+            ),
+            existingBookIds = emptySet(),
+        )
+        val partial = planMobileImportBatch(
+            files = listOf(
+                ImportedBookFile("one.epub", null, "/imports/one.epub", 1L, id = "one"),
+            ),
+            existingBookIds = emptySet(),
+            failedCount = 1,
+        )
+
+        assertNull(bulk.singleSelectionOpenBook(emptyList()))
+        assertNull(partial.singleSelectionOpenBook(emptyList()))
+    }
+
+    @Test
+    fun `mobile open preflight removes a missing folder book before cloud handling`() {
+        val folderBook = BookItem(
+            id = "folder-book",
+            path = "/folders/Books/missing.epub",
+            type = FileType.EPUB,
+            displayName = "Missing",
+            timestamp = 1L,
+            isAvailable = false,
+            sourceFolder = "Books",
+        )
+
+        assertEquals(
+            MobileBookOpenPreflightAction.REMOVE_MISSING_FOLDER_BOOK,
+            mobileBookOpenPreflightAction(
+                book = folderBook,
+                localFileExists = false,
+                canDownload = true,
+            ),
+        )
+        assertEquals(
+            MobileBookOpenPreflightAction.DOWNLOAD,
+            mobileBookOpenPreflightAction(
+                book = folderBook.copy(sourceFolder = null),
+                localFileExists = false,
+                canDownload = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `mobile open preflight distinguishes missing location from unavailable content`() {
+        val availableWithoutPath = BookItem(
+            id = "missing-location",
+            path = null,
+            type = FileType.PDF,
+            displayName = "Missing",
+            timestamp = 1L,
+            isAvailable = true,
+        )
+
+        assertEquals(
+            MobileBookOpenPreflightAction.SHOW_MISSING_LOCATION,
+            mobileBookOpenPreflightAction(
+                book = availableWithoutPath,
+                localFileExists = false,
+                canDownload = false,
+            ),
+        )
+        assertEquals(
+            MobileBookOpenPreflightAction.SHOW_UNAVAILABLE,
+            mobileBookOpenPreflightAction(
+                book = availableWithoutPath.copy(isAvailable = false),
+                localFileExists = false,
+                canDownload = false,
+            ),
+        )
+        assertEquals(
+            MobileBookOpenPreflightAction.OPEN,
+            mobileBookOpenPreflightAction(
+                book = availableWithoutPath.copy(path = "/imports/book.pdf"),
+                localFileExists = true,
+                canDownload = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `mobile library search ignores late query callbacks after close`() {
+        val active = SharedReaderScreenState()
+            .withMobileLibrarySearchActive(true)
+            .withMobileLibrarySearchQuery("reader")
+        val closed = active.withMobileLibrarySearchActive(false)
+        val lateCallback = closed.withMobileLibrarySearchQuery("reader!")
+
+        assertTrue(active.isSearchActive)
+        assertEquals("reader", active.searchQuery)
+        assertFalse(closed.isSearchActive)
+        assertEquals("", closed.searchQuery)
+        assertEquals(closed, lateCallback)
     }
 
     @Test

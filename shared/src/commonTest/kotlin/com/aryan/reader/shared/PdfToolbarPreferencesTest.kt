@@ -7,6 +7,15 @@ import kotlin.test.assertTrue
 
 class PdfToolbarPreferencesTest {
     @Test
+    fun `pdf navigation tools follow android tts enablement`() {
+        assertFalse(isPdfReaderToolEnabledDuringTts(PdfReaderTool.SLIDER, true))
+        assertFalse(isPdfReaderToolEnabledDuringTts(PdfReaderTool.TOC, true))
+        assertFalse(isPdfReaderToolEnabledDuringTts(PdfReaderTool.SEARCH, true))
+        assertTrue(isPdfReaderToolEnabledDuringTts(PdfReaderTool.EDIT_MODE, true))
+        assertTrue(isPdfReaderToolEnabledDuringTts(PdfReaderTool.SEARCH, false))
+    }
+
+    @Test
     fun `defaults mirror android visibility and placement`() {
         val preferences = PdfToolbarPreferences()
 

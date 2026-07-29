@@ -46,4 +46,31 @@ class SharedReducersTest {
 
         assertEquals(listOf(font), result.customFonts)
     }
+
+    @Test
+    fun `disabling or closing all tabs clears ids active tab and materialized tabs together`() {
+        val tab = BookItem(
+            id = "pdf",
+            path = "/books/pdf.pdf",
+            type = FileType.PDF,
+            displayName = "pdf.pdf",
+            timestamp = 1L,
+        )
+        val state = SharedReaderScreenState(
+            openTabIds = listOf(tab.id),
+            activeTabBookId = tab.id,
+            openTabs = listOf(tab),
+        )
+
+        val disabled = state.reduce(AppAction.TabsEnabledChanged(false))
+        val closedAll = state.reduce(AppAction.AllTabsClosed)
+
+        assertEquals(false, disabled.isTabsEnabled)
+        assertEquals(emptyList(), disabled.openTabIds)
+        assertEquals(null, disabled.activeTabBookId)
+        assertEquals(emptyList(), disabled.openTabs)
+        assertEquals(emptyList(), closedAll.openTabIds)
+        assertEquals(null, closedAll.activeTabBookId)
+        assertEquals(emptyList(), closedAll.openTabs)
+    }
 }

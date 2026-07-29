@@ -39,6 +39,46 @@ internal enum class SharedMobileBookTapIntent {
 internal fun mobileBookTapIntent(selectedBookIds: Set<String>): SharedMobileBookTapIntent =
     if (selectedBookIds.isEmpty()) SharedMobileBookTapIntent.OPEN else SharedMobileBookTapIntent.TOGGLE_SELECTION
 
+/**
+ * Android long-press only enters/adds to book selection. Repeating a
+ * long-press on an already selected book is intentionally a no-op.
+ */
+internal fun shouldSelectBookOnLongPress(
+    bookId: String,
+    selectedBookIds: Set<String>,
+): Boolean = bookId !in selectedBookIds
+
+internal enum class SharedMobileShelfTapIntent {
+    OPEN,
+    TOGGLE_SELECTION,
+}
+
+/**
+ * Android keeps shelf taps inside contextual mode once any shelf is selected.
+ * This also prevents non-selectable shelves from unexpectedly opening while a
+ * manual-shelf selection is active.
+ */
+internal fun mobileShelfTapIntent(selectedShelfIds: Set<String>): SharedMobileShelfTapIntent =
+    if (selectedShelfIds.isEmpty()) SharedMobileShelfTapIntent.OPEN else SharedMobileShelfTapIntent.TOGGLE_SELECTION
+
+/**
+ * Android long-press only enters/adds to shelf selection. Repeating a
+ * long-press on an already selected shelf is intentionally a no-op.
+ */
+internal fun shouldSelectShelfOnLongPress(
+    shelfId: String,
+    selectedShelfIds: Set<String>,
+): Boolean = shelfId !in selectedShelfIds
+
+/**
+ * Android treats the source chips as alternate views of one pending add
+ * operation. Selections therefore remain pending when the user switches
+ * between Unshelved and All books.
+ */
+internal fun mobileAddBooksSelectionAfterSourceChange(
+    selectedBookIds: Set<String>,
+): Set<String> = selectedBookIds
+
 enum class SharedAppMoreGroup {
     LIBRARY,
     ACCOUNT,

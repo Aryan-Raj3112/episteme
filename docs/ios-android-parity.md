@@ -361,6 +361,84 @@ integration boundaries.
   The transient password is forwarded to page and zoom-tile rendering, search,
   outline loading, text selection, links, and read-aloud extraction so the
   complete reader remains functional after unlock.
+- PDF toolbar navigation now respects Android's TTS lifecycle on iOS. Slider,
+  Sidebar, and Search are disabled while speech is speaking or preparing in
+  top, bottom, and hidden-tool placements, then re-enable when speech pauses or
+  stops. Hidden tools and Share/Save/Print children also dismiss the overflow
+  before opening their destination, preventing a stale menu from covering the
+  resulting sheet or native controller.
+- User-driven PDF pagination now stops active or preparing speech like Android.
+  Both direct pager drags and tap-to-turn edge navigation cancel the pending
+  speech request, active utterance, and highlight before changing pages.
+  Programmatic TTS page advancement remains uninterrupted, vertical scrolling
+  retains its existing behavior, and paused speech is not discarded.
+- PDF Auto Scroll now moves the vertical document continuously from the frame
+  clock instead of jumping one full page every 3.5 seconds. Its shared speed
+  contract matches Android's effective 80 px/s base with the 0.5 multiplier
+  (the default 3x setting is 120 px/s), and iOS now has play/pause, speed, top,
+  close, collapse, stepper/slider, and min/max controls. Global profiles persist
+  across files, local profiles are stored with the PDF and snapshot, and bounds
+  apply Android's correction rules. Musician mode persists globally, suppresses
+  chrome, and exposes the same quarter-width page-jump regions; user drags and
+  musician jumps use Android's temporary-pause timings. Leaving vertical mode
+  closes the session.
+- PDF search now follows Android's live-query lifecycle on iOS: it accepts
+  single-character terms, waits the same 300 ms before searching, and requests
+  keyboard focus after Android's 100 ms activation delay. PDFium text extraction
+  runs off the main dispatcher, checks cancellation between pages when the query
+  changes, and caches the completed per-document index so subsequent edits search
+  existing text instead of reopening and rescanning every page. Search results
+  now convert their UTF-16 ranges to PDFium page rectangles, share the page text
+  session with selection, and render in both pagination and vertical modes.
+  The navigation pill exposes Android's all/focused highlight toggle and disables
+  previous/next at the result boundaries instead of wrapping to the other end.
+  Background matches use Android's translucent yellow with 3 px padding; the
+  active match is always layered above them in orange with 5 px padding and a
+  3 dp orange border, including when focused-only mode hides background matches.
+- PDF page-slider movement no longer pollutes semantic jump history on iOS.
+  Android's history remains limited to TOC/bookmark/highlight, internal-link,
+  and search-result jumps, with the same branch truncation, adjacent reverse
+  replacement, invalid-page pruning, and 21-entry cap. The page-slider enabled
+  preference is now retained independently for each PDF, as on Android.
+- External EPUB links now use Android's confirmation flow in both paginated and
+  vertical modes. iOS shows the complete destination and offers Open, Copy, or
+  Cancel instead of launching an external app immediately. EPUB auto-scroll
+  also applies Android's effective 0.5 speed multiplier, so the same stored
+  setting moves the viewport at the same rate on both platforms.
+- The EPUB page-slider toggle is now persisted independently per book on iOS,
+  matching Android across reader reopen. Search temporarily suppresses the
+  slider chrome without clearing that preference, and leaving a reading mode
+  still disables and persists the slider when Android does.
+- EPUB Auto Scroll now uses Android's actual `0.1x–10x` profile rather than the
+  earlier iOS-only pixel-speed scale. The default is `0.8x`; the renderer
+  converts Android's half-pixel-per-frame multiplier to a time-based 60 Hz
+  rate. Global and per-book speed/min/max profiles apply the same bound
+  correction rules, persist across reopen, and expose Android's exact speed
+  choices plus the persisted slider/stepper input toggle. Existing legacy iOS
+  pixel-speed values migrate to equivalent Android multipliers.
+- EPUB musician mode now persists globally and suppresses reader chrome while
+  active. Its left/right regions match Android's quarter-width, 40%-height
+  layout: taps move by 75% of the viewport with a 600 ms auto-scroll pause,
+  while a one-second hold shows progress and jumps to the chapter start/end
+  with a one-second pause. Ordinary vertical drags temporarily pause scrolling
+  for Android's 300 ms interval, and closing Auto Scroll restores chrome.
+- EPUB search activation now requests keyboard focus after Android's 100 ms
+  delay. Typing retains the 350 ms debounce, while the keyboard Search action
+  runs immediately, hides the keyboard, and clears focus. Choosing a result
+  collapses only the result panel and leaves Android's search top bar plus
+  boundary-aware navigation visible; closing search clears the query, results,
+  active index, keyboard focus, and stale navigation state.
+- Automatic EPUB chapter-end events are now distinct from manual pull
+  navigation. Auto Scroll advances to the next chapter, pauses for Android's
+  one-second load interval, then resumes at the chapter start. Reaching the
+  final chapter stops the playing state while keeping the Auto Scroll controls
+  open, instead of leaving iOS showing a running session whose JavaScript timer
+  had already terminated.
+- EPUB Auto Scroll controls now include Android's transient collapsed shell:
+  collapse reduces the panel to expand and play/pause actions without changing
+  the saved profile or active session. The expanded panel is capped at 400 dp
+  and includes Scroll to top, which uses the same one-second temporary pause as
+  Android before resuming playback.
 
 ## Known platform constraint
 

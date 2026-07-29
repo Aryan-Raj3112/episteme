@@ -148,6 +148,12 @@ class SharedLibrarySnapshotJsonTest {
             ),
             readerAutoScrollIsLocal = true,
             readerAutoScrollLocalSpeed = 72f,
+            readerAutoScrollLocalMinSpeed = 0.5f,
+            readerAutoScrollLocalMaxSpeed = 4f,
+            pdfAutoScrollIsLocal = true,
+            pdfAutoScrollLocalSpeed = 2.5f,
+            pdfAutoScrollLocalMinSpeed = 0.5f,
+            pdfAutoScrollLocalMaxSpeed = 8f,
                     readerBookmarks = listOf(
                         ReaderBookmark(
                             id = "book_4",

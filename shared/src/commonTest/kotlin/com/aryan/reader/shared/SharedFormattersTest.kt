@@ -2,6 +2,8 @@ package com.aryan.reader.shared
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class SharedFormattersTest {
     @Test
@@ -17,6 +19,17 @@ class SharedFormattersTest {
     @Test
     fun `blank embedded title falls back to filename`() {
         assertEquals("document.pdf", book(FileType.PDF).copy(title = " ").cardTitle())
+    }
+
+    @Test
+    fun `original file actions require a local non streamed path`() {
+        assertTrue(book(FileType.PDF).canExportOriginalFile())
+        assertFalse(book(FileType.PDF).copy(path = null).canExportOriginalFile())
+        assertFalse(
+            book(FileType.PDF)
+                .copy(path = "opds-pse://stream?id=remote")
+                .canExportOriginalFile()
+        )
     }
 
     private fun book(type: FileType) = BookItem(

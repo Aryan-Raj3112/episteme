@@ -29,6 +29,12 @@ fun BookItem.withReaderSessionState(
             readerLocalFormatSettings == session.readerLocalFormatSettings &&
             readerAutoScrollIsLocal == session.readerAutoScrollIsLocal &&
             readerAutoScrollLocalSpeed == session.readerAutoScrollLocalSpeed &&
+            readerAutoScrollLocalMinSpeed == session.readerAutoScrollLocalMinSpeed &&
+            readerAutoScrollLocalMaxSpeed == session.readerAutoScrollLocalMaxSpeed &&
+            pdfAutoScrollIsLocal == session.pdfAutoScrollIsLocal &&
+            pdfAutoScrollLocalSpeed == session.pdfAutoScrollLocalSpeed &&
+            pdfAutoScrollLocalMinSpeed == session.pdfAutoScrollLocalMinSpeed &&
+            pdfAutoScrollLocalMaxSpeed == session.pdfAutoScrollLocalMaxSpeed &&
             readerBookmarks == session.readerBookmarks &&
             readerHighlights == session.readerHighlights
     if (readingStateIsUnchanged) return this
@@ -41,6 +47,12 @@ fun BookItem.withReaderSessionState(
         readerLocalFormatSettings = session.readerLocalFormatSettings,
         readerAutoScrollIsLocal = session.readerAutoScrollIsLocal,
         readerAutoScrollLocalSpeed = session.readerAutoScrollLocalSpeed,
+        readerAutoScrollLocalMinSpeed = session.readerAutoScrollLocalMinSpeed,
+        readerAutoScrollLocalMaxSpeed = session.readerAutoScrollLocalMaxSpeed,
+        pdfAutoScrollIsLocal = session.pdfAutoScrollIsLocal,
+        pdfAutoScrollLocalSpeed = session.pdfAutoScrollLocalSpeed,
+        pdfAutoScrollLocalMinSpeed = session.pdfAutoScrollLocalMinSpeed,
+        pdfAutoScrollLocalMaxSpeed = session.pdfAutoScrollLocalMaxSpeed,
         readerBookmarks = session.readerBookmarks,
         readerHighlights = session.readerHighlights,
         readingPositionModifiedTimestamp = modifiedAt,

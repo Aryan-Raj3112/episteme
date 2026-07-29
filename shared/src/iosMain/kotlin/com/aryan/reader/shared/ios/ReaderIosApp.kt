@@ -69,6 +69,8 @@ import com.aryan.reader.shared.ShelfType
 import com.aryan.reader.shared.SyncedFolder
 import com.aryan.reader.shared.UserData
 import com.aryan.reader.shared.ReaderPlatform
+import com.aryan.reader.shared.ReaderAutoScrollProfile
+import com.aryan.reader.shared.migrateLegacyIosReaderAutoScrollSpeed
 import com.aryan.reader.shared.currentTimestamp
 import com.aryan.reader.shared.canEnableGoogleDriveSync
 import com.aryan.reader.shared.canOpenMobilePdfTab
@@ -78,10 +80,16 @@ import com.aryan.reader.shared.enqueueMobileFolderScan
 import com.aryan.reader.shared.mobileExternalFileCloseAction
 import com.aryan.reader.shared.normalizedExternalFileBehavior
 import com.aryan.reader.shared.planMobileImportBatch
+import com.aryan.reader.shared.singleSelectionOpenBook
+import com.aryan.reader.shared.mobileBookOpenPreflightAction
+import com.aryan.reader.shared.MobileBookOpenPreflightAction
 import com.aryan.reader.shared.reduce
 import com.aryan.reader.shared.resolveMobileReaderSessionBook
 import com.aryan.reader.shared.withMobileBookOpened
 import com.aryan.reader.shared.withMobileBookClosed
+import com.aryan.reader.shared.withMobileLibrarySearchActive
+import com.aryan.reader.shared.withMobileLibrarySearchQuery
+import com.aryan.reader.shared.withMobileFolderFileTypes
 import com.aryan.reader.shared.withMobileTemporaryBookClosed
 import com.aryan.reader.shared.withMobileTemporaryBookOpened
 import com.aryan.reader.shared.withRestoredMobileReaderSession
@@ -103,6 +111,7 @@ import com.aryan.reader.shared.toSharedMobileReaderState
 import com.aryan.reader.shared.sharedSettingsHubModel
 import com.aryan.reader.shared.sharedAppLanguageLabel
 import com.aryan.reader.shared.sharedAppLanguages
+import com.aryan.reader.shared.shouldApplyMobileFolderScan
 import com.aryan.reader.shared.shouldRequestCloudSyncAfterFolderSyncChange
 import com.aryan.reader.shared.opds.OpdsEntry
 import com.aryan.reader.shared.opds.OpdsStreamReference
@@ -111,6 +120,7 @@ import com.aryan.reader.shared.opds.SharedOpdsDownloadState
 import com.aryan.reader.shared.opds.SharedOpdsStreamUri
 import com.aryan.reader.shared.pdf.SharedPdfReaderState
 import com.aryan.reader.shared.pdf.SharedPdfReaderStateSerializer
+import com.aryan.reader.shared.pdf.PdfAutoScrollProfile
 import com.aryan.reader.shared.ui.SharedAppTheme
 import com.aryan.reader.shared.ui.SharedAppThemeSettingsDialog
 import com.aryan.reader.shared.ui.SharedAboutScreen
@@ -130,6 +140,7 @@ import com.aryan.reader.shared.ui.SharedSettingsHub
 import com.aryan.reader.shared.ui.LocalSharedStringResolver
 import com.aryan.reader.shared.ui.SharedStringResolver
 import com.aryan.reader.shared.ui.SharedSupportProjectScreen
+import com.aryan.reader.shared.ui.mobileRecentBooks
 import com.aryan.reader.shared.ui.openSharedMobileExternalUrl
 import com.aryan.reader.shared.reader.ReaderScreenOrientationMode
 import com.aryan.reader.shared.ui.SharedMobilePdfNativeAction
@@ -741,6 +752,8 @@ private const val IosImportsRelativePrefix = "Imports/"
 private const val IosDocumentsRelativePrefix = "Documents/"
 private const val IosCoversRelativePrefix = "Covers/"
 private const val IosPdfReaderStateDefaultsPrefix = "reader_ios_pdf_state_v1_"
+private const val IosPdfPageSliderVisibleDefaultsPrefix = "reader_ios_pdf_slider_visible_v1_"
+private const val IosEpubPageSliderVisibleDefaultsPrefix = "reader_ios_epub_slider_visible_v1_"
 private const val IosEpubReaderStateDefaultsPrefix = "reader_ios_epub_state_v1_"
 private const val IosReaderBrightnessDefaultsKey = "reader_ios_reader_brightness_v1"
 private const val IosReaderCustomBrightnessDefaultsKey = "reader_ios_reader_custom_brightness_v1"
@@ -749,6 +762,15 @@ private const val IosPdfToolbarOrderDefaultsKey = "reader_ios_pdf_toolbar_order_
 private const val IosPdfToolbarBottomDefaultsKey = "reader_ios_pdf_toolbar_bottom_v1"
 private const val IosPdfTopTabStripVisibleDefaultsKey = "reader_ios_pdf_top_tab_strip_visible_v1"
 private const val IosReaderAutoScrollSpeedDefaultsKey = "reader_ios_auto_scroll_speed_v1"
+private const val IosReaderAutoScrollMinDefaultsKey = "reader_ios_auto_scroll_min_v1"
+private const val IosReaderAutoScrollMaxDefaultsKey = "reader_ios_auto_scroll_max_v1"
+private const val IosReaderAutoScrollSliderDefaultsKey = "reader_ios_auto_scroll_slider_v1"
+private const val IosReaderAutoScrollMusicianDefaultsKey = "reader_ios_auto_scroll_musician_v1"
+private const val IosPdfAutoScrollSpeedDefaultsKey = "reader_ios_pdf_auto_scroll_speed_v1"
+private const val IosPdfAutoScrollMinDefaultsKey = "reader_ios_pdf_auto_scroll_min_v1"
+private const val IosPdfAutoScrollMaxDefaultsKey = "reader_ios_pdf_auto_scroll_max_v1"
+private const val IosPdfAutoScrollMusicianDefaultsKey = "reader_ios_pdf_auto_scroll_musician_v1"
+private const val IosPdfAutoScrollSliderDefaultsKey = "reader_ios_pdf_auto_scroll_slider_v1"
 private const val IosReaderOrientationDefaultsKey = "reader_ios_reader_orientation_v1"
 private const val IosKeepScreenOnDefaultsKey = "reader_ios_keep_screen_on_v1"
 private const val IosReaderPreferencesDefaultsKey = "reader_ios_reader_preferences_v1"
@@ -938,15 +960,71 @@ private fun persistIosPdfToolbarPreferences(preferences: PdfToolbarPreferences) 
     defaults.setObject(sanitized.bottomToolIds.sorted().joinToString(","), forKey = IosPdfToolbarBottomDefaultsKey)
 }
 
-private fun loadIosReaderAutoScrollSpeed(): Float {
-    return NSUserDefaults.standardUserDefaults.stringForKey(IosReaderAutoScrollSpeedDefaultsKey)
-        ?.toFloatOrNull()
-        ?.coerceIn(12f, 160f)
-        ?: 36f
+private fun loadIosReaderAutoScrollProfile(): ReaderAutoScrollProfile {
+    val defaults = NSUserDefaults.standardUserDefaults
+    return ReaderAutoScrollProfile(
+        speed = defaults.stringForKey(IosReaderAutoScrollSpeedDefaultsKey)
+            ?.toFloatOrNull()
+            ?.let(::migrateLegacyIosReaderAutoScrollSpeed)
+            ?: 0.8f,
+        minSpeed = defaults.stringForKey(IosReaderAutoScrollMinDefaultsKey)?.toFloatOrNull() ?: 0.1f,
+        maxSpeed = defaults.stringForKey(IosReaderAutoScrollMaxDefaultsKey)?.toFloatOrNull() ?: 10f,
+    ).sanitized()
 }
 
-private fun persistIosReaderAutoScrollSpeed(speed: Float) {
-    NSUserDefaults.standardUserDefaults.setObject(speed.coerceIn(12f, 160f).toString(), forKey = IosReaderAutoScrollSpeedDefaultsKey)
+private fun persistIosReaderAutoScrollProfile(profile: ReaderAutoScrollProfile) {
+    val sanitized = profile.sanitized()
+    val defaults = NSUserDefaults.standardUserDefaults
+    defaults.setObject(sanitized.speed.toString(), forKey = IosReaderAutoScrollSpeedDefaultsKey)
+    defaults.setObject(sanitized.minSpeed.toString(), forKey = IosReaderAutoScrollMinDefaultsKey)
+    defaults.setObject(sanitized.maxSpeed.toString(), forKey = IosReaderAutoScrollMaxDefaultsKey)
+}
+
+private fun loadIosReaderAutoScrollUseSlider(): Boolean =
+    NSUserDefaults.standardUserDefaults.boolForKey(IosReaderAutoScrollSliderDefaultsKey)
+
+private fun persistIosReaderAutoScrollUseSlider(useSlider: Boolean) {
+    NSUserDefaults.standardUserDefaults.setBool(useSlider, forKey = IosReaderAutoScrollSliderDefaultsKey)
+}
+
+private fun loadIosReaderAutoScrollMusicianMode(): Boolean =
+    NSUserDefaults.standardUserDefaults.boolForKey(IosReaderAutoScrollMusicianDefaultsKey)
+
+private fun persistIosReaderAutoScrollMusicianMode(enabled: Boolean) {
+    NSUserDefaults.standardUserDefaults.setBool(enabled, forKey = IosReaderAutoScrollMusicianDefaultsKey)
+}
+
+private fun loadIosPdfPageSliderVisible(bookId: String): Boolean {
+    return NSUserDefaults.standardUserDefaults.boolForKey(IosPdfPageSliderVisibleDefaultsPrefix + bookId)
+}
+
+private fun persistIosPdfPageSliderVisible(bookId: String, visible: Boolean) {
+    NSUserDefaults.standardUserDefaults.setBool(visible, forKey = IosPdfPageSliderVisibleDefaultsPrefix + bookId)
+}
+
+private fun loadIosEpubPageSliderVisible(bookId: String): Boolean {
+    return NSUserDefaults.standardUserDefaults.boolForKey(IosEpubPageSliderVisibleDefaultsPrefix + bookId)
+}
+
+private fun persistIosEpubPageSliderVisible(bookId: String, visible: Boolean) {
+    NSUserDefaults.standardUserDefaults.setBool(visible, forKey = IosEpubPageSliderVisibleDefaultsPrefix + bookId)
+}
+
+private fun loadIosPdfAutoScrollProfile(): PdfAutoScrollProfile {
+    val defaults = NSUserDefaults.standardUserDefaults
+    return PdfAutoScrollProfile(
+        speed = defaults.stringForKey(IosPdfAutoScrollSpeedDefaultsKey)?.toFloatOrNull() ?: 3f,
+        minSpeed = defaults.stringForKey(IosPdfAutoScrollMinDefaultsKey)?.toFloatOrNull() ?: 0.1f,
+        maxSpeed = defaults.stringForKey(IosPdfAutoScrollMaxDefaultsKey)?.toFloatOrNull() ?: 10f,
+    ).sanitized()
+}
+
+private fun persistIosPdfAutoScrollProfile(profile: PdfAutoScrollProfile) {
+    val sanitized = profile.sanitized()
+    val defaults = NSUserDefaults.standardUserDefaults
+    defaults.setObject(sanitized.speed.toString(), forKey = IosPdfAutoScrollSpeedDefaultsKey)
+    defaults.setObject(sanitized.minSpeed.toString(), forKey = IosPdfAutoScrollMinDefaultsKey)
+    defaults.setObject(sanitized.maxSpeed.toString(), forKey = IosPdfAutoScrollMaxDefaultsKey)
 }
 
 private fun loadIosKeepScreenOn(): Boolean {
@@ -1341,7 +1419,16 @@ private fun ReaderIosApp(
     var readerCustomBrightness by remember { mutableStateOf(loadIosReaderCustomBrightness()) }
     var pdfToolbarPreferences by remember { mutableStateOf(loadIosPdfToolbarPreferences()) }
     var pdfTopTabStripVisible by remember { mutableStateOf(loadIosPdfTopTabStripVisible()) }
-    var readerAutoScrollSpeed by remember { mutableStateOf(loadIosReaderAutoScrollSpeed()) }
+    var readerAutoScrollProfile by remember { mutableStateOf(loadIosReaderAutoScrollProfile()) }
+    var readerAutoScrollUseSlider by remember { mutableStateOf(loadIosReaderAutoScrollUseSlider()) }
+    var readerAutoScrollMusicianMode by remember { mutableStateOf(loadIosReaderAutoScrollMusicianMode()) }
+    var pdfAutoScrollProfile by remember { mutableStateOf(loadIosPdfAutoScrollProfile()) }
+    var pdfAutoScrollMusicianMode by remember {
+        mutableStateOf(NSUserDefaults.standardUserDefaults.boolForKey(IosPdfAutoScrollMusicianDefaultsKey))
+    }
+    var pdfAutoScrollUseSlider by remember {
+        mutableStateOf(NSUserDefaults.standardUserDefaults.boolForKey(IosPdfAutoScrollSliderDefaultsKey))
+    }
     var readerOrientation by remember { mutableStateOf(loadIosReaderOrientation()) }
     var stringResolver by remember { mutableStateOf(SharedStringResolver()) }
     LaunchedEffect(state.appLanguageTag) {
@@ -1385,8 +1472,40 @@ private fun ReaderIosApp(
     )
 
     fun openLibraryBook(book: BookItem, temporary: Boolean = false) {
-        if (!book.isAvailable) {
-            if (cloudSyncEligible()) {
+        val canDownload = cloudSyncEligible()
+        val localFileExists = book.path?.let { path ->
+            path.startsWith("opds-pse://") ||
+                NSFileManager.defaultManager.fileExistsAtPath(path)
+        } == true
+        when (
+            mobileBookOpenPreflightAction(
+                book = book,
+                localFileExists = localFileExists,
+                canDownload = canDownload,
+            )
+        ) {
+            MobileBookOpenPreflightAction.REMOVE_MISSING_FOLDER_BOOK -> {
+                state = state.removeIosBooks(setOf(book.id)).copy(
+                    bannerMessage = null,
+                )
+                showMessage(
+                    stringResolver.string(
+                        "banner_file_deleted_from_folder",
+                        "File deleted from folder. Removed from library.",
+                    )
+                )
+                return
+            }
+            MobileBookOpenPreflightAction.SHOW_MISSING_LOCATION -> {
+                showMessage(
+                    stringResolver.string(
+                        "error_file_location_not_found",
+                        "Could not find file location.",
+                    )
+                )
+                return
+            }
+            MobileBookOpenPreflightAction.DOWNLOAD -> {
                 pendingUnavailableBookId = book.id
                 bridge.requestCloudSync(
                     SharedLibrarySnapshotJson.encode(
@@ -1394,10 +1513,13 @@ private fun ReaderIosApp(
                     )
                 )
                 showMessage("Downloading ${book.displayName}")
-            } else {
-                showMessage("This book is not available on this device")
+                return
             }
-            return
+            MobileBookOpenPreflightAction.SHOW_UNAVAILABLE -> {
+                showMessage("This book is not available on this device")
+                return
+            }
+            MobileBookOpenPreflightAction.OPEN -> Unit
         }
         if (book.type !in IOS_NATIVE_READER_FILE_TYPES) {
             if (temporary) {
@@ -1622,6 +1744,7 @@ private fun ReaderIosApp(
 
     LaunchedEffect(bridge.importedFiles, bridge.pendingImportBatches, bridge.pendingFolderScans) {
         bridge.pendingImportBatches.firstOrNull()?.let { batch ->
+            val existingBooks = state.rawLibraryBooks
             val outcome = planMobileImportBatch(
                 files = batch.files.map { file ->
                     ImportedBookFile(
@@ -1635,6 +1758,7 @@ private fun ReaderIosApp(
                 existingBookIds = state.rawLibraryBooks.mapTo(mutableSetOf()) { it.id },
                 failedCount = batch.failedCount,
             )
+            val bookToOpen = outcome.singleSelectionOpenBook(existingBooks)
             val rejectedPaths = outcome.plan.decisions
                 .filterNot { it.status == com.aryan.reader.shared.SharedImportDecisionStatus.IMPORTABLE }
                 .mapNotNull { it.file.localPath }
@@ -1660,6 +1784,7 @@ private fun ReaderIosApp(
                 )
                 showMessage(feedback.message)
             }
+            bookToOpen?.let(::openLibraryBook)
             bridge.consumeImportBatch()
         }
 
@@ -1672,6 +1797,12 @@ private fun ReaderIosApp(
             }
             val now = currentTimestamp()
             val configuredFolder = state.syncedFolders.firstOrNull { it.name == scan.folderName }
+            if (!shouldApplyMobileFolderScan(configuredFolder)) {
+                bridge.consumeFolderScan()
+                state = state.copy(isRefreshing = bridge.pendingFolderScans.isNotEmpty())
+                return@LaunchedEffect
+            }
+            val folderForScan = configuredFolder
                 ?: SyncedFolder(
                     uriString = "ios-local-folder://${scan.folderName.normalizedId()}",
                     name = scan.folderName,
@@ -1679,12 +1810,12 @@ private fun ReaderIosApp(
                 )
             val syncResult = LocalFolderSyncEngine.syncFolder(
                 state = state,
-                folder = configuredFolder.copy(uriString = scan.folderName),
+                folder = folderForScan.copy(uriString = scan.folderName),
                 files = scan.files,
                 remoteMetadata = emptyMap(),
                 nowMillis = now,
             )
-            val syncedFolder = configuredFolder.copy(lastScanTime = now)
+            val syncedFolder = folderForScan.copy(lastScanTime = now)
             state = syncResult.state.copy(
                 syncedFolders = (
                     state.syncedFolders.filterNot { it.name == scan.folderName } + syncedFolder
@@ -1893,6 +2024,10 @@ private fun ReaderIosApp(
                             },
                             initialKeepScreenOn = loadIosKeepScreenOn(),
                             onKeepScreenOnPreferenceChange = ::persistIosKeepScreenOn,
+                            initialPageSliderVisible = loadIosPdfPageSliderVisible(book.id),
+                            onPageSliderVisibilityPreferenceChange = { visible ->
+                                persistIosPdfPageSliderVisible(book.id, visible)
+                            },
                             onReaderStateChange = { pdfState ->
                                 persistIosPdfReaderState(book, pdfState)
                                 val updatedBook = book.withIosPdfReaderProgress(pdfState)
@@ -1900,6 +2035,25 @@ private fun ReaderIosApp(
                                     activeReaderBook = updatedBook
                                     state = state.withUpdatedIosBook(updatedBook)
                                 }
+                            },
+                            pdfAutoScrollGlobalProfile = pdfAutoScrollProfile,
+                            onPdfAutoScrollGlobalProfileChange = { profile ->
+                                pdfAutoScrollProfile = profile.sanitized()
+                                persistIosPdfAutoScrollProfile(pdfAutoScrollProfile)
+                            },
+                            initialPdfAutoScrollMusicianMode = pdfAutoScrollMusicianMode,
+                            onPdfAutoScrollMusicianModeChange = { enabled ->
+                                pdfAutoScrollMusicianMode = enabled
+                                NSUserDefaults.standardUserDefaults.setBool(enabled, forKey = IosPdfAutoScrollMusicianDefaultsKey)
+                            },
+                            initialPdfAutoScrollUseSlider = pdfAutoScrollUseSlider,
+                            onPdfAutoScrollUseSliderChange = { enabled ->
+                                pdfAutoScrollUseSlider = enabled
+                                NSUserDefaults.standardUserDefaults.setBool(enabled, forKey = IosPdfAutoScrollSliderDefaultsKey)
+                            },
+                            onPdfAutoScrollBookChange = { updated ->
+                                activeReaderBook = updated
+                                state = state.withUpdatedIosBook(updated)
                             },
                             onKeepScreenOnChange = bridge::setKeepScreenOn,
                             onSystemUiAppearanceChange = bridge::updateSystemUi,
@@ -1945,6 +2099,8 @@ private fun ReaderIosApp(
                                     readerLocalFormatSettings = snapshot.localFormatSettings,
                                     readerAutoScrollIsLocal = snapshot.autoScrollIsLocal,
                                     readerAutoScrollLocalSpeed = snapshot.autoScrollLocalSpeed,
+                                    readerAutoScrollLocalMinSpeed = snapshot.autoScrollLocalMinSpeed,
+                                    readerAutoScrollLocalMaxSpeed = snapshot.autoScrollLocalMaxSpeed,
                                     readerBookmarks = snapshot.bookmarks,
                                     readerHighlights = snapshot.highlights,
                                 )
@@ -2012,10 +2168,24 @@ private fun ReaderIosApp(
                                 persistIosReaderBrightness(brightness, readerCustomBrightness)
                                 bridge.setReaderBrightness(brightness)
                             },
-                            readerAutoScrollSpeed = readerAutoScrollSpeed,
-                            onReaderAutoScrollSpeedChange = { speed ->
-                                readerAutoScrollSpeed = speed.coerceIn(12f, 160f)
-                                persistIosReaderAutoScrollSpeed(readerAutoScrollSpeed)
+                            readerAutoScrollProfile = readerAutoScrollProfile,
+                            onReaderAutoScrollProfileChange = { profile ->
+                                readerAutoScrollProfile = profile.sanitized()
+                                persistIosReaderAutoScrollProfile(readerAutoScrollProfile)
+                            },
+                            initialAutoScrollUseSlider = readerAutoScrollUseSlider,
+                            onAutoScrollUseSliderPreferenceChange = { useSlider ->
+                                readerAutoScrollUseSlider = useSlider
+                                persistIosReaderAutoScrollUseSlider(useSlider)
+                            },
+                            initialAutoScrollMusicianMode = readerAutoScrollMusicianMode,
+                            onAutoScrollMusicianModePreferenceChange = { enabled ->
+                                readerAutoScrollMusicianMode = enabled
+                                persistIosReaderAutoScrollMusicianMode(enabled)
+                            },
+                            initialPageSliderVisible = loadIosEpubPageSliderVisible(book.id),
+                            onPageSliderVisibilityPreferenceChange = { visible ->
+                                persistIosEpubPageSliderVisible(book.id, visible)
                             },
                             readerScreenOrientationMode = readerOrientation,
                             onReaderScreenOrientationModeChange = { mode ->
@@ -2311,7 +2481,7 @@ private fun ReaderIosApp(
                                     }
                                     override fun openSearch() {
                                         selectMainPage(SharedMobileMainDestination.LIBRARY)
-                                        state = state.copy(isSearchActive = true)
+                                        state = state.withMobileLibrarySearchActive(true)
                                     }
                                     override fun navigateToFolderSync() {
                                         onImportFolder()
@@ -2330,7 +2500,7 @@ private fun ReaderIosApp(
                                     override fun selectAll() {
                                         state = SharedLibraryEditor.toggleVisibleBookSelectionInState(
                                             state = state,
-                                            visibleBookIds = state.recentBooks.map { it.id },
+                                            visibleBookIds = state.mobileRecentBooks().map { it.id },
                                         )
                                     }
                                     override fun closeTab(book: BookItem) {
@@ -2452,12 +2622,11 @@ private fun ReaderIosApp(
                                 onImportBooks = onImportBooks,
                                 onOpenBook = ::openLibraryBook,
                                 onLongPressBook = { book -> state = state.toggleBookSelection(book.id) },
-                                onSearchQueryChange = { query -> state = state.reduce(LibraryAction.SearchChanged(query)) },
+                                onSearchQueryChange = { query ->
+                                    state = state.withMobileLibrarySearchQuery(query)
+                                },
                                 onSearchActiveChange = { active ->
-                                    state = state.copy(
-                                        isSearchActive = active,
-                                        searchQuery = if (active) state.searchQuery else ""
-                                    )
+                                    state = state.withMobileLibrarySearchActive(active)
                                 },
                                 onSortOrderChange = { sortOrder -> state = state.reduce(LibraryAction.SortChanged(sortOrder)) },
                                 onClearSelection = {
@@ -2554,13 +2723,12 @@ private fun ReaderIosApp(
                                             if (it.uriString == folder.uriString) it.copy(localSyncEnabled = enabled) else it
                                         },
                                     )
+                                    if (enabled) refreshFolders()
                                 },
                                 onFolderFileTypesChange = { folder, types ->
-                                    state = state.copy(
-                                        syncedFolders = state.syncedFolders.map {
-                                            if (it.uriString == folder.uriString) it.copy(allowedFileTypes = types) else it
-                                        },
-                                    )
+                                    state = state
+                                        .withMobileFolderFileTypes(folder, types)
+                                        .state
                                     refreshFolders()
                                 },
                                 onRemoveFolder = { folder ->

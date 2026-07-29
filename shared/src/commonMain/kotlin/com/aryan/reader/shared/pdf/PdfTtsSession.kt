@@ -41,3 +41,68 @@ object PdfTtsSessionPlanner {
         return PdfTextSelectionRange(start, end).takeUnless { it.isEmpty }
     }
 }
+
+fun shouldStopPdfTtsForManualPageTurn(
+    isPaginationMode: Boolean,
+    isUserInitiated: Boolean,
+    isTtsPlayingOrLoading: Boolean,
+): Boolean = isPaginationMode && isUserInitiated && isTtsPlayingOrLoading
+
+fun pdfAutoScrollPixelsPerSecond(speedMultiplier: Float): Float =
+    80f * (speedMultiplier.coerceIn(0.1f, 10f) * 0.5f)
+
+data class PdfAutoScrollProfile(
+    val speed: Float = 3f,
+    val minSpeed: Float = 0.1f,
+    val maxSpeed: Float = 10f,
+) {
+    fun sanitized(): PdfAutoScrollProfile {
+        val min = minSpeed.coerceIn(0.1f, 10f)
+        val max = maxSpeed.coerceIn(min, 10f)
+        return copy(
+            speed = speed.coerceIn(min, max),
+            minSpeed = min,
+            maxSpeed = max,
+        )
+    }
+
+    fun withMinSpeed(value: Float): PdfAutoScrollProfile {
+        val min = value.coerceIn(0.1f, 10f)
+        val max = maxSpeed.coerceAtLeast(min)
+        return copy(speed = speed.coerceIn(min, max), minSpeed = min, maxSpeed = max).sanitized()
+    }
+
+    fun withMaxSpeed(value: Float): PdfAutoScrollProfile {
+        val max = value.coerceIn(0.1f, 10f)
+        val min = minSpeed.coerceAtMost(max)
+        return copy(speed = speed.coerceIn(min, max), minSpeed = min, maxSpeed = max).sanitized()
+    }
+}
+
+const val PdfMusicianHoldDurationMillis = 1_000L
+const val PdfMusicianTapPauseMillis = 600L
+const val PdfMusicianHoldPauseMillis = 1_000L
+const val PdfMusicianViewportJumpFraction = 0.75f
+
+enum class PdfMusicianNavigationTarget { RELATIVE, START, END }
+
+data class PdfMusicianGesturePlan(
+    val target: PdfMusicianNavigationTarget,
+    val relativeViewportDelta: Float,
+    val pauseMillis: Long,
+)
+
+fun planPdfMusicianGesture(isRightRegion: Boolean, isLongPress: Boolean): PdfMusicianGesturePlan {
+    if (isLongPress) {
+        return PdfMusicianGesturePlan(
+            target = if (isRightRegion) PdfMusicianNavigationTarget.END else PdfMusicianNavigationTarget.START,
+            relativeViewportDelta = 0f,
+            pauseMillis = PdfMusicianHoldPauseMillis,
+        )
+    }
+    return PdfMusicianGesturePlan(
+        target = PdfMusicianNavigationTarget.RELATIVE,
+        relativeViewportDelta = if (isRightRegion) PdfMusicianViewportJumpFraction else -PdfMusicianViewportJumpFraction,
+        pauseMillis = PdfMusicianTapPauseMillis,
+    )
+}

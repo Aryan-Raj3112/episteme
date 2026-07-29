@@ -98,7 +98,8 @@ fun SharedReaderScreenState.reduce(action: AppAction): SharedReaderScreenState {
         is AppAction.TabsEnabledChanged -> copy(
             isTabsEnabled = action.enabled,
             openTabIds = if (action.enabled) openTabIds else emptyList(),
-            activeTabBookId = if (action.enabled) activeTabBookId else null
+            activeTabBookId = if (action.enabled) activeTabBookId else null,
+            openTabs = if (action.enabled) openTabs else emptyList(),
         )
         is AppAction.BookTabOpened -> {
             val bookId = action.bookId.trim()
@@ -121,7 +122,11 @@ fun SharedReaderScreenState.reduce(action: AppAction): SharedReaderScreenState {
                 activeTabBookId = if (activeTabBookId == action.bookId) remaining.lastOrNull() else activeTabBookId
             )
         }
-        AppAction.AllTabsClosed -> copy(openTabIds = emptyList(), activeTabBookId = null)
+        AppAction.AllTabsClosed -> copy(
+            openTabIds = emptyList(),
+            activeTabBookId = null,
+            openTabs = emptyList(),
+        )
         is AppAction.HomePinToggled -> copy(
             pinnedHomeBookIds = if (action.bookId in pinnedHomeBookIds) {
                 pinnedHomeBookIds - action.bookId

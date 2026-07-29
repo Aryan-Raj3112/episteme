@@ -43,6 +43,15 @@ enum class PdfReaderTool(val id: String, val title: String, val category: String
     }
 }
 
+fun isPdfReaderToolEnabledDuringTts(
+    tool: PdfReaderTool,
+    isTtsPlayingOrLoading: Boolean,
+): Boolean = !isTtsPlayingOrLoading || tool !in setOf(
+    PdfReaderTool.SLIDER,
+    PdfReaderTool.TOC,
+    PdfReaderTool.SEARCH,
+)
+
 data class PdfToolbarPreferences(
     val hiddenToolIds: Set<String> = setOf(
         PdfReaderTool.SCREEN_ORIENTATION.id,

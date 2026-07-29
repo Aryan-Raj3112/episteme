@@ -29,6 +29,36 @@ class NonReaderLayoutModelsTest {
     }
 
     @Test
+    fun `book long press adds selection but never removes an existing selection`() {
+        assertTrue(shouldSelectBookOnLongPress("book", emptySet()))
+        assertFalse(shouldSelectBookOnLongPress("book", setOf("book")))
+        assertTrue(shouldSelectBookOnLongPress("other", setOf("book")))
+    }
+
+    @Test
+    fun `shelf taps toggle selection instead of opening while contextual mode is active`() {
+        assertEquals(SharedMobileShelfTapIntent.OPEN, mobileShelfTapIntent(emptySet()))
+        assertEquals(
+            SharedMobileShelfTapIntent.TOGGLE_SELECTION,
+            mobileShelfTapIntent(setOf("selected-shelf")),
+        )
+    }
+
+    @Test
+    fun `shelf long press adds selection but never removes an existing selection`() {
+        assertTrue(shouldSelectShelfOnLongPress("shelf", emptySet()))
+        assertFalse(shouldSelectShelfOnLongPress("shelf", setOf("shelf")))
+        assertTrue(shouldSelectShelfOnLongPress("other", setOf("shelf")))
+    }
+
+    @Test
+    fun `add books source changes preserve the pending selection`() {
+        val selection = linkedSetOf("unshelved-book", "all-books-result")
+
+        assertEquals(selection, mobileAddBooksSelectionAfterSourceChange(selection))
+    }
+
+    @Test
     fun `android library keeps the simple top level organization tabs`() {
         val visibleTabs = visibleNonReaderLibraryTabs(ReaderPlatform.ANDROID)
 
@@ -196,6 +226,15 @@ class NonReaderLayoutModelsTest {
             SharedReaderScreenState(
                 rawLibraryBooks = listOf(activeTab.copy(isRecent = false), inProgress, pinned, recent),
                 pinnedHomeBookIds = setOf(pinned.id),
+            ).mobileRecentBooks().map { it.id },
+        )
+        assertEquals(
+            listOf(pinned.id, inProgress.id),
+            SharedReaderScreenState(
+                rawLibraryBooks = listOf(activeTab.copy(isRecent = false), inProgress, pinned, recent),
+                recentBooks = listOf(inProgress, pinned, recent),
+                pinnedHomeBookIds = setOf(pinned.id),
+                recentFilesLimit = 2,
             ).mobileRecentBooks().map { it.id },
         )
         assertEquals(listOf(recent.id), layout.selectedBooks.map { it.id })

@@ -799,7 +799,11 @@ private val IosEpubBridgeBootstrapScript = """
               return;
             }
           }
-          if ((dx * dx + dy * dy) > 100 || elapsed > 650) return;
+          if ((dx * dx + dy * dy) > 100) {
+            post('readerDragActivity', '{}');
+            return;
+          }
+          if (elapsed > 650) return;
           post('readerPointerActivity', '{}');
         }, { passive: true, capture: true });
         document.addEventListener('touchcancel', function () {

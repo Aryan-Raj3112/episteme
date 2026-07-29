@@ -129,7 +129,7 @@ class PdfReaderSessionTest {
     }
 
     @Test
-    fun `search query resets active result and result navigation wraps`() {
+    fun `search query resets active result and out of range navigation does not wrap`() {
         val results = listOf(
             SharedPdfSearchResult(pageIndex = 1, preview = "first", matchIndex = 5),
             SharedPdfSearchResult(pageIndex = 3, preview = "second", matchIndex = 7)
@@ -146,8 +146,8 @@ class PdfReaderSessionTest {
         assertEquals(-1, changed.activeSearchResultIndex)
         assertEquals(SearchHighlightMode.FOCUSED, changed.searchHighlightMode)
         assertEquals(1, changed.pageIndex)
-        assertEquals(1, state.activeSearchResultIndex)
-        assertEquals(3, state.pageIndex)
+        assertEquals(-1, state.activeSearchResultIndex)
+        assertEquals(1, state.pageIndex)
     }
 
     @Test
@@ -332,6 +332,17 @@ class PdfReaderSessionTest {
     }
 
     @Test
+    fun `jump history replaces reverse adjacent jump like android`() {
+        val history = SharedPdfJumpHistory()
+            .record(currentPageIndex = 0, targetPageIndex = 4, pageCount = 10)
+            .record(currentPageIndex = 0, targetPageIndex = 2, pageCount = 10)
+
+        assertEquals(listOf(0, 2), history.pages)
+        assertEquals(1, history.cursor)
+        assertEquals(0, history.backPage)
+    }
+
+    @Test
     fun `jump history ignores invalid jumps prunes document bounds and caps entries`() {
         val unchanged = SharedPdfJumpHistory()
             .record(currentPageIndex = 0, targetPageIndex = 0, pageCount = 10)
@@ -382,6 +393,17 @@ class PdfReaderSessionTest {
         assertEquals(listOf(0, 11, 0), results.map { it.matchIndex })
         assertEquals(listOf(5, 5, 5), results.map { it.matchLength })
         assertTrue(results.first().preview.contains("Alpha"))
+    }
+
+    @Test
+    fun `search accepts android single-character queries`() {
+        val results = SharedPdfSearchEngine.search(
+            pageTexts = listOf("A cat", "beta"),
+            query = "a",
+        )
+
+        assertEquals(listOf(0, 0, 1), results.map { it.pageIndex })
+        assertEquals(listOf(0, 3, 3), results.map { it.matchIndex })
     }
 
     @Test

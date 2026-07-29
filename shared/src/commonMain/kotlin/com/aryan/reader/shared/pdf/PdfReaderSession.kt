@@ -474,13 +474,13 @@ fun SharedPdfReaderState.reduce(
             }
         )
         is SharedPdfReaderAction.GoToSearchResult -> {
-            if (action.results.isEmpty()) {
+            val result = action.results.getOrNull(action.resultIndex)
+            if (result == null) {
                 this
             } else {
-                val normalizedIndex = action.resultIndex.wrapIndex(action.results.size)
                 copy(
-                    activeSearchResultIndex = normalizedIndex,
-                    pageIndex = action.results[normalizedIndex].pageIndex.coerceIn(0, lastPageIndex)
+                    activeSearchResultIndex = action.resultIndex,
+                    pageIndex = result.pageIndex.coerceIn(0, lastPageIndex)
                 )
             }
         }

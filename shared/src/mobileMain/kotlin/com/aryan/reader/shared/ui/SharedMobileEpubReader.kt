@@ -10,9 +10,12 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.drag
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -29,6 +32,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.only
@@ -106,6 +110,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -124,14 +129,18 @@ import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
@@ -146,6 +155,14 @@ import com.aryan.reader.shared.ReaderTtsPlanner
 import com.aryan.reader.shared.ReaderTtsChunk
 import com.aryan.reader.shared.ReaderLifecycleAction
 import com.aryan.reader.shared.ReaderExternalLookupAction
+import com.aryan.reader.shared.ReaderAutoScrollProfile
+import com.aryan.reader.shared.ReaderAutoScrollBoundaryAction
+import com.aryan.reader.shared.ReaderMusicianGesturePlan
+import com.aryan.reader.shared.ReaderMusicianHoldDurationMillis
+import com.aryan.reader.shared.ReaderMusicianNavigationTarget
+import com.aryan.reader.shared.planReaderMusicianGesture
+import com.aryan.reader.shared.ReaderSearchFocusDelayMillis
+import com.aryan.reader.shared.readerSearchDelayMillis
 import com.aryan.reader.shared.readerExternalLookupActionForSelectionId
 import com.aryan.reader.shared.HighlightColor
 import com.aryan.reader.shared.HighlightStyle
@@ -167,6 +184,9 @@ import com.aryan.reader.shared.matchingReaderBookmark
 import com.aryan.reader.shared.withoutMatchingReaderBookmarks
 import com.aryan.reader.shared.readerWordStartMatchOffsets
 import com.aryan.reader.shared.readerLifecycleAction
+import com.aryan.reader.shared.readerAutoScrollPixelsPerSecond
+import com.aryan.reader.shared.readerAutoScrollBoundaryAction
+import com.aryan.reader.shared.migrateLegacyIosReaderAutoScrollSpeed
 import com.aryan.reader.shared.shouldFollowReaderTtsChunk
 import com.aryan.reader.shared.toSharedReaderFontFamily
 import com.aryan.reader.shared.withTtsReplacements
@@ -230,7 +250,9 @@ data class SharedMobileEpubReaderSnapshot(
     val formatIsLocal: Boolean,
     val localFormatSettings: ReaderSettings?,
     val autoScrollIsLocal: Boolean,
-    val autoScrollLocalSpeed: Float?
+    val autoScrollLocalSpeed: Float?,
+    val autoScrollLocalMinSpeed: Float?,
+    val autoScrollLocalMaxSpeed: Float?,
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -263,8 +285,14 @@ fun SharedMobileEpubReaderScreen(
     readerCustomBrightness: Float = com.aryan.reader.shared.DefaultReaderCustomBrightness,
     readerBrightnessSupported: Boolean = false,
     onReaderBrightnessChange: (Float?) -> Unit = {},
-    readerAutoScrollSpeed: Float = 36f,
-    onReaderAutoScrollSpeedChange: (Float) -> Unit = {},
+    readerAutoScrollProfile: ReaderAutoScrollProfile = ReaderAutoScrollProfile(),
+    onReaderAutoScrollProfileChange: (ReaderAutoScrollProfile) -> Unit = {},
+    initialAutoScrollUseSlider: Boolean = false,
+    onAutoScrollUseSliderPreferenceChange: (Boolean) -> Unit = {},
+    initialAutoScrollMusicianMode: Boolean = false,
+    onAutoScrollMusicianModePreferenceChange: (Boolean) -> Unit = {},
+    initialPageSliderVisible: Boolean = false,
+    onPageSliderVisibilityPreferenceChange: (Boolean) -> Unit = {},
     readerScreenOrientationMode: ReaderScreenOrientationMode = ReaderScreenOrientationMode.FOLLOW_SYSTEM,
     onReaderScreenOrientationModeChange: (ReaderScreenOrientationMode) -> Unit = {},
     onApplyReaderScreenOrientation: (ReaderScreenOrientationMode) -> Unit = {},
@@ -324,12 +352,14 @@ fun SharedMobileEpubReaderScreen(
     var showSearch by remember(book.id) { mutableStateOf(false) }
     var showSearchResultsPanel by remember(book.id) { mutableStateOf(true) }
     var searchQuery by remember(book.id) { mutableStateOf("") }
+    var searchRequestId by remember(book.id) { mutableLongStateOf(0L) }
+    var immediateSearchRequestId by remember(book.id) { mutableLongStateOf(-1L) }
     var searchResults by remember(book.id) { mutableStateOf<List<SharedMobileEpubSearchResult>>(emptyList()) }
     var isSearchInProgress by remember(book.id) { mutableStateOf(false) }
     var searchResultIndex by remember(book.id) { mutableIntStateOf(-1) }
     var pullDirection by remember(book.id) { mutableStateOf<String?>(null) }
     var pullProgress by remember(book.id) { mutableStateOf(0f) }
-    var showSlider by remember(book.id) { mutableStateOf(false) }
+    var showSlider by remember(book.id) { mutableStateOf(initialPageSliderVisible) }
     var showMore by remember(book.id) { mutableStateOf(false) }
     var showFileInfo by remember(book.id) { mutableStateOf(false) }
     var showCustomizeToolsSheet by remember(book.id) { mutableStateOf(false) }
@@ -338,15 +368,35 @@ fun SharedMobileEpubReaderScreen(
     var showTtsReplacementsSheet by remember(book.id) { mutableStateOf(false) }
     var showTtsSettingsSheet by remember(book.id) { mutableStateOf(false) }
     var showBookReplacementsSheet by remember(book.id) { mutableStateOf(false) }
+    var pendingExternalLink by remember(book.id) { mutableStateOf<String?>(null) }
     var keepScreenOn by remember(book.id) { mutableStateOf(initialKeepScreenOn) }
     var autoScrollModeActive by remember(book.id) { mutableStateOf(false) }
     var autoScroll by remember(book.id) { mutableStateOf(false) }
+    var autoScrollUseSlider by remember { mutableStateOf(initialAutoScrollUseSlider) }
+    var autoScrollMusicianMode by remember { mutableStateOf(initialAutoScrollMusicianMode) }
+    var autoScrollCollapsed by remember(book.id) { mutableStateOf(false) }
+    var autoScrollTemporarilyPaused by remember(book.id) { mutableStateOf(false) }
+    var autoScrollPauseRequestId by remember(book.id) { mutableLongStateOf(0L) }
     var autoScrollIsLocal by remember(book.id) { mutableStateOf(book.readerAutoScrollIsLocal) }
-    var autoScrollLocalSpeed by remember(book.id) { mutableStateOf(book.readerAutoScrollLocalSpeed) }
-    var autoScrollSpeed by remember(book.id) {
+    var autoScrollLocalProfile by remember(book.id) {
         mutableStateOf(
-            if (book.readerAutoScrollIsLocal) book.readerAutoScrollLocalSpeed ?: readerAutoScrollSpeed
-            else readerAutoScrollSpeed
+            book.readerAutoScrollLocalSpeed?.let { speed ->
+                ReaderAutoScrollProfile(
+                    speed = migrateLegacyIosReaderAutoScrollSpeed(speed),
+                    minSpeed = book.readerAutoScrollLocalMinSpeed
+                        ?.let(::migrateLegacyIosReaderAutoScrollSpeed)
+                        ?: readerAutoScrollProfile.minSpeed,
+                    maxSpeed = book.readerAutoScrollLocalMaxSpeed
+                        ?.let(::migrateLegacyIosReaderAutoScrollSpeed)
+                        ?: readerAutoScrollProfile.maxSpeed,
+                ).sanitized()
+            }
+        )
+    }
+    var autoScrollProfile by remember(book.id) {
+        mutableStateOf(
+            if (book.readerAutoScrollIsLocal) autoScrollLocalProfile ?: readerAutoScrollProfile.sanitized()
+            else readerAutoScrollProfile.sanitized()
         )
     }
     var drawerTab by remember(book.id) { mutableStateOf(0) }
@@ -426,6 +476,9 @@ fun SharedMobileEpubReaderScreen(
     }
 
     LaunchedEffect(keepScreenOn) { onKeepScreenOnChange(keepScreenOn) }
+    LaunchedEffect(book.id, showSlider) {
+        onPageSliderVisibilityPreferenceChange(showSlider)
+    }
     LaunchedEffect(settings.systemUiMode, settings.darkMode, settings.backgroundColorArgb, showChrome) {
         val backgroundArgb = settings.backgroundColorArgb ?: if (settings.darkMode) 0xFF121212L else 0xFFFFFFFFL
         onSystemUiAppearanceChange(
@@ -441,14 +494,18 @@ fun SharedMobileEpubReaderScreen(
             onSystemUiAppearanceChange(false, false, false, 0xFFFFFFFFL)
         }
     }
-    LaunchedEffect(autoScroll, autoScrollSpeed) {
-        commandScript = if (autoScroll) sharedMobileEpubAutoScrollStartScript(autoScrollSpeed) else SharedMobileEpubAutoScrollStopScript
+    LaunchedEffect(autoScroll, autoScrollProfile.speed, autoScrollTemporarilyPaused) {
+        commandScript = if (autoScroll && !autoScrollTemporarilyPaused) {
+            sharedMobileEpubAutoScrollStartScript(autoScrollProfile.speed)
+        } else {
+            SharedMobileEpubAutoScrollStopScript
+        }
         navigationRequestId++
     }
     LaunchedEffect(localTts.isSessionActive) {
         if (!localTts.isSessionActive) detachedTtsChunkIndex = null
     }
-    LaunchedEffect(loadedBook, searchQuery, pages) {
+    LaunchedEffect(loadedBook, searchQuery, searchRequestId, pages) {
         val epub = loadedBook
         val query = searchQuery.trim()
         if (epub == null || query.isBlank()) {
@@ -457,7 +514,7 @@ fun SharedMobileEpubReaderScreen(
             isSearchInProgress = false
             return@LaunchedEffect
         }
-        delay(350)
+        delay(readerSearchDelayMillis(searchRequestId, immediateSearchRequestId))
         isSearchInProgress = true
         try {
             searchResults = withContext(Dispatchers.Default) { epub.searchMobileEpub(query, pages) }
@@ -489,11 +546,13 @@ fun SharedMobileEpubReaderScreen(
             formatIsLocal = isLocalFormatMode,
             localFormatSettings = localFormatSettings,
             autoScrollIsLocal = autoScrollIsLocal,
-            autoScrollLocalSpeed = autoScrollLocalSpeed,
+            autoScrollLocalSpeed = autoScrollLocalProfile?.speed,
+            autoScrollLocalMinSpeed = autoScrollLocalProfile?.minSpeed,
+            autoScrollLocalMaxSpeed = autoScrollLocalProfile?.maxSpeed,
         )
     }
 
-    LaunchedEffect(currentLocator, settings, bookmarks, highlights, currentPageIndex, pageCount, isLocalFormatMode, localFormatSettings, autoScrollIsLocal, autoScrollLocalSpeed) {
+    LaunchedEffect(currentLocator, settings, bookmarks, highlights, currentPageIndex, pageCount, isLocalFormatMode, localFormatSettings, autoScrollIsLocal, autoScrollLocalProfile) {
         delay(220)
         currentReaderSnapshot()?.let(onReaderStateChange)
     }
@@ -510,6 +569,31 @@ fun SharedMobileEpubReaderScreen(
         ) {
             detachedTtsChunkIndex = activeTtsChunk?.index
         }
+    }
+
+    fun temporarilyPauseAutoScroll(durationMillis: Long) {
+        if (!autoScrollModeActive || !autoScroll) return
+        val requestId = ++autoScrollPauseRequestId
+        autoScrollTemporarilyPaused = true
+        scope.launch {
+            delay(durationMillis)
+            if (requestId == autoScrollPauseRequestId && autoScrollModeActive && autoScroll) {
+                autoScrollTemporarilyPaused = false
+            }
+        }
+    }
+
+    fun performMusicianGesture(plan: ReaderMusicianGesturePlan) {
+        temporarilyPauseAutoScroll(plan.pauseMillis)
+        commandScript = when (plan.target) {
+            ReaderMusicianNavigationTarget.START ->
+                "window.scrollTo({ top: 0, behavior: 'auto' });"
+            ReaderMusicianNavigationTarget.END ->
+                "window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'auto' });"
+            ReaderMusicianNavigationTarget.RELATIVE ->
+                "window.scrollBy({ top: window.innerHeight * ${plan.relativeViewportDelta}, behavior: 'smooth' });"
+        }
+        navigationRequestId++
     }
 
     fun navigate(
@@ -587,7 +671,7 @@ fun SharedMobileEpubReaderScreen(
                 val chunks = ReaderHtmlDocumentBuilder.verticalChapterChunks(epub, targetChapterIndex)
                 sharedMobileEpubScrollToEndScript(chunks.lastIndex, chunks.lastOrNull())
             }
-            autoScroll -> sharedMobileEpubAutoScrollStartScript(autoScrollSpeed)
+            autoScroll -> sharedMobileEpubAutoScrollStartScript(autoScrollProfile.speed)
             else -> null
         }
         navigationRequestId++
@@ -677,7 +761,7 @@ fun SharedMobileEpubReaderScreen(
             null
         }
         navigationRequestId++
-        showSearch = false
+        showSearchResultsPanel = false
     }
 
     fun goBackInJumpHistory() {
@@ -753,6 +837,39 @@ fun SharedMobileEpubReaderScreen(
     }
 
     val isBookmarked = bookmarks.matchingReaderBookmark(currentLocator, currentPageIndex) != null
+
+    pendingExternalLink?.let { url ->
+        AlertDialog(
+            onDismissRequest = { pendingExternalLink = null },
+            title = { Text("External Link") },
+            text = { Text("You clicked on an external link:\n\n$url\n\nWhat would you like to do?") },
+            confirmButton = {
+                Row(horizontalArrangement = Arrangement.End) {
+                    TextButton(
+                        onClick = {
+                            openSharedMobileEpubExternalLink(url)
+                            pendingExternalLink = null
+                        }
+                    ) {
+                        Text("Open")
+                    }
+                    TextButton(
+                        onClick = {
+                            clipboard.setText(AnnotatedString(url))
+                            pendingExternalLink = null
+                        }
+                    ) {
+                        Text("Copy")
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingExternalLink = null }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
 
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -909,7 +1026,7 @@ fun SharedMobileEpubReaderScreen(
                                 },
                                 onLinkClicked = { link ->
                                     if (link.href.isExternalEpubLink()) {
-                                        openSharedMobileEpubExternalLink(link.href)
+                                        pendingExternalLink = link.href
                                     } else {
                                         val sourceChapter = link.chapterIndex ?: currentChapterIndex
                                         val sourceHref = loadedBook.chapters.getOrNull(sourceChapter)?.baseHref
@@ -918,7 +1035,9 @@ fun SharedMobileEpubReaderScreen(
                                         }
                                     }
                                 },
-                                onReaderTap = { showChrome = !showChrome },
+                                onReaderTap = {
+                                    if (!(autoScrollMusicianMode && autoScrollModeActive)) showChrome = !showChrome
+                                },
                                 onReaderHorizontalTap = { horizontalFraction ->
                                     when (sharedPaginatedTapAction(horizontalFraction, settings.tapToNavigateEnabled, settings.rightToLeftPagination)) {
                                         SharedPaginatedTapAction.PREVIOUS_PAGE -> navigatePage(-1)
@@ -1011,7 +1130,10 @@ fun SharedMobileEpubReaderScreen(
                             navigationRequestId = navigationRequestId,
                             onBridgeMessage = { method, payload ->
                                 when (method) {
-                                    "readerPointerActivity" -> showChrome = !showChrome
+                                    "readerPointerActivity" -> {
+                                        if (!(autoScrollMusicianMode && autoScrollModeActive)) showChrome = !showChrome
+                                    }
+                                    "readerDragActivity" -> temporarilyPauseAutoScroll(300L)
                                     "readerPositionChanged" -> payload.sharedMobileEpubLocatorOrNull()?.let { position ->
                                         val reportedChapter = position.chapterIndex
                                         if (reportedChapter == null || reportedChapter == currentChapterIndex) {
@@ -1023,6 +1145,19 @@ fun SharedMobileEpubReaderScreen(
                                     "readerChapterBoundary" -> when (payload.sharedMobileEpubDirectionOrNull()) {
                                         "previous" -> navigateChapter(-1)
                                         "next" -> navigateChapter(1)
+                                    }
+                                    "readerAutoScrollChapterEnd" -> {
+                                        when (readerAutoScrollBoundaryAction(currentChapterIndex, loadedBook.chapters.size)) {
+                                            ReaderAutoScrollBoundaryAction.NEXT_CHAPTER -> {
+                                                navigateChapter(1)
+                                                temporarilyPauseAutoScroll(1_000L)
+                                            }
+                                            ReaderAutoScrollBoundaryAction.STOP -> {
+                                                autoScroll = false
+                                                autoScrollTemporarilyPaused = false
+                                                autoScrollPauseRequestId++
+                                            }
+                                        }
                                     }
                                     "readerChapterPull" -> payload.sharedMobileEpubPullOrNull()?.let { pull ->
                                         pullDirection = pull.first
@@ -1040,7 +1175,7 @@ fun SharedMobileEpubReaderScreen(
                                     }
                                     "readerLinkClicked" -> payload.sharedMobileEpubLinkOrNull()?.let { link ->
                                         if (link.href.isExternalEpubLink()) {
-                                            openSharedMobileEpubExternalLink(link.href)
+                                            pendingExternalLink = link.href
                                         } else {
                                             loadedBook.locatorForLink(link.href, link.chapterHref, pages)?.let { (locator, fragment) ->
                                                 recordJumpAndNavigate(locator, fragment)
@@ -1185,6 +1320,7 @@ fun SharedMobileEpubReaderScreen(
                         onAutoScrollChange = { active ->
                             autoScrollModeActive = active
                             autoScroll = active
+                            if (active && autoScrollMusicianMode) showChrome = false
                         },
                         modifier = Modifier
                             .align(Alignment.TopCenter)
@@ -1270,36 +1406,82 @@ fun SharedMobileEpubReaderScreen(
                 if (autoScrollModeActive && settings.readingMode == ReaderReadingMode.VERTICAL) {
                     SharedMobileEpubAutoScrollControls(
                         isPlaying = autoScroll,
-                        speed = autoScrollSpeed,
+                        profile = autoScrollProfile,
                         isLocalMode = autoScrollIsLocal,
+                        useSlider = autoScrollUseSlider,
+                        isMusicianMode = autoScrollMusicianMode,
+                        isCollapsed = autoScrollCollapsed,
                         onPlayPause = { autoScroll = !autoScroll },
                         onSpeedChange = { requested ->
-                            val next = requested.coerceIn(12f, 160f)
-                            autoScrollSpeed = next
+                            val next = autoScrollProfile.copy(speed = requested).sanitized()
+                            autoScrollProfile = next
                             if (autoScrollIsLocal) {
-                                autoScrollLocalSpeed = next
+                                autoScrollLocalProfile = next
                             } else {
-                                onReaderAutoScrollSpeedChange(next)
+                                onReaderAutoScrollProfileChange(next)
                             }
+                        },
+                        onMinSpeedChange = { requested ->
+                            val next = autoScrollProfile.withMinSpeed(requested)
+                            autoScrollProfile = next
+                            if (autoScrollIsLocal) autoScrollLocalProfile = next
+                            else onReaderAutoScrollProfileChange(next)
+                        },
+                        onMaxSpeedChange = { requested ->
+                            val next = autoScrollProfile.withMaxSpeed(requested)
+                            autoScrollProfile = next
+                            if (autoScrollIsLocal) autoScrollLocalProfile = next
+                            else onReaderAutoScrollProfileChange(next)
+                        },
+                        onInputModeToggle = {
+                            autoScrollUseSlider = !autoScrollUseSlider
+                            onAutoScrollUseSliderPreferenceChange(autoScrollUseSlider)
+                        },
+                        onMusicianModeToggle = {
+                            autoScrollMusicianMode = !autoScrollMusicianMode
+                            onAutoScrollMusicianModePreferenceChange(autoScrollMusicianMode)
+                            if (autoScrollMusicianMode) showChrome = false
+                        },
+                        onCollapseChange = { autoScrollCollapsed = it },
+                        onScrollToTop = {
+                            performMusicianGesture(
+                                planReaderMusicianGesture(
+                                    isRightRegion = false,
+                                    isLongPress = true,
+                                )
+                            )
                         },
                         onLocalModeChange = { useLocal ->
                             if (useLocal != autoScrollIsLocal) {
                                 if (useLocal) {
-                                    val local = autoScrollLocalSpeed ?: autoScrollSpeed
-                                    autoScrollLocalSpeed = local
-                                    autoScrollSpeed = local
+                                    val local = autoScrollLocalProfile ?: autoScrollProfile
+                                    autoScrollLocalProfile = local
+                                    autoScrollProfile = local
                                 } else {
-                                    autoScrollLocalSpeed = autoScrollSpeed
-                                    autoScrollSpeed = readerAutoScrollSpeed
+                                    autoScrollLocalProfile = autoScrollProfile
+                                    autoScrollProfile = readerAutoScrollProfile.sanitized()
                                 }
                                 autoScrollIsLocal = useLocal
                             }
                         },
-                        onClose = { autoScroll = false; autoScrollModeActive = false },
+                        onClose = {
+                            autoScroll = false
+                            autoScrollModeActive = false
+                            autoScrollTemporarilyPaused = false
+                            showChrome = true
+                        },
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
                             .padding(horizontal = 12.dp)
                             .offset(y = if (showChrome) (-52).dp else (-12).dp)
+                    )
+                }
+                if (autoScrollModeActive && autoScrollMusicianMode && settings.readingMode == ReaderReadingMode.VERTICAL) {
+                    SharedMobileEpubMusicianOverlay(
+                        onGesture = { isRight, isLongPress ->
+                            performMusicianGesture(planReaderMusicianGesture(isRight, isLongPress))
+                        },
+                        modifier = Modifier.fillMaxSize(),
                     )
                 }
                 val canPullDirection = (pullDirection == "previous" && currentChapterIndex > 0) ||
@@ -1314,7 +1496,14 @@ fun SharedMobileEpubReaderScreen(
                 if (showSearch && loadedBook != null) {
                     SharedMobileEpubSearchOverlay(
                         query = searchQuery,
-                        onQueryChange = { searchQuery = it },
+                        onQueryChange = {
+                            searchQuery = it
+                            searchRequestId++
+                        },
+                        onForceSearch = {
+                            immediateSearchRequestId = searchRequestId + 1L
+                            searchRequestId++
+                        },
                         results = searchResults,
                         isSearching = isSearchInProgress,
                         showResults = showSearchResultsPanel,
@@ -1323,7 +1512,14 @@ fun SharedMobileEpubReaderScreen(
                             searchResultIndex = searchResults.indexOf(result)
                             navigateSearchResult(result)
                         },
-                        onDismiss = { showSearch = false },
+                        onDismiss = {
+                            showSearch = false
+                            showSearchResultsPanel = true
+                            searchQuery = ""
+                            searchResults = emptyList()
+                            searchResultIndex = -1
+                            searchRequestId++
+                        },
                         modifier = Modifier.fillMaxSize()
                     )
                 }
@@ -1339,7 +1535,6 @@ fun SharedMobileEpubReaderScreen(
                             searchResultIndex = (searchResultIndex + 1).coerceAtMost(searchResults.lastIndex)
                             navigateSearchResult(searchResults[searchResultIndex])
                         },
-                        onClose = { searchResults = emptyList(); searchResultIndex = -1; searchQuery = "" },
                         modifier = Modifier.align(Alignment.TopCenter).padding(top = 64.dp)
                     )
                 }
@@ -1365,7 +1560,7 @@ fun SharedMobileEpubReaderScreen(
                             )
                     )
                 }
-                if (showChrome && showSlider && pages.isNotEmpty()) {
+                if (showChrome && showSlider && !showSearch && pages.isNotEmpty()) {
                     SharedMobileEpubSlider(
                         pageIndex = currentPageIndex,
                         pageCount = pageCount,
@@ -3363,6 +3558,7 @@ private fun <T> SharedMobileEpubEnumChoices(values: List<T>, selected: T, label:
 private fun SharedMobileEpubSearchOverlay(
     query: String,
     onQueryChange: (String) -> Unit,
+    onForceSearch: () -> Unit,
     results: List<SharedMobileEpubSearchResult>,
     isSearching: Boolean,
     showResults: Boolean,
@@ -3371,6 +3567,13 @@ private fun SharedMobileEpubSearchOverlay(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val focusRequester = remember { FocusRequester() }
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
+    LaunchedEffect(Unit) {
+        delay(ReaderSearchFocusDelayMillis)
+        focusRequester.requestFocus()
+    }
     Column(modifier) {
         Surface(tonalElevation = 8.dp) {
             Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -3386,11 +3589,21 @@ private fun SharedMobileEpubSearchOverlay(
                         }
                     },
                     singleLine = true,
-                    modifier = Modifier.weight(1f)
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(
+                        onSearch = {
+                            onForceSearch()
+                            keyboardController?.hide()
+                            focusManager.clearFocus()
+                        }
+                    ),
+                    modifier = Modifier.weight(1f).focusRequester(focusRequester)
                 )
                 IconButton(
-                    onClick = { onShowResultsChange(!showResults) },
-                    enabled = results.isNotEmpty()
+                    onClick = {
+                        onShowResultsChange(!showResults)
+                        focusManager.clearFocus()
+                    },
                 ) {
                     Icon(
                         if (showResults) Icons.Default.ArrowDropUp else Icons.Default.ArrowDropDown,
@@ -3401,31 +3614,34 @@ private fun SharedMobileEpubSearchOverlay(
         }
         if (showResults) {
             Surface(Modifier.fillMaxWidth().weight(1f), tonalElevation = 8.dp) {
-                Column {
-                    if (isSearching) {
-                        Row(
-                            Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                            Text("Searching…", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    } else {
-                        Text(
-                            if (query.isBlank()) "Enter a search term" else "${results.size} results",
-                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                when {
+                    isSearching -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator()
                     }
-                    HorizontalDivider()
-                    LazyColumn(Modifier.fillMaxSize()) {
-                        items(results) { result ->
-                            Column(Modifier.fillMaxWidth().clickable { onResultClick(result) }.padding(horizontal = 20.dp, vertical = 14.dp)) {
-                                Text(result.chapterTitle, fontWeight = FontWeight.SemiBold, maxLines = 1)
-                                Text(result.snippet, style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                    results.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text("No results found", style = MaterialTheme.typography.bodyLarge)
+                    }
+                    else -> Column {
+                        Text(
+                            "${results.size} results",
+                            style = MaterialTheme.typography.titleSmall,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                        )
+                        HorizontalDivider()
+                        LazyColumn(Modifier.fillMaxSize()) {
+                            items(results) { result ->
+                                Column(
+                                    Modifier.fillMaxWidth().clickable {
+                                        onResultClick(result)
+                                        keyboardController?.hide()
+                                        focusManager.clearFocus()
+                                    }.padding(horizontal = 20.dp, vertical = 14.dp)
+                                ) {
+                                    Text(result.chapterTitle, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                                    Text(result.snippet, style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                                }
+                                HorizontalDivider()
                             }
-                            HorizontalDivider()
                         }
                     }
                 }
@@ -3437,13 +3653,12 @@ private fun SharedMobileEpubSearchOverlay(
 }
 
 @Composable
-private fun SharedMobileEpubSearchNavigation(current: Int, total: Int, onPrevious: () -> Unit, onNext: () -> Unit, onClose: () -> Unit, modifier: Modifier = Modifier) {
+private fun SharedMobileEpubSearchNavigation(current: Int, total: Int, onPrevious: () -> Unit, onNext: () -> Unit, modifier: Modifier = Modifier) {
     Surface(modifier = modifier, shape = RoundedCornerShape(24.dp), tonalElevation = 8.dp) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 6.dp)) {
-            IconButton(onClick = onPrevious, enabled = current > 0) { Icon(Icons.Default.ArrowUpward, contentDescription = "Previous result") }
+            IconButton(onClick = onPrevious, enabled = current > 0) { Icon(Icons.Default.ArrowDropUp, contentDescription = "Previous result") }
             Text("${current + 1}/$total", style = MaterialTheme.typography.labelLarge)
-            IconButton(onClick = onNext, enabled = current < total - 1) { Icon(Icons.Default.ArrowDownward, contentDescription = "Next result") }
-            IconButton(onClick = onClose) { Icon(Icons.Default.Close, contentDescription = "Close search results") }
+            IconButton(onClick = onNext, enabled = current < total - 1) { Icon(Icons.Default.ArrowDropDown, contentDescription = "Next result") }
         }
     }
 }
@@ -3947,24 +4162,121 @@ private fun ReaderSettings.readerPageInfoBackgroundColor(): Color {
 }
 
 @Composable
+private fun SharedMobileEpubMusicianOverlay(
+    onGesture: (isRightRegion: Boolean, isLongPress: Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val scope = rememberCoroutineScope()
+    Box(modifier) {
+        listOf(false, true).forEach { isRightRegion ->
+            var holdProgress by remember { mutableFloatStateOf(0f) }
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(0.25f)
+                    .fillMaxHeight(0.4f)
+                    .align(if (isRightRegion) Alignment.TopEnd else Alignment.TopStart)
+                    .offset(y = 100.dp)
+                    .padding(
+                        start = if (isRightRegion) 0.dp else 8.dp,
+                        end = if (isRightRegion) 8.dp else 0.dp,
+                    )
+                    .border(2.dp, Color.Gray.copy(alpha = 0.3f), RoundedCornerShape(12.dp))
+                    .pointerInput(isRightRegion) {
+                        awaitEachGesture {
+                            awaitFirstDown()
+                            var longPressTriggered = false
+                            val holdJob = scope.launch {
+                                val startedAt = currentTimestamp()
+                                while (true) {
+                                    val elapsed = currentTimestamp() - startedAt
+                                    holdProgress = (elapsed.toFloat() / ReaderMusicianHoldDurationMillis).coerceIn(0f, 1f)
+                                    if (elapsed >= ReaderMusicianHoldDurationMillis) {
+                                        longPressTriggered = true
+                                        holdProgress = 0f
+                                        onGesture(isRightRegion, true)
+                                        break
+                                    }
+                                    delay(16L)
+                                }
+                            }
+                            val up = waitForUpOrCancellation()
+                            holdJob.cancel()
+                            holdProgress = 0f
+                            if (!longPressTriggered && up != null) {
+                                up.consume()
+                                onGesture(isRightRegion, false)
+                            }
+                        }
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                if (holdProgress > 0f) {
+                    CircularProgressIndicator(
+                        progress = { holdProgress },
+                        modifier = Modifier.size(48.dp),
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                        trackColor = Color.Transparent,
+                        strokeWidth = 4.dp,
+                    )
+                    Icon(
+                        if (isRightRegion) Icons.Default.ArrowDownward else Icons.Default.ArrowUpward,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun SharedMobileEpubAutoScrollControls(
     isPlaying: Boolean,
-    speed: Float,
+    profile: ReaderAutoScrollProfile,
     isLocalMode: Boolean,
+    useSlider: Boolean,
+    isMusicianMode: Boolean,
+    isCollapsed: Boolean,
     onPlayPause: () -> Unit,
     onSpeedChange: (Float) -> Unit,
+    onMinSpeedChange: (Float) -> Unit,
+    onMaxSpeedChange: (Float) -> Unit,
+    onInputModeToggle: () -> Unit,
+    onMusicianModeToggle: () -> Unit,
+    onCollapseChange: (Boolean) -> Unit,
+    onScrollToTop: () -> Unit,
     onLocalModeChange: (Boolean) -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var showModeMenu by remember { mutableStateOf(false) }
+    val profile = profile.sanitized()
+    val speedOptions = listOf(0.1f, 0.5f, 1f, 1.5f, 2f, 3f, 4f, 5f, 6f, 7f, 8f, 9f, 10f)
     Surface(
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
+        modifier = modifier
+            .then(if (isCollapsed) Modifier else Modifier.fillMaxWidth())
+            .widthIn(max = 400.dp),
+        shape = RoundedCornerShape(28.dp),
         tonalElevation = 8.dp,
         shadowElevation = 8.dp
     ) {
-        Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+        if (isCollapsed) {
+            Row(
+                modifier = Modifier.padding(horizontal = 6.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                IconButton(onClick = { onCollapseChange(false) }, modifier = Modifier.size(36.dp)) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Expand Auto Scroll")
+                }
+                IconButton(onClick = onPlayPause, modifier = Modifier.size(36.dp)) {
+                    Icon(
+                        if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                        contentDescription = if (isPlaying) "Pause auto scroll" else "Resume auto scroll",
+                    )
+                }
+            }
+        } else Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onPlayPause) {
                     Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, contentDescription = if (isPlaying) "Pause auto scroll" else "Resume auto scroll")
@@ -3988,13 +4300,85 @@ private fun SharedMobileEpubAutoScrollControls(
                     }
                 }
                 Spacer(Modifier.weight(1f))
-                Text("${speed.roundToInt()} px/s", style = MaterialTheme.typography.labelLarge)
+                Text("${sharedMobileAutoScrollSpeedLabel(profile.speed)}x", style = MaterialTheme.typography.labelLarge)
+                IconButton(onClick = onScrollToTop) {
+                    Icon(Icons.Default.ArrowUpward, contentDescription = "Scroll to top")
+                }
+                IconButton(onClick = onMusicianModeToggle) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.VolumeUp,
+                        contentDescription = if (isMusicianMode) "Disable musician mode" else "Enable musician mode",
+                        tint = if (isMusicianMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                IconButton(onClick = onInputModeToggle) {
+                    Icon(Icons.Default.SwapHoriz, contentDescription = "Swap speed controls")
+                }
+                IconButton(onClick = { onCollapseChange(true) }) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Collapse Auto Scroll")
+                }
                 IconButton(onClick = onClose) { Icon(Icons.Default.Close, contentDescription = "Stop auto scroll") }
             }
-            Slider(value = speed.coerceIn(12f, 160f), onValueChange = onSpeedChange, valueRange = 12f..160f)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                SharedMobileEpubSpeedMenu("Min", profile.minSpeed, speedOptions, onMinSpeedChange)
+                SharedMobileEpubSpeedMenu("Max", profile.maxSpeed, speedOptions, onMaxSpeedChange)
+            }
+            if (useSlider) {
+                Slider(
+                    value = profile.speed,
+                    onValueChange = { onSpeedChange((it * 10f).roundToInt() / 10f) },
+                    valueRange = profile.minSpeed..profile.maxSpeed.coerceAtLeast(profile.minSpeed + 0.1f),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    IconButton(onClick = { onSpeedChange((profile.speed - 0.1f).coerceAtLeast(profile.minSpeed)) }) {
+                        Icon(Icons.Default.Remove, contentDescription = "Slower")
+                    }
+                    Text("${sharedMobileAutoScrollSpeedLabel(profile.speed)}x", style = MaterialTheme.typography.titleMedium)
+                    IconButton(onClick = { onSpeedChange((profile.speed + 0.1f).coerceAtMost(profile.maxSpeed)) }) {
+                        Icon(Icons.Default.Add, contentDescription = "Faster")
+                    }
+                }
+            }
         }
     }
 }
+
+@Composable
+private fun SharedMobileEpubSpeedMenu(
+    label: String,
+    value: Float,
+    options: List<Float>,
+    onValueChange: (Float) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        TextButton(onClick = { expanded = true }) {
+            Text("$label ${sharedMobileAutoScrollSpeedLabel(value)}x")
+            Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            options.forEach { option ->
+                DropdownMenuItem(
+                    text = { Text("${sharedMobileAutoScrollSpeedLabel(option)}x") },
+                    trailingIcon = { if (option == value) Text("✓") },
+                    onClick = {
+                        onValueChange(option)
+                        expanded = false
+                    },
+                )
+            }
+        }
+    }
+}
+
+private fun sharedMobileAutoScrollSpeedLabel(value: Float): String =
+    if (value % 1f == 0f) value.roundToInt().toString() else ((value * 10f).roundToInt() / 10f).toString()
 
 @Composable
 private fun sharedMobileEpubTextureBitmap(textureId: String?): ImageBitmap? {
@@ -4011,7 +4395,8 @@ private fun sharedMobileEpubTextureBitmap(textureId: String?): ImageBitmap? {
 }
 
 private fun sharedMobileEpubAutoScrollStartScript(speed: Float): String {
-    val intervalMillis = (1000f / speed.coerceIn(12f, 160f)).roundToInt().coerceAtLeast(6)
+    val effectiveSpeed = readerAutoScrollPixelsPerSecond(speed)
+    val intervalMillis = (1000f / effectiveSpeed).roundToInt().coerceAtLeast(6)
     return """
     (function () {
       if (window.readerIosAutoScrollTimer) window.clearInterval(window.readerIosAutoScrollTimer);
@@ -4022,7 +4407,7 @@ private fun sharedMobileEpubAutoScrollStartScript(speed: Float): String {
           window.clearInterval(window.readerIosAutoScrollTimer);
           window.readerIosAutoScrollTimer = null;
           if (window.kmpJsBridge && window.kmpJsBridge.callNative) {
-            window.kmpJsBridge.callNative('readerChapterBoundary', JSON.stringify({ direction: 'next' }));
+            window.kmpJsBridge.callNative('readerAutoScrollChapterEnd', '{}');
           }
         }
       }, $intervalMillis);

@@ -20,6 +20,69 @@ import kotlin.test.assertTrue
 class ReaderExtrasModelsTest {
 
     @Test
+    fun `epub auto scroll uses android effective speed contract`() {
+        assertEquals(3f, readerAutoScrollPixelsPerSecond(0f))
+        assertEquals(24f, readerAutoScrollPixelsPerSecond(0.8f))
+        assertEquals(300f, readerAutoScrollPixelsPerSecond(20f))
+    }
+
+    @Test
+    fun `epub auto scroll profile applies android bound correction`() {
+        assertEquals(
+            ReaderAutoScrollProfile(speed = 4f, minSpeed = 4f, maxSpeed = 4f),
+            ReaderAutoScrollProfile(speed = 0.8f, minSpeed = 4f, maxSpeed = 2f).sanitized(),
+        )
+        assertEquals(
+            ReaderAutoScrollProfile(speed = 5f, minSpeed = 5f, maxSpeed = 5f),
+            ReaderAutoScrollProfile(speed = 2f, minSpeed = 1f, maxSpeed = 5f).withMinSpeed(5f),
+        )
+        assertEquals(
+            ReaderAutoScrollProfile(speed = 1f, minSpeed = 1f, maxSpeed = 1f),
+            ReaderAutoScrollProfile(speed = 4f, minSpeed = 1f, maxSpeed = 5f).withMaxSpeed(1f),
+        )
+    }
+
+    @Test
+    fun `legacy ios epub pixel speeds migrate to android multipliers`() {
+        assertEquals(0.6f, migrateLegacyIosReaderAutoScrollSpeed(36f))
+        assertEquals(0.8f, migrateLegacyIosReaderAutoScrollSpeed(0.8f))
+    }
+
+    @Test
+    fun `epub musician gestures match android targets and pause timing`() {
+        assertEquals(
+            ReaderMusicianGesturePlan(ReaderMusicianNavigationTarget.RELATIVE, -0.75f, 600L),
+            planReaderMusicianGesture(isRightRegion = false, isLongPress = false),
+        )
+        assertEquals(
+            ReaderMusicianGesturePlan(ReaderMusicianNavigationTarget.RELATIVE, 0.75f, 600L),
+            planReaderMusicianGesture(isRightRegion = true, isLongPress = false),
+        )
+        assertEquals(
+            ReaderMusicianGesturePlan(ReaderMusicianNavigationTarget.START, 0f, 1_000L),
+            planReaderMusicianGesture(isRightRegion = false, isLongPress = true),
+        )
+        assertEquals(
+            ReaderMusicianGesturePlan(ReaderMusicianNavigationTarget.END, 0f, 1_000L),
+            planReaderMusicianGesture(isRightRegion = true, isLongPress = true),
+        )
+    }
+
+    @Test
+    fun `epub search ime request bypasses android debounce once`() {
+        assertEquals(350L, readerSearchDelayMillis(requestId = 4L, immediateRequestId = 3L))
+        assertEquals(0L, readerSearchDelayMillis(requestId = 4L, immediateRequestId = 4L))
+        assertEquals(350L, readerSearchDelayMillis(requestId = 5L, immediateRequestId = 4L))
+    }
+
+    @Test
+    fun `epub auto scroll continues between chapters and stops at book end`() {
+        assertEquals(ReaderAutoScrollBoundaryAction.NEXT_CHAPTER, readerAutoScrollBoundaryAction(0, 2))
+        assertEquals(ReaderAutoScrollBoundaryAction.STOP, readerAutoScrollBoundaryAction(1, 2))
+        assertEquals(ReaderAutoScrollBoundaryAction.STOP, readerAutoScrollBoundaryAction(0, 0))
+    }
+
+    @Test
     fun `selection lookup ids map to android external actions`() {
         assertEquals(ReaderExternalLookupAction.DICTIONARY, readerExternalLookupActionForSelectionId("dictionary"))
         assertEquals(ReaderExternalLookupAction.TRANSLATE, readerExternalLookupActionForSelectionId("translate"))
