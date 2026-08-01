@@ -307,6 +307,16 @@ class BookTtsSessionCoordinator(
         startPolicy: String = START_RESUME,
         selectedChapterIndex: Int? = null
     ) {
+        val playback = playbackManager.ttsState.value
+        if (
+            startPolicy == START_RESUME &&
+            activeBook?.bookId == bookId &&
+            playback.playbackSource == "AUDIOBOOK_TTS" &&
+            !playback.sessionFinished
+        ) {
+            Timber.tag(TAG).i("Ignoring duplicate coordinator start for active book=$bookId")
+            return
+        }
         transitionJob?.cancel()
         transitionJob = scope.launch {
             runCatching {
@@ -325,6 +335,7 @@ class BookTtsSessionCoordinator(
                 playChapter(chapter, chunk, continueSession = false)
             }.onFailure { error ->
                 Timber.tag(TAG).e(error, "Unable to start headless book TTS for $bookId")
+                playbackManager.stopBookListeningSession()
             }
         }
     }
@@ -401,9 +412,18 @@ class BookTtsSessionCoordinator(
         if (state.sessionFinished) {
             if (transitionJob?.isActive == true) return
             if (chapterIndex < book.chapters.lastIndex) {
-                transitionJob = scope.launch { playChapter(chapterIndex + 1, 0, continueSession = true) }
+                transitionJob = scope.launch {
+                    runCatching { playChapter(chapterIndex + 1, 0, continueSession = true) }
+                        .onFailure { error ->
+                            Timber.tag(TAG).w(error, "No further readable audiobook chapter for book=${book.bookId}")
+                            persist(completed = true, state = state)
+                            playbackManager.stopBookListeningSession()
+                        }
+                }
             } else {
                 persist(completed = true, state = state)
+                Timber.tag(TAG).i("Book completed; releasing local TTS engine for book=${book.bookId}")
+                playbackManager.stopBookListeningSession()
             }
             return
         }
@@ -493,6 +513,16 @@ class BookTtsAudiobookController(context: Context) {
     }
 
     fun start(bookId: String, policy: String, chapterIndex: Int? = null) {
+        val active = playbackState.value
+        if (
+            policy == BookTtsSessionCoordinator.START_RESUME &&
+            active.playbackSource == "AUDIOBOOK_TTS" &&
+            active.bookId == bookId &&
+            !active.sessionFinished
+        ) {
+            Timber.tag("BOOK_TTS_AUDIOBOOK").i("Ignoring duplicate resume request for active book=$bookId")
+            return
+        }
         appContext.startService(Intent(appContext, AudiobookPlaybackService::class.java).setAction(ACTION_AUDIOBOOK_STOP))
         val intent = Intent(appContext, TtsService::class.java).apply {
             action = ACTION_START_BOOK_TTS

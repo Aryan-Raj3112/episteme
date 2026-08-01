@@ -123,6 +123,13 @@ import com.aryan.reader.audiobook.AudiobookController
 import com.aryan.reader.shared.AnnotationExportFormat
 import kotlinx.coroutines.launch
 
+internal fun shouldAutoStartTtsAudiobook(
+    requestedBookId: String?,
+    playback: com.aryan.reader.tts.TtsPlaybackManager.TtsState
+): Boolean = requestedBookId == null ||
+    playback.playbackSource != "AUDIOBOOK_TTS" ||
+    playback.bookId != requestedBookId
+
 /** Android-only successor experiment for the separate Home and Library destinations. */
 @androidx.annotation.OptIn(UnstableApi::class)
 @OptIn(
@@ -493,11 +500,17 @@ fun UnifiedLibraryScreen(
                     audiobooks = importedAudiobooks,
                     ebooks = uiState.rawLibraryFiles.filter { it.type != FileType.AUDIOBOOK },
                     ttsProgress = bookTtsProgress,
-                    onAudiobookClick = { audiobookPlayerItem = it },
+                    onAudiobookClick = { item ->
+                        val shouldStart = item.isTts && shouldAutoStartTtsAudiobook(item.sourceBook?.bookId, ttsPlayback)
+                        if (shouldStart) viewModel.ttsController.connect()
+                        audiobookPlayerItem = if (item.isTts && !shouldStart) item.copy(autoStart = false) else item
+                    },
                     onListenWithTtsClick = { book ->
+                        val shouldStart = shouldAutoStartTtsAudiobook(book.bookId, ttsPlayback)
+                        if (shouldStart) viewModel.ttsController.connect()
                         audiobookPlayerItem = book
                             .toTtsAudiobookUiItem(bookTtsProgress.firstOrNull { it.bookId == book.bookId })
-                            .copy(autoStart = true)
+                            .copy(autoStart = shouldStart)
                     },
                     onAddAudiobookClick = { showAudiobookAddSheet = true }
                 )

@@ -4,6 +4,7 @@ import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.data.AudiobookImporter
 import com.aryan.reader.audiobook.audiobookResumePosition
 import com.aryan.reader.audiobook.formatSleepTimerLabel
+import com.aryan.reader.tts.TtsPlaybackManager
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertEquals
@@ -91,5 +92,18 @@ class UnifiedLibraryScreenTest {
     @Test
     fun generatedAudiobookProgressIncludesCompletedChapters() {
         assertEquals(.375f, calculateTtsAudiobookProgress(chapterIndex = 1, chapterCount = 4, chunkIndex = 4, chunkCount = 10))
+    }
+
+    @Test
+    fun activeGeneratedAudiobookIsExpandedWithoutRestartingPlayback() {
+        val active = TtsPlaybackManager.TtsState(
+            bookId = "book-1",
+            playbackSource = "AUDIOBOOK_TTS",
+            isPlaying = true
+        )
+
+        assertFalse(shouldAutoStartTtsAudiobook("book-1", active))
+        assertTrue(shouldAutoStartTtsAudiobook("book-2", active))
+        assertTrue(shouldAutoStartTtsAudiobook("book-1", active.copy(playbackSource = "READER")))
     }
 }

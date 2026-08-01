@@ -2,6 +2,7 @@ package com.aryan.reader
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,6 +11,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -19,6 +21,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -46,6 +50,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -56,6 +61,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -63,7 +69,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -399,6 +407,9 @@ private fun BookTtsPlayerSheet(item: AudiobookUiItem, onDismiss: () -> Unit) {
     val prepared by controller.uiState.collectAsStateWithLifecycle()
     val playback by controller.playbackState.collectAsStateWithLifecycle()
     var showChapters by remember { mutableStateOf(false) }
+    var showTranscript by rememberSaveable(sourceBook.bookId) { mutableStateOf(false) }
+    val transcriptListState = rememberLazyListState()
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var rate by remember { mutableFloatStateOf(prepared.savedProgress?.speechRate ?: loadTtsSpeechRate(context)) }
     var pitch by remember { mutableFloatStateOf(prepared.savedProgress?.pitch ?: loadTtsPitch(context)) }
     val isThisBookActive = playback.playbackSource == "AUDIOBOOK_TTS" && playback.bookId == sourceBook.bookId
@@ -425,16 +436,26 @@ private fun BookTtsPlayerSheet(item: AudiobookUiItem, onDismiss: () -> Unit) {
             pitch = it.pitch
         }
     }
+    LaunchedEffect(playback.currentChunkIndex, playback.transcriptStartIndex, showTranscript) {
+        if (showTranscript && playback.transcriptChunks.isNotEmpty()) {
+            val localIndex = (playback.currentChunkIndex - playback.transcriptStartIndex)
+                .coerceIn(playback.transcriptChunks.indices)
+            transcriptListState.animateScrollToItem(localIndex)
+        }
+    }
     DisposableEffect(controller) { onDispose(controller::release) }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         dragHandle = null,
+        modifier = Modifier.fillMaxSize(),
+        sheetState = sheetState,
+        shape = RectangleShape,
         containerColor = MaterialTheme.colorScheme.surface
     ) {
         Box(
             Modifier
-                .fillMaxWidth()
+                .fillMaxSize()
                 .background(
                     Brush.verticalGradient(
                         listOf(
@@ -446,7 +467,7 @@ private fun BookTtsPlayerSheet(item: AudiobookUiItem, onDismiss: () -> Unit) {
                 )
         ) {
             Column(
-                Modifier.fillMaxWidth().padding(horizontal = 24.dp).navigationBarsPadding(),
+                Modifier.fillMaxSize().padding(horizontal = 24.dp).navigationBarsPadding(),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Row(
@@ -465,14 +486,51 @@ private fun BookTtsPlayerSheet(item: AudiobookUiItem, onDismiss: () -> Unit) {
                     }
                 }
 
-                MockAudioCover(
-                    item,
-                    Modifier
-                        .fillMaxWidth(.56f)
-                        .aspectRatio(.72f)
-                        .padding(top = 14.dp)
-                        .shadow(18.dp, RoundedCornerShape(20.dp))
-                )
+                Box(
+                    Modifier.fillMaxWidth().weight(1f).padding(top = 12.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    when {
+                        showChapters -> LazyColumn(
+                            Modifier.fillMaxSize().testTag("AudiobookChapterList"),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            items(book?.chapters.orEmpty(), key = { it.id }) { chapter ->
+                                val selected = chapter.index == currentChapter
+                                Row(
+                                    Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
+                                        .background(if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerLow)
+                                        .clickable {
+                                            if (selected && isThisBookActive) {
+                                                showChapters = false
+                                                return@clickable
+                                            }
+                                            if (isThisBookActive) controller.selectChapter(chapter.index)
+                                            else controller.start(sourceBook.bookId, BookTtsSessionCoordinator.START_CHAPTER, chapter.index)
+                                            showChapters = false
+                                        }.padding(horizontal = 16.dp, vertical = 14.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text("${chapter.index + 1}", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                                    Text(chapter.title, Modifier.weight(1f).padding(start = 16.dp), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                    if (selected) Icon(Icons.AutoMirrored.Filled.VolumeUp, null, Modifier.size(18.dp))
+                                }
+                            }
+                        }
+                        showTranscript -> AudiobookTranscript(
+                            chunks = playback.transcriptChunks,
+                            startIndex = playback.transcriptStartIndex,
+                            currentIndex = playback.currentChunkIndex,
+                            listState = transcriptListState,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                        else -> MockAudioCover(
+                            item,
+                            Modifier.fillMaxHeight(.94f).aspectRatio(.72f)
+                                .shadow(18.dp, RoundedCornerShape(20.dp))
+                        )
+                    }
+                }
                 Text(
                     item.title,
                     Modifier.padding(top = 24.dp),
@@ -534,10 +592,12 @@ private fun BookTtsPlayerSheet(item: AudiobookUiItem, onDismiss: () -> Unit) {
                     }
                 }
 
-                Row(
-                    Modifier.fillMaxWidth().padding(top = 18.dp, bottom = 10.dp),
-                    horizontalArrangement = Arrangement.SpaceEvenly
+                LazyRow(
+                    Modifier.fillMaxWidth().padding(top = 14.dp, bottom = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    contentPadding = PaddingValues(horizontal = 2.dp)
                 ) {
+                    item {
                     AssistChip(
                         onClick = {
                             rate = nextAudiobookSpeed(rate)
@@ -545,43 +605,33 @@ private fun BookTtsPlayerSheet(item: AudiobookUiItem, onDismiss: () -> Unit) {
                         },
                         label = { Text("${"%.2g".format(rate)}×") }
                     )
+                    }
+                    item {
                     AssistChip(
-                        onClick = { showChapters = !showChapters },
+                        onClick = {
+                            showChapters = !showChapters
+                            if (showChapters) showTranscript = false
+                        },
                         label = { Text("Chapters") },
                         leadingIcon = { Icon(Icons.Default.Menu, null, Modifier.size(16.dp)) }
                     )
+                    }
+                    item {
+                        AssistChip(
+                            onClick = {
+                                showTranscript = !showTranscript
+                                if (showTranscript) showChapters = false
+                            },
+                            label = { Text(if (showTranscript) "Hide transcript" else "Transcript") },
+                            leadingIcon = { Icon(Icons.Default.Book, null, Modifier.size(16.dp)) }
+                        )
+                    }
+                    item {
                     AssistChip(
                         onClick = { controller.startSleepTimer(30) },
                         label = { Text(controller.sleepTimerLabel.collectAsStateWithLifecycle().value) },
                         leadingIcon = { Icon(Icons.Default.Settings, null, Modifier.size(16.dp)) }
                     )
-                }
-
-                if (showChapters) {
-                    LazyColumn(
-                        Modifier.fillMaxWidth().heightIn(max = 280.dp).padding(bottom = 12.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        items(book?.chapters.orEmpty(), key = { it.id }) { chapter ->
-                            val selected = chapter.index == currentChapter
-                            Row(
-                                Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(14.dp))
-                                    .background(if (selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)
-                                    .clickable {
-                                        if (isThisBookActive) controller.selectChapter(chapter.index)
-                                        else controller.start(sourceBook.bookId, BookTtsSessionCoordinator.START_CHAPTER, chapter.index)
-                                        showChapters = false
-                                    }
-                                    .padding(horizontal = 14.dp, vertical = 12.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text("${chapter.index + 1}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-                                Text(chapter.title, Modifier.weight(1f).padding(start = 14.dp), maxLines = 2, overflow = TextOverflow.Ellipsis)
-                                if (selected) Icon(Icons.AutoMirrored.Filled.VolumeUp, null, Modifier.size(18.dp))
-                            }
-                        }
                     }
                 }
             }
@@ -601,6 +651,46 @@ internal fun calculateTtsAudiobookProgress(
 }
 
 @Composable
+private fun AudiobookTranscript(
+    chunks: List<String>,
+    startIndex: Int,
+    currentIndex: Int,
+    listState: androidx.compose.foundation.lazy.LazyListState,
+    modifier: Modifier = Modifier
+) {
+    if (chunks.isEmpty()) {
+        Box(modifier, contentAlignment = Alignment.Center) {
+            Text(
+                "Spoken text will appear when playback starts",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodyLarge
+            )
+        }
+        return
+    }
+    LazyColumn(
+        modifier.testTag("AudiobookTranscript"),
+        state = listState,
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+        contentPadding = PaddingValues(vertical = 18.dp)
+    ) {
+        itemsIndexed(chunks) { localIndex, text ->
+            val absoluteIndex = startIndex + localIndex
+            val selected = absoluteIndex == currentIndex
+            Text(
+                text = text,
+                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
+                    .background(if (selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)
+                    .padding(horizontal = 16.dp, vertical = 13.dp),
+                style = if (selected) MaterialTheme.typography.titleMedium else MaterialTheme.typography.bodyLarge,
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
 internal fun AudiobookMiniPlayer(
     item: AudiobookUiItem,
     isPlaying: Boolean,
@@ -608,8 +698,23 @@ internal fun AudiobookMiniPlayer(
     onExpand: () -> Unit,
     onStop: () -> Unit
 ) {
+    var verticalDrag by remember { mutableFloatStateOf(0f) }
     Surface(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp).testTag("AudiobookMiniPlayer"),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp)
+            .pointerInput(onExpand) {
+                detectVerticalDragGestures(
+                    onDragStart = { verticalDrag = 0f },
+                    onVerticalDrag = { change, dragAmount ->
+                        change.consume()
+                        verticalDrag += dragAmount
+                    },
+                    onDragEnd = {
+                        if (verticalDrag < -48f) onExpand()
+                        verticalDrag = 0f
+                    }
+                )
+            }
+            .testTag("AudiobookMiniPlayer"),
         shape = RoundedCornerShape(18.dp),
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
         shadowElevation = 8.dp,

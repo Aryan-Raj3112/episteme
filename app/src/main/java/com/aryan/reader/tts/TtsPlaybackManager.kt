@@ -145,6 +145,14 @@ internal fun resolveTtsStartChunkIndex(
     return requestedChunkIndex.coerceIn(0, totalChunks - 1)
 }
 
+internal fun resolveTtsTranscriptWindow(currentIndex: Int, chunkCount: Int): Pair<Int, IntRange> {
+    if (chunkCount <= 0) return 0 to IntRange.EMPTY
+    val center = currentIndex.coerceIn(0, chunkCount - 1)
+    val start = (center - 2).coerceAtLeast(0)
+    val end = (center + 3).coerceAtMost(chunkCount - 1)
+    return start to (start..end)
+}
+
 internal fun resolveReusableTtsPlaylistIndex(
     playlistIndex: Int?,
     direction: Int
@@ -392,7 +400,9 @@ class TtsPlaybackManager(
         val currentWordStartOffset: Int = -1,
         val sessionFinished: Boolean = false,
         val playbackSource: String? = null,
-        val ttsMode: String = TtsMode.CLOUD.name
+        val ttsMode: String = TtsMode.CLOUD.name,
+        val transcriptStartIndex: Int = 0,
+        val transcriptChunks: List<String> = emptyList()
     )
 
     private val initialSpeakerId = loadTtsSpeaker(appContext)
@@ -780,6 +790,11 @@ class TtsPlaybackManager(
             player.stop()
             return
         }
+        handleStopTts(userInitiated = true)
+        onExplicitStopRequested()
+    }
+
+    fun stopBookListeningSession() {
         handleStopTts(userInitiated = true)
         onExplicitStopRequested()
     }
@@ -1831,7 +1846,7 @@ class TtsPlaybackManager(
         onResetContext()
         preparationJob?.cancel()
         wordTrackingJob?.cancel()
-        directLocalTtsPlayer.stop()
+        if (userInitiated) directLocalTtsPlayer.shutdown() else directLocalTtsPlayer.stop()
         localResumeOffset = 0
         localLatestRangeOffset = 0
         localQueuedThrough = -1
@@ -2758,6 +2773,12 @@ class TtsPlaybackManager(
 
     @Suppress("Deprecation")
     private fun createStateButton(state: TtsState): CommandButton {
+        val transcriptRange = if (
+            state.playbackSource == "AUDIOBOOK_TTS" && state.ttsMode == TtsMode.BASE.name
+        ) resolveTtsTranscriptWindow(
+            currentIndex = state.currentChunkIndex,
+            chunkCount = textChunks.size
+        ) else 0 to IntRange.EMPTY
         val bundle = Bundle().apply {
             putBoolean("isPlaying", state.isPlaying)
             putBoolean("isLoading", state.isLoading)
@@ -2784,6 +2805,11 @@ class TtsPlaybackManager(
             putBoolean("sessionFinished", state.sessionFinished)
             putString("playbackSource", state.playbackSource)
             putString("ttsMode", state.ttsMode)
+            putInt("transcriptStartIndex", transcriptRange.first)
+            putStringArrayList(
+                "transcriptChunks",
+                ArrayList(transcriptRange.second.map { textChunks[it].text })
+            )
         }
         return CommandButton.Builder()
             .setSessionCommand(STATE_UPDATE_COMMAND)
@@ -2791,6 +2817,7 @@ class TtsPlaybackManager(
             .setExtras(bundle)
             .build()
     }
+
 
     @Suppress("Deprecation")
     private fun createStopCommandButton(): CommandButton {

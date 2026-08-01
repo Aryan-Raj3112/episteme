@@ -26,6 +26,24 @@ class TtsLifecycleSourceTest {
     }
 
     @Test
+    fun `audiobook tab does not bind tts until a play action`() {
+        val source = sourceFile("com/aryan/reader/UnifiedLibraryScreen.kt").readText()
+
+        assertFalse(source.contains("LaunchedEffect(viewModel.ttsController) { viewModel.ttsController.connect() }"))
+        assertTrue(source.contains("if (shouldStart) viewModel.ttsController.connect()"))
+    }
+
+    @Test
+    fun `explicit stop shuts down the local engine before service destruction`() {
+        val source = sourceFile("com/aryan/reader/tts/TtsPlaybackManager.kt").readText()
+        val stopBody = source.substringAfter("private fun handleStopTts")
+            .substringBefore("fun stopForAppTaskRemoval")
+
+        assertTrue(stopBody.contains("if (userInitiated) directLocalTtsPlayer.shutdown()"))
+        assertTrue(source.contains("fun stopBookListeningSession()"))
+    }
+
+    @Test
     fun `direct local notification metadata uses a valid synthetic media uri`() {
         val source = sourceFile("com/aryan/reader/tts/TtsPlaybackManager.kt").readText()
         val updateLocalMediaItemBody = source.substringAfter("private fun updateLocalMediaItem")

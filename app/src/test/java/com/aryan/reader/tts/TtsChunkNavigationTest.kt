@@ -66,6 +66,14 @@ class TtsChunkNavigationTest {
     }
 
     @Test
+    fun `transcript window follows current chunk and clamps at chapter edges`() {
+        assertEquals(0 to (0..3), resolveTtsTranscriptWindow(currentIndex = 0, chunkCount = 10))
+        assertEquals(3 to (3..8), resolveTtsTranscriptWindow(currentIndex = 5, chunkCount = 10))
+        assertEquals(7 to (7..9), resolveTtsTranscriptWindow(currentIndex = 9, chunkCount = 10))
+        assertEquals(0 to IntRange.EMPTY, resolveTtsTranscriptWindow(currentIndex = 0, chunkCount = 0))
+    }
+
+    @Test
     fun `only forward chunk skips can reuse an existing playlist item`() {
         assertEquals(3, resolveReusableTtsPlaylistIndex(playlistIndex = 3, direction = 1))
         assertNull(resolveReusableTtsPlaylistIndex(playlistIndex = 3, direction = -1))

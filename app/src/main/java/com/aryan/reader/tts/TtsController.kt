@@ -397,6 +397,8 @@ class TtsController(context: Context) : Player.Listener {
             val serviceCurrentChunkIndex = customState.getInt("currentChunkIndex", -1)
             val serviceTotalChunks = customState.getInt("totalChunks", 0)
             val serviceBookProgressPercent = customState.getInt("bookProgressPercent", -1).takeIf { it >= 0 }
+            val transcriptStartIndex = customState.getInt("transcriptStartIndex", 0)
+            val transcriptChunks = customState.getStringArrayList("transcriptChunks").orEmpty()
 
             val sourceCfi = mediaItemExtras?.getString("sourceCfi") ?: customState.getString("sourceCfi")
             val startOffset = mediaItemExtras?.getInt("startOffset", -1)
@@ -463,8 +465,18 @@ class TtsController(context: Context) : Player.Listener {
                 currentWordStartOffset = if (isPlaybackActive) currentWordStartOffset else -1,
                 sessionFinished = sessionFinished,
                 playbackSource = playbackSource,
-                ttsMode = serviceMode
+                ttsMode = serviceMode,
+                transcriptStartIndex = transcriptStartIndex,
+                transcriptChunks = transcriptChunks
             )
+            if (sessionEndedByStop) {
+                // Every observer releases its binding after an explicit stop so stopSelf()
+                // can reach onDestroy and tear down the local engine and media resources.
+                scope.launch {
+                    delay(1)
+                    if (_ttsState.value.sessionEndedByStop) disconnect()
+                }
+            }
         }
     }
 
