@@ -2109,8 +2109,6 @@ fun TtsOverlayControls(
     val context = LocalContext.current
     var rate by remember { mutableFloatStateOf(loadTtsSpeechRate(context)) }
     var pitch by remember { mutableFloatStateOf(loadTtsPitch(context)) }
-    var isDraggingRate by remember { mutableStateOf(false) }
-    var isDraggingPitch by remember { mutableStateOf(false) }
 
     val activeMode = try { com.aryan.reader.tts.TtsPlaybackManager.TtsMode.valueOf(ttsState.ttsMode) } catch(_: Exception) { com.aryan.reader.tts.TtsPlaybackManager.TtsMode.CLOUD }
     val progressPercent = ttsState.bookProgressPercent
@@ -2161,11 +2159,7 @@ fun TtsOverlayControls(
     val saveAndApply = {
         saveTtsSpeechRate(context, rate)
         saveTtsPitch(context, pitch)
-        if (activeMode == com.aryan.reader.tts.TtsPlaybackManager.TtsMode.CLOUD) {
-            ttsController.setPlaybackParameters(rate, pitch)
-        } else {
-            ttsController.sliceAndRetainPosition()
-        }
+        ttsController.setPlaybackParameters(rate, pitch)
     }
 
     Surface(
@@ -2551,12 +2545,8 @@ fun TtsOverlayControls(
                                     }
                                     Slider(
                                         value = rate,
-                                        onValueChange = {
-                                            rate = it; if (!isDraggingRate && activeMode != com.aryan.reader.tts.TtsPlaybackManager.TtsMode.CLOUD) {
-                                            isDraggingRate = true; ttsController.pause()
-                                        }
-                                        },
-                                        onValueChangeFinished = { isDraggingRate = false; saveAndApply() },
+                                        onValueChange = { rate = it },
+                                        onValueChangeFinished = saveAndApply,
                                         valueRange = 0.5f..3.0f,
                                         modifier = Modifier.weight(1f).height(20.dp),
                                         thumb = {
@@ -2624,12 +2614,8 @@ fun TtsOverlayControls(
                                     }
                                     Slider(
                                         value = pitch,
-                                        onValueChange = {
-                                            pitch = it; if (!isDraggingPitch && activeMode != com.aryan.reader.tts.TtsPlaybackManager.TtsMode.CLOUD) {
-                                            isDraggingPitch = true; ttsController.pause()
-                                        }
-                                        },
-                                        onValueChangeFinished = { isDraggingPitch = false; saveAndApply() },
+                                        onValueChange = { pitch = it },
+                                        onValueChangeFinished = saveAndApply,
                                         valueRange = 0.5f..2.0f,
                                         modifier = Modifier.weight(1f).height(20.dp),
                                         thumb = {

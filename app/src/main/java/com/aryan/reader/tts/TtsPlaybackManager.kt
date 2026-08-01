@@ -180,6 +180,34 @@ internal fun shouldPublishTtsTransportButtonsInCustomLayout(): Boolean {
     // Keep the legacy bridge away from indexing custom transport actions against Media3 media button preferences.
     return false
 }
+
+internal fun buildTtsNotificationContextLabel(
+    chapterTitle: String?,
+    chapterIndex: Int?,
+    totalChapters: Int?,
+    bookProgressPercent: Int?,
+    currentChunkIndex: Int,
+    totalChunks: Int
+): String {
+    val chunkLabel = formatReaderTtsChunkLabel(currentChunkIndex, totalChunks)
+    return buildString {
+        if (chapterIndex != null && totalChapters != null) {
+            append("Chapter ${chapterIndex + 1} of $totalChapters")
+            if (!chapterTitle.isNullOrBlank()) append(": $chapterTitle")
+        } else if (!chapterTitle.isNullOrBlank()) {
+            append(chapterTitle)
+        }
+        if (bookProgressPercent != null) {
+            if (isNotEmpty()) append(" - ")
+            append("$bookProgressPercent%")
+        }
+        if (chunkLabel != null) {
+            if (isNotEmpty()) append(" - ")
+            append(chunkLabel)
+        }
+    }.ifBlank { chapterTitle ?: chunkLabel ?: "TTS" }
+}
+
 internal fun shouldStopTtsPrefetchAfterMissingChunk(
     isLoaded: Boolean,
     playlistIndex: Int?
@@ -315,7 +343,7 @@ class TtsPlaybackManager(
     private val onPlaybackSessionPreparing: (bookTitle: String?, chapterTitle: String?) -> Unit = { _, _ -> },
     private val onPlaybackSessionStopped: () -> Unit = {},
     private val onExplicitStopRequested: () -> Unit = {}
-) : MediaSession.Callback, Player.Listener {
+) : MediaSession.Callback, Player.Listener, DirectLocalTtsListener {
 
     private val appContext = context.applicationContext
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -386,6 +414,13 @@ class TtsPlaybackManager(
     private var chapterIndex: Int? = null
     private var totalChapters: Int? = null
     private var pageIndex: Int? = null
+    private val directLocalTtsPlayer = DirectLocalTtsPlayer(appContext, this)
+    private var localSpeechRate = 1f
+    private var localSpeechPitch = 1f
+    private var localResumeOffset = 0
+    private var localLatestRangeOffset = 0
+    private var localQueuedThrough = -1
+    private var directLocalPlayerStateInvalidator: (() -> Unit)? = null
 
     init {
         player.addListener(this)
@@ -397,6 +432,11 @@ class TtsPlaybackManager(
     fun setMediaSession(session: MediaSession) {
         this.mediaSession = session
         updateSessionControls(_ttsState.value)
+    }
+
+    fun setDirectLocalPlayerStateInvalidator(invalidator: () -> Unit) {
+        directLocalPlayerStateInvalidator = invalidator
+        invalidator()
     }
 
     private fun advancePlaybackGeneration(): Int {
@@ -589,6 +629,10 @@ class TtsPlaybackManager(
                 handleChangeTtsMode(newMode)
             }
             FLUSH_PREFETCH_COMMAND -> {
+                if (currentTtsMode == TtsMode.BASE) {
+                    restartLocalSpeechFromCurrentPosition()
+                    return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+                }
                 Timber.d("Flushing prefetched TTS chunks for new parameters.")
                 advancePlaybackGeneration()
                 onResetContext()
@@ -626,7 +670,8 @@ class TtsPlaybackManager(
                 }
             }
             SLICE_CURRENT_AND_RELOAD_COMMAND -> {
-                handleSliceAndReload()
+                if (currentTtsMode == TtsMode.BASE) restartLocalSpeechFromCurrentPosition()
+                else handleSliceAndReload()
             }
             SET_PLAYBACK_PARAMS_COMMAND -> {
                 val speed = args.getFloat("speed", 1f)
@@ -635,6 +680,13 @@ class TtsPlaybackManager(
                     scope.launch(Dispatchers.Main) {
                         player.playbackParameters = androidx.media3.common.PlaybackParameters(speed, pitch)
                     }
+                } else {
+                    localSpeechRate = speed
+                    localSpeechPitch = pitch
+                    Timber.tag(TTS_LOCAL_SPEAK_DIAG_TAG).i(
+                        "parameters-updated rate=$localSpeechRate pitch=$localSpeechPitch playing=${_ttsState.value.isPlaying}"
+                    )
+                    restartLocalSpeechFromCurrentPosition()
                 }
             }
             SKIP_TO_PREVIOUS_TTS_CHUNK_COMMAND -> {
@@ -663,14 +715,66 @@ class TtsPlaybackManager(
         handleSkipTtsChunk(direction = 1)
     }
 
+    fun isDirectLocalPlayback(): Boolean = currentTtsMode == TtsMode.BASE && textChunks.isNotEmpty()
+
+    fun playFromTransport() {
+        if (!isDirectLocalPlayback()) {
+            player.play()
+            return
+        }
+        if (_ttsState.value.isPlaying) return
+        val chunkIndex = _ttsState.value.currentChunkIndex.takeIf { it in textChunks.indices } ?: return
+        val generation = advancePlaybackGeneration()
+        startLocalChunk(chunkIndex, localResumeOffset, generation)
+    }
+
+    fun pauseFromTransport() {
+        if (!isDirectLocalPlayback()) {
+            player.pause()
+            return
+        }
+        advancePlaybackGeneration()
+        directLocalTtsPlayer.stop()
+        localQueuedThrough = -1
+        localResumeOffset = localLatestRangeOffset
+        _ttsState.value = _ttsState.value.copy(isPlaying = false, isLoading = false)
+        Timber.tag(TTS_LOCAL_SPEAK_DIAG_TAG).i(
+            "pause chunk=${_ttsState.value.currentChunkIndex} resumeOffset=$localResumeOffset"
+        )
+    }
+
+    fun stopFromTransport() {
+        if (!isDirectLocalPlayback()) {
+            player.stop()
+            return
+        }
+        handleStopTts(userInitiated = true)
+        onExplicitStopRequested()
+    }
+
+    fun localPlaybackState(): Int = when {
+        !isDirectLocalPlayback() -> player.playbackState
+        _ttsState.value.isLoading -> Player.STATE_BUFFERING
+        _ttsState.value.sessionFinished -> Player.STATE_ENDED
+        else -> Player.STATE_READY
+    }
+
+    fun localIsPlaying(): Boolean = isDirectLocalPlayback() && _ttsState.value.isPlaying
+
     private fun canSkipTtsChunk(direction: Int): Boolean {
-        val currentIndex = currentChunkIndexFromPlayer()
+        val currentIndex = if (currentTtsMode == TtsMode.BASE) {
+            _ttsState.value.currentChunkIndex
+        } else currentChunkIndexFromPlayer()
             .takeIf { it != C.INDEX_UNSET }
             ?: _ttsState.value.currentChunkIndex
         return resolveTtsChunkSkipTarget(currentIndex, textChunks.size, direction) != null
     }
 
     private fun handleSkipTtsChunk(direction: Int) {
+        if (currentTtsMode == TtsMode.BASE) {
+            handleLocalSkip(direction)
+            return
+        }
         val currentIndex = currentChunkIndexFromPlayer()
             .takeIf { it != C.INDEX_UNSET }
             ?: _ttsState.value.currentChunkIndex
@@ -885,6 +989,198 @@ class TtsPlaybackManager(
         }
     }
 
+    private fun handleLocalSkip(direction: Int) {
+        val currentIndex = _ttsState.value.currentChunkIndex
+        val targetIndex = resolveTtsChunkSkipTarget(currentIndex, textChunks.size, direction) ?: return
+        val shouldPlay = _ttsState.value.isPlaying || _ttsState.value.isLoading
+        val generation = advancePlaybackGeneration()
+        directLocalTtsPlayer.stop()
+        localResumeOffset = 0
+        localLatestRangeOffset = 0
+        localQueuedThrough = -1
+        if (shouldPlay) {
+            startLocalChunk(targetIndex, 0, generation)
+        } else {
+            publishLocalChunkState(targetIndex, isLoading = false, isPlaying = false)
+        }
+        Timber.tag(TTS_LOCAL_SPEAK_DIAG_TAG).i(
+            "skip direction=$direction from=$currentIndex to=$targetIndex play=$shouldPlay generation=$generation"
+        )
+    }
+
+    private fun restartLocalSpeechFromCurrentPosition() {
+        if (!isDirectLocalPlayback() || !_ttsState.value.isPlaying) return
+        val chunkIndex = _ttsState.value.currentChunkIndex.takeIf { it in textChunks.indices } ?: return
+        val generation = advancePlaybackGeneration()
+        directLocalTtsPlayer.stop()
+        localQueuedThrough = -1
+        startLocalChunk(chunkIndex, localLatestRangeOffset, generation)
+    }
+
+    private fun startLocalChunk(chunkIndex: Int, spokenStartOffset: Int, generation: Int) {
+        val chunk = textChunks.getOrNull(chunkIndex) ?: return
+        val spokenText = chunk.spokenText.ifBlank { chunk.text }
+        val safeOffset = spokenStartOffset.coerceIn(0, spokenText.length)
+        if (safeOffset >= spokenText.length) {
+            handleLocalChunkDone(LocalTtsUtterance(generation, chunkIndex, safeOffset))
+            return
+        }
+        localResumeOffset = safeOffset
+        localLatestRangeOffset = safeOffset
+        localQueuedThrough = chunkIndex
+        publishLocalChunkState(chunkIndex, isLoading = true, isPlaying = false)
+        updateLocalMediaItem(chunkIndex)
+        val id = localTtsUtteranceId(generation, chunkIndex, safeOffset)
+        Timber.tag(TTS_LOCAL_SPEAK_DIAG_TAG).i(
+            "speak-request id=$id chars=${spokenText.length - safeOffset}"
+        )
+        directLocalTtsPlayer.speak(
+            text = spokenText.substring(safeOffset),
+            utteranceId = id,
+            rate = localSpeechRate,
+            pitch = localSpeechPitch,
+            queueMode = android.speech.tts.TextToSpeech.QUEUE_FLUSH
+        )
+        enqueueLocalLookahead(generation)
+    }
+
+    private fun enqueueLocalLookahead(generation: Int) {
+        val target = localQueuedThrough + 1
+        val chunk = textChunks.getOrNull(target) ?: return
+        val spokenText = chunk.spokenText.ifBlank { chunk.text }
+        localQueuedThrough = target
+        directLocalTtsPlayer.speak(
+            text = spokenText,
+            utteranceId = localTtsUtteranceId(generation, target, 0),
+            rate = localSpeechRate,
+            pitch = localSpeechPitch,
+            queueMode = android.speech.tts.TextToSpeech.QUEUE_ADD
+        )
+    }
+
+    private fun publishLocalChunkState(chunkIndex: Int, isLoading: Boolean, isPlaying: Boolean) {
+        val chunk = textChunks.getOrNull(chunkIndex) ?: return
+        _ttsState.value = _ttsState.value.copy(
+            isLoading = isLoading,
+            isPlaying = isPlaying,
+            currentText = chunk.text,
+            errorMessage = null,
+            currentChunkIndex = chunkIndex,
+            totalChunks = textChunks.size,
+            bookProgressPercent = calculateBookProgressPercent(chunkIndex),
+            sourceCfi = chunk.sourceCfi,
+            startOffsetInSource = chunk.startOffsetInSource,
+            currentWordSourceCfi = chunk.sourceCfi,
+            currentWordStartOffset = chunk.startOffsetInSource,
+            sessionFinished = false
+        )
+    }
+
+    private fun updateLocalMediaItem(chunkIndex: Int) {
+        val chunk = textChunks.getOrNull(chunkIndex) ?: return
+        val contextLabel = buildTtsNotificationContextLabel(
+            chapterTitle = chapterTitle,
+            chapterIndex = chapterIndex,
+            totalChapters = totalChapters,
+            bookProgressPercent = calculateBookProgressPercent(chunkIndex),
+            currentChunkIndex = chunkIndex,
+            totalChunks = textChunks.size
+        )
+        val metadata = MediaMetadata.Builder()
+            .setTitle(bookTitle)
+            .setDisplayTitle(bookTitle)
+            .setArtist(contextLabel)
+            .setSubtitle(chunk.text.replace(Regex("\\s+"), " ").trim().take(180))
+            .setArtworkUri(coverImageUri?.toUri())
+            .setExtras(Bundle().apply {
+                putString("ttsText", chunk.text)
+                putString("sourceCfi", chunk.sourceCfi)
+                putInt("startOffset", chunk.startOffsetInSource)
+            })
+            .build()
+        // Media3 requires every item placed on ExoPlayer to have a local configuration,
+        // even though direct local TTS never asks ExoPlayer to prepare or render it. Keep
+        // this synthetic URI solely as the MediaSession/notification metadata carrier.
+        player.setMediaItem(
+            MediaItem.Builder()
+                .setMediaId(chunkIndex.toString())
+                .setUri("tts-local://chunk/$chunkIndex")
+                .setMediaMetadata(metadata)
+                .build()
+        )
+    }
+
+    override fun onReady(generation: Int, chunkIndex: Int) {
+        scope.launch(Dispatchers.Main) {
+            if (!isPlaybackGenerationActive(generation) || currentTtsMode != TtsMode.BASE) return@launch
+            Timber.tag(TTS_LOCAL_SPEAK_DIAG_TAG).i("ready generation=$generation chunk=$chunkIndex")
+        }
+    }
+
+    override fun onStart(utterance: LocalTtsUtterance) {
+        scope.launch(Dispatchers.Main) {
+            if (!isPlaybackGenerationActive(utterance.generation) || currentTtsMode != TtsMode.BASE) return@launch
+            publishLocalChunkState(utterance.chunkIndex, isLoading = false, isPlaying = true)
+            updateLocalMediaItem(utterance.chunkIndex)
+        }
+    }
+
+    override fun onRangeStart(utterance: LocalTtsUtterance, start: Int, end: Int) {
+        scope.launch(Dispatchers.Main) {
+            if (!isPlaybackGenerationActive(utterance.generation) || currentTtsMode != TtsMode.BASE) return@launch
+            val chunk = textChunks.getOrNull(utterance.chunkIndex) ?: return@launch
+            localLatestRangeOffset = (utterance.spokenStartOffset + start)
+                .coerceIn(0, chunk.spokenText.ifBlank { chunk.text }.length)
+            val sourceOffset = resolveLocalTtsSourceOffset(
+                sourceStartOffset = chunk.startOffsetInSource,
+                spokenStartOffset = utterance.spokenStartOffset,
+                rangeStart = start,
+                visibleTextMatchesSpokenText = chunk.spokenText.ifBlank { chunk.text } == chunk.text
+            )
+            _ttsState.value = _ttsState.value.copy(
+                currentWordSourceCfi = chunk.sourceCfi,
+                currentWordStartOffset = sourceOffset
+            )
+        }
+    }
+
+    override fun onDone(utterance: LocalTtsUtterance) {
+        scope.launch(Dispatchers.Main) {
+            if (!isPlaybackGenerationActive(utterance.generation) || currentTtsMode != TtsMode.BASE) return@launch
+            handleLocalChunkDone(utterance)
+        }
+    }
+
+    private fun handleLocalChunkDone(utterance: LocalTtsUtterance) {
+        val next = utterance.chunkIndex + 1
+        if (next in textChunks.indices) {
+            enqueueLocalLookahead(utterance.generation)
+        } else {
+            localResumeOffset = 0
+            localLatestRangeOffset = 0
+            localQueuedThrough = -1
+            _ttsState.value = _ttsState.value.copy(
+                isLoading = false,
+                isPlaying = false,
+                currentWordSourceCfi = null,
+                currentWordStartOffset = -1,
+                sessionFinished = true
+            )
+            Timber.tag(TTS_LOCAL_SPEAK_DIAG_TAG).i("session-finished chunk=${utterance.chunkIndex}")
+        }
+    }
+
+    override fun onError(utterance: LocalTtsUtterance?, errorCode: Int) {
+        scope.launch(Dispatchers.Main) {
+            if (utterance != null && !isPlaybackGenerationActive(utterance.generation)) return@launch
+            _ttsState.value = _ttsState.value.copy(
+                isLoading = false,
+                isPlaying = false,
+                errorMessage = appContext.getString(R.string.tts_error_playback, errorCode.toString())
+            )
+        }
+    }
+
     private fun handleSliceAndReload() {
         val currentIdx = currentChunkIndexFromPlayer()
         if (currentIdx == C.INDEX_UNSET) return
@@ -970,6 +1266,8 @@ class TtsPlaybackManager(
         val continueSession = args.getBoolean(KEY_CONTINUE_SESSION, false)
         val speed = args.getFloat("playback_speed", 1f)
         val pitch = args.getFloat("playback_pitch", 1f)
+        localSpeechRate = speed
+        localSpeechPitch = pitch
 
         scope.launch(Dispatchers.Main) {
             if (ttsMode == TtsMode.CLOUD) {
@@ -1046,6 +1344,10 @@ class TtsPlaybackManager(
 
         currentAuthToken = authToken
         val resolvedStartChunkIndex = resolveTtsStartChunkIndex(startChunkIndex, chunks.size)
+        if (ttsMode == TtsMode.BASE) {
+            startLocalChunk(resolvedStartChunkIndex, 0, startGeneration)
+            return
+        }
         preparationJob = scope.launch {
             prepareAndPlayFirstChunk(startAtIndex = resolvedStartChunkIndex)
         }
@@ -1497,6 +1799,10 @@ class TtsPlaybackManager(
         onResetContext()
         preparationJob?.cancel()
         wordTrackingJob?.cancel()
+        directLocalTtsPlayer.stop()
+        localResumeOffset = 0
+        localLatestRangeOffset = 0
+        localQueuedThrough = -1
         if (clearState) {
             val finalState = TtsState(
                 sessionEndedByStop = userInitiated,
@@ -1532,6 +1838,7 @@ class TtsPlaybackManager(
     }
 
     override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+        if (currentTtsMode == TtsMode.BASE) return
         val newPlaylistIndex = player.currentMediaItemIndex
         Timber.tag("TTS_CLOUD_DIAG").d("onMediaItemTransition to playlistIndex: $newPlaylistIndex, mediaId: ${mediaItem?.mediaId}, reason: $reason")
         Timber.tag(TTS_NOTIFICATION_DIAG_TAG).i(
@@ -1742,6 +2049,7 @@ class TtsPlaybackManager(
     }
 
     override fun onIsPlayingChanged(isPlaying: Boolean) {
+        if (currentTtsMode == TtsMode.BASE) return
         Timber.tag(TTS_NOTIFICATION_DIAG_TAG).i(
             "onIsPlayingChanged. isPlaying=$isPlaying, playbackState=${player.playbackState}, playWhenReady=${player.playWhenReady}, mediaItems=${player.mediaItemCount}, currentIndex=${player.currentMediaItemIndex}"
         )
@@ -2208,30 +2516,14 @@ class TtsPlaybackManager(
     private fun createMediaItem(text: String, path: String, index: Int, chunk: TtsChunk): MediaItem {
         val isStreaming = path.startsWith("ttsstream://")
         val localAudioFile = if (isStreaming) null else File(path)
-        val progress = calculateBookProgressPercent(index)
-        val chunkLabel = if (textChunks.isNotEmpty()) {
-            "Chunk ${index + 1}/${textChunks.size}"
-        } else {
-            null
-        }
-        val chapterLabel = buildString {
-            val chapter = chapterIndex
-            val chapterCount = totalChapters
-            if (chapter != null && chapterCount != null) {
-                append("Chapter ${chapter + 1} of $chapterCount")
-                if (!chapterTitle.isNullOrBlank()) append(": $chapterTitle")
-            } else if (!chapterTitle.isNullOrBlank()) {
-                append(chapterTitle)
-            }
-            if (progress != null) {
-                if (isNotEmpty()) append(" - ")
-                append("$progress%")
-            }
-            if (chunkLabel != null) {
-                if (isNotEmpty()) append(" - ")
-                append(chunkLabel)
-            }
-        }.ifBlank { chapterTitle ?: chunkLabel ?: "TTS" }
+        val chapterLabel = buildTtsNotificationContextLabel(
+            chapterTitle = chapterTitle,
+            chapterIndex = chapterIndex,
+            totalChapters = totalChapters,
+            bookProgressPercent = calculateBookProgressPercent(index),
+            currentChunkIndex = index,
+            totalChunks = textChunks.size
+        )
         val chunkPreview = text
             .replace(Regex("\\s+"), " ")
             .trim()
@@ -2343,6 +2635,7 @@ class TtsPlaybackManager(
             session.setCustomLayout(createCustomLayout(state))
             session.setSessionActivity(createSessionActivity(state))
         }
+        directLocalPlayerStateInvalidator?.invoke()
     }
 
     private fun createCustomLayout(state: TtsState): List<CommandButton> {
@@ -2434,7 +2727,12 @@ class TtsPlaybackManager(
     @Suppress("Deprecation")
     private fun createStateButton(state: TtsState): CommandButton {
         val bundle = Bundle().apply {
+            putBoolean("isPlaying", state.isPlaying)
             putBoolean("isLoading", state.isLoading)
+            putInt(
+                "playbackState",
+                if (isDirectLocalPlayback()) localPlaybackState() else state.playbackState
+            )
             putString("errorMessage", state.errorMessage)
             putString("bookId", state.bookId)
             putString("bookTitle", state.bookTitle)
@@ -2472,12 +2770,15 @@ class TtsPlaybackManager(
     }
 
     fun release() {
+        directLocalPlayerStateInvalidator = null
         player.removeListener(this)
         handleStopTts(userInitiated = true)
+        directLocalTtsPlayer.shutdown()
         Timber.d("TtsPlaybackManager released.")
     }
 
     override fun onPlaybackStateChanged(playbackState: Int) {
+        if (currentTtsMode == TtsMode.BASE) return
         val stateName = when (playbackState) {
             Player.STATE_IDLE -> "STATE_IDLE"
             Player.STATE_BUFFERING -> "STATE_BUFFERING"
