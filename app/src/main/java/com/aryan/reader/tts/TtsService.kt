@@ -50,6 +50,7 @@ import com.aryan.reader.GEMINI_CLOUD_TTS_MODEL
 import com.aryan.reader.isByokCloudTtsAvailable
 import com.aryan.reader.loadAiByokSettings
 import com.aryan.reader.tts.TtsPlaybackManager.TtsMode
+import com.aryan.reader.audiobook.BookTtsSessionCoordinator
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -255,6 +256,16 @@ private const val TTS_FOREGROUND_NOTIFICATION_ID = 1001
 private const val TTS_FOREGROUND_IDLE_GRACE_MS = 15_000L
 private const val ACTION_TTS_NOTIFICATION_PREVIOUS_CHUNK = "com.aryan.reader.tts.NOTIFICATION_PREVIOUS_CHUNK"
 private const val ACTION_TTS_NOTIFICATION_NEXT_CHUNK = "com.aryan.reader.tts.NOTIFICATION_NEXT_CHUNK"
+const val ACTION_START_BOOK_TTS = "com.aryan.reader.tts.START_BOOK_AUDIOBOOK"
+const val ACTION_BOOK_TTS_PREVIOUS_CHAPTER = "com.aryan.reader.tts.BOOK_AUDIOBOOK_PREVIOUS_CHAPTER"
+const val ACTION_BOOK_TTS_NEXT_CHAPTER = "com.aryan.reader.tts.BOOK_AUDIOBOOK_NEXT_CHAPTER"
+const val ACTION_BOOK_TTS_SELECT_CHAPTER = "com.aryan.reader.tts.BOOK_AUDIOBOOK_SELECT_CHAPTER"
+const val ACTION_BOOK_TTS_SLEEP_TIMER = "com.aryan.reader.tts.BOOK_AUDIOBOOK_SLEEP_TIMER"
+const val ACTION_BOOK_TTS_CANCEL_SLEEP_TIMER = "com.aryan.reader.tts.BOOK_AUDIOBOOK_CANCEL_SLEEP_TIMER"
+const val EXTRA_BOOK_TTS_BOOK_ID = "book_tts_book_id"
+const val EXTRA_BOOK_TTS_START_POLICY = "book_tts_start_policy"
+const val EXTRA_BOOK_TTS_CHAPTER_INDEX = "book_tts_chapter_index"
+const val EXTRA_BOOK_TTS_SLEEP_MINUTES = "book_tts_sleep_minutes"
 private const val TTS_NOTIFICATION_PREVIOUS_REQUEST_CODE = 4208
 private const val TTS_NOTIFICATION_NEXT_REQUEST_CODE = 4209
 
@@ -602,14 +613,56 @@ class TtsService : MediaSessionService() {
     private lateinit var player: ExoPlayer
     private lateinit var playbackManager: TtsPlaybackManager
     private lateinit var cacheManager: TtsCacheManager
+    private lateinit var bookTtsCoordinator: BookTtsSessionCoordinator
     private var foregroundNotificationShown = false
     private var foregroundPlaybackExpected = false
     private var foregroundIdleJob: Job? = null
     private var foregroundBookTitle: String? = null
     private var foregroundChapterTitle: String? = null
+    private var bookSleepTimerJob: Job? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
+            ACTION_START_BOOK_TTS -> {
+                val bookId = intent.getStringExtra(EXTRA_BOOK_TTS_BOOK_ID)
+                if (!bookId.isNullOrBlank() && ::bookTtsCoordinator.isInitialized) {
+                    showPreparingForegroundNotification("book-audiobook-start")
+                    bookTtsCoordinator.start(
+                        bookId = bookId,
+                        startPolicy = intent.getStringExtra(EXTRA_BOOK_TTS_START_POLICY)
+                            ?: BookTtsSessionCoordinator.START_RESUME,
+                        selectedChapterIndex = intent.getIntExtra(EXTRA_BOOK_TTS_CHAPTER_INDEX, -1).takeIf { it >= 0 }
+                    )
+                }
+                return START_STICKY
+            }
+            ACTION_BOOK_TTS_PREVIOUS_CHAPTER -> {
+                if (::bookTtsCoordinator.isInitialized) bookTtsCoordinator.skipChapter(-1)
+                return START_STICKY
+            }
+            ACTION_BOOK_TTS_NEXT_CHAPTER -> {
+                if (::bookTtsCoordinator.isInitialized) bookTtsCoordinator.skipChapter(1)
+                return START_STICKY
+            }
+            ACTION_BOOK_TTS_SELECT_CHAPTER -> {
+                val chapter = intent.getIntExtra(EXTRA_BOOK_TTS_CHAPTER_INDEX, -1)
+                if (chapter >= 0 && ::bookTtsCoordinator.isInitialized) bookTtsCoordinator.selectChapter(chapter)
+                return START_STICKY
+            }
+            ACTION_BOOK_TTS_SLEEP_TIMER -> {
+                bookSleepTimerJob?.cancel()
+                val minutes = intent.getIntExtra(EXTRA_BOOK_TTS_SLEEP_MINUTES, 0)
+                if (minutes > 0) bookSleepTimerJob = scope.launch {
+                    delay(minutes * 60_000L)
+                    if (::playbackManager.isInitialized) playbackManager.pauseFromTransport()
+                }
+                return START_STICKY
+            }
+            ACTION_BOOK_TTS_CANCEL_SLEEP_TIMER -> {
+                bookSleepTimerJob?.cancel()
+                bookSleepTimerJob = null
+                return START_STICKY
+            }
             ACTION_TTS_NOTIFICATION_PREVIOUS_CHUNK -> {
                 Timber.tag(TTS_NOTIFICATION_DIAG_TAG).i("Notification previous chunk action received.")
                 Timber.tag(TTS_CHUNK_NAV_DIAG_TAG).i(
@@ -746,6 +799,7 @@ class TtsService : MediaSessionService() {
 
     private fun scheduleForegroundIdleStop(startId: Int) {
         foregroundIdleJob?.cancel()
+        bookSleepTimerJob?.cancel()
         foregroundIdleJob = scope.launch {
             delay(TTS_FOREGROUND_IDLE_GRACE_MS)
             val playbackInactive = !::player.isInitialized ||
@@ -1218,6 +1272,7 @@ class TtsService : MediaSessionService() {
 
         mediaSession?.let { playbackManager.setMediaSession(it) }
         playbackManager.setDirectLocalPlayerStateInvalidator(sessionPlayer::invalidateDirectLocalState)
+        bookTtsCoordinator = BookTtsSessionCoordinator(this, scope, playbackManager)
         Timber.tag(TTS_NOTIFICATION_DIAG_TAG).i("MediaSession created and attached to playback manager. sessionAvailable=${mediaSession != null}")
     }
 
@@ -1245,6 +1300,8 @@ class TtsService : MediaSessionService() {
         Timber.d("TtsService is being destroyed.")
         Timber.tag(TTS_NOTIFICATION_DIAG_TAG).w("TtsService onDestroy.")
         foregroundIdleJob?.cancel()
+        if (::bookTtsCoordinator.isInitialized) bookTtsCoordinator.release()
+        scope.cancel()
         stopTtsForeground()
         if (::playbackManager.isInitialized) {
             playbackManager.release()

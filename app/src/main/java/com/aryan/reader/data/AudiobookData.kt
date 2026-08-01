@@ -12,6 +12,7 @@ import androidx.room.OnConflictStrategy
 import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.withTransaction
+import androidx.documentfile.provider.DocumentFile
 import com.aryan.reader.FileType
 import java.io.File
 import java.util.UUID
@@ -111,6 +112,25 @@ class AudiobookImporter(private val context: Context) {
             }
             ImportedAudiobook(recent, audio)
         }
+    }
+
+    suspend fun importAll(uris: List<Uri>): List<Result<ImportedAudiobook>> =
+        uris.distinct().map { import(it) }
+
+    suspend fun importFolder(treeUri: Uri): List<Result<ImportedAudiobook>> {
+        val root = DocumentFile.fromTreeUri(context, treeUri) ?: return emptyList()
+        val audioFiles = buildList {
+            fun collect(directory: DocumentFile) {
+                directory.listFiles().sortedBy { it.name.orEmpty() }.forEach { child ->
+                    when {
+                        child.isDirectory -> collect(child)
+                        child.isFile && child.name?.let(::isSupportedAudiobookFileName) == true -> add(child.uri)
+                    }
+                }
+            }
+            collect(root)
+        }
+        return importAll(audioFiles)
     }
 
     private fun queryDisplayName(uri: Uri): String? = context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->

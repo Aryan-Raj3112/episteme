@@ -45,6 +45,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -402,6 +403,7 @@ class TtsPlaybackManager(
             ttsMode = initialTtsMode.name
         )
     )
+    val ttsState = _ttsState.asStateFlow()
 
     private var textChunks: List<TtsChunk> = emptyList()
     private val audioFiles = java.util.concurrent.ConcurrentHashMap<Int, File>()
@@ -437,6 +439,36 @@ class TtsPlaybackManager(
     fun setDirectLocalPlayerStateInvalidator(invalidator: () -> Unit) {
         directLocalPlayerStateInvalidator = invalidator
         invalidator()
+    }
+
+    fun startBookListeningChapter(
+        book: com.aryan.reader.audiobook.ListeningBook,
+        content: com.aryan.reader.audiobook.ListeningChapterContent,
+        startChunkIndex: Int,
+        continueSession: Boolean,
+        speechRate: Float,
+        pitch: Float
+    ) {
+        val args = Bundle().apply {
+            putBoolean(KEY_CONTINUE_SESSION, continueSession)
+            putFloat("playback_speed", speechRate)
+            putFloat("playback_pitch", pitch)
+        }
+        handleStartTts(
+            chunks = content.chunks,
+            speakerId = currentSpeakerId,
+            bookId = book.bookId,
+            bookTitle = book.title,
+            chapterTitle = content.chapter.title,
+            coverImageUri = book.coverPath?.let { File(it).toURI().toString() },
+            chapterIndex = content.chapter.index,
+            totalChapters = book.chapters.size,
+            pageIndex = if (book.type == com.aryan.reader.FileType.PDF) content.chapter.index else null,
+            startChunkIndex = startChunkIndex,
+            ttsMode = TtsMode.BASE,
+            playbackSource = "AUDIOBOOK_TTS",
+            args = args
+        )
     }
 
     private fun advancePlaybackGeneration(): Int {

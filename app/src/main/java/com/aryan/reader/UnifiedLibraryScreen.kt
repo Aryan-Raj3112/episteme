@@ -85,6 +85,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -118,6 +119,7 @@ import coil.request.ImageRequest
 import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.data.AppDatabase
 import com.aryan.reader.data.AudiobookImporter
+import com.aryan.reader.audiobook.AudiobookController
 import com.aryan.reader.shared.AnnotationExportFormat
 import kotlinx.coroutines.launch
 
@@ -139,6 +141,15 @@ fun UnifiedLibraryScreen(
     val audiobookImporter = remember(context) { AudiobookImporter(context.applicationContext) }
     val importedAudiobooks by remember(context) { AppDatabase.getDatabase(context).audiobookDao().observeAll() }
         .collectAsStateWithLifecycle(initialValue = emptyList())
+    val bookTtsProgress by remember(context) { AppDatabase.getDatabase(context).bookTtsListeningProgressDao().observeAll() }
+        .collectAsStateWithLifecycle(initialValue = emptyList())
+    val globalAudiobookController = remember(context) { AudiobookController(context) }
+    val importedPlayback by globalAudiobookController.state.collectAsStateWithLifecycle()
+    val ttsPlayback by viewModel.ttsController.ttsState.collectAsStateWithLifecycle()
+    LaunchedEffect(importedAudiobooks.isNotEmpty()) {
+        if (importedAudiobooks.isNotEmpty()) globalAudiobookController.connectSession()
+    }
+    DisposableEffect(globalAudiobookController) { onDispose(globalAudiobookController::release) }
     var selectedShelfId by rememberSaveable { mutableStateOf<String?>(null) }
     var filter by rememberSaveable { mutableStateOf(UnifiedLibraryFilter.ALL) }
     var query by rememberSaveable { mutableStateOf("") }
@@ -169,6 +180,22 @@ fun UnifiedLibraryScreen(
                     .onFailure { error -> viewModel.showBanner(error.message ?: context.getString(R.string.audiobooks_import_failed), isError = true) }
             }
         }
+    }
+    val audiobookMultiplePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isNotEmpty()) scope.launch {
+            val results = audiobookImporter.importAll(uris)
+            val imported = results.count { it.isSuccess }
+            val failed = results.size - imported
+            viewModel.showBanner("Imported $imported audiobook${if (imported == 1) "" else "s"}${if (failed > 0) "; $failed failed" else ""}", isError = imported == 0)
+        }
+    }
+    val audiobookFolderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        uri?.let { folderUri -> scope.launch {
+            val results = audiobookImporter.importFolder(folderUri)
+            val imported = results.count { it.isSuccess }
+            val failed = results.size - imported
+            viewModel.showBanner("Imported $imported audiobook${if (imported == 1) "" else "s"}${if (failed > 0) "; $failed failed" else ""}", isError = imported == 0)
+        } }
     }
     val saveOriginalLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/octet-stream")
@@ -325,6 +352,36 @@ fun UnifiedLibraryScreen(
     ) {
         Scaffold(
             contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0, 0, 0, 0),
+            bottomBar = {
+                val activeTtsBook = ttsPlayback.bookId
+                    ?.takeIf { ttsPlayback.playbackSource == "AUDIOBOOK_TTS" }
+                    ?.let { id -> uiState.rawLibraryFiles.firstOrNull { it.bookId == id } }
+                val activeImported = importedPlayback.bookId
+                    ?.let { id -> importedAudiobooks.firstOrNull { it.bookId == id } }
+                when {
+                    activeTtsBook != null -> {
+                        val item = activeTtsBook.toTtsAudiobookUiItem(bookTtsProgress.firstOrNull { it.bookId == activeTtsBook.bookId })
+                            .copy(chapter = ttsPlayback.chapterTitle ?: "Listening with TTS")
+                        AudiobookMiniPlayer(
+                            item = item,
+                            isPlaying = ttsPlayback.isPlaying,
+                            onTogglePlay = { if (ttsPlayback.isPlaying || ttsPlayback.isLoading) viewModel.ttsController.pause() else viewModel.ttsController.resume() },
+                            onExpand = { audiobookPlayerItem = item },
+                            onStop = viewModel.ttsController::stop
+                        )
+                    }
+                    activeImported != null -> {
+                        val item = activeImported.toUiItem()
+                        AudiobookMiniPlayer(
+                            item = item,
+                            isPlaying = importedPlayback.isPlaying,
+                            onTogglePlay = { globalAudiobookController.togglePlay(viewModel.ttsController::stop) },
+                            onExpand = { audiobookPlayerItem = item },
+                            onStop = globalAudiobookController::stop
+                        )
+                    }
+                }
+            },
             topBar = {
                 if (selectedItems.isNotEmpty()) {
                     ContextualTopAppBar(
@@ -435,8 +492,13 @@ fun UnifiedLibraryScreen(
                     modifier = Modifier.padding(padding),
                     audiobooks = importedAudiobooks,
                     ebooks = uiState.rawLibraryFiles.filter { it.type != FileType.AUDIOBOOK },
+                    ttsProgress = bookTtsProgress,
                     onAudiobookClick = { audiobookPlayerItem = it },
-                    onListenWithTtsClick = { book -> audiobookPlayerItem = book.toTtsAudiobookUiItem() },
+                    onListenWithTtsClick = { book ->
+                        audiobookPlayerItem = book
+                            .toTtsAudiobookUiItem(bookTtsProgress.firstOrNull { it.bookId == book.bookId })
+                            .copy(autoStart = true)
+                    },
                     onAddAudiobookClick = { showAudiobookAddSheet = true }
                 )
                 UnifiedLibrarySection.SHELVES -> UnifiedShelvesSection(
@@ -504,6 +566,14 @@ fun UnifiedLibraryScreen(
             onChooseFile = {
                 showAudiobookAddSheet = false
                 audiobookPicker.launch(arrayOf("audio/*", "application/octet-stream"))
+            },
+            onChooseMultiple = {
+                showAudiobookAddSheet = false
+                audiobookMultiplePicker.launch(arrayOf("audio/*", "application/octet-stream"))
+            },
+            onChooseFolder = {
+                showAudiobookAddSheet = false
+                audiobookFolderPicker.launch(null)
             },
             onDismiss = { showAudiobookAddSheet = false }
         )

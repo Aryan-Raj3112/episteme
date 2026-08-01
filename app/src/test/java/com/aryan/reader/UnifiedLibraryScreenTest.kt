@@ -2,6 +2,8 @@ package com.aryan.reader
 
 import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.data.AudiobookImporter
+import com.aryan.reader.audiobook.audiobookResumePosition
+import com.aryan.reader.audiobook.formatSleepTimerLabel
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertEquals
@@ -72,5 +74,22 @@ class UnifiedLibraryScreenTest {
     fun audiobookSpeedControlCyclesThroughListeningSpeeds() {
         assertEquals(1.25f, nextAudiobookSpeed(1f))
         assertEquals(.75f, nextAudiobookSpeed(2f))
+    }
+
+    @Test
+    fun audiobookResumeRewindsForContextWithoutGoingNegative() {
+        assertEquals(0L, audiobookResumePosition(7_000L))
+        assertEquals(50_000L, audiobookResumePosition(60_000L))
+    }
+
+    @Test
+    fun sleepTimerCountdownUsesCompactClockFormatting() {
+        assertEquals("30:00", formatSleepTimerLabel(1_800))
+        assertEquals("0:09", formatSleepTimerLabel(9))
+    }
+
+    @Test
+    fun generatedAudiobookProgressIncludesCompletedChapters() {
+        assertEquals(.375f, calculateTtsAudiobookProgress(chapterIndex = 1, chapterCount = 4, chunkIndex = 4, chunkCount = 10))
     }
 }
