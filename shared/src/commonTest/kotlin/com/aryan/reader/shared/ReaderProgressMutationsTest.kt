@@ -25,6 +25,27 @@ class ReaderProgressMutationsTest {
     }
 
     @Test
+    fun `pdf progress applied to current edited book preserves metadata edits`() {
+        val edited = pdfBook().copy(
+            title = "Edited in reader",
+            author = "Updated author",
+            metadataModifiedTimestamp = 90L,
+        )
+
+        val progressed = edited.withPdfReadingProgress(
+            pageIndex = 7,
+            progressPercentage = 64f,
+            modifiedAt = 100L,
+        )
+
+        assertEquals("Edited in reader", progressed.title)
+        assertEquals("Updated author", progressed.author)
+        assertEquals(90L, progressed.metadataModifiedTimestamp)
+        assertEquals(7, progressed.lastPageIndex)
+        assertEquals(64f, progressed.progressPercentage)
+    }
+
+    @Test
     fun `unchanged pdf progress does not create a newer reading update`() {
         val book = pdfBook().copy(
             lastPageIndex = 4,

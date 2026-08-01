@@ -95,6 +95,32 @@ class SharedOpdsCatalogsTest {
     }
 
     @Test
+    fun `catalog stream cleanup matches the decoded catalog id exactly`() {
+        fun stream(id: String, catalogId: String) = BookItem(
+            id = id,
+            path = SharedOpdsStreamUri.build(
+                OpdsStreamReference(
+                    id = id,
+                    count = 12,
+                    urlTemplate = "https://example.org/$id/{pageNumber}",
+                    catalogId = catalogId,
+                )
+            ),
+            type = FileType.CBZ,
+            displayName = id,
+            timestamp = 0L,
+        )
+        val wanted = stream("wanted", "catalog 1")
+        val similar = stream("similar", "catalog 10")
+        val local = BookItem("local", "/books/local.cbz", FileType.CBZ, "Local", 0L)
+
+        assertEquals(
+            listOf("wanted"),
+            listOf(wanted, similar, local).opdsStreamBooksForCatalog("catalog 1").map { it.id },
+        )
+    }
+
+    @Test
     fun `download namer prefers content disposition and falls back to acquisition format`() {
         assertEquals(
             ".azw3",

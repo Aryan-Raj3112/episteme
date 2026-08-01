@@ -83,3 +83,28 @@ interface TtsAdapter {
     suspend fun resume() = Unit
     suspend fun stop()
 }
+
+interface AudiobookRepository {
+    fun observeAudiobooks(): Flow<List<SharedAudiobook>>
+    suspend fun upsertAudiobook(audiobook: SharedAudiobook)
+    suspend fun updatePlayback(bookId: String, positionMs: Long, speed: Float)
+}
+
+interface BookTtsListeningProgressRepository {
+    fun observeAll(): Flow<List<SharedBookTtsListeningProgress>>
+    suspend fun get(bookId: String): SharedBookTtsListeningProgress?
+    suspend fun upsert(progress: SharedBookTtsListeningProgress)
+    suspend fun delete(bookId: String)
+}
+
+interface AudiobookPlaybackAdapter {
+    fun observeState(): Flow<SharedAudiobookPlaybackState>
+    suspend fun play(request: SharedAudiobookPlaybackRequest)
+    suspend fun pause()
+    suspend fun resume()
+    suspend fun seekTo(positionMs: Long)
+    suspend fun setSpeed(speed: Float)
+    suspend fun stop()
+    suspend fun startSleepTimer(minutes: Int)
+    suspend fun cancelSleepTimer()
+}

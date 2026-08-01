@@ -831,7 +831,11 @@ fun sharedSettingsHubModel(input: SharedSettingsHubInput): SharedSettingsHubMode
                         SharedSettingsItemModel(
                             action = SharedSettingsAction.TTS_SETTINGS,
                             title = "TTS voice settings",
-                            summary = "Choose cloud or device voices and speech behavior"
+                            summary = if (input.platform == SharedSettingsPlatform.IOS) {
+                                "Choose an iOS voice, speech rate, and pitch"
+                            } else {
+                                "Choose cloud or device voices and speech behavior"
+                            }
                         )
                     )
                 }

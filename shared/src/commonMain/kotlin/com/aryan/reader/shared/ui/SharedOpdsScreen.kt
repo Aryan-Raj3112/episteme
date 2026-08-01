@@ -72,6 +72,7 @@ import com.aryan.reader.shared.opds.SharedOpdsLocalBookMatcher
 import com.aryan.reader.shared.opds.SharedOpdsDownloadState
 import com.aryan.reader.shared.opds.SharedOpdsScreenState
 import com.aryan.reader.shared.opds.SharedOpdsText
+import com.aryan.reader.shared.opds.opdsStreamBooksForCatalog
 
 @Composable
 fun SharedOpdsScreen(
@@ -85,6 +86,7 @@ fun SharedOpdsScreen(
     onAddCatalog: (String, String, String?, String?) -> Unit,
     onUpdateCatalog: (String, String, String, String?, String?) -> Unit,
     onRemoveCatalog: (OpdsCatalog) -> Unit,
+    onDeleteCatalogStreams: (String) -> Unit,
     onDownloadBook: (OpdsEntry, OpdsAcquisition) -> Unit,
     onReadBook: (BookItem) -> Unit,
     onStreamBook: (OpdsEntry, OpdsCatalog?) -> Unit,
@@ -180,16 +182,42 @@ fun SharedOpdsScreen(
     }
 
     catalogToDelete?.let { catalog ->
+        val streamedBooksCount = localLibraryBooks.opdsStreamBooksForCatalog(catalog.id).size
         AlertDialog(
             onDismissRequest = { catalogToDelete = null },
             title = { Text(readerString("delete_catalog", "Delete catalog")) },
-            text = { Text(readerString("desktop_opds_delete_catalog_desc", "Delete \"%1\$s\"? Streamed books from this catalog may stop opening if credentials change later.", catalog.title)) },
+            text = {
+                Column {
+                    Text(
+                        readerString(
+                            "delete_catalog_desc",
+                            "Are you sure you want to delete '%1\$s'?",
+                            catalog.title,
+                        )
+                    )
+                    if (streamedBooksCount > 0) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            readerString(
+                                "delete_catalog_warning",
+                                "Deleting this catalog will also permanently remove %1\$d streaming books associated with it from your library.",
+                                streamedBooksCount,
+                            ),
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                }
+            },
             confirmButton = {
                 TextButton(
                     onClick = {
                         onRemoveCatalog(catalog)
+                        if (streamedBooksCount > 0) onDeleteCatalogStreams(catalog.id)
                         catalogToDelete = null
-                    }
+                    },
+                    colors = androidx.compose.material3.ButtonDefaults.textButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error,
+                    ),
                 ) {
                     Text(readerString("action_delete", "Delete"))
                 }

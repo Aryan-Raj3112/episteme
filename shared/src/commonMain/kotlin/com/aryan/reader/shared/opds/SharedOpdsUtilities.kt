@@ -295,6 +295,11 @@ object SharedOpdsStreamUri {
     }
 }
 
+/** Streamed books owned by a catalog, used when that catalog is deleted. */
+fun List<BookItem>.opdsStreamBooksForCatalog(catalogId: String): List<BookItem> = filter { book ->
+    SharedOpdsStreamUri.parse(book.path)?.catalogId == catalogId
+}
+
 fun String.percentEncode(): String {
     val bytes = encodeToByteArray()
     return buildString(bytes.size) {

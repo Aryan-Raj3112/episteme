@@ -32,6 +32,18 @@ class SharedFormattersTest {
         )
     }
 
+    @Test
+    fun `embedded metadata editing requires a local epub like Android`() {
+        assertTrue(book(FileType.EPUB).canEditEmbeddedFileMetadata())
+        assertFalse(book(FileType.PDF).canEditEmbeddedFileMetadata())
+        assertFalse(book(FileType.EPUB).copy(path = null).canEditEmbeddedFileMetadata())
+        assertFalse(
+            book(FileType.EPUB)
+                .copy(path = "opds-pse://stream?id=remote")
+                .canEditEmbeddedFileMetadata()
+        )
+    }
+
     private fun book(type: FileType) = BookItem(
         id = "book",
         path = "/books/document.pdf",

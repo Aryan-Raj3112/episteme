@@ -67,6 +67,7 @@ import com.aryan.reader.shared.Shelf
 import com.aryan.reader.shared.Tag
 import com.aryan.reader.shared.cardAuthor
 import com.aryan.reader.shared.cardTitle
+import com.aryan.reader.shared.canEditEmbeddedFileMetadata
 import com.aryan.reader.shared.formatFileSize
 import com.aryan.reader.shared.parseTagList
 
@@ -324,12 +325,15 @@ fun SharedBookInfoDialog(
     book: BookItem,
     knownTags: List<Tag> = emptyList(),
     initiallyEditing: Boolean = false,
-    canEditEmbeddedMetadata: Boolean = book.type == FileType.EPUB,
-    canRenameDisplayName: Boolean = true,
+    canEditEmbeddedMetadata: Boolean = book.canEditEmbeddedFileMetadata(),
+    canRenameDisplayName: Boolean = !canEditEmbeddedMetadata,
     canRestoreEmbeddedMetadata: Boolean = canEditEmbeddedMetadata,
     onChooseCover: (() -> String?)? = null,
     onRequestCover: (() -> Unit)? = null,
     externallySelectedCoverPath: String? = null,
+    formattedAddedDate: String? = null,
+    formattedModifiedDate: String? = null,
+    displayLocation: String? = null,
     onDismiss: () -> Unit,
     onSave: (BookItem) -> Unit,
     onRestore: (BookItem) -> Unit
@@ -439,8 +443,13 @@ fun SharedBookInfoDialog(
                         SharedBookMetadataInfoContent(
                             book = book,
                             hasMetadataChanges = hasMetadataChanges,
+                            formattedAddedDate = formattedAddedDate,
+                            formattedModifiedDate = formattedModifiedDate,
+                            displayLocation = displayLocation,
                             onCopyPath = {
-                                book.path?.takeIf { it.isNotBlank() }?.let { clipboard.setText(AnnotatedString(it)) }
+                                (displayLocation ?: book.path)
+                                    ?.takeIf { it.isNotBlank() }
+                                    ?.let { clipboard.setText(AnnotatedString(it)) }
                             }
                         )
                     }
@@ -562,6 +571,9 @@ private fun SharedBookInfoTopBar(
 private fun SharedBookMetadataInfoContent(
     book: BookItem,
     hasMetadataChanges: Boolean,
+    formattedAddedDate: String?,
+    formattedModifiedDate: String?,
+    displayLocation: String?,
     onCopyPath: () -> Unit
 ) {
     SharedInfoCard {
@@ -611,8 +623,19 @@ private fun SharedBookMetadataInfoContent(
 
     SharedInfoSection(title = readerString("section_file", "File")) {
         SharedInfoRowDetailed(readerString("label_file_name_simple", "File name"), book.displayName, maxLines = 2)
-        SharedInfoRowDetailed(readerString("location", "Location"), book.path.orEmpty().ifBlank { readerString("not_available_locally", "Not available") }, maxLines = 4, onCopy = onCopyPath)
-        book.sourceFolder?.takeIf { it.isNotBlank() }?.let {
+        formattedAddedDate?.let {
+            SharedInfoRowDetailed(readerString("added", "Added"), it)
+        }
+        formattedModifiedDate?.let {
+            SharedInfoRowDetailed(readerString("label_modified", "Modified"), it)
+        }
+        SharedInfoRowDetailed(
+            readerString("location", "Location"),
+            displayLocation ?: book.path.orEmpty().ifBlank { readerString("not_available_locally", "Not available") },
+            maxLines = 4,
+            onCopy = onCopyPath,
+        )
+        if (displayLocation == null) book.sourceFolder?.takeIf { it.isNotBlank() }?.let {
             SharedInfoRowDetailed(readerString("filter_source_folder", "Source folder"), it, maxLines = 3)
         }
     }

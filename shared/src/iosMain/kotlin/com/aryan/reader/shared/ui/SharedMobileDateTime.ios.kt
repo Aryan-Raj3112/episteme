@@ -25,6 +25,13 @@ internal actual fun formatSharedMobileClockTime(epochMillis: Long): String {
     return formatter.stringFromDate(epochMillis.toNSDate())
 }
 
+internal actual fun formatSharedMobileBookInfoDateTime(epochMillis: Long): String {
+    val formatter = NSDateFormatter().apply {
+        dateFormat = "MMM dd, yyyy HH:mm"
+    }
+    return formatter.stringFromDate(epochMillis.toNSDate())
+}
+
 private fun Long.toNSDate(): NSDate {
     val unixSecondsAtAppleReferenceDate = 978_307_200.0
     return NSDate(

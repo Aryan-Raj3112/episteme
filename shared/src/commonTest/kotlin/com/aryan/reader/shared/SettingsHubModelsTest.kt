@@ -143,6 +143,21 @@ class SettingsHubModelsTest {
     }
 
     @Test
+    fun `ios native tts settings describe device controls`() {
+        val item = sharedSettingsHubModel(
+            SharedSettingsHubInput(
+                platform = SharedSettingsPlatform.IOS,
+                ttsSettingsAvailable = true,
+                aiSettingsAvailable = false,
+            )
+        ).page(SharedSettingsDestination.TTS_AI)
+            .items
+            .single { it.action == SharedSettingsAction.TTS_SETTINGS }
+
+        assertEquals("Choose an iOS voice, speech rate, and pitch", item.summary)
+    }
+
+    @Test
     fun `cloud sync row requires both pro and platform account eligibility`() {
         val item = sharedSettingsHubModel(
             SharedSettingsHubInput(

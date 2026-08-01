@@ -42,6 +42,11 @@ fun BookItem.canExportOriginalFile(): Boolean {
     return path != null && !isOpdsStream()
 }
 
+/** Mirrors Android's embedded-metadata editor gate. Only a local EPUB can be rewritten. */
+fun BookItem.canEditEmbeddedFileMetadata(): Boolean {
+    return type == FileType.EPUB && path != null && !isOpdsStream()
+}
+
 fun BookItem.matchesSourceFolders(sourceFolders: Set<String>): Boolean {
     if (sourceFolders.isEmpty()) return true
     val matchesInAppStorage = IN_APP_STORAGE_SOURCE in sourceFolders &&

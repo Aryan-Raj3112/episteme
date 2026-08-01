@@ -495,6 +495,7 @@ fun SharedSupportProjectScreen(
 fun SharedAboutScreen(
     versionName: String,
     buildLabel: String,
+    subtitle: String = readerString("desktop_about_subtitle", "Desktop reader"),
     onOpenSource: (() -> Unit)? = null,
     onOpenIssues: (() -> Unit)? = null,
     onOpenPrivacyPolicy: (() -> Unit)? = null,
@@ -504,7 +505,7 @@ fun SharedAboutScreen(
 ) {
     SharedScreenScaffold(
         title = readerString("about_title", "About Episteme"),
-        subtitle = readerString("desktop_about_subtitle", "Desktop reader"),
+        subtitle = subtitle,
         modifier = modifier
     ) {
         Surface(

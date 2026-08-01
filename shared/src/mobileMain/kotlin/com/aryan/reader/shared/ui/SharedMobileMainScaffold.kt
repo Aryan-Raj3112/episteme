@@ -13,7 +13,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 
 /**
- * The two top-level destinations shared by Android and iOS phone layouts.
+ * The top-level destinations shared by Android and iOS phone layouts.
  *
  * Desktop deliberately owns a different navigation model, so this type lives
  * in mobileMain rather than commonMain.
@@ -22,7 +22,8 @@ enum class SharedMobileMainDestination(
     val label: String
 ) {
     HOME("Home"),
-    LIBRARY("Library")
+    LIBRARY("Library"),
+    UNIFIED_LIBRARY("Library Beta"),
 }
 
 /**
@@ -48,6 +49,7 @@ fun SharedMobileMainScaffold(
                                 imageVector = when (destination) {
                                     SharedMobileMainDestination.HOME -> Icons.Default.Home
                                     SharedMobileMainDestination.LIBRARY -> Icons.AutoMirrored.Filled.LibraryBooks
+                                    SharedMobileMainDestination.UNIFIED_LIBRARY -> Icons.AutoMirrored.Filled.LibraryBooks
                                 },
                                 contentDescription = destination.label
                             )
