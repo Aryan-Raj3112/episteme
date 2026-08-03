@@ -1,5 +1,18 @@
 package com.aryan.reader
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
@@ -10,8 +23,8 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -31,16 +44,14 @@ import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Book
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.SkipNext
-import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
@@ -55,17 +66,17 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -76,31 +87,38 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
-import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.media3.common.util.UnstableApi
 import coil.compose.AsyncImage
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.res.painterResource
-import com.aryan.reader.data.RecentFileItem
-import com.aryan.reader.data.AudiobookEntity
 import com.aryan.reader.audiobook.AudiobookController
 import com.aryan.reader.audiobook.AudiobookPlaybackRequest
-import com.aryan.reader.audiobook.BookTtsListeningProgressEntity
-import com.aryan.reader.audiobook.BookTtsContentRepository
 import com.aryan.reader.audiobook.BookTtsAudiobookController
+import com.aryan.reader.audiobook.BookTtsContentRepository
+import com.aryan.reader.audiobook.BookTtsListeningProgressEntity
 import com.aryan.reader.audiobook.BookTtsSessionCoordinator
+import com.aryan.reader.data.AudiobookEntity
+import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.epubreader.loadTtsPitch
 import com.aryan.reader.epubreader.loadTtsSpeechRate
 import com.aryan.reader.tts.formatReaderTtsChunkLabel
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.media3.common.util.UnstableApi
 
 internal enum class AudiobookUiStatus { ALL, IN_PROGRESS, NOT_STARTED, COMPLETED }
+
+private enum class TtsPlayerPanel {
+    COVER,
+    CHAPTERS,
+    TRANSCRIPT
+}
 
 internal data class AudiobookUiItem(
     val id: String,
@@ -928,9 +946,11 @@ private fun BookTtsPlayerSheet(item: AudiobookUiItem, onDismiss: () -> Unit) {
     val controller = remember(sourceBook.bookId) { BookTtsAudiobookController(context) }
     val prepared by controller.uiState.collectAsStateWithLifecycle()
     val playback by controller.playbackState.collectAsStateWithLifecycle()
-    var showChapters by remember { mutableStateOf(false) }
     var showPlayerMenu by remember(sourceBook.bookId) {
         mutableStateOf(false)
+    }
+    var activePanel by rememberSaveable(sourceBook.bookId) {
+        mutableStateOf(TtsPlayerPanel.COVER)
     }
     val sleepTimerLabel by controller.sleepTimerLabel
         .collectAsStateWithLifecycle()
@@ -940,7 +960,6 @@ private fun BookTtsPlayerSheet(item: AudiobookUiItem, onDismiss: () -> Unit) {
     var showSleepTimerDialog by remember(sourceBook.bookId) {
         mutableStateOf(false)
     }
-    var showTranscript by rememberSaveable(sourceBook.bookId) { mutableStateOf(false) }
     val transcriptListState = rememberLazyListState()
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var rate by remember { mutableFloatStateOf(prepared.savedProgress?.speechRate ?: loadTtsSpeechRate(context)) }
@@ -969,11 +988,26 @@ private fun BookTtsPlayerSheet(item: AudiobookUiItem, onDismiss: () -> Unit) {
             pitch = it.pitch
         }
     }
-    LaunchedEffect(playback.currentChunkIndex, playback.transcriptStartIndex, showTranscript) {
-        if (showTranscript && playback.transcriptChunks.isNotEmpty()) {
-            val localIndex = (playback.currentChunkIndex - playback.transcriptStartIndex)
-                .coerceIn(playback.transcriptChunks.indices)
-            transcriptListState.animateScrollToItem(localIndex)
+    LaunchedEffect(
+        playback.currentChunkIndex,
+        playback.transcriptStartIndex,
+        playback.transcriptChunks.size,
+        activePanel
+    ) {
+        if (
+            activePanel == TtsPlayerPanel.TRANSCRIPT &&
+            playback.transcriptChunks.isNotEmpty()
+        ) {
+            val localIndex =
+                (
+                        playback.currentChunkIndex -
+                                playback.transcriptStartIndex
+                        )
+                    .coerceIn(
+                        playback.transcriptChunks.indices
+                    )
+
+            transcriptListState.animateScrollToCenter(localIndex)
         }
     }
     DisposableEffect(controller) { onDispose(controller::release) }
@@ -1030,12 +1064,32 @@ private fun BookTtsPlayerSheet(item: AudiobookUiItem, onDismiss: () -> Unit) {
                             color = MaterialTheme.colorScheme.primary
                         )
 
-                        Text(
-                            text = currentChapterTitle,
-                            style = MaterialTheme.typography.labelMedium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                        AnimatedContent(
+                            targetState = currentChapterTitle,
+                            transitionSpec = {
+                                (
+                                        fadeIn(tween(220)) +
+                                                slideInVertically(
+                                                    animationSpec = tween(260),
+                                                    initialOffsetY = { it / 2 }
+                                                )
+                                        ) togetherWith (
+                                        fadeOut(tween(150)) +
+                                                slideOutVertically(
+                                                    animationSpec = tween(200),
+                                                    targetOffsetY = { -it / 2 }
+                                                )
+                                        )
+                            },
+                            label = "TtsChapterTitle"
+                        ) { title ->
+                            Text(
+                                text = title,
+                                style = MaterialTheme.typography.labelMedium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     }
 
                     Box {
@@ -1074,48 +1128,114 @@ private fun BookTtsPlayerSheet(item: AudiobookUiItem, onDismiss: () -> Unit) {
                 }
 
                 Box(
-                    Modifier.fillMaxWidth().weight(1f).padding(top = 12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .padding(top = 12.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    when {
-                        showChapters -> LazyColumn(
-                            Modifier.fillMaxSize().testTag("AudiobookChapterList"),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            items(book?.chapters.orEmpty(), key = { it.id }) { chapter ->
-                                val selected = chapter.index == currentChapter
-                                Row(
-                                    Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
-                                        .background(if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerLow)
-                                        .clickable {
-                                            if (selected && isThisBookActive) {
-                                                showChapters = false
-                                                return@clickable
-                                            }
-                                            if (isThisBookActive) controller.selectChapter(chapter.index)
-                                            else controller.start(sourceBook.bookId, BookTtsSessionCoordinator.START_CHAPTER, chapter.index)
-                                            showChapters = false
-                                        }.padding(horizontal = 16.dp, vertical = 14.dp),
-                                    verticalAlignment = Alignment.CenterVertically
+                    AnimatedContent(
+                        targetState = activePanel,
+                        transitionSpec = {
+                            val movingForward =
+                                targetState.ordinal > initialState.ordinal
+
+                            val enterOffset: (Int) -> Int = { width ->
+                                if (movingForward) width / 7 else -width / 7
+                            }
+
+                            val exitOffset: (Int) -> Int = { width ->
+                                if (movingForward) -width / 7 else width / 7
+                            }
+
+                            (
+                                    fadeIn(
+                                        animationSpec = tween(durationMillis = 220)
+                                    ) + slideInHorizontally(
+                                        animationSpec = tween(durationMillis = 300),
+                                        initialOffsetX = enterOffset
+                                    )
+                                    ) togetherWith (
+                                    fadeOut(
+                                        animationSpec = tween(durationMillis = 160)
+                                    ) + slideOutHorizontally(
+                                        animationSpec = tween(durationMillis = 240),
+                                        targetOffsetX = exitOffset
+                                    )
+                                    )
+                        },
+                        label = "TtsPlayerPanel"
+                    ) { panel ->
+                        when (panel) {
+                            TtsPlayerPanel.CHAPTERS -> {
+                                LazyColumn(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .testTag("AudiobookChapterList"),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                                    contentPadding = PaddingValues(
+                                        top = 8.dp,
+                                        bottom = 24.dp
+                                    )
                                 ) {
-                                    Text("${chapter.index + 1}", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                                    Text(chapter.title, Modifier.weight(1f).padding(start = 16.dp), maxLines = 2, overflow = TextOverflow.Ellipsis)
-                                    if (selected) Icon(Icons.AutoMirrored.Filled.VolumeUp, null, Modifier.size(18.dp))
+                                    items(
+                                        items = book?.chapters.orEmpty(),
+                                        key = { chapter -> chapter.id }
+                                    ) { chapter ->
+                                        val selected =
+                                            chapter.index == currentChapter
+
+                                        ChapterSelectionRow(
+                                            chapterNumber = chapter.index + 1,
+                                            title = chapter.title,
+                                            selected = selected,
+                                            onClick = {
+                                                if (selected && isThisBookActive) {
+                                                    activePanel = TtsPlayerPanel.COVER
+                                                } else {
+                                                    if (isThisBookActive) {
+                                                        controller.selectChapter(
+                                                            chapter.index
+                                                        )
+                                                    } else {
+                                                        controller.start(
+                                                            sourceBook.bookId,
+                                                            BookTtsSessionCoordinator.START_CHAPTER,
+                                                            chapter.index
+                                                        )
+                                                    }
+
+                                                    activePanel = TtsPlayerPanel.COVER
+                                                }
+                                            }
+                                        )
+                                    }
                                 }
                             }
+
+                            TtsPlayerPanel.TRANSCRIPT -> {
+                                AudiobookTranscript(
+                                    chunks = playback.transcriptChunks,
+                                    startIndex = playback.transcriptStartIndex,
+                                    currentIndex = playback.currentChunkIndex,
+                                    listState = transcriptListState,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            }
+
+                            TtsPlayerPanel.COVER -> {
+                                MockAudioCover(
+                                    item = item,
+                                    modifier = Modifier
+                                        .fillMaxHeight(0.94f)
+                                        .aspectRatio(0.72f)
+                                        .shadow(
+                                            elevation = 18.dp,
+                                            shape = RoundedCornerShape(20.dp)
+                                        )
+                                )
+                            }
                         }
-                        showTranscript -> AudiobookTranscript(
-                            chunks = playback.transcriptChunks,
-                            startIndex = playback.transcriptStartIndex,
-                            currentIndex = playback.currentChunkIndex,
-                            listState = transcriptListState,
-                            modifier = Modifier.fillMaxSize()
-                        )
-                        else -> MockAudioCover(
-                            item,
-                            Modifier.fillMaxHeight(.94f).aspectRatio(.72f)
-                                .shadow(18.dp, RoundedCornerShape(20.dp))
-                        )
                     }
                 }
                 Text(
@@ -1197,12 +1317,8 @@ private fun BookTtsPlayerSheet(item: AudiobookUiItem, onDismiss: () -> Unit) {
                             },
                             modifier = Modifier.size(76.dp)
                         ) {
-                            Icon(
-                                imageVector = if (playback.isPlaying) {
-                                    Icons.Default.Pause
-                                } else {
-                                    Icons.Default.PlayArrow
-                                },
+                            AnimatedPlayPauseIcon(
+                                isPlaying = playback.isPlaying,
                                 contentDescription = stringResource(
                                     if (playback.isPlaying) {
                                         R.string.content_desc_pause_tts
@@ -1263,23 +1379,75 @@ private fun BookTtsPlayerSheet(item: AudiobookUiItem, onDismiss: () -> Unit) {
                         )
                     }
                     item {
-                    AssistChip(
-                        onClick = {
-                            showChapters = !showChapters
-                            if (showChapters) showTranscript = false
-                        },
-                        label = { Text("Chapters") },
-                        leadingIcon = { Icon(Icons.Default.Menu, null, Modifier.size(16.dp)) }
-                    )
+                        AssistChip(
+                            onClick = {
+                                activePanel =
+                                    if (
+                                        activePanel ==
+                                        TtsPlayerPanel.CHAPTERS
+                                    ) {
+                                        TtsPlayerPanel.COVER
+                                    } else {
+                                        TtsPlayerPanel.CHAPTERS
+                                    }
+                            },
+                            label = {
+                                Text(
+                                    stringResource(
+                                        if (
+                                            activePanel ==
+                                            TtsPlayerPanel.CHAPTERS
+                                        ) {
+                                            R.string.audiobooks_hide_chapters
+                                        } else {
+                                            R.string.audiobooks_chapters
+                                        }
+                                    )
+                                )
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Default.Menu,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        )
                     }
                     item {
                         AssistChip(
                             onClick = {
-                                showTranscript = !showTranscript
-                                if (showTranscript) showChapters = false
+                                activePanel =
+                                    if (
+                                        activePanel ==
+                                        TtsPlayerPanel.TRANSCRIPT
+                                    ) {
+                                        TtsPlayerPanel.COVER
+                                    } else {
+                                        TtsPlayerPanel.TRANSCRIPT
+                                    }
                             },
-                            label = { Text(if (showTranscript) "Hide transcript" else "Transcript") },
-                            leadingIcon = { Icon(Icons.Default.Book, null, Modifier.size(16.dp)) }
+                            label = {
+                                Text(
+                                    stringResource(
+                                        if (
+                                            activePanel ==
+                                            TtsPlayerPanel.TRANSCRIPT
+                                        ) {
+                                            R.string.audiobooks_hide_transcript
+                                        } else {
+                                            R.string.audiobooks_transcript
+                                        }
+                                    )
+                                )
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Default.Book,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
                         )
                     }
                     item {
@@ -1348,35 +1516,219 @@ private fun AudiobookTranscript(
     modifier: Modifier = Modifier
 ) {
     if (chunks.isEmpty()) {
-        Box(modifier, contentAlignment = Alignment.Center) {
+        Box(
+            modifier = modifier,
+            contentAlignment = Alignment.Center
+        ) {
             Text(
-                "Spoken text will appear when playback starts",
+                text = "Spoken text will appear when playback starts",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.bodyLarge
             )
         }
         return
     }
+
     LazyColumn(
-        modifier.testTag("AudiobookTranscript"),
+        modifier = modifier.testTag("AudiobookTranscript"),
         state = listState,
         verticalArrangement = Arrangement.spacedBy(10.dp),
-        contentPadding = PaddingValues(vertical = 18.dp)
+        contentPadding = PaddingValues(
+            top = 18.dp,
+            bottom = 18.dp
+        )
     ) {
-        itemsIndexed(chunks) { localIndex, text ->
+        itemsIndexed(
+            items = chunks,
+            key = { localIndex, _ ->
+                startIndex + localIndex
+            }
+        ) { localIndex, text ->
             val absoluteIndex = startIndex + localIndex
             val selected = absoluteIndex == currentIndex
-            Text(
-                text = text,
-                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
-                    .background(if (selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)
-                    .padding(horizontal = 16.dp, vertical = 13.dp),
-                style = if (selected) MaterialTheme.typography.titleMedium else MaterialTheme.typography.bodyLarge,
-                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-                color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+
+            val containerColor by animateColorAsState(
+                targetValue = if (selected) {
+                    MaterialTheme.colorScheme.primaryContainer
+                } else {
+                    Color.Transparent
+                },
+                animationSpec = tween(durationMillis = 260),
+                label = "TranscriptContainerColor"
             )
+
+            val textColor by animateColorAsState(
+                targetValue = if (selected) {
+                    MaterialTheme.colorScheme.onPrimaryContainer
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+                animationSpec = tween(durationMillis = 260),
+                label = "TranscriptTextColor"
+            )
+
+            val scale by animateFloatAsState(
+                targetValue = if (selected) {
+                    1f
+                } else {
+                    0.985f
+                },
+                animationSpec = tween(durationMillis = 260),
+                label = "TranscriptItemScale"
+            )
+
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .graphicsLayer {
+                        scaleX = scale
+                        scaleY = scale
+                    },
+                shape = RoundedCornerShape(16.dp),
+                color = containerColor,
+                tonalElevation = if (selected) 2.dp else 0.dp
+            ) {
+                Text(
+                    text = text,
+                    modifier = Modifier.padding(
+                        horizontal = 16.dp,
+                        vertical = 14.dp
+                    ),
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = if (selected) {
+                        FontWeight.Bold
+                    } else {
+                        FontWeight.Normal
+                    },
+                    color = textColor
+                )
+            }
         }
     }
+}
+
+@Composable
+private fun ChapterSelectionRow(
+    chapterNumber: Int,
+    title: String,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    val containerColor by animateColorAsState(
+        targetValue = if (selected) {
+            MaterialTheme.colorScheme.primaryContainer
+        } else {
+            MaterialTheme.colorScheme.surfaceContainerLow
+        },
+        animationSpec = tween(durationMillis = 220),
+        label = "ChapterContainerColor"
+    )
+
+    val scale by animateFloatAsState(
+        targetValue = if (selected) 1f else 0.985f,
+        animationSpec = tween(durationMillis = 220),
+        label = "ChapterScale"
+    )
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
+            .clip(RoundedCornerShape(16.dp))
+            .background(containerColor)
+            .clickable(onClick = onClick)
+            .padding(
+                horizontal = 16.dp,
+                vertical = 14.dp
+            ),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = chapterNumber.toString(),
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.primary
+        )
+
+        Text(
+            text = title,
+            modifier = Modifier
+                .weight(1f)
+                .padding(start = 16.dp),
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            fontWeight = if (selected) {
+                FontWeight.SemiBold
+            } else {
+                FontWeight.Normal
+            }
+        )
+
+        AnimatedContent(
+            targetState = selected,
+            transitionSpec = {
+                (
+                        fadeIn(tween(180)) +
+                                scaleIn(
+                                    animationSpec = tween(180),
+                                    initialScale = 0.6f
+                                )
+                        ) togetherWith (
+                        fadeOut(tween(120)) +
+                                scaleOut(
+                                    animationSpec = tween(120),
+                                    targetScale = 0.6f
+                                )
+                        )
+            },
+            label = "SelectedChapterIcon"
+        ) { isSelected ->
+            if (isSelected) {
+                Icon(
+                    imageVector =
+                        Icons.AutoMirrored.Filled.VolumeUp,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+            } else {
+                Spacer(Modifier.size(18.dp))
+            }
+        }
+    }
+}
+
+private suspend fun androidx.compose.foundation.lazy.LazyListState
+        .animateScrollToCenter(index: Int) {
+    if (index < 0) return
+
+    val layout = layoutInfo
+    val visibleItems = layout.visibleItemsInfo
+
+    val targetItem = visibleItems.firstOrNull {
+        it.index == index
+    }
+
+    val estimatedItemHeight = targetItem?.size
+        ?: visibleItems
+            .takeIf { it.isNotEmpty() }
+            ?.map { it.size }
+            ?.average()
+            ?.toInt()
+        ?: 0
+
+    val viewportHeight =
+        layout.viewportEndOffset - layout.viewportStartOffset
+
+    val centeredOffset = -(
+            (viewportHeight - estimatedItemHeight) / 2
+            )
+
+    animateScrollToItem(
+        index = index,
+        scrollOffset = centeredOffset
+    )
 }
 
 @Composable
@@ -1640,6 +1992,7 @@ private fun AudiobookSleepTimerDialog(
     onDismiss: () -> Unit
 ) {
     val durations = listOf(
+        1,
         15,
         30,
         45,
@@ -1671,12 +2024,10 @@ private fun AudiobookSleepTimerDialog(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = if (minutes == 60) {
-                                stringResource(
-                                    R.string.audiobooks_one_hour
-                                )
-                            } else {
-                                stringResource(
+                            text = when (minutes) {
+                                1 -> stringResource(R.string.audiobooks_one_minute)
+                                60 -> stringResource(R.string.audiobooks_one_hour)
+                                else -> stringResource(
                                     R.string.audiobooks_minutes,
                                     minutes
                                 )
@@ -1694,4 +2045,43 @@ private fun AudiobookSleepTimerDialog(
             }
         }
     )
+}
+
+@Composable
+private fun AnimatedPlayPauseIcon(
+    isPlaying: Boolean,
+    contentDescription: String,
+    modifier: Modifier = Modifier,
+    tint: Color
+) {
+    AnimatedContent(
+        targetState = isPlaying,
+        transitionSpec = {
+            (
+                    fadeIn(tween(150)) +
+                            scaleIn(
+                                animationSpec = tween(180),
+                                initialScale = 0.65f
+                            )
+                    ) togetherWith (
+                    fadeOut(tween(100)) +
+                            scaleOut(
+                                animationSpec = tween(140),
+                                targetScale = 0.65f
+                            )
+                    )
+        },
+        label = "PlayPauseIcon"
+    ) { playing ->
+        Icon(
+            imageVector = if (playing) {
+                Icons.Default.Pause
+            } else {
+                Icons.Default.PlayArrow
+            },
+            contentDescription = contentDescription,
+            modifier = modifier,
+            tint = tint
+        )
+    }
 }

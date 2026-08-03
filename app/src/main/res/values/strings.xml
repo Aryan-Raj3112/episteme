@@ -2177,4 +2177,8 @@
     <string name="audiobooks_sleep_timer">Sleep timer</string>
     <string name="audiobooks_minutes">%1$d minutes</string>
     <string name="audiobooks_one_hour">1 hour</string>
+    <string name="audiobooks_one_minute">1 minute</string>
+    <string name="audiobooks_hide_chapters">Hide chapters</string>
+    <string name="audiobooks_transcript">Transcript</string>
+    <string name="audiobooks_hide_transcript">Hide transcript</string>
 </resources>
