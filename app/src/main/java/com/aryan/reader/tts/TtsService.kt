@@ -73,6 +73,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import com.google.common.collect.ImmutableList
 import java.util.concurrent.CopyOnWriteArraySet
+import kotlin.time.Duration.Companion.milliseconds
 
 data class WordTimingInfo(val word: String, val startTime: Double)
 
@@ -651,16 +652,42 @@ class TtsService : MediaSessionService() {
             }
             ACTION_BOOK_TTS_SLEEP_TIMER -> {
                 bookSleepTimerJob?.cancel()
-                val minutes = intent.getIntExtra(EXTRA_BOOK_TTS_SLEEP_MINUTES, 0)
-                if (minutes > 0) bookSleepTimerJob = scope.launch {
-                    delay(minutes * 60_000L)
-                    if (::playbackManager.isInitialized) playbackManager.pauseFromTransport()
+                bookSleepTimerJob = null
+
+                val minutes = intent.getIntExtra(
+                    EXTRA_BOOK_TTS_SLEEP_MINUTES,
+                    0
+                )
+
+                if (minutes > 0) {
+                    bookSleepTimerJob = scope.launch {
+                        delay((minutes * 60_000L).milliseconds)
+
+                        bookSleepTimerJob = null
+
+                        Timber.tag(TTS_NOTIFICATION_DIAG_TAG).i(
+                            "Book TTS sleep timer expired after $minutes minute(s)."
+                        )
+
+                        if (::bookTtsCoordinator.isInitialized) {
+                            bookTtsCoordinator.stopForSleepTimer()
+                        } else {
+                            stopSelf()
+                        }
+                    }
                 }
+
                 return START_STICKY
             }
+
             ACTION_BOOK_TTS_CANCEL_SLEEP_TIMER -> {
                 bookSleepTimerJob?.cancel()
                 bookSleepTimerJob = null
+
+                Timber.tag(TTS_NOTIFICATION_DIAG_TAG).i(
+                    "Book TTS sleep timer cancelled."
+                )
+
                 return START_STICKY
             }
             ACTION_TTS_NOTIFICATION_PREVIOUS_CHUNK -> {
@@ -1238,9 +1265,10 @@ class TtsService : MediaSessionService() {
             onPlaybackSessionPreparing = ::onPlaybackSessionPreparing,
             onPlaybackSessionStopped = ::onPlaybackSessionStopped,
             onExplicitStopRequested = {
-                // Do not use this for natural chapter handoffs: #346 relies on
-                // the service staying alive while ordered chunks are generated.
-                // It is only invoked for the user's explicit Stop action.
+                // Manual stop and sleep-timer stop both terminate the complete session.
+                // Natural chapter handoffs never invoke this callback.
+                bookSleepTimerJob?.cancel()
+                bookSleepTimerJob = null
                 stopSelf()
             }
         )
@@ -1300,7 +1328,12 @@ class TtsService : MediaSessionService() {
         Timber.d("TtsService is being destroyed.")
         Timber.tag(TTS_NOTIFICATION_DIAG_TAG).w("TtsService onDestroy.")
         foregroundIdleJob?.cancel()
-        if (::bookTtsCoordinator.isInitialized) bookTtsCoordinator.release()
+        bookSleepTimerJob?.cancel()
+        bookSleepTimerJob = null
+
+        if (::bookTtsCoordinator.isInitialized) {
+            bookTtsCoordinator.release()
+        }
         scope.cancel()
         stopTtsForeground()
         if (::playbackManager.isInitialized) {

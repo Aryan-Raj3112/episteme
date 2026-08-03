@@ -33,6 +33,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlin.time.Duration.Companion.milliseconds
 
 data class AudiobookPlaybackState(
     val connected: Boolean = false,
@@ -101,6 +102,9 @@ class AudiobookPlaybackService : MediaSessionService(), Player.Listener {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_AUDIOBOOK_STOP -> {
+                sleepTimerJob?.cancel()
+                sleepTimerJob = null
+
                 scope.launch {
                     persistPosition()
                     player.stop()
@@ -108,15 +112,34 @@ class AudiobookPlaybackService : MediaSessionService(), Player.Listener {
                     stopSelf()
                 }
             }
+
             ACTION_AUDIOBOOK_SLEEP_TIMER -> {
                 sleepTimerJob?.cancel()
-                val minutes = intent.getIntExtra(EXTRA_AUDIOBOOK_SLEEP_MINUTES, 0)
-                if (minutes > 0) sleepTimerJob = scope.launch {
-                    delay(minutes * 60_000L)
-                    player.pause()
+                sleepTimerJob = null
+
+                val minutes = intent.getIntExtra(
+                    EXTRA_AUDIOBOOK_SLEEP_MINUTES,
+                    0
+                )
+
+                if (minutes > 0) {
+                    sleepTimerJob = scope.launch {
+                        delay((minutes * 60_000L).milliseconds)
+
+                        persistPosition()
+
+                        sleepTimerJob = null
+                        player.stop()
+                        player.clearMediaItems()
+                        stopSelf()
+                    }
                 }
             }
-            ACTION_AUDIOBOOK_CANCEL_SLEEP_TIMER -> sleepTimerJob?.cancel()
+
+            ACTION_AUDIOBOOK_CANCEL_SLEEP_TIMER -> {
+                sleepTimerJob?.cancel()
+                sleepTimerJob = null
+            }
         }
         return super.onStartCommand(intent, flags, startId)
     }
@@ -231,7 +254,14 @@ class AudiobookController(context: Context) : Player.Listener {
     fun seekBy(deltaMs: Long) { controller?.let { seekTo(it.currentPosition + deltaMs) } }
     fun setSpeed(speed: Float) { controller?.setPlaybackSpeed(speed) }
     fun stop() {
-        context.startService(Intent(context, AudiobookPlaybackService::class.java).setAction(ACTION_AUDIOBOOK_STOP))
+        sleepCountdownJob?.cancel()
+        sleepCountdownJob = null
+        _sleepTimerLabel.value = "Sleep"
+
+        context.startService(
+            Intent(context, AudiobookPlaybackService::class.java)
+                .setAction(ACTION_AUDIOBOOK_STOP)
+        )
     }
 
     fun toggleSleepTimer(minutes: Int = 30) {

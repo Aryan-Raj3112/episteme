@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import androidx.core.content.ContextCompat
+import androidx.media3.common.util.UnstableApi
 import androidx.room.Dao
 import androidx.room.Entity
 import androidx.room.ForeignKey
@@ -60,6 +61,7 @@ import com.aryan.reader.tts.EXTRA_BOOK_TTS_BOOK_ID
 import com.aryan.reader.tts.EXTRA_BOOK_TTS_START_POLICY
 import com.aryan.reader.tts.EXTRA_BOOK_TTS_CHAPTER_INDEX
 import com.aryan.reader.tts.EXTRA_BOOK_TTS_SLEEP_MINUTES
+import kotlin.time.Duration.Companion.milliseconds
 
 @Entity(
     tableName = "book_tts_listening_progress",
@@ -355,6 +357,22 @@ class BookTtsSessionCoordinator(
         transitionJob = scope.launch { playChapter(chapterIndex, 0, continueSession = true) }
     }
 
+    @androidx.annotation.OptIn(UnstableApi::class)
+    suspend fun stopForSleepTimer() {
+        transitionJob?.cancel()
+        persistJob?.cancel()
+
+        val state = playbackManager.ttsState.value
+        if (state.playbackSource != "AUDIOBOOK_TTS") return
+
+        persistNow(
+            completed = false,
+            state = state
+        )
+
+        playbackManager.stopBookListeningSession()
+    }
+
     private suspend fun playChapter(
         chapterIndex: Int,
         startChunkIndex: Int,
@@ -405,6 +423,7 @@ class BookTtsSessionCoordinator(
         Timber.tag(TAG).i("Playing book=${book.bookId} chapter=$playableChapterIndex chunk=${progress.chunkIndex}")
     }
 
+    @UnstableApi
     private fun onPlaybackState(state: com.aryan.reader.tts.TtsPlaybackManager.TtsState) {
         if (state.playbackSource != "AUDIOBOOK_TTS") return
         val book = activeBook ?: return
@@ -438,25 +457,74 @@ class BookTtsSessionCoordinator(
         }
     }
 
-    private fun persist(completed: Boolean, state: com.aryan.reader.tts.TtsPlaybackManager.TtsState) {
-        val book = activeBook ?: return
-        val old = activeProgress ?: return
-        val chapter = (state.chapterIndex ?: old.chapterIndex).coerceIn(book.chapters.indices)
+    @androidx.annotation.OptIn(UnstableApi::class)
+    private fun buildProgress(
+        completed: Boolean,
+        state: com.aryan.reader.tts.TtsPlaybackManager.TtsState
+    ): BookTtsListeningProgressEntity? {
+        val book = activeBook ?: return null
+        val old = activeProgress ?: return null
+
+        val chapter = (state.chapterIndex ?: old.chapterIndex)
+            .coerceIn(book.chapters.indices)
+
         val chunkFraction = if (state.totalChunks > 0) {
-            (state.currentChunkIndex.coerceAtLeast(0) + 1f) / state.totalChunks
-        } else 0f
-        val progress = if (completed) 100f else ((chapter + chunkFraction) / book.chapters.size * 100f).coerceIn(0f, 99.9f)
-        val next = old.copy(
+            (state.currentChunkIndex.coerceAtLeast(0) + 1f) /
+                    state.totalChunks
+        } else {
+            0f
+        }
+
+        val progress = if (completed) {
+            100f
+        } else {
+            ((chapter + chunkFraction) / book.chapters.size * 100f)
+                .coerceIn(0f, 99.9f)
+        }
+
+        return old.copy(
             chapterIndex = chapter,
             chunkIndex = state.currentChunkIndex.coerceAtLeast(0),
             sourceCfi = state.currentWordSourceCfi ?: state.sourceCfi,
-            sourceOffset = state.currentWordStartOffset.takeIf { it >= 0 } ?: state.startOffsetInSource.coerceAtLeast(0),
+            sourceOffset = state.currentWordStartOffset
+                .takeIf { it >= 0 }
+                ?: state.startOffsetInSource.coerceAtLeast(0),
             progressPercent = progress,
             completed = completed,
             updatedAt = System.currentTimeMillis()
-        )
-        activeProgress = next
-        scope.launch(Dispatchers.IO) { repository.saveProgress(next) }
+        ).also {
+            activeProgress = it
+        }
+    }
+
+    @androidx.annotation.OptIn(UnstableApi::class)
+    private fun persist(
+        completed: Boolean,
+        state: com.aryan.reader.tts.TtsPlaybackManager.TtsState
+    ) {
+        val next = buildProgress(
+            completed = completed,
+            state = state
+        ) ?: return
+
+        scope.launch(Dispatchers.IO) {
+            repository.saveProgress(next)
+        }
+    }
+
+    @androidx.annotation.OptIn(UnstableApi::class)
+    private suspend fun persistNow(
+        completed: Boolean,
+        state: com.aryan.reader.tts.TtsPlaybackManager.TtsState
+    ) {
+        val next = buildProgress(
+            completed = completed,
+            state = state
+        ) ?: return
+
+        withContext(Dispatchers.IO) {
+            repository.saveProgress(next)
+        }
     }
 
     fun release() {
@@ -538,9 +606,16 @@ class BookTtsAudiobookController(context: Context) {
         else ttsController.resume()
     }
 
-    fun stop() = ttsController.stop()
+    fun stop() {
+        sleepTimerJob?.cancel()
+        sleepTimerJob = null
+        _sleepTimerLabel.value = "Sleep"
+        ttsController.stop()
+    }
     fun previousChunk() = ttsController.skipToPreviousChunk()
     fun nextChunk() = ttsController.skipToNextChunk()
+
+    @UnstableApi
     fun setParameters(rate: Float, pitch: Float) {
         com.aryan.reader.epubreader.saveTtsSpeechRate(appContext, rate)
         com.aryan.reader.epubreader.saveTtsPitch(appContext, pitch)
@@ -552,25 +627,40 @@ class BookTtsAudiobookController(context: Context) {
     }
 
     fun startSleepTimer(minutes: Int) {
-        sleepTimerJob?.cancel()
         if (_sleepTimerLabel.value != "Sleep") {
+            sleepTimerJob?.cancel()
+            sleepTimerJob = null
             _sleepTimerLabel.value = "Sleep"
-            appContext.startService(Intent(appContext, TtsService::class.java).setAction(ACTION_BOOK_TTS_CANCEL_SLEEP_TIMER))
+
+            appContext.startService(
+                Intent(appContext, TtsService::class.java)
+                    .setAction(ACTION_BOOK_TTS_CANCEL_SLEEP_TIMER)
+            )
             return
         }
-        appContext.startService(Intent(appContext, TtsService::class.java).apply {
-            action = ACTION_BOOK_TTS_SLEEP_TIMER
-            putExtra(EXTRA_BOOK_TTS_SLEEP_MINUTES, minutes)
-        })
+
+        sleepTimerJob?.cancel()
+
+        appContext.startService(
+            Intent(appContext, TtsService::class.java).apply {
+                action = ACTION_BOOK_TTS_SLEEP_TIMER
+                putExtra(EXTRA_BOOK_TTS_SLEEP_MINUTES, minutes)
+            }
+        )
+
         sleepTimerJob = scope.launch {
             var remaining = minutes * 60
+
             while (remaining > 0) {
-                _sleepTimerLabel.value = "${remaining / 60}:${(remaining % 60).toString().padStart(2, '0')}"
-                delay(1_000)
+                _sleepTimerLabel.value =
+                    "${remaining / 60}:${(remaining % 60).toString().padStart(2, '0')}"
+
+                delay(1_000.milliseconds)
                 remaining--
             }
-            ttsController.pause()
+
             _sleepTimerLabel.value = "Sleep"
+            sleepTimerJob = null
         }
     }
 
