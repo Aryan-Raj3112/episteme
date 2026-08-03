@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -37,12 +38,16 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -54,6 +59,7 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -79,6 +85,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.data.AudiobookEntity
 import com.aryan.reader.audiobook.AudiobookController
@@ -91,6 +98,7 @@ import com.aryan.reader.epubreader.loadTtsPitch
 import com.aryan.reader.epubreader.loadTtsSpeechRate
 import com.aryan.reader.tts.formatReaderTtsChunkLabel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.media3.common.util.UnstableApi
 
 internal enum class AudiobookUiStatus { ALL, IN_PROGRESS, NOT_STARTED, COMPLETED }
 
@@ -150,67 +158,150 @@ internal fun AudiobooksLibrarySection(
     audiobooks: List<AudiobookEntity>,
     ebooks: List<RecentFileItem>,
     ttsProgress: List<BookTtsListeningProgressEntity>,
+    activeItemId: String?,
     onAudiobookClick: (AudiobookUiItem) -> Unit,
     onListenWithTtsClick: (RecentFileItem) -> Unit,
     onAddAudiobookClick: () -> Unit,
 ) {
     var status by remember { mutableStateOf(AudiobookUiStatus.ALL) }
+
     val ttsItems = ebooks
         .filter { BookTtsContentRepository.supports(it.type) }
-        .map { book -> book.toTtsAudiobookUiItem(ttsProgress.firstOrNull { it.bookId == book.bookId }) }
+        .map { book ->
+            book.toTtsAudiobookUiItem(
+                ttsProgress.firstOrNull { it.bookId == book.bookId }
+            )
+        }
+
     val allAudiobooks = audiobooks.map(AudiobookEntity::toUiItem)
     val visible = filterAudiobooks(allAudiobooks, status)
-    LazyColumn(
-        modifier = modifier.fillMaxSize().testTag("AudiobooksLibrary"),
-        contentPadding = PaddingValues(bottom = 112.dp),
-        verticalArrangement = Arrangement.spacedBy(22.dp)
-    ) {
-        item {
-            Column(Modifier.padding(start = 20.dp, end = 20.dp, top = 18.dp)) {
-                Text(stringResource(R.string.audiobooks_listen_anywhere), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                Text(stringResource(R.string.audiobooks_listen_anywhere_desc), color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+    val resumableItems = (allAudiobooks + ttsItems)
+        .filter { it.progress in 0.001f..<1f }
+
+    val continueItem =
+        resumableItems.firstOrNull { it.id == activeItemId }
+            ?: resumableItems.maxByOrNull { candidate ->
+                if (candidate.isTts) {
+                    ttsProgress
+                        .firstOrNull { "tts-${it.bookId}" == candidate.id }
+                        ?.updatedAt
+                        ?: 0L
+                } else {
+                    0L
+                }
             }
-        }
-        item {
-            (allAudiobooks + ttsItems)
-                .filter { it.progress in 0.001f..<1f }
-                .maxByOrNull { candidate ->
-                    if (candidate.isTts) ttsProgress.firstOrNull { "tts-${it.bookId}" == candidate.id }?.updatedAt ?: 0L
-                    else 0L
-                }?.let { item ->
+
+    LazyColumn(
+        modifier = modifier
+            .fillMaxSize()
+            .testTag("AudiobooksLibrary"),
+        contentPadding = PaddingValues(
+            top = 16.dp,
+            bottom = 112.dp
+        ),
+        verticalArrangement = Arrangement.spacedBy(20.dp)
+    ) {
+        continueItem?.let { item ->
+            item {
                 AudiobookContinueCard(
-                    item,
-                    { onAudiobookClick(if (item.isTts) item.copy(autoStart = true) else item) },
-                    Modifier.padding(horizontal = 20.dp)
+                    item = item,
+                    isActive = item.id == activeItemId,
+                    onClick = {
+                        onAudiobookClick(
+                            if (item.isTts) {
+                                item.copy(autoStart = true)
+                            } else {
+                                item
+                            }
+                        )
+                    },
+                    modifier = Modifier.padding(horizontal = 20.dp)
                 )
             }
         }
+
         item {
             Column {
-                SectionHeading(stringResource(R.string.audiobooks_your_audiobooks), stringResource(R.string.audiobooks_imported_files_desc))
-                LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                SectionHeading(
+                    title = stringResource(R.string.audiobooks_your_audiobooks),
+                    subtitle = stringResource(R.string.audiobooks_imported_files_desc)
+                )
+
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 20.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     items(AudiobookUiStatus.entries) { option ->
-                        FilterChip(selected = status == option, onClick = { status = option }, label = { Text(stringResource(option.labelRes)) })
+                        FilterChip(
+                            selected = status == option,
+                            onClick = { status = option },
+                            label = {
+                                Text(stringResource(option.labelRes))
+                            }
+                        )
                     }
                 }
+
                 if (visible.isEmpty()) {
-                    AudiobookEmptyCard(onAddAudiobookClick, Modifier.padding(horizontal = 20.dp, vertical = 8.dp))
+                    AudiobookEmptyCard(
+                        onAdd = onAddAudiobookClick,
+                        modifier = Modifier.padding(
+                            horizontal = 20.dp,
+                            vertical = 8.dp
+                        )
+                    )
                 } else {
-                    LazyRow(contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                        items(visible, key = { it.id }) { AudiobookCoverCard(it, { onAudiobookClick(it) }) }
+                    LazyRow(
+                        contentPadding = PaddingValues(
+                            horizontal = 20.dp,
+                            vertical = 8.dp
+                        ),
+                        horizontalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        items(
+                            items = visible,
+                            key = { it.id }
+                        ) { item ->
+                            AudiobookCoverCard(
+                                item = item,
+                                isActive = item.id == activeItemId,
+                                onClick = { onAudiobookClick(item) }
+                            )
+                        }
                     }
                 }
             }
         }
+
         item {
             Column {
-                SectionHeading(stringResource(R.string.audiobooks_listen_to_ebooks), stringResource(R.string.audiobooks_tts_desc))
+                SectionHeading(
+                    title = stringResource(R.string.audiobooks_listen_to_ebooks),
+                    subtitle = stringResource(R.string.audiobooks_tts_desc)
+                )
+
                 if (ttsItems.isEmpty()) {
-                    TtsDiscoveryCard(onAddAudiobookClick, Modifier.padding(horizontal = 20.dp))
+                    TtsDiscoveryCard(
+                        onAdd = onAddAudiobookClick,
+                        modifier = Modifier.padding(horizontal = 20.dp)
+                    )
                 } else {
-                    LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                        items(ttsItems, key = { it.id }) { item ->
-                            TtsBookCard(requireNotNull(item.sourceBook), { onListenWithTtsClick(requireNotNull(item.sourceBook)) })
+                    LazyRow(
+                        contentPadding = PaddingValues(horizontal = 20.dp),
+                        horizontalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
+                        items(
+                            items = ttsItems,
+                            key = { it.id }
+                        ) { item ->
+                            TtsBookCard(
+                                item = item,
+                                isActive = item.id == activeItemId,
+                                onClick = {
+                                    item.sourceBook?.let(onListenWithTtsClick)
+                                }
+                            )
                         }
                     }
                 }
@@ -233,30 +324,251 @@ private val AudiobookUiStatus.labelRes: Int get() = when (this) {
     }
 }
 
-@Composable private fun AudiobookContinueCard(item: AudiobookUiItem, onClick: () -> Unit, modifier: Modifier) {
-    Card(modifier.fillMaxWidth().clickable(onClick = onClick).testTag("AudiobookContinue"), shape = RoundedCornerShape(28.dp)) {
-        Row(Modifier.background(Brush.horizontalGradient(listOf(MaterialTheme.colorScheme.primaryContainer, MaterialTheme.colorScheme.surfaceContainer))).padding(18.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            MockAudioCover(item, Modifier.size(96.dp, 132.dp))
-            Column(Modifier.weight(1f)) {
-                Text(stringResource(R.string.audiobooks_continue_listening).uppercase(), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
-                Text(item.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Text(item.chapter, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                LinearProgressIndicator({ item.progress }, Modifier.fillMaxWidth().padding(top = 14.dp).height(6.dp).clip(CircleShape))
-                Text(item.remaining, Modifier.padding(top = 6.dp), style = MaterialTheme.typography.labelSmall)
+@Composable
+private fun AudiobookContinueCard(
+    item: AudiobookUiItem,
+    isActive: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier
+) {
+    Card(
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .testTag("AudiobookContinue"),
+        shape = RoundedCornerShape(28.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .background(
+                    Brush.horizontalGradient(
+                        listOf(
+                            MaterialTheme.colorScheme.primaryContainer,
+                            MaterialTheme.colorScheme.surfaceContainer
+                        )
+                    )
+                )
+                .padding(18.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            if (item.isTts) {
+                MockAudioCover(
+                    item = item,
+                    modifier = Modifier.size(
+                        width = 92.dp,
+                        height = 132.dp
+                    )
+                )
+            } else {
+                MockAudioCover(
+                    item = item,
+                    modifier = Modifier.size(112.dp)
+                )
             }
-            Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primary) { Icon(Icons.Default.PlayArrow, null, Modifier.padding(12.dp), tint = MaterialTheme.colorScheme.onPrimary) }
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = stringResource(
+                        if (isActive) {
+                            R.string.audiobooks_now_playing
+                        } else {
+                            R.string.audiobooks_continue_listening
+                        }
+                    ).uppercase(),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Bold
+                )
+
+                Text(
+                    text = item.title,
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+
+                Text(
+                    text = item.author,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+
+                Text(
+                    text = item.chapter,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+
+                LinearProgressIndicator(
+                    progress = { item.progress },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 14.dp)
+                        .height(6.dp)
+                        .clip(CircleShape)
+                )
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 7.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "${(item.progress * 100).toInt()}%",
+                        style = MaterialTheme.typography.labelSmall
+                    )
+
+                    Text(
+                        text = item.remaining,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+
+            Surface(
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.primary
+            ) {
+                Icon(
+                    imageVector = if (isActive) {
+                        Icons.AutoMirrored.Filled.VolumeUp
+                    } else {
+                        Icons.Default.PlayArrow
+                    },
+                    contentDescription = null,
+                    modifier = Modifier.padding(12.dp),
+                    tint = MaterialTheme.colorScheme.onPrimary
+                )
+            }
         }
     }
 }
 
-@Composable private fun AudiobookCoverCard(item: AudiobookUiItem, onClick: () -> Unit) {
-    Column(Modifier.size(width = 142.dp, height = 248.dp).clickable(onClick = onClick).testTag("AudiobookCard-${item.id}")) {
+@Composable
+private fun AudiobookCoverCard(
+    item: AudiobookUiItem,
+    isActive: Boolean,
+    onClick: () -> Unit
+) {
+    val cardWidth = if (item.isTts) 142.dp else 164.dp
+    val artworkAspectRatio = if (item.isTts) 0.72f else 1f
+
+    Column(
+        modifier = Modifier
+            .width(cardWidth)
+            .clickable(onClick = onClick)
+            .testTag("AudiobookCard-${item.id}")
+    ) {
         Box {
-            MockAudioCover(item, Modifier.fillMaxWidth().aspectRatio(.72f))
-            Surface(Modifier.align(Alignment.BottomEnd).padding(8.dp), shape = CircleShape, color = MaterialTheme.colorScheme.primary) { Icon(Icons.Default.PlayArrow, null, Modifier.padding(8.dp), tint = MaterialTheme.colorScheme.onPrimary) }
+            MockAudioCover(
+                item = item,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(artworkAspectRatio)
+            )
+
+            if (isActive) {
+                Surface(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(8.dp),
+                    shape = RoundedCornerShape(50),
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                ) {
+                    Row(
+                        modifier = Modifier.padding(
+                            horizontal = 8.dp,
+                            vertical = 5.dp
+                        ),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.VolumeUp,
+                            contentDescription = null,
+                            modifier = Modifier.size(14.dp)
+                        )
+
+                        Text(
+                            text = stringResource(R.string.audiobooks_now_playing),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+
+            Surface(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(8.dp),
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.primary
+            ) {
+                Icon(
+                    imageVector = Icons.Default.PlayArrow,
+                    contentDescription = null,
+                    modifier = Modifier.padding(8.dp),
+                    tint = MaterialTheme.colorScheme.onPrimary
+                )
+            }
         }
-        Text(item.title, Modifier.padding(top = 8.dp), fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-        Text(item.remaining, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+
+        Text(
+            text = item.title,
+            modifier = Modifier.padding(top = 9.dp),
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
+        )
+
+        Text(
+            text = item.author,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+
+        if (item.progress > 0f) {
+            LinearProgressIndicator(
+                progress = { item.progress },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp)
+                    .height(4.dp)
+                    .clip(CircleShape)
+            )
+        }
+
+        Text(
+            text = when {
+                item.progress >= 1f ->
+                    stringResource(R.string.audiobooks_completed)
+
+                item.progress > 0f ->
+                    item.remaining
+
+                else ->
+                    stringResource(R.string.audiobooks_not_started)
+            },
+            modifier = Modifier.padding(top = 5.dp),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }
 
@@ -280,14 +592,113 @@ private val AudiobookUiStatus.labelRes: Int get() = when (this) {
     }
 }
 
-@Composable private fun TtsBookCard(book: RecentFileItem, onClick: () -> Unit) {
-    Card(Modifier.size(width = 250.dp, height = 126.dp).clickable(onClick = onClick).testTag("ListenWithTts-${book.bookId}"), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
-        Row(Modifier.fillMaxSize().padding(14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            ThemedBookCover(book, Modifier.size(62.dp, 94.dp), book.displayName)
-            Column(Modifier.weight(1f)) {
-                Text(book.title ?: book.displayName.substringBeforeLast('.'), fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Text(book.author ?: stringResource(R.string.audiobooks_unknown_author), style = MaterialTheme.typography.bodySmall, maxLines = 1)
-                AssistChip(onClick = onClick, label = { Text(stringResource(R.string.audiobooks_listen_with_tts)) }, leadingIcon = { Icon(Icons.AutoMirrored.Filled.VolumeUp, null, Modifier.size(16.dp)) })
+@Composable
+private fun TtsBookCard(
+    item: AudiobookUiItem,
+    isActive: Boolean,
+    onClick: () -> Unit
+) {
+    val book = item.sourceBook ?: return
+
+    Card(
+        modifier = Modifier
+            .width(270.dp)
+            .heightIn(min = 132.dp)
+            .clickable(onClick = onClick)
+            .testTag("ListenWithTts-${book.bookId}"),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            ThemedBookCover(
+                item = book,
+                modifier = Modifier.size(
+                    width = 68.dp,
+                    height = 102.dp
+                ),
+                contentDescription = book.displayName
+            )
+
+            Column(modifier = Modifier.weight(1f)) {
+                if (isActive) {
+                    Text(
+                        text = stringResource(R.string.audiobooks_now_playing)
+                            .uppercase(),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                Text(
+                    text = item.title,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+
+                Text(
+                    text = item.author,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+
+                Text(
+                    text = item.chapter,
+                    modifier = Modifier.padding(top = 5.dp),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+
+                if (item.progress > 0f) {
+                    LinearProgressIndicator(
+                        progress = { item.progress },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 9.dp)
+                            .height(4.dp)
+                            .clip(CircleShape)
+                    )
+
+                    Text(
+                        text = stringResource(
+                            R.string.progress_complete,
+                            (item.progress * 100).toInt()
+                        ),
+                        modifier = Modifier.padding(top = 4.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            Surface(
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.primaryContainer,
+                contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+            ) {
+                Icon(
+                    imageVector = if (isActive) {
+                        Icons.AutoMirrored.Filled.VolumeUp
+                    } else {
+                        Icons.Default.PlayArrow
+                    },
+                    contentDescription = stringResource(
+                        R.string.audiobooks_listen_with_tts
+                    ),
+                    modifier = Modifier.padding(10.dp)
+                )
             }
         }
     }
@@ -353,9 +764,14 @@ private val AudiobookUiStatus.labelRes: Int get() = when (this) {
     LaunchedEffect(item.id) { item.playbackRequest?.let(controller::connect) }
     DisposableEffect(controller) { onDispose(controller::release) }
     var draggedPosition by remember(item.id) { mutableStateOf<Float?>(null) }
+    var showPlayerMenu by remember(item.id) {
+        mutableStateOf(false)
+    }
     val duration = playback.durationMs.takeIf { it > 0 } ?: item.playbackRequest?.durationMs ?: 0L
     val displayedPosition = draggedPosition?.toLong() ?: playback.positionMs
-    val progress = if (duration > 0) displayedPosition.toFloat() / duration else item.progress
+    var showSpeedDialog by remember(item.id) {
+        mutableStateOf(false)
+    }
     ModalBottomSheet(onDismissRequest = onDismiss, dragHandle = null, containerColor = MaterialTheme.colorScheme.surface) {
         Column(
             Modifier.fillMaxWidth().background(
@@ -363,15 +779,82 @@ private val AudiobookUiStatus.labelRes: Int get() = when (this) {
             ).padding(horizontal = 24.dp).navigationBarsPadding(),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = onDismiss) { Icon(Icons.Default.KeyboardArrowDown, stringResource(R.string.action_close)) }
-                Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(stringResource(R.string.audiobooks_now_playing).uppercase(), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
-                    Text(item.chapter, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onDismiss) {
+                    Icon(
+                        imageVector = Icons.Default.KeyboardArrowDown,
+                        contentDescription = stringResource(
+                            R.string.audiobooks_collapse_player
+                        )
+                    )
                 }
-                IconButton(onClick = { controller.stop(); onDismiss() }) { Icon(Icons.Default.Close, stringResource(R.string.action_close)) }
+
+                Column(
+                    modifier = Modifier.weight(1f),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = stringResource(R.string.audiobooks_now_playing)
+                            .uppercase(),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+
+                    Text(
+                        text = item.chapter,
+                        style = MaterialTheme.typography.labelMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                Box {
+                    IconButton(onClick = { showPlayerMenu = true }) {
+                        Icon(
+                            imageVector = Icons.Default.MoreVert,
+                            contentDescription = stringResource(
+                                R.string.content_desc_more_options
+                            )
+                        )
+                    }
+
+                    DropdownMenu(
+                        expanded = showPlayerMenu,
+                        onDismissRequest = { showPlayerMenu = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = {
+                                Text(stringResource(R.string.audiobooks_stop_playback))
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = null
+                                )
+                            },
+                            onClick = {
+                                showPlayerMenu = false
+                                controller.stop()
+                                onDismiss()
+                            }
+                        )
+                    }
+                }
             }
-            MockAudioCover(item, Modifier.fillMaxWidth(.58f).aspectRatio(.72f).padding(top = 18.dp).shadow(18.dp, RoundedCornerShape(20.dp)))
+            MockAudioCover(
+                item = item,
+                modifier = Modifier
+                    .fillMaxWidth(0.68f)
+                    .aspectRatio(1f)
+                    .padding(top = 18.dp)
+                    .shadow(
+                        elevation = 18.dp,
+                        shape = RoundedCornerShape(20.dp)
+                    )
+            )
             Text(item.title, Modifier.padding(top = 22.dp), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
             Text(item.author, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Slider(
@@ -385,19 +868,58 @@ private val AudiobookUiStatus.labelRes: Int get() = when (this) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text(formatPlayerTime(displayedPosition), style = MaterialTheme.typography.labelSmall); Text("−${formatPlayerTime((duration - displayedPosition).coerceAtLeast(0L))}", style = MaterialTheme.typography.labelSmall) }
             playback.error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp)) }
             Row(Modifier.fillMaxWidth().padding(vertical = 20.dp), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = { controller.seekBy(-30_000) }, enabled = playback.connected) { Icon(Icons.Default.SkipPrevious, stringResource(R.string.audiobooks_rewind)) }
+                IconButton(
+                    onClick = { controller.seekBy(-30_000) },
+                    enabled = playback.connected
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.fast_rewind),
+                        contentDescription = stringResource(
+                            R.string.audiobooks_rewind_30_seconds
+                        ),
+                        modifier = Modifier.size(32.dp)
+                    )
+                }
                 Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primary, shadowElevation = 8.dp) { IconButton(onClick = { controller.togglePlay(onBeforePlay) }, enabled = playback.connected, modifier = Modifier.size(76.dp)) { Icon(if (playback.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, stringResource(if (playback.isPlaying) R.string.content_desc_pause_tts else R.string.content_desc_start_tts), Modifier.size(42.dp), tint = MaterialTheme.colorScheme.onPrimary) } }
-                IconButton(onClick = { controller.seekBy(30_000) }, enabled = playback.connected) { Icon(Icons.Default.SkipNext, stringResource(R.string.audiobooks_forward)) }
+                IconButton(
+                    onClick = { controller.seekBy(30_000) },
+                    enabled = playback.connected
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.fast_forward),
+                        contentDescription = stringResource(
+                            R.string.audiobooks_forward_30_seconds
+                        ),
+                        modifier = Modifier.size(32.dp),
+                    )
+                }
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                AssistChip(onClick = { controller.setSpeed(nextAudiobookSpeed(playback.speed)) }, label = { Text("${playback.speed}×") })
+                AssistChip(
+                    onClick = {
+                        showSpeedDialog = true
+                    },
+                    label = {
+                        Text(audiobookSpeedLabel(playback.speed))
+                    }
+                )
                 AssistChip(onClick = controller::toggleSleepTimer, label = { Text(sleepTimerLabel) }, leadingIcon = { Icon(Icons.Default.Settings, null, Modifier.size(16.dp)) })
             }
             Spacer(Modifier.height(20.dp))
         }
     }
+    if (showSpeedDialog) {
+        AudiobookSpeedDialog(
+            currentSpeed = playback.speed,
+            onSpeedSelected = controller::setSpeed,
+            onDismiss = {
+                showSpeedDialog = false
+            }
+        )
+    }
 }
 
+@androidx.annotation.OptIn(UnstableApi::class)
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun BookTtsPlayerSheet(item: AudiobookUiItem, onDismiss: () -> Unit) {
@@ -407,6 +929,17 @@ private fun BookTtsPlayerSheet(item: AudiobookUiItem, onDismiss: () -> Unit) {
     val prepared by controller.uiState.collectAsStateWithLifecycle()
     val playback by controller.playbackState.collectAsStateWithLifecycle()
     var showChapters by remember { mutableStateOf(false) }
+    var showPlayerMenu by remember(sourceBook.bookId) {
+        mutableStateOf(false)
+    }
+    val sleepTimerLabel by controller.sleepTimerLabel
+        .collectAsStateWithLifecycle()
+    var showSpeedDialog by remember(sourceBook.bookId) {
+        mutableStateOf(false)
+    }
+    var showSleepTimerDialog by remember(sourceBook.bookId) {
+        mutableStateOf(false)
+    }
     var showTranscript by rememberSaveable(sourceBook.bookId) { mutableStateOf(false) }
     val transcriptListState = rememberLazyListState()
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -471,18 +1004,72 @@ private fun BookTtsPlayerSheet(item: AudiobookUiItem, onDismiss: () -> Unit) {
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Row(
-                    Modifier.fillMaxWidth().padding(top = 10.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 10.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     IconButton(onClick = onDismiss) {
-                        Icon(Icons.Default.KeyboardArrowDown, stringResource(R.string.action_close))
+                        Icon(
+                            imageVector = Icons.Default.KeyboardArrowDown,
+                            contentDescription = stringResource(
+                                R.string.audiobooks_collapse_player
+                            )
+                        )
                     }
-                    Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("LISTENING WITH TTS", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
-                        Text(currentChapterTitle, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = stringResource(
+                                R.string.audiobooks_listening_with_tts
+                            ).uppercase(),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+
+                        Text(
+                            text = currentChapterTitle,
+                            style = MaterialTheme.typography.labelMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
-                    IconButton(onClick = { controller.stop(); onDismiss() }, enabled = isThisBookActive) {
-                        Icon(Icons.Default.Close, stringResource(R.string.action_close))
+
+                    Box {
+                        IconButton(onClick = { showPlayerMenu = true }) {
+                            Icon(
+                                imageVector = Icons.Default.MoreVert,
+                                contentDescription = stringResource(
+                                    R.string.content_desc_more_options
+                                )
+                            )
+                        }
+
+                        DropdownMenu(
+                            expanded = showPlayerMenu,
+                            onDismissRequest = { showPlayerMenu = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = {
+                                    Text(stringResource(R.string.audiobooks_stop_playback))
+                                },
+                                leadingIcon = {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = null
+                                    )
+                                },
+                                enabled = isThisBookActive,
+                                onClick = {
+                                    showPlayerMenu = false
+                                    controller.stop()
+                                    onDismiss()
+                                }
+                            )
+                        }
                     }
                 }
 
@@ -558,37 +1145,105 @@ private fun BookTtsPlayerSheet(item: AudiobookUiItem, onDismiss: () -> Unit) {
                 }
 
                 Row(
-                    Modifier.fillMaxWidth().padding(top = 20.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 20.dp),
                     horizontalArrangement = Arrangement.SpaceEvenly,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    IconButton(onClick = controller::previousChapter, enabled = isThisBookActive && (currentChapter ?: 0) > 0) {
-                        Icon(Icons.Default.SkipPrevious, "Previous chapter")
+                    // Outer left: previous chapter.
+                    IconButton(
+                        onClick = controller::previousChapter,
+                        enabled = isThisBookActive && (currentChapter ?: 0) > 0
+                    ) {
+                        Icon(
+                            painter = painterResource(R.drawable.fast_rewind),
+                            contentDescription = stringResource(
+                                R.string.audiobooks_previous_chapter
+                            ),
+                            modifier = Modifier.size(30.dp)
+                        )
                     }
-                    IconButton(onClick = controller::previousChunk, enabled = isThisBookActive && playback.currentChunkIndex > 0) {
-                        Text("−1", fontWeight = FontWeight.Bold)
+
+                    // Inner left: previous generated passage/chunk.
+                    IconButton(
+                        onClick = controller::previousChunk,
+                        enabled = isThisBookActive && playback.currentChunkIndex > 0
+                    ) {
+                        Icon(
+                            painter = painterResource(R.drawable.skip_previous),
+                            contentDescription = stringResource(
+                                R.string.audiobooks_previous_passage
+                            ),
+                            modifier = Modifier.size(27.dp)
+                        )
                     }
-                    Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primary, shadowElevation = 8.dp) {
+
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.primary,
+                        shadowElevation = 8.dp
+                    ) {
                         IconButton(
                             onClick = {
-                                if (isThisBookActive) controller.togglePlay()
-                                else controller.start(sourceBook.bookId, BookTtsSessionCoordinator.START_RESUME)
+                                if (isThisBookActive) {
+                                    controller.togglePlay()
+                                } else {
+                                    controller.start(
+                                        sourceBook.bookId,
+                                        BookTtsSessionCoordinator.START_RESUME
+                                    )
+                                }
                             },
                             modifier = Modifier.size(76.dp)
                         ) {
                             Icon(
-                                if (playback.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                if (playback.isPlaying) "Pause" else "Play",
-                                Modifier.size(42.dp),
+                                imageVector = if (playback.isPlaying) {
+                                    Icons.Default.Pause
+                                } else {
+                                    Icons.Default.PlayArrow
+                                },
+                                contentDescription = stringResource(
+                                    if (playback.isPlaying) {
+                                        R.string.content_desc_pause_tts
+                                    } else {
+                                        R.string.content_desc_start_tts
+                                    }
+                                ),
+                                modifier = Modifier.size(42.dp),
                                 tint = MaterialTheme.colorScheme.onPrimary
                             )
                         }
                     }
-                    IconButton(onClick = controller::nextChunk, enabled = isThisBookActive && playback.currentChunkIndex < playback.totalChunks - 1) {
-                        Text("+1", fontWeight = FontWeight.Bold)
+
+                    // Inner right: next generated passage/chunk.
+                    IconButton(
+                        onClick = controller::nextChunk,
+                        enabled = isThisBookActive &&
+                                playback.currentChunkIndex < playback.totalChunks - 1
+                    ) {
+                        Icon(
+                            painter = painterResource(R.drawable.skip_next),
+                            contentDescription = stringResource(
+                                R.string.audiobooks_next_passage
+                            ),
+                            modifier = Modifier.size(27.dp)
+                        )
                     }
-                    IconButton(onClick = controller::nextChapter, enabled = isThisBookActive && (currentChapter ?: 0) < (book?.chapters?.lastIndex ?: 0)) {
-                        Icon(Icons.Default.SkipNext, "Next chapter")
+
+                    // Outer right: next chapter.
+                    IconButton(
+                        onClick = controller::nextChapter,
+                        enabled = isThisBookActive &&
+                                (currentChapter ?: 0) < (book?.chapters?.lastIndex ?: 0)
+                    ) {
+                        Icon(
+                            painter = painterResource(R.drawable.fast_forward),
+                            contentDescription = stringResource(
+                                R.string.audiobooks_next_chapter
+                            ),
+                            modifier = Modifier.size(30.dp)
+                        )
                     }
                 }
 
@@ -598,13 +1253,14 @@ private fun BookTtsPlayerSheet(item: AudiobookUiItem, onDismiss: () -> Unit) {
                     contentPadding = PaddingValues(horizontal = 2.dp)
                 ) {
                     item {
-                    AssistChip(
-                        onClick = {
-                            rate = nextAudiobookSpeed(rate)
-                            controller.setParameters(rate, pitch)
-                        },
-                        label = { Text("${"%.2g".format(rate)}×") }
-                    )
+                        AssistChip(
+                            onClick = {
+                                showSpeedDialog = true
+                            },
+                            label = {
+                                Text(audiobookSpeedLabel(rate))
+                            }
+                        )
                     }
                     item {
                     AssistChip(
@@ -627,15 +1283,48 @@ private fun BookTtsPlayerSheet(item: AudiobookUiItem, onDismiss: () -> Unit) {
                         )
                     }
                     item {
-                    AssistChip(
-                        onClick = { controller.startSleepTimer(30) },
-                        label = { Text(controller.sleepTimerLabel.collectAsStateWithLifecycle().value) },
-                        leadingIcon = { Icon(Icons.Default.Settings, null, Modifier.size(16.dp)) }
-                    )
+                        AssistChip(
+                            onClick = {
+                                showSleepTimerDialog = true
+                            },
+                            label = {
+                                Text(sleepTimerLabel)
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Default.Settings,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        )
                     }
                 }
             }
         }
+    }
+    if (showSpeedDialog) {
+        AudiobookSpeedDialog(
+            currentSpeed = rate,
+            onSpeedSelected = { selectedSpeed ->
+                rate = selectedSpeed
+                controller.setParameters(
+                    rate = selectedSpeed,
+                    pitch = pitch
+                )
+            },
+            onDismiss = {
+                showSpeedDialog = false
+            }
+        )
+    }
+    if (showSleepTimerDialog) {
+        AudiobookSleepTimerDialog(
+            onDurationSelected = controller::startSleepTimer,
+            onDismiss = {
+                showSleepTimerDialog = false
+            }
+        )
     }
 }
 
@@ -694,11 +1383,15 @@ private fun AudiobookTranscript(
 internal fun AudiobookMiniPlayer(
     item: AudiobookUiItem,
     isPlaying: Boolean,
+    progress: Float,
     onTogglePlay: () -> Unit,
     onExpand: () -> Unit,
     onStop: () -> Unit
 ) {
     var verticalDrag by remember { mutableFloatStateOf(0f) }
+    var showMenu by remember {
+        mutableStateOf(false)
+    }
     Surface(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp)
             .pointerInput(onExpand) {
@@ -720,16 +1413,109 @@ internal fun AudiobookMiniPlayer(
         shadowElevation = 8.dp,
         onClick = onExpand
     ) {
-        Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            MockAudioCover(item, Modifier.size(48.dp).clip(RoundedCornerShape(11.dp)))
-            Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
-                Text(item.title, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(item.chapter, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Column(modifier = Modifier.fillMaxWidth()) {
+            LinearProgressIndicator(
+                progress = {
+                    progress.coerceIn(0f, 1f)
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(3.dp),
+                color = MaterialTheme.colorScheme.primary,
+                trackColor = MaterialTheme.colorScheme.surfaceContainerHighest
+            )
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                MockAudioCover(
+                    item = item,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(RoundedCornerShape(11.dp))
+                )
+
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(horizontal = 12.dp)
+                ) {
+                    Text(
+                        text = item.title,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+
+                    Text(
+                        text = item.chapter,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                IconButton(onClick = onTogglePlay) {
+                    Icon(
+                        imageVector = if (isPlaying) {
+                            Icons.Default.Pause
+                        } else {
+                            Icons.Default.PlayArrow
+                        },
+                        contentDescription = stringResource(
+                            if (isPlaying) {
+                                R.string.content_desc_pause_tts
+                            } else {
+                                R.string.content_desc_start_tts
+                            }
+                        )
+                    )
+                }
+
+                Box {
+                    IconButton(onClick = {
+                        showMenu = true
+                    }) {
+                        Icon(
+                            imageVector = Icons.Default.MoreVert,
+                            contentDescription = stringResource(
+                                R.string.content_desc_more_options
+                            )
+                        )
+                    }
+
+                    DropdownMenu(
+                        expanded = showMenu,
+                        onDismissRequest = {
+                            showMenu = false
+                        }
+                    ) {
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    stringResource(
+                                        R.string.audiobooks_stop_playback
+                                    )
+                                )
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = null
+                                )
+                            },
+                            onClick = {
+                                showMenu = false
+                                onStop()
+                            }
+                        )
+                    }
+                }
             }
-            IconButton(onClick = onTogglePlay) {
-                Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, if (isPlaying) "Pause" else "Play")
-            }
-            IconButton(onClick = onStop) { Icon(Icons.Default.Close, stringResource(R.string.action_close)) }
         }
     }
 }
@@ -745,4 +1531,167 @@ private fun formatPlayerTime(milliseconds: Long): String {
     val minutes = totalSeconds % 3600 / 60
     val seconds = totalSeconds % 60
     return if (hours > 0) "%d:%02d:%02d".format(hours, minutes, seconds) else "%d:%02d".format(minutes, seconds)
+}
+
+@Composable
+private fun AudiobookSpeedDialog(
+    currentSpeed: Float,
+    onSpeedSelected: (Float) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val speeds = listOf(
+        0.75f,
+        1f,
+        1.25f,
+        1.5f,
+        1.75f,
+        2f
+    )
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(stringResource(R.string.audiobooks_playback_speed))
+        },
+        text = {
+            LazyColumn(
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                items(
+                    items = speeds,
+                    key = { it }
+                ) { speed ->
+                    val selected = kotlin.math.abs(
+                        speed - currentSpeed
+                    ) < 0.01f
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(
+                                if (selected) {
+                                    MaterialTheme.colorScheme.primaryContainer
+                                } else {
+                                    Color.Transparent
+                                }
+                            )
+                            .clickable {
+                                onSpeedSelected(speed)
+                                onDismiss()
+                            }
+                            .padding(
+                                horizontal = 16.dp,
+                                vertical = 13.dp
+                            ),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = audiobookSpeedLabel(speed),
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = if (selected) {
+                                FontWeight.Bold
+                            } else {
+                                FontWeight.Normal
+                            },
+                            color = if (selected) {
+                                MaterialTheme.colorScheme.onPrimaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.onSurface
+                            }
+                        )
+
+                        if (selected) {
+                            Text(
+                                text = stringResource(
+                                    R.string.audiobooks_speed_selected
+                                ),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.action_cancel))
+            }
+        }
+    )
+}
+
+private fun audiobookSpeedLabel(speed: Float): String {
+    val number = if (speed % 1f == 0f) {
+        speed.toInt().toString()
+    } else {
+        speed.toString()
+    }
+
+    return "${number}×"
+}
+
+@Composable
+private fun AudiobookSleepTimerDialog(
+    onDurationSelected: (Int) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val durations = listOf(
+        15,
+        30,
+        45,
+        60
+    )
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(stringResource(R.string.audiobooks_sleep_timer))
+        },
+        text = {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                durations.forEach { minutes ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .clickable {
+                                onDurationSelected(minutes)
+                                onDismiss()
+                            }
+                            .padding(
+                                horizontal = 16.dp,
+                                vertical = 14.dp
+                            ),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = if (minutes == 60) {
+                                stringResource(
+                                    R.string.audiobooks_one_hour
+                                )
+                            } else {
+                                stringResource(
+                                    R.string.audiobooks_minutes,
+                                    minutes
+                                )
+                            },
+                            style = MaterialTheme.typography.bodyLarge
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.action_cancel))
+            }
+        }
+    )
 }

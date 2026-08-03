@@ -2162,4 +2162,19 @@
     <string name="tts_replacements_replace_only_spoken_desc">Reader text, highlights, and locations stay unchanged.</string>
     <!-- TTS replacement summary. %1$s = replacement source; %2$s = spoken replacement. Example: "Dr. -> Doctor". -->
     <string name="tts_replacements_summary_format">%1$s -&gt; %2$s</string>
+
+    <string name="audiobooks_collapse_player">Collapse player</string>
+    <string name="audiobooks_stop_playback">Stop playback</string>
+    <string name="audiobooks_rewind_30_seconds">Rewind 30 seconds</string>
+    <string name="audiobooks_forward_30_seconds">Forward 30 seconds</string>
+    <string name="audiobooks_listening_with_tts">Listening with TTS</string>
+    <string name="audiobooks_previous_chapter">Previous chapter</string>
+    <string name="audiobooks_next_chapter">Next chapter</string>
+    <string name="audiobooks_previous_passage">Previous spoken passage</string>
+    <string name="audiobooks_next_passage">Next spoken passage</string>
+    <string name="audiobooks_playback_speed">Playback speed</string>
+    <string name="audiobooks_speed_selected">Selected</string>
+    <string name="audiobooks_sleep_timer">Sleep timer</string>
+    <string name="audiobooks_minutes">%1$d minutes</string>
+    <string name="audiobooks_one_hour">1 hour</string>
 </resources>
