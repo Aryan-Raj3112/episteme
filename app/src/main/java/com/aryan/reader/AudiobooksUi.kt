@@ -33,7 +33,6 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -402,19 +401,25 @@ internal fun AudiobooksLibrarySection(
         importedItems + ttsItems
     }
 
-    val visibleItems = remember(
+    val sourceItems = remember(
         allItems,
-        source,
-        status,
-        sort,
-        query
+        importedItems,
+        ttsItems,
+        source
     ) {
-        val sourceItems = when (source) {
+        when (source) {
             ListenSource.ALL -> allItems
             ListenSource.AUDIOBOOKS -> importedItems
             ListenSource.TTS -> ttsItems
         }
+    }
 
+    val visibleItems = remember(
+        sourceItems,
+        status,
+        sort,
+        query
+    ) {
         sortListenItems(
             items = filterAudiobooks(
                 items = sourceItems,
@@ -427,18 +432,36 @@ internal fun AudiobooksLibrarySection(
     }
 
     val continueItem = remember(
-        allItems,
-        activeItemId
+        visibleItems,
+        activeItemId,
+        query
     ) {
-        allItems.firstOrNull {
-            it.id == activeItemId
-        } ?: allItems
-            .filter {
-                it.progress in 0.001f..<1f
+        if (query.isNotBlank()) {
+            null
+        } else {
+            visibleItems.firstOrNull {
+                it.id == activeItemId
+            } ?: visibleItems
+                .filter {
+                    it.progress in 0.001f..<1f
+                }
+                .maxByOrNull {
+                    it.lastListenedAt
+                }
+        }
+    }
+
+    val regularListItems = remember(
+        visibleItems,
+        continueItem
+    ) {
+        if (continueItem == null) {
+            visibleItems
+        } else {
+            visibleItems.filterNot {
+                it.id == continueItem.id
             }
-            .maxByOrNull {
-                it.lastListenedAt
-            }
+        }
     }
 
     fun openItem(item: AudiobookUiItem) {
@@ -451,19 +474,139 @@ internal fun AudiobooksLibrarySection(
         }
     }
 
-    LazyColumn(
+    Column(
         modifier = modifier
             .fillMaxSize()
-            .testTag("AudiobooksLibrary"),
-        contentPadding = PaddingValues(
-            top = 16.dp,
-            bottom = 112.dp
-        ),
-        verticalArrangement = Arrangement.spacedBy(18.dp)
+            .testTag("AudiobooksLibrary")
     ) {
-        if (query.isBlank()) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(
+                    start = 20.dp,
+                    top = 16.dp,
+                    end = 20.dp
+                ),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            ListenSourceSwitcher(
+                selected = source,
+                onSelected = {
+                    source = it
+                }
+            )
+
+            OutlinedTextField(
+                value = query,
+                onValueChange = {
+                    query = it
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("ListenSearch"),
+                placeholder = {
+                    Text(
+                        stringResource(
+                            R.string.listen_search
+                        )
+                    )
+                },
+                leadingIcon = {
+                    Icon(
+                        imageVector = Icons.Default.Search,
+                        contentDescription = null
+                    )
+                },
+                trailingIcon = {
+                    if (query.isNotBlank()) {
+                        IconButton(
+                            onClick = {
+                                query = ""
+                            }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = stringResource(
+                                    R.string.action_clear
+                                )
+                            )
+                        }
+                    }
+                },
+                singleLine = true,
+                shape = RoundedCornerShape(20.dp)
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = pluralStringResource(
+                        R.plurals.listen_item_count,
+                        visibleItems.size,
+                        visibleItems.size
+                    ),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f)
+                )
+
+                ListenSortMenu(
+                    selected = sort,
+                    onSelected = {
+                        sort = it
+                    }
+                )
+            }
+        }
+
+        LazyRow(
+            modifier = Modifier.fillMaxWidth(),
+            contentPadding = PaddingValues(
+                start = 20.dp,
+                top = 8.dp,
+                end = 20.dp,
+                bottom = 8.dp
+            ),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            items(
+                items = AudiobookUiStatus.entries,
+                key = {
+                    it.name
+                }
+            ) { option ->
+                FilterChip(
+                    selected = status == option,
+                    onClick = {
+                        status = option
+                    },
+                    label = {
+                        Text(
+                            stringResource(
+                                option.labelRes
+                            )
+                        )
+                    }
+                )
+            }
+        }
+
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+            contentPadding = PaddingValues(
+                top = 8.dp,
+                bottom = 112.dp
+            ),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
             continueItem?.let { item ->
-                item {
+                item(
+                    key = "continue-${item.id}"
+                ) {
                     AudiobookContinueCard(
                         item = item,
                         isActive = item.id == activeItemId,
@@ -482,186 +625,14 @@ internal fun AudiobooksLibrarySection(
                     )
                 }
             }
-        }
-
-        item {
-            Column(
-                modifier = Modifier.padding(
-                    horizontal = 20.dp
-                ),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                ListenSourceSwitcher(
-                    selected = source,
-                    onSelected = {
-                        source = it
-                    }
-                )
-
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = {
-                        query = it
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("ListenSearch"),
-                    placeholder = {
-                        Text(
-                            stringResource(
-                                R.string.listen_search
-                            )
-                        )
-                    },
-                    leadingIcon = {
-                        Icon(
-                            imageVector = Icons.Default.Search,
-                            contentDescription = null
-                        )
-                    },
-                    trailingIcon = {
-                        if (query.isNotBlank()) {
-                            IconButton(
-                                onClick = {
-                                    query = ""
-                                }
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Close,
-                                    contentDescription = stringResource(
-                                        R.string.action_clear
-                                    )
-                                )
-                            }
-                        }
-                    },
-                    singleLine = true,
-                    shape = RoundedCornerShape(20.dp)
-                )
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = pluralStringResource(
-                            R.plurals.listen_item_count,
-                            visibleItems.size,
-                            visibleItems.size
-                        ),
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.weight(1f)
-                    )
-
-                    ListenSortMenu(
-                        selected = sort,
-                        onSelected = {
-                            sort = it
-                        }
-                    )
-                }
-            }
-        }
-
-        item {
-            LazyRow(
-                contentPadding = PaddingValues(
-                    horizontal = 20.dp
-                ),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                items(
-                    items = AudiobookUiStatus.entries,
-                    key = {
-                        it.name
-                    }
-                ) { option ->
-                    FilterChip(
-                        selected = status == option,
-                        onClick = {
-                            status = option
-                        },
-                        label = {
-                            Text(
-                                stringResource(
-                                    option.labelRes
-                                )
-                            )
-                        }
-                    )
-                }
-            }
-        }
-
-        if (
-            source == ListenSource.ALL &&
-            query.isBlank()
-        ) {
-            val audiobookPreview = visibleItems
-                .filterNot {
-                    it.isTts
-                }
-                .take(6)
-
-            val ttsPreview = visibleItems
-                .filter {
-                    it.isTts
-                }
-                .take(6)
 
             if (
-                audiobookPreview.isEmpty() &&
-                ttsPreview.isEmpty()
+                regularListItems.isEmpty() &&
+                continueItem == null
             ) {
-                item {
-                    ListenLibraryEmptyState(
-                        query = query,
-                        onAdd = onAddAudiobookClick
-                    )
-                }
-            } else {
-                if (audiobookPreview.isNotEmpty()) {
-                    item {
-                        ListenPreviewSection(
-                            title = stringResource(
-                                R.string.audiobooks_your_audiobooks
-                            ),
-                            subtitle = stringResource(
-                                R.string.audiobooks_imported_files_desc
-                            ),
-                            items = audiobookPreview,
-                            activeItemId = activeItemId,
-                            onSeeAll = {
-                                source = ListenSource.AUDIOBOOKS
-                            },
-                            onItemClick = ::openItem
-                        )
-                    }
-                }
-
-                if (ttsPreview.isNotEmpty()) {
-                    item {
-                        ListenPreviewSection(
-                            title = stringResource(
-                                R.string.audiobooks_listen_to_ebooks
-                            ),
-                            subtitle = stringResource(
-                                R.string.audiobooks_tts_desc
-                            ),
-                            items = ttsPreview,
-                            activeItemId = activeItemId,
-                            onSeeAll = {
-                                source = ListenSource.TTS
-                            },
-                            onItemClick = ::openItem
-                        )
-                    }
-                }
-            }
-        } else {
-            if (visibleItems.isEmpty()) {
-                item {
+                item(
+                    key = "listen-empty"
+                ) {
                     ListenLibraryEmptyState(
                         query = query,
                         onAdd = onAddAudiobookClick
@@ -669,7 +640,7 @@ internal fun AudiobooksLibrarySection(
                 }
             } else {
                 items(
-                    items = visibleItems,
+                    items = regularListItems,
                     key = {
                         it.id
                     }
@@ -824,124 +795,6 @@ private fun AudiobookContinueCard(
                 )
             }
         }
-    }
-}
-
-@Composable
-private fun AudiobookCoverCard(
-    item: AudiobookUiItem,
-    isActive: Boolean,
-    onClick: () -> Unit
-) {
-    val cardWidth = if (item.isTts) 142.dp else 164.dp
-    val artworkAspectRatio = if (item.isTts) 0.72f else 1f
-
-    Column(
-        modifier = Modifier
-            .width(cardWidth)
-            .clickable(onClick = onClick)
-            .testTag("AudiobookCard-${item.id}")
-    ) {
-        Box {
-            MockAudioCover(
-                item = item,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(artworkAspectRatio)
-            )
-
-            if (isActive) {
-                Surface(
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .padding(8.dp),
-                    shape = RoundedCornerShape(50),
-                    color = MaterialTheme.colorScheme.primaryContainer,
-                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                ) {
-                    Row(
-                        modifier = Modifier.padding(
-                            horizontal = 8.dp,
-                            vertical = 5.dp
-                        ),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.VolumeUp,
-                            contentDescription = null,
-                            modifier = Modifier.size(14.dp)
-                        )
-
-                        Text(
-                            text = stringResource(R.string.audiobooks_now_playing),
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                }
-            }
-
-            Surface(
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(8.dp),
-                shape = CircleShape,
-                color = MaterialTheme.colorScheme.primary
-            ) {
-                Icon(
-                    imageVector = Icons.Default.PlayArrow,
-                    contentDescription = null,
-                    modifier = Modifier.padding(8.dp),
-                    tint = MaterialTheme.colorScheme.onPrimary
-                )
-            }
-        }
-
-        Text(
-            text = item.title,
-            modifier = Modifier.padding(top = 9.dp),
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis
-        )
-
-        Text(
-            text = item.author,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-
-        if (item.progress > 0f) {
-            LinearProgressIndicator(
-                progress = { item.progress },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 8.dp)
-                    .height(4.dp)
-                    .clip(CircleShape)
-            )
-        }
-
-        Text(
-            text = when {
-                item.progress >= 1f ->
-                    stringResource(R.string.audiobooks_completed)
-
-                item.progress > 0f ->
-                    item.remaining
-
-                else ->
-                    stringResource(R.string.audiobooks_not_started)
-            },
-            modifier = Modifier.padding(top = 5.dp),
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
     }
 }
 
@@ -2712,78 +2565,6 @@ private fun ListenSortMenu(
                     onClick = {
                         onSelected(option)
                         expanded = false
-                    }
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun ListenPreviewSection(
-    title: String,
-    subtitle: String,
-    items: List<AudiobookUiItem>,
-    activeItemId: String?,
-    onSeeAll: () -> Unit,
-    onItemClick: (AudiobookUiItem) -> Unit
-) {
-    Column {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(
-                    start = 20.dp,
-                    end = 12.dp,
-                    bottom = 4.dp
-                ),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(
-                modifier = Modifier.weight(1f)
-            ) {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold
-                )
-
-                Text(
-                    text = subtitle,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-
-            TextButton(
-                onClick = onSeeAll
-            ) {
-                Text(
-                    stringResource(
-                        R.string.listen_see_all
-                    )
-                )
-            }
-        }
-
-        LazyRow(
-            contentPadding = PaddingValues(
-                horizontal = 20.dp,
-                vertical = 8.dp
-            ),
-            horizontalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            items(
-                items = items,
-                key = {
-                    it.id
-                }
-            ) { item ->
-                AudiobookCoverCard(
-                    item = item,
-                    isActive = item.id == activeItemId,
-                    onClick = {
-                        onItemClick(item)
                     }
                 )
             }
