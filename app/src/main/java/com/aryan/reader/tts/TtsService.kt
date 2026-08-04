@@ -438,26 +438,26 @@ private class TtsSessionPlayer(
 
         val eventBuilder = FlagSet.Builder()
         if (previous?.playbackState != snapshot.playbackState) {
-            eventBuilder.add(Player.EVENT_PLAYBACK_STATE_CHANGED)
+            eventBuilder.add(EVENT_PLAYBACK_STATE_CHANGED)
             registeredListeners.forEach { it.onPlaybackStateChanged(snapshot.playbackState) }
         }
         if (previous?.playWhenReady != snapshot.playWhenReady) {
-            eventBuilder.add(Player.EVENT_PLAY_WHEN_READY_CHANGED)
+            eventBuilder.add(EVENT_PLAY_WHEN_READY_CHANGED)
             registeredListeners.forEach {
                 it.onPlayWhenReadyChanged(
                     snapshot.playWhenReady,
-                    Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST
+                    PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST
                 )
             }
         }
         if (previous?.isPlaying != snapshot.isPlaying) {
-            eventBuilder.add(Player.EVENT_IS_PLAYING_CHANGED)
+            eventBuilder.add(EVENT_IS_PLAYING_CHANGED)
             registeredListeners.forEach { it.onIsPlayingChanged(snapshot.isPlaying) }
         }
         if (previous?.canSkipPrevious != snapshot.canSkipPrevious ||
-            previous?.canSkipNext != snapshot.canSkipNext
+            previous.canSkipNext != snapshot.canSkipNext
         ) {
-            eventBuilder.add(Player.EVENT_AVAILABLE_COMMANDS_CHANGED)
+            eventBuilder.add(EVENT_AVAILABLE_COMMANDS_CHANGED)
             val commands = availableCommands
             registeredListeners.forEach { it.onAvailableCommandsChanged(commands) }
         }
@@ -474,29 +474,29 @@ private class TtsSessionPlayer(
         val builder = super.getAvailableCommands().buildUpon()
         if (canSkipToPreviousChunk()) {
             builder
-                .add(Player.COMMAND_SEEK_TO_PREVIOUS)
-                .add(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
+                .add(COMMAND_SEEK_TO_PREVIOUS)
+                .add(COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
         } else {
             builder
-                .remove(Player.COMMAND_SEEK_TO_PREVIOUS)
-                .remove(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
+                .remove(COMMAND_SEEK_TO_PREVIOUS)
+                .remove(COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
         }
         if (canSkipToNextChunk()) {
             builder
-                .add(Player.COMMAND_SEEK_TO_NEXT)
-                .add(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
+                .add(COMMAND_SEEK_TO_NEXT)
+                .add(COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
         } else {
             builder
-                .remove(Player.COMMAND_SEEK_TO_NEXT)
-                .remove(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
+                .remove(COMMAND_SEEK_TO_NEXT)
+                .remove(COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
         }
         if (isDirectLocalPlayback()) {
             builder
-                .remove(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM)
-                .remove(Player.COMMAND_SEEK_TO_DEFAULT_POSITION)
-                .remove(Player.COMMAND_SEEK_TO_MEDIA_ITEM)
-                .remove(Player.COMMAND_SEEK_BACK)
-                .remove(Player.COMMAND_SEEK_FORWARD)
+                .remove(COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM)
+                .remove(COMMAND_SEEK_TO_DEFAULT_POSITION)
+                .remove(COMMAND_SEEK_TO_MEDIA_ITEM)
+                .remove(COMMAND_SEEK_BACK)
+                .remove(COMMAND_SEEK_FORWARD)
         }
         return builder.build()
     }
@@ -807,7 +807,6 @@ class TtsService : MediaSessionService() {
     }
 
     private fun ensureTtsNotificationChannel() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val notificationManager = getSystemService(NotificationManager::class.java)
         val channel = NotificationChannel(
             TTS_FOREGROUND_CHANNEL_ID,
@@ -828,7 +827,7 @@ class TtsService : MediaSessionService() {
         foregroundIdleJob?.cancel()
         bookSleepTimerJob?.cancel()
         foregroundIdleJob = scope.launch {
-            delay(TTS_FOREGROUND_IDLE_GRACE_MS)
+            delay(TTS_FOREGROUND_IDLE_GRACE_MS.milliseconds)
             val playbackInactive = !::player.isInitialized ||
                 (!player.isPlaying && !player.playWhenReady && player.mediaItemCount == 0)
             if (!foregroundPlaybackExpected && playbackInactive) {
@@ -858,7 +857,7 @@ class TtsService : MediaSessionService() {
     private fun stopTtsForeground() {
         if (!foregroundNotificationShown) return
         try {
-            stopForeground(android.app.Service.STOP_FOREGROUND_REMOVE)
+            stopForeground(STOP_FOREGROUND_REMOVE)
         } catch (e: Exception) {
             Timber.tag(TTS_NOTIFICATION_DIAG_TAG).w(e, "Failed to stop fallback foreground notification.")
         } finally {
@@ -1039,7 +1038,7 @@ class TtsService : MediaSessionService() {
             if (!isConnected) throw IllegalStateException(connectionError ?: "Failed to connect to proxy WebSocket")
 
             val isSetup = try {
-                kotlinx.coroutines.withTimeout(10000L) { setupDeferred.await() }
+                kotlinx.coroutines.withTimeout(10000L.milliseconds) { setupDeferred.await() }
             } catch (_: Exception) { false }
 
             if (!isSetup) {
@@ -1095,7 +1094,7 @@ class TtsService : MediaSessionService() {
                         }
 
                         var receivedAudioBytes = 0
-                        kotlinx.coroutines.withTimeout(30000L) {
+                        kotlinx.coroutines.withTimeout(30000L.milliseconds) {
                             for (event in audioChannel) {
                                 when (event) {
                                     is GeminiWsEvent.Audio -> {

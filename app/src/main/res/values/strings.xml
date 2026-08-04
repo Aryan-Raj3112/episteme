@@ -2181,4 +2181,32 @@
     <string name="audiobooks_hide_chapters">Hide chapters</string>
     <string name="audiobooks_transcript">Transcript</string>
     <string name="audiobooks_hide_transcript">Hide transcript</string>
+    <string name="listen_title">Listen</string>
+    <string name="listen_add">Add to Listen</string>
+    <string name="listen_source_tts">TTS</string>
+
+    <string name="listen_search">Search audiobooks and TTS books</string>
+    <string name="listen_search_library_books">Search your library</string>
+
+    <string name="listen_sort_recently_listened">Recently listened</string>
+    <string name="listen_sort_recently_added">Recently added</string>
+    <string name="listen_sort_title">Title</string>
+    <string name="listen_sort_author">Author</string>
+    <string name="listen_sort_progress">Progress</string>
+
+    <string name="listen_see_all">See all</string>
+
+    <string name="listen_choose_tts_book">Choose a book for TTS</string>
+    <string name="listen_choose_tts_book_desc">Pick a supported book from your library and start listening</string>
+    <string name="listen_no_tts_books">No supported books found</string>
+
+    <string name="listen_empty">Nothing to listen to yet</string>
+    <string name="listen_empty_desc">Import an audiobook or choose a library book to listen with text-to-speech.</string>
+    <string name="listen_no_matches">No listening items match “%1$s”</string>
+
+    <string name="listen_badge_audiobook">AUDIOBOOK</string>
+    <string name="listen_badge_tts">TTS</string>
+
+    <string name="listen_timer">Timer</string>
+    <string name="listen_chapter_number">Chapter %1$d</string>
 </resources>

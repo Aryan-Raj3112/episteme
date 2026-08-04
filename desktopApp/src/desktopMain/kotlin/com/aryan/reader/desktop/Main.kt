@@ -95,6 +95,7 @@ import com.aryan.reader.shared.reader.SharedJvmBookLoadSemanticMode
 import com.aryan.reader.shared.reader.SharedJvmBookLoader
 import com.aryan.reader.shared.readerCloudTtsControlsModel
 import com.aryan.reader.shared.cardTitle
+import com.aryan.reader.shared.opds.SharedOpdsScreenState
 import com.aryan.reader.shared.reduce
 import com.aryan.reader.shared.sharedSettingsHubModel
 import com.aryan.reader.shared.shouldApplyRemoteCloudBookMetadataUpdate
@@ -122,6 +123,7 @@ import com.aryan.reader.shared.ui.SharedSupportProjectScreen
 import com.aryan.reader.shared.ui.SharedTextInputDialog
 import com.aryan.reader.shared.ui.readerString
 import com.aryan.reader.shared.withTtsReplacements
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -130,12 +132,17 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.awt.Component
 import java.awt.EventQueue
+import java.awt.Frame
+import java.awt.Window
 import java.io.File
 import java.net.URI
 import java.util.Base64
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicReference
+import javax.swing.SwingUtilities
+import kotlin.math.abs
+import kotlin.time.Duration.Companion.milliseconds
 
 private const val DesktopReaderCloseDisposeSyncDelayMillis = 350L
 private const val DesktopVerticalInitialPreparedHtmlChapterRadius = 2
@@ -360,7 +367,6 @@ internal fun EpistemeDesktopApp(
             useWorkerProvider = { true },
             onWorkerUsageCompleted = {
                 requestDesktopAccountRefreshAfterUsage()
-                Unit
             }
         )
     }
@@ -463,7 +469,7 @@ internal fun EpistemeDesktopApp(
         val persistJob = scope.launch(Dispatchers.IO) {
             runCatching {
                 if (persistDebounceMillis > 0L) {
-                    delay(persistDebounceMillis)
+                    delay(persistDebounceMillis.milliseconds)
                 }
                 libraryDatabase.save(snapshot)
             }
@@ -938,7 +944,7 @@ internal fun EpistemeDesktopApp(
                     desktopCloudContentRetryJob = null
                 } else if (desktopCloudContentRetryJob?.isActive != true) {
                     desktopCloudContentRetryJob = scope.launch {
-                        delay(DesktopCloudContentRetryDelayMillis)
+                        delay(DesktopCloudContentRetryDelayMillis.milliseconds)
                         if (state.isSyncEnabled) {
                             logDesktopCloudSync { "desktop.full_sync.content_retry pending=${result.pendingContentDownloads}" }
                             syncDesktopCloud(showBanner = false).join()
@@ -1024,7 +1030,7 @@ internal fun EpistemeDesktopApp(
         }
         desktopBookCloudSyncJobs.remove(book.id)?.cancel()
         val job = scope.launch {
-            if (!uploadContent && debounce) delay(1_200L)
+            if (!uploadContent && debounce) delay(1_200L.milliseconds)
             val credentials = desktopCloudSyncCredentials(showBanner = false) ?: run {
                 logDesktopCloudSync { "desktop.book_queue.skip reason=missing_credentials book=${book.id}" }
                 return@launch
@@ -1103,7 +1109,7 @@ internal fun EpistemeDesktopApp(
                 if (remoteChangedSinceDirtyStart && !(forceUploadAnnotations && hasLocalAnnotations)) {
                     logDesktopCloudAnnotations {
                         "desktop.queue.skip_upload book=${latestBook.id} reason=remote_changed_since_dirty " +
-                            "dirtyBaseTs=$dirtyBaseTimestamp remoteTs=${remoteBook?.lastModifiedTimestamp ?: 0L}"
+                            "dirtyBaseTs=$dirtyBaseTimestamp remoteTs=${remoteBook.lastModifiedTimestamp ?: 0L}"
                     }
                     logDesktopCloudSync { "desktop.book_queue.decision action=pull_remote_changed_since_dirty book=${latestBook.id}" }
                     syncDesktopCloud(showBanner = false).join()
@@ -1254,7 +1260,7 @@ internal fun EpistemeDesktopApp(
     fun syncClosedReaderBooksAfterDispose(bookIds: Set<String>) {
         if (bookIds.isEmpty()) return
         scope.launch {
-            delay(DesktopReaderCloseDisposeSyncDelayMillis)
+            delay(DesktopReaderCloseDisposeSyncDelayMillis.milliseconds)
             val stillClosedBookIds = bookIds
                 .filter { bookId -> readerWindows.none { it.bookId == bookId } }
                 .toSet()
@@ -1759,7 +1765,7 @@ internal fun EpistemeDesktopApp(
                 if (summary.error != null) {
                     desktopFeatureNoticeForError(summary.error)?.let { showDesktopFeatureNotice(it, readerWindowId = windowId) }
                 }
-                delay(500)
+                delay(500.milliseconds)
             }
 
             updateTextReaderWindow(windowId) { it.copy(recapProgressMessage = "Generating recap...") }
@@ -1944,7 +1950,7 @@ internal fun EpistemeDesktopApp(
         desktopBookSidecarSaveJobs.remove(book.id)?.cancel()
         val saveJob = scope.launch(Dispatchers.IO) {
             if (debounceMillis > 0L) {
-                delay(debounceMillis)
+                delay(debounceMillis.milliseconds)
             }
             DesktopLocalFolderSync.saveBookSidecars(book)
         }
@@ -2009,7 +2015,7 @@ internal fun EpistemeDesktopApp(
             readerPosition?.pageIndex ?: lastPageIndex
         }
         val savedProgress = progressPercentage
-        val progressMatches = savedProgress != null && kotlin.math.abs(savedProgress - progress) < 0.001f
+        val progressMatches = savedProgress != null && abs(savedProgress - progress) < 0.001f
         val locatorMatches = session == null || readerPosition == session.navigationLocator
         return savedPage == pageIndex && progressMatches && locatorMatches
     }
@@ -2092,7 +2098,7 @@ internal fun EpistemeDesktopApp(
         val nextHighlights = session?.highlights ?: previousBook.readerHighlights
         val nextPdfViewport = pdfViewport ?: previousBook.pdfReaderViewport
         val progressChanged = previousBook.progressPercentage
-            ?.let { kotlin.math.abs(it - progress) >= DesktopProgressEpsilon }
+            ?.let { abs(it - progress) >= DesktopProgressEpsilon }
             ?: true
         val isReaderDirty =
             previousBook.lastPageIndex != pageIndex ||
@@ -2430,7 +2436,7 @@ internal fun EpistemeDesktopApp(
                         isLoading = true,
                         statusMessage = desktopString(
                             "desktop_preparing_scope_format",
-                            "Preparing %1\$s",
+                            $$"Preparing %1$s",
                             desktopReadScopeLabel(readScope)
                         ),
                         progress = initialProgress,
@@ -2455,12 +2461,12 @@ internal fun EpistemeDesktopApp(
                         "startChunk=${boundedStartChunkIndex + 1}"
                 )
                 desktopTtsAdapter.speakChunks(content.session.reader.book.title, readScope, playbackChunks) { relativeIndex ->
-                    if (!isActive) throw kotlinx.coroutines.CancellationException("Reader cloud TTS stopped")
+                    if (!isActive) throw CancellationException("Reader cloud TTS stopped")
                     val index = boundedStartChunkIndex + relativeIndex
                     val chunk = ttsChunks[index]
                     val progress = initialProgress.copy(currentChunkIndex = index)
                     val latest = textReaderWindowContent(windowId)
-                        ?: throw kotlinx.coroutines.CancellationException("Reader window closed")
+                        ?: throw CancellationException("Reader window closed")
                     if (latest.session.reader.currentPageIndex != chunk.pageIndex) {
                         val updatedSession = readerEngine.goToPage(latest.session, chunk.pageIndex)
                         updateTextReaderWindow(windowId) { current -> current.copy(session = updatedSession) }
@@ -2499,7 +2505,7 @@ internal fun EpistemeDesktopApp(
             }.onFailure { error ->
                 logDesktopTts("reader_sequence_failed error=\"${error.desktopTtsSummary()}\"")
                 updateTextReaderTtsSession { latest ->
-                    if (error is kotlinx.coroutines.CancellationException) {
+                    if (error is CancellationException) {
                         latest.copy(
                             ttsJob = null,
                             extrasState = latest.extrasState.copy(
@@ -2677,8 +2683,8 @@ internal fun EpistemeDesktopApp(
                     desktopQuantityString(
                         "desktop_import_failed_file_count",
                         failedCount,
-                        "Could not import %1\$d file.",
-                        "Could not import %1\$d files.",
+                        $$"Could not import %1$d file.",
+                        $$"Could not import %1$d files.",
                         failedCount
                     ),
                     isError = true
@@ -2704,21 +2710,21 @@ internal fun EpistemeDesktopApp(
                         val importedMessage = desktopQuantityString(
                             "desktop_imported_file_count",
                             counts.addedCount,
-                            "Imported %1\$d file.",
-                            "Imported %1\$d files.",
+                            $$"Imported %1$d file.",
+                            $$"Imported %1$d files.",
                             counts.addedCount
                         )
                         val skippedMessage = desktopQuantityString(
                             "desktop_skipped_file_count",
                             skippedCount,
-                            "Skipped %1\$d file.",
-                            "Skipped %1\$d files.",
+                            $$"Skipped %1$d file.",
+                            $$"Skipped %1$d files.",
                             skippedCount
                         )
                         it.withBanner(
                             desktopString(
                                 "desktop_import_result_pair",
-                                "%1\$s %2\$s",
+                                $$"%1$s %2$s",
                                 importedMessage,
                                 skippedMessage
                             )
@@ -2728,8 +2734,8 @@ internal fun EpistemeDesktopApp(
                         desktopQuantityString(
                             "desktop_imported_file_count",
                             counts.addedCount,
-                            "Imported %1\$d file.",
-                            "Imported %1\$d files.",
+                            $$"Imported %1$d file.",
+                            $$"Imported %1$d files.",
                             counts.addedCount
                         )
                     )
@@ -2738,8 +2744,8 @@ internal fun EpistemeDesktopApp(
                         desktopQuantityString(
                             "desktop_import_failed_file_count",
                             counts.failedCount,
-                            "Could not import %1\$d file.",
-                            "Could not import %1\$d files.",
+                            $$"Could not import %1$d file.",
+                            $$"Could not import %1$d files.",
                             counts.failedCount
                         ),
                         isError = true
@@ -2794,8 +2800,8 @@ internal fun EpistemeDesktopApp(
                 desktopQuantityString(
                     "desktop_importing_file_count",
                     files.size,
-                    "Importing %1\$d file...",
-                    "Importing %1\$d files...",
+                    $$"Importing %1$d file...",
+                    $$"Importing %1$d files...",
                     files.size
                 )
             )
@@ -2869,16 +2875,16 @@ internal fun EpistemeDesktopApp(
                     desktopQuantityString(
                         "desktop_folder_sync_failed_folder_count",
                         failedCount,
-                        "Folder sync failed for %1\$d folder.",
-                        "Folder sync failed for %1\$d folders.",
+                        $$"Folder sync failed for %1$d folder.",
+                        $$"Folder sync failed for %1$d folders.",
                         failedCount
                     )
                 failedCount > 0 ->
                     desktopQuantityString(
                         "desktop_folder_sync_skipped_folder_count",
                         failedCount,
-                        "Folder sync finished with %1\$d folder skipped.",
-                        "Folder sync finished with %1\$d folders skipped.",
+                        $$"Folder sync finished with %1$d folder skipped.",
+                        $$"Folder sync finished with %1$d folders skipped.",
                         failedCount
                     )
                 metadataOnly ->
@@ -3260,7 +3266,7 @@ internal fun EpistemeDesktopApp(
 
     fun schedulePdfEmbeddedAnnotationsLoad(windowId: String, document: DesktopPdfDocument) {
         scope.launch {
-            delay(650L)
+            delay(650L.milliseconds)
             val stillOpen = readerWindows.any { window ->
                 window.id == windowId &&
                     (window.content as? DesktopReaderWindowContent.Pdf)?.document?.handleId == document.handleId
@@ -3313,13 +3319,13 @@ internal fun EpistemeDesktopApp(
     }
 
     fun focusDesktopAppWindow() {
-        val ownerWindow = (window as? java.awt.Window)
-            ?: window?.let { javax.swing.SwingUtilities.getWindowAncestor(it) }
+        val ownerWindow = (window as? Window)
+            ?: window?.let { SwingUtilities.getWindowAncestor(it) }
             ?: return
         EventQueue.invokeLater {
             if (!ownerWindow.isDisplayable || !ownerWindow.isShowing) return@invokeLater
-            if (ownerWindow is java.awt.Frame && ownerWindow.extendedState and java.awt.Frame.ICONIFIED != 0) {
-                ownerWindow.extendedState = ownerWindow.extendedState and java.awt.Frame.ICONIFIED.inv()
+            if (ownerWindow is Frame && ownerWindow.extendedState and Frame.ICONIFIED != 0) {
+                ownerWindow.extendedState = ownerWindow.extendedState and Frame.ICONIFIED.inv()
             }
             ownerWindow.toFront()
             ownerWindow.requestFocus()
@@ -3816,7 +3822,7 @@ internal fun EpistemeDesktopApp(
         }
     }
 
-    fun emitOpds(next: com.aryan.reader.shared.opds.SharedOpdsScreenState) {
+    fun emitOpds(next: SharedOpdsScreenState) {
         opdsState = next
     }
 
@@ -3855,28 +3861,44 @@ internal fun EpistemeDesktopApp(
     }
 
     fun removeOpdsCatalog(catalog: OpdsCatalog) {
+        if (!featurePolicy.opdsCatalogs) return
         emitOpds(opdsController.removeCatalog(catalog.id))
+    }
+
+    fun deleteStreamedBooksForCatalog(catalogId: String) {
+        if (!featurePolicy.opdsCatalogs) return
+
         val streamBookIds = state.rawLibraryBooks
-            .filter { book -> SharedOpdsStreamUri.parse(book.path)?.catalogId == catalog.id }
+            .filter { book ->
+                SharedOpdsStreamUri.parse(book.path)?.catalogId == catalogId
+            }
             .mapTo(mutableSetOf()) { it.id }
-        if (streamBookIds.isNotEmpty()) {
-            closeReaderWindowsForBookIds(streamBookIds)
-            updateState(
-                state.copy(
-                    rawLibraryBooks = state.rawLibraryBooks.filterNot { it.id in streamBookIds },
-                    openTabIds = state.openTabIds.filterNot { it in streamBookIds },
-                    activeTabBookId = state.activeTabBookId?.takeUnless { it in streamBookIds }
-                ).withBanner(
-                    desktopQuantityString(
-                        "desktop_opds_removed_stream_book_count",
-                        streamBookIds.size,
-                        "Removed %1\$d streamed OPDS book from that catalog.",
-                        "Removed %1\$d streamed OPDS books from that catalog.",
-                        streamBookIds.size
-                    )
+
+        if (streamBookIds.isEmpty()) return
+
+        closeReaderWindowsForBookIds(streamBookIds)
+
+        updateState(
+            state.copy(
+                rawLibraryBooks = state.rawLibraryBooks.filterNot { book ->
+                    book.id in streamBookIds
+                },
+                openTabIds = state.openTabIds.filterNot { bookId ->
+                    bookId in streamBookIds
+                },
+                activeTabBookId = state.activeTabBookId?.takeUnless { bookId ->
+                    bookId in streamBookIds
+                }
+            ).withBanner(
+                desktopQuantityString(
+                    "desktop_opds_removed_stream_book_count",
+                    streamBookIds.size,
+                    $$"Removed %1$d streamed OPDS book from that catalog.",
+                    $$"Removed %1$d streamed OPDS books from that catalog.",
+                    streamBookIds.size
                 )
             )
-        }
+        )
     }
 
     fun downloadOpdsBook(entry: OpdsEntry, acquisition: OpdsAcquisition) {
@@ -4352,12 +4374,28 @@ internal fun EpistemeDesktopApp(
                                     onSearch = ::searchOpds,
                                     onLoadNextPage = ::loadNextOpdsPage,
                                     onAddCatalog = { title, url, username, password ->
-                                        emitOpds(opdsController.addCatalog(title, url, username, password))
+                                        emitOpds(
+                                            opdsController.addCatalog(
+                                                title,
+                                                url,
+                                                username,
+                                                password
+                                            )
+                                        )
                                     },
                                     onUpdateCatalog = { id, title, url, username, password ->
-                                        emitOpds(opdsController.updateCatalog(id, title, url, username, password))
+                                        emitOpds(
+                                            opdsController.updateCatalog(
+                                                id,
+                                                title,
+                                                url,
+                                                username,
+                                                password
+                                            )
+                                        )
                                     },
                                     onRemoveCatalog = ::removeOpdsCatalog,
+                                    onDeleteCatalogStreams = ::deleteStreamedBooksForCatalog,
                                     onDownloadBook = ::downloadOpdsBook,
                                     onReadBook = ::openReader,
                                     onStreamBook = ::streamOpdsBook,
@@ -4458,7 +4496,8 @@ internal fun EpistemeDesktopApp(
                         }
                         closeReaderWindow(readerWindow.id)
                     },
-                    title = desktopString("desktop_label_pair_format", "%1\$s - %2\$s", readerWindow.title, readerWindowDefaults.title),
+                    title = desktopString("desktop_label_pair_format",
+                        $$"%1$s - %2$s", readerWindow.title, readerWindowDefaults.title),
                     state = windowState,
                     icon = painterResource(readerWindowDefaults.iconResourcePath)
                 ) {
@@ -4487,9 +4526,9 @@ internal fun EpistemeDesktopApp(
                     }
                     LaunchedEffect(readerWindow.focusRequestId) {
                         EventQueue.invokeLater {
-                            val awtWindow = readerAwtWindow as? java.awt.Window ?: return@invokeLater
-                            if (awtWindow is java.awt.Frame && awtWindow.extendedState and java.awt.Frame.ICONIFIED != 0) {
-                                awtWindow.extendedState = awtWindow.extendedState and java.awt.Frame.ICONIFIED.inv()
+                            val awtWindow = readerAwtWindow as? Window ?: return@invokeLater
+                            if (awtWindow is Frame && awtWindow.extendedState and Frame.ICONIFIED != 0) {
+                                awtWindow.extendedState = awtWindow.extendedState and Frame.ICONIFIED.inv()
                             }
                             awtWindow.toFront()
                             awtWindow.requestFocus()
@@ -5068,7 +5107,8 @@ internal fun EpistemeDesktopApp(
         shelfToDelete?.let { shelf ->
             SharedConfirmDialog(
                 title = readerString("menu_delete_shelf", "Delete shelf"),
-                body = readerString("desktop_delete_shelf_desc", "Delete \"%1\$s\"? Books stay in your library.", shelf.name),
+                body = readerString("desktop_delete_shelf_desc",
+                    $$"Delete \"%1$s\"? Books stay in your library.", shelf.name),
                 confirmLabel = readerString("action_delete", "Delete"),
                 onDismiss = { shelfToDelete = null },
                 onConfirm = {
@@ -5081,7 +5121,8 @@ internal fun EpistemeDesktopApp(
         tagToDelete?.let { tagShelf ->
             SharedConfirmDialog(
                 title = readerString("menu_delete_tag", "Delete tag"),
-                body = readerString("desktop_delete_tag_desc", "Delete tag \"%1\$s\"? It will be removed from every book.", tagShelf.name),
+                body = readerString("desktop_delete_tag_desc",
+                    $$"Delete tag \"%1$s\"? It will be removed from every book.", tagShelf.name),
                 confirmLabel = readerString("action_delete", "Delete"),
                 onDismiss = { tagToDelete = null },
                 onConfirm = {
@@ -5096,8 +5137,8 @@ internal fun EpistemeDesktopApp(
                 body = desktopQuantityString(
                     "desktop_remove_folder_desc_with_book_count",
                     folder.bookCount,
-                    "Remove \"%1\$s\" and its %2\$d book from the app? Files on disk will not be deleted.",
-                    "Remove \"%1\$s\" and its %2\$d books from the app? Files on disk will not be deleted.",
+                    $$"Remove \"%1$s\" and its %2$d book from the app? Files on disk will not be deleted.",
+                    $$"Remove \"%1$s\" and its %2$d books from the app? Files on disk will not be deleted.",
                     folder.name,
                     folder.bookCount
                 ),

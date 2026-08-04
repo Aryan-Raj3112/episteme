@@ -183,6 +183,9 @@ fun UnifiedLibraryScreen(
     var pendingAnnotationExportText by remember { mutableStateOf<String?>(null) }
     var showAnnotationExportFormatDialogFor by remember { mutableStateOf<RecentFileItem?>(null) }
     var showAudiobookAddSheet by rememberSaveable { mutableStateOf(false) }
+    var showTtsBookPicker by rememberSaveable {
+        mutableStateOf(false)
+    }
     var audiobookPlayerItem by remember { mutableStateOf<AudiobookUiItem?>(null) }
 
     val filePicker = rememberFilePickerLauncher(viewModel::onFilesSelected)
@@ -480,7 +483,7 @@ fun UnifiedLibraryScreen(
                         onClick = { showAudiobookAddSheet = true },
                         modifier = Modifier.testTag("UnifiedLibraryAddAudiobook")
                     ) {
-                        Icon(Icons.Default.Add, contentDescription = stringResource(R.string.audiobooks_add))
+                        Icon(Icons.Default.Add, contentDescription = stringResource(R.string.listen_add))
                     }
                     UnifiedLibrarySection.SHELVES -> if (selectedShelfId == null) {
                         ExtendedFloatingActionButton(
@@ -533,7 +536,7 @@ fun UnifiedLibraryScreen(
                 UnifiedLibrarySection.AUDIOBOOKS -> AudiobooksLibrarySection(
                     modifier = Modifier.padding(padding),
                     audiobooks = importedAudiobooks,
-                    ebooks = uiState.rawLibraryFiles.filter { it.type != FileType.AUDIOBOOK },
+                    libraryBooks = uiState.rawLibraryFiles,
                     ttsProgress = bookTtsProgress,
                     activeItemId = activeListeningItemId,
                     onAudiobookClick = { item ->
@@ -629,17 +632,63 @@ fun UnifiedLibraryScreen(
         AudiobookAddSheet(
             onChooseFile = {
                 showAudiobookAddSheet = false
-                audiobookPicker.launch(arrayOf("audio/*", "application/octet-stream"))
+                audiobookPicker.launch(
+                    arrayOf(
+                        "audio/*",
+                        "application/octet-stream"
+                    )
+                )
             },
             onChooseMultiple = {
                 showAudiobookAddSheet = false
-                audiobookMultiplePicker.launch(arrayOf("audio/*", "application/octet-stream"))
+                audiobookMultiplePicker.launch(
+                    arrayOf(
+                        "audio/*",
+                        "application/octet-stream"
+                    )
+                )
             },
             onChooseFolder = {
                 showAudiobookAddSheet = false
                 audiobookFolderPicker.launch(null)
             },
-            onDismiss = { showAudiobookAddSheet = false }
+            onChooseTtsBook = {
+                showAudiobookAddSheet = false
+                showTtsBookPicker = true
+            },
+            onDismiss = {
+                showAudiobookAddSheet = false
+            }
+        )
+    }
+    if (showTtsBookPicker) {
+        TtsBookPickerSheet(
+            books = uiState.rawLibraryFiles,
+            onBookSelected = { book ->
+                showTtsBookPicker = false
+
+                val shouldStart =
+                    shouldAutoStartTtsAudiobook(
+                        book.bookId,
+                        ttsPlayback
+                    )
+
+                if (shouldStart) {
+                    viewModel.ttsController.connect()
+                }
+
+                audiobookPlayerItem =
+                    book.toTtsAudiobookUiItem(
+                        bookTtsProgress.firstOrNull {
+                            it.bookId == book.bookId
+                        }
+                    ).copy(
+                        autoStart = shouldStart
+                    )
+            },
+            onDismiss = {
+                showTtsBookPicker = false
+            }
         )
     }
     audiobookPlayerItem?.let { item ->
@@ -787,7 +836,7 @@ private fun UnifiedLibraryDrawer(
                 modifier = Modifier.padding(start = 28.dp, top = 20.dp, bottom = 8.dp)
             )
             UnifiedLibraryDestination(stringResource(R.string.unified_library_home), currentSection == UnifiedLibrarySection.HOME, { Icon(Icons.Default.Home, null) }) { onSectionSelected(UnifiedLibrarySection.HOME) }
-            UnifiedLibraryDestination(stringResource(R.string.audiobooks_title), currentSection == UnifiedLibrarySection.AUDIOBOOKS, { Icon(Icons.AutoMirrored.Filled.VolumeUp, null) }) { onSectionSelected(UnifiedLibrarySection.AUDIOBOOKS) }
+            UnifiedLibraryDestination(stringResource(R.string.listen_title), currentSection == UnifiedLibrarySection.AUDIOBOOKS, { Icon(Icons.AutoMirrored.Filled.VolumeUp, null) }) { onSectionSelected(UnifiedLibrarySection.AUDIOBOOKS) }
             UnifiedLibraryDestination(stringResource(R.string.tab_shelves), currentSection == UnifiedLibrarySection.SHELVES, { Icon(Icons.AutoMirrored.Filled.LibraryBooks, null) }) { onSectionSelected(UnifiedLibrarySection.SHELVES) }
             UnifiedLibraryDestination(stringResource(R.string.tab_folders), currentSection == UnifiedLibrarySection.FOLDERS, { Icon(Icons.Default.Folder, null) }) { onSectionSelected(UnifiedLibrarySection.FOLDERS) }
             if (!BuildConfig.IS_OFFLINE) {
@@ -842,7 +891,7 @@ private fun UnifiedLibraryTopBar(
             }
                 val title = selectedShelf?.name ?: when (section) {
                     UnifiedLibrarySection.HOME -> null
-                    UnifiedLibrarySection.AUDIOBOOKS -> stringResource(R.string.audiobooks_title)
+                    UnifiedLibrarySection.AUDIOBOOKS -> stringResource(R.string.listen_title)
                     UnifiedLibrarySection.SHELVES -> stringResource(R.string.tab_shelves)
                     UnifiedLibrarySection.FOLDERS -> stringResource(R.string.tab_folders)
                     UnifiedLibrarySection.CATALOGS -> stringResource(R.string.tab_catalogs)
