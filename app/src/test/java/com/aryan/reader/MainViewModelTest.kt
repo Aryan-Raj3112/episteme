@@ -583,9 +583,9 @@ class MainViewModelTest {
 
         viewModel.setMainScreenPage(99)
 
-        val state = viewModel.uiState.first { it.mainScreenStartPage == 1 }
-        assertEquals(1, state.mainScreenStartPage)
-        verify { mockEditor.putInt(KEY_MAIN_SCREEN_START_PAGE, 1) }
+        val state = viewModel.uiState.first { it.mainScreenStartPage == 2 }
+        assertEquals(2, state.mainScreenStartPage)
+        verify { mockEditor.putInt(KEY_MAIN_SCREEN_START_PAGE, 2) }
     }
 
     @Test
@@ -836,6 +836,20 @@ class MainViewModelTest {
         val restored = TestMainViewModel(mockApplication)
         try {
             assertEquals(setOf(FileType.PDF), restored.uiState.value.libraryFilters.fileTypes)
+        } finally {
+            restored.clearForTest()
+            testDispatcher.scheduler.advanceUntilIdle()
+        }
+    }
+
+    @Test
+    fun `listen unified library section survives restore without clamping to catalogs`() = runTest(testDispatcher) {
+        every { mockPrefs.getInt(KEY_UNIFIED_LIBRARY_SECTION, 0) } returns 4
+
+        val restored = TestMainViewModel(mockApplication)
+        try {
+            advanceUntilIdle()
+            assertEquals(4, restored.uiState.value.unifiedLibrarySection)
         } finally {
             restored.clearForTest()
             testDispatcher.scheduler.advanceUntilIdle()

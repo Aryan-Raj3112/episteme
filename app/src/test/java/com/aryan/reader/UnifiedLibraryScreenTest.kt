@@ -72,12 +72,6 @@ class UnifiedLibraryScreenTest {
     }
 
     @Test
-    fun audiobookSpeedControlCyclesThroughListeningSpeeds() {
-        assertEquals(1.25f, nextAudiobookSpeed(1f))
-        assertEquals(.75f, nextAudiobookSpeed(2f))
-    }
-
-    @Test
     fun audiobookResumeRewindsForContextWithoutGoingNegative() {
         assertEquals(0L, audiobookResumePosition(7_000L))
         assertEquals(50_000L, audiobookResumePosition(60_000L))

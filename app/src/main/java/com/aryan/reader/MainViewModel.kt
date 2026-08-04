@@ -566,7 +566,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 0
             ).coerceIn(0, if (BuildConfig.IS_OFFLINE) 2 else 3),
             unifiedLibrarySection = prefs.getInt(KEY_UNIFIED_LIBRARY_SECTION, 0)
-                .coerceIn(0, if (BuildConfig.IS_OFFLINE) 2 else 3),
+                .coerceIn(0, 4),
             viewingShelfId = prefs.getString(KEY_LAST_VIEWING_SHELF_ID, null),
             isAddingBooksToShelf = prefs.getBoolean(KEY_LAST_ADDING_BOOKS_TO_SHELF, false),
             currentUser = authRepository.getSignedInUser(),
@@ -7615,7 +7615,6 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         private const val KEY_APP_TEXT_DIM_FACTOR_LIGHT = "app_text_dim_factor_light"
         private const val KEY_APP_TEXT_DIM_FACTOR_DARK = "app_text_dim_factor_dark"
         private const val KEY_APP_FONT_KIND = "app_font_kind"
-        private const val KEY_UNIFIED_LIBRARY_SECTION = "unified_library_section"
         private const val KEY_APP_FONT_CUSTOM_ID = "app_font_custom_id"
         private const val KEY_CUSTOM_APP_THEMES = "custom_app_themes"
 
