@@ -64,6 +64,77 @@ class AudiobookModelsTest {
         assertEquals("0:00", formatSharedAudiobookSleepTimer(-1))
     }
 
+    @Test
+    fun `sleep timer ms label matches M colon SS countdown`() {
+        assertEquals("30:00", formatSharedSleepTimerLabel(1_800_000L))
+        assertEquals("0:09", formatSharedSleepTimerLabel(9_000L))
+        assertEquals("0:00", formatSharedSleepTimerLabel(-1L))
+    }
+
+    @Test
+    fun `remaining label matches Android listen row text`() {
+        assertEquals("Duration unavailable", sharedAudiobookRemainingLabel(0L, 0L))
+        assertEquals("1 hr 40 min", sharedAudiobookRemainingLabel(6_000_000L, 0L))
+        assertEquals("45 min", sharedAudiobookRemainingLabel(6_000_000L, 3_300_000L))
+        assertEquals("0 min", sharedAudiobookRemainingLabel(100_000L, 200_000L))
+    }
+
+    @Test
+    fun `sort matches Android listen sort orders`() {
+        fun ab(id: String, addedAt: Long, lastListenedAt: Long, title: String, author: String?, durationMs: Long, positionMs: Long) =
+            SharedAudiobook(
+                bookId = id, filePath = "/$id", format = "m4b", title = title, author = author,
+                durationMs = durationMs, positionMs = positionMs, addedAt = addedAt, lastListenedAt = lastListenedAt,
+            )
+        val recent = ab("recent", 1L, 100L, "Beta", "Zed", 100L, 0L)
+        val added = ab("added", 50L, 0L, "Alpha", "Ann", 100L, 0L)
+        val title = ab("title", 20L, 0L, "Middle", "Bob", 100L, 0L)
+        val half = ab("half", 2L, 30L, "Halfway", null, 100L, 50L)
+        val books = listOf(recent, added, title, half)
+
+        assertEquals(listOf("recent", "half", "added", "title"),
+            sortSharedAudiobooks(books, SharedAudiobookSort.RECENTLY_LISTENED).map { it.bookId })
+        assertEquals(listOf("added", "title", "half", "recent"),
+            sortSharedAudiobooks(books, SharedAudiobookSort.RECENTLY_ADDED).map { it.bookId })
+        assertEquals(listOf("added", "recent", "half", "title"),
+            sortSharedAudiobooks(books, SharedAudiobookSort.TITLE).map { it.bookId })
+        assertEquals(listOf("half", "added", "title", "recent"),
+            sortSharedAudiobooks(books, SharedAudiobookSort.AUTHOR).map { it.bookId })
+        assertEquals(listOf("half", "recent", "added", "title"),
+            sortSharedAudiobooks(books, SharedAudiobookSort.PROGRESS).map { it.bookId })
+    }
+
+    @Test
+    fun `query matches title author album and narrator`() {
+        val book = SharedAudiobook(
+            bookId = "id", filePath = "/id", format = "m4b", title = "The Hobbit",
+            author = "Tolkien", album = "Middle Earth", narrator = "Reader", addedAt = 1L,
+        )
+        assertTrue(book.matchesSharedAudiobookQuery("hob"))
+        assertTrue(book.matchesSharedAudiobookQuery("  TOLKIEN  "))
+        assertTrue(book.matchesSharedAudiobookQuery("middle"))
+        assertTrue(book.matchesSharedAudiobookQuery("reader"))
+        assertFalse(book.matchesSharedAudiobookQuery("sauron"))
+        assertTrue(book.matchesSharedAudiobookQuery(""))
+    }
+
+    @Test
+    fun `library item mirrors fractional progress and last listened time`() {
+        val book = SharedAudiobook(
+            bookId = "id", filePath = "/id", format = "m4b", title = "Book",
+            durationMs = 100L, positionMs = 40L, addedAt = 1L, lastListenedAt = 9L,
+        )
+        assertEquals(SharedAudiobookLibraryItem("id", 0.4f, false, 9L), book.toSharedAudiobookLibraryItem())
+    }
+
+    @Test
+    fun `playback time formatting matches clock expectations`() {
+        assertEquals("0:05", formatSharedPlaybackTime(5_000L))
+        assertEquals("3:02", formatSharedPlaybackTime(182_000L))
+        assertEquals("1:02:03", formatSharedPlaybackTime(3_723_000L))
+        assertEquals("0:00", formatSharedPlaybackTime(-1L))
+    }
+
     private fun item(id: String, progress: Float, isTts: Boolean = false, updatedAt: Long = 0L) =
         SharedAudiobookLibraryItem(id, progress, isTts, updatedAt)
 }

@@ -71,6 +71,11 @@ import com.aryan.reader.shared.SharedSettingsHubInput
 import com.aryan.reader.shared.SharedSettingsPlatform
 import com.aryan.reader.shared.Shelf
 import com.aryan.reader.shared.ShelfType
+import com.aryan.reader.shared.SharedAudiobook
+import com.aryan.reader.shared.SharedAudiobookFormats
+import com.aryan.reader.shared.SharedAudiobookPlaybackRequest
+import com.aryan.reader.shared.SharedAudiobookPlaybackState
+import com.aryan.reader.shared.sharedAudiobookResumePosition
 import com.aryan.reader.shared.SyncedFolder
 import com.aryan.reader.shared.UserData
 import com.aryan.reader.shared.ReaderPlatform
@@ -102,6 +107,8 @@ import com.aryan.reader.shared.withRestoredMobileLibraryNavigation
 import com.aryan.reader.shared.withoutMobileReaderSession
 import com.aryan.reader.shared.withMobileImportedBooks
 import com.aryan.reader.shared.withMigratedMobileBookIdentity
+import com.aryan.reader.shared.withAudiobookImported
+import com.aryan.reader.shared.withAudiobookPosition
 import com.aryan.reader.shared.withLoadedMetadata
 import com.aryan.reader.shared.withUserEditedMetadata
 import com.aryan.reader.shared.DefaultReaderCustomBrightness
@@ -235,6 +242,17 @@ class ReaderIosBridge {
     private var cloudUploadHandler: ((String) -> Unit)? = null
     private var folderFileDeletionHandler: ((String, List<String>) -> Unit)? = null
     private var folderFileReplacementHandler: ((String, String) -> String?)? = null
+    internal var audiobookPlayHandler: ((String, Double, Double) -> Unit)? = null
+    internal var audiobookPauseHandler: (() -> Unit)? = null
+    internal var audiobookSpeedAndResumeHandler: ((Float) -> Unit)? = null
+    internal var audiobookSeekHandler: ((Double) -> Unit)? = null
+    internal var audiobookSpeedHandler: ((Double) -> Unit)? = null
+    internal var audiobookSleepTimerHandler: ((Int) -> Unit)? = null
+    internal var audiobookCancelSleepHandler: (() -> Unit)? = null
+    internal var audiobookStopHandler: (() -> Unit)? = null
+    internal var audiobookMetadataHandler: ((String, String, (String, String?, String?, Long) -> Unit) -> Unit)? = null
+    internal var audiobookPlaybackSnapshot by mutableStateOf(SharedAudiobookPlaybackState())
+        private set
     internal var pendingCloudSync by mutableStateOf<IosPendingCloudSync?>(null)
         private set
     internal var cloudSyncStatus by mutableStateOf<String?>(null)
@@ -242,6 +260,46 @@ class ReaderIosBridge {
 
     internal var latestNativeEvent by mutableStateOf<String?>(null)
         private set
+
+    fun updateAudiobookPlaybackState(
+        isPlaying: Boolean,
+        isLoading: Boolean,
+        positionMs: Long,
+        durationMs: Long,
+        speed: Float,
+        sleepTimerRemainingMs: Long,
+        error: String?,
+    ) {
+        audiobookPlaybackSnapshot = audiobookPlaybackSnapshot.copy(
+            connected = true,
+            isPlaying = isPlaying,
+            isLoading = isLoading,
+            positionMs = positionMs.coerceAtLeast(0L),
+            durationMs = durationMs.coerceAtLeast(0L),
+            speed = speed.takeIf { it > 0f } ?: 1f,
+            sleepTimerRemainingMs = sleepTimerRemainingMs.coerceAtLeast(0L),
+            error = error,
+        )
+    }
+
+    internal fun markAudiobookConnected(bookId: String) {
+        audiobookPlaybackSnapshot = audiobookPlaybackSnapshot.copy(
+            connected = true,
+            bookId = bookId,
+            error = null,
+        )
+    }
+
+    internal fun markAudiobookStopped() {
+        audiobookPlaybackSnapshot = audiobookPlaybackSnapshot.copy(
+            connected = false,
+            bookId = null,
+            isPlaying = false,
+            isLoading = false,
+            sleepTimerRemainingMs = 0L,
+            error = null,
+        )
+    }
 
     fun recordImportedFiles(
         fileNames: List<String>,
@@ -446,6 +504,44 @@ class ReaderIosBridge {
 
     fun setFolderFileReplacementHandler(handler: (String, String) -> String?) {
         folderFileReplacementHandler = handler
+    }
+
+    fun setAudiobookPlayHandler(handler: (filePath: String, positionMs: Double, speed: Double) -> Unit) {
+        audiobookPlayHandler = handler
+    }
+
+    fun setAudiobookPauseHandler(handler: () -> Unit) {
+        audiobookPauseHandler = handler
+    }
+
+    fun setAudiobookSpeedAndResumeHandler(handler: (speed: Float) -> Unit) {
+        audiobookSpeedAndResumeHandler = handler
+    }
+
+    fun setAudiobookSeekHandler(handler: (positionMs: Double) -> Unit) {
+        audiobookSeekHandler = handler
+    }
+
+    fun setAudiobookSpeedHandler(handler: (speed: Double) -> Unit) {
+        audiobookSpeedHandler = handler
+    }
+
+    fun setAudiobookSleepTimerHandler(handler: (minutes: Int) -> Unit) {
+        audiobookSleepTimerHandler = handler
+    }
+
+    fun setAudiobookCancelSleepHandler(handler: () -> Unit) {
+        audiobookCancelSleepHandler = handler
+    }
+
+    fun setAudiobookStopHandler(handler: () -> Unit) {
+        audiobookStopHandler = handler
+    }
+
+    fun setAudiobookMetadataHandler(
+        handler: (filePath: String, fallbackTitle: String, completion: (title: String, author: String?, album: String?, durationMs: Long) -> Unit) -> Unit,
+    ) {
+        audiobookMetadataHandler = handler
     }
 
     internal fun replaceFolderManagedFile(folderName: String, managedPath: String): IosFolderReplacement? {
@@ -806,12 +902,16 @@ private fun loadIosLibrarySnapshot(): SharedLibrarySnapshot {
     val encoded = defaults.stringForKey(IosLibrarySnapshotDefaultsKey)
         ?: defaults.stringForKey(IosReaderPreferencesDefaultsKey)
         ?: return SharedLibrarySnapshot()
-    return SharedLibrarySnapshotJson.decodeOrEmpty(encoded).withResolvedIosBookPaths()
+    return SharedLibrarySnapshotJson.decodeOrEmpty(encoded)
+        .withResolvedIosBookPaths()
+        .withResolvedIosAudiobookPaths()
 }
 
 private fun persistIosLibrarySnapshot(state: SharedReaderScreenState) {
     val encoded = SharedLibrarySnapshotJson.encode(
-        state.toSharedMobileLibrarySnapshot().withStableIosBookPaths()
+        state.toSharedMobileLibrarySnapshot()
+            .withStableIosBookPaths()
+            .withStableIosAudiobookPaths()
     )
     NSUserDefaults.standardUserDefaults.setObject(encoded, forKey = IosLibrarySnapshotDefaultsKey)
 }
@@ -929,6 +1029,20 @@ private fun SharedLibrarySnapshot.withStableIosBookPaths(): SharedLibrarySnapsho
         }
         .distinctBy { book -> book.path?.takeIf(String::isNotBlank)?.let { "path:$it" } ?: "id:${book.id}" }
     return copy(books = stableBooks)
+}
+
+private fun SharedLibrarySnapshot.withResolvedIosAudiobookPaths(): SharedLibrarySnapshot {
+    val resolvedAudiobooks = audiobooks
+        .map { audiobook -> audiobook.copy(filePath = audiobook.filePath.resolvedIosImportedFilePath()) }
+        .distinctBy { it.bookId }
+    return copy(audiobooks = resolvedAudiobooks)
+}
+
+private fun SharedLibrarySnapshot.withStableIosAudiobookPaths(): SharedLibrarySnapshot {
+    val stableAudiobooks = audiobooks
+        .map { audiobook -> audiobook.copy(filePath = audiobook.filePath.stableIosImportedFilePath()) }
+        .distinctBy { it.bookId }
+    return copy(audiobooks = stableAudiobooks)
 }
 
 private fun loadIosReaderOrientation(): ReaderScreenOrientationMode {
@@ -1377,6 +1491,25 @@ private fun ReaderIosApp(
     LaunchedEffect(state.viewingShelfId, state.isAddingBooksToShelf, state.addBooksSource) {
         persistIosMobileLibraryNavigation(state)
     }
+    val audiobookPlayer = remember { IosAudiobookPlayback(bridge) }
+    val audiobookPlaybackSnapshot = bridge.audiobookPlaybackSnapshot
+    var lastAudiobookPersistAt by remember { mutableStateOf(0L) }
+    LaunchedEffect(audiobookPlaybackSnapshot) {
+        val snapshot = audiobookPlaybackSnapshot
+        val bookId = snapshot.bookId ?: return@LaunchedEffect
+        val now = currentTimestamp()
+        val shouldPersist = !snapshot.isPlaying || (now - lastAudiobookPersistAt) >= 5_000L
+        if (snapshot.connected && shouldPersist) {
+            lastAudiobookPersistAt = now
+            state = state.withAudiobookPosition(
+                bookId = bookId,
+                positionMs = snapshot.positionMs,
+                durationMs = snapshot.durationMs,
+                speed = snapshot.speed,
+                lastListenedAt = now,
+            )
+        }
+    }
     LaunchedEffect(state.isSyncEnabled) {
         persistIosSyncEnabled(state.isSyncEnabled)
     }
@@ -1610,11 +1743,55 @@ private fun ReaderIosApp(
         selectLibraryTab(SharedMobileLibraryTab.BOOKS)
     }
 
+    fun importIosAudiobooks(files: List<IosImportedFile>) {
+        val candidates = files
+            .filter { SharedAudiobookFormats.supportsFileName(it.name) }
+            .filter { file ->
+                val id = file.contentId.takeIf { it.isNotBlank() }
+                    ?: "ios_audio_${file.path.stableIosImportedFilePath().normalizedId()}"
+                state.audiobooks.none { it.bookId == id }
+            }
+            .distinctBy { it.path }
+        if (candidates.isEmpty()) return
+        val pending = candidates.withIndex().toMutableList()
+        val total = candidates.size
+        candidates.forEach { file ->
+            val id = file.contentId.takeIf { it.isNotBlank() }
+                ?: "ios_audio_${file.path.stableIosImportedFilePath().normalizedId()}"
+            audiobookPlayer.extractAudiobookMetadata(
+                filePath = file.path,
+                fallbackTitle = file.name.substringBeforeLast('.').ifBlank { file.name },
+            ) { title, author, album, durationMs ->
+                state = state.withAudiobookImported(
+                    SharedAudiobook(
+                        bookId = id,
+                        filePath = file.path.stableIosImportedFilePath(),
+                        format = file.name.substringAfterLast('.', "").lowercase(),
+                        title = title,
+                        author = author,
+                        album = album,
+                        durationMs = durationMs,
+                        positionMs = 0L,
+                        playbackSpeed = 1f,
+                        addedAt = currentTimestamp(),
+                    )
+                )
+                pending.removeAll { it.value.path == file.path }
+                if (pending.isEmpty()) {
+                    selectMainPage(SharedMobileMainDestination.LIBRARY)
+                    showMessage(if (total == 1) "Added $total audiobook" else "Added $total audiobooks")
+                }
+            }
+        }
+    }
+
     fun requestCloudSyncIfEligible() {
         if (!cloudSyncEligible()) return
         bridge.requestCloudSync(
             SharedLibrarySnapshotJson.encode(
-                state.toSharedMobileLibrarySnapshot().withStableIosBookPaths()
+                state.toSharedMobileLibrarySnapshot()
+                    .withStableIosBookPaths()
+                    .withStableIosAudiobookPaths()
             )
         )
     }
@@ -1721,6 +1898,7 @@ private fun ReaderIosApp(
         )
         state = mergedSnapshot
             .withResolvedIosBookPaths()
+            .withResolvedIosAudiobookPaths()
             .toSharedMobileReaderState()
         pendingUnavailableBookId?.let { bookId ->
             val downloaded = state.rawLibraryBooks.firstOrNull { it.id == bookId && it.isAvailable }
@@ -1732,7 +1910,11 @@ private fun ReaderIosApp(
             }
         }
         bridge.uploadCloudSnapshot(
-            SharedLibrarySnapshotJson.encode(mergedSnapshot.withStableIosBookPaths())
+            SharedLibrarySnapshotJson.encode(
+                mergedSnapshot
+                    .withStableIosBookPaths()
+                    .withStableIosAudiobookPaths()
+            )
         )
         bridge.consumeCloudSnapshot()
     }
@@ -1770,9 +1952,11 @@ private fun ReaderIosApp(
 
     LaunchedEffect(bridge.importedFiles, bridge.pendingImportBatches, bridge.pendingFolderScans) {
         bridge.pendingImportBatches.firstOrNull()?.let { batch ->
+            val audioFiles = batch.files.filter { SharedAudiobookFormats.supportsFileName(it.name) }
+            val bookFiles = batch.files.filterNot { SharedAudiobookFormats.supportsFileName(it.name) }
             val existingBooks = state.rawLibraryBooks
             val outcome = planMobileImportBatch(
-                files = batch.files.map { file ->
+                files = bookFiles.map { file ->
                     ImportedBookFile(
                         name = file.name,
                         uriString = null,
@@ -1796,7 +1980,7 @@ private fun ReaderIosApp(
                     outcome.plan.importedBooks,
                     "Added ${outcome.counts.addedCount} book(s)",
                 )
-            } else {
+            } else if (bookFiles.isNotEmpty() || audioFiles.isEmpty()) {
                 val feedback = SharedImportPlanner.feedbackForCounts(
                     counts = outcome.counts,
                     importedMessage = "Added ${outcome.counts.addedCount} book(s)",
@@ -1809,6 +1993,9 @@ private fun ReaderIosApp(
                     failedMessage = "Could not import the selected file(s)",
                 )
                 showMessage(feedback.message)
+            }
+            if (audioFiles.isNotEmpty()) {
+                importIosAudiobooks(audioFiles)
             }
             bookToOpen?.let(::openLibraryBook)
             bridge.consumeImportBatch()
@@ -3042,6 +3229,31 @@ private fun ReaderIosApp(
                                 },
                                 initialSection = loadIosUnifiedLibrarySection(),
                                 onSectionChange = ::persistIosUnifiedLibrarySection,
+                                audiobooks = state.audiobooks,
+                                audiobookPlayback = audiobookPlaybackSnapshot,
+                                onPlayAudiobook = { audiobook ->
+                                    audiobookPlayer.connect(
+                                        SharedAudiobookPlaybackRequest(
+                                            bookId = audiobook.bookId,
+                                            filePath = audiobook.filePath.resolvedIosImportedFilePath(),
+                                            title = audiobook.title,
+                                            author = audiobook.author,
+                                            narrator = audiobook.narrator,
+                                            album = audiobook.album,
+                                            coverPath = audiobook.coverPath,
+                                            positionMs = sharedAudiobookResumePosition(audiobook.positionMs),
+                                            durationMs = audiobook.durationMs,
+                                            speed = audiobook.playbackSpeed.takeIf { it > 0f } ?: 1f,
+                                        )
+                                    )
+                                },
+                                onToggleAudiobookPlayback = audiobookPlayer::togglePlayPause,
+                                onSeekAudiobook = audiobookPlayer::seekTo,
+                                onAudiobookSpeedChange = audiobookPlayer::setSpeed,
+                                onAudiobookSleepTimer = { minutes -> if (minutes == null) audiobookPlayer.cancelSleepTimer() else audiobookPlayer.setSleepTimer(minutes) },
+                                onStopAudiobookPlayback = {
+                                    audiobookPlayer.stop()
+                                },
                                 modifier = Modifier.fillMaxSize(),
                             )
                         }

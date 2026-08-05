@@ -246,6 +246,8 @@ import com.aryan.reader.shared.ReadStatusFilter
 import com.aryan.reader.shared.ReaderTheme
 import com.aryan.reader.shared.ReaderPlatform
 import com.aryan.reader.shared.ReaderTtsReplacementPreferences
+import com.aryan.reader.shared.SharedAudiobook
+import com.aryan.reader.shared.SharedAudiobookPlaybackState
 import com.aryan.reader.shared.SharedReaderScreenState
 import com.aryan.reader.shared.Shelf
 import com.aryan.reader.shared.ShelfType
@@ -4836,6 +4838,14 @@ fun SharedMobileUnifiedLibraryScreen(
     catalogContent: @Composable (Modifier) -> Unit,
     initialSection: Int = 0,
     onSectionChange: (Int) -> Unit = {},
+    audiobooks: List<SharedAudiobook> = emptyList(),
+    audiobookPlayback: SharedAudiobookPlaybackState = SharedAudiobookPlaybackState(),
+    onPlayAudiobook: (SharedAudiobook) -> Unit = {},
+    onToggleAudiobookPlayback: () -> Unit = {},
+    onSeekAudiobook: (Long) -> Unit = {},
+    onAudiobookSpeedChange: (Float) -> Unit = {},
+    onAudiobookSleepTimer: (Int?) -> Unit = {},
+    onStopAudiobookPlayback: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     var filter by remember { mutableStateOf(MobileUnifiedLibraryFilter.ALL) }
@@ -4847,6 +4857,8 @@ fun SharedMobileUnifiedLibraryScreen(
     }
     var selectedShelfId by remember { mutableStateOf<String?>(null) }
     var showCreateShelf by remember { mutableStateOf(false) }
+    var playerBook by remember { mutableStateOf<SharedAudiobook?>(null) }
+    var showPlayerSheet by remember { mutableStateOf(false) }
     val unifiedDrawerState = rememberDrawerState(DrawerValue.Closed)
     val unifiedScope = rememberCoroutineScope()
     val visibleBooks = remember(state.rawLibraryBooks, filter, query) {
@@ -4901,6 +4913,13 @@ fun SharedMobileUnifiedLibraryScreen(
                     onClick = { closeDrawerAnd { section = MobileUnifiedLibrarySection.CATALOGS; selectedShelfId = null; onSectionChange(section.persistedValue) } },
                     modifier = Modifier.padding(horizontal = 12.dp),
                 )
+                NavigationDrawerItem(
+                    label = { Text(readerString("audiobooks_title", "Audiobooks")) },
+                    selected = section == MobileUnifiedLibrarySection.AUDIOBOOKS,
+                    icon = { Icon(Icons.Default.PlayArrow, contentDescription = null) },
+                    onClick = { closeDrawerAnd { section = MobileUnifiedLibrarySection.AUDIOBOOKS; selectedShelfId = null; onSectionChange(section.persistedValue) } },
+                    modifier = Modifier.padding(horizontal = 12.dp),
+                )
                 HorizontalDivider(Modifier.padding(horizontal = 16.dp, vertical = 12.dp))
                 Text(
                     readerString("unified_library_appearance", "Appearance"),
@@ -4945,6 +4964,7 @@ fun SharedMobileUnifiedLibraryScreen(
                                     MobileUnifiedLibrarySection.SHELVES -> readerString("tab_shelves", "Shelves")
                                     MobileUnifiedLibrarySection.FOLDERS -> readerString("tab_folders", "Folders")
                                     MobileUnifiedLibrarySection.CATALOGS -> readerString("tab_catalogs", "Catalogs")
+                                    MobileUnifiedLibrarySection.AUDIOBOOKS -> readerString("audiobooks_title", "Audiobooks")
                                 }
                         )
                         Spacer(Modifier.width(8.dp))
@@ -4995,6 +5015,26 @@ fun SharedMobileUnifiedLibraryScreen(
                 )
                 section == MobileUnifiedLibrarySection.FOLDERS -> Unit
                 section == MobileUnifiedLibrarySection.CATALOGS -> Unit
+                section == MobileUnifiedLibrarySection.AUDIOBOOKS -> ExtendedFloatingActionButton(
+                    onClick = onImportBooks,
+                    icon = { Icon(Icons.Default.Add, contentDescription = null) },
+                    text = { Text(readerString("audiobooks_add", "Add audiobook")) },
+                )
+            }
+        },
+        bottomBar = {
+            audiobooks.firstOrNull { it.bookId == audiobookPlayback.bookId }?.let { active ->
+                SharedMobileAudiobookMiniPlayer(
+                    audiobook = active,
+                    playback = audiobookPlayback,
+                    onTogglePlayback = onToggleAudiobookPlayback,
+                    onExpand = {
+                        playerBook = active
+                        showPlayerSheet = true
+                    },
+                    onStopPlayback = onStopAudiobookPlayback,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
+                )
             }
         },
     ) { padding ->
@@ -5031,6 +5071,22 @@ fun SharedMobileUnifiedLibraryScreen(
         }
         if (section == MobileUnifiedLibrarySection.CATALOGS) {
             catalogContent(Modifier.fillMaxSize().padding(padding))
+            return@Scaffold
+        }
+        if (section == MobileUnifiedLibrarySection.AUDIOBOOKS) {
+            SharedMobileAudiobooksSection(
+                audiobooks = audiobooks,
+                playback = audiobookPlayback,
+                onAddAudiobook = onImportBooks,
+                onOpenPlayer = { book ->
+                    if (audiobookPlayback.bookId != book.bookId) {
+                        onPlayAudiobook(book)
+                    }
+                    playerBook = book
+                    showPlayerSheet = true
+                },
+                modifier = Modifier.fillMaxSize().padding(padding),
+            )
             return@Scaffold
         }
         LazyColumn(
@@ -5131,13 +5187,34 @@ fun SharedMobileUnifiedLibraryScreen(
             onCreate = { name -> onCreateShelf(name); showCreateShelf = false },
         )
     }
+    if (showPlayerSheet) {
+        playerBook?.let { book ->
+            SharedMobileAudiobookPlayerSheet(
+                audiobook = book,
+                playback = audiobookPlayback,
+                onTogglePlayback = {
+                    if (audiobookPlayback.bookId != book.bookId) {
+                        onPlayAudiobook(book)
+                    } else {
+                        onToggleAudiobookPlayback()
+                    }
+                },
+                onSeek = onSeekAudiobook,
+                onSpeedChange = onAudiobookSpeedChange,
+                onSleepTimer = onAudiobookSleepTimer,
+                onStopPlayback = onStopAudiobookPlayback,
+                onDismiss = { showPlayerSheet = false },
+            )
+        }
+    }
 }
 
 private enum class MobileUnifiedLibrarySection(val persistedValue: Int) {
     HOME(0),
     SHELVES(1),
     FOLDERS(2),
-    CATALOGS(3);
+    CATALOGS(3),
+    AUDIOBOOKS(4);
 
     companion object {
         fun fromPersisted(value: Int): MobileUnifiedLibrarySection =

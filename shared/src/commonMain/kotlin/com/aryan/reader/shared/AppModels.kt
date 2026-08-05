@@ -214,6 +214,7 @@ data class SharedReaderScreenState(
     val selectedBookId: String? = null,
     val selectedUriString: String? = null,
     val selectedFileType: FileType? = null,
+    val audiobooks: List<SharedAudiobook> = emptyList(),
     val isLoading: Boolean = false,
     val errorMessage: String? = null,
     val renderMode: RenderMode = RenderMode.VERTICAL_SCROLL,

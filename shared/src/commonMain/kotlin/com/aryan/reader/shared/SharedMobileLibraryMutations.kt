@@ -243,6 +243,45 @@ fun planMobileImportBatch(
     )
 }
 
+fun SharedReaderScreenState.withAudiobookImported(
+    audiobook: SharedAudiobook,
+): SharedReaderScreenState {
+    if (audiobook.bookId.isBlank()) return this
+    if (audiobooks.any { it.bookId == audiobook.bookId && it.filePath == audiobook.filePath }) return this
+    return copy(
+        audiobooks = (listOf(audiobook) + audiobooks.filterNot { it.bookId == audiobook.bookId })
+            .sortedByDescending { it.addedAt },
+    )
+}
+
+fun SharedReaderScreenState.withAudiobookPosition(
+    bookId: String,
+    positionMs: Long,
+    durationMs: Long,
+    speed: Float,
+    lastListenedAt: Long,
+): SharedReaderScreenState {
+    if (audiobooks.none { it.bookId == bookId }) return this
+    return copy(
+        audiobooks = audiobooks.map { audiobook ->
+            if (audiobook.bookId == bookId) {
+                audiobook.copy(
+                    positionMs = positionMs.coerceAtLeast(0L),
+                    durationMs = if (durationMs > 0L) durationMs else audiobook.durationMs,
+                    playbackSpeed = if (speed > 0f) speed else audiobook.playbackSpeed,
+                    lastListenedAt = lastListenedAt,
+                )
+            } else {
+                audiobook
+            }
+        },
+    )
+}
+
+fun SharedReaderScreenState.withAudiobookRemoved(bookId: String): SharedReaderScreenState {
+    return copy(audiobooks = audiobooks.filterNot { it.bookId == bookId })
+}
+
 fun SharedReaderScreenState.withMobileImportedBooks(
     books: List<BookItem>,
     message: String? = null

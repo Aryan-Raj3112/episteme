@@ -161,6 +161,97 @@ class SharedMobileLibraryPersistenceTest {
         assertEquals(0, snapshot.libraryScreenStartPage)
     }
 
+    @Test
+    fun audiobooksSurviveMobileSnapshotRoundTrip() {
+        val audiobook = SharedAudiobook(
+            bookId = "ab-1",
+            filePath = "/tmp/audiobooks/left-hand.epub.m4b",
+            format = "m4b",
+            title = "The Left Hand of Darkness",
+            author = "Ursula K. Le Guin",
+            album = "Hainish Cycle",
+            durationMs = 2_500_000L,
+            positionMs = 60_000L,
+            playbackSpeed = 1.5f,
+            coverPath = null,
+            addedAt = 42L,
+        )
+        val state = SharedReaderScreenState(
+            audiobooks = listOf(audiobook),
+        )
+
+        val snapshot = state.toSharedMobileLibrarySnapshot()
+        val restored = SharedLibrarySnapshotJson
+            .decodeOrEmpty(SharedLibrarySnapshotJson.encode(snapshot))
+            .toSharedMobileReaderState()
+
+        assertEquals(listOf(audiobook), restored.audiobooks)
+    }
+
+    @Test
+    fun olderSnapshotDefaultsAudiobooksToEmpty() {
+        val restored = SharedLibrarySnapshotJson
+            .decodeOrEmpty("""{"schemaVersion":28}""")
+            .toSharedMobileReaderState()
+
+        assertTrue(restored.audiobooks.isEmpty())
+    }
+
+    @Test
+    fun audiobookImportDedupesByBookIdAndPath() {
+        val book1 = SharedAudiobook(
+            bookId = "ab-1", filePath = "/a.m4b", format = "m4b", title = "A", addedAt = 1L,
+        )
+        val book1Again = SharedAudiobook(
+            bookId = "ab-1", filePath = "/a.m4b", format = "m4b", title = "A", addedAt = 2L,
+        )
+        val book2 = SharedAudiobook(
+            bookId = "ab-2", filePath = "/b.m4b", format = "m4b", title = "B", addedAt = 3L,
+        )
+        val state = SharedReaderScreenState()
+
+        val imported = state
+            .withAudiobookImported(book1)
+            .withAudiobookImported(book1Again)
+            .withAudiobookImported(book2)
+
+        assertEquals(listOf("ab-2", "ab-1"), imported.audiobooks.map { it.bookId })
+        assertTrue(imported.audiobooks.single { it.bookId == "ab-1" }.addedAt == 1L)
+    }
+
+    @Test
+    fun audiobookPositionUpdateKeepsDurationAndSetsLastListened() {
+        val book = SharedAudiobook(
+            bookId = "ab-1", filePath = "/a.m4b", format = "m4b", title = "A",
+            durationMs = 100L, addedAt = 1L,
+        )
+        val state = SharedReaderScreenState(audiobooks = listOf(book))
+
+        val updated = state.withAudiobookPosition("ab-1", 50L, 100L, 1.5f, 77L)
+
+        assertEquals(50L, updated.audiobooks.single().positionMs)
+        assertEquals(100L, updated.audiobooks.single().durationMs)
+        assertEquals(1.5f, updated.audiobooks.single().playbackSpeed)
+        assertEquals(77L, updated.audiobooks.single().lastListenedAt)
+    }
+
+    @Test
+    fun audiobookPositionUnknownBookIsIgnored() {
+        val book = SharedAudiobook(bookId = "ab-1", filePath = "/a.m4b", format = "m4b", title = "A", addedAt = 1L)
+        val state = SharedReaderScreenState(audiobooks = listOf(book))
+
+        assertEquals(state, state.withAudiobookPosition("missing", 50L, 100L, 1f, 1L))
+    }
+
+    @Test
+    fun audiobookRemovalDropsOnlyThatBook() {
+        val a = SharedAudiobook(bookId = "ab-1", filePath = "/a.m4b", format = "m4b", title = "A", addedAt = 1L)
+        val b = SharedAudiobook(bookId = "ab-2", filePath = "/b.m4b", format = "m4b", title = "B", addedAt = 2L)
+        val state = SharedReaderScreenState(audiobooks = listOf(a, b))
+
+        assertEquals(listOf(b), state.withAudiobookRemoved("ab-1").audiobooks)
+    }
+
     private fun book(id: String, timestamp: Long): BookItem {
         return BookItem(
             id = id,

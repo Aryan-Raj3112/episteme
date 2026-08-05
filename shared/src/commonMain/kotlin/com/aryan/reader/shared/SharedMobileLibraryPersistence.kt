@@ -7,6 +7,7 @@ package com.aryan.reader.shared
 fun SharedLibrarySnapshot.toSharedMobileReaderState(): SharedReaderScreenState {
     val base = SharedReaderScreenState(
         syncedFolders = syncedFolders,
+        audiobooks = audiobooks,
         pinnedHomeBookIds = pinnedHomeBookIds,
         pinnedLibraryBookIds = pinnedLibraryBookIds,
         recentFilesLimit = recentFilesLimit,
@@ -78,6 +79,7 @@ fun SharedReaderScreenState.toSharedMobileLibrarySnapshot(): SharedLibrarySnapsh
     }
     return SharedLibrarySnapshot(
         books = rawLibraryBooks,
+        audiobooks = audiobooks,
         bookTombstones = cloudBookTombstones,
         shelfRecords = shelfRecords,
         shelfRefs = shelfRefs,

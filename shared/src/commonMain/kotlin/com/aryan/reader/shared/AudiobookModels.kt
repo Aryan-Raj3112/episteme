@@ -14,6 +14,7 @@ data class SharedAudiobook(
     val playbackSpeed: Float = 1f,
     val coverPath: String? = null,
     val addedAt: Long,
+    val lastListenedAt: Long = 0L,
 )
 
 data class SharedBookTtsListeningProgress(
@@ -32,6 +33,8 @@ data class SharedBookTtsListeningProgress(
 
 enum class SharedAudiobookStatus { ALL, IN_PROGRESS, NOT_STARTED, COMPLETED }
 
+enum class SharedAudiobookSort { RECENTLY_LISTENED, RECENTLY_ADDED, TITLE, AUTHOR, PROGRESS }
+
 data class SharedAudiobookLibraryItem(
     val id: String,
     val progress: Float,
@@ -47,6 +50,7 @@ data class SharedAudiobookPlaybackState(
     val positionMs: Long = 0L,
     val durationMs: Long = 0L,
     val speed: Float = 1f,
+    val sleepTimerRemainingMs: Long = 0L,
     val error: String? = null,
 )
 
@@ -89,6 +93,48 @@ fun sharedAudiobookContinueItem(
     .filter { it.progress in 0.001f..<1f }
     .maxByOrNull { if (it.isTts) it.updatedAt else 0L }
 
+fun sortSharedAudiobooks(
+    items: List<SharedAudiobook>,
+    sort: SharedAudiobookSort,
+): List<SharedAudiobook> = when (sort) {
+    SharedAudiobookSort.RECENTLY_LISTENED -> items.sortedWith(
+        compareByDescending<SharedAudiobook> { it.lastListenedAt }.thenByDescending { it.addedAt }
+    )
+    SharedAudiobookSort.RECENTLY_ADDED -> items.sortedByDescending { it.addedAt }
+    SharedAudiobookSort.TITLE -> items.sortedBy { it.title.lowercase() }
+    SharedAudiobookSort.AUTHOR -> items.sortedWith(
+        compareBy<SharedAudiobook> { it.author?.lowercase().orEmpty() }.thenBy { it.title.lowercase() }
+    )
+    SharedAudiobookSort.PROGRESS -> items.sortedByDescending { it.progressFraction }
+}
+
+fun SharedAudiobook.matchesSharedAudiobookQuery(query: String): Boolean {
+    val normalized = query.trim()
+    if (normalized.isBlank()) return true
+    return listOf(title, author, album, narrator)
+        .any { it?.contains(normalized, ignoreCase = true) == true }
+}
+
+fun SharedAudiobook.toSharedAudiobookLibraryItem(): SharedAudiobookLibraryItem =
+    SharedAudiobookLibraryItem(
+        id = bookId,
+        progress = progressFraction,
+        isTts = false,
+        updatedAt = lastListenedAt,
+    )
+
+fun formatSharedPlaybackTime(durationMs: Long): String {
+    val totalSeconds = (durationMs.coerceAtLeast(0L) / 1000L)
+    val hours = totalSeconds / 3600
+    val minutes = (totalSeconds % 3600) / 60
+    val seconds = totalSeconds % 60
+    return if (hours > 0) {
+        "$hours:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}"
+    } else {
+        "$minutes:${seconds.toString().padStart(2, '0')}"
+    }
+}
+
 fun calculateSharedTtsAudiobookProgress(
     chapterIndex: Int,
     chapterCount: Int,
@@ -112,6 +158,27 @@ fun formatSharedAudiobookSleepTimer(remainingSeconds: Int): String {
     val safeSeconds = remainingSeconds.coerceAtLeast(0)
     return "${safeSeconds / 60}:${(safeSeconds % 60).toString().padStart(2, '0')}"
 }
+
+/**
+ * "1 hr 30 min" style label for how much time is left in an audiobook,
+ * mirroring the Listen row's remaining-time text on Android.
+ */
+fun sharedAudiobookRemainingLabel(durationMs: Long, positionMs: Long): String {
+    if (durationMs <= 0L) return "Duration unavailable"
+    val minutes = (durationMs - positionMs).coerceAtLeast(0L) / 60_000L
+    return if (minutes >= 60L) {
+        "${minutes / 60} hr ${minutes % 60} min"
+    } else {
+        "$minutes min"
+    }
+}
+
+/**
+ * "M:SS" countdown label for an active sleep timer, mirroring Android's
+ * [sleepTimerLabel] format ("Sleep" being represented by the zero value).
+ */
+fun formatSharedSleepTimerLabel(remainingMs: Long): String =
+    formatSharedAudiobookSleepTimer((remainingMs.coerceAtLeast(0L) / 1000L).toInt())
 
 object SharedAudiobookFormats {
     val supportedExtensions: Set<String> = setOf("mp3", "m4a", "m4b", "aac", "ogg", "opus", "flac")

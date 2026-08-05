@@ -26,6 +26,7 @@ import com.aryan.reader.shared.reader.SharedReaderTextAlign
 
 data class SharedLibrarySnapshot(
     val books: List<BookItem> = emptyList(),
+    val audiobooks: List<SharedAudiobook> = emptyList(),
     val bookTombstones: List<CloudBookTombstone> = emptyList(),
     val shelfRecords: List<ShelfRecord> = emptyList(),
     val shelfRefs: List<BookShelfRef> = emptyList(),
@@ -66,7 +67,7 @@ data class SharedLibrarySnapshot(
 )
 
 object SharedLibrarySnapshotJson {
-    private const val SCHEMA_VERSION = 28
+    private const val SCHEMA_VERSION = 29
 
     private val json = Json {
         prettyPrint = true
@@ -88,6 +89,7 @@ object SharedLibrarySnapshotJson {
             books = root.array("books")
                 .mapNotNull { it.asBookItemOrNull() }
                 .migrateLegacyRecentState(schemaVersion, openTabIds),
+            audiobooks = root.array("audiobooks").mapNotNull { it.asSharedAudiobookOrNull() },
             bookTombstones = root.array("bookTombstones").mapNotNull { it.asCloudBookTombstoneOrNull() },
             shelfRecords = root.array("shelves").mapNotNull { it.asShelfRecordOrNull() },
             shelfRefs = root.array("bookShelfRefs").mapNotNull { it.asBookShelfRefOrNull() },
@@ -175,6 +177,7 @@ object SharedLibrarySnapshotJson {
             mapOf(
                 "schemaVersion" to JsonPrimitive(SCHEMA_VERSION),
                 "books" to JsonArray(snapshot.books.map { it.toJsonObject() }),
+                "audiobooks" to JsonArray(snapshot.audiobooks.map { it.toJsonObject() }),
                 "bookTombstones" to JsonArray(snapshot.bookTombstones.map { it.toJsonObject() }),
                 "shelves" to JsonArray(snapshot.shelfRecords.map { it.toJsonObject() }),
                 "bookShelfRefs" to JsonArray(snapshot.shelfRefs.map { it.toJsonObject() }),
@@ -376,6 +379,26 @@ private fun JsonElement.asCloudBookTombstoneOrNull(): CloudBookTombstone? {
     )
 }
 
+private fun JsonElement.asSharedAudiobookOrNull(): SharedAudiobook? {
+    val obj = runCatching { jsonObject }.getOrNull() ?: return null
+    val bookId = obj.string("bookId") ?: return null
+    return SharedAudiobook(
+        bookId = bookId,
+        filePath = obj.string("filePath") ?: return null,
+        format = obj.string("format") ?: return null,
+        title = obj.string("title") ?: return null,
+        author = obj.string("author"),
+        album = obj.string("album"),
+        narrator = obj.string("narrator"),
+        durationMs = obj.long("durationMs"),
+        positionMs = obj.long("positionMs"),
+        playbackSpeed = obj.float("playbackSpeed") ?: 1f,
+        coverPath = obj.string("coverPath"),
+        addedAt = obj.long("addedAt"),
+        lastListenedAt = obj.long("lastListenedAt")
+    )
+}
+
 private fun JsonElement.asBookShelfRefOrNull(): BookShelfRef? {
     val obj = runCatching { jsonObject }.getOrNull() ?: return null
     return BookShelfRef(
@@ -524,6 +547,26 @@ private fun CloudBookTombstone.toJsonObject(): JsonObject {
             "bookId" to JsonPrimitive(bookId),
             "type" to type.asJson(),
             "deletedAt" to JsonPrimitive(deletedAt),
+        )
+    )
+}
+
+private fun SharedAudiobook.toJsonObject(): JsonObject {
+    return JsonObject(
+        mapOf(
+            "bookId" to JsonPrimitive(bookId),
+            "filePath" to JsonPrimitive(filePath),
+            "format" to JsonPrimitive(format),
+            "title" to JsonPrimitive(title),
+            "author" to author.asJson(),
+            "album" to album.asJson(),
+            "narrator" to narrator.asJson(),
+            "durationMs" to JsonPrimitive(durationMs),
+            "positionMs" to JsonPrimitive(positionMs),
+            "playbackSpeed" to JsonPrimitive(playbackSpeed),
+            "coverPath" to coverPath.asJson(),
+            "addedAt" to JsonPrimitive(addedAt),
+            "lastListenedAt" to JsonPrimitive(lastListenedAt)
         )
     )
 }

@@ -14,6 +14,7 @@ struct ContentView: View {
     private enum ImportKind { case books, folder, fonts, cover }
 
     private let bridge = ReaderIosBridge()
+    private let audiobookPlayer = AudiobookPlayerController()
     @StateObject private var localStoreKit = LocalStoreKitController()
     @StateObject private var localAccount = LocalAccountController()
     @Environment(\.scenePhase) private var scenePhase
@@ -147,6 +148,53 @@ struct ContentView: View {
             }
             bridge.setFolderFileReplacementHandler { folderName, managedPath in
                 replaceImportedFolderFile(folderName: folderName, managedPath: managedPath)
+            }
+            audiobookPlayer.onPlaybackUpdate = { isPlaying, isLoading, positionMs, durationMs, speed, sleepTimerRemainingMs, error in
+                bridge.updateAudiobookPlaybackState(
+                    isPlaying: isPlaying,
+                    isLoading: isLoading,
+                    positionMs: positionMs,
+                    durationMs: durationMs,
+                    speed: speed,
+                    sleepTimerRemainingMs: sleepTimerRemainingMs,
+                    error: error
+                )
+            }
+            bridge.setAudiobookPlayHandler { filePath, positionMs, speed in
+                audiobookPlayer.play(
+                    filePath: filePath,
+                    positionMs: positionMs.doubleValue,
+                    speed: speed.doubleValue
+                )
+            }
+            bridge.setAudiobookPauseHandler {
+                audiobookPlayer.pause()
+            }
+            bridge.setAudiobookSpeedAndResumeHandler { speed in
+                audiobookPlayer.resume(speed: speed.floatValue)
+            }
+            bridge.setAudiobookSeekHandler { positionMs in
+                audiobookPlayer.seek(to: positionMs.doubleValue)
+            }
+            bridge.setAudiobookSpeedHandler { speed in
+                audiobookPlayer.setSpeed(speed.doubleValue)
+            }
+            bridge.setAudiobookSleepTimerHandler { minutes in
+                audiobookPlayer.setSleepTimer(minutes: Int(minutes.intValue))
+            }
+            bridge.setAudiobookCancelSleepHandler {
+                audiobookPlayer.cancelSleepTimer()
+            }
+            bridge.setAudiobookStopHandler {
+                audiobookPlayer.stop()
+            }
+            bridge.setAudiobookMetadataHandler { filePath, fallbackTitle, completion in
+                audiobookPlayer.extractMetadata(
+                    filePath: filePath,
+                    fallbackTitle: fallbackTitle
+                ) { title, author, album, durationMs in
+                    completion(title, author, album, KotlinLong(longLong: durationMs))
+                }
             }
         }
         .onChange(of: scenePhase) { _, phase in
