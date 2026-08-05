@@ -210,6 +210,36 @@ enum class ReaderExternalLookupAction(val title: String) {
     SEARCH("Search")
 }
 
+enum class ReaderExternalLookupService(val id: String, val title: String) {
+    SYSTEM("system", "System Dictionary"),
+    GOOGLE("google", "Google"),
+    GOOGLE_TRANSLATE("google_translate", "Google Translate"),
+    DUCKDUCKGO("duckduckgo", "DuckDuckGo"),
+    BING("bing", "Bing");
+
+    companion object {
+        fun fromId(id: String?): ReaderExternalLookupService {
+            return entries.firstOrNull { it.id.equals(id, ignoreCase = true) } ?: SYSTEM
+        }
+    }
+}
+
+val ReaderDictionaryServiceOptions = listOf(
+    ReaderExternalLookupService.SYSTEM,
+    ReaderExternalLookupService.GOOGLE,
+)
+
+val ReaderTranslateServiceOptions = listOf(
+    ReaderExternalLookupService.GOOGLE_TRANSLATE,
+    ReaderExternalLookupService.BING,
+)
+
+val ReaderSearchServiceOptions = listOf(
+    ReaderExternalLookupService.GOOGLE,
+    ReaderExternalLookupService.DUCKDUCKGO,
+    ReaderExternalLookupService.BING,
+)
+
 const val ReaderExternalLookupSelectionLimit = 2_000
 
 fun readerExternalLookupActionsAvailable(selectionLength: Int): Boolean {
@@ -225,12 +255,25 @@ fun readerExternalLookupActionForSelectionId(id: String): ReaderExternalLookupAc
     }
 }
 
-fun externalLookupUrl(action: ReaderExternalLookupAction, text: String): String {
+fun externalLookupUrl(
+    action: ReaderExternalLookupAction,
+    text: String,
+    service: ReaderExternalLookupService = ReaderExternalLookupService.GOOGLE,
+): String {
     val encoded = text.trim().urlEncoded()
-    return when (action) {
-        ReaderExternalLookupAction.DICTIONARY -> "https://www.google.com/search?q=define+$encoded"
-        ReaderExternalLookupAction.TRANSLATE -> "https://translate.google.com/?sl=auto&tl=en&text=$encoded&op=translate"
-        ReaderExternalLookupAction.SEARCH -> "https://www.google.com/search?q=$encoded"
+    return when (service) {
+        ReaderExternalLookupService.GOOGLE_TRANSLATE ->
+            "https://translate.google.com/?sl=auto&tl=en&text=$encoded&op=translate"
+        ReaderExternalLookupService.DUCKDUCKGO -> "https://duckduckgo.com/?q=$encoded"
+        ReaderExternalLookupService.BING -> when (action) {
+            ReaderExternalLookupAction.TRANSLATE -> "https://www.bing.com/translator/?text=$encoded"
+            else -> "https://www.bing.com/search?q=$encoded"
+        }
+        ReaderExternalLookupService.SYSTEM, ReaderExternalLookupService.GOOGLE -> when (action) {
+            ReaderExternalLookupAction.DICTIONARY -> "https://www.google.com/search?q=define+$encoded"
+            ReaderExternalLookupAction.TRANSLATE -> "https://translate.google.com/?sl=auto&tl=en&text=$encoded&op=translate"
+            ReaderExternalLookupAction.SEARCH -> "https://www.google.com/search?q=$encoded"
+        }
     }
 }
 

@@ -21,6 +21,7 @@ import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.ReaderTtsChunk
 import com.aryan.reader.shared.ReaderTtsProgress
 import com.aryan.reader.shared.ReaderExternalLookupAction
+import com.aryan.reader.shared.ReaderExternalLookupService
 import com.aryan.reader.shared.externalLookupUrl
 import com.aryan.reader.shared.ios.loadIosEpubBook
 import kotlinx.coroutines.Dispatchers
@@ -134,22 +135,33 @@ internal actual fun openSharedMobileEpubExternalLink(url: String): Boolean {
     return UIApplication.sharedApplication.openURL(target)
 }
 
+internal object IosReaderLookupServices {
+    var dictionary: ReaderExternalLookupService = ReaderExternalLookupService.SYSTEM
+    var translate: ReaderExternalLookupService = ReaderExternalLookupService.GOOGLE_TRANSLATE
+    var search: ReaderExternalLookupService = ReaderExternalLookupService.GOOGLE
+}
+
 internal actual fun openSharedMobileEpubLookup(
     action: ReaderExternalLookupAction,
     text: String
 ): Boolean {
     val query = text.trim()
     if (query.isEmpty()) return false
-    if (action != ReaderExternalLookupAction.DICTIONARY) {
-        return openSharedMobileEpubExternalLink(externalLookupUrl(action, query))
+    val service = when (action) {
+        ReaderExternalLookupAction.DICTIONARY -> IosReaderLookupServices.dictionary
+        ReaderExternalLookupAction.TRANSLATE -> IosReaderLookupServices.translate
+        ReaderExternalLookupAction.SEARCH -> IosReaderLookupServices.search
     }
-    val presenter = UIApplication.sharedApplication.keyWindow?.rootViewController ?: return false
-    presenter.presentViewController(
-        UIReferenceLibraryViewController(term = query),
-        animated = true,
-        completion = null
-    )
-    return true
+    if (action == ReaderExternalLookupAction.DICTIONARY && service == ReaderExternalLookupService.SYSTEM) {
+        val presenter = UIApplication.sharedApplication.keyWindow?.rootViewController ?: return false
+        presenter.presentViewController(
+            UIReferenceLibraryViewController(term = query),
+            animated = true,
+            completion = null
+        )
+        return true
+    }
+    return openSharedMobileEpubExternalLink(externalLookupUrl(action, query, service))
 }
 
 internal actual fun shareSharedMobileEpubImage(bytes: ByteArray, fileName: String): Boolean {

@@ -220,7 +220,7 @@ private data class IosHttpResponse(
     val headers: Map<String, String>
 )
 
-private data class IosUrlSessionResponse(
+internal data class IosUrlSessionResponse(
     val data: NSData?,
     val response: NSURLResponse?,
     val error: NSError?
@@ -230,8 +230,13 @@ private fun NSStringFromData(data: NSData): String {
     return platform.Foundation.NSString.create(data = data, encoding = NSUTF8StringEncoding)?.toString().orEmpty()
 }
 
-private class IosUrlSessionHttpClient {
-    suspend fun fetch(url: String, username: String?, password: String?): IosUrlSessionResponse {
+internal class IosUrlSessionHttpClient {
+    suspend fun fetch(
+        url: String,
+        username: String?,
+        password: String?,
+        headers: Map<String, String> = emptyMap(),
+    ): IosUrlSessionResponse {
         val nsUrl = NSURL.URLWithString(url.trim()) ?: error("Invalid URL: $url")
         val request = NSMutableURLRequest.requestWithURL(
             URL = nsUrl,
@@ -240,6 +245,9 @@ private class IosUrlSessionHttpClient {
         ).apply {
             HTTPMethod = "GET"
             setValue("EpistemeReader/1.0 (iOS)", forHTTPHeaderField = "User-Agent")
+            headers.forEach { (name, value) ->
+                setValue(value, forHTTPHeaderField = name)
+            }
             basicAuthHeader(username, password)?.let { authHeader ->
                 setValue(authHeader, forHTTPHeaderField = "Authorization")
             }

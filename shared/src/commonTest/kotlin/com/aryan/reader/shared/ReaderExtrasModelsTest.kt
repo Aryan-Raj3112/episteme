@@ -620,4 +620,52 @@ class ReaderExtrasModelsTest {
             externalLookupUrl(ReaderExternalLookupAction.TRANSLATE, "hello world")
         )
     }
+
+    @Test
+    fun `external lookup urls honor configured services`() {
+        assertEquals(
+            "https://translate.google.com/?sl=auto&tl=en&text=hello&op=translate",
+            externalLookupUrl(ReaderExternalLookupAction.TRANSLATE, "hello", ReaderExternalLookupService.GOOGLE_TRANSLATE)
+        )
+        assertEquals(
+            "https://www.bing.com/translator/?text=hello",
+            externalLookupUrl(ReaderExternalLookupAction.TRANSLATE, "hello", ReaderExternalLookupService.BING)
+        )
+        assertEquals(
+            "https://duckduckgo.com/?q=hello",
+            externalLookupUrl(ReaderExternalLookupAction.SEARCH, "hello", ReaderExternalLookupService.DUCKDUCKGO)
+        )
+        assertEquals(
+            "https://www.bing.com/search?q=hello",
+            externalLookupUrl(ReaderExternalLookupAction.SEARCH, "hello", ReaderExternalLookupService.BING)
+        )
+        assertEquals(
+            "https://www.google.com/search?q=define+hello",
+            externalLookupUrl(ReaderExternalLookupAction.DICTIONARY, "hello", ReaderExternalLookupService.GOOGLE)
+        )
+        assertEquals(
+            "https://www.google.com/search?q=hello",
+            externalLookupUrl(ReaderExternalLookupAction.SEARCH, "hello", ReaderExternalLookupService.GOOGLE)
+        )
+    }
+
+    @Test
+    fun `external lookup service ids round trip`() {
+        assertEquals(ReaderExternalLookupService.SYSTEM, ReaderExternalLookupService.fromId("system"))
+        assertEquals(ReaderExternalLookupService.GOOGLE, ReaderExternalLookupService.fromId("google"))
+        assertEquals(ReaderExternalLookupService.GOOGLE_TRANSLATE, ReaderExternalLookupService.fromId("google_translate"))
+        assertEquals(ReaderExternalLookupService.DUCKDUCKGO, ReaderExternalLookupService.fromId("DUCKDUCKGO"))
+        assertEquals(ReaderExternalLookupService.BING, ReaderExternalLookupService.fromId("bing"))
+        assertEquals(ReaderExternalLookupService.SYSTEM, ReaderExternalLookupService.fromId(null))
+        assertEquals(ReaderExternalLookupService.SYSTEM, ReaderExternalLookupService.fromId("unknown"))
+    }
+
+    @Test
+    fun `dictionary service options exclude system for translate and search`() {
+        assertEquals(2, ReaderDictionaryServiceOptions.size)
+        assertEquals(2, ReaderTranslateServiceOptions.size)
+        assertEquals(3, ReaderSearchServiceOptions.size)
+        assertEquals(false, ReaderTranslateServiceOptions.contains(ReaderExternalLookupService.SYSTEM))
+        assertEquals(false, ReaderSearchServiceOptions.contains(ReaderExternalLookupService.SYSTEM))
+    }
 }

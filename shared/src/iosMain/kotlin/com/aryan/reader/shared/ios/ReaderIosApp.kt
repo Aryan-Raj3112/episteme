@@ -80,6 +80,8 @@ import com.aryan.reader.shared.SyncedFolder
 import com.aryan.reader.shared.UserData
 import com.aryan.reader.shared.ReaderPlatform
 import com.aryan.reader.shared.ReaderAutoScrollProfile
+import com.aryan.reader.shared.ReaderExternalLookupService
+import com.aryan.reader.shared.ui.IosReaderLookupServices
 import com.aryan.reader.shared.migrateLegacyIosReaderAutoScrollSpeed
 import com.aryan.reader.shared.currentTimestamp
 import com.aryan.reader.shared.canEnableGoogleDriveSync
@@ -144,6 +146,7 @@ import com.aryan.reader.shared.ui.SharedMobileAppDrawerContent
 import com.aryan.reader.shared.ui.SharedMobileEpubReaderScreen
 import com.aryan.reader.shared.ui.SharedMobileReaderTtsSettingsSheet
 import com.aryan.reader.shared.ui.SharedMobilePdfReaderScreen
+import com.aryan.reader.shared.ui.SharedMobileDictionarySettingsSheet
 import com.aryan.reader.shared.ui.SharedMobileHomeScreen
 import com.aryan.reader.shared.ui.SharedMobileHomeActions
 import com.aryan.reader.shared.ui.SharedMobileLibraryScreen
@@ -1077,6 +1080,28 @@ private fun persistIosReaderBrightness(brightness: Float?, customBrightness: Flo
     defaults.setObject(normalizeReaderBrightness(customBrightness).toString(), forKey = IosReaderCustomBrightnessDefaultsKey)
 }
 
+private const val IosLookupDictionaryServiceKey = "ios_reader_lookup_dictionary_service"
+private const val IosLookupTranslateServiceKey = "ios_reader_lookup_translate_service"
+private const val IosLookupSearchServiceKey = "ios_reader_lookup_search_service"
+
+private fun loadIosReaderLookupServices():
+    Triple<ReaderExternalLookupService, ReaderExternalLookupService, ReaderExternalLookupService> {
+    return Triple(
+        loadIosLookupService(IosLookupDictionaryServiceKey, ReaderExternalLookupService.SYSTEM),
+        loadIosLookupService(IosLookupTranslateServiceKey, ReaderExternalLookupService.GOOGLE_TRANSLATE),
+        loadIosLookupService(IosLookupSearchServiceKey, ReaderExternalLookupService.GOOGLE),
+    )
+}
+
+private fun loadIosLookupService(key: String, default: ReaderExternalLookupService): ReaderExternalLookupService {
+    val stored = NSUserDefaults.standardUserDefaults.stringForKey(key) ?: return default
+    return ReaderExternalLookupService.fromId(stored)
+}
+
+private fun persistIosLookupService(key: String, service: ReaderExternalLookupService) {
+    NSUserDefaults.standardUserDefaults.setObject(service.id, forKey = key)
+}
+
 private fun loadIosPdfToolbarPreferences(): PdfToolbarPreferences {
     val defaults = NSUserDefaults.standardUserDefaults
     val baseline = PdfToolbarPreferences()
@@ -1568,6 +1593,17 @@ private fun ReaderIosApp(
     var showSignOutConfirmation by remember { mutableStateOf(false) }
     var showTtsSettings by remember { mutableStateOf(false) }
     val settingsTts = rememberSharedMobileEpubLocalTts()
+    var showDictionarySettingsSheet by remember { mutableStateOf(false) }
+    val initialLookupServices = remember {
+        loadIosReaderLookupServices().also { (dictionary, translate, search) ->
+            IosReaderLookupServices.dictionary = dictionary
+            IosReaderLookupServices.translate = translate
+            IosReaderLookupServices.search = search
+        }
+    }
+    var lookupDictionaryService by remember { mutableStateOf(initialLookupServices.first) }
+    var lookupTranslateService by remember { mutableStateOf(initialLookupServices.second) }
+    var lookupSearchService by remember { mutableStateOf(initialLookupServices.third) }
     var activeReaderBook by remember { mutableStateOf(restoredReaderBook) }
     var activeTemporaryBookId by remember { mutableStateOf<String?>(null) }
     var activeTemporaryBookPath by remember { mutableStateOf<String?>(null) }
@@ -1618,6 +1654,24 @@ private fun ReaderIosApp(
     fun showMessage(message: String) {
         state = state.withMessage(message)
         bridge.recordNativeEvent(message)
+    }
+
+    var googleFontNames by remember { mutableStateOf<List<String>>(emptyList()) }
+    LaunchedEffect(Unit) {
+        googleFontNames = loadIosGoogleFontNames()
+    }
+
+    fun downloadGoogleFont(fontName: String, onComplete: () -> Unit) {
+        scope.launch {
+            val result = withContext(Dispatchers.Default) { downloadIosGoogleFont(fontName) }
+            result.onSuccess { font ->
+                bridge.recordImportedFonts(listOf(font.fileName), listOf(font.path))
+                showMessage("$fontName downloaded successfully!")
+            }.onFailure { error ->
+                showMessage("Failed to download $fontName: ${error.message}")
+            }
+            onComplete()
+        }
     }
 
     fun runDrawerAction(action: () -> Unit) {
@@ -2192,16 +2246,20 @@ private fun ReaderIosApp(
                                 }
                             },
                             onNativePdfAction = { pdfBook, action ->
-                                val handled = performIosPdfNativeAction(pdfBook, action)
-                                if (!handled) {
-                                    showMessage(
-                                        when (action) {
-                                            SharedMobilePdfNativeAction.SHARE -> "Unable to share ${pdfBook.displayName}."
-                                            SharedMobilePdfNativeAction.SAVE_COPY -> "Unable to export ${pdfBook.displayName}."
-                                            SharedMobilePdfNativeAction.PRINT -> "Printing is unavailable."
-                                            else -> "${action.iosPdfActionLabel()} is not available yet."
-                                        }
-                                    )
+                                if (action == SharedMobilePdfNativeAction.DICTIONARY_SETTINGS) {
+                                    showDictionarySettingsSheet = true
+                                } else {
+                                    val handled = performIosPdfNativeAction(pdfBook, action)
+                                    if (!handled) {
+                                        showMessage(
+                                            when (action) {
+                                                SharedMobilePdfNativeAction.SHARE -> "Unable to share ${pdfBook.displayName}."
+                                                SharedMobilePdfNativeAction.SAVE_COPY -> "Unable to export ${pdfBook.displayName}."
+                                                SharedMobilePdfNativeAction.PRINT -> "Printing is unavailable."
+                                                else -> "${action.iosPdfActionLabel()} is not available yet."
+                                            }
+                                        )
+                                    }
                                 }
                             },
                             onBookInfoChange = { updated ->
@@ -2281,6 +2339,29 @@ private fun ReaderIosApp(
                             onSystemUiAppearanceChange = bridge::updateSystemUi,
                             modifier = Modifier.fillMaxSize()
                         )
+                        if (showDictionarySettingsSheet) {
+                            SharedMobileDictionarySettingsSheet(
+                                dictionaryService = lookupDictionaryService,
+                                translateService = lookupTranslateService,
+                                searchService = lookupSearchService,
+                                onDictionaryServiceChange = { service ->
+                                    lookupDictionaryService = service
+                                    IosReaderLookupServices.dictionary = service
+                                    persistIosLookupService(IosLookupDictionaryServiceKey, service)
+                                },
+                                onTranslateServiceChange = { service ->
+                                    lookupTranslateService = service
+                                    IosReaderLookupServices.translate = service
+                                    persistIosLookupService(IosLookupTranslateServiceKey, service)
+                                },
+                                onSearchServiceChange = { service ->
+                                    lookupSearchService = service
+                                    IosReaderLookupServices.search = service
+                                    persistIosLookupService(IosLookupSearchServiceKey, service)
+                                },
+                                onDismiss = { showDictionarySettingsSheet = false },
+                            )
+                        }
                     }
                     FileType.EPUB,
                     FileType.TXT,
@@ -2575,6 +2656,9 @@ private fun ReaderIosApp(
                                     AppAction.CustomFontsChanged(state.customFonts.filterNot { it.id == font.id })
                                 )
                             },
+                            googleFontsAvailable = true,
+                            getGoogleFonts = { googleFontNames },
+                            onDownloadGoogleFont = ::downloadGoogleFont,
                             modifier = Modifier.fillMaxSize(),
                         )
                     }
