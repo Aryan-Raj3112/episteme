@@ -4,6 +4,7 @@ package com.aryan.reader.shared.ios
 
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.FileType
+import com.aryan.reader.shared.currentTimestamp
 import com.aryan.reader.shared.mobi.MOBI_ENCRYPTION_NONE
 import com.aryan.reader.shared.mobi.MOBI_SUCCESS
 import com.aryan.reader.shared.mobi.MOBIFiletype
@@ -115,6 +116,12 @@ internal const val IOS_MOBI_LOG_TAG = "ReaderMobiIOS"
 
 internal inline fun iosMobiLog(message: () -> String) {
     println("[$IOS_MOBI_LOG_TAG] ${message()}")
+}
+
+internal const val IOS_EPUB_LOAD_LOG_TAG = "ReaderIosEpub"
+
+internal inline fun iosEpubLoadLog(message: () -> String) {
+    println("[$IOS_EPUB_LOAD_LOG_TAG] ${message()}")
 }
 
 internal data class IosBookPresentation(
@@ -378,6 +385,8 @@ private fun String.normalizeIosZipPathSegments(): String {
 }
 
 internal fun loadIosEpubBook(book: BookItem): SharedEpubBook {
+    val startedAt = currentTimestamp()
+    iosEpubLoadLog { "Load started id=${book.id} type=${book.type} name=${book.displayName} path=${book.path ?: "<null>"}" }
     if (book.type == FileType.CBZ) {
         return loadIosCbzBook(book)
     }
@@ -400,11 +409,14 @@ internal fun loadIosEpubBook(book: BookItem): SharedEpubBook {
     val path = book.path.resolveIosEpubSourcePath()
         ?: error("EPUB path is unavailable")
     val archive = IosZipEpubArchive(path)
-    return SharedEpubPackageLoader.load(
+    iosEpubLoadLog { "Archive opened path=$path entries=${archive.entryPaths.size} elapsed=${currentTimestamp() - startedAt}ms" }
+    val book = SharedEpubPackageLoader.load(
         archive = archive,
         sourceId = book.id,
         fileName = book.displayName.ifBlank { path.substringAfterLast('/') }
     )
+    iosEpubLoadLog { "Load finished chapters=${book.chapters.size} elapsed=${currentTimestamp() - startedAt}ms" }
+    return book
 }
 
 private val IOS_ZIP_DOCUMENT_READER_TYPES = setOf(
@@ -883,7 +895,7 @@ private fun String.escapeIosReaderHtml(): String {
         .replace("\"", "&quot;")
 }
 
-private class IosZipEpubArchive(path: String) : SharedEpubArchive {
+internal class IosZipEpubArchive(path: String) : SharedEpubArchive {
     private val archiveBytes = path.readIosFileBytes()
     private val entries: Map<String, IosZipEntry> = parseZipEntries(archiveBytes)
 
@@ -1332,7 +1344,7 @@ private fun inflateRawZipEntry(compressed: ByteArray, expectedSize: Int): ByteAr
     return output
 }
 
-private fun String?.resolveIosEpubSourcePath(): String? {
+internal fun String?.resolveIosEpubSourcePath(): String? {
     val raw = this?.takeIf(String::isNotBlank) ?: return null
     if (NSFileManager.defaultManager.fileExistsAtPath(raw)) return raw
     val fileName = raw.substringAfterLast('/').takeIf(String::isNotBlank) ?: return null

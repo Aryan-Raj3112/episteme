@@ -4,6 +4,7 @@ package com.aryan.reader.shared.reader
 
 import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
+import com.aryan.reader.shared.sharedHtmlToPlainText
 
 /**
  * Platform-neutral view of an EPUB ZIP archive. Platform source sets only provide archive I/O;
@@ -974,3 +975,125 @@ private fun Int.toBigEndianBytes(): ByteArray = byteArrayOf(
     (this ushr 8).toByte(),
     toByte()
 )
+
+/**
+ * A plain-text-only spine document produced by [loadSharedEpubTtsChapters].
+ */
+data class SharedEpubTtsChapter(
+    val id: String,
+    val title: String,
+    val plainText: String,
+)
+
+/**
+ * Lightweight text-only EPUB extraction for text-to-speech. Mirrors the chapter
+ * granularity of [load] (spine order, TOC section splitting, heading-based titles)
+ * but skips all presentation work: CSS processing, image/font embedding, sanitizing,
+ * and resource rewriting. Each spine document is read and its text is extracted as-is.
+ */
+fun loadSharedEpubTtsChapters(
+    archive: SharedEpubArchive,
+    fileName: String,
+): List<SharedEpubTtsChapter> {
+    val normalizedEntries = archive.entryPaths
+        .mapNotNull(::safeEpubPathOrNull)
+        .associateBy { it.lowercase() }
+    fun actualPath(path: String): String? {
+        val safe = safeEpubPathOrNull(path) ?: return null
+        return normalizedEntries[safe.lowercase()]
+    }
+    fun text(path: String): String? = actualPath(path)?.let(archive::readText)
+
+    val containerRoot = text("META-INF/container.xml")?.let(::parseSharedEpubXml)
+    val containerRootFiles = containerRoot?.descendants("rootfile")?.toList().orEmpty()
+    val preferredRootFile = containerRootFiles.firstOrNull {
+        it.attribute("media-type").equals("application/oebps-package+xml", ignoreCase = true)
+    } ?: containerRootFiles.firstOrNull()
+    val opfPath = preferredRootFile
+        ?.attribute("full-path")
+        ?.trim()
+        ?.takeIf(String::isNotBlank)
+        ?.let(::safeEpubPathOrNull)
+        ?: normalizedEntries.values.firstOrNull { it.endsWith(".opf", ignoreCase = true) }
+        ?: error("EPUB package document was not found")
+    val opf = text(opfPath) ?: error("EPUB package document is missing: $opfPath")
+    val packageRoot = parseSharedEpubXml(opf) ?: error("EPUB package document is malformed: $opfPath")
+
+    val manifest = packageRoot.firstDescendant("manifest")?.children
+        .orEmpty()
+        .filter { it.localName == "item" }
+        .mapNotNull { item ->
+            val id = item.attribute("id").orEmpty().trim()
+            val href = item.attribute("href").orEmpty().trim()
+            if (id.isBlank() || href.isBlank()) null else {
+                id to SharedEpubManifestItem(
+                    id = id,
+                    path = resolveEpubPath(opfPath, href),
+                    mediaType = item.attribute("media-type").orEmpty().trim().lowercase(),
+                    properties = item.attribute("properties")
+                        .orEmpty()
+                        .split(Regex("\\s+"))
+                        .filter(String::isNotBlank)
+                        .map(String::lowercase)
+                        .toSet()
+                )
+            }
+        }
+        .toMap()
+    val spineIds = packageRoot.firstDescendant("spine")?.children
+        .orEmpty()
+        .filter { it.localName == "itemref" && !it.attribute("linear").equals("no", ignoreCase = true) }
+        .mapNotNull { it.attribute("idref")?.trim()?.takeIf(String::isNotBlank) }
+    val chapterItems = spineIds.mapNotNull(manifest::get).ifEmpty {
+        manifest.values.filter { it.isHtml && "nav" !in it.properties }
+    }
+
+    val tocByPath = parseEpubTableOfContents(
+        archiveText = ::text,
+        packageRoot = packageRoot,
+        manifest = manifest
+    )
+        .filter { !it.fragmentId.isNullOrBlank() }
+        .groupBy { it.href.lowercase() }
+
+    val chapters = chapterItems.flatMapIndexed { index, item ->
+        if (!item.isHtml) return@flatMapIndexed emptyList()
+        val raw = text(item.path) ?: return@flatMapIndexed emptyList()
+        val body = raw.extractEpubBodyOrSelf()
+        val fallbackTitle = raw.firstEpubHeading()
+            ?: raw.epubTagText("title")
+            ?: "Chapter ${index + 1}"
+        val sections = materializeEpubTocSections(
+            body = body,
+            entries = tocByPath[item.path.lowercase()].orEmpty()
+        )
+        if (sections.isEmpty()) {
+            val plainText = sharedHtmlToPlainText(body).ifBlank { sharedHtmlToPlainText(raw) }
+            if (plainText.isBlank()) return@flatMapIndexed emptyList()
+            listOf(
+                SharedEpubTtsChapter(
+                    id = item.id.ifBlank { "chapter_$index" },
+                    title = fallbackTitle,
+                    plainText = plainText,
+                )
+            )
+        } else {
+            sections.mapIndexedNotNull { sectionIndex, section ->
+                val plainText = sharedHtmlToPlainText(section.html)
+                if (plainText.isBlank()) return@mapIndexedNotNull null
+                SharedEpubTtsChapter(
+                    id = "${item.id.ifBlank { "chapter_$index" }}#${section.fragmentId}",
+                    title = section.entry.label.ifBlank { fallbackTitle },
+                    plainText = plainText,
+                )
+            }
+        }
+    }
+    if (chapters.isEmpty()) {
+        error(
+            "EPUB contains no readable spine documents " +
+                "(manifest=${manifest.size}, spine=${spineIds.size}, candidates=${chapterItems.size}, entries=${normalizedEntries.size})"
+        )
+    }
+    return chapters
+}

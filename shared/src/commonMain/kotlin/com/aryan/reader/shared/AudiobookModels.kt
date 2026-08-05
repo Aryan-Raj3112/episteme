@@ -186,3 +186,165 @@ object SharedAudiobookFormats {
     fun supportsFileName(name: String): Boolean =
         name.substringAfterLast('.', missingDelimiterValue = "").lowercase() in supportedExtensions
 }
+
+/**
+ * State of the "Listen with TTS" player (reading a library book as an audiobook
+ * through the platform speech engine), mirroring the Android TtsState fields
+ * used by the Listen UI. [progressPercent] is a 0..1 fraction of the whole book.
+ */
+data class SharedBookTtsListenState(
+    val connected: Boolean = false,
+    val bookId: String? = null,
+    val isPlaying: Boolean = false,
+    val isLoading: Boolean = false,
+    val chapterIndex: Int = 0,
+    val chapterCount: Int = 0,
+    val chunkIndex: Int = -1,
+    val chunkCount: Int = 0,
+    val chapterTitle: String? = null,
+    val progressPercent: Float = 0f,
+    val speechRate: Float = 1f,
+    val pitch: Float = 1f,
+    val sleepTimerRemainingMs: Long = 0L,
+    val sessionFinished: Boolean = false,
+    val sessionEndedByStop: Boolean = false,
+    val error: String? = null,
+    val transcriptStartIndex: Int = 0,
+    val transcriptChunks: List<String> = emptyList(),
+)
+
+enum class SharedTtsListenStartPolicy { RESUME, BEGINNING, READING_POSITION, CHAPTER }
+
+object SharedTtsListenCapabilities {
+    val reflowTypes: Set<FileType> = setOf(
+        FileType.EPUB,
+        FileType.MOBI,
+        FileType.FB2,
+        FileType.ODT,
+        FileType.FODT,
+        FileType.MD,
+        FileType.TXT,
+        FileType.HTML,
+        FileType.DOCX,
+    )
+
+    fun supports(type: FileType): Boolean = type == FileType.PDF || type in reflowTypes
+}
+
+data class SharedTtsListenItem(
+    val book: BookItem,
+    val progress: SharedBookTtsListeningProgress?,
+) {
+    val title: String
+        get() = book.title?.takeIf { it.isNotBlank() }
+            ?: book.displayName.substringBeforeLast('.').ifBlank { book.displayName }
+    val author: String
+        get() = book.author ?: "Unknown author"
+}
+
+fun buildSharedTtsListenItems(
+    books: List<BookItem>,
+    progress: List<SharedBookTtsListeningProgress>,
+): List<SharedTtsListenItem> {
+    val progressByBook = progress.associateBy { it.bookId }
+    return books
+        .filter { it.type != FileType.AUDIOBOOK && SharedTtsListenCapabilities.supports(it.type) }
+        .sortedByDescending { it.dateAddedTimestamp.coerceAtLeast(it.timestamp) }
+        .map { SharedTtsListenItem(it, progressByBook[it.id]) }
+}
+
+/**
+ * Mirrors Android's shouldAutoStartTtsAudiobook: a row click auto-starts TTS
+ * unless the tapped book is already the active listening session.
+ */
+fun sharedShouldAutoStartTtsListen(requestedBookId: String?, state: SharedBookTtsListenState): Boolean =
+    requestedBookId == null || state.bookId != requestedBookId || !state.connected
+
+/**
+ * Transcript window centered on the current chunk (2 behind, current, 3 ahead),
+ * mirroring Android's resolveTtsTranscriptWindow. Returns an empty range when
+ * there are no chunks.
+ */
+fun sharedTtsTranscriptWindow(currentChunkIndex: Int, chunkCount: Int): IntRange {
+    if (chunkCount <= 0) return 0..-1
+    val center = currentChunkIndex.coerceIn(0, chunkCount - 1)
+    return (center - 2).coerceAtLeast(0)..(center + 3).coerceAtMost(chunkCount - 1)
+}
+
+fun SharedTtsListenItem.toSharedAudiobookLibraryItem(): SharedAudiobookLibraryItem =
+    SharedAudiobookLibraryItem(
+        id = book.id,
+        progress = ((progress?.progressPercent ?: 0f) / 100f).coerceIn(0f, 1f),
+        isTts = true,
+        updatedAt = progress?.updatedAt ?: 0L,
+    )
+
+/**
+ * Splits plain text into TTS chunks of at most [maxLength] characters, grouping
+ * sentences and hard-splitting oversized sentences at word boundaries.
+ *
+ * Deliberately regex-free: the Kotlin/Native regex engine is ICU-backed, and
+ * lookbehind-based sentence splits proved unreliable on device. The scan is
+ * linear and engine-independent. Mirrors Android's chunking behavior.
+ */
+fun splitSharedTtsListenChunks(text: String, maxLength: Int = READER_TTS_CHUNK_MAX_LENGTH): List<String> {
+    if (maxLength <= 0) return listOf(text).filter(String::isNotBlank)
+    val normalized = text.replace("\r\n", "\n").trim()
+    if (normalized.isBlank()) return emptyList()
+    val sentences = splitSharedTtsSentences(normalized)
+    if (sentences.isEmpty()) return emptyList()
+    val chunks = mutableListOf<String>()
+    var current = StringBuilder()
+    fun flush() {
+        if (current.isNotBlank()) {
+            chunks += current.toString().trim()
+            current = StringBuilder()
+        }
+    }
+    for (sentence in sentences) {
+        if (sentence.length <= maxLength) {
+            if (current.isNotEmpty() && current.length + sentence.length + 1 > maxLength) flush()
+            if (current.isNotEmpty()) current.append(' ')
+            current.append(sentence)
+            continue
+        }
+        flush()
+        var remaining = sentence
+        while (remaining.length > maxLength) {
+            var cut = remaining.lastIndexOf(' ', maxLength)
+            if (cut <= 0) cut = maxLength
+            chunks += remaining.substring(0, cut).trim()
+            remaining = remaining.substring(cut).trim()
+        }
+        if (remaining.isNotEmpty()) current.append(remaining)
+    }
+    flush()
+    return chunks
+}
+
+private fun splitSharedTtsSentences(text: String): List<String> {
+    // Sentence boundaries are runs of sentence punctuation (or a newline)
+    // followed by whitespace.
+    val sentences = mutableListOf<String>()
+    var start = 0
+    var index = 0
+    while (index < text.length) {
+        val char = text[index]
+        if (char == '.' || char == '!' || char == '?' || char == '…' || char == '\n') {
+            var end = index + 1
+            while (end < text.length && (text[end] == '.' || text[end] == '!' || text[end] == '?' || text[end] == '…' || text[end] == '\n')) end++
+            while (end < text.length && text[end].isWhitespace()) end++
+            val sentence = text.substring(start, end).trim()
+            if (sentence.isNotBlank()) sentences += sentence
+            start = end
+            index = end
+        } else {
+            index++
+        }
+    }
+    if (start < text.length) {
+        val tail = text.substring(start).trim()
+        if (tail.isNotBlank()) sentences += tail
+    }
+    return sentences
+}

@@ -257,4 +257,83 @@ class SharedEpubPackageLoaderTest {
         override val entryPaths: Set<String> = values.keys
         override fun readBytes(path: String): ByteArray? = values[path]
     }
+
+    @Test
+    fun `loadSharedEpubTtsChapters splits toc sections strips scripts and skips non html items`() {
+        val archive = MapEpubArchive(
+            mapOf(
+                "META-INF/container.xml" to """
+                    <container><rootfiles><rootfile full-path="OPS/package.opf"/></rootfiles></container>
+                """.trimIndent().encodeToByteArray(),
+                "OPS/package.opf" to """
+                    <package unique-identifier="pub-id">
+                      <metadata><identifier id="pub-id">u1</identifier><title>TTS Book</title></metadata>
+                      <manifest>
+                        <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+                        <item id="c1" href="text/c1.xhtml" media-type="application/xhtml+xml"/>
+                        <item id="c2" href="text/c2.xhtml" media-type="application/xhtml+xml"/>
+                        <item id="cover" href="images/cover.jpg" media-type="image/jpeg"/>
+                      </manifest>
+                      <spine><itemref idref="cover"/><itemref idref="c1"/><itemref idref="c2"/></spine>
+                    </package>
+                """.trimIndent().encodeToByteArray(),
+                "OPS/nav.xhtml" to """
+                    <html><body><nav epub:type="toc"><ol>
+                      <li><a href="text/c1.xhtml#intro">Intro</a></li>
+                      <li><a href="text/c1.xhtml#part2">Part Two</a></li>
+                    </ol></nav></body></html>
+                """.trimIndent().encodeToByteArray(),
+                "OPS/text/c1.xhtml" to """
+                    <html><head><title>Doc title</title></head>
+                    <body>
+                      <div id="intro"><p>Hello &amp; welcome.</p><script>bad()</script></div>
+                      <div id="part2"><p>Second&nbsp;part here.</p></div>
+                    </body></html>
+                """.trimIndent().encodeToByteArray(),
+                "OPS/text/c2.xhtml" to """
+                    <html><head><title>Doc title</title></head><body><p>Last chapter.</p></body></html>
+                """.trimIndent().encodeToByteArray(),
+                "OPS/images/cover.jpg" to byteArrayOf(1, 2, 3)
+            )
+        )
+
+        val chapters = loadSharedEpubTtsChapters(archive, "tts.epub")
+
+        assertEquals(3, chapters.size)
+        assertEquals("Intro", chapters[0].title)
+        assertEquals(true, chapters[0].plainText.contains("Hello & welcome."))
+        assertEquals(false, chapters[0].plainText.contains("bad()"))
+        assertEquals("Part Two", chapters[1].title)
+        assertEquals(true, chapters[1].plainText.contains("Second part here."))
+        assertEquals("Doc title", chapters[2].title)
+        assertEquals("Last chapter.", chapters[2].plainText)
+    }
+
+    @Test
+    fun `loadSharedEpubTtsChapters honors linear no and falls back to heading titles`() {
+        val archive = MapEpubArchive(
+            mapOf(
+                "META-INF/container.xml" to """
+                    <container><rootfiles><rootfile full-path="OPS/book.opf"/></rootfiles></container>
+                """.trimIndent().encodeToByteArray(),
+                "OPS/book.opf" to """
+                    <package><metadata><title>TTS Two</title></metadata><manifest>
+                      <item id="skip" href="skip.xhtml" media-type="application/xhtml+xml"/>
+                      <item id="main" href="main.xhtml" media-type="application/xhtml+xml"/>
+                    </manifest><spine>
+                      <itemref idref="skip" linear="no"/>
+                      <itemref idref="main"/>
+                    </spine></package>
+                """.trimIndent().encodeToByteArray(),
+                "OPS/skip.xhtml" to "<html><body><p>Should not be spoken</p></body></html>".encodeToByteArray(),
+                "OPS/main.xhtml" to "<html><body><h2>Real Chapter</h2><p>Spoken text.</p></body></html>".encodeToByteArray()
+            )
+        )
+
+        val chapters = loadSharedEpubTtsChapters(archive, "tts.epub")
+
+        assertEquals(1, chapters.size)
+        assertEquals("Real Chapter", chapters[0].title)
+        assertEquals("Real Chapter\nSpoken text.", chapters[0].plainText)
+    }
 }

@@ -51,6 +51,36 @@ class AudiobookModelsTest {
     }
 
     @Test
+    fun `tts listen chunking groups sentences within the chunk limit`() {
+        val text = "First sentence here. Second sentence here. Third sentence here."
+        val chunks = splitSharedTtsListenChunks(text, maxLength = 30)
+        assertTrue(chunks.isNotEmpty())
+        assertTrue(chunks.all { it.length <= 30 })
+        assertEquals(text, chunks.joinToString(" "))
+        assertEquals(3, chunks.size)
+        assertEquals(20, chunks.first().length)
+    }
+
+    @Test
+    fun `tts listen chunking hard splits oversized sentences at word boundaries`() {
+        val sentence = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau upsilon phi chi psi omega"
+        val chunks = splitSharedTtsListenChunks(sentence, maxLength = 40)
+        assertTrue(chunks.size >= 2)
+        assertTrue(chunks.all { it.length <= 40 })
+        assertEquals(sentence, chunks.joinToString(" "))
+    }
+
+    @Test
+    fun `tts listen chunking terminates on unbroken long input and blank text`() {
+        val unbroken = "x".repeat(10_000)
+        val chunks = splitSharedTtsListenChunks(unbroken, maxLength = 250)
+        assertEquals(40, chunks.size)
+        assertTrue(chunks.all { it.length == 250 })
+        assertEquals(emptyList(), splitSharedTtsListenChunks("   \n  "))
+        assertEquals(emptyList(), splitSharedTtsListenChunks(""))
+    }
+
+    @Test
     fun `resume rewinds ten seconds without seeking before the file`() {
         assertEquals(0L, sharedAudiobookResumePosition(5_000L))
         assertEquals(15_000L, sharedAudiobookResumePosition(25_000L))

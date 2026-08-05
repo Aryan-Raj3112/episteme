@@ -248,7 +248,11 @@ import com.aryan.reader.shared.ReaderPlatform
 import com.aryan.reader.shared.ReaderTtsReplacementPreferences
 import com.aryan.reader.shared.SharedAudiobook
 import com.aryan.reader.shared.SharedAudiobookPlaybackState
+import com.aryan.reader.shared.SharedBookTtsListenState
+import com.aryan.reader.shared.SharedBookTtsListeningProgress
 import com.aryan.reader.shared.SharedReaderScreenState
+import com.aryan.reader.shared.SharedTtsListenItem
+import com.aryan.reader.shared.SharedTtsListenStartPolicy
 import com.aryan.reader.shared.Shelf
 import com.aryan.reader.shared.ShelfType
 import com.aryan.reader.shared.SearchHighlightMode
@@ -265,6 +269,7 @@ import com.aryan.reader.shared.currentTimestamp
 import com.aryan.reader.shared.resolveReaderTheme
 import com.aryan.reader.shared.applyLibraryFilters
 import com.aryan.reader.shared.booksAvailableForShelfAddition
+import com.aryan.reader.shared.buildSharedTtsListenItems
 import com.aryan.reader.shared.opds.OpdsAcquisition
 import com.aryan.reader.shared.opds.OpdsCatalog
 import com.aryan.reader.shared.opds.OpdsEntry
@@ -4846,6 +4851,16 @@ fun SharedMobileUnifiedLibraryScreen(
     onAudiobookSpeedChange: (Float) -> Unit = {},
     onAudiobookSleepTimer: (Int?) -> Unit = {},
     onStopAudiobookPlayback: () -> Unit = {},
+    ttsListenState: SharedBookTtsListenState = SharedBookTtsListenState(),
+    ttsProgress: List<SharedBookTtsListeningProgress> = emptyList(),
+    ttsChapterTitles: Map<String, List<String>> = emptyMap(),
+    onStartTtsListen: (BookItem, SharedTtsListenStartPolicy, Int?) -> Unit = { _, _, _ -> },
+    onToggleTtsPlayback: () -> Unit = {},
+    onSeekTtsChunk: (Int) -> Unit = {},
+    onSeekTtsChapter: (Int) -> Unit = {},
+    onTtsSpeedChange: (Float) -> Unit = {},
+    onTtsSleepTimer: (Int?) -> Unit = {},
+    onStopTtsPlayback: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     var filter by remember { mutableStateOf(MobileUnifiedLibraryFilter.ALL) }
@@ -4859,6 +4874,8 @@ fun SharedMobileUnifiedLibraryScreen(
     var showCreateShelf by remember { mutableStateOf(false) }
     var playerBook by remember { mutableStateOf<SharedAudiobook?>(null) }
     var showPlayerSheet by remember { mutableStateOf(false) }
+    var ttsPlayerItem by remember { mutableStateOf<SharedTtsListenItem?>(null) }
+    var showTtsPlayerSheet by remember { mutableStateOf(false) }
     val unifiedDrawerState = rememberDrawerState(DrawerValue.Closed)
     val unifiedScope = rememberCoroutineScope()
     val visibleBooks = remember(state.rawLibraryBooks, filter, query) {
@@ -4866,6 +4883,9 @@ fun SharedMobileUnifiedLibraryScreen(
     }
     val continueReading = remember(state.rawLibraryBooks) {
         mobileUnifiedContinueReadingBook(state.rawLibraryBooks)
+    }
+    val ttsItems = remember(state.rawLibraryBooks, ttsProgress) {
+        buildSharedTtsListenItems(state.rawLibraryBooks, ttsProgress)
     }
 
     fun closeDrawerAnd(action: () -> Unit) {
@@ -5023,16 +5043,29 @@ fun SharedMobileUnifiedLibraryScreen(
             }
         },
         bottomBar = {
-            audiobooks.firstOrNull { it.bookId == audiobookPlayback.bookId }?.let { active ->
-                SharedMobileAudiobookMiniPlayer(
-                    audiobook = active,
+            val activeAudiobook = audiobooks.firstOrNull { it.bookId == audiobookPlayback.bookId }
+            val activeTts = ttsItems.firstOrNull { it.book.id == ttsListenState.bookId && ttsListenState.connected }
+            when {
+                activeAudiobook != null -> SharedMobileAudiobookMiniPlayer(
+                    audiobook = activeAudiobook,
                     playback = audiobookPlayback,
                     onTogglePlayback = onToggleAudiobookPlayback,
                     onExpand = {
-                        playerBook = active
+                        playerBook = activeAudiobook
                         showPlayerSheet = true
                     },
                     onStopPlayback = onStopAudiobookPlayback,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
+                )
+                activeTts != null -> SharedMobileTtsMiniPlayer(
+                    item = activeTts,
+                    playback = ttsListenState,
+                    onTogglePlayback = onToggleTtsPlayback,
+                    onExpand = {
+                        ttsPlayerItem = activeTts
+                        showTtsPlayerSheet = true
+                    },
+                    onStopPlayback = onStopTtsPlayback,
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
                 )
             }
@@ -5077,6 +5110,8 @@ fun SharedMobileUnifiedLibraryScreen(
             SharedMobileAudiobooksSection(
                 audiobooks = audiobooks,
                 playback = audiobookPlayback,
+                ttsItems = ttsItems,
+                ttsPlayback = ttsListenState,
                 onAddAudiobook = onImportBooks,
                 onOpenPlayer = { book ->
                     if (audiobookPlayback.bookId != book.bookId) {
@@ -5084,6 +5119,13 @@ fun SharedMobileUnifiedLibraryScreen(
                     }
                     playerBook = book
                     showPlayerSheet = true
+                },
+                onOpenTtsPlayer = { item, autoStart ->
+                    if (autoStart) {
+                        onStartTtsListen(item.book, SharedTtsListenStartPolicy.RESUME, null)
+                    }
+                    ttsPlayerItem = item
+                    showTtsPlayerSheet = true
                 },
                 modifier = Modifier.fillMaxSize().padding(padding),
             )
@@ -5204,6 +5246,34 @@ fun SharedMobileUnifiedLibraryScreen(
                 onSleepTimer = onAudiobookSleepTimer,
                 onStopPlayback = onStopAudiobookPlayback,
                 onDismiss = { showPlayerSheet = false },
+            )
+        }
+    }
+    if (showTtsPlayerSheet) {
+        ttsPlayerItem?.let { item ->
+            SharedMobileTtsPlayerSheet(
+                item = item,
+                playback = ttsListenState,
+                chapterTitles = ttsChapterTitles[item.book.id],
+                onTogglePlayback = {
+                    if (ttsListenState.bookId != item.book.id || !ttsListenState.connected) {
+                        onStartTtsListen(item.book, SharedTtsListenStartPolicy.RESUME, null)
+                    } else {
+                        onToggleTtsPlayback()
+                    }
+                },
+                onSeekChunk = onSeekTtsChunk,
+                onSeekChapter = { index ->
+                    if (ttsListenState.bookId == item.book.id && ttsListenState.connected) {
+                        onSeekTtsChapter(index)
+                    } else {
+                        onStartTtsListen(item.book, SharedTtsListenStartPolicy.CHAPTER, index)
+                    }
+                },
+                onSpeedChange = onTtsSpeedChange,
+                onSleepTimer = onTtsSleepTimer,
+                onStopPlayback = onStopTtsPlayback,
+                onDismiss = { showTtsPlayerSheet = false },
             )
         }
     }

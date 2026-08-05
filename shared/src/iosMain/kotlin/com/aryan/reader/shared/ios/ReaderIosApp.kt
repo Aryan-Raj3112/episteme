@@ -1492,6 +1492,7 @@ private fun ReaderIosApp(
         persistIosMobileLibraryNavigation(state)
     }
     val audiobookPlayer = remember { IosAudiobookPlayback(bridge) }
+    val ttsListenController = remember { IosBookTtsListeningController() }
     val audiobookPlaybackSnapshot = bridge.audiobookPlaybackSnapshot
     var lastAudiobookPersistAt by remember { mutableStateOf(0L) }
     LaunchedEffect(audiobookPlaybackSnapshot) {
@@ -3232,6 +3233,7 @@ private fun ReaderIosApp(
                                 audiobooks = state.audiobooks,
                                 audiobookPlayback = audiobookPlaybackSnapshot,
                                 onPlayAudiobook = { audiobook ->
+                                    ttsListenController.stop()
                                     audiobookPlayer.connect(
                                         SharedAudiobookPlaybackRequest(
                                             bookId = audiobook.bookId,
@@ -3254,6 +3256,37 @@ private fun ReaderIosApp(
                                 onStopAudiobookPlayback = {
                                     audiobookPlayer.stop()
                                 },
+                                ttsListenState = ttsListenController.state,
+                                ttsProgress = ttsListenController.progressByBook.values.toList(),
+                                ttsChapterTitles = ttsListenController.chapterTitlesByBook,
+                                onStartTtsListen = { book, policy, chapterIndex ->
+                                    iosTtsListenLog(
+                                        "onStartTtsListen ENTRY bookId=${book.id} name=${book.displayName} " +
+                                            "type=${book.type} policy=$policy chapterIndex=$chapterIndex " +
+                                            "path=${book.path ?: "<null>"}"
+                                    )
+                                    audiobookPlayer.stop()
+                                    ttsListenController.start(
+                                        book,
+                                        policy,
+                                        chapterIndex,
+                                        replacements = state.readerTtsReplacementPreferences,
+                                    )
+                                },
+                                onToggleTtsPlayback = ttsListenController::togglePlay,
+                                onSeekTtsChunk = ttsListenController::seekToChunk,
+                                onSeekTtsChapter = ttsListenController::selectChapter,
+                                onTtsSpeedChange = { rate ->
+                                    ttsListenController.setParameters(rate, ttsListenController.state.pitch)
+                                },
+                                onTtsSleepTimer = { minutes ->
+                                    if (minutes == null) {
+                                        ttsListenController.cancelSleepTimer()
+                                    } else {
+                                        ttsListenController.startSleepTimer(minutes)
+                                    }
+                                },
+                                onStopTtsPlayback = ttsListenController::stop,
                                 modifier = Modifier.fillMaxSize(),
                             )
                         }
