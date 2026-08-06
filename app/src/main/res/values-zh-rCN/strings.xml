@@ -67,7 +67,7 @@
     <string name="not_available_locally">本地不可用</string>
     <string name="drawer_sign_in">使用 Google 登录</string>
     <string name="drawer_by_signing_in">登录即表示，</string>
-    <string name="drawer_pro_unlocked">Episteme Pro</string>
+    <string name="drawer_pro_unlocked">Episteme 高级版</string>
     <string name="drawer_upgrade_pro">升级到 Episteme Pro</string>
     <string name="drawer_sync_library">同步书库</string>
     <string name="drawer_backup_local_folders">本地文件夹云同步</string>
@@ -130,7 +130,7 @@
     <string name="clear_all">全部清除</string>
     <string name="filter_in_app_storage">应用内存储</string>
     <string name="external_file_prompt_title">保存文件？</string>
-    <string name="external_file_prompt_desc">要将这个外部文件保存到应用书库中吗？如果不保存，它将被移除。\n\n（你随时可以在首页 &gt; 更多选项 &gt; 外部文件行为中更改此默认行为。）</string>
+    <string name="external_file_prompt_desc">是否要将此外部文件保存到本程序的书库中?如果不保存,则会将其移除。\n\n（你随时可以在首页 &gt; 更多选项 &gt; 外部文件行为中更改此默认行为）。</string>
     <string name="external_file_dont_ask">不再询问</string>
     <string name="external_file_keep">保留在书库中</string>
     <string name="external_file_delete">移除</string>
@@ -203,7 +203,7 @@
     <string name="action_got_it">知道了！</string>
     <string name="custom_fonts">自定义字体</string>
     <string name="import_font">导入字体</string>
-    <string name="google_fonts">Google Fonts</string>
+    <string name="google_fonts">谷歌字体</string>
     <string name="action_browse_google_fonts">浏览 Google Fonts</string>
     <string name="google_fonts_search_placeholder">搜索 1900+ 种字体…</string>
     <string name="google_fonts_popular_choices">热门选择</string>
@@ -216,7 +216,7 @@
     <string name="dialog_delete_font_desc">确定要删除“%1$s”吗？如果同步已开启，它会从你的所有设备中移除。</string>
     <string name="get_in_touch">联系我们</string>
     <string name="feedback_desc">发现错误、有功能请求，或者只是想打个招呼？欢迎通过 GitHub 或电子邮件告诉我们。</string>
-    <string name="github_issues">GitHub Issues</string>
+    <string name="github_issues">GitHub 反馈</string>
     <string name="github_issues_desc">报告错误、请求功能并跟踪开发进度。</string>
     <string name="email_support">邮件支持</string>
     <string name="email_support_desc">如有其他问题，请直接通过电子邮件联系我们。</string>
@@ -893,7 +893,7 @@
     <string name="content_desc_toggle_editing_mode">切换编辑模式</string>
     <string name="content_desc_smart_comic_zoom">智能漫画缩放</string>
     <string name="highlight_customize_title">自定义高亮</string>
-    <string name="ocr_language_latin">英语、西班牙语、法语等</string>
+    <string name="ocr_language_latin">英语、西班牙语、法语等。</string>
     <string name="ocr_language_devanagari">印地语、马拉地语、梵语 + 英语</string>
     <string name="ocr_language_chinese">中文 + 英语</string>
     <string name="ocr_language_japanese">日语 + 英语</string>
@@ -1133,7 +1133,7 @@
     <string name="action_save_comment">保存评论</string>
     <string name="action_add_comment">添加评论</string>
     <string name="action_reply">回复</string>
-    <string name="placeholder_add_comment">添加评论...</string>
+    <string name="placeholder_add_comment">添加评论…</string>
     <string name="label_comments">评论</string>
     <string name="label_editing_comment">编辑评论</string>
     <string name="label_replying_to">回复%1$s</string>
@@ -1268,7 +1268,7 @@
     <string name="desktop_type_example_pdf">类型，例如PDF</string>
     <string name="desktop_view">查看</string>
     <string name="desktop_voice_cache">语音缓存</string>
-    <string name="desktop_webview_preparing">正在准备嵌入的网络视图...</string>
+    <string name="desktop_webview_preparing">正在准备嵌入式网页视图…</string>
     <string name="desktop_webview_preparing_progress">准备捆绑的嵌入式 webview %1$d%%</string>
     <string name="desktop_webview_restart_required">安装了嵌入式 webview。重新启动Episteme完成设置。</string>
     <string name="desktop_webview_start_error">嵌入式 webview 无法启动：%1$s</string>
@@ -1564,11 +1564,11 @@
     <string name="dialog_delete_tag_desc">确认删除 %1$s？它将会从所有书中删除。</string>
     <string name="error_copy_to_clipboard">无法复制到剪切板</string>
     <string name="error_print_password_protected">密码保护的 PDF 文件不能被打印</string>
-    <string name="action_export_annotations">导出笔记。</string>
+    <string name="action_export_annotations">导出注释</string>
     <string name="dialog_export_annotations_title">导出笔记</string>
-    <string name="export_annotations_markdown">Markdown (.md)</string>
-    <string name="export_annotations_text">Text (.txt)</string>
-    <string name="language_estonian">Eesti (Estonian)</string>
+    <string name="export_annotations_markdown">Markdown文件 (.md)</string>
+    <string name="export_annotations_text">文本 (.txt)</string>
+    <string name="language_estonian">Eesti (爱沙尼亚语)</string>
     <string name="sort_date_added_newest">最新</string>
     <string name="sort_date_added_oldest">最早</string>
     <string name="label_cover">封面</string>
