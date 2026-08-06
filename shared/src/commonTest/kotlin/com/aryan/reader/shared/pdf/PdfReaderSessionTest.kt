@@ -105,6 +105,17 @@ class PdfReaderSessionTest {
     }
 
     @Test
+    fun `rich text document json survives reader state round trip`() {
+        val withRichText = SharedPdfReaderState.initial(pageCount = 4).copy(richTextDocumentJson = """{"pages":[]}""")
+        val restored = SharedPdfReaderStateSerializer.decode(SharedPdfReaderStateSerializer.encode(withRichText))
+
+        assertEquals("""{"pages":[]}""", restored?.richTextDocumentJson)
+
+        val legacy = SharedPdfReaderStateSerializer.decode("""{"pageIndex":0,"pageCount":4,"displayMode":"PAGINATION"}""")
+        assertEquals("", legacy?.richTextDocumentJson)
+    }
+
+    @Test
     fun `reader viewport clamps zoom pages and scroll offsets`() {
         val viewport = SharedPdfReaderViewport(
             pageIndex = 99,

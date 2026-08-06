@@ -172,6 +172,21 @@ class SharedPdfVirtualPagesTest {
     }
 
     @Test
+    fun `insert blank page carries the manual flag from the action`() {
+        val state = SharedPdfReaderState.initial(pageCount = 3).copy(pageIndex = 0)
+
+        val manual = state.reduce(
+            SharedPdfReaderAction.InsertBlankPageAt(displayIndex = 0, widthPx = 400f, heightPx = 600f, id = "m")
+        )
+        assertTrue(manual.blankPageInsertions.single().wasManuallyAdded)
+
+        val auto = state.reduce(
+            SharedPdfReaderAction.InsertBlankPageAt(displayIndex = 0, widthPx = 400f, heightPx = 600f, id = "a", wasManuallyAdded = false)
+        )
+        assertTrue(!auto.blankPageInsertions.single().wasManuallyAdded)
+    }
+
+    @Test
     fun `delete blank page removes it and keeps the spot`() {
         val state = SharedPdfReaderState.initial(pageCount = 3).copy(
             blankPageInsertions = listOf(blank(0, "a")),

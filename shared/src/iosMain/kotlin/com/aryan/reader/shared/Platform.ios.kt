@@ -1,5 +1,6 @@
 package com.aryan.reader.shared
 
+import androidx.compose.ui.input.pointer.PointerEvent
 import kotlinx.cinterop.alloc
 import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.ptr
@@ -14,3 +15,5 @@ actual fun currentTimestamp(): Long {
         now.tv_sec * 1000L + now.tv_usec / 1000L
     }
 }
+
+actual fun sharedPdfStylusBarrelPressed(event: PointerEvent): Boolean = false

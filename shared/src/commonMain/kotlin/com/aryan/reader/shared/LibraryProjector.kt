@@ -1,5 +1,7 @@
 package com.aryan.reader.shared
 
+import androidx.compose.ui.input.pointer.PointerEvent
+
 class LibraryProjector {
     fun home(state: LibraryState): HomeScreenModel {
         val recentBooks = sortBooks(state.books.filter { it.isRecent }, SortOrder.RECENT)
@@ -163,6 +165,8 @@ private fun ImportedFile.toImportedBookFile(): ImportedBookFile {
 }
 
 expect fun currentTimestamp(): Long
+
+expect fun sharedPdfStylusBarrelPressed(event: PointerEvent): Boolean
 
 fun String.toFileType(): FileType {
     return SharedFileCapabilities.fileTypeForName(this)

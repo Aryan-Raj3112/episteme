@@ -15,6 +15,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -33,9 +34,12 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Undo
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -56,6 +60,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.focus.FocusRequester
@@ -180,6 +185,8 @@ internal fun sharedPdfInteractionDockItems(
 @Composable
 fun SharedPdfInteractionDock(
     isTextSelectionMode: Boolean,
+    isStylusOnlyMode: Boolean = false,
+    onToggleStylusOnlyMode: (() -> Unit)? = null,
     selectedTool: PdfInkTool,
     selectedColor: Int,
     strokeWidth: Float,
@@ -373,6 +380,32 @@ fun SharedPdfInteractionDock(
                 }
 
                 SharedPdfInteractionDivider()
+
+                if (onToggleStylusOnlyMode != null) {
+                    ReaderTooltipIconButton(
+                        tooltip = readerString("pdf_stylus_only_mode", "Stylus-only mode"),
+                        onClick = { onToggleStylusOnlyMode() },
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    if (isStylusOnlyMode) Color.White.copy(alpha = 0.15f) else Color.Transparent
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            SharedPdfAndroidPathIcon(
+                                pathData = if (isStylusOnlyMode) SharedPdfAndroidDoNotTouchPath else SharedPdfAndroidTouchAppPath,
+                                tint = if (isStylusOnlyMode) Color(0xFFE57373) else Color.White.copy(alpha = 0.76f),
+                                viewportWidth = 24f,
+                                viewportHeight = 24f,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                }
 
                 if (SharedPdfInteractionDockItem.PEN in dockItems) {
                     val tool = selectedTool.takeIf { it in penTools } ?: lastPenTool
@@ -1386,6 +1419,7 @@ fun SharedPdfHighlighterPaletteEditor(
 fun SharedPdfTextAnnotationDock(
     style: SharedPdfTextStyleConfig,
     onStyleChange: (SharedPdfTextStyleConfig) -> Unit,
+    onInsertTextBox: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     Surface(
@@ -1399,6 +1433,36 @@ fun SharedPdfTextAnnotationDock(
             modifier = Modifier.padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = readerString("text_annotation_dock_title", "Text box"),
+                    color = Color.White.copy(alpha = 0.86f),
+                    style = MaterialTheme.typography.labelLarge
+                )
+                Button(
+                    onClick = onInsertTextBox,
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF64B5F6),
+                        contentColor = Color.Black
+                    )
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = readerString("content_desc_insert_text_box", "Insert text box"),
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = readerString("action_insert_text_box", "Insert"),
+                        fontSize = 12.sp
+                    )
+                }
+            }
             SharedPdfTextStyleControls(
                 style = style,
                 onStyleChange = onStyleChange,
@@ -1439,6 +1503,11 @@ fun SharedPdfTextBoxEditorOverlay(
     canvasSize: IntSize,
     onTextChange: (String) -> Unit,
     onBoundsChange: (PdfPageBounds) -> Unit,
+    onGlobalDragStart: (() -> Unit)? = null,
+    onGlobalDrag: ((Offset) -> Unit)? = null,
+    onGlobalDragEnd: (() -> Unit)? = null,
+    onGlobalDragCancel: (() -> Unit)? = null,
+    isDraggingGlobally: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     if (canvasSize.width <= 0 || canvasSize.height <= 0) return
@@ -1484,7 +1553,7 @@ fun SharedPdfTextBoxEditorOverlay(
 
     val fontSizePx = style.sharedPdfTextFontSizePx(canvasSize)
 
-    Box(modifier = modifier.fillMaxSize()) {
+    Box(modifier = modifier.fillMaxSize().alpha(if (isDraggingGlobally) 0f else 1f)) {
         BasicTextField(
             value = textFieldValue,
             onValueChange = { nextValue ->
@@ -1592,21 +1661,35 @@ fun SharedPdfTextBoxEditorOverlay(
                 .clip(CircleShape)
                 .background(Color(0xFF64B5F6))
                 .border(1.dp, Color.White.copy(alpha = 0.92f), CircleShape)
-                .pointerInput(id, canvasSize) {
+                .pointerInput(id, canvasSize, onGlobalDrag != null) {
                     detectDragGestures(
                         onDragStart = {
                             isResizing = true
+                            if (onGlobalDrag == null) return@detectDragGestures
+                            onGlobalDragStart?.invoke()
                         },
                         onDragEnd = {
                             isResizing = false
+                            if (onGlobalDrag != null) {
+                                onGlobalDragEnd?.invoke()
+                                return@detectDragGestures
+                            }
                             onBoundsChange(liveBounds)
                         },
                         onDragCancel = {
                             isResizing = false
+                            if (onGlobalDrag != null) {
+                                onGlobalDragCancel?.invoke()
+                                return@detectDragGestures
+                            }
                             liveBounds = bounds
                         },
                         onDrag = { change, dragAmount ->
                             change.consume()
+                            if (onGlobalDrag != null) {
+                                onGlobalDrag(dragAmount)
+                                return@detectDragGestures
+                            }
                             liveBounds = liveBounds.movedBy(
                                 deltaXPx = dragAmount.x,
                                 deltaYPx = dragAmount.y,
@@ -2028,6 +2111,7 @@ private const val SharedPdfAndroidTextSelectStartPath = "M440,840L440,760L520,76
 private const val SharedPdfAndroidEraserPath = "M690,720L880,720L880,800L610,800L690,720ZM190,800L105,715Q82,692 81.5,658Q81,624 104,600L544,144Q567,120 600.5,120Q634,120 657,143L856,342Q879,365 879,399Q879,433 856,456L520,800L190,800ZM486,720L800,398Q800,398 800,398Q800,398 800,398L602,200Q602,200 602,200Q602,200 602,200L160,656Q160,656 160,656Q160,656 160,656L224,720L486,720ZM480,480L480,480L480,480Q480,480 480,480Q480,480 480,480L480,480Q480,480 480,480Q480,480 480,480L480,480Q480,480 480,480Q480,480 480,480Z"
 private const val SharedPdfAndroidDeletePath = "M280,840Q247,840 223.5,816.5Q200,793 200,760L200,240L160,240L160,160L360,160L360,120L600,120L600,160L800,160L800,240L760,240L760,760Q760,793 736.5,816.5Q713,840 680,840L280,840ZM680,240L280,240L280,760Q280,760 280,760Q280,760 280,760L680,760Q680,760 680,760Q680,760 680,760L680,240ZM360,680L440,680L440,320L360,320L360,680ZM520,680L600,680L600,320L520,320L520,680ZM280,240L280,240L280,760Q280,760 280,760Q280,760 280,760L280,760Q280,760 280,760Q280,760 280,760L280,240Z"
 private const val SharedPdfAndroidTouchAppPath = "M419,880Q391,880 366.5,868Q342,856 325,834L107,557L126,537Q146,516 174,512Q202,508 226,523L300,568L300,240Q300,223 311.5,211.5Q323,200 340,200Q357,200 369,211.5Q381,223 381,240L381,712L284,652L388,785Q394,792 402,796Q410,800 419,800L640,800Q673,800 696.5,776.5Q720,753 720,720L720,560Q720,543 708.5,531.5Q697,520 680,520L461,520L461,440L680,440Q730,440 765,475Q800,510 800,560L800,720Q800,786 753,833Q706,880 640,880L419,880ZM167,340Q154,318 147,292.5Q140,267 140,240Q140,157 198.5,98.5Q257,40 340,40Q423,40 481.5,98.5Q540,157 540,240Q540,267 533,292.5Q526,318 513,340L444,300Q452,286 456,271.5Q460,257 460,240Q460,190 425,155Q390,120 340,120Q290,120 255,155Q220,190 220,240Q220,257 224,271.5Q228,286 236,300L167,340ZM502,620L502,620L502,620L502,620Q502,620 502,620Q502,620 502,620L502,620Q502,620 502,620Q502,620 502,620L502,620Q502,620 502,620Q502,620 502,620L502,620L502,620Z"
+private const val SharedPdfAndroidDoNotTouchPath = "M13 10.17l-2.5-2.5V2.25a1.25 1.25 0 0 1 2.5 0v7.92zm7 2.58v-7.5a1.25 1.25 0 0 0-2.5 0V11h-1V3.25a1.25 1.25 0 0 0-2.5 0v7.92l6 6v-4.42zM9.5 4.25C9.5 3.56 8.94 3 8.25 3c-.67 0-1.2.53-1.24 1.18L9.5 6.67V4.25zm3.5 5.92l-2.5-2.5V2.25a1.25 1.25 0 0 1 2.5 0v7.92zm7 2.58v-7.5a1.25 1.25 0 0 0-2.5 0V11h-1V3.25a1.25 1.25 0 0 0-2.5 0v7.92l6 6v-4.42zM9.5 4.25C9.5 3.56 8.94 3 8.25 3c-.67 0-1.2.53-1.24 1.18L9.5 6.67V4.25zm11.69 16.94L2.81 2.81L1.39 4.22l5.63 5.63L7 9.83v4.3c-1.11-.64-2.58-1.47-2.6-1.48c-.17-.09-.34-.14-.54-.14c-.26 0-.5.09-.7.26c-.04.01-1.16 1.11-1.16 1.11l6.8 7.18c.57.6 1.35.94 2.18.94H17c.62 0 1.18-.19 1.65-.52l-.02-.02l1.15 1.15l1.41-1.42z"
 private const val SharedPdfAndroidUndoPath = "M280,760L280,680L564,680Q627,680 673.5,640Q720,600 720,540Q720,480 673.5,440Q627,400 564,400L312,400L416,504L360,560L160,360L360,160L416,216L312,320L564,320Q661,320 730.5,383Q800,446 800,540Q800,634 730.5,697Q661,760 564,760L280,760Z"
 private const val SharedPdfAndroidRedoPath = "M396,760Q299,760 229.5,697Q160,634 160,540Q160,446 229.5,383Q299,320 396,320L648,320L544,216L600,160L800,360L600,560L544,504L648,400L396,400Q333,400 286.5,440Q240,480 240,540Q240,600 286.5,640Q333,680 396,680L680,680L680,760L396,760Z"
 
@@ -2035,14 +2119,16 @@ private const val SharedPdfAndroidRedoPath = "M396,760Q299,760 229.5,697Q160,634
 private fun SharedPdfAndroidPathIcon(
     pathData: String,
     tint: Color,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    viewportWidth: Float = 960f,
+    viewportHeight: Float = 960f
 ) {
-    val imageVector = remember(pathData) {
+    val imageVector = remember(pathData, viewportWidth, viewportHeight) {
         ImageVector.Builder(
             defaultWidth = 24.dp,
             defaultHeight = 24.dp,
-            viewportWidth = 960f,
-            viewportHeight = 960f
+            viewportWidth = viewportWidth,
+            viewportHeight = viewportHeight
         ).apply {
             addPath(
                 pathData = PathParser().parsePathString(pathData).toNodes(),
@@ -2811,7 +2897,7 @@ private fun SharedPdfTextStyleConfig.displayFontName(): String {
         ?: "Default"
 }
 
-private fun sharedPdfFontFamily(nameOrPath: String?): FontFamily? {
+internal fun sharedPdfFontFamily(nameOrPath: String?): FontFamily? {
     return when (nameOrPath) {
         "Merriweather",
         "Lora",

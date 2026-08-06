@@ -890,6 +890,7 @@ private const val IosPdfAutoScrollMusicianDefaultsKey = "reader_ios_pdf_auto_scr
 private const val IosPdfAutoScrollSliderDefaultsKey = "reader_ios_pdf_auto_scroll_slider_v1"
 private const val IosReaderOrientationDefaultsKey = "reader_ios_reader_orientation_v1"
 private const val IosKeepScreenOnDefaultsKey = "reader_ios_keep_screen_on_v1"
+private const val IosStylusOnlyModeDefaultsKey = "reader_ios_stylus_only_mode_v1"
 private const val IosReaderPreferencesDefaultsKey = "reader_ios_reader_preferences_v1"
 private const val IosLibrarySnapshotDefaultsKey = "reader_ios_library_snapshot_v1"
 private const val IosLastOpenBookIdDefaultsKey = "reader_ios_last_open_book_id_v1"
@@ -1198,6 +1199,14 @@ private fun loadIosKeepScreenOn(): Boolean {
 
 private fun persistIosKeepScreenOn(enabled: Boolean) {
     NSUserDefaults.standardUserDefaults.setBool(enabled, forKey = IosKeepScreenOnDefaultsKey)
+}
+
+private fun loadIosStylusOnlyMode(): Boolean {
+    return NSUserDefaults.standardUserDefaults.boolForKey(IosStylusOnlyModeDefaultsKey)
+}
+
+private fun persistIosStylusOnlyMode(enabled: Boolean) {
+    NSUserDefaults.standardUserDefaults.setBool(enabled, forKey = IosStylusOnlyModeDefaultsKey)
 }
 
 private fun loadIosPdfTopTabStripVisible(): Boolean {
@@ -2373,6 +2382,8 @@ private fun ReaderIosApp(
                             },
                             initialKeepScreenOn = loadIosKeepScreenOn(),
                             onKeepScreenOnPreferenceChange = ::persistIosKeepScreenOn,
+                            initialStylusOnlyMode = loadIosStylusOnlyMode(),
+                            onStylusOnlyModePreferenceChange = ::persistIosStylusOnlyMode,
                             initialPageSliderVisible = loadIosPdfPageSliderVisible(book.id),
                             onPageSliderVisibilityPreferenceChange = { visible ->
                                 persistIosPdfPageSliderVisible(book.id, visible)

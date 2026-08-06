@@ -35,6 +35,7 @@ data class SharedPdfBlankPageInsertion(
     val widthPx: Float = 595f,
     val heightPx: Float = 842f,
     val id: String = "",
+    val wasManuallyAdded: Boolean = true,
 )
 
 sealed interface SharedPdfVirtualPage {
@@ -116,7 +117,8 @@ data class SharedPdfReaderStore(
     val blankPageInsertions: List<SharedPdfBlankPageInsertion> = emptyList(),
     val penPalette: List<Int> = SharedPdfAnnotationDefaults.penPalette,
     val lastActivePenTool: PdfInkTool = PdfInkTool.PEN,
-    val lastActiveHighlighterTool: PdfInkTool = PdfInkTool.HIGHLIGHTER
+    val lastActiveHighlighterTool: PdfInkTool = PdfInkTool.HIGHLIGHTER,
+    val richTextDocumentJson: String = ""
 )
 
 object SharedPdfBookmarkSerializer {
@@ -168,7 +170,8 @@ object SharedPdfReaderStateSerializer {
                 blankPageInsertions = state.blankPageInsertions,
                 penPalette = state.penPalette,
                 lastActivePenTool = state.lastActivePenTool,
-                lastActiveHighlighterTool = state.lastActiveHighlighterTool
+                lastActiveHighlighterTool = state.lastActiveHighlighterTool,
+                richTextDocumentJson = state.richTextDocumentJson
             )
         )
     }
@@ -196,7 +199,8 @@ object SharedPdfReaderStateSerializer {
             blankPageInsertions = store.blankPageInsertions,
             penPalette = store.penPalette,
             lastActivePenTool = store.lastActivePenTool,
-            lastActiveHighlighterTool = store.lastActiveHighlighterTool
+            lastActiveHighlighterTool = store.lastActiveHighlighterTool,
+            richTextDocumentJson = store.richTextDocumentJson
         ).coerced().let { state ->
             if (state.pageCount > 0) state else state.copy(pageIndex = fallbackPageIndex)
         }
@@ -353,7 +357,8 @@ data class SharedPdfReaderState(
     val lastActivePenTool: PdfInkTool = PdfInkTool.PEN,
     val lastActiveHighlighterTool: PdfInkTool = PdfInkTool.HIGHLIGHTER,
     val annotationUndoStack: List<SharedPdfAnnotationHistoryAction> = emptyList(),
-    val annotationRedoStack: List<SharedPdfAnnotationHistoryAction> = emptyList()
+    val annotationRedoStack: List<SharedPdfAnnotationHistoryAction> = emptyList(),
+    val richTextDocumentJson: String = ""
 ) {
     val safePageCount: Int get() = pageCount.coerceAtLeast(0)
     val displayPageCount: Int get() = safePageCount + blankPageInsertions.size.coerceAtLeast(0)
@@ -484,7 +489,8 @@ sealed interface SharedPdfReaderAction {
         val displayIndex: Int,
         val widthPx: Float,
         val heightPx: Float,
-        val id: String = ""
+        val id: String = "",
+        val wasManuallyAdded: Boolean = true
     ) : SharedPdfReaderAction
     data class DeleteBlankPageAt(val displayIndex: Int) : SharedPdfReaderAction
     data class AnnotationsLoaded(val annotations: List<SharedPdfAnnotation>) : SharedPdfReaderAction
@@ -621,7 +627,8 @@ fun SharedPdfReaderState.reduce(
                 afterPdfIndex = targetPdfIndex,
                 widthPx = action.widthPx.coerceAtLeast(1f),
                 heightPx = action.heightPx.coerceAtLeast(1f),
-                id = action.id.ifBlank { "blank_${targetPdfIndex}_${kotlin.random.Random.nextLong()}" }
+                id = action.id.ifBlank { "blank_${targetPdfIndex}_${kotlin.random.Random.nextLong()}" },
+                wasManuallyAdded = action.wasManuallyAdded
             )
             val nextInsertions = blankPageInsertions + insertion
             val nextLayout = buildSharedPdfVirtualPageLayout(pageCount, nextInsertions)

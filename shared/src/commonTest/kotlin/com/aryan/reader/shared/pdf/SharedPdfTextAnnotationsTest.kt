@@ -1,5 +1,7 @@
 package com.aryan.reader.shared.pdf
 
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.unit.IntSize
 import kotlin.math.abs
 import kotlin.test.Test
@@ -240,5 +242,110 @@ class SharedPdfTextAnnotationsTest {
             "Line one\nLine two",
             SharedPdfTextAnnotationDefaults.normalizeTextDraft(" \r\nLine one\r\nLine two\n ")
         )
+    }
+
+    @Test
+    fun `containsNormalizedPoint hits inside and misses outside the bounds rect`() {
+        val bounds = PdfPageBounds(left = 0.3f, top = 0.45f, right = 0.7f, bottom = 0.55f)
+
+        assertTrue(bounds.containsNormalizedPoint(0.5f, 0.5f))
+        assertTrue(bounds.containsNormalizedPoint(0.3f, 0.45f))
+        assertTrue(bounds.containsNormalizedPoint(0.7f, 0.55f))
+        assertTrue(!bounds.containsNormalizedPoint(0.29f, 0.5f))
+        assertTrue(!bounds.containsNormalizedPoint(0.5f, 0.44f))
+        assertTrue(!bounds.containsNormalizedPoint(0.71f, 0.5f))
+        assertTrue(!bounds.containsNormalizedPoint(0.5f, 0.56f))
+    }
+
+    @Test
+    fun `Android default insert box lands at fixed relative bounds`() {
+        val style = SharedPdfTextStyleConfig(fontSize = 16f)
+        val draft = SharedPdfTextDraft(
+            id = "android-default-box",
+            pageIndex = 0,
+            bounds = PdfPageBounds(left = 0.3f, top = 0.45f, right = 0.7f, bottom = 0.55f),
+            text = "",
+            style = style,
+            createdAt = 0L,
+            isManuallySized = true
+        )
+        val canvasSize = IntSize(800, 1_200)
+
+        val typed = draft.withText("Typed text stays inside the fixed box", canvasSize)
+        val styled = typed.withStyle(typed.style.copy(fontSize = 24f), canvasSize)
+
+        assertEquals(0.3f, typed.bounds.left)
+        assertEquals(0.45f, typed.bounds.top)
+        assertEquals(0.7f, typed.bounds.right)
+        assertEquals(0.55f, typed.bounds.bottom)
+        assertEquals(styled.bounds, typed.bounds)
+        assertEquals(0.4f, styled.bounds.right - styled.bounds.left, 0.0001f)
+        assertEquals(0.1f, styled.bounds.bottom - styled.bounds.top, 0.0001f)
+
+        val annotation = typed.toAnnotation()
+        assertTrue(annotation.bounds!!.containsNormalizedPoint(0.5f, 0.5f))
+    }
+
+    @Test
+    fun `drop bounds map window coordinates to page relative bounds`() {
+        val target = Rect(100f, 50f, 500f, 450f)
+
+        val bounds = sharedPdfTextDropBounds(
+            dropTopLeft = Offset(300f, 250f),
+            targetRect = target,
+            relWidth = 0.2f,
+            relHeight = 0.1f,
+            paddingPx = 14f
+        )
+
+        assertEquals(0.5f, bounds.left, 0.001f)
+        assertEquals(0.5f, bounds.top, 0.001f)
+        assertEquals(0.7f, bounds.right, 0.001f)
+        assertEquals(0.6f, bounds.bottom, 0.001f)
+    }
+
+    @Test
+    fun `drop bounds clamp to padding insets on all edges`() {
+        val target = Rect(100f, 50f, 500f, 450f)
+        val padRelX = 14f / 400f
+        val padRelY = 14f / 400f
+
+        val farTopLeft = sharedPdfTextDropBounds(
+            dropTopLeft = Offset(-9999f, -9999f),
+            targetRect = target,
+            relWidth = 0.2f,
+            relHeight = 0.1f,
+            paddingPx = 14f
+        )
+        assertEquals(padRelX, farTopLeft.left, 0.001f)
+        assertEquals(padRelY, farTopLeft.top, 0.001f)
+
+        val farBottomRight = sharedPdfTextDropBounds(
+            dropTopLeft = Offset(9999f, 9999f),
+            targetRect = target,
+            relWidth = 0.2f,
+            relHeight = 0.1f,
+            paddingPx = 14f
+        )
+        assertEquals(1f - 0.2f - padRelX, farBottomRight.left, 0.001f)
+        assertEquals(1f - 0.1f - padRelY, farBottomRight.top, 0.001f)
+        assertEquals(1f - padRelX, farBottomRight.right, 0.001f)
+        assertEquals(1f - padRelY, farBottomRight.bottom, 0.001f)
+    }
+
+    @Test
+    fun `drop bounds tolerate degenerate target rects`() {
+        val bounds = sharedPdfTextDropBounds(
+            dropTopLeft = Offset(0f, 0f),
+            targetRect = Rect(0f, 0f, 0f, 0f),
+            relWidth = 2f,
+            relHeight = 3f,
+            paddingPx = 14f
+        )
+
+        assertEquals(0f, bounds.left)
+        assertEquals(0f, bounds.top)
+        assertEquals(1f, bounds.right)
+        assertEquals(1f, bounds.bottom)
     }
 }

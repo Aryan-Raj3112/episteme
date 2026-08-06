@@ -98,6 +98,7 @@ fun SharedPdfRichTextLayer(
     centeringOffsetY: Float = 0f,
     isDarkMode: Boolean = false,
     isScrolling: Boolean = false,
+    tapHandlingEnabled: Boolean = true,
     onPageTapped: (Int) -> Unit = {}
 ) {
     LaunchedEffect(pageIndex, pageWidth, pageHeight, isTextEditingEnabled) {
@@ -158,7 +159,7 @@ fun SharedPdfRichTextLayer(
             .graphicsLayer()
             .clipToBounds()
             .then(
-                if (isTextEditingEnabled) {
+                if (isTextEditingEnabled && tapHandlingEnabled) {
                     Modifier.pointerInput(
                         pageIndex,
                         editorWidth,
