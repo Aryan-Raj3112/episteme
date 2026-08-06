@@ -1,2 +1,2 @@
-headers = fpdfview.h fpdf_text.h fpdf_doc.h
+headers = fpdfview.h fpdf_text.h fpdf_doc.h fpdf_edit.h
 package = com.aryan.reader.shared.pdfium.c

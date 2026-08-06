@@ -306,6 +306,12 @@ import com.aryan.reader.shared.pdf.SharedPdfReaderAction
 import com.aryan.reader.shared.pdf.SharedPdfReaderState
 import com.aryan.reader.shared.pdf.SharedPdfJumpHistory
 import com.aryan.reader.shared.pdf.SharedPdfSearchResult
+import com.aryan.reader.shared.pdf.SharedPdfVirtualPage
+import com.aryan.reader.shared.pdf.SharedPdfBlankPageInsertion
+import com.aryan.reader.shared.pdf.buildSharedPdfVirtualPageLayout
+import com.aryan.reader.shared.pdf.sharedPdfPdfPageIndexAt
+import com.aryan.reader.shared.pdf.sharedPdfDisplayIndexFor
+import com.aryan.reader.shared.pdf.sharedPdfNearestPdfPageIndex
 import com.aryan.reader.shared.pdf.reduce
 import com.aryan.reader.shared.reader.ReaderPageSpreadMode
 import com.aryan.reader.shared.reader.ReaderSettings
@@ -570,7 +576,14 @@ enum class SharedMobilePdfNativeAction {
     SHARE,
     SAVE_COPY,
     PRINT,
+    TEXT_VIEW,
 }
+
+data class SharedMobilePdfReflowUiState(
+    val isGenerating: Boolean = false,
+    val progress: Float = 0f,
+    val hasReflowBook: Boolean = false,
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -578,6 +591,7 @@ fun SharedMobilePdfReaderScreen(
     book: BookItem,
     onBack: () -> Unit,
     onNativePdfAction: (BookItem, SharedMobilePdfNativeAction) -> Unit,
+    pdfReflowUiState: SharedMobilePdfReflowUiState = SharedMobilePdfReflowUiState(),
     pdfTabsEnabled: Boolean = false,
     openPdfTabs: List<BookItem> = emptyList(),
     activePdfTabBookId: String? = null,
@@ -784,6 +798,13 @@ fun SharedMobilePdfReaderScreen(
     } else {
         readerState.pageCount.coerceAtLeast(1)
     }
+    val virtualLayout = remember(pageCount, readerState.blankPageInsertions) {
+        buildSharedPdfVirtualPageLayout(pageCount, readerState.blankPageInsertions)
+    }
+    val displayPageCount = virtualLayout.size
+    val currentPdfIndex = readerState.currentNearestPdfPageIndex ?: 0
+    val currentPageRender = rememberSharedMobilePdfPageRender(book, currentPdfIndex, password = pdfPassword)
+    val isCurrentPageBlank = (virtualLayout.getOrNull(readerState.pageIndex) as? SharedPdfVirtualPage.BlankPage) != null
     val prefetchedTtsPageIndex = (ttsPageIndex + 1).coerceAtMost(pageCount - 1)
     val prefetchedTtsTextSession = rememberPdfTextPageSession(book, prefetchedTtsPageIndex, pdfPassword)
     val activeTheme = remember(readerState.themeId, customReaderThemes) {
@@ -836,8 +857,8 @@ fun SharedMobilePdfReaderScreen(
         centerFraction: Float = 0.5f,
         reason: PdfNavigationReason = PdfNavigationReason.PAGE_SLIDER
     ) {
-        val target = pageIndex.coerceIn(0, (pageCount - 1).coerceAtLeast(0))
-        if (recordHistory) jumpHistory = jumpHistory.record(readerState.pageIndex, target, pageCount)
+        val target = pageIndex.coerceIn(0, (displayPageCount - 1).coerceAtLeast(0))
+        if (recordHistory) jumpHistory = jumpHistory.record(readerState.pageIndex, target, displayPageCount)
         dispatch(SharedPdfReaderAction.GoToPage(target))
         navigationRequestPage = target
         navigationCenterFraction = centerFraction.coerceIn(0f, 1f)
@@ -851,9 +872,11 @@ fun SharedMobilePdfReaderScreen(
         startAtLastChunk: Boolean = false,
         playWhenReady: Boolean = true
     ) {
-        val target = pageIndex.coerceIn(0, pageCount - 1)
+        val target = pageIndex.coerceIn(0, (displayPageCount - 1).coerceAtLeast(0))
         pdfTts.prepare()
-        ttsPageIndex = target
+        ttsPageIndex = sharedPdfPdfPageIndexAt(virtualLayout, target)
+            ?: sharedPdfNearestPdfPageIndex(virtualLayout, target)
+            ?: target.coerceIn(0, (pageCount - 1).coerceAtLeast(0))
         pendingTtsStart = startCharIndex.coerceAtLeast(0)
         pendingTtsStartAtLastChunk = startAtLastChunk
         pendingTtsPlayWhenReady = playWhenReady
@@ -887,12 +910,38 @@ fun SharedMobilePdfReaderScreen(
         readerState = readerState.reduce(SharedPdfReaderAction.GoToSearchResult(resultIndex, searchResults))
         val resolvedIndex = readerState.activeSearchResultIndex
         searchResults.getOrNull(resolvedIndex)?.let { result ->
-            jumpHistory = jumpHistory.record(previousPage, result.pageIndex, pageCount)
-            navigationRequestPage = result.pageIndex
+            val targetDisplay = sharedPdfDisplayIndexFor(virtualLayout, result.pageIndex)
+            jumpHistory = jumpHistory.record(previousPage, targetDisplay, displayPageCount)
+            navigationRequestPage = targetDisplay
             navigationCenterFraction = result.boundsList.centerYFraction()
             navigationReason = PdfNavigationReason.SEARCH_RESULT
             navigationRequestToken++
         }
+    }
+
+    fun insertBlankPageAtCurrentPosition() {
+        val insertAt = readerState.pageIndex.coerceIn(0, (displayPageCount - 1).coerceAtLeast(0))
+        val aspectRatio = currentPageRender.aspectRatio.coerceIn(0.1f, 10f)
+        dispatch(
+            SharedPdfReaderAction.InsertBlankPageAt(
+                displayIndex = insertAt,
+                widthPx = 1000f,
+                heightPx = 1000f / aspectRatio,
+                id = "blank_${currentTimestamp()}"
+            )
+        )
+        navigationRequestPage = readerState.pageIndex
+        navigationCenterFraction = 0.5f
+        navigationReason = PdfNavigationReason.PAGE_SLIDER
+        navigationRequestToken++
+    }
+
+    fun deleteBlankPageAtCurrentPosition() {
+        dispatch(SharedPdfReaderAction.DeleteBlankPageAt(readerState.pageIndex))
+        navigationRequestPage = readerState.pageIndex
+        navigationCenterFraction = 0.5f
+        navigationReason = PdfNavigationReason.PAGE_SLIDER
+        navigationRequestToken++
     }
 
     fun activeToolConfig(tool: PdfInkTool) = SharedPdfAnnotationDefaults.configFor(tool)
@@ -1044,7 +1093,7 @@ fun SharedMobilePdfReaderScreen(
             } else {
                 ttsPageIndex = next
                 pendingTtsStart = 0
-                navigateToPage(next, recordHistory = false, reason = PdfNavigationReason.TTS)
+                navigateToPage(sharedPdfDisplayIndexFor(virtualLayout, next), recordHistory = false, reason = PdfNavigationReason.TTS)
             }
         } else {
             pendingTtsStart = null
@@ -1067,7 +1116,7 @@ fun SharedMobilePdfReaderScreen(
             emptyList()
         }
         if (range != null) {
-            navigateToPage(ttsPageIndex, recordHistory = false, centerFraction = ttsHighlightBounds.centerYFraction(), reason = PdfNavigationReason.TTS)
+            navigateToPage(sharedPdfDisplayIndexFor(virtualLayout, ttsPageIndex), recordHistory = false, centerFraction = ttsHighlightBounds.centerYFraction(), reason = PdfNavigationReason.TTS)
         }
     }
 
@@ -1077,7 +1126,7 @@ fun SharedMobilePdfReaderScreen(
         val next = PdfTtsSessionPlanner.nextPage(ttsPageIndex, pageCount)
         if (next != null) {
             ttsPageIndex = next
-            navigateToPage(next, recordHistory = false, reason = PdfNavigationReason.TTS)
+            navigateToPage(sharedPdfDisplayIndexFor(virtualLayout, next), recordHistory = false, reason = PdfNavigationReason.TTS)
             val prefetched = prefetchedTtsTextSession.takeIf { prefetchedTtsPageIndex == next }
             val source = prefetched?.textForRange(0, prefetched.pageCharCount).orEmpty()
             val planned = PdfTtsSessionPlanner.page(next, source)
@@ -1103,13 +1152,14 @@ fun SharedMobilePdfReaderScreen(
 
     ModalNavigationDrawer(
         drawerState = drawerState,
+        gesturesEnabled = drawerState.isOpen,
         drawerContent = {
             SharedMobilePdfReaderDrawer(
                 book = book,
                 state = readerState,
                 tableOfContents = tableOfContents,
                 onGoToPage = { page ->
-                    navigateToPage(page, reason = PdfNavigationReason.TABLE_OF_CONTENTS)
+                    navigateToPage(sharedPdfDisplayIndexFor(virtualLayout, page), reason = PdfNavigationReason.TABLE_OF_CONTENTS)
                     scope.launch { drawerState.close() }
                 },
                 onEditNote = { annotation ->
@@ -1117,7 +1167,7 @@ fun SharedMobilePdfReaderScreen(
                     scope.launch { drawerState.close() }
                 },
                 onDeleteHighlight = { dispatch(SharedPdfReaderAction.AnnotationDeleted(it.id)) },
-                onToggleBookmark = { dispatch(SharedPdfReaderAction.BookmarkToggled(readerState.pageIndex, createdAt = currentTimestamp())) },
+                onToggleBookmark = { dispatch(SharedPdfReaderAction.BookmarkToggled(currentPdfIndex, createdAt = currentTimestamp())) },
                 tabsEnabled = pdfTabsEnabled,
                 tabs = openPdfTabs,
                 activeTabBookId = activePdfTabBookId,
@@ -1149,15 +1199,15 @@ fun SharedMobilePdfReaderScreen(
                             pageIndex = readerState.pageIndex,
                             pageLabel = sharedMobilePdfPageLabel(
                                 readerState.pageIndex,
-                                pageCount,
+                                displayPageCount,
                                 useTwoPageSpread && readerState.displayMode == PdfDisplayMode.PAGINATION,
                                 firstPageStandaloneInSpread
                             ),
-                            pageCount = pageCount,
+                            pageCount = displayPageCount,
                             displayMode = readerState.displayMode,
                             isSearchActive = readerState.isSearchActive,
                             searchQuery = readerState.searchQuery,
-                            isBookmarked = readerState.bookmarks.any { it.pageIndex == readerState.pageIndex },
+                            isBookmarked = readerState.bookmarks.any { it.pageIndex == currentPdfIndex },
                             onBack = onBack,
                             onOpenDrawer = { scope.launch { drawerState.open() } },
                             onSearch = { dispatch(SharedPdfReaderAction.SearchOpened) },
@@ -1166,7 +1216,7 @@ fun SharedMobilePdfReaderScreen(
                             },
                             onCloseSearch = { dispatch(SharedPdfReaderAction.SearchClosed) },
                             onToggleBookmark = {
-                                dispatch(SharedPdfReaderAction.BookmarkToggled(readerState.pageIndex, createdAt = currentTimestamp()))
+                                dispatch(SharedPdfReaderAction.BookmarkToggled(currentPdfIndex, createdAt = currentTimestamp()))
                             },
                             onToggleDisplayMode = ::toggleDisplayMode,
                             onTheme = { showThemePanel = true },
@@ -1221,6 +1271,10 @@ fun SharedMobilePdfReaderScreen(
                                     onNativePdfAction(book, action)
                                 }
                             },
+                            isCurrentPageBlank = isCurrentPageBlank,
+                            onInsertBlankPage = ::insertBlankPageAtCurrentPosition,
+                            onDeleteBlankPage = ::deleteBlankPageAtCurrentPosition,
+                            pdfReflowUiState = pdfReflowUiState,
                             isTtsPlayingOrLoading = isPdfTtsPlayingOrLoading,
                             onFileInformation = { showFileInformation = true },
                             onBrightness = { showBrightnessSheet = true },
@@ -1293,7 +1347,8 @@ fun SharedMobilePdfReaderScreen(
                         state = readerState,
                         activeTheme = activeTheme,
                         textureAlpha = 1f - globalTextureTransparency,
-                        pageCount = pageCount,
+                        pageCount = displayPageCount,
+                        virtualLayout = virtualLayout,
                         navigationRequestPage = navigationRequestPage,
                         navigationRequestToken = navigationRequestToken,
                         navigationCenterFraction = navigationCenterFraction,
@@ -1315,10 +1370,10 @@ fun SharedMobilePdfReaderScreen(
                         onCanvasSizeChanged = { canvasSize = it },
                         onFinishInkStroke = ::finishInkStroke,
                         onExternalLink = { url -> pendingExternalLink = url },
-                        onInternalLink = { navigateToPage(it, reason = PdfNavigationReason.INTERNAL_LINK) },
+                        onInternalLink = { navigateToPage(sharedPdfDisplayIndexFor(virtualLayout, it), reason = PdfNavigationReason.INTERNAL_LINK) },
                         onExistingHighlightTap = { noteAnnotationId = it.id },
                         onHighlight = { page, range, text, bounds, color, style, note -> addTextHighlight(page, range, text, bounds, color, style, note) },
-                        onReadAloud = { page, charIndex -> requestTts(page, charIndex) },
+                        onReadAloud = { page, charIndex -> requestTts(sharedPdfDisplayIndexFor(virtualLayout, page), charIndex) },
                         userScrollEnabled = !readerState.isScrollLocked,
                         isScrollLocked = readerState.isScrollLocked,
                         zoomCamera = pdfZoomCamera,
@@ -1335,7 +1390,8 @@ fun SharedMobilePdfReaderScreen(
                         state = readerState,
                         activeTheme = activeTheme,
                         textureAlpha = 1f - globalTextureTransparency,
-                        pageCount = pageCount,
+                        pageCount = displayPageCount,
+                        virtualLayout = virtualLayout,
                         navigationRequestPage = navigationRequestPage,
                         navigationRequestToken = navigationRequestToken,
                         animateNavigation = navigationReason.animatesPagination(),
@@ -1349,10 +1405,10 @@ fun SharedMobilePdfReaderScreen(
                         activeStroke = activeStroke,
                         tapToTurnPages = tapToTurnPages,
                         onExternalLink = { url -> pendingExternalLink = url },
-                        onInternalLink = { navigateToPage(it, reason = PdfNavigationReason.INTERNAL_LINK) },
+                        onInternalLink = { navigateToPage(sharedPdfDisplayIndexFor(virtualLayout, it), reason = PdfNavigationReason.INTERNAL_LINK) },
                         onExistingHighlightTap = { noteAnnotationId = it.id },
                         onHighlight = { page, range, text, bounds, color, style, note -> addTextHighlight(page, range, text, bounds, color, style, note) },
-                        onReadAloud = { page, charIndex -> requestTts(page, charIndex) },
+                        onReadAloud = { page, charIndex -> requestTts(sharedPdfDisplayIndexFor(virtualLayout, page), charIndex) },
                         userScrollEnabled = !readerState.isScrollLocked,
                         isScrollLocked = readerState.isScrollLocked,
                         zoomCamera = pdfZoomCamera,
@@ -1373,7 +1429,7 @@ fun SharedMobilePdfReaderScreen(
                 ) {
                     SharedMobilePdfPageSlider(
                         pageIndex = readerState.pageIndex,
-                        pageCount = pageCount,
+                        pageCount = displayPageCount,
                         onPageChange = {
                             navigateToPage(
                                 pageIndex = it,
@@ -1438,7 +1494,7 @@ fun SharedMobilePdfReaderScreen(
                                 pdfTts.skipPrevious()
                             } else if (ttsPageIndex > 0) {
                                 requestTts(
-                                    pageIndex = ttsPageIndex - 1,
+                                    pageIndex = sharedPdfDisplayIndexFor(virtualLayout, ttsPageIndex - 1),
                                     startAtLastChunk = true,
                                     playWhenReady = pdfTts.state != SharedMobileEpubLocalTtsState.PAUSED
                                 )
@@ -1449,12 +1505,12 @@ fun SharedMobilePdfReaderScreen(
                                 pdfTts.skipNext()
                             } else if (ttsPageIndex < pageCount - 1) {
                                 requestTts(
-                                    pageIndex = ttsPageIndex + 1,
+                                    pageIndex = sharedPdfDisplayIndexFor(virtualLayout, ttsPageIndex + 1),
                                     playWhenReady = pdfTts.state != SharedMobileEpubLocalTtsState.PAUSED
                                 )
                             }
                         },
-                        onLocate = { navigateToPage(ttsPageIndex, recordHistory = false, centerFraction = ttsHighlightBounds.centerYFraction(), reason = PdfNavigationReason.TTS) },
+                        onLocate = { navigateToPage(sharedPdfDisplayIndexFor(virtualLayout, ttsPageIndex), recordHistory = false, centerFraction = ttsHighlightBounds.centerYFraction(), reason = PdfNavigationReason.TTS) },
                         onStop = {
                             pdfTts.stop()
                             pendingTtsStart = null
@@ -1547,6 +1603,9 @@ fun SharedMobilePdfReaderScreen(
                         modifier = Modifier
                             .padding(bottom = 24.dp)
                     )
+                }
+                if (pdfReflowUiState.isGenerating) {
+                    SharedMobilePdfReflowProgressOverlay(progress = pdfReflowUiState.progress)
                 }
             }
         }
@@ -1943,6 +2002,10 @@ private fun SharedMobilePdfReaderTopBar(
     onVoiceSettings: () -> Unit,
     onWordReplacements: () -> Unit,
     onNativeAction: (SharedMobilePdfNativeAction) -> Unit,
+    isCurrentPageBlank: Boolean = false,
+    onInsertBlankPage: () -> Unit = {},
+    onDeleteBlankPage: () -> Unit = {},
+    pdfReflowUiState: SharedMobilePdfReflowUiState,
     onFileInformation: () -> Unit,
     onBrightness: () -> Unit,
     onScreenOrientation: () -> Unit,
@@ -2072,6 +2135,7 @@ private fun SharedMobilePdfReaderTopBar(
                             action()
                         }
                         when (tool) {
+                            PdfReaderTool.DICTIONARY -> SharedMobilePdfOverflowItem("Dictionary", leadingIcon = { Icon(Icons.Default.Book, contentDescription = null) }, onClick = { closeMenuAndRun { onNativeAction(SharedMobilePdfNativeAction.DICTIONARY_SETTINGS) } })
                             PdfReaderTool.THEME -> SharedMobilePdfOverflowItem("Theme", onClick = { closeMenuAndRun(onTheme) })
                             PdfReaderTool.BRIGHTNESS -> SharedMobilePdfOverflowItem("Brightness", leadingIcon = { Icon(Icons.Default.Visibility, contentDescription = null) }, onClick = { closeMenuAndRun(onBrightness) })
                             PdfReaderTool.LOCK_PANNING -> SharedMobilePdfOverflowItem(if (isScrollLocked) "Unlock Panning" else "Lock Panning", onClick = { closeMenuAndRun(onToggleScrollLock) })
@@ -2177,19 +2241,38 @@ private fun SharedMobilePdfReaderTopBar(
                         onToggleBookmark()
                     }
                 )
-                if (PdfReaderTool.PAGE_MANAGEMENT in SharedMobilePdfAvailableTools && toolbarPreferences.isVisible(PdfReaderTool.PAGE_MANAGEMENT)) SharedMobilePdfOverflowItem(
-                    "Insert Blank Page",
-                    onClick = {
-                        showMoreMenu = false
-                        onNativeAction(SharedMobilePdfNativeAction.INSERT_BLANK_PAGE)
+                if (PdfReaderTool.PAGE_MANAGEMENT in SharedMobilePdfAvailableTools && toolbarPreferences.isVisible(PdfReaderTool.PAGE_MANAGEMENT)) {
+                    SharedMobilePdfOverflowItem(
+                        "Insert Blank Page",
+                        leadingIcon = { Icon(Icons.Default.Add, contentDescription = null) },
+                        onClick = {
+                            showMoreMenu = false
+                            onInsertBlankPage()
+                        }
+                    )
+                    if (isCurrentPageBlank) {
+                        SharedMobilePdfOverflowItem(
+                            "Delete Blank Page",
+                            isError = true,
+                            leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null) },
+                            onClick = {
+                                showMoreMenu = false
+                                onDeleteBlankPage()
+                            }
+                        )
                     }
-                )
+                }
                 if (PdfReaderTool.REFLOW in SharedMobilePdfAvailableTools && toolbarPreferences.isVisible(PdfReaderTool.REFLOW)) SharedMobilePdfOverflowItem(
-                    "Generate Text View",
+                    when {
+                        pdfReflowUiState.isGenerating -> "Generating Text View…"
+                        pdfReflowUiState.hasReflowBook -> "Open Text View"
+                        else -> "Generate Text View"
+                    },
+                    enabled = !pdfReflowUiState.isGenerating,
                     leadingIcon = { Icon(Icons.Default.Fonts, contentDescription = null) },
                     onClick = {
                         showMoreMenu = false
-                        onTextSelection()
+                        onNativeAction(SharedMobilePdfNativeAction.TEXT_VIEW)
                     }
                 )
                 if (listOf(PdfReaderTool.SHARE, PdfReaderTool.SAVE_COPY, PdfReaderTool.PRINT).any(toolbarPreferences::isVisible)) SharedMobilePdfOverflowItem(
@@ -2230,6 +2313,7 @@ private fun SharedMobilePdfTopToolButton(
 }
 
 private val SharedMobilePdfAvailableTools = setOf(
+    PdfReaderTool.DICTIONARY,
     PdfReaderTool.THEME,
     PdfReaderTool.BRIGHTNESS,
     PdfReaderTool.LOCK_PANNING,
@@ -2249,9 +2333,11 @@ private val SharedMobilePdfAvailableTools = setOf(
     PdfReaderTool.SCREEN_ORIENTATION,
     PdfReaderTool.AUTO_SCROLL,
     PdfReaderTool.BOOKMARK,
+    PdfReaderTool.PAGE_MANAGEMENT,
     PdfReaderTool.SHARE,
     PdfReaderTool.SAVE_COPY,
     PdfReaderTool.PRINT,
+    PdfReaderTool.REFLOW,
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -2328,9 +2414,47 @@ private fun SharedMobilePdfToolbarCustomizationSheet(
 }
 
 @Composable
+private fun SharedMobilePdfReflowProgressOverlay(progress: Float) {
+    Surface(
+        modifier = Modifier
+            .fillMaxSize()
+            .clickable(enabled = true, onClick = {}),
+        color = Color.Black.copy(alpha = 0.35f),
+    ) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Column(
+                modifier = Modifier
+                    .width(240.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(16.dp))
+                    .padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text(
+                    text = "Generating Text View…",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Text(
+                    text = "${(progress.coerceIn(0f, 1f) * 100).toInt()}%",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                LinearProgressIndicator(
+                    progress = { progress.coerceIn(0f, 1f) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun SharedMobilePdfOverflowItem(
     text: String,
     enabled: Boolean = true,
+    isError: Boolean = false,
     leadingIcon: (@Composable () -> Unit)? = null,
     trailingIcon: (@Composable () -> Unit)? = null,
     onClick: () -> Unit = {}
@@ -2351,7 +2475,13 @@ private fun SharedMobilePdfOverflowItem(
             text = text,
             style = MaterialTheme.typography.titleSmall,
             fontWeight = FontWeight.SemiBold,
-            color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
+            color = if (!enabled) {
+                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+            } else if (isError) {
+                MaterialTheme.colorScheme.error
+            } else {
+                MaterialTheme.colorScheme.onSurface
+            },
             modifier = Modifier.weight(1f)
         )
         Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) {
@@ -2698,7 +2828,7 @@ private fun SharedMobilePdfReaderDrawer(
             when (selectedSection) {
                 SharedMobilePdfDrawerSection.CHAPTERS -> SharedMobilePdfChaptersDrawerPage(
                     entries = tableOfContents,
-                    currentPageIndex = state.pageIndex,
+                    currentPageIndex = state.currentNearestPdfPageIndex ?: 0,
                     onGoToPage = onGoToPage,
                     modifier = Modifier.weight(1f)
                 )
@@ -2989,7 +3119,7 @@ private fun SharedMobilePdfBookmarksDrawerPage(
             NavigationDrawerItem(
                 icon = { Icon(Icons.Default.Bookmark, contentDescription = null) },
                 label = { Text(bookmark.label.ifBlank { "Page ${bookmark.pageIndex + 1}" }) },
-                selected = bookmark.pageIndex == state.pageIndex,
+                selected = bookmark.pageIndex == (state.currentNearestPdfPageIndex ?: 0),
                 onClick = { onGoToPage(bookmark.pageIndex) },
                 badge = { Icon(Icons.Default.KeyboardArrowRight, contentDescription = null, modifier = Modifier.size(18.dp)) },
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
@@ -3582,6 +3712,7 @@ private fun SharedMobilePdfVerticalPages(
     activeTheme: ReaderTheme,
     textureAlpha: Float,
     pageCount: Int,
+    virtualLayout: List<SharedPdfVirtualPage>,
     navigationRequestPage: Int,
     navigationRequestToken: Int,
     navigationCenterFraction: Float,
@@ -3633,7 +3764,9 @@ private fun SharedMobilePdfVerticalPages(
     }
     val navigationRender = rememberSharedMobilePdfPageRender(
         book = book,
-        pageIndex = navigationRequestPage.coerceIn(0, pageCount - 1),
+        pageIndex = sharedPdfPdfPageIndexAt(virtualLayout, navigationRequestPage)
+            ?: sharedPdfNearestPdfPageIndex(virtualLayout, navigationRequestPage)
+            ?: 0,
         zoomScale = zoomCamera.scale,
         password = pdfPassword,
     )
@@ -3684,36 +3817,50 @@ private fun SharedMobilePdfVerticalPages(
                 verticalArrangement = Arrangement.spacedBy(if (showPageGap) 8.dp else 0.dp)
             ) {
                 items(pageCount) { page ->
-                    val render = rememberSharedMobilePdfPageRender(book, page, zoomScale, pdfPassword)
-                    SharedMobilePdfPageSurface(
-                book = book,
-                pdfPassword = pdfPassword,
-                pageIndex = page,
-                pageCount = pageCount,
-                pageRender = render,
-                zoomCamera = zoomCamera,
-                activeTheme = activeTheme,
-                textureAlpha = textureAlpha,
-                showPageNumberOverlay = showPageNumberOverlay,
-                searchResults = searchResults.filter { it.pageIndex == page },
-                focusedSearchResult = searchResults.getOrNull(state.activeSearchResultIndex)
-                    ?.takeIf { it.pageIndex == page },
-                searchHighlightMode = state.searchHighlightMode,
-                ttsHighlights = if (ttsPageIndex == page && !zoomCamera.isZoomed()) ttsHighlightBounds else emptyList(),
-                annotations = state.annotations.filter { it.pageIndex == page },
-                activeStroke = if (page == state.pageIndex) activeStroke else emptyList(),
-                selectedTool = state.selectedTool,
-                selectedColorArgb = state.selectedColorArgb,
-                strokeWidth = state.strokeWidth,
-                onExternalLink = onExternalLink,
-                onInternalLink = onInternalLink,
-                onExistingHighlightTap = onExistingHighlightTap,
-                onHighlight = onHighlight,
-                onReadAloud = onReadAloud,
-                onCanvasSizeChanged = onCanvasSizeChanged,
-                onFinishInkStroke = onFinishInkStroke,
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    val pdfPage = sharedPdfPdfPageIndexAt(virtualLayout, page)
+                    if (pdfPage == null) {
+                        SharedMobilePdfBlankPageSurface(
+                            insertion = (virtualLayout[page] as SharedPdfVirtualPage.BlankPage).insertion,
+                            displayIndex = page,
+                            displayPageCount = pageCount,
+                            activeTheme = activeTheme,
+                            showPageNumberOverlay = showPageNumberOverlay,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    } else {
+                        val render = rememberSharedMobilePdfPageRender(book, pdfPage, zoomScale, pdfPassword)
+                        SharedMobilePdfPageSurface(
+                        book = book,
+                        pdfPassword = pdfPassword,
+                        pageIndex = pdfPage,
+                        pageCount = pageCount,
+                        overlayPageNumber = page + 1,
+                        overlayPageCount = pageCount,
+                        pageRender = render,
+                        zoomCamera = zoomCamera,
+                        activeTheme = activeTheme,
+                        textureAlpha = textureAlpha,
+                        showPageNumberOverlay = showPageNumberOverlay,
+                        searchResults = searchResults.filter { it.pageIndex == pdfPage },
+                        focusedSearchResult = searchResults.getOrNull(state.activeSearchResultIndex)
+                            ?.takeIf { it.pageIndex == pdfPage },
+                        searchHighlightMode = state.searchHighlightMode,
+                        ttsHighlights = if (ttsPageIndex == pdfPage && !zoomCamera.isZoomed()) ttsHighlightBounds else emptyList(),
+                        annotations = state.annotations.filter { it.pageIndex == pdfPage },
+                        activeStroke = if (page == state.pageIndex) activeStroke else emptyList(),
+                        selectedTool = state.selectedTool,
+                        selectedColorArgb = state.selectedColorArgb,
+                        strokeWidth = state.strokeWidth,
+                        onExternalLink = onExternalLink,
+                        onInternalLink = onInternalLink,
+                        onExistingHighlightTap = onExistingHighlightTap,
+                        onHighlight = onHighlight,
+                        onReadAloud = onReadAloud,
+                        onCanvasSizeChanged = onCanvasSizeChanged,
+                        onFinishInkStroke = onFinishInkStroke,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
                 }
             }
         }
@@ -3835,6 +3982,7 @@ private fun SharedMobilePdfPaginatedPages(
     activeTheme: ReaderTheme,
     textureAlpha: Float,
     pageCount: Int,
+    virtualLayout: List<SharedPdfVirtualPage>,
     navigationRequestPage: Int,
     navigationRequestToken: Int,
     animateNavigation: Boolean,
@@ -3965,46 +4113,70 @@ private fun SharedMobilePdfPaginatedPages(
                     horizontalArrangement = Arrangement.spacedBy(pageGap),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    spreadPages.forEach { pageIndex ->
-                        val render = rememberSharedMobilePdfPageRender(book, pageIndex, zoomScale, pdfPassword)
-                        val aspectRatio = render.aspectRatio.coerceIn(0.1f, 10f)
-                        val widthLimited = slotWidth.value / viewportHeight.value <= aspectRatio
-                        val fittedWidth = if (widthLimited) slotWidth else viewportHeight * aspectRatio
-                        val fittedHeight = fittedWidth / aspectRatio
-                        Box(
-                            modifier = Modifier.weight(1f).fillMaxHeight(),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            SharedMobilePdfPageSurface(
-                                book = book,
-                                pdfPassword = pdfPassword,
-                                pageIndex = pageIndex,
-                                pageCount = pageCount,
-                                pageRender = render,
-                                zoomCamera = activeZoomCamera,
-                                activeTheme = activeTheme,
-                                textureAlpha = textureAlpha,
-                                showPageNumberOverlay = showPageNumberOverlay,
-                                searchResults = searchResults.filter { it.pageIndex == pageIndex },
-                                focusedSearchResult = searchResults.getOrNull(state.activeSearchResultIndex)
-                                    ?.takeIf { it.pageIndex == pageIndex },
-                                searchHighlightMode = state.searchHighlightMode,
-                                ttsHighlights = if (ttsPageIndex == pageIndex && !activeZoomCamera.isZoomed()) ttsHighlightBounds else emptyList(),
-                                annotations = state.annotations.filter { it.pageIndex == pageIndex },
-                                activeStroke = if (pageIndex == state.pageIndex) activeStroke else emptyList(),
-                                selectedTool = state.selectedTool,
-                                selectedColorArgb = state.selectedColorArgb,
-                                strokeWidth = state.strokeWidth,
-                                onExternalLink = onExternalLink,
-                                onInternalLink = onInternalLink,
-                                onExistingHighlightTap = onExistingHighlightTap,
-                                onHighlight = onHighlight,
-                                onReadAloud = onReadAloud,
-                                onCanvasSizeChanged = onCanvasSizeChanged,
-                                onFinishInkStroke = onFinishInkStroke,
-                                modifier = Modifier.size(fittedWidth, fittedHeight)
-                            )
-            }
+                    spreadPages.forEach { displayPage ->
+                        val pdfPage = sharedPdfPdfPageIndexAt(virtualLayout, displayPage)
+                        if (pdfPage == null) {
+                            val insertion = (virtualLayout[displayPage] as SharedPdfVirtualPage.BlankPage).insertion
+                            val aspectRatio = (insertion.widthPx / insertion.heightPx.coerceAtLeast(1f)).coerceIn(0.1f, 10f)
+                            val widthLimited = slotWidth.value / viewportHeight.value <= aspectRatio
+                            val fittedWidth = if (widthLimited) slotWidth else viewportHeight * aspectRatio
+                            val fittedHeight = fittedWidth / aspectRatio
+                            Box(
+                                modifier = Modifier.weight(1f).fillMaxHeight(),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                SharedMobilePdfBlankPageSurface(
+                                    insertion = insertion,
+                                    displayIndex = displayPage,
+                                    displayPageCount = pageCount,
+                                    activeTheme = activeTheme,
+                                    showPageNumberOverlay = showPageNumberOverlay,
+                                    modifier = Modifier.size(fittedWidth, fittedHeight)
+                                )
+                            }
+                        } else {
+                            val render = rememberSharedMobilePdfPageRender(book, pdfPage, zoomScale, pdfPassword)
+                            val aspectRatio = render.aspectRatio.coerceIn(0.1f, 10f)
+                            val widthLimited = slotWidth.value / viewportHeight.value <= aspectRatio
+                            val fittedWidth = if (widthLimited) slotWidth else viewportHeight * aspectRatio
+                            val fittedHeight = fittedWidth / aspectRatio
+                            Box(
+                                modifier = Modifier.weight(1f).fillMaxHeight(),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                SharedMobilePdfPageSurface(
+                                    book = book,
+                                    pdfPassword = pdfPassword,
+                                    pageIndex = pdfPage,
+                                    pageCount = pageCount,
+                                    overlayPageNumber = displayPage + 1,
+                                    overlayPageCount = pageCount,
+                                    pageRender = render,
+                                    zoomCamera = activeZoomCamera,
+                                    activeTheme = activeTheme,
+                                    textureAlpha = textureAlpha,
+                                    showPageNumberOverlay = showPageNumberOverlay,
+                                    searchResults = searchResults.filter { it.pageIndex == pdfPage },
+                                    focusedSearchResult = searchResults.getOrNull(state.activeSearchResultIndex)
+                                        ?.takeIf { it.pageIndex == pdfPage },
+                                    searchHighlightMode = state.searchHighlightMode,
+                                    ttsHighlights = if (ttsPageIndex == pdfPage && !activeZoomCamera.isZoomed()) ttsHighlightBounds else emptyList(),
+                                    annotations = state.annotations.filter { it.pageIndex == pdfPage },
+                                    activeStroke = if (displayPage == state.pageIndex) activeStroke else emptyList(),
+                                    selectedTool = state.selectedTool,
+                                    selectedColorArgb = state.selectedColorArgb,
+                                    strokeWidth = state.strokeWidth,
+                                    onExternalLink = onExternalLink,
+                                    onInternalLink = onInternalLink,
+                                    onExistingHighlightTap = onExistingHighlightTap,
+                                    onHighlight = onHighlight,
+                                    onReadAloud = onReadAloud,
+                                    onCanvasSizeChanged = onCanvasSizeChanged,
+                                    onFinishInkStroke = onFinishInkStroke,
+                                    modifier = Modifier.size(fittedWidth, fittedHeight)
+                                )
+                            }
+                        }
           }
         }
     }
@@ -4558,6 +4730,8 @@ private fun SharedMobilePdfPageSurface(
     activeTheme: ReaderTheme,
     textureAlpha: Float,
     showPageNumberOverlay: Boolean,
+    overlayPageNumber: Int = pageIndex + 1,
+    overlayPageCount: Int = pageCount,
     searchResults: List<SharedPdfSearchResult>,
     focusedSearchResult: SharedPdfSearchResult?,
     searchHighlightMode: SearchHighlightMode,
@@ -4721,6 +4895,10 @@ private fun SharedMobilePdfPageSurface(
                 textSession = textSession,
                 canvasSize = localCanvasSize,
                 selectedTool = selectedTool,
+                pageRender = pageRender,
+                zoomTiles = highResolutionTiles,
+                zoomScale = zoomCamera.scale,
+                magnifierColorFilter = sharedMobilePdfColorFilter(activeTheme),
                 onExternalLink = onExternalLink,
                 onInternalLink = onInternalLink,
                 existingHighlights = annotations.filter { it.kind == PdfAnnotationKind.HIGHLIGHT },
@@ -4731,9 +4909,39 @@ private fun SharedMobilePdfPageSurface(
             )
             if (showPageNumberOverlay) {
                 SharedPdfPageNumberOverlay(
-                    pageIndex = pageIndex,
-                    pageCount = pageCount,
+                    pageIndex = overlayPageNumber - 1,
+                    pageCount = overlayPageCount,
                     modifier = Modifier.fillMaxSize()
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SharedMobilePdfBlankPageSurface(
+    insertion: SharedPdfBlankPageInsertion,
+    displayIndex: Int,
+    displayPageCount: Int,
+    activeTheme: ReaderTheme,
+    showPageNumberOverlay: Boolean,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        color = sharedMobilePdfPageBackground(activeTheme),
+        shape = RoundedCornerShape(2.dp),
+        shadowElevation = 4.dp,
+        modifier = modifier
+            .aspectRatio((insertion.widthPx / insertion.heightPx.coerceAtLeast(1f)).coerceIn(0.1f, 10f))
+            .clipToBounds()
+    ) {
+        Box(Modifier.fillMaxSize()) {
+            if (showPageNumberOverlay) {
+                SharedPdfPageNumberOverlay(
+                    pageIndex = displayIndex,
+                    pageCount = displayPageCount,
+                    modifier = Modifier.fillMaxSize(),
+                    isDarkPage = sharedMobilePdfPageTextColor(activeTheme).luminance() < 0.5f
                 )
             }
         }

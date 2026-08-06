@@ -873,6 +873,7 @@ fun SharedMobileEpubReaderScreen(
 
     ModalNavigationDrawer(
         drawerState = drawerState,
+        gesturesEnabled = drawerState.isOpen,
         drawerContent = {
             ModalDrawerSheet(Modifier.fillMaxWidth(0.86f)) {
                 Text(

@@ -137,6 +137,7 @@ import com.aryan.reader.shared.opds.opdsStreamBooksForCatalog
 import com.aryan.reader.shared.pdf.SharedPdfReaderState
 import com.aryan.reader.shared.pdf.SharedPdfReaderStateSerializer
 import com.aryan.reader.shared.pdf.PdfAutoScrollProfile
+import com.aryan.reader.shared.pdf.generateIosPdfReflowHtml
 import com.aryan.reader.shared.ui.SharedAppTheme
 import com.aryan.reader.shared.ui.SharedAppThemeSettingsDialog
 import com.aryan.reader.shared.ui.SharedAboutScreen
@@ -146,6 +147,7 @@ import com.aryan.reader.shared.ui.SharedMobileAppDrawerContent
 import com.aryan.reader.shared.ui.SharedMobileEpubReaderScreen
 import com.aryan.reader.shared.ui.SharedMobileReaderTtsSettingsSheet
 import com.aryan.reader.shared.ui.SharedMobilePdfReaderScreen
+import com.aryan.reader.shared.ui.SharedMobilePdfReflowUiState
 import com.aryan.reader.shared.ui.SharedMobileDictionarySettingsSheet
 import com.aryan.reader.shared.ui.SharedMobileHomeScreen
 import com.aryan.reader.shared.ui.SharedMobileHomeActions
@@ -1604,6 +1606,7 @@ private fun ReaderIosApp(
     var lookupDictionaryService by remember { mutableStateOf(initialLookupServices.first) }
     var lookupTranslateService by remember { mutableStateOf(initialLookupServices.second) }
     var lookupSearchService by remember { mutableStateOf(initialLookupServices.third) }
+    var pdfReflowProgress by remember { mutableStateOf<Float?>(null) }
     var activeReaderBook by remember { mutableStateOf(restoredReaderBook) }
     var activeTemporaryBookId by remember { mutableStateOf<String?>(null) }
     var activeTemporaryBookPath by remember { mutableStateOf<String?>(null) }
@@ -1796,6 +1799,62 @@ private fun ReaderIosApp(
             .withIosImportsFolder(result.addedBooks)
         selectMainPage(SharedMobileMainDestination.LIBRARY)
         selectLibraryTab(SharedMobileLibraryTab.BOOKS)
+    }
+
+    fun startIosPdfReflow(pdfBook: BookItem) {
+        val reflowBookId = "${pdfBook.id}_reflow"
+        val existing = state.rawLibraryBooks.firstOrNull { it.id == reflowBookId }
+        if (existing != null) {
+            openLibraryBook(existing)
+            return
+        }
+        if (pdfReflowProgress != null) return
+        val pdfPath = pdfBook.path?.takeIf(NSFileManager.defaultManager::fileExistsAtPath)
+        if (pdfPath == null) {
+            showMessage("Could not find ${pdfBook.displayName}.")
+            return
+        }
+        val importsPath = iosImportsDirectoryPath()?.canonicalIosFilePath()
+        if (importsPath == null) {
+            showMessage("Unable to generate Text View.")
+            return
+        }
+        val baseTitle = pdfBook.title?.takeIf { it.isNotBlank() }
+            ?: pdfBook.displayName.substringBeforeLast('.', pdfBook.displayName)
+        val destPath = "$importsPath/$reflowBookId.html"
+        pdfReflowProgress = 0f
+        scope.launch {
+            val success = generateIosPdfReflowHtml(
+                pdfPath = pdfPath,
+                destPath = destPath,
+                onProgress = { progress -> pdfReflowProgress = progress },
+            )
+            if (!success) {
+                pdfReflowProgress = null
+                showMessage("Text View generation failed.")
+                return@launch
+            }
+            pdfReflowProgress = null
+            val books = listOf(
+                IosImportedFile(
+                    name = "$baseTitle (Text View).html",
+                    path = destPath,
+                    contentId = reflowBookId,
+                )
+            ).toImportedBooks(existingBooks = state.rawLibraryBooks)
+            val created = books.firstOrNull()
+            if (created == null) {
+                showMessage("Unable to add the generated Text View.")
+                return@launch
+            }
+            val reflowBook = created.copy(
+                displayName = "$baseTitle (Text View)",
+                title = "$baseTitle (Reflow)",
+                author = "Generated",
+            )
+            addBooksToLibrary(listOf(reflowBook), "Generated Text View for ${pdfBook.displayName}")
+            openLibraryBook(reflowBook)
+        }
     }
 
     fun importIosAudiobooks(files: List<IosImportedFile>) {
@@ -2217,6 +2276,11 @@ private fun ReaderIosApp(
                             onBack = {
                                 closeActiveReader(book)
                             },
+                            pdfReflowUiState = SharedMobilePdfReflowUiState(
+                                isGenerating = pdfReflowProgress != null,
+                                progress = pdfReflowProgress ?: 0f,
+                                hasReflowBook = state.rawLibraryBooks.any { it.id == "${book.id}_reflow" },
+                            ),
                             pdfTabsEnabled = state.isTabsEnabled,
                             openPdfTabs = state.openTabs,
                             activePdfTabBookId = state.activeTabBookId,
@@ -2246,19 +2310,25 @@ private fun ReaderIosApp(
                                 }
                             },
                             onNativePdfAction = { pdfBook, action ->
-                                if (action == SharedMobilePdfNativeAction.DICTIONARY_SETTINGS) {
-                                    showDictionarySettingsSheet = true
-                                } else {
-                                    val handled = performIosPdfNativeAction(pdfBook, action)
-                                    if (!handled) {
-                                        showMessage(
-                                            when (action) {
-                                                SharedMobilePdfNativeAction.SHARE -> "Unable to share ${pdfBook.displayName}."
-                                                SharedMobilePdfNativeAction.SAVE_COPY -> "Unable to export ${pdfBook.displayName}."
-                                                SharedMobilePdfNativeAction.PRINT -> "Printing is unavailable."
-                                                else -> "${action.iosPdfActionLabel()} is not available yet."
-                                            }
-                                        )
+                                when (action) {
+                                    SharedMobilePdfNativeAction.DICTIONARY_SETTINGS -> {
+                                        showDictionarySettingsSheet = true
+                                    }
+                                    SharedMobilePdfNativeAction.TEXT_VIEW -> {
+                                        startIosPdfReflow(pdfBook)
+                                    }
+                                    else -> {
+                                        val handled = performIosPdfNativeAction(pdfBook, action)
+                                        if (!handled) {
+                                            showMessage(
+                                                when (action) {
+                                                    SharedMobilePdfNativeAction.SHARE -> "Unable to share ${pdfBook.displayName}."
+                                                    SharedMobilePdfNativeAction.SAVE_COPY -> "Unable to export ${pdfBook.displayName}."
+                                                    SharedMobilePdfNativeAction.PRINT -> "Printing is unavailable."
+                                                    else -> "${action.iosPdfActionLabel()} is not available yet."
+                                                }
+                                            )
+                                        }
                                     }
                                 }
                             },
@@ -4024,6 +4094,7 @@ private fun SharedMobilePdfNativeAction.iosPdfActionLabel(): String = when (this
     SharedMobilePdfNativeAction.SHARE -> "Share"
     SharedMobilePdfNativeAction.SAVE_COPY -> "Save copy"
     SharedMobilePdfNativeAction.PRINT -> "Print"
+    SharedMobilePdfNativeAction.TEXT_VIEW -> "Text View"
 }
 
 private fun presentIosShareSheet(url: NSURL): Boolean {

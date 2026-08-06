@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -94,6 +95,7 @@ import com.aryan.reader.shared.generated.resources.strikethrough
 import com.aryan.reader.shared.generated.resources.teardrop
 import com.aryan.reader.shared.generated.resources.translate
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 import org.jetbrains.compose.resources.painterResource
 
 private const val LongPressCharTolerance = 5.0
@@ -115,6 +117,10 @@ internal fun SharedMobilePdfTextSelectionOverlay(
     textSession: com.aryan.reader.shared.pdf.PdfTextPageSession?,
     canvasSize: IntSize,
     selectedTool: PdfInkTool,
+    pageRender: SharedMobilePdfPageRender?,
+    zoomTiles: List<SharedMobilePdfTileRender>,
+    zoomScale: Float,
+    magnifierColorFilter: androidx.compose.ui.graphics.ColorFilter?,
     onExternalLink: (String) -> Unit,
     onInternalLink: (Int) -> Unit,
     existingHighlights: List<SharedPdfAnnotation>,
@@ -131,7 +137,7 @@ internal fun SharedMobilePdfTextSelectionOverlay(
     val density = LocalDensity.current
     val teardropWidthDp = 24.dp
     val teardropHeightDp = 24.dp
-    val teardropWidthPx = with(density) { teardropWidthDp.toPx() }
+    var teardropWidthPx = with(density) { teardropWidthDp.toPx() }
     val teardropHeightPx = with(density) { teardropHeightDp.toPx() }
 
     androidx.compose.runtime.LaunchedEffect(book.path, pageIndex, password, canvasSize) {
@@ -328,6 +334,15 @@ internal fun SharedMobilePdfTextSelectionOverlay(
     var dragPointerId: Any? by remember { mutableStateOf<Any?>(null) }
     var dragHandle: PdfSelectionHandle? by remember { mutableStateOf<PdfSelectionHandle?>(null) }
 
+    var showMagnifier by remember { mutableStateOf(false) }
+    var magnifierActiveHandle by remember { mutableStateOf<PdfSelectionHandle?>(null) }
+
+    // Android-exact magnifier metrics: 120x60dp lens, 24dp above the handle,
+    // centered on the handle x, sampling 2x of the on-screen content.
+    val magnifierWidthDp = 120.dp
+    val magnifierHeightDp = 60.dp
+    val magnifierOffsetAboveHandleDp = 24.dp
+
     val touchExpansionDp = 8.dp
     val touchExpansionPx = with(density) { touchExpansionDp.toPx() }
     val touchW = teardropWidthPx + touchExpansionPx
@@ -378,6 +393,8 @@ internal fun SharedMobilePdfTextSelectionOverlay(
                     down.consume()
                     dragPointerId = down.id
                     dragHandle = handle
+                    showMagnifier = true
+                    magnifierActiveHandle = handle
                     val pointerId = down.id
                     try {
                         while (true) {
@@ -426,6 +443,8 @@ internal fun SharedMobilePdfTextSelectionOverlay(
                     } finally {
                         dragPointerId = null
                         dragHandle = null
+                        showMagnifier = false
+                        magnifierActiveHandle = null
                         selLog { "drag[$handle] gesture ended" }
                     }
                 }
@@ -508,6 +527,61 @@ internal fun SharedMobilePdfTextSelectionOverlay(
                     val s = session ?: return@SharedMobilePdfSelectionMenu
                     scope.launch { computeAndApply(PdfTextSelectionRange(0, s.pageCharCount)) }
                 }
+            )
+        }
+    }
+
+    val magnifierHandle = magnifierActiveHandle
+    val magnifierBitmap = pageRender?.bitmap
+    val visibleSelectionRects = state.selectionRects
+    if (showMagnifier && magnifierHandle != null && magnifierBitmap != null && visibleSelectionRects.isNotEmpty()) {
+        val handle = magnifierHandle
+        val handleRect = when (handle) {
+            PdfSelectionHandle.START -> visibleSelectionRects.first()
+            PdfSelectionHandle.END -> visibleSelectionRects.last()
+        }
+        val handleX = when (handle) {
+            PdfSelectionHandle.START -> handleRect.left
+            PdfSelectionHandle.END -> handleRect.right
+        }
+        val handleY = handleRect.bottom
+        // The lens is drawn inside the (graphicsLayer-scaled) overlay, so its
+        // canvas-local size is divided by the zoom and the inverse scale is
+        // applied afterwards — the lens renders at a constant 120x60dp on
+        // screen and samples 2x of the on-screen content at any zoom level.
+        val zoom = zoomScale.takeIf { it.isFinite() && it > 1f } ?: 1f
+        val lensVisualWidthPx = with(density) { magnifierWidthDp.toPx() }
+        val lensVisualHeightPx = with(density) { magnifierHeightDp.toPx() }
+        val gapVisualPx = with(density) { magnifierOffsetAboveHandleDp.toPx() }
+        val lensCanvasWidthPx = lensVisualWidthPx / zoom
+        val lensCanvasHeightPx = lensVisualHeightPx / zoom
+        val gapCanvasPx = gapVisualPx / zoom
+        val lensLeft = handleX - lensCanvasWidthPx / 2f
+        val lensTop = handleY - lensCanvasHeightPx - gapCanvasPx
+        // Content space is the canvas (page fit) size at scale 1 — Android's
+        // "targetWidth" space — so the sampling center is the canvas handle
+        // position directly: (handle x, selection rect center y).
+        val magnifierCenter = Offset(handleX, handleRect.center.y)
+        Box(
+            Modifier
+                .offset { IntOffset(lensLeft.roundToInt(), lensTop.roundToInt()) }
+                .width(with(density) { lensCanvasWidthPx.toDp() })
+                .height(with(density) { lensCanvasHeightPx.toDp() })
+                .graphicsLayer {
+                    scaleX = 1f / zoom
+                    scaleY = 1f / zoom
+                }
+        ) {
+            SharedPdfMagnifier(
+                sourceBitmap = magnifierBitmap,
+                tiles = zoomTiles,
+                currentScale = zoomScale,
+                magnifierCenterOnBitmap = magnifierCenter,
+                contentWidthPx = canvasSize.width,
+                contentHeightPx = canvasSize.height,
+                selectionRectsInContentCoords = visibleSelectionRects,
+                highlightColor = Color(0x6633B5E5),
+                colorFilter = magnifierColorFilter
             )
         }
     }

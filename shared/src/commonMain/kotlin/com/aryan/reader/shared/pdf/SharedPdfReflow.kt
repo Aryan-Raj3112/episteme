@@ -32,6 +32,113 @@ data class SharedPdfReflowTextLine(
     val charCount: Int
 )
 
+fun buildReaderReflowTextLines(
+    rawText: String,
+    charCount: Int,
+    sizeAt: (Int) -> Float,
+    weightAt: (Int) -> Int,
+    flagsAt: (Int) -> Int,
+    boxTopYAt: (Int) -> Float?,
+): List<SharedPdfReflowTextLine> {
+    val textLines = mutableListOf<SharedPdfReflowTextLine>()
+    val currentSpans = mutableListOf<SharedPdfReflowTextSpan>()
+    val currentSpanBuffer = StringBuilder()
+    var currentSize = -1f
+    var currentBold = false
+    var currentItalic = false
+    var lineBaseline = 0f
+
+    fun commitSpan() {
+        if (currentSpanBuffer.isNotEmpty()) {
+            currentSpans.add(
+                SharedPdfReflowTextSpan(
+                    text = currentSpanBuffer.toString(),
+                    size = currentSize,
+                    isBold = currentBold,
+                    isItalic = currentItalic,
+                )
+            )
+            currentSpanBuffer.clear()
+        }
+    }
+
+    fun commitLine() {
+        commitSpan()
+        if (currentSpans.isNotEmpty()) {
+            val text = currentSpans.joinToString("") { it.text }
+            if (text.isNotBlank()) {
+                textLines.add(SharedPdfReflowTextLine(currentSpans.toList(), lineBaseline, text.length))
+            }
+            currentSpans.clear()
+        }
+        lineBaseline = 0f
+    }
+
+    val actualCount = minOf(charCount, rawText.length)
+    for (index in 0 until actualCount) {
+        val char = rawText[index]
+        val code = char.code
+
+        if (code == 0) continue
+
+        if (char == '\r') {
+            commitLine()
+            continue
+        }
+
+        if (char == '\n') {
+            if (index > 0 && rawText[index - 1] == '\r') continue
+            commitLine()
+            continue
+        }
+
+        val charToProcess = when (char) {
+            '\u00A0' -> ' '
+            '\u00AD' -> '-'
+            '\u0009' -> ' '
+            else -> char
+        }
+
+        if (isReflowJunkCode(code)) continue
+
+        val size = sizeAt(index).coerceAtLeast(0f)
+        val isBold = weightAt(index) > 600
+        val isItalic = (flagsAt(index) and 64) != 0
+
+        if (currentSpanBuffer.isEmpty() && currentSpans.isEmpty() && !charToProcess.isWhitespace()) {
+            lineBaseline = boxTopYAt(index) ?: 0f
+        }
+
+        if (currentSpanBuffer.isEmpty()) {
+            currentSize = size
+            currentBold = isBold
+            currentItalic = isItalic
+            currentSpanBuffer.append(charToProcess)
+        } else if (!charToProcess.isWhitespace() &&
+            (size != currentSize || isBold != currentBold || isItalic != currentItalic)
+        ) {
+            commitSpan()
+            currentSize = size
+            currentBold = isBold
+            currentItalic = isItalic
+            currentSpanBuffer.append(charToProcess)
+        } else {
+            currentSpanBuffer.append(charToProcess)
+        }
+    }
+    commitLine()
+
+    return textLines
+}
+
+private fun isReflowJunkCode(code: Int): Boolean = when {
+    code == 0xFFFE || code == 0xFFFF || code == 0xFFFD -> true
+    code in 0xE000..0xF8FF -> true
+    code in 0xD800..0xDFFF -> true
+    code in 0x7F..0x9F -> true
+    else -> false
+}
+
 data class SharedPdfReflowPage(
     val pageNumber: Int,
     val elements: List<SharedPdfReflowPageElement>
