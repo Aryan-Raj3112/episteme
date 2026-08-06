@@ -2533,67 +2533,84 @@ private fun SharedMobilePdfToolbarCustomizationSheet(
     onPreferencesChange: (PdfToolbarPreferences) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    var localHiddenTools by remember { mutableStateOf(preferences.hiddenToolIds) }
+    var flatItems by remember {
+        mutableStateOf(buildSharedPdfToolbarItems(preferences, availableTools))
+    }
+
+    val lazyListState = rememberLazyListState()
+    val dragDropState = rememberSharedToolbarDragDropState(
+        lazyListState = lazyListState,
+        flatItems = { flatItems },
+        onFlatItemsChange = { flatItems = it },
+    )
+
+    val commitDragDrop = {
+        val next = buildSharedPdfToolbarCommit(flatItems, localHiddenTools, availableTools)
+        localHiddenTools = next.hiddenToolIds
+        onPreferencesChange(next)
+    }
+
+    val resetToDefault = {
+        val defaults = PdfToolbarPreferences()
+        localHiddenTools = defaults.hiddenToolIds
+        flatItems = buildSharedPdfToolbarItems(defaults, availableTools)
+        onPreferencesChange(defaults.sanitized(availableTools))
+    }
+
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
     ) {
         Column(
-            modifier = Modifier.fillMaxWidth().heightIn(max = 680.dp)
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp).padding(bottom = 32.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth().heightIn(max = 720.dp),
         ) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                Column {
-                    Text("Customize Toolbar", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    Text("Visibility, order, and top/bottom placement", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                TextButton(onClick = onDismiss) { Text("Done") }
-            }
-            HorizontalDivider()
-            preferences.toolOrder.filter { it in availableTools }.forEachIndexed { index, tool ->
-                Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text(tool.title, style = MaterialTheme.typography.titleSmall)
-                            Text(
-                                if (tool.supportsToolbarPlacement) {
-                                    if (preferences.isBottom(tool)) "Bottom Bar" else "Top Bar"
-                                } else {
-                                    "Overflow Menu"
-                                },
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        if (tool.supportsToolbarPlacement) {
-                            TextButton(onClick = {
-                                onPreferencesChange(preferences.withBottomPlacement(tool, !preferences.isBottom(tool)))
-                            }) {
-                                Text(if (preferences.isBottom(tool)) "Move Top" else "Move Bottom")
-                            }
-                        }
-                        IconButton(
-                            onClick = { onPreferencesChange(preferences.moveWithinAvailable(tool, -1, availableTools)) },
-                            enabled = index > 0,
-                        ) { Icon(Icons.Default.ArrowUpward, contentDescription = "Move ${tool.title} up") }
-                        IconButton(
-                            onClick = { onPreferencesChange(preferences.moveWithinAvailable(tool, 1, availableTools)) },
-                            enabled = index < availableTools.size - 1,
-                        ) { Icon(Icons.Default.ArrowDownward, contentDescription = "Move ${tool.title} down") }
-                        Switch(
-                            checked = preferences.isVisible(tool),
-                            onCheckedChange = { visible ->
-                                onPreferencesChange(preferences.withVisibility(tool, hidden = !visible))
+            SharedToolbarCustomizationHeader(
+                title = "Customize Toolbar",
+                onReset = resetToDefault,
+                onDismiss = onDismiss,
+            )
+            SharedToolbarDragDropList(
+                flatItems = flatItems,
+                dragDropState = dragDropState,
+                emptyPlaceholderTitle = "Drop tools here",
+                moreMenuTitle = "More Menu",
+                toolRow = { item, isDragging ->
+                    val tool = item.toolId?.let(PdfReaderTool::fromId)
+                    if (tool != null) {
+                        SharedToolbarDragRow(
+                            title = tool.title,
+                            isDragging = isDragging,
+                            leadingIcon = { SharedPdfToolbarDragIcon(tool) },
+                            onDragStart = { dragDropState.onDragStart(item.id) },
+                            onDrag = { dragDropState.onDrag(it) },
+                            onDragEnd = {
+                                dragDropState.onDragEnd()
+                                flatItems = sanitizeSharedToolbarPlaceholders(flatItems)
+                                commitDragDrop()
                             },
                         )
                     }
-                }
-            }
+                },
+                moreToolRow = { item ->
+                    val tool = item.toolId?.let(PdfReaderTool::fromId)
+                    if (tool != null) {
+                        SharedToolbarMoreVisibilityRow(
+                            title = tool.title,
+                            visible = !localHiddenTools.contains(tool.id),
+                            onToggle = {
+                                val next = if (localHiddenTools.contains(tool.id)) {
+                                    localHiddenTools - tool.id
+                                } else {
+                                    localHiddenTools + tool.id
+                                }
+                                localHiddenTools = next
+                                onPreferencesChange(preferences.copy(hiddenToolIds = next).sanitized(availableTools))
+                            },
+                        )
+                    }
+                },
+            )
         }
     }
 }

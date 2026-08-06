@@ -1626,19 +1626,11 @@ fun SharedMobileEpubReaderScreen(
         )
     }
     if (showCustomizeToolsSheet) {
-        ModalBottomSheet(onDismissRequest = { showCustomizeToolsSheet = false }) {
-            Column(
-                modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 32.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                Text("Customize Toolbar", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                SharedReaderToolbarControls(
-                    toolbarPreferences = sanitizedToolbarPreferences,
-                    onToolbarPreferencesChange = onReaderToolbarPreferencesChange,
-                    availableTools = SharedMobileEpubCustomizableTools
-                )
-            }
-        }
+        SharedMobileEpubToolbarCustomizationSheet(
+            toolbarPreferences = sanitizedToolbarPreferences,
+            onToolbarPreferencesChange = onReaderToolbarPreferencesChange,
+            onDismiss = { showCustomizeToolsSheet = false }
+        )
     }
     if (showScreenOrientationSheet) {
         SharedMobileReaderScreenOrientationSheet(
@@ -2016,6 +2008,107 @@ private val SharedMobileEpubCustomizableTools = SharedMobileEpubToolbarTools + s
     ReaderTool.BOOK_REPLACEMENTS,
     ReaderTool.FILE_INFO
 )
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SharedMobileEpubToolbarCustomizationSheet(
+    toolbarPreferences: ReaderToolbarPreferences,
+    onToolbarPreferencesChange: (ReaderToolbarPreferences) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var localHiddenTools by remember { mutableStateOf(toolbarPreferences.hiddenToolIds) }
+    var flatItems by remember {
+        mutableStateOf(
+            buildSharedEpubToolbarItems(
+                preferences = toolbarPreferences,
+                toolbarTools = SharedMobileEpubToolbarTools,
+                availableTools = SharedMobileEpubCustomizableTools,
+            )
+        )
+    }
+
+    val lazyListState = rememberLazyListState()
+    val dragDropState = rememberSharedToolbarDragDropState(
+        lazyListState = lazyListState,
+        flatItems = { flatItems },
+        onFlatItemsChange = { flatItems = it },
+    )
+
+    val commitDragDrop = {
+        val next = buildSharedEpubToolbarCommit(flatItems, localHiddenTools, SharedMobileEpubToolbarTools)
+        localHiddenTools = next.hiddenToolIds
+        onToolbarPreferencesChange(next)
+    }
+
+    val resetToDefault = {
+        val defaults = ReaderToolbarPreferences()
+        localHiddenTools = defaults.hiddenToolIds
+        flatItems = buildSharedEpubToolbarItems(
+            preferences = defaults,
+            toolbarTools = SharedMobileEpubToolbarTools,
+            availableTools = SharedMobileEpubCustomizableTools,
+        )
+        onToolbarPreferencesChange(defaults.sanitized())
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().heightIn(max = 720.dp),
+        ) {
+            SharedToolbarCustomizationHeader(
+                title = "Customize Toolbar",
+                onReset = resetToDefault,
+                onDismiss = onDismiss,
+            )
+            SharedToolbarDragDropList(
+                flatItems = flatItems,
+                dragDropState = dragDropState,
+                emptyPlaceholderTitle = "Drop tools here",
+                moreMenuTitle = "More Menu",
+                toolRow = { item, isDragging ->
+                    val tool = item.toolId?.let(ReaderTool::fromId)
+                    if (tool != null) {
+                        SharedToolbarDragRow(
+                            title = tool.title,
+                            isDragging = isDragging,
+                            leadingIcon = { SharedEpubToolbarDragIcon(tool) },
+                            onDragStart = { dragDropState.onDragStart(item.id) },
+                            onDrag = { dragDropState.onDrag(it) },
+                            onDragEnd = {
+                                dragDropState.onDragEnd()
+                                flatItems = sanitizeSharedToolbarPlaceholders(flatItems)
+                                commitDragDrop()
+                            },
+                        )
+                    }
+                },
+                moreToolRow = { item ->
+                    val tool = item.toolId?.let(ReaderTool::fromId)
+                    if (tool != null) {
+                        SharedToolbarMoreVisibilityRow(
+                            title = tool.title,
+                            visible = !localHiddenTools.contains(tool.id),
+                            onToggle = {
+                                val next = if (localHiddenTools.contains(tool.id)) {
+                                    localHiddenTools - tool.id
+                                } else {
+                                    localHiddenTools + tool.id
+                                }
+                                localHiddenTools = next
+                                onToolbarPreferencesChange(
+                                    toolbarPreferences.copy(hiddenToolIds = next).sanitized()
+                                )
+                            },
+                        )
+                    }
+                },
+            )
+        }
+    }
+}
 
 @Composable
 private fun SharedMobileEpubSwitchMenuItem(
