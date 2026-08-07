@@ -28,7 +28,9 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -60,6 +62,8 @@ import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.SolidColor
@@ -74,6 +78,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalViewConfiguration
@@ -533,6 +538,41 @@ fun SharedNativePaginatedReader(
     }
 }
 
+/** Lets the host screen drive the native vertical EPUB list from outside it (auto-scroll, musician gestures). */
+class SharedNativeVerticalScrollController {
+    private var listState: LazyListState? = null
+
+    internal fun attach(state: LazyListState) {
+        listState = state
+    }
+
+    internal fun detach() {
+        listState = null
+    }
+
+    suspend fun scrollByPixels(deltaPx: Float) {
+        listState?.scrollBy(deltaPx)
+    }
+
+    suspend fun scrollByViewportFraction(fraction: Float) {
+        val state = listState ?: return
+        val viewportHeightPx = state.layoutInfo.viewportEndOffset - state.layoutInfo.viewportStartOffset
+        if (viewportHeightPx <= 0) return
+        state.scrollBy(viewportHeightPx * fraction)
+    }
+
+    suspend fun scrollToStart() {
+        listState?.scrollToItem(0)
+    }
+
+    suspend fun scrollToEnd() {
+        val state = listState ?: return
+        state.scrollToItem((state.layoutInfo.totalItemsCount - 1).coerceAtLeast(0))
+    }
+
+    fun canScrollForward(): Boolean = listState?.canScrollForward ?: false
+}
+
 @Composable
 fun SharedNativeVerticalReader(
     renderPlan: ReaderContentRenderPlan.NativeVerticalPages,
@@ -548,7 +588,8 @@ fun SharedNativeVerticalReader(
     onHighlightSelected: (String) -> Unit = {},
     onLinkClicked: (SharedNativeReaderLinkClick) -> Unit = {},
     onReaderTap: () -> Unit = {},
-    imageContent: (@Composable (SemanticImage, Modifier) -> Unit)? = null
+    imageContent: (@Composable (SemanticImage, Modifier) -> Unit)? = null,
+    verticalScrollController: SharedNativeVerticalScrollController? = null
 ) {
     val flowItems = remember(renderPlan.book, renderPlan.pages) {
         buildSharedNativeVerticalFlowItems(
@@ -557,6 +598,10 @@ fun SharedNativeVerticalReader(
         )
     }
     val listState = rememberLazyListState()
+    DisposableEffect(verticalScrollController, listState) {
+        verticalScrollController?.attach(listState)
+        onDispose { verticalScrollController?.detach() }
+    }
     var activeSelection by remember(renderPlan.navigationTarget.requestId) {
         mutableStateOf<SharedNativeReaderTextSelection?>(null)
     }
@@ -2868,6 +2913,30 @@ private fun SemanticImage.imageContentAlignment(): Alignment {
         style.float == "left" || style.horizontalAlign == "left" || style.horizontalAlign == "start" -> Alignment.CenterStart
         else -> Alignment.Center
     }
+}
+
+internal fun SemanticImage.sharedNativeImageContentScale(): ContentScale {
+    return when (style.blockStyle.objectFit) {
+        "cover" -> ContentScale.Crop
+        "fill" -> ContentScale.FillBounds
+        "contain", "scale-down" -> ContentScale.Fit
+        else -> ContentScale.Fit
+    }
+}
+
+internal fun SemanticImage.sharedNativeImageColorMatrix(): FloatArray? {
+    if (style.blockStyle.filter != "invert(100%)") return null
+    return floatArrayOf(
+        -1f, 0f, 0f, 0f, 255f,
+        0f, -1f, 0f, 0f, 255f,
+        0f, 0f, -1f, 0f, 255f,
+        0f, 0f, 0f, 1f, 0f
+    )
+}
+
+internal fun SemanticImage.sharedNativeImageColorFilter(): ColorFilter? {
+    val matrix = sharedNativeImageColorMatrix() ?: return null
+    return ColorFilter.colorMatrix(ColorMatrix(matrix))
 }
 
 @Composable

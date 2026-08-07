@@ -51,6 +51,8 @@ internal interface SharedMobileEpubLocalTts {
     val speechPitch: Float
     val availableVoices: List<SharedMobileEpubVoice>
     val selectedVoiceIdentifier: String?
+    /** Non-null when the last playback attempt was interrupted or failed unexpectedly. */
+    val errorMessage: String?
     /** Increments only when every chunk finishes naturally; explicit stop does not increment it. */
     val completionCount: Long
     /** Starts platform audio preparation while document text is still being extracted. */

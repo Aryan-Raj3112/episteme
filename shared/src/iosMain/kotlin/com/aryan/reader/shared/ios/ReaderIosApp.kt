@@ -2,6 +2,12 @@
 
 package com.aryan.reader.shared.ios
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -37,6 +43,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.ComposeUIViewController
@@ -163,6 +170,7 @@ import com.aryan.reader.shared.ui.LocalSharedStringResolver
 import com.aryan.reader.shared.ui.SharedStringResolver
 import com.aryan.reader.shared.ui.SharedSupportProjectScreen
 import com.aryan.reader.shared.ui.mobileRecentBooks
+import com.aryan.reader.shared.ui.readerBannerMessage
 import com.aryan.reader.shared.ui.readerString
 import com.aryan.reader.shared.ui.openSharedMobileExternalUrl
 import com.aryan.reader.shared.ui.rememberSharedMobileEpubLocalTts
@@ -170,6 +178,7 @@ import com.aryan.reader.shared.ui.withoutIosFolderFilter
 import com.aryan.reader.shared.reader.ReaderScreenOrientationMode
 import com.aryan.reader.shared.ui.SharedMobilePdfNativeAction
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.cinterop.addressOf
@@ -890,6 +899,7 @@ private const val IosPdfAutoScrollMusicianDefaultsKey = "reader_ios_pdf_auto_scr
 private const val IosPdfAutoScrollSliderDefaultsKey = "reader_ios_pdf_auto_scroll_slider_v1"
 private const val IosReaderOrientationDefaultsKey = "reader_ios_reader_orientation_v1"
 private const val IosKeepScreenOnDefaultsKey = "reader_ios_keep_screen_on_v1"
+private const val IosNativeVerticalRendererDefaultsKey = "reader_native_vertical_renderer"
 private const val IosStylusOnlyModeDefaultsKey = "reader_ios_stylus_only_mode_v1"
 private const val IosReaderPreferencesDefaultsKey = "reader_ios_reader_preferences_v1"
 private const val IosLibrarySnapshotDefaultsKey = "reader_ios_library_snapshot_v1"
@@ -1199,6 +1209,14 @@ private fun loadIosKeepScreenOn(): Boolean {
 
 private fun persistIosKeepScreenOn(enabled: Boolean) {
     NSUserDefaults.standardUserDefaults.setBool(enabled, forKey = IosKeepScreenOnDefaultsKey)
+}
+
+private fun loadIosNativeVerticalRenderer(): Boolean {
+    return NSUserDefaults.standardUserDefaults.boolForKey(IosNativeVerticalRendererDefaultsKey)
+}
+
+private fun persistIosNativeVerticalRenderer(enabled: Boolean) {
+    NSUserDefaults.standardUserDefaults.setBool(enabled, forKey = IosNativeVerticalRendererDefaultsKey)
 }
 
 private fun loadIosStylusOnlyMode(): Boolean {
@@ -1601,6 +1619,7 @@ private fun ReaderIosApp(
     var showRecentLimitDialog by remember { mutableStateOf(false) }
     var showExternalFileBehaviorDialog by remember { mutableStateOf(false) }
     var showStrictFilterConfirmation by remember { mutableStateOf(false) }
+    var showClearReflowCacheConfirmation by remember { mutableStateOf(false) }
     var showSignOutConfirmation by remember { mutableStateOf(false) }
     var showTtsSettings by remember { mutableStateOf(false) }
     val settingsTts = rememberSharedMobileEpubLocalTts()
@@ -2244,6 +2263,7 @@ private fun ReaderIosApp(
             LocalSharedStringResolver provides stringResolver,
             LocalUsePdfFileNameAsDisplayName provides state.usePdfFileNameAsDisplayName,
         ) {
+        Box(Modifier.fillMaxSize()) {
         Surface(modifier = Modifier.fillMaxSize()) {
             if (showAppThemePanel) {
                 SharedAppThemeSettingsDialog(
@@ -2370,6 +2390,9 @@ private fun ReaderIosApp(
                             readerTtsReplacementPreferences = state.readerTtsReplacementPreferences,
                             onReaderTtsReplacementPreferencesChange = {
                                 state = state.reduce(AppAction.ReaderTtsReplacementPreferencesChanged(it))
+                            },
+                            onTtsError = { message ->
+                                state = state.reduce(AppAction.BannerShown(BannerMessage(message, isError = true)))
                             },
                             initialReaderState = initialPdfReaderState,
                             readerDefaultSettings = state.pdfReaderDefaultSettings,
@@ -2571,6 +2594,11 @@ private fun ReaderIosApp(
                             onPageSliderVisibilityPreferenceChange = { visible ->
                                 persistIosEpubPageSliderVisible(book.id, visible)
                             },
+                            initialUseNativeVerticalRenderer = loadIosNativeVerticalRenderer(),
+                            onUseNativeVerticalRendererPreferenceChange = ::persistIosNativeVerticalRenderer,
+                            onTtsError = { message ->
+                                state = state.reduce(AppAction.BannerShown(BannerMessage(message, isError = true)))
+                            },
                             readerScreenOrientationMode = readerOrientation,
                             onReaderScreenOrientationModeChange = { mode ->
                                 readerOrientation = mode
@@ -2614,10 +2642,11 @@ private fun ReaderIosApp(
                                 aiSettingsAvailable = false,
                                 ttsSettingsAvailable = true,
                                 bookCacheMaintenanceAvailable = false,
-                                reflowCacheMaintenanceAvailable = false,
+                                reflowCacheMaintenanceAvailable = true,
                                 includeLanguage = true,
                                 includeScreenCaptureProtection = false,
                                 includeCloudLocalDataClear = false,
+                                includeHideReaderAi = false,
                                 supportProjectAvailable = true,
                                 isTabsEnabled = state.isTabsEnabled,
                                 isSyncEnabled = state.isSyncEnabled,
@@ -2711,6 +2740,9 @@ private fun ReaderIosApp(
                                     }
                                     SharedSettingsAction.TTS_SETTINGS -> {
                                         showTtsSettings = true
+                                    }
+                                    SharedSettingsAction.CLEAR_REFLOW_CACHE -> {
+                                        showClearReflowCacheConfirmation = true
                                     }
                                     SharedSettingsAction.TEXT_READER_DEFAULTS,
                                     SharedSettingsAction.PDF_READER_DEFAULTS,
@@ -3511,6 +3543,31 @@ private fun ReaderIosApp(
             onDismiss = { showStrictFilterConfirmation = false },
         )
     }
+    if (showClearReflowCacheConfirmation) {
+        IosConfirmationDialog(
+            title = readerString("dialog_clear_reflow_cache", "Clear Reflow Cache"),
+            message = readerString(
+                "dialog_clear_reflow_cache_desc",
+                "This removes every generated Text View (PDF reflow) book. Text Views are recreated the next time you open one.",
+            ),
+            confirmLabel = readerString("action_clear", "Clear"),
+            onConfirm = {
+                val reflowBooks = state.rawLibraryBooks.filter { it.id.endsWith("_reflow") }
+                val reflowPaths = reflowBooks.mapNotNull { it.path }
+                bridge.removeImportedFiles(reflowPaths)
+                if (reflowBooks.isNotEmpty()) {
+                    state = state.removeIosBooks(
+                        bookIds = reflowBooks.map { it.id }.toSet(),
+                        recordCloudDeletion = true,
+                    )
+                } else {
+                    showMessage("No reflow cache found")
+                }
+                showClearReflowCacheConfirmation = false
+            },
+            onDismiss = { showClearReflowCacheConfirmation = false },
+        )
+    }
     if (showSignOutConfirmation) {
         IosConfirmationDialog(
             title = readerString("dialog_confirm_sign_out", "Confirm Sign Out"),
@@ -3523,6 +3580,55 @@ private fun ReaderIosApp(
             onDismiss = { showSignOutConfirmation = false },
         )
     }
+        LaunchedEffect(state.bannerMessage) {
+            val banner = state.bannerMessage ?: return@LaunchedEffect
+            if (banner.isPersistent) return@LaunchedEffect
+            delay(3_000L)
+            state = state.reduce(AppAction.BannerDismissed)
+        }
+        state.bannerMessage?.let { banner ->
+            IosAppTopBanner(
+                bannerMessage = banner,
+            )
+        }
+        }
+    }
+}
+
+@Composable
+private fun IosAppTopBanner(
+    bannerMessage: BannerMessage,
+) {
+    AnimatedVisibility(
+        visible = true,
+        enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
+        exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut(),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
+            Surface(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                color = if (bannerMessage.isError) {
+                    MaterialTheme.colorScheme.errorContainer
+                } else {
+                    MaterialTheme.colorScheme.secondaryContainer
+                },
+                shape = MaterialTheme.shapes.medium,
+                shadowElevation = 8.dp
+            ) {
+                Text(
+                    text = readerBannerMessage(bannerMessage),
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                    color = if (bannerMessage.isError) {
+                        MaterialTheme.colorScheme.onErrorContainer
+                    } else {
+                        MaterialTheme.colorScheme.onSecondaryContainer
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+        }
     }
 }
 

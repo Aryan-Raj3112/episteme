@@ -23,6 +23,16 @@ data class SharedPdfBookmark(
     val createdAt: Long = 0L
 )
 
+/** Formats a spread-aware page label, mirroring Android's pdfPageRangeLabel. */
+fun sharedPdfPageRangeLabel(pageLabel: String, pageCount: Int): String {
+    val range = pageLabel.ifBlank { "1" }
+    return if ('-' in range) {
+        "Pages $range of ${pageCount.coerceAtLeast(1)}"
+    } else {
+        "Page $range of ${pageCount.coerceAtLeast(1)}"
+    }
+}
+
 @Serializable
 data class SharedPdfBookmarkStore(
     val version: Int = 1,
@@ -485,6 +495,8 @@ sealed interface SharedPdfReaderAction {
         val label: String = "",
         val createdAt: Long = 0L
     ) : SharedPdfReaderAction
+    data class BookmarkRenamed(val pageIndex: Int, val label: String) : SharedPdfReaderAction
+    data class BookmarkDeleted(val pageIndex: Int) : SharedPdfReaderAction
     data class InsertBlankPageAt(
         val displayIndex: Int,
         val widthPx: Float,
@@ -618,6 +630,18 @@ fun SharedPdfReaderState.reduce(
                 withoutPage
             }
             copy(bookmarks = nextBookmarks.normalizedBookmarks(lastPdfPageIndex))
+        }
+        is SharedPdfReaderAction.BookmarkRenamed -> {
+            val page = action.pageIndex.coerceIn(0, lastPdfPageIndex)
+            copy(
+                bookmarks = bookmarks.map { bookmark ->
+                    if (bookmark.pageIndex == page) bookmark.copy(label = action.label.trim().ifBlank { "Page ${page + 1}" }) else bookmark
+                }.normalizedBookmarks(lastPdfPageIndex)
+            )
+        }
+        is SharedPdfReaderAction.BookmarkDeleted -> {
+            val page = action.pageIndex.coerceIn(0, lastPdfPageIndex)
+            copy(bookmarks = bookmarks.filterNot { it.pageIndex == page }.normalizedBookmarks(lastPdfPageIndex))
         }
         is SharedPdfReaderAction.InsertBlankPageAt -> {
             val layout = virtualPageLayout

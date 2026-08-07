@@ -1,8 +1,12 @@
 package com.aryan.reader.shared.pdf
 
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.unit.dp
 import com.aryan.reader.shared.PdfDisplayMode
 import com.aryan.reader.shared.SearchHighlightMode
+import com.aryan.reader.shared.ui.sharedPdfThumbnailRowFor
+import com.aryan.reader.shared.ui.sharedPdfThumbnailRows
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -308,6 +312,139 @@ class PdfReaderSessionTest {
 
         assertEquals(listOf(1), state.bookmarks.map { it.pageIndex })
         assertEquals("Page 2", state.bookmarks.single().label)
+    }
+
+    @Test
+    fun `bookmark rename and delete mutate the bookmark list`() {
+        val base = SharedPdfReaderState.initial(pageCount = 4)
+            .reduce(
+                SharedPdfReaderAction.BookmarksLoaded(
+                    listOf(
+                        SharedPdfBookmark(pageIndex = 1, label = "One", createdAt = 10L),
+                        SharedPdfBookmark(pageIndex = 2, label = "Two", createdAt = 20L)
+                    )
+                )
+            )
+
+        val renamed = base.reduce(SharedPdfReaderAction.BookmarkRenamed(pageIndex = 2, label = "Chapter two"))
+        assertEquals("Chapter two", renamed.bookmarks.single { it.pageIndex == 2 }.label)
+        assertEquals("One", renamed.bookmarks.single { it.pageIndex == 1 }.label)
+
+        val renamedBlank = base.reduce(SharedPdfReaderAction.BookmarkRenamed(pageIndex = 2, label = "   "))
+        assertEquals("Page 3", renamedBlank.bookmarks.single { it.pageIndex == 2 }.label)
+
+        val deleted = base.reduce(SharedPdfReaderAction.BookmarkDeleted(pageIndex = 1))
+        assertEquals(listOf(2), deleted.bookmarks.map { it.pageIndex })
+
+        val missing = base.reduce(SharedPdfReaderAction.BookmarkDeleted(pageIndex = 99))
+        assertEquals(base.bookmarks, missing.bookmarks)
+    }
+
+    @Test
+    fun `shared page range label formats single pages and spreads`() {
+        assertEquals("Page 3 of 10", sharedPdfPageRangeLabel("3", 10))
+        assertEquals("Pages 2-3 of 10", sharedPdfPageRangeLabel("2-3", 10))
+        assertEquals("Page 1 of 1", sharedPdfPageRangeLabel("", 1))
+        assertEquals("Pages 4-5 of 12", sharedPdfPageRangeLabel("4-5", 12))
+    }
+
+    @Test
+    fun `thumbnail grid rows chunk pages by three and locate row computes`() {
+        assertEquals(listOf(listOf(0, 1, 2), listOf(3, 4, 5)), sharedPdfThumbnailRows(6))
+        assertEquals(listOf(listOf(0, 1, 2), listOf(3, 4)), sharedPdfThumbnailRows(5))
+        assertEquals(emptyList(), sharedPdfThumbnailRows(0))
+        assertEquals(listOf(listOf(0)), sharedPdfThumbnailRows(1))
+        assertEquals(0, sharedPdfThumbnailRowFor(0))
+        assertEquals(0, sharedPdfThumbnailRowFor(2))
+        assertEquals(1, sharedPdfThumbnailRowFor(3))
+        assertEquals(2, sharedPdfThumbnailRowFor(6))
+        assertEquals(0, sharedPdfThumbnailRowFor(-1))
+    }
+
+    @Test
+    fun `keyboard navigation maps page keys and vertical scroll arrows`() {
+        assertEquals(
+            SharedPdfKeyboardNavigationAction.NEXT_PAGE,
+            sharedPdfKeyboardNavigationAction(Key.PageDown, PdfDisplayMode.PAGINATION)
+        )
+        assertEquals(
+            SharedPdfKeyboardNavigationAction.PREVIOUS_PAGE,
+            sharedPdfKeyboardNavigationAction(Key.PageUp, PdfDisplayMode.VERTICAL_SCROLL)
+        )
+        assertEquals(
+            SharedPdfKeyboardNavigationAction.FIRST_PAGE,
+            sharedPdfKeyboardNavigationAction(Key.MoveHome, PdfDisplayMode.PAGINATION)
+        )
+        assertEquals(
+            SharedPdfKeyboardNavigationAction.LAST_PAGE,
+            sharedPdfKeyboardNavigationAction(Key.MoveEnd, PdfDisplayMode.VERTICAL_SCROLL)
+        )
+        assertEquals(
+            SharedPdfKeyboardNavigationAction.SCROLL_DOWN,
+            sharedPdfKeyboardNavigationAction(Key.DirectionDown, PdfDisplayMode.VERTICAL_SCROLL)
+        )
+        assertEquals(
+            SharedPdfKeyboardNavigationAction.NEXT_PAGE,
+            sharedPdfKeyboardNavigationAction(Key.DirectionDown, PdfDisplayMode.PAGINATION)
+        )
+        assertEquals(
+            SharedPdfKeyboardNavigationAction.SCROLL_UP,
+            sharedPdfKeyboardNavigationAction(Key.DirectionUp, PdfDisplayMode.VERTICAL_SCROLL)
+        )
+        assertEquals(
+            SharedPdfKeyboardNavigationAction.PREVIOUS_PAGE,
+            sharedPdfKeyboardNavigationAction(Key.DirectionUp, PdfDisplayMode.PAGINATION)
+        )
+        assertEquals(
+            SharedPdfKeyboardNavigationAction.NONE,
+            sharedPdfKeyboardNavigationAction(Key.A, PdfDisplayMode.PAGINATION)
+        )
+    }
+
+    @Test
+    fun `highlight all rects merge overlapping lines and keep separate rows`() {
+        val merged = sharedPdfMergeRectsIntoLines(
+            listOf(
+                PdfPageBounds(left = 0.1f, top = 0.1f, right = 0.3f, bottom = 0.2f),
+                PdfPageBounds(left = 0.2f, top = 0.12f, right = 0.5f, bottom = 0.2f),
+                PdfPageBounds(left = 0.1f, top = 0.4f, right = 0.2f, bottom = 0.5f),
+                PdfPageBounds(left = 0.15f, top = 0.42f, right = 0.6f, bottom = 0.52f),
+            )
+        )
+        assertEquals(2, merged.size)
+        val first = merged[0]
+        assertEquals(0.1f, first.left)
+        assertEquals(0.5f, first.right)
+        val second = merged[1]
+        assertEquals(0.1f, second.left)
+        assertEquals(0.6f, second.right)
+    }
+
+    @Test
+    fun `highlight all rects sort out of order input`() {
+        val merged = sharedPdfMergeRectsIntoLines(
+            listOf(
+                PdfPageBounds(left = 0.1f, top = 0.4f, right = 0.2f, bottom = 0.5f),
+                PdfPageBounds(left = 0.1f, top = 0.1f, right = 0.3f, bottom = 0.2f),
+            )
+        )
+        assertEquals(listOf(PdfPageBounds(0.1f, 0.1f, 0.3f, 0.2f), PdfPageBounds(0.1f, 0.4f, 0.2f, 0.5f)), merged)
+    }
+
+    @Test
+    fun `highlight all rects handle empty input`() {
+        assertEquals(emptyList(), sharedPdfMergeRectsIntoLines(emptyList()))
+    }
+
+    @Test
+    fun `highlight all colors mirror android dark and light themes`() {
+        val dark = sharedPdfHighlightAllColors(isDarkMode = true, primary = Color(0xFF6750A4))
+        assertEquals(Color(0xFFFFEB3B).copy(alpha = 0.4f), dark.rectColor)
+        assertEquals(Color.Transparent, dark.scrimColor)
+
+        val light = sharedPdfHighlightAllColors(isDarkMode = false, primary = Color(0xFF6750A4))
+        assertEquals(Color(0xFF6750A4).copy(alpha = 0f), light.rectColor)
+        assertEquals(Color.Black.copy(alpha = 0.4f), light.scrimColor)
     }
 
     @Test

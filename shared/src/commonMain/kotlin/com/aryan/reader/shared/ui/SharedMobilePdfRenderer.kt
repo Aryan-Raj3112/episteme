@@ -30,6 +30,19 @@ internal data class SharedMobilePdfTileRender(
     val bitmap: ImageBitmap
 )
 
+internal data class SharedMobilePdfPageThumbnail(
+    val bitmap: ImageBitmap? = null,
+    val aspectRatio: Float = DefaultSharedMobilePdfPageAspectRatio,
+)
+
+/** Splits display pages into fixed-width grid rows, mirroring Android's PAGES drawer. */
+internal fun sharedPdfThumbnailRows(pageCount: Int, perRow: Int = 3): List<List<Int>> =
+    (0 until pageCount.coerceAtLeast(0)).chunked(perRow.coerceAtLeast(1))
+
+/** The grid row containing [pageIndex], for the drawer's Locate action. */
+internal fun sharedPdfThumbnailRowFor(pageIndex: Int, perRow: Int = 3): Int =
+    pageIndex.coerceAtLeast(0) / perRow.coerceAtLeast(1)
+
 internal const val DefaultSharedMobilePdfPageAspectRatio = 0.72f
 
 @Composable
@@ -41,6 +54,13 @@ internal expect fun rememberSharedMobilePdfPageRender(
 ): SharedMobilePdfPageRender
 
 @Composable
+internal expect fun rememberSharedMobilePdfPageThumbnail(
+    book: BookItem,
+    pageIndex: Int,
+    password: String? = null,
+): SharedMobilePdfPageThumbnail
+
+@Composable
 internal expect fun rememberSharedMobilePdfTileRenders(
     book: BookItem,
     pageIndex: Int,
@@ -49,3 +69,15 @@ internal expect fun rememberSharedMobilePdfTileRenders(
     visibleBounds: com.aryan.reader.shared.pdf.PdfPageBounds?,
     password: String? = null,
 ): List<SharedMobilePdfTileRender>
+
+/**
+ * OCR fallback for the highlight-all overlay (Android's ML Kit `OcrHelper`
+ * path in PdfPageComposable.kt): line bounding boxes in normalized,
+ * top-left-origin page coordinates. Returns an empty list when OCR is
+ * unavailable or finds no text.
+ */
+internal expect suspend fun sharedMobilePdfOcrTextBounds(
+    book: BookItem,
+    pageIndex: Int,
+    password: String? = null,
+): List<com.aryan.reader.shared.pdf.PdfPageBounds>

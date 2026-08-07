@@ -219,6 +219,8 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
         private set
     override var completionCount by mutableStateOf(0L)
         private set
+    override var errorMessage by mutableStateOf<String?>(null)
+        private set
     override var speechRate by mutableStateOf(
         preferences.readerTtsFloat(IosReaderTtsRateKey, 1f).coerceIn(0.5f, 3f)
     )
@@ -274,6 +276,7 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
     ) {
         val readableChunks = chunks.filter { it.spokenText.isNotBlank() }
         if (readableChunks.isEmpty()) return
+        errorMessage = null
         invalidateActiveUtterance()
         synthesizer.stopSpeakingAtBoundary(AVSpeechBoundary.AVSpeechBoundaryImmediate)
         this.chunks = readableChunks
@@ -339,6 +342,7 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
 
     override fun stop() {
         sessionId += 1
+        errorMessage = null
         invalidateActiveUtterance()
         synthesizer.stopSpeakingAtBoundary(AVSpeechBoundary.AVSpeechBoundaryImmediate)
         chunks = emptyList()
@@ -375,6 +379,7 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
     ) {
         val chunk = chunks.getOrNull(currentChunkIndex)
         if (chunk == null) {
+            errorMessage = null
             chunks = emptyList()
             currentChunkIndex = -1
             progress = ReaderTtsProgress()
@@ -458,6 +463,9 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
     private fun utteranceCancelled(utterance: AVSpeechUtterance) {
         if (!isActive(utterance)) return
         activeUtterance = null
+        if (wantsPlayback && chunks.isNotEmpty()) {
+            errorMessage = "Text-to-speech was interrupted."
+        }
         if (chunks.isEmpty()) state = SharedMobileEpubLocalTtsState.IDLE
         updateNowPlaying()
     }
