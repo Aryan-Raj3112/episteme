@@ -46,12 +46,13 @@ class SharedLibraryStateProjector(
         )
             .withPinnedFirst(current.pinnedHomeBookIds)
             .take(if (current.recentFilesLimit > 0) current.recentFilesLimit else Int.MAX_VALUE)
-        val openTabs = current.openTabIds
-            .distinct()
-            .mapNotNull { tabId -> allLibraryBooks.find { it.id == tabId } }
-            .take(MAX_OPEN_PDF_TABS)
-        val openTabIds = openTabs.map { it.id }
-        val activeTabBookId = current.activeTabBookId?.takeIf { it in openTabIds }
+        val booksById = allLibraryBooks.associateBy { it.id }
+        val tabState = AppTabState(
+            isEnabled = current.isTabsEnabled,
+            openBookIds = current.openTabIds,
+            activeBookId = current.activeTabBookId,
+        ).reconcileAvailableBooks(booksById.keys)
+        val openTabs = tabState.openBookIds.mapNotNull(booksById::get)
         val shelfProjection = buildShelves(
             allLibraryBooks = allLibraryBooks,
             shelfRecords = input.shelfRecords,
@@ -86,8 +87,8 @@ class SharedLibraryStateProjector(
             },
             shelves = shelfProjection.shelves,
             openTabs = openTabs,
-            openTabIds = openTabIds,
-            activeTabBookId = activeTabBookId,
+            openTabIds = tabState.openBookIds,
+            activeTabBookId = tabState.activeBookId,
             booksAvailableForAdding = booksAvailableForAdding,
             allTags = input.tags,
             syncedFolders = syncedFolders

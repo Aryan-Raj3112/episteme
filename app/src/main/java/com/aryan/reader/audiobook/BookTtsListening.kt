@@ -30,6 +30,11 @@ import com.aryan.reader.pdf.PdfiumCoreProvider
 import com.aryan.reader.pdf.data.PdfTextDatabase
 import com.aryan.reader.data.AppDatabase
 import com.aryan.reader.data.RecentFileEntity
+import com.aryan.reader.shared.SharedBookTtsListenState
+import com.aryan.reader.shared.calculateSharedTtsAudiobookProgress
+import com.aryan.reader.shared.SharedListeningHandoff
+import com.aryan.reader.shared.SharedListeningTarget
+import com.aryan.reader.shared.sharedListeningHandoff
 import com.aryan.reader.withTtsReplacements
 import java.io.File
 import java.io.InputStream
@@ -43,6 +48,9 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.ExperimentalSerializationApi
@@ -564,6 +572,18 @@ class BookTtsAudiobookController(context: Context) {
     val uiState = _uiState.asStateFlow()
     private val _sleepTimerLabel = MutableStateFlow("Sleep")
     val sleepTimerLabel = _sleepTimerLabel.asStateFlow()
+    private val _sleepTimerRemainingMs = MutableStateFlow(0L)
+    val sharedPlaybackState = combine(
+        playbackState,
+        _uiState,
+        _sleepTimerRemainingMs,
+    ) { playback, prepared, sleepTimerRemainingMs ->
+        playback.toSharedBookTtsListenState(
+            progress = prepared.savedProgress,
+            preparedChapterCount = prepared.book?.chapters?.size ?: 0,
+            sleepTimerRemainingMs = sleepTimerRemainingMs,
+        )
+    }.stateIn(scope, SharingStarted.Eagerly, SharedBookTtsListenState())
     private var sleepTimerJob: Job? = null
 
     fun connect(bookId: String) {
@@ -591,7 +611,12 @@ class BookTtsAudiobookController(context: Context) {
             Timber.tag("BOOK_TTS_AUDIOBOOK").i("Ignoring duplicate resume request for active book=$bookId")
             return
         }
-        appContext.startService(Intent(appContext, AudiobookPlaybackService::class.java).setAction(ACTION_AUDIOBOOK_STOP))
+        when (sharedListeningHandoff(SharedListeningTarget.GENERATED_BOOK_TTS)) {
+            SharedListeningHandoff.STOP_AUDIOBOOK -> appContext.startService(
+                Intent(appContext, AudiobookPlaybackService::class.java).setAction(ACTION_AUDIOBOOK_STOP),
+            )
+            SharedListeningHandoff.STOP_TTS -> Unit
+        }
         val intent = Intent(appContext, TtsService::class.java).apply {
             action = ACTION_START_BOOK_TTS
             putExtra(EXTRA_BOOK_TTS_BOOK_ID, bookId)
@@ -609,6 +634,7 @@ class BookTtsAudiobookController(context: Context) {
     fun stop() {
         sleepTimerJob?.cancel()
         sleepTimerJob = null
+        _sleepTimerRemainingMs.value = 0L
         _sleepTimerLabel.value = "Sleep"
         ttsController.stop()
     }
@@ -630,6 +656,7 @@ class BookTtsAudiobookController(context: Context) {
         if (_sleepTimerLabel.value != "Sleep") {
             sleepTimerJob?.cancel()
             sleepTimerJob = null
+            _sleepTimerRemainingMs.value = 0L
             _sleepTimerLabel.value = "Sleep"
 
             appContext.startService(
@@ -652,6 +679,7 @@ class BookTtsAudiobookController(context: Context) {
             var remaining = minutes * 60
 
             while (remaining > 0) {
+                _sleepTimerRemainingMs.value = remaining * 1_000L
                 _sleepTimerLabel.value =
                     "${remaining / 60}:${(remaining % 60).toString().padStart(2, '0')}"
 
@@ -659,6 +687,7 @@ class BookTtsAudiobookController(context: Context) {
                 remaining--
             }
 
+            _sleepTimerRemainingMs.value = 0L
             _sleepTimerLabel.value = "Sleep"
             sleepTimerJob = null
         }
@@ -680,4 +709,43 @@ class BookTtsAudiobookController(context: Context) {
         ttsController.release()
         scope.cancel()
     }
+}
+
+@androidx.annotation.OptIn(UnstableApi::class)
+internal fun com.aryan.reader.tts.TtsPlaybackManager.TtsState.toSharedBookTtsListenState(
+    progress: BookTtsListeningProgressEntity?,
+    preparedChapterCount: Int,
+    sleepTimerRemainingMs: Long,
+): SharedBookTtsListenState {
+    val isBookListening = playbackSource == "AUDIOBOOK_TTS"
+    val resolvedChapterCount = (totalChapters ?: preparedChapterCount).coerceAtLeast(0)
+    val resolvedChapterIndex = (chapterIndex ?: progress?.chapterIndex ?: 0).coerceAtLeast(0)
+    val resolvedProgress = bookProgressPercent
+        ?.div(100f)
+        ?: calculateSharedTtsAudiobookProgress(
+            chapterIndex = resolvedChapterIndex,
+            chapterCount = resolvedChapterCount,
+            chunkIndex = currentChunkIndex,
+            chunkCount = totalChunks,
+        )
+    return SharedBookTtsListenState(
+        connected = isBookListening,
+        bookId = bookId,
+        isPlaying = isBookListening && isPlaying,
+        isLoading = isBookListening && isLoading,
+        chapterIndex = resolvedChapterIndex,
+        chapterCount = resolvedChapterCount,
+        chunkIndex = currentChunkIndex,
+        chunkCount = totalChunks,
+        chapterTitle = chapterTitle,
+        progressPercent = resolvedProgress.coerceIn(0f, 1f),
+        speechRate = progress?.speechRate ?: 1f,
+        pitch = progress?.pitch ?: 1f,
+        sleepTimerRemainingMs = sleepTimerRemainingMs.coerceAtLeast(0L),
+        sessionFinished = sessionFinished,
+        sessionEndedByStop = sessionEndedByStop,
+        error = errorMessage,
+        transcriptStartIndex = transcriptStartIndex,
+        transcriptChunks = transcriptChunks,
+    )
 }

@@ -1,5 +1,13 @@
 package com.aryan.reader.shared
 
+fun pdfReadingProgressPercentage(pageIndex: Int, totalPages: Int): Float {
+    return if (totalPages > 0) {
+        ((pageIndex + 1).toFloat() / totalPages.toFloat()) * 100f
+    } else {
+        0f
+    }
+}
+
 fun BookItem.withPdfReadingProgress(
     pageIndex: Int,
     progressPercentage: Float,

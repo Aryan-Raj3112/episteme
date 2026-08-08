@@ -279,6 +279,9 @@ import com.aryan.reader.scaledToCanvasLimit
 import com.aryan.reader.shared.ReaderTtsReplacementPreferences
 import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.pdf.PdfSpreadLayout
+import com.aryan.reader.shared.pdf.SharedPdfAnnotationSessionAction
+import com.aryan.reader.shared.pdf.SharedPdfAnnotationSessionState
+import com.aryan.reader.shared.pdf.reduce
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.ui.ReaderMinimalSlider
 import com.aryan.reader.shouldRenderReaderSlider
@@ -1005,8 +1008,7 @@ fun PdfViewerScreen(
 
     var lastEraserPoint by remember { mutableStateOf<PdfPoint?>(null) }
 
-    var areAnnotationsLoaded by remember { mutableStateOf(false) }
-    var loadedSidecarBookId by remember { mutableStateOf<String?>(null) }
+    var annotationSession by remember { mutableStateOf(SharedPdfAnnotationSessionState()) }
 
     val richTextRepository = remember(context) { PdfRichTextRepository(context) }
     val richTextController = remember(currentBookId) {
@@ -1343,8 +1345,7 @@ fun PdfViewerScreen(
 
     val lastSavedHashes = remember(currentBookId) { IntArray(5) { -1 } }
 
-    val sidecarsReadyForCurrentBook =
-        canUsePdfSidecarsForBook(currentBookId, loadedSidecarBookId, areAnnotationsLoaded)
+    val sidecarsReadyForCurrentBook = annotationSession.canUseFor(currentBookId)
     val textBoxesSnapshot by remember { derivedStateOf { textBoxes.toList() } }
     val userHighlightsSnapshot by remember { derivedStateOf { userHighlights.toList() } }
     val visibleAllAnnotations = if (sidecarsReadyForCurrentBook) allAnnotations else emptyMap()
@@ -1368,8 +1369,7 @@ fun PdfViewerScreen(
     val currentAnnotations by rememberUpdatedState(allAnnotations)
     val currentTextBoxes by rememberUpdatedState(textBoxesSnapshot)
     val currentHighlights by rememberUpdatedState(userHighlightsSnapshot)
-    val currentLoadedSidecarBookId by rememberUpdatedState(loadedSidecarBookId)
-    val currentAreAnnotationsLoaded by rememberUpdatedState(areAnnotationsLoaded)
+    val currentAnnotationSession by rememberUpdatedState(annotationSession)
     val currentBookmarks by rememberUpdatedState(bookmarks)
     val currentTotalPages by rememberUpdatedState(totalDisplayPages)
     val currentPageState by rememberUpdatedState(currentPage)
@@ -1382,12 +1382,9 @@ fun PdfViewerScreen(
     val saveAllData = remember(currentBookId, annotationRepository, textBoxRepository, highlightRepository) {
         { force: Boolean ->
             val bookIdSnapshot = currentBookId
-            val loadedSidecarBookIdSnapshot = currentLoadedSidecarBookId
-            val canSaveSidecarsSnapshot = canUsePdfSidecarsForBook(
-                bookIdSnapshot,
-                loadedSidecarBookIdSnapshot,
-                currentAreAnnotationsLoaded
-            )
+            val annotationSessionSnapshot = currentAnnotationSession
+            val loadedSidecarBookIdSnapshot = annotationSessionSnapshot.bookId
+            val canSaveSidecarsSnapshot = annotationSessionSnapshot.canUseFor(bookIdSnapshot)
             // saveAllData is remembered for the life of a document. Read these changing
             // values through rememberUpdatedState so a pause never saves the initial
             // restoration target after the reader has moved on.
@@ -1525,12 +1522,9 @@ fun PdfViewerScreen(
     val persistInkAnnotationsNow = remember(currentBookId, annotationRepository) {
         { annotationsSnapshot: Map<Int, List<PdfAnnotation>>, deletedAnnotations: Collection<PdfAnnotation>, reason: String ->
             val bookIdSnapshot = currentBookId
-            val loadedSidecarBookIdSnapshot = currentLoadedSidecarBookId
-            val canSaveSidecarsSnapshot = canUsePdfSidecarsForBook(
-                bookIdSnapshot,
-                loadedSidecarBookIdSnapshot,
-                currentAreAnnotationsLoaded
-            )
+            val annotationSessionSnapshot = currentAnnotationSession
+            val loadedSidecarBookIdSnapshot = annotationSessionSnapshot.bookId
+            val canSaveSidecarsSnapshot = annotationSessionSnapshot.canUseFor(bookIdSnapshot)
             viewModel.viewModelScope.launch {
                 val bookId = bookIdSnapshot ?: return@launch
                 if (!canSaveSidecarsSnapshot) {
@@ -2623,8 +2617,7 @@ fun PdfViewerScreen(
                 "previousVirtual=${virtualPages.pdfLayoutDebugSummary()}"
         )
 
-        areAnnotationsLoaded = false
-        loadedSidecarBookId = null
+        annotationSession = annotationSession.reduce(SharedPdfAnnotationSessionAction.Reset)
         allAnnotations = emptyMap()
         textBoxes.clear()
         userHighlights.clear()
@@ -2644,6 +2637,10 @@ fun PdfViewerScreen(
             return@LaunchedEffect
         }
 
+        annotationSession = annotationSession.reduce(
+            SharedPdfAnnotationSessionAction.LoadStarted(loadingBookId),
+        )
+
         val loaded = annotationRepository.loadAnnotations(loadingBookId)
         val loadedBoxes = textBoxRepository.loadTextBoxes(loadingBookId)
         val loadedHighlights = highlightRepository.loadHighlights(loadingBookId)
@@ -2656,8 +2653,14 @@ fun PdfViewerScreen(
         lastSavedHashes[0] = loaded.hashCode()
         lastSavedHashes[1] = loadedBoxes.hashCode()
         lastSavedHashes[2] = loadedHighlights.hashCode()
-        loadedSidecarBookId = loadingBookId
-        areAnnotationsLoaded = true
+        annotationSession = annotationSession.reduce(
+            SharedPdfAnnotationSessionAction.LoadCompleted(
+                bookId = loadingBookId,
+                inkCount = loaded.values.sumOf { it.size },
+                textBoxCount = loadedBoxes.size,
+                highlightCount = loadedHighlights.size,
+            ),
+        )
         logCloudAnnotationSyncTrace {
             "android.reader.sidecar_load book=$loadingBookId inkPages=${loaded.keys.sorted()} " +
                 "inkCount=${loaded.values.sumOf { it.size }} textBoxes=${loadedBoxes.size} " +
@@ -3604,8 +3607,7 @@ fun PdfViewerScreen(
         documentMetadataTitle = null
         isPrintBlockedForPasswordProtectedPdf = false
         currentBookId = null
-        areAnnotationsLoaded = false
-        loadedSidecarBookId = null
+        annotationSession = annotationSession.reduce(SharedPdfAnnotationSessionAction.Reset)
         allAnnotations = emptyMap()
         textBoxes.clear()
         userHighlights.clear()

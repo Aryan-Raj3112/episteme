@@ -34,43 +34,28 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.edit
 import com.aryan.reader.shared.ui.ReaderMinimalSlider
+import com.aryan.reader.shared.ui.SharedReaderBrightnessLabels
+import com.aryan.reader.shared.ui.SharedReaderBrightnessSheet
 import kotlin.math.roundToInt
 
 private const val READER_PREFS_NAME = "reader_prefs"
 private const val PREF_READER_BRIGHTNESS_USE_SYSTEM = "reader_brightness_use_system"
 private const val PREF_READER_BRIGHTNESS_VALUE = "reader_brightness_value"
-private const val DEFAULT_CUSTOM_BRIGHTNESS = 0.75f
-private const val MIN_CUSTOM_BRIGHTNESS_PERCENT = 1
-private const val MAX_CUSTOM_BRIGHTNESS_PERCENT = 100
-private const val CUSTOM_BRIGHTNESS_STEP_PERCENT = 1
-private const val MIN_CUSTOM_BRIGHTNESS = 0.01f
-
-data class ReaderBrightnessSettings(
-    val useSystemBrightness: Boolean = true,
-    val customBrightness: Float = DEFAULT_CUSTOM_BRIGHTNESS
-) {
-    val safeCustomBrightness: Float
-        get() = normalizeReaderBrightness(customBrightness)
-}
+typealias ReaderBrightnessSettings = com.aryan.reader.shared.ReaderBrightnessSettings
 
 internal fun normalizeReaderBrightness(brightness: Float): Float {
-    val percent = (brightness * 100f).roundToInt()
-        .coerceIn(MIN_CUSTOM_BRIGHTNESS_PERCENT, MAX_CUSTOM_BRIGHTNESS_PERCENT)
-    return percent / 100f
+    return com.aryan.reader.shared.normalizeReaderBrightness(brightness)
 }
 
 internal fun stepReaderBrightness(brightness: Float, percentDelta: Int): Float {
-    val currentPercent = (normalizeReaderBrightness(brightness) * 100f).roundToInt()
-    val nextPercent = (currentPercent + percentDelta)
-        .coerceIn(MIN_CUSTOM_BRIGHTNESS_PERCENT, MAX_CUSTOM_BRIGHTNESS_PERCENT)
-    return nextPercent / 100f
+    return com.aryan.reader.shared.stepReaderBrightness(brightness, percentDelta)
 }
 
 fun loadReaderBrightnessSettings(context: Context): ReaderBrightnessSettings {
     val prefs = context.getSharedPreferences(READER_PREFS_NAME, Context.MODE_PRIVATE)
     return ReaderBrightnessSettings(
         useSystemBrightness = prefs.getBoolean(PREF_READER_BRIGHTNESS_USE_SYSTEM, true),
-        customBrightness = prefs.getFloat(PREF_READER_BRIGHTNESS_VALUE, DEFAULT_CUSTOM_BRIGHTNESS)
+        customBrightness = prefs.getFloat(PREF_READER_BRIGHTNESS_VALUE, com.aryan.reader.shared.DefaultReaderCustomBrightness)
             .let(::normalizeReaderBrightness)
     )
 }
@@ -112,153 +97,22 @@ fun ReaderBrightnessSheet(
     onSettingsChange: (ReaderBrightnessSettings) -> Unit,
     onDismiss: () -> Unit
 ) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 24.dp, vertical = 8.dp)
-                .padding(bottom = 32.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text(
-                    text = stringResource(R.string.reader_brightness_title),
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold
-                )
-                TextButton(onClick = onDismiss) {
-                    Text(stringResource(R.string.action_done))
-                }
-            }
-
-            HorizontalDivider()
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = stringResource(R.string.reader_brightness_system),
-                        style = MaterialTheme.typography.titleMedium
-                    )
-                    Text(
-                        text = stringResource(R.string.reader_brightness_system_desc),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                Switch(
-                    checked = settings.useSystemBrightness,
-                    onCheckedChange = { useSystem ->
-                        onSettingsChange(settings.copy(useSystemBrightness = useSystem))
-                    }
-                )
-            }
-
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text(
-                        text = stringResource(R.string.reader_brightness_custom),
-                        style = MaterialTheme.typography.titleMedium
-                    )
-                    Text(
-                        text = stringResource(
-                            R.string.reader_brightness_percent,
-                            (settings.safeCustomBrightness * 100f).roundToInt()
-                        ),
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-                ReaderBrightnessControl(
-                    settings = settings,
-                    onSettingsChange = onSettingsChange
-                )
-                Text(
-                    text = stringResource(R.string.reader_brightness_custom_desc),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-
-            Spacer(Modifier.height(4.dp))
-        }
-    }
-}
-
-@Composable
-private fun ReaderBrightnessControl(
-    settings: ReaderBrightnessSettings,
-    onSettingsChange: (ReaderBrightnessSettings) -> Unit
-) {
-    val brightness = settings.safeCustomBrightness
-    val canDecrease = brightness > MIN_CUSTOM_BRIGHTNESS
-    val canIncrease = brightness < 1f
-
-    fun updateBrightness(value: Float) {
-        onSettingsChange(
-            settings.copy(
-                useSystemBrightness = false,
-                customBrightness = normalizeReaderBrightness(value)
-            )
-        )
-    }
-
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        IconButton(
-            onClick = {
-                updateBrightness(stepReaderBrightness(brightness, -CUSTOM_BRIGHTNESS_STEP_PERCENT))
-            },
-            enabled = canDecrease,
-            modifier = Modifier.size(36.dp)
-        ) {
-            Icon(
-                imageVector = Icons.Default.Remove,
-                contentDescription = stringResource(R.string.content_desc_decrease),
-                modifier = Modifier.size(18.dp)
-            )
-        }
-        ReaderMinimalSlider(
-            value = brightness,
-            onValueChange = ::updateBrightness,
-            valueRange = MIN_CUSTOM_BRIGHTNESS..1f,
-            activeColor = MaterialTheme.colorScheme.primary,
-            inactiveColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f),
-            thumbColor = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.weight(1f)
-        )
-        IconButton(
-            onClick = {
-                updateBrightness(stepReaderBrightness(brightness, CUSTOM_BRIGHTNESS_STEP_PERCENT))
-            },
-            enabled = canIncrease,
-            modifier = Modifier.size(36.dp)
-        ) {
-            Icon(
-                imageVector = Icons.Default.Add,
-                contentDescription = stringResource(R.string.content_desc_increase),
-                modifier = Modifier.size(18.dp)
-            )
-        }
-    }
+    SharedReaderBrightnessSheet(
+        settings = settings,
+        onSettingsChange = onSettingsChange,
+        labels = SharedReaderBrightnessLabels(
+            title = stringResource(R.string.reader_brightness_title),
+            done = stringResource(R.string.action_done),
+            system = stringResource(R.string.reader_brightness_system),
+            systemDescription = stringResource(R.string.reader_brightness_system_desc),
+            custom = stringResource(R.string.reader_brightness_custom),
+            customDescription = stringResource(R.string.reader_brightness_custom_desc),
+            percent = stringResource(R.string.reader_brightness_percent, (settings.safeCustomBrightness * 100f).roundToInt()),
+            decrease = stringResource(R.string.content_desc_decrease),
+            increase = stringResource(R.string.content_desc_increase)
+        ),
+        onDismiss = onDismiss
+    )
 }
 
 private fun Window.setReaderBrightness(brightness: Float) {

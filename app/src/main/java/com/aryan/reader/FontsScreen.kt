@@ -78,6 +78,12 @@ import com.aryan.reader.shared.hasVariableWeightFace
 import com.aryan.reader.shared.ui.SharedAppFontSelector
 import com.aryan.reader.shared.ui.SharedFontSettingsSection
 import com.aryan.reader.shared.ui.SharedFontSettingsTabs
+import com.aryan.reader.shared.ui.SharedFontFamilyCardFrame
+import com.aryan.reader.shared.ui.SharedFontFamilyCardContent
+import com.aryan.reader.shared.ui.SharedFontVariantRowFrame
+import com.aryan.reader.shared.ui.SharedDeleteFontsConfirmationDialog
+import com.aryan.reader.shared.ui.SharedGoogleFontsBottomSheet
+import com.aryan.reader.shared.ui.SharedGoogleFontsLabels
 import com.aryan.reader.data.CustomFontEntity
 import java.io.File
 
@@ -291,156 +297,28 @@ fun FontsScreen(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun GoogleFontsBottomSheet(
     onDismiss: () -> Unit,
     existingFonts: List<CustomFontEntity>,
     getFullFontList: () -> List<String>,
-    onDownloadFont: (String, () -> Unit) -> Unit
+    onDownloadFont: (String, () -> Unit) -> Unit,
 ) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    var searchQuery by remember { mutableStateOf("") }
-    var downloadingFontName by remember { mutableStateOf<String?>(null) }
-
-    // Curated presets to show when search is empty
-    val popularPresets = remember {
-        listOf(
-            "Merriweather", "Open Sans", "Playfair Display", "Montserrat", "Oswald", "Raleway", "Nunito",
-            "Poppins", "Ubuntu", "Fira Sans", "Quicksand", "Crimson Text",
-            "Literata", "EB Garamond", "Libre Baskerville", "Inter", "Work Sans"
-        )
-    }
-
-    // Lazy evaluation of the full list only when typing
-    val displayList = remember(searchQuery) {
-        if (searchQuery.isBlank()) {
-            popularPresets
-        } else {
-            val allFonts = getFullFontList()
-            allFonts.filter { it.contains(searchQuery, ignoreCase = true) }.take(50) // Limit to 50 for performance
-        }
-    }
-
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        containerColor = MaterialTheme.colorScheme.surface
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp)
-        ) {
-            Text(
-                text = stringResource(R.string.action_browse_google_fonts),
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(bottom = 12.dp)
-            )
-
-            OutlinedTextField(
-                value = searchQuery,
-                onValueChange = { searchQuery = it },
-                modifier = Modifier.fillMaxWidth(),
-                placeholder = { Text(stringResource(R.string.google_fonts_search_placeholder)) },
-                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                singleLine = true,
-                shape = RoundedCornerShape(12.dp)
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            LazyColumn(
-                modifier = Modifier.fillMaxWidth(),
-                contentPadding = PaddingValues(bottom = 24.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                if (searchQuery.isBlank()) {
-                    item {
-                        Text(
-                            text = stringResource(R.string.google_fonts_popular_choices),
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.padding(vertical = 4.dp)
-                        )
-                    }
-                } else if (displayList.isEmpty()) {
-                    item {
-                        Text(
-                            text = stringResource(R.string.google_fonts_no_matches, searchQuery),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(16.dp)
-                        )
-                    }
-                }
-
-                items(displayList) { fontName ->
-                    val isDownloaded = remember(existingFonts, fontName) {
-                        existingFonts.any { it.displayName.equals(fontName, ignoreCase = true) }
-                    }
-                    val isDownloading = downloadingFontName == fontName
-
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable(enabled = !isDownloaded && !isDownloading) {
-                                downloadingFontName = fontName
-                                onDownloadFont(fontName) {
-                                    if (downloadingFontName == fontName) {
-                                        downloadingFontName = null
-                                    }
-                                }
-                            }
-                            .background(
-                                if (isDownloaded) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.2f)
-                                else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
-                            )
-                            .padding(horizontal = 16.dp, vertical = 14.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text(
-                            text = fontName,
-                            style = MaterialTheme.typography.bodyLarge,
-                            fontWeight = if (isDownloaded) FontWeight.Bold else FontWeight.Medium,
-                            color = if (isDownloaded) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                        )
-
-                        Box(modifier = Modifier.padding(start = 12.dp)) {
-                            when {
-                                isDownloaded -> {
-                                    Icon(
-                                        Icons.Default.Check,
-                                        contentDescription = stringResource(R.string.content_desc_already_downloaded),
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                }
-                                isDownloading -> {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(20.dp),
-                                        strokeWidth = 2.dp,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                }
-                                else -> {
-                                    Icon(
-                                        Icons.Default.CloudDownload,
-                                        contentDescription = stringResource(R.string.action_download),
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
+    val context = LocalContext.current
+    SharedGoogleFontsBottomSheet(
+        existingFontNames = existingFonts.map { it.displayName },
+        getFullFontList = getFullFontList,
+        onDownloadFont = onDownloadFont,
+        labels = SharedGoogleFontsLabels(
+            title = stringResource(R.string.action_browse_google_fonts),
+            searchPlaceholder = stringResource(R.string.google_fonts_search_placeholder),
+            popularChoices = stringResource(R.string.google_fonts_popular_choices),
+            noMatches = { query -> context.getString(R.string.google_fonts_no_matches, query) },
+            alreadyDownloadedContentDescription = stringResource(R.string.content_desc_already_downloaded),
+            downloadContentDescription = stringResource(R.string.action_download),
+        ),
+        onDismiss = onDismiss,
+    )
 }
 
 // Existing unchanged components
@@ -577,99 +455,34 @@ fun FontFamilyListItem(
         }
     }
 
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .combinedClickable(
-                onClick = {
-                    if (isSelectionMode) {
-                        onFamilySelectionToggle()
-                    }
-                },
-                onLongClick = onFamilySelectionToggle
-            ),
-        colors = CardDefaults.cardColors(
-            containerColor = if (isSelected) {
-                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
-            } else {
-                MaterialTheme.colorScheme.surface
-            }
-        )
+    SharedFontFamilyCardFrame(
+        isSelected = isSelected,
+        isSelectionMode = isSelectionMode,
+        onSelectionToggle = onFamilySelectionToggle,
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                if (isSelectionMode) {
-                    Checkbox(
-                        checked = allSelected,
-                        onCheckedChange = { onFamilySelectionToggle() },
-                        modifier = Modifier.padding(end = 8.dp)
-                    )
-                }
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = family.familyName,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        text = faceSummary,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-            }
-
-            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), MaterialTheme.shapes.small)
-                    .padding(12.dp)
-            ) {
-                if (customTypeface != null) {
-                    Text(
-                        text = stringResource(R.string.font_preview_text),
-                        fontFamily = customTypeface,
-                        fontSize = 18.sp,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                } else {
-                    Text(
-                        text = stringResource(R.string.font_preview_error),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            family.variants.forEachIndexed { index, variant ->
-                FontVariantRow(
-                    variant = variant,
-                    entity = fontEntityForId(variant.font.id),
-                    isSelected = variant.font.id in selectedFontIds,
-                    isSelectionMode = isSelectionMode,
-                    onSelectionToggle = { onVariantSelectionToggle(variant.font.id) },
-                    onDelete = { onDeleteVariant(variant.font.id) }
-                )
-                if (index != family.variants.lastIndex) {
-                    HorizontalDivider(modifier = Modifier.padding(start = if (isSelectionMode) 48.dp else 0.dp))
-                }
-            }
+        SharedFontFamilyCardContent(
+            familyName = family.familyName,
+            faceSummary = faceSummary,
+            allSelected = allSelected,
+            isSelectionMode = isSelectionMode,
+            previewText = stringResource(R.string.font_preview_text),
+            previewErrorText = stringResource(R.string.font_preview_error),
+            previewFontFamily = customTypeface,
+            variantCount = family.variants.size,
+            onFamilySelectionToggle = onFamilySelectionToggle,
+        ) { index ->
+            val variant = family.variants[index]
+            FontVariantRow(
+                variant = variant,
+                entity = fontEntityForId(variant.font.id),
+                isSelected = variant.font.id in selectedFontIds,
+                isSelectionMode = isSelectionMode,
+                onSelectionToggle = { onVariantSelectionToggle(variant.font.id) },
+                onDelete = { onDeleteVariant(variant.font.id) },
+            )
         }
     }
 }
-
 @Composable
 private fun FontVariantRow(
     variant: CustomFontVariantItem,
@@ -677,51 +490,29 @@ private fun FontVariantRow(
     isSelected: Boolean,
     isSelectionMode: Boolean,
     onSelectionToggle: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
 ) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(6.dp))
-            .clickable(enabled = isSelectionMode) { onSelectionToggle() }
-            .padding(vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
+    SharedFontVariantRowFrame(
+        isSelected = isSelected,
+        isSelectionMode = isSelectionMode,
+        extensionLabel = variant.font.fileExtension.uppercase(),
+        deleteContentDescription = stringResource(R.string.action_delete),
+        onSelectionToggle = onSelectionToggle,
+        onDelete = onDelete,
     ) {
-        if (isSelectionMode) {
-            Checkbox(
-                checked = isSelected,
-                onCheckedChange = { onSelectionToggle() },
-                modifier = Modifier.padding(end = 8.dp)
-            )
-        }
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = variant.fontFaceLabel(),
                 style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.Medium
+                fontWeight = FontWeight.Medium,
             )
             Text(
                 text = entity?.fileName ?: variant.font.fileName,
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.outline,
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                overflow = TextOverflow.Ellipsis,
             )
-        }
-        Text(
-            text = variant.font.fileExtension.uppercase(),
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.outline,
-            modifier = Modifier.padding(horizontal = 8.dp)
-        )
-        if (!isSelectionMode) {
-            IconButton(onClick = onDelete, modifier = Modifier.size(32.dp)) {
-                Icon(
-                    Icons.Default.Delete,
-                    contentDescription = stringResource(R.string.action_delete),
-                    tint = MaterialTheme.colorScheme.error
-                )
-            }
         }
     }
 }
@@ -737,7 +528,7 @@ private fun List<CustomFontEntity>.toSharedCustomFontItems(): List<CustomFontIte
                 fileExtension = font.fileExtension,
                 path = font.path,
                 timestamp = font.timestamp,
-                isDeleted = font.isDeleted
+                isDeleted = font.isDeleted,
             )
         }
 }
@@ -749,37 +540,21 @@ fun DeleteFontsConfirmationDialog(
     onDismiss: () -> Unit
 ) {
     val isSingleFont = fonts.size == 1
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Text(
-                if (isSingleFont) {
-                    stringResource(R.string.dialog_delete_font)
-                } else {
-                    stringResource(R.string.dialog_delete_fonts)
-                }
-            )
+    SharedDeleteFontsConfirmationDialog(
+        title = if (isSingleFont) {
+            stringResource(R.string.dialog_delete_font)
+        } else {
+            stringResource(R.string.dialog_delete_fonts)
         },
-        text = {
-            Text(
-                if (isSingleFont) {
-                    stringResource(R.string.dialog_delete_font_desc, fonts.first().displayName)
-                } else {
-                    stringResource(R.string.dialog_delete_fonts_desc, fonts.size)
-                }
-            )
+        body = if (isSingleFont) {
+            stringResource(R.string.dialog_delete_font_desc, fonts.first().displayName)
+        } else {
+            stringResource(R.string.dialog_delete_fonts_desc, fonts.size)
         },
-        confirmButton = {
-            TextButton(
-                onClick = onConfirm,
-                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
-            ) {
-                Text(stringResource(R.string.action_delete))
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
-        }
+        confirmLabel = stringResource(R.string.action_delete),
+        dismissLabel = stringResource(R.string.action_cancel),
+        onConfirm = onConfirm,
+        onDismiss = onDismiss,
     )
 }
 

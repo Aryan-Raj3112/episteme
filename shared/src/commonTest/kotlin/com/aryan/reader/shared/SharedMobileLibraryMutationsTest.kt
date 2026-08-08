@@ -8,6 +8,48 @@ import kotlin.test.assertTrue
 
 class SharedMobileLibraryMutationsTest {
     @Test
+    fun `synced folder mutations preserve Android add update and removal policy`() {
+        val existing = SyncedFolder(
+            uriString = "folder://existing",
+            name = "Existing",
+            lastScanTime = 1L,
+            allowedFileTypes = setOf(FileType.PDF, FileType.EPUB),
+        )
+
+        assertEquals(SyncedFolderAddDecision.INVALID_URI, syncedFolderAddDecision(listOf(existing), "  "))
+        assertEquals(
+            SyncedFolderAddDecision.ALREADY_SYNCED,
+            syncedFolderAddDecision(listOf(existing), existing.uriString),
+        )
+        assertEquals(
+            SyncedFolderAddDecision.LIMIT_REACHED,
+            syncedFolderAddDecision(
+                List(MAX_SYNCED_FOLDER_COUNT) { index -> existing.copy(uriString = "folder://$index") },
+                "folder://new",
+            ),
+        )
+
+        val added = listOf(existing).withSyncedFolder(
+            existing.copy(uriString = "  folder://new  ", name = "New"),
+        )
+        assertEquals(listOf("folder://existing", "folder://new"), added.map { it.uriString })
+
+        val disabled = added.withSyncedFolderLocalSync(existing.uriString, enabled = false)
+        assertFalse(disabled.first().localSyncEnabled)
+        assertTrue(disabled.last().localSyncEnabled)
+
+        val filtered = disabled.withSyncedFolderFileTypes(
+            uriString = existing.uriString,
+            requestedFileTypes = setOf(FileType.PDF, FileType.UNKNOWN, FileType.MOBI),
+            supportedFileTypes = setOf(FileType.PDF, FileType.MOBI),
+        )
+        assertEquals(setOf(FileType.PDF, FileType.MOBI), filtered.first().allowedFileTypes)
+        assertEquals(added.last().allowedFileTypes, filtered.last().allowedFileTypes)
+
+        assertEquals(listOf("folder://new"), filtered.withoutSyncedFolder(existing.uriString).map { it.uriString })
+    }
+
+    @Test
     fun `mobile folder scans apply only to new or locally enabled folders`() {
         val enabled = SyncedFolder(
             uriString = "folder://enabled",

@@ -822,7 +822,8 @@ fun SharedMobileEpubReaderScreen(
                     sourceCfi = locator.cfi
                 )
             ).withTtsReplacements(readerTtsReplacementPreferences, book.id),
-            bookTitle = epub.title
+            bookTitle = epub.title,
+            bookId = book.id,
         )
     }
 
@@ -1443,7 +1444,8 @@ fun SharedMobileEpubReaderScreen(
                                         chunks = ReaderTtsPlanner.chunksFromCurrentLocation(session)
                                             .ifEmpty { ReaderTtsPlanner.chunksForCurrentChapter(session) }
                                             .withTtsReplacements(readerTtsReplacementPreferences, book.id),
-                                        bookTitle = epub.title
+                                        bookTitle = epub.title,
+                                        bookId = book.id,
                                     )
                                 }
                                 SharedMobileEpubLocalTtsState.SPEAKING -> localTts.pause()
@@ -1497,7 +1499,8 @@ fun SharedMobileEpubReaderScreen(
                                             chunks = ReaderTtsPlanner.chunksFromCurrentLocation(session)
                                                 .ifEmpty { ReaderTtsPlanner.chunksForCurrentChapter(session) }
                                                 .withTtsReplacements(readerTtsReplacementPreferences, book.id),
-                                            bookTitle = epub.title
+                                            bookTitle = epub.title,
+                                            bookId = book.id,
                                         )
                                     }
                                     SharedMobileEpubLocalTtsState.SPEAKING -> localTts.pause()

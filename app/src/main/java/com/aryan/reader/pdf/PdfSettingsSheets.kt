@@ -80,6 +80,8 @@ import com.aryan.reader.epubreader.SystemUiMode
 import com.aryan.reader.epubreader.titleRes
 import com.aryan.reader.readerModalMaxHeightDp
 import com.aryan.reader.shared.reader.ReaderPageSpreadMode
+import com.aryan.reader.shared.ui.SharedPdfVisualOptionsLabels
+import com.aryan.reader.shared.ui.SharedPdfVisualOptionsSheet
 
 
 enum class PdfFlatItemType { SECTION_HEADER, TOOL, EMPTY_PLACEHOLDER, MORE_HEADER, MORE_TOOL }
@@ -572,122 +574,40 @@ fun PdfVisualOptionsSheet(
     onShowPageNumberOverlayChange: (Boolean) -> Unit,
     onDismiss: () -> Unit
 ) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val configuration = LocalConfiguration.current
     val maxSheetHeight = readerModalMaxHeightDp(configuration.screenHeightDp).dp
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        containerColor = MaterialTheme.colorScheme.surface,
-        contentWindowInsets = { WindowInsets.navigationBars }
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(max = maxSheetHeight)
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 24.dp, vertical = 8.dp)
-                .padding(bottom = 32.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(stringResource(R.string.menu_visual_options), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                IconButton(onClick = onDismiss) {
-                    Icon(Icons.Default.Close, contentDescription = stringResource(R.string.action_close))
-                }
-            }
-            Spacer(modifier = Modifier.height(16.dp))
-
-            Text(stringResource(R.string.visual_options_system_ui), style = MaterialTheme.typography.titleMedium)
-            Text(stringResource(R.string.visual_options_system_ui_desc), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(modifier = Modifier.height(12.dp))
-
-            OptionSegmentedControl(
-                options = SystemUiMode.entries,
-                selectedOption = systemUiMode,
-                onOptionSelected = onSystemUiModeChange,
-                getLabel = { stringResource(it.titleRes) }
-            )
-
-            Spacer(modifier = Modifier.height(20.dp))
-            HorizontalDivider()
-            Spacer(modifier = Modifier.height(12.dp))
-
-            Text(stringResource(R.string.visual_options_page_layout), style = MaterialTheme.typography.titleMedium)
-            Spacer(modifier = Modifier.height(4.dp))
-            if (displayMode == DisplayMode.PAGINATION) {
-                Text(
-                    stringResource(R.string.visual_options_pdf_page_spread),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                OptionSegmentedControl(
-                    options = ReaderPageSpreadMode.entries,
-                    selectedOption = pageSpreadMode,
-                    onOptionSelected = onPageSpreadModeChange,
-                    getLabel = {
-                        when (it) {
-                            ReaderPageSpreadMode.SINGLE -> stringResource(R.string.visual_options_pdf_spread_single)
-                            ReaderPageSpreadMode.TWO_PAGE -> stringResource(R.string.visual_options_pdf_spread_two)
-                        }
-                    }
-                )
-                if (pageSpreadMode == ReaderPageSpreadMode.TWO_PAGE) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    PdfVisualOptionSwitchRow(
-                        title = stringResource(R.string.visual_options_pdf_first_page_alone),
-                        description = stringResource(R.string.visual_options_pdf_first_page_alone_desc),
-                        checked = firstPageStandaloneInSpread,
-                        onCheckedChange = onFirstPageStandaloneInSpreadChange
-                    )
-                }
-                Spacer(modifier = Modifier.height(12.dp))
-            }
-            PdfVisualOptionSwitchRow(
-                title = stringResource(R.string.visual_options_remove_page_gap),
-                description = stringResource(R.string.visual_options_remove_page_gap_desc),
-                checked = !showVerticalPageGap,
-                onCheckedChange = { removeGap ->
-                    onShowVerticalPageGapChange(!removeGap)
-                }
-            )
-            PdfVisualOptionSwitchRow(
-                title = stringResource(R.string.visual_options_hide_page_number_overlay),
-                description = stringResource(R.string.visual_options_hide_page_number_overlay_desc),
-                checked = !showPageNumberOverlay,
-                onCheckedChange = { hideOverlay ->
-                    onShowPageNumberOverlayChange(!hideOverlay)
-                }
-            )
-        }
-    }
-}
-
-@Composable
-private fun PdfVisualOptionSwitchRow(
-    title: String,
-    description: String,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
-            Text(
-                description,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-        Switch(checked = checked, onCheckedChange = onCheckedChange)
-    }
+    SharedPdfVisualOptionsSheet(
+        displayMode = displayMode,
+        systemUiMode = systemUiMode,
+        pageSpreadMode = pageSpreadMode,
+        firstPageStandaloneInSpread = firstPageStandaloneInSpread,
+        showVerticalPageGap = showVerticalPageGap,
+        showPageNumberOverlay = showPageNumberOverlay,
+        onPageSpreadModeChange = onPageSpreadModeChange,
+        onFirstPageStandaloneInSpreadChange = onFirstPageStandaloneInSpreadChange,
+        onSystemUiModeChange = onSystemUiModeChange,
+        onShowVerticalPageGapChange = onShowVerticalPageGapChange,
+        onShowPageNumberOverlayChange = onShowPageNumberOverlayChange,
+        maxSheetHeight = maxSheetHeight,
+        labels = SharedPdfVisualOptionsLabels(
+            title = stringResource(R.string.menu_visual_options),
+            close = stringResource(R.string.action_close),
+            systemUi = stringResource(R.string.visual_options_system_ui),
+            systemUiDescription = stringResource(R.string.visual_options_system_ui_desc),
+            systemUiOptions = SystemUiMode.entries.associateWith { stringResource(it.titleRes) },
+            pageLayout = stringResource(R.string.visual_options_page_layout),
+            pageSpread = stringResource(R.string.visual_options_pdf_page_spread),
+            spreadOptions = mapOf(
+                ReaderPageSpreadMode.SINGLE to stringResource(R.string.visual_options_pdf_spread_single),
+                ReaderPageSpreadMode.TWO_PAGE to stringResource(R.string.visual_options_pdf_spread_two)
+            ),
+            firstPageAlone = stringResource(R.string.visual_options_pdf_first_page_alone),
+            firstPageAloneDescription = stringResource(R.string.visual_options_pdf_first_page_alone_desc),
+            removePageGap = stringResource(R.string.visual_options_remove_page_gap),
+            removePageGapDescription = stringResource(R.string.visual_options_remove_page_gap_desc),
+            hidePageNumberOverlay = stringResource(R.string.visual_options_hide_page_number_overlay),
+            hidePageNumberOverlayDescription = stringResource(R.string.visual_options_hide_page_number_overlay_desc)
+        ),
+        onDismiss = onDismiss
+    )
 }

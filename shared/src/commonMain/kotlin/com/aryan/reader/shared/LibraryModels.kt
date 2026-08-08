@@ -165,6 +165,8 @@ data class LibraryState(
     val sortOrder: SortOrder = SortOrder.RECENT,
     val filters: LibraryFilters = LibraryFilters(),
     val selectedBookIds: Set<String> = emptySet(),
+    val selectedShelfIds: Set<String> = emptySet(),
+    val libraryPage: Int = 0,
     val recentLimit: Int = 12,
     val message: String? = null,
     val messageText: SharedText? = null

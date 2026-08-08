@@ -21,6 +21,10 @@ import androidx.media3.session.MediaSessionService
 import androidx.media3.session.SessionToken
 import androidx.room.withTransaction
 import com.aryan.reader.data.AppDatabase
+import com.aryan.reader.shared.SharedAudiobookPlaybackRequest
+import com.aryan.reader.shared.SharedAudiobookPlaybackState
+import com.aryan.reader.shared.formatSharedAudiobookSleepTimer
+import com.aryan.reader.shared.sharedAudiobookResumePosition
 import com.google.common.util.concurrent.ListenableFuture
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
@@ -35,29 +39,8 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlin.time.Duration.Companion.milliseconds
 
-data class AudiobookPlaybackState(
-    val connected: Boolean = false,
-    val bookId: String? = null,
-    val isPlaying: Boolean = false,
-    val isLoading: Boolean = false,
-    val positionMs: Long = 0L,
-    val durationMs: Long = 0L,
-    val speed: Float = 1f,
-    val error: String? = null,
-)
-
-data class AudiobookPlaybackRequest(
-    val bookId: String,
-    val filePath: String,
-    val title: String,
-    val author: String?,
-    val narrator: String?,
-    val album: String?,
-    val coverPath: String?,
-    val positionMs: Long,
-    val durationMs: Long,
-    val speed: Float,
-)
+typealias AudiobookPlaybackState = SharedAudiobookPlaybackState
+typealias AudiobookPlaybackRequest = SharedAudiobookPlaybackRequest
 
 @OptIn(UnstableApi::class)
 class AudiobookPlaybackService : MediaSessionService(), Player.Listener {
@@ -203,6 +186,7 @@ class AudiobookController(context: Context) : Player.Listener {
     private val _sleepTimerLabel = MutableStateFlow("Sleep")
     val sleepTimerLabel = _sleepTimerLabel.asStateFlow()
     private var sleepCountdownJob: Job? = null
+    private var sleepTimerRemainingMs: Long = 0L
 
     fun connect(book: AudiobookPlaybackRequest) {
         pendingBook = book
@@ -256,7 +240,9 @@ class AudiobookController(context: Context) : Player.Listener {
     fun stop() {
         sleepCountdownJob?.cancel()
         sleepCountdownJob = null
+        sleepTimerRemainingMs = 0L
         _sleepTimerLabel.value = "Sleep"
+        _state.value = _state.value.copy(sleepTimerRemainingMs = 0L)
 
         context.startService(
             Intent(context, AudiobookPlaybackService::class.java)
@@ -268,7 +254,9 @@ class AudiobookController(context: Context) : Player.Listener {
         if (sleepCountdownJob != null) {
             sleepCountdownJob?.cancel()
             sleepCountdownJob = null
+            sleepTimerRemainingMs = 0L
             _sleepTimerLabel.value = "Sleep"
+            _state.value = _state.value.copy(sleepTimerRemainingMs = 0L)
             context.startService(Intent(context, AudiobookPlaybackService::class.java).setAction(ACTION_AUDIOBOOK_CANCEL_SLEEP_TIMER))
             return
         }
@@ -279,11 +267,15 @@ class AudiobookController(context: Context) : Player.Listener {
         sleepCountdownJob = scope.launch {
             var remaining = minutes * 60
             while (remaining > 0) {
+                sleepTimerRemainingMs = remaining * 1_000L
                 _sleepTimerLabel.value = formatSleepTimerLabel(remaining)
+                _state.value = _state.value.copy(sleepTimerRemainingMs = sleepTimerRemainingMs)
                 delay(1_000)
                 remaining--
             }
+            sleepTimerRemainingMs = 0L
             _sleepTimerLabel.value = "Sleep"
+            _state.value = _state.value.copy(sleepTimerRemainingMs = 0L)
             sleepCountdownJob = null
         }
     }
@@ -306,6 +298,7 @@ class AudiobookController(context: Context) : Player.Listener {
             positionMs = player.currentPosition.coerceAtLeast(0L),
             durationMs = player.duration.takeIf { it > 0 && it != C.TIME_UNSET } ?: 0L,
             speed = player.playbackParameters.speed,
+            sleepTimerRemainingMs = sleepTimerRemainingMs,
             error = player.playerError?.message,
         )
     }
@@ -323,7 +316,7 @@ class AudiobookController(context: Context) : Player.Listener {
 }
 
 internal fun audiobookResumePosition(savedPositionMs: Long, rewindMs: Long = 10_000L): Long =
-    (savedPositionMs - rewindMs).coerceAtLeast(0L)
+    sharedAudiobookResumePosition(savedPositionMs, rewindMs)
 
 internal fun formatSleepTimerLabel(remainingSeconds: Int): String =
-    "${remainingSeconds.coerceAtLeast(0) / 60}:${(remainingSeconds.coerceAtLeast(0) % 60).toString().padStart(2, '0')}"
+    formatSharedAudiobookSleepTimer(remainingSeconds)

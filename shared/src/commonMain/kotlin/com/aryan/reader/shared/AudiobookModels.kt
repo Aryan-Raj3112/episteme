@@ -67,6 +67,16 @@ data class SharedAudiobookPlaybackRequest(
     val speed: Float = 1f,
 )
 
+enum class SharedListeningTarget { IMPORTED_AUDIOBOOK, GENERATED_BOOK_TTS }
+
+enum class SharedListeningHandoff { STOP_TTS, STOP_AUDIOBOOK }
+
+/** Preserves Android's single-active-listening-source policy. */
+fun sharedListeningHandoff(target: SharedListeningTarget): SharedListeningHandoff = when (target) {
+    SharedListeningTarget.IMPORTED_AUDIOBOOK -> SharedListeningHandoff.STOP_TTS
+    SharedListeningTarget.GENERATED_BOOK_TTS -> SharedListeningHandoff.STOP_AUDIOBOOK
+}
+
 val SharedAudiobook.progressFraction: Float
     get() = if (durationMs > 0L) {
         (positionMs.toFloat() / durationMs).coerceIn(0f, 1f)

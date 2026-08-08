@@ -595,54 +595,17 @@ private fun TocTreeItem(
     onToggleExpand: () -> Unit,
     onClick: () -> Unit
 ) {
-    val backgroundColor by animateColorAsState(
-        targetValue = if (isCurrent) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.2f) else Color.Transparent,
-        label = "TocItemBackground"
+    com.aryan.reader.shared.ui.SharedAndroidEpubTocTreeItem(
+        label = label,
+        depth = depth,
+        isExpanded = isExpanded,
+        hasChildren = hasChildren,
+        isCurrent = isCurrent,
+        collapseDescription = stringResource(R.string.content_desc_collapse),
+        expandDescription = stringResource(R.string.content_desc_expand),
+        onToggleExpand = onToggleExpand,
+        onClick = onClick,
     )
-
-    val contentColor = if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(min = 48.dp)
-            .background(backgroundColor)
-            .clickable(onClick = onClick)
-            .padding(vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Spacer(modifier = Modifier.width((16 * depth).dp))
-
-        Box(
-            modifier = Modifier
-                .size(40.dp)
-                .clickable(
-                    enabled = hasChildren,
-                    onClick = onToggleExpand
-                ),
-            contentAlignment = Alignment.Center
-        ) {
-            if (hasChildren) {
-                Icon(
-                    imageVector = if (isExpanded) Icons.Default.KeyboardArrowDown else Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                    contentDescription = if (isExpanded) stringResource(R.string.content_desc_collapse) else stringResource(R.string.content_desc_expand),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-
-        Text(
-            text = label,
-            style = if (depth == 0) MaterialTheme.typography.bodyLarge else MaterialTheme.typography.bodyMedium,
-            fontWeight = if (isCurrent) FontWeight.Bold else if (depth == 0) FontWeight.SemiBold else FontWeight.Normal,
-            color = contentColor,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier
-                .weight(1f)
-                .padding(end = 16.dp)
-        )
-    }
 }
 
 @Composable
@@ -652,163 +615,32 @@ private fun BookmarksList(
     onRenameBookmark: (Bookmark, String) -> Unit,
     onDeleteBookmark: (Bookmark) -> Unit
 ) {
-    if (bookmarks.isEmpty()) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(16.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                stringResource(R.string.no_bookmarks_yet),
-                style = MaterialTheme.typography.bodyLarge,
-                textAlign = TextAlign.Center
-            )
-        }
-    } else {
-        var bookmarkMenuExpandedFor by remember { mutableStateOf<Bookmark?>(null) }
-        var showDeleteConfirmDialogFor by remember { mutableStateOf<Bookmark?>(null) }
-        var showRenameBookmarkDialog by remember { mutableStateOf<Bookmark?>(null) }
-
-        val listState = rememberLazyListState()
-
-        Box(modifier = Modifier.fillMaxSize()) {
-            LazyColumn(
-                state = listState,
-                modifier = Modifier.fillMaxSize().padding(end = 4.dp)
-            ) {
-                items(
-                    items = bookmarks.distinctBy { it.cfi }.sortedBy { it.cfi },
-                    key = { it.cfi }
-                ) { bookmark ->
-                    ListItem(
-                        headlineContent = {
-                            Text(
-                                text = bookmark.label?.takeIf { it.isNotBlank() } ?: bookmark.snippet.ifBlank { "Bookmark" },
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                style = MaterialTheme.typography.bodyLarge
-                            )
-                        },
-                        supportingContent = {
-                            Column {
-                                Text(
-                                    text = bookmark.chapterTitle,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                if (bookmark.pageInChapter != null && bookmark.totalPagesInChapter != null) {
-                                    Text(
-                                        text = "Page ${bookmark.pageInChapter} of ${bookmark.totalPagesInChapter}",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                        },
-                        trailingContent = {
-                            Box {
-                                IconButton(onClick = { bookmarkMenuExpandedFor = bookmark }) {
-                                    Icon(
-                                        imageVector = Icons.Default.MoreVert,
-                                        contentDescription = stringResource(R.string.content_desc_more_options_bookmark)
-                                    )
-                                }
-                                DropdownMenu(
-                                    expanded = bookmarkMenuExpandedFor == bookmark,
-                                    onDismissRequest = { bookmarkMenuExpandedFor = null }
-                                ) {
-                                    DropdownMenuItem(
-                                        text = { Text(stringResource(R.string.action_rename)) },
-                                        onClick = {
-                                            showRenameBookmarkDialog = bookmark
-                                            bookmarkMenuExpandedFor = null
-                                        }
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text(stringResource(R.string.action_delete)) },
-                                        onClick = {
-                                            showDeleteConfirmDialogFor = bookmark
-                                            bookmarkMenuExpandedFor = null
-                                        }
-                                    )
-                                }
-                            }
-                        },
-                        modifier = Modifier.clickable { onNavigateToBookmark(bookmark) }
-                    )
-                    HorizontalDivider()
-                }
-            }
-
+    com.aryan.reader.shared.ui.SharedAndroidEpubBookmarksList(
+        bookmarks = bookmarks,
+        strings = com.aryan.reader.shared.ui.SharedAndroidEpubBookmarkStrings(
+            empty = stringResource(R.string.no_bookmarks_yet),
+            defaultLabel = "Bookmark",
+            pageOf = { page, total -> "Page $page of $total" },
+            moreOptionsDescription = stringResource(R.string.content_desc_more_options_bookmark),
+            renameAction = stringResource(R.string.action_rename),
+            deleteAction = stringResource(R.string.action_delete),
+            renameDialogTitle = stringResource(R.string.dialog_rename_bookmark),
+            newNameLabel = stringResource(R.string.label_new_name),
+            saveAction = stringResource(R.string.action_save),
+            cancelAction = stringResource(R.string.action_cancel),
+            deleteDialogTitle = stringResource(R.string.dialog_delete_bookmark),
+            deleteDialogDescription = stringResource(R.string.dialog_delete_bookmark_desc),
+        ),
+        onNavigateToBookmark = onNavigateToBookmark,
+        onRenameBookmark = onRenameBookmark,
+        onDeleteBookmark = onDeleteBookmark,
+        scrollbar = { listState ->
             VerticalScrollbar(
                 listState = listState,
-                modifier = Modifier.align(Alignment.CenterEnd)
+                modifier = Modifier.align(Alignment.CenterEnd),
             )
-        }
-
-        showRenameBookmarkDialog?.let { bookmarkToRename ->
-            val currentName = bookmarkToRename.label?.takeIf { it.isNotBlank() } ?: bookmarkToRename.snippet
-            var newTitle by remember(bookmarkToRename) { mutableStateOf(currentName) }
-
-            AlertDialog(
-                onDismissRequest = { showRenameBookmarkDialog = null },
-                title = { Text(stringResource(R.string.dialog_rename_bookmark)) },
-                text = {
-                    androidx.compose.material3.OutlinedTextField(
-                        value = newTitle,
-                        onValueChange = { newTitle = it },
-                        label = { Text(stringResource(R.string.label_new_name)) },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                },
-                confirmButton = {
-                    TextButton(
-                        onClick = {
-                            if (newTitle.isNotBlank()) {
-                                onRenameBookmark(bookmarkToRename, newTitle)
-                            }
-                            showRenameBookmarkDialog = null
-                        }
-                    ) {
-                        Text(stringResource(R.string.action_save))
-                    }
-                },
-                dismissButton = {
-                    TextButton(onClick = { showRenameBookmarkDialog = null }) {
-                        Text(stringResource(R.string.action_cancel))
-                    }
-                }
-            )
-        }
-
-        showDeleteConfirmDialogFor?.let { bookmarkToDelete ->
-            AlertDialog(
-                onDismissRequest = { showDeleteConfirmDialogFor = null },
-                title = { Text(stringResource(R.string.dialog_delete_bookmark)) },
-                text = { Text(stringResource(R.string.dialog_delete_bookmark_desc)) },
-                confirmButton = {
-                    TextButton(
-                        onClick = {
-                            onDeleteBookmark(bookmarkToDelete)
-                            showDeleteConfirmDialogFor = null
-                        }
-                    ) {
-                        Text(stringResource(R.string.action_delete))
-                    }
-                },
-                dismissButton = {
-                    TextButton(onClick = { showDeleteConfirmDialogFor = null }) {
-                        Text(stringResource(R.string.action_cancel))
-                    }
-                }
-            )
-        }
-    }
+        },
+    )
 }
 
 @Composable

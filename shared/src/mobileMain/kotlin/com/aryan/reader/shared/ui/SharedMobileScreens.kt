@@ -35,10 +35,12 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
@@ -56,6 +58,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
@@ -127,9 +130,11 @@ import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.outlined.FileOpen
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.CircularProgressIndicator
@@ -158,6 +163,7 @@ import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.ProvideTextStyle
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
@@ -167,6 +173,7 @@ import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.TriStateCheckbox
@@ -223,6 +230,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
@@ -241,6 +249,7 @@ import androidx.compose.ui.layout.findRootCoordinates
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -1278,6 +1287,7 @@ fun SharedMobilePdfReaderScreen(
             pdfTts.start(
                 chunks = planned.chunks,
                 bookTitle = pdfCardTitle,
+                bookId = book.id,
                 startChunkIndex = if (pendingTtsStartAtLastChunk) planned.chunks.lastIndex else 0,
                 playWhenReady = pendingTtsPlayWhenReady
             )
@@ -1310,7 +1320,7 @@ fun SharedMobilePdfReaderScreen(
             val planned = PdfTtsSessionPlanner.page(next, source)
             if (planned.chunks.isNotEmpty()) {
                 pendingTtsStart = null
-                pdfTts.start(planned.chunks, pdfCardTitle)
+                pdfTts.start(planned.chunks, pdfCardTitle, bookId = book.id)
             } else {
                 pendingTtsStart = 0
             }
@@ -7102,8 +7112,28 @@ fun SharedMobileLibraryScreen(
                     if (selectedTab == SharedMobileLibraryTab.BOOKS && state.libraryFilters.isActive) {
                         SharedMobileLibraryFilterChips(
                             filters = state.libraryFilters,
-                            onClearFilters = onClearFilters,
-                            onRemoveFilters = onRemoveFilters
+                            fileTypesLabel = readerString(
+                                "filter_types",
+                                "Types: %1\$s",
+                                state.libraryFilters.fileTypes.joinToString { it.name },
+                            ),
+                            foldersLabel = readerString(
+                                "filter_folders",
+                                "Folders: %1\$s",
+                                state.libraryFilters.sourceFolders.size,
+                            ),
+                            statusLabel = readerString(
+                                "filter_status",
+                                "Status: %1\$s",
+                                state.libraryFilters.readStatus.sharedMobileLabel(),
+                            ),
+                            tagsLabel = readerString(
+                                "filter_tags",
+                                "Tags: %1\$s",
+                                state.libraryFilters.tagIds.size,
+                            ),
+                            clearContentDescription = readerString("action_clear", "Clear"),
+                            onRemoveFilters = onRemoveFilters,
                         )
                     }
                 }
@@ -8387,7 +8417,6 @@ private fun SharedMobileLibraryTopBar(
     onSearchClick: () -> Unit,
     onSettingsClick: () -> Unit
 ) {
-    var showSortMenu by remember { mutableStateOf(false) }
     TopAppBar(
         title = { Text(readerString("library_title", "Library")) },
         actions = {
@@ -8399,39 +8428,19 @@ private fun SharedMobileLibraryTopBar(
                         tint = if (isFilterActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                Box {
-                    TextButton(onClick = { showSortMenu = true }) {
+                SharedMobileLibrarySortControl(
+                    sortOrder = sortOrder,
+                    labels = SortOrder.entries.associateWith { it.sharedMobileLabel() },
+                    selectedContentDescription = readerString("content_desc_selected", "Selected"),
+                    onSortOrderChange = onSortOrderChange,
+                    icon = {
                         Icon(
                             Icons.Default.Sort,
                             contentDescription = readerString("content_desc_sort", "Sort"),
-                            modifier = Modifier.size(18.dp),
+                            modifier = Modifier.size(20.dp),
                         )
-                        Spacer(Modifier.width(6.dp))
-                        Text(sortOrder.sharedMobileLabel())
-                    }
-                    DropdownMenu(
-                        expanded = showSortMenu,
-                        onDismissRequest = { showSortMenu = false }
-                    ) {
-                        SortOrder.entries.forEach { order ->
-                            DropdownMenuItem(
-                                text = { Text(order.sharedMobileLabel()) },
-                                onClick = {
-                                    onSortOrderChange(order)
-                                    showSortMenu = false
-                                },
-                                trailingIcon = {
-                                    if (order == sortOrder) {
-                                        Icon(
-                                            Icons.Default.Check,
-                                            contentDescription = readerString("content_desc_selected", "Selected"),
-                                        )
-                                    }
-                                }
-                            )
-                        }
-                    }
-                }
+                    },
+                )
                 IconButton(onClick = onSearchClick) {
                     Icon(Icons.Default.Search, contentDescription = readerString("action_search", "Search"))
                 }
@@ -8441,6 +8450,607 @@ private fun SharedMobileLibraryTopBar(
             }
         }
     )
+}
+
+@Composable
+fun SharedMobileLibrarySortControl(
+    sortOrder: SortOrder,
+    labels: Map<SortOrder, String>,
+    selectedContentDescription: String,
+    onSortOrderChange: (SortOrder) -> Unit,
+    modifier: Modifier = Modifier,
+    icon: @Composable () -> Unit,
+) {
+    var showSortMenu by remember { mutableStateOf(false) }
+    Box {
+        TextButton(
+            onClick = { showSortMenu = true },
+            modifier = modifier,
+        ) {
+            icon()
+            Spacer(Modifier.width(8.dp))
+            Text(labels[sortOrder].orEmpty())
+        }
+        DropdownMenu(
+            expanded = showSortMenu,
+            onDismissRequest = { showSortMenu = false },
+        ) {
+            SortOrder.entries.forEach { order ->
+                DropdownMenuItem(
+                    text = { Text(labels[order].orEmpty()) },
+                    onClick = {
+                        onSortOrderChange(order)
+                        showSortMenu = false
+                    },
+                    trailingIcon = {
+                        if (order == sortOrder) {
+                            Icon(
+                                Icons.Default.Check,
+                                contentDescription = selectedContentDescription,
+                            )
+                        }
+                    },
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun SharedMobileLibraryBookListCardFrame(
+    isAvailable: Boolean,
+    isSelected: Boolean,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    cover: @Composable BoxScope.() -> Unit,
+    header: @Composable RowScope.() -> Unit,
+    metadata: @Composable RowScope.() -> Unit,
+    progress: @Composable () -> Unit,
+) {
+    ElevatedCard(
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.elevatedCardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        ),
+        elevation = CardDefaults.elevatedCardElevation(
+            defaultElevation = if (isSelected) 6.dp else 2.dp,
+        ),
+        modifier = modifier
+            .fillMaxWidth()
+            .graphicsLayer { alpha = if (isAvailable) 1f else 0.8f }
+            .then(
+                if (isSelected) {
+                    Modifier.border(2.dp, MaterialTheme.colorScheme.primary, MaterialTheme.shapes.large)
+                } else {
+                    Modifier
+                },
+            )
+            .clip(MaterialTheme.shapes.large)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 12.dp)
+                .height(132.dp),
+            verticalAlignment = Alignment.Top,
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .aspectRatio(0.7f)
+                    .clip(MaterialTheme.shapes.medium)
+                    .border(
+                        0.5.dp,
+                        MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                        MaterialTheme.shapes.medium,
+                    ),
+                content = cover,
+            )
+            Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                Row(
+                    verticalAlignment = Alignment.Top,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    content = header,
+                )
+                Spacer(Modifier.height(10.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    content = metadata,
+                )
+                Spacer(Modifier.weight(1f))
+                progress()
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun SharedMobileShelfListCardFrame(
+    isSelected: Boolean,
+    contentStartIndent: Dp,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable RowScope.() -> Unit,
+) {
+    ElevatedCard(
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.elevatedCardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        ),
+        elevation = CardDefaults.elevatedCardElevation(
+            defaultElevation = if (isSelected) 8.dp else 2.dp,
+        ),
+        modifier = modifier
+            .fillMaxWidth()
+            .then(
+                if (isSelected) {
+                    Modifier.border(2.dp, MaterialTheme.colorScheme.primary, MaterialTheme.shapes.large)
+                } else {
+                    Modifier
+                },
+            )
+            .clip(MaterialTheme.shapes.large)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
+    ) {
+        Row(
+            modifier = Modifier.padding(
+                start = 12.dp + contentStartIndent,
+                end = 12.dp,
+                top = 8.dp,
+                bottom = 8.dp,
+            ),
+            verticalAlignment = Alignment.CenterVertically,
+            content = content,
+        )
+    }
+}
+
+@Composable
+fun SharedMobileTopBanner(
+    text: String,
+    visible: Boolean,
+    isError: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    AnimatedVisibility(
+        visible = visible,
+        enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
+        exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut(),
+        modifier = modifier.fillMaxWidth(),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .statusBarsPadding(),
+            contentAlignment = Alignment.TopCenter,
+        ) {
+            Surface(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                color = if (isError) {
+                    MaterialTheme.colorScheme.errorContainer
+                } else {
+                    MaterialTheme.colorScheme.secondaryContainer
+                },
+                shape = MaterialTheme.shapes.medium,
+                shadowElevation = 8.dp,
+            ) {
+                Text(
+                    text = text,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                    color = if (isError) {
+                        MaterialTheme.colorScheme.onErrorContainer
+                    } else {
+                        MaterialTheme.colorScheme.onSecondaryContainer
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun SharedMobileTopAppBar(
+    modifier: Modifier = Modifier,
+    title: @Composable () -> Unit,
+    navigationIcon: @Composable () -> Unit = {},
+    actions: @Composable RowScope.() -> Unit = {},
+) {
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        shadowElevation = 2.dp,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .height(56.dp)
+                .padding(horizontal = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            navigationIcon()
+            Box(
+                modifier = Modifier.weight(1f).padding(start = 12.dp),
+                contentAlignment = Alignment.CenterStart,
+            ) {
+                ProvideTextStyle(MaterialTheme.typography.titleLarge) { title() }
+            }
+            Row(
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically,
+                content = actions,
+            )
+        }
+    }
+}
+
+data class SharedMobileContextualActionLabels(
+    val selectedCount: String,
+    val clearSelection: String,
+    val info: String,
+    val pin: String,
+    val selectAll: String,
+    val delete: String,
+    val moreOptions: String,
+    val tag: String,
+    val addToShelf: String,
+    val save: String,
+    val share: String,
+    val exportAnnotations: String,
+    val clear: String,
+)
+
+@Composable
+fun SharedMobileContextualActionBar(
+    selectedItemCount: Int,
+    labels: SharedMobileContextualActionLabels,
+    onNavigateBack: () -> Unit,
+    onDelete: () -> Unit,
+    compact: Boolean,
+    onInfo: (() -> Unit)? = null,
+    onSave: (() -> Unit)? = null,
+    onShare: (() -> Unit)? = null,
+    onExportAnnotations: (() -> Unit)? = null,
+    onTag: (() -> Unit)? = null,
+    onAddToShelf: (() -> Unit)? = null,
+    onSelectAll: (() -> Unit)? = null,
+    onPin: (() -> Unit)? = null,
+    onClear: (() -> Unit)? = null,
+    tagIcon: @Composable (String?) -> Unit,
+) {
+    SharedMobileTopAppBar(
+        title = {
+            Text(labels.selectedCount, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        },
+        navigationIcon = {
+            IconButton(onClick = onNavigateBack) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = labels.clearSelection)
+            }
+        },
+        actions = {
+            if (compact) {
+                SharedMobileCompactSelectionActions(
+                    selectedItemCount = selectedItemCount,
+                    labels = labels,
+                    onInfo = onInfo,
+                    onPin = onPin,
+                    onSelectAll = onSelectAll,
+                    onTag = onTag,
+                    onAddToShelf = onAddToShelf,
+                    onSave = onSave,
+                    onShare = onShare,
+                    onExportAnnotations = onExportAnnotations,
+                    onClear = onClear ?: onNavigateBack,
+                    onDelete = onDelete,
+                    tagIcon = tagIcon,
+                )
+            } else {
+                onTag?.let { action ->
+                    IconButton(onClick = action) { tagIcon(labels.tag) }
+                }
+                onPin?.let { action ->
+                    IconButton(onClick = action) {
+                        Icon(Icons.Default.PushPin, contentDescription = labels.pin)
+                    }
+                }
+                if (selectedItemCount == 1) {
+                    onInfo?.let { action ->
+                        IconButton(onClick = action) {
+                            Icon(Icons.Default.Info, contentDescription = labels.info)
+                        }
+                    }
+                    onSave?.let { action ->
+                        IconButton(onClick = action) {
+                            Icon(Icons.Default.Save, contentDescription = labels.save)
+                        }
+                    }
+                    onShare?.let { action ->
+                        IconButton(onClick = action) {
+                            Icon(Icons.Default.Share, contentDescription = labels.share)
+                        }
+                    }
+                }
+                onSelectAll?.let { action ->
+                    IconButton(onClick = action) {
+                        Icon(Icons.Default.SelectAll, contentDescription = labels.selectAll)
+                    }
+                }
+                IconButton(onClick = onDelete) {
+                    Icon(Icons.Default.Delete, contentDescription = labels.delete)
+                }
+            }
+        },
+    )
+}
+
+@Composable
+private fun SharedMobileCompactSelectionActions(
+    selectedItemCount: Int,
+    labels: SharedMobileContextualActionLabels,
+    onInfo: (() -> Unit)?,
+    onPin: (() -> Unit)?,
+    onSelectAll: (() -> Unit)?,
+    onTag: (() -> Unit)?,
+    onAddToShelf: (() -> Unit)?,
+    onSave: (() -> Unit)?,
+    onShare: (() -> Unit)?,
+    onExportAnnotations: (() -> Unit)?,
+    onClear: () -> Unit,
+    onDelete: () -> Unit,
+    tagIcon: @Composable (String?) -> Unit,
+) {
+    var showMore by remember { mutableStateOf(false) }
+    if (selectedItemCount == 1) {
+        onInfo?.let { action ->
+            IconButton(onClick = action) { Icon(Icons.Default.Info, contentDescription = labels.info) }
+        }
+    }
+    onPin?.let { action ->
+        IconButton(onClick = action) { Icon(Icons.Default.PushPin, contentDescription = labels.pin) }
+    }
+    onSelectAll?.let { action ->
+        IconButton(onClick = action) { Icon(Icons.Default.SelectAll, contentDescription = labels.selectAll) }
+    }
+    IconButton(onClick = onDelete) { Icon(Icons.Default.Delete, contentDescription = labels.delete) }
+    Box {
+        IconButton(onClick = { showMore = true }) {
+            Icon(Icons.Default.MoreVert, contentDescription = labels.moreOptions)
+        }
+        DropdownMenu(expanded = showMore, onDismissRequest = { showMore = false }) {
+            onTag?.let { action ->
+                DropdownMenuItem(
+                    text = { Text(labels.tag) },
+                    leadingIcon = { tagIcon(null) },
+                    onClick = { showMore = false; action() },
+                )
+            }
+            onAddToShelf?.let { action ->
+                DropdownMenuItem(
+                    text = { Text(labels.addToShelf) },
+                    leadingIcon = { Icon(Icons.Default.Folder, contentDescription = null) },
+                    onClick = { showMore = false; action() },
+                )
+            }
+            if (selectedItemCount == 1) {
+                onSave?.let { action ->
+                    DropdownMenuItem(
+                        text = { Text(labels.save) },
+                        leadingIcon = { Icon(Icons.Default.Save, contentDescription = null) },
+                        onClick = { showMore = false; action() },
+                    )
+                }
+                onShare?.let { action ->
+                    DropdownMenuItem(
+                        text = { Text(labels.share) },
+                        leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) },
+                        onClick = { showMore = false; action() },
+                    )
+                }
+                onExportAnnotations?.let { action ->
+                    DropdownMenuItem(
+                        text = { Text(labels.exportAnnotations) },
+                        leadingIcon = { Icon(Icons.Default.Save, contentDescription = null) },
+                        onClick = { showMore = false; action() },
+                    )
+                }
+            }
+            DropdownMenuItem(
+                text = { Text(labels.clear) },
+                leadingIcon = { Icon(Icons.Default.Close, contentDescription = null) },
+                onClick = { showMore = false; onClear() },
+            )
+        }
+    }
+}
+
+@Composable
+fun SharedMobileLibrarySearchTopBar(
+    value: TextFieldValue,
+    onValueChange: (TextFieldValue) -> Unit,
+    showClear: Boolean,
+    onClose: () -> Unit,
+    onClear: () -> Unit,
+    placeholder: String,
+    closeContentDescription: String,
+    clearContentDescription: String,
+    focusRequester: FocusRequester,
+    textFieldModifier: Modifier = Modifier,
+) {
+    Surface(shadowElevation = 4.dp, modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().statusBarsPadding().height(64.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = onClose) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = closeContentDescription)
+            }
+            OutlinedTextField(
+                value = value,
+                onValueChange = onValueChange,
+                placeholder = { Text(placeholder) },
+                modifier = textFieldModifier
+                    .weight(1f)
+                    .padding(vertical = 4.dp)
+                    .focusRequester(focusRequester),
+                singleLine = true,
+                colors = TextFieldDefaults.colors(
+                    focusedContainerColor = Color.Transparent,
+                    unfocusedContainerColor = Color.Transparent,
+                    disabledContainerColor = Color.Transparent,
+                    focusedIndicatorColor = Color.Transparent,
+                    unfocusedIndicatorColor = Color.Transparent,
+                ),
+                trailingIcon = {
+                    if (showClear) {
+                        IconButton(onClick = onClear) {
+                            Icon(Icons.Default.Close, contentDescription = clearContentDescription)
+                        }
+                    }
+                },
+            )
+        }
+    }
+}
+
+data class SharedMobileLibraryFilterLabels(
+    val title: String,
+    val fileType: String,
+    val sourceFolder: String,
+    val inAppStorage: String,
+    val readStatus: String,
+    val tags: String,
+    val clearAll: String,
+    val apply: String,
+)
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SharedMobileLibraryFilterDialog(
+    filters: LibraryFilters,
+    allTags: List<Tag>,
+    syncedFolders: List<SyncedFolder>,
+    readableFileTypes: Set<FileType>,
+    fileTypeLabels: Map<FileType, String>,
+    readStatusLabels: Map<ReadStatusFilter, String>,
+    labels: SharedMobileLibraryFilterLabels,
+    onApply: (LibraryFilters) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var currentFilters by remember { mutableStateOf(filters) }
+
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Text(labels.title, style = MaterialTheme.typography.titleLarge)
+            Text(labels.fileType, style = MaterialTheme.typography.titleMedium)
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                readableFileTypes.forEach { type ->
+                    FilterChip(
+                        selected = type in currentFilters.fileTypes,
+                        onClick = {
+                            currentFilters = currentFilters.copy(
+                                fileTypes = currentFilters.fileTypes.toggleMember(type),
+                            )
+                        },
+                        label = { Text(fileTypeLabels[type].orEmpty()) },
+                    )
+                }
+            }
+            Text(labels.sourceFolder, style = MaterialTheme.typography.titleMedium)
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                FilterChip(
+                    selected = IN_APP_STORAGE_SOURCE in currentFilters.sourceFolders,
+                    onClick = {
+                        currentFilters = currentFilters.copy(
+                            sourceFolders = currentFilters.sourceFolders.toggleMember(IN_APP_STORAGE_SOURCE),
+                        )
+                    },
+                    label = { Text(labels.inAppStorage) },
+                )
+                syncedFolders.forEach { folder ->
+                    FilterChip(
+                        selected = folder.uriString in currentFilters.sourceFolders,
+                        onClick = {
+                            currentFilters = currentFilters.copy(
+                                sourceFolders = currentFilters.sourceFolders.toggleMember(folder.uriString),
+                            )
+                        },
+                        label = { Text(folder.name) },
+                    )
+                }
+            }
+            Text(labels.readStatus, style = MaterialTheme.typography.titleMedium)
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                ReadStatusFilter.entries.forEach { status ->
+                    FilterChip(
+                        selected = currentFilters.readStatus == status,
+                        onClick = { currentFilters = currentFilters.copy(readStatus = status) },
+                        label = { Text(readStatusLabels[status].orEmpty()) },
+                    )
+                }
+            }
+            if (allTags.isNotEmpty()) {
+                Text(labels.tags, style = MaterialTheme.typography.titleMedium)
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    allTags.forEach { tag ->
+                        val selected = tag.id in currentFilters.tagIds
+                        FilterChip(
+                            selected = selected,
+                            onClick = {
+                                currentFilters = currentFilters.copy(
+                                    tagIds = currentFilters.tagIds.toggleMember(tag.id),
+                                )
+                            },
+                            label = { Text(tag.name) },
+                            leadingIcon = {
+                                Box(
+                                    modifier = Modifier.size(10.dp).background(
+                                        Color(tag.color ?: 0xFF64B5F6.toInt()),
+                                        CircleShape,
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                TextButton(onClick = { currentFilters = LibraryFilters() }) { Text(labels.clearAll) }
+                Spacer(Modifier.width(8.dp))
+                Button(onClick = { onApply(currentFilters); onDismiss() }) { Text(labels.apply) }
+            }
+            Spacer(Modifier.height(32.dp))
+        }
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -8592,71 +9202,49 @@ private fun SharedMobileContextualTopBar(
 }
 
 @Composable
-private fun SharedMobileLibraryFilterChips(
+fun SharedMobileLibraryFilterChips(
     filters: LibraryFilters,
-    onClearFilters: () -> Unit,
-    onRemoveFilters: (LibraryFilters) -> Unit
+    fileTypesLabel: String,
+    foldersLabel: String,
+    statusLabel: String,
+    tagsLabel: String,
+    clearContentDescription: String,
+    onRemoveFilters: (LibraryFilters) -> Unit,
 ) {
-    LazyRow(
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         if (filters.fileTypes.isNotEmpty()) {
-            item {
-                InputChip(
-                    selected = true,
-                    onClick = { onRemoveFilters(filters.copy(fileTypes = emptySet())) },
-                    label = { Text("Types: ${filters.fileTypes.joinToString { it.name }}") },
-                    trailingIcon = { Icon(Icons.Default.Close, contentDescription = "Remove", modifier = Modifier.size(16.dp)) }
-                )
-            }
+            AssistChip(
+                onClick = { onRemoveFilters(filters.copy(fileTypes = emptySet())) },
+                label = { Text(fileTypesLabel) },
+                trailingIcon = { Icon(Icons.Default.Close, contentDescription = clearContentDescription, modifier = Modifier.size(16.dp)) },
+            )
         }
         if (filters.sourceFolders.isNotEmpty()) {
-            item {
-                InputChip(
-                    selected = true,
-                    onClick = { onRemoveFilters(filters.copy(sourceFolders = emptySet())) },
-                    label = { Text("Folders: ${filters.sourceFolders.size}") },
-                    trailingIcon = { Icon(Icons.Default.Close, contentDescription = "Remove", modifier = Modifier.size(16.dp)) }
-                )
-            }
+            AssistChip(
+                onClick = { onRemoveFilters(filters.copy(sourceFolders = emptySet())) },
+                label = { Text(foldersLabel) },
+                trailingIcon = { Icon(Icons.Default.Close, contentDescription = clearContentDescription, modifier = Modifier.size(16.dp)) },
+            )
         }
         if (filters.readStatus != ReadStatusFilter.ALL) {
-            item {
-                InputChip(
-                    selected = true,
-                    onClick = { onRemoveFilters(filters.copy(readStatus = ReadStatusFilter.ALL)) },
-                    label = {
-                        Text(
-                            readerString(
-                                "filter_status",
-                                "Status: %1\$s",
-                                filters.readStatus.sharedMobileLabel(),
-                            )
-                        )
-                    },
-                    trailingIcon = { Icon(Icons.Default.Close, contentDescription = "Remove", modifier = Modifier.size(16.dp)) }
-                )
-            }
+            AssistChip(
+                onClick = { onRemoveFilters(filters.copy(readStatus = ReadStatusFilter.ALL)) },
+                label = { Text(statusLabel) },
+                trailingIcon = { Icon(Icons.Default.Close, contentDescription = clearContentDescription, modifier = Modifier.size(16.dp)) },
+            )
         }
         if (filters.tagIds.isNotEmpty()) {
-            item {
-                InputChip(
-                    selected = true,
-                    onClick = { onRemoveFilters(filters.copy(tagIds = emptySet())) },
-                    label = { Text("Tags: ${filters.tagIds.size}") },
-                    trailingIcon = { Icon(Icons.Default.Close, contentDescription = "Remove", modifier = Modifier.size(16.dp)) }
-                )
-            }
-        }
-        item {
-            InputChip(
-                selected = false,
-                onClick = onClearFilters,
-                label = { Text("Clear") }
+            AssistChip(
+                onClick = { onRemoveFilters(filters.copy(tagIds = emptySet())) },
+                label = { Text(tagsLabel) },
+                trailingIcon = { Icon(Icons.Default.Close, contentDescription = clearContentDescription, modifier = Modifier.size(16.dp)) },
             )
         }
     }
@@ -9545,7 +10133,7 @@ private fun SharedMobileShelfRow(
 }
 
 @Composable
-private fun SharedMobileEmptyLibrary(
+fun SharedMobileEmptyLibrary(
     title: String,
     message: String,
     actionLabel: String?,
@@ -9554,28 +10142,48 @@ private fun SharedMobileEmptyLibrary(
     onSecondaryAction: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Column(
-            modifier = Modifier.padding(28.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
-            Icon(Icons.Default.Info, contentDescription = null, modifier = Modifier.size(56.dp), tint = MaterialTheme.colorScheme.primary)
-            Text(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-            Text(message, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            if (actionLabel != null) {
-                Button(onClick = onAction) {
-                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text(actionLabel)
-                }
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(horizontal = 32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Icon(
+            imageVector = Icons.Outlined.FileOpen,
+            contentDescription = readerString("content_desc_no_files_icon", "No files"),
+            modifier = Modifier.size(80.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(24.dp))
+        Text(
+            text = title,
+            style = MaterialTheme.typography.headlineSmall,
+            color = MaterialTheme.colorScheme.onSurface,
+            textAlign = TextAlign.Center,
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            text = message,
+            style = MaterialTheme.typography.bodyMedium,
+            textAlign = TextAlign.Center,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (actionLabel != null) {
+            Spacer(Modifier.height(32.dp))
+            FilledTonalButton(
+                onClick = onAction,
+                shape = MaterialTheme.shapes.medium,
+            ) {
+                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
+                Spacer(Modifier.size(ButtonDefaults.IconSpacing))
+                Text(actionLabel)
             }
-            if (secondaryActionLabel != null) {
-                Button(onClick = onSecondaryAction) {
-                    Icon(Icons.Default.FolderSpecial, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text(secondaryActionLabel)
-                }
+        }
+        if (secondaryActionLabel != null) {
+            Spacer(Modifier.height(16.dp))
+            OutlinedButton(onClick = onSecondaryAction) {
+                Text(secondaryActionLabel)
             }
         }
     }

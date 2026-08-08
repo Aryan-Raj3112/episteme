@@ -203,12 +203,10 @@ class LibraryStateProjectorTest {
         val manualShelf = shelfEntity("manual", "Manual")
 
         val state = ReaderScreenState(
-            sortOrder = SortOrder.TITLE_ASC,
-            recentFilesLimit = 1,
-            openTabIds = listOf("beta", "missing"),
-            activeTabBookId = "missing",
+            libraryState = LibraryState(sortOrder = SortOrder.TITLE_ASC, recentLimit = 1),
+            tabState = AppTabState(openBookIds = listOf("beta", "missing"), activeBookId = "missing"),
             contextualActionItems = setOf(recentFile("beta"), recentFile("missing")),
-            viewingShelfId = "manual",
+            shelfState = AppShelfState(viewingShelfId = "manual"),
             contextualActionShelfIds = setOf("manual", "missing")
         )
 
@@ -265,14 +263,16 @@ class LibraryStateProjectorTest {
         val result = LibraryStateProjector().project(
             LibraryProjectionInput(
                 state = ReaderScreenState(
-                    searchQuery = "android",
-                    sortOrder = SortOrder.TITLE_ASC,
-                    libraryFilters = LibraryFilters(
+                    libraryState = LibraryState(
+                        searchQuery = "android",
+                        sortOrder = SortOrder.TITLE_ASC,
+                        filters = LibraryFilters(
                         fileTypes = setOf(FileType.PDF),
                         sourceFolders = setOf("content://sync"),
                         readStatus = ReadStatusFilter.IN_PROGRESS,
                         tagIds = setOf(tag.id)
-                    )
+                        ),
+                    ),
                 ),
                 recentFilesFromDb = listOf(searchMiss, filterMiss, match),
                 dbShelves = emptyList(),
@@ -295,7 +295,7 @@ class LibraryStateProjectorTest {
 
         val result = LibraryStateProjector().project(
             LibraryProjectionInput(
-                state = ReaderScreenState(sortOrder = SortOrder.TITLE_ASC),
+                state = ReaderScreenState(libraryState = LibraryState(sortOrder = SortOrder.TITLE_ASC)),
                 recentFilesFromDb = listOf(olderTitleFirst, newerTitleLast, middleNotRecent),
                 dbShelves = emptyList(),
                 shelfRefs = emptyList(),
@@ -316,9 +316,11 @@ class LibraryStateProjectorTest {
         val result = LibraryStateProjector().project(
             LibraryProjectionInput(
                 state = ReaderScreenState(
-                    sortOrder = SortOrder.TITLE_ASC,
-                    pinnedHomeBookIds = setOf("older"),
-                    pinnedLibraryBookIds = setOf("older")
+                    libraryState = LibraryState(sortOrder = SortOrder.TITLE_ASC),
+                    pinState = AppPinState(
+                        homeBookIds = setOf("older"),
+                        libraryBookIds = setOf("older"),
+                    ),
                 ),
                 recentFilesFromDb = listOf(older, newer),
                 dbShelves = emptyList(),
@@ -344,7 +346,7 @@ class LibraryStateProjectorTest {
 
         val result = LibraryStateProjector().project(
             LibraryProjectionInput(
-                state = ReaderScreenState(sortOrder = SortOrder.TITLE_ASC),
+                state = ReaderScreenState(libraryState = LibraryState(sortOrder = SortOrder.TITLE_ASC)),
                 recentFilesFromDb = listOf(manualBook, taggedBook, seriesTwo, loose, seriesOne),
                 dbShelves = listOf(manualShelf),
                 shelfRefs = listOf(BookShelfCrossRef(bookId = "manual", shelfId = "manual", addedAt = 1L)),
@@ -395,10 +397,12 @@ class LibraryStateProjectorTest {
         val result = LibraryStateProjector().project(
             LibraryProjectionInput(
                 state = ReaderScreenState(
-                    viewingShelfId = "manual",
-                    isAddingBooksToShelf = true,
-                    addBooksSource = AddBooksSource.ALL_BOOKS,
-                    sortOrder = SortOrder.TITLE_ASC
+                    shelfState = AppShelfState(
+                        viewingShelfId = "manual",
+                        isAddingBooks = true,
+                        addBooksSource = AddBooksSource.ALL_BOOKS,
+                    ),
+                    libraryState = LibraryState(sortOrder = SortOrder.TITLE_ASC),
                 ),
                 recentFilesFromDb = listOf(shelved, loose),
                 dbShelves = listOf(shelf),
@@ -422,10 +426,12 @@ class LibraryStateProjectorTest {
         val result = LibraryStateProjector().project(
             LibraryProjectionInput(
                 state = ReaderScreenState(
-                    viewingShelfId = "manual",
-                    isAddingBooksToShelf = true,
-                    addBooksSource = AddBooksSource.UNSHELVED,
-                    sortOrder = SortOrder.TITLE_ASC
+                    shelfState = AppShelfState(
+                        viewingShelfId = "manual",
+                        isAddingBooks = true,
+                        addBooksSource = AddBooksSource.UNSHELVED,
+                    ),
+                    libraryState = LibraryState(sortOrder = SortOrder.TITLE_ASC),
                 ),
                 recentFilesFromDb = listOf(shelved, loose, tagged),
                 dbShelves = listOf(shelf),
@@ -443,8 +449,7 @@ class LibraryStateProjectorTest {
         val result = LibraryStateProjector().project(
             LibraryProjectionInput(
                 state = ReaderScreenState(
-                    viewingShelfId = "deleted",
-                    isAddingBooksToShelf = true,
+                    shelfState = AppShelfState(viewingShelfId = "deleted", isAddingBooks = true),
                     contextualActionShelfIds = setOf("deleted")
                 ),
                 recentFilesFromDb = listOf(recentFile("book")),
@@ -546,7 +551,13 @@ class LibraryStateProjectorTest {
 
         projector.project(input)
         val result = projector.project(
-            input.copy(state = input.state.copy(appFontPreference = AppFontPreference.Monospace))
+            input.copy(
+                state = input.state.copy(
+                    appAppearance = input.state.appAppearance.copy(
+                        fontPreference = AppFontPreference.Monospace,
+                    ),
+                ),
+            )
         )
 
         assertEquals(AppFontPreference.Monospace, result.appFontPreference)

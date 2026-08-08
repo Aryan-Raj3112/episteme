@@ -1,5 +1,6 @@
 package com.aryan.reader.shared.pdf
 
+import androidx.compose.ui.graphics.Color
 import com.aryan.reader.shared.HighlightStyle
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
@@ -11,6 +12,13 @@ enum class PdfAnnotationKind {
     INK,
     TEXT,
     HIGHLIGHT
+}
+
+enum class PdfHighlightColor(val color: Color) {
+    YELLOW(Color(0xFFFBC02D)),
+    GREEN(Color(0xFF388E3C)),
+    BLUE(Color(0xFF1976D2)),
+    RED(Color(0xFFD32F2F)),
 }
 
 enum class PdfInkTool {
@@ -108,6 +116,33 @@ data class SharedPdfAnnotation(
     val rangeStartIndex: Int? = null,
     val rangeEndIndex: Int? = null,
     val createdAt: Long = 0L
+)
+
+fun sharedPdfHighlightAnnotation(
+    id: String,
+    pageIndex: Int,
+    bounds: List<PdfPageBounds>,
+    text: String,
+    note: String?,
+    comments: List<SharedPdfAnnotationComment>,
+    colorArgb: Int,
+    highlightStyle: HighlightStyle,
+    rangeStart: Int,
+    rangeEndExclusive: Int,
+): SharedPdfAnnotation = SharedPdfAnnotation(
+    id = id,
+    pageIndex = pageIndex,
+    kind = PdfAnnotationKind.HIGHLIGHT,
+    tool = PdfInkTool.HIGHLIGHTER,
+    bounds = bounds.firstOrNull(),
+    boundsList = bounds,
+    text = text,
+    note = note,
+    comments = comments,
+    colorArgb = colorArgb,
+    highlightStyle = highlightStyle,
+    rangeStartIndex = rangeStart,
+    rangeEndIndex = (rangeEndExclusive - 1).coerceAtLeast(rangeStart),
 )
 
 @Serializable

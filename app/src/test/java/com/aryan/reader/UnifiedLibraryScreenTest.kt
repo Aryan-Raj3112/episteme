@@ -4,6 +4,8 @@ import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.data.AudiobookImporter
 import com.aryan.reader.audiobook.audiobookResumePosition
 import com.aryan.reader.audiobook.formatSleepTimerLabel
+import com.aryan.reader.audiobook.BookTtsListeningProgressEntity
+import com.aryan.reader.audiobook.toSharedBookTtsListenState
 import com.aryan.reader.tts.TtsPlaybackManager
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -99,5 +101,37 @@ class UnifiedLibraryScreenTest {
         assertFalse(shouldAutoStartTtsAudiobook("book-1", active))
         assertTrue(shouldAutoStartTtsAudiobook("book-2", active))
         assertTrue(shouldAutoStartTtsAudiobook("book-1", active.copy(playbackSource = "READER")))
+    }
+
+    @Test
+    fun generatedAudiobookControllerProjectsServiceStateIntoSharedSessionState() {
+        val projected = TtsPlaybackManager.TtsState(
+            bookId = "book-1",
+            playbackSource = "AUDIOBOOK_TTS",
+            isPlaying = true,
+            chapterIndex = 1,
+            totalChapters = 4,
+            currentChunkIndex = 4,
+            totalChunks = 10,
+            chapterTitle = "Chapter 2",
+            transcriptStartIndex = 2,
+            transcriptChunks = listOf("A", "B"),
+        ).toSharedBookTtsListenState(
+            progress = BookTtsListeningProgressEntity("book-1", speechRate = 1.2f, pitch = .9f),
+            preparedChapterCount = 0,
+            sleepTimerRemainingMs = 90_000L,
+        )
+
+        assertTrue(projected.connected)
+        assertTrue(projected.isPlaying)
+        assertEquals(1, projected.chapterIndex)
+        assertEquals(4, projected.chapterCount)
+        assertEquals(4, projected.chunkIndex)
+        assertEquals(10, projected.chunkCount)
+        assertEquals(.375f, projected.progressPercent)
+        assertEquals(1.2f, projected.speechRate)
+        assertEquals(.9f, projected.pitch)
+        assertEquals(90_000L, projected.sleepTimerRemainingMs)
+        assertEquals(listOf("A", "B"), projected.transcriptChunks)
     }
 }

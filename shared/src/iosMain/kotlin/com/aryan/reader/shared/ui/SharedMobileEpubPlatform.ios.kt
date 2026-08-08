@@ -271,6 +271,7 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
     override fun start(
         chunks: List<ReaderTtsChunk>,
         bookTitle: String,
+        bookId: String?,
         startChunkIndex: Int,
         playWhenReady: Boolean
     ) {
@@ -507,7 +508,7 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
         }
     }
 
-    fun release() {
+    override fun release() {
         stop()
         previewSynthesizer.stopSpeakingAtBoundary(AVSpeechBoundary.AVSpeechBoundaryImmediate)
         synthesizer.delegate = null

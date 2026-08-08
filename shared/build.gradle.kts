@@ -152,8 +152,8 @@ kotlin {
     sourceSets {
         val commonMain by getting
         val desktopMain by getting
-        // The phone-first Compose layer is introduced to iOS first. Android
-        // remains the reference app until feature parity is established.
+        // Shared phone/tablet UI. Android remains the behavioral and visual
+        // reference while ownership moves here incrementally.
         val mobileMain by creating {
             dependsOn(commonMain)
             dependencies {
@@ -169,7 +169,15 @@ kotlin {
             }
         }
         if (!desktopOnlyBuild) {
-            val androidMain by getting
+            val androidMain by getting {
+                dependencies {
+                    implementation(libs.androidx.core.ktx)
+                    implementation("io.coil-kt:coil:2.7.0")
+                    implementation("io.coil-kt:coil-svg:2.6.0")
+                    implementation("io.legere:pdfiumandroid:2.0.0")
+                }
+            }
+            androidMain.dependsOn(mobileMain)
             androidMain.dependsOn(readerJvmMain)
             val iosMain by creating {
                 dependsOn(mobileMain)
@@ -195,6 +203,7 @@ kotlin {
         }
         commonTest.dependencies {
             implementation(kotlin("test"))
+            implementation(libs.kotlinx.coroutines.test)
         }
     }
 }

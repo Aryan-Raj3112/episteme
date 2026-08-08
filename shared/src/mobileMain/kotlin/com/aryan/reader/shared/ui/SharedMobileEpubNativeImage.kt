@@ -12,22 +12,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.toComposeImageBitmap
 import com.aryan.reader.paginatedreader.SemanticImage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import org.jetbrains.skia.Data
-import org.jetbrains.skia.Surface
-import org.jetbrains.skia.svg.SVGDOM
-import org.jetbrains.skia.svg.SVGLengthContext
-import org.jetbrains.skia.Color as SkiaColor
-import org.jetbrains.skia.Image as SkiaImage
 import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
-import kotlin.math.roundToInt
 
 @Composable
 fun SharedMobileEpubNativeImage(
@@ -90,11 +82,11 @@ private object SharedMobileEpubNativeImageCache {
         }
     }
 
-    fun load(path: String): ImageBitmap? {
+    suspend fun load(path: String): ImageBitmap? {
         peek(path)?.let { return it }
         val source = SharedMobileEpubNativeImageSource.from(path) ?: return null
         val bytes = source.bytes() ?: return null
-        val bitmap = decode(bytes, source.isSvg) ?: return null
+        val bitmap = decodeSharedMobileEpubImage(bytes, source.isSvg) ?: return null
         runBlocking {
             mutex.withLock {
                 entries[source.key] = bitmap
@@ -107,48 +99,12 @@ private object SharedMobileEpubNativeImageCache {
         return bitmap
     }
 
-    private fun decode(bytes: ByteArray, isSvg: Boolean): ImageBitmap? {
-        if (isSvg) {
-            decodeSvg(bytes)?.let { return it }
-        }
-        return runCatching {
-            SkiaImage.makeFromEncoded(bytes).toComposeImageBitmap()
-        }.getOrNull()
-    }
-
-    private fun decodeSvg(bytes: ByteArray): ImageBitmap? {
-        var data: Data? = null
-        var dom: SVGDOM? = null
-        var surface: Surface? = null
-        return runCatching {
-            data = Data.makeFromBytes(bytes)
-            dom = SVGDOM(data!!)
-            val root = dom?.root
-            val viewBox = root?.viewBox
-            val intrinsic = root?.getIntrinsicSize(SVGLengthContext(DefaultSvgViewportPx, DefaultSvgViewportPx))
-            val width = (intrinsic?.x?.takeIf { it.isFinite() && it > 0f }
-                ?: viewBox?.width?.takeIf { it.isFinite() && it > 0f }
-                ?: DefaultSvgViewportPx)
-                .roundToInt()
-                .coerceIn(1, MaxSvgRasterDimensionPx)
-            val height = (intrinsic?.y?.takeIf { it.isFinite() && it > 0f }
-                ?: viewBox?.height?.takeIf { it.isFinite() && it > 0f }
-                ?: DefaultSvgViewportPx)
-                .roundToInt()
-                .coerceIn(1, MaxSvgRasterDimensionPx)
-            dom?.setContainerSize(width.toFloat(), height.toFloat())
-            surface = Surface.makeRasterN32Premul(width, height)
-            val canvas = surface!!.canvas
-            canvas.clear(SkiaColor.TRANSPARENT)
-            dom?.render(canvas)
-            surface!!.makeImageSnapshot().toComposeImageBitmap()
-        }.getOrNull().also {
-            surface?.close()
-            dom?.close()
-            data?.close()
-        }
-    }
 }
+
+internal expect suspend fun decodeSharedMobileEpubImage(
+    bytes: ByteArray,
+    isSvg: Boolean
+): ImageBitmap?
 
 private class SharedMobileEpubNativeImageSource(
     val key: String,
@@ -179,6 +135,3 @@ private class SharedMobileEpubNativeImageSource(
         }
     }
 }
-
-private const val DefaultSvgViewportPx = 512f
-private const val MaxSvgRasterDimensionPx = 4096

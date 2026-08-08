@@ -3,11 +3,14 @@ package com.aryan.reader.shared.ui
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -41,19 +44,25 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedCard
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -61,6 +70,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -859,6 +869,331 @@ private fun SharedUtilityEmptyState(
                     Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
                     Text(actionLabel)
+                }
+            }
+        }
+    }
+}
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun SharedFontFamilyCardFrame(
+    isSelected: Boolean,
+    isSelectionMode: Boolean,
+    onSelectionToggle: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+) {
+    Card(
+        modifier = modifier
+            .fillMaxWidth()
+            .combinedClickable(
+                onClick = {
+                    if (isSelectionMode) {
+                        onSelectionToggle()
+                    }
+                },
+                onLongClick = onSelectionToggle,
+            ),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isSelected) {
+                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
+            } else {
+                MaterialTheme.colorScheme.surface
+            },
+        ),
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            content()
+        }
+    }
+}
+
+@Composable
+fun SharedFontFamilyCardContent(
+    familyName: String,
+    faceSummary: String,
+    allSelected: Boolean,
+    isSelectionMode: Boolean,
+    previewText: String,
+    previewErrorText: String,
+    previewFontFamily: FontFamily?,
+    variantCount: Int,
+    onFamilySelectionToggle: () -> Unit,
+    variantContent: @Composable (Int) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (isSelectionMode) {
+            Checkbox(
+                checked = allSelected,
+                onCheckedChange = { onFamilySelectionToggle() },
+                modifier = Modifier.padding(end = 8.dp),
+            )
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = familyName,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = faceSummary,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), MaterialTheme.shapes.small)
+            .padding(12.dp),
+    ) {
+        if (previewFontFamily != null) {
+            Text(
+                text = previewText,
+                fontFamily = previewFontFamily,
+                fontSize = 18.sp,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+        } else {
+            Text(
+                text = previewErrorText,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
+    }
+    Spacer(Modifier.height(8.dp))
+    repeat(variantCount) { index ->
+        variantContent(index)
+        if (index != variantCount - 1) {
+            HorizontalDivider(modifier = Modifier.padding(start = if (isSelectionMode) 48.dp else 0.dp))
+        }
+    }
+}
+
+@Composable
+fun SharedFontVariantRowFrame(
+    isSelected: Boolean,
+    isSelectionMode: Boolean,
+    extensionLabel: String,
+    deleteContentDescription: String,
+    onSelectionToggle: () -> Unit,
+    onDelete: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable RowScope.() -> Unit,
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(6.dp))
+            .clickable(enabled = isSelectionMode) { onSelectionToggle() }
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (isSelectionMode) {
+            Checkbox(
+                checked = isSelected,
+                onCheckedChange = { onSelectionToggle() },
+                modifier = Modifier.padding(end = 8.dp),
+            )
+        }
+        content()
+        Text(
+            text = extensionLabel,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.outline,
+            modifier = Modifier.padding(horizontal = 8.dp),
+        )
+        if (!isSelectionMode) {
+            IconButton(onClick = onDelete, modifier = Modifier.size(32.dp)) {
+                Icon(
+                    Icons.Default.Delete,
+                    contentDescription = deleteContentDescription,
+                    tint = MaterialTheme.colorScheme.error,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun SharedDeleteFontsConfirmationDialog(
+    title: String,
+    body: String,
+    confirmLabel: String,
+    dismissLabel: String,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = { Text(body) },
+        confirmButton = {
+            TextButton(
+                onClick = onConfirm,
+                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
+            ) {
+                Text(confirmLabel)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(dismissLabel) }
+        },
+    )
+}
+
+data class SharedGoogleFontsLabels(
+    val title: String,
+    val searchPlaceholder: String,
+    val popularChoices: String,
+    val noMatches: (String) -> String,
+    val alreadyDownloadedContentDescription: String,
+    val downloadContentDescription: String,
+)
+
+private val sharedGoogleFontsPopularPresets = listOf(
+    "Merriweather", "Open Sans", "Playfair Display", "Montserrat", "Oswald", "Raleway", "Nunito",
+    "Poppins", "Ubuntu", "Fira Sans", "Quicksand", "Crimson Text", "Literata", "EB Garamond",
+    "Libre Baskerville", "Inter", "Work Sans",
+)
+
+fun sharedGoogleFontsDisplayList(
+    searchQuery: String,
+    getFullFontList: () -> List<String>,
+): List<String> = if (searchQuery.isBlank()) {
+    sharedGoogleFontsPopularPresets
+} else {
+    getFullFontList().filter { it.contains(searchQuery, ignoreCase = true) }.take(50)
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SharedGoogleFontsBottomSheet(
+    existingFontNames: List<String>,
+    getFullFontList: () -> List<String>,
+    onDownloadFont: (String, () -> Unit) -> Unit,
+    labels: SharedGoogleFontsLabels,
+    onDismiss: () -> Unit,
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var searchQuery by remember { mutableStateOf("") }
+    var downloadingFontName by remember { mutableStateOf<String?>(null) }
+    val displayList = remember(searchQuery) {
+        sharedGoogleFontsDisplayList(searchQuery, getFullFontList)
+    }
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surface,
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+        ) {
+            Text(
+                text = labels.title,
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(bottom = 12.dp),
+            )
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                modifier = Modifier.fillMaxWidth(),
+                placeholder = { Text(labels.searchPlaceholder) },
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                singleLine = true,
+                shape = RoundedCornerShape(12.dp),
+            )
+            Spacer(Modifier.height(16.dp))
+            LazyColumn(
+                modifier = Modifier.fillMaxWidth(),
+                contentPadding = PaddingValues(bottom = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                if (searchQuery.isBlank()) {
+                    item {
+                        Text(
+                            text = labels.popularChoices,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(vertical = 4.dp),
+                        )
+                    }
+                } else if (displayList.isEmpty()) {
+                    item {
+                        Text(
+                            text = labels.noMatches(searchQuery),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(16.dp),
+                        )
+                    }
+                }
+                items(displayList) { fontName ->
+                    val isDownloaded = remember(existingFontNames, fontName) {
+                        existingFontNames.any { it.equals(fontName, ignoreCase = true) }
+                    }
+                    val isDownloading = downloadingFontName == fontName
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable(enabled = !isDownloaded && !isDownloading) {
+                                downloadingFontName = fontName
+                                onDownloadFont(fontName) {
+                                    if (downloadingFontName == fontName) downloadingFontName = null
+                                }
+                            }
+                            .background(
+                                if (isDownloaded) {
+                                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.2f)
+                                } else {
+                                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+                                },
+                            )
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text(
+                            text = fontName,
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = if (isDownloaded) FontWeight.Bold else FontWeight.Medium,
+                            color = if (isDownloaded) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                        )
+                        Box(Modifier.padding(start = 12.dp)) {
+                            when {
+                                isDownloaded -> Icon(
+                                    Icons.Default.Check,
+                                    contentDescription = labels.alreadyDownloadedContentDescription,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(20.dp),
+                                )
+                                isDownloading -> CircularProgressIndicator(
+                                    modifier = Modifier.size(20.dp),
+                                    strokeWidth = 2.dp,
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                                else -> Icon(
+                                    Icons.Default.CloudDownload,
+                                    contentDescription = labels.downloadContentDescription,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(20.dp),
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }

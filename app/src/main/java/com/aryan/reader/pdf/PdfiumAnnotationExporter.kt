@@ -418,20 +418,9 @@ internal object PdfiumAnnotationExporter {
             val boundsList = highlight.bounds.mapNotNull { rect ->
                 rect.toNormalizedPdfPageBounds(pageSizeFor(pageSizes, highlight.pageIndex))
             }
-            annotations += SharedPdfAnnotation(
-                id = highlight.id,
-                pageIndex = highlight.pageIndex,
-                kind = PdfAnnotationKind.HIGHLIGHT,
-                tool = PdfInkTool.HIGHLIGHTER,
-                bounds = boundsList.firstOrNull(),
-                boundsList = boundsList,
-                text = highlight.text,
-                note = highlight.note,
-                comments = highlight.comments,
-                colorArgb = highlight.resolvedColor(customHighlightColors).toArgb(),
-                highlightStyle = highlight.style,
-                rangeStartIndex = highlight.range.first,
-                rangeEndIndex = (highlight.range.second - 1).coerceAtLeast(highlight.range.first)
+            annotations += highlight.toSharedPdfHighlightAnnotation(
+                normalizedBounds = boundsList,
+                resolvedColorArgb = highlight.resolvedColor(customHighlightColors).toArgb(),
             )
         }
         return annotations

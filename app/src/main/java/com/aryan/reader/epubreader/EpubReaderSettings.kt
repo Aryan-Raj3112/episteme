@@ -121,6 +121,12 @@ import com.aryan.reader.shared.familyFilenameSignature
 import com.aryan.reader.shared.groupByFamily
 import com.aryan.reader.shared.hasVariableWeightFace
 import com.aryan.reader.shared.supportsVariableWeightAxis
+import com.aryan.reader.shared.ui.SharedReaderVisualOptionsLabels
+import com.aryan.reader.shared.ui.SharedReaderVisualOptionsSheet
+import com.aryan.reader.shared.ui.SharedReaderFormatStepperRow
+import com.aryan.reader.shared.ui.SharedReaderFormatAdjustmentDialog
+import com.aryan.reader.shared.ui.SharedReaderTextFormatSheet
+import com.aryan.reader.shared.ui.SharedReaderTextFormatSheetLabels
 import timber.log.Timber
 import java.io.File
 import kotlin.math.roundToInt
@@ -633,307 +639,109 @@ fun ReaderTextFormatPanel(
     onLocalModeToggle: (Boolean) -> Unit,
     onClose: () -> Unit
 ) {
-    if (isVisible) {
-        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-        var activeAdjustment by remember { mutableStateOf<ReaderFormatAdjustment?>(null) }
-
-        ModalBottomSheet(
-            onDismissRequest = onClose,
-            sheetState = sheetState,
-            scrimColor = Color.Transparent,
-            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.9f),
-            contentWindowInsets = { WindowInsets.navigationBars }
-        ) {
-            val configuration = LocalConfiguration.current
-            val maxSheetHeight = (configuration.screenHeightDp * 0.7f).dp
-
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = maxSheetHeight)
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 16.dp, vertical = 8.dp)
-                    .padding(bottom = 24.dp)
+    if (!isVisible) return
+    var activeAdjustment by remember { mutableStateOf<ReaderFormatAdjustment?>(null) }
+    val configuration = LocalConfiguration.current
+    SharedReaderTextFormatSheet(
+        isVisible = true,
+        isLocalMode = isLocalMode,
+        onLocalModeToggle = onLocalModeToggle,
+        onReset = onReset,
+        onClose = onClose,
+        maxSheetHeight = (configuration.screenHeightDp * 0.7f).dp,
+        previewFontFamily = previewFontFamily,
+        currentFontSize = currentFontSize,
+        currentFontWeight = currentFontWeight,
+        currentLetterSpacing = currentLetterSpacing,
+        currentLineHeight = currentLineHeight,
+        currentFontName = currentCustomFontName ?: currentFont.displayName,
+        onFontOptionClick = onFontOptionClick,
+        labels = SharedReaderTextFormatSheetLabels(
+            local = stringResource(R.string.format_local),
+            global = stringResource(R.string.format_global),
+            localDescription = stringResource(R.string.auto_scroll_saved_for_file),
+            globalDescription = stringResource(R.string.auto_scroll_applies_all_files),
+            selectMode = stringResource(R.string.content_desc_select_mode),
+            reset = stringResource(R.string.action_reset),
+            close = stringResource(R.string.action_close),
+            fontAlignmentSection = stringResource(R.string.section_font_alignment),
+            typographySection = stringResource(R.string.section_typography),
+            layoutSpacingSection = stringResource(R.string.section_layout_spacing),
+            selectFontFamily = stringResource(R.string.content_desc_select_font_family),
+            fontPreview = stringResource(R.string.label_aa_preview)
+        ),
+        alignmentControl = {
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                modifier = Modifier.fillMaxWidth().height(48.dp)
             ) {
-                // Header Row (Local/Global + Close/Reset)
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box {
-                        var showModeMenu by remember { mutableStateOf(false) }
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable { showModeMenu = true }
-                                .padding(4.dp)
+                Row {
+                    ReaderTextAlign.entries.forEach { align ->
+                        val selected = currentTextAlign == align
+                        val displayName = stringResource(align.displayNameRes)
+                        Column(
+                            modifier = Modifier.fillMaxHeight().weight(1f).clip(RoundedCornerShape(12.dp))
+                                .background(if (selected) MaterialTheme.colorScheme.primary else Color.Transparent)
+                                .clickable { onTextAlignChange(align) },
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center
                         ) {
-                            Text(
-                                text = if (isLocalMode) stringResource(R.string.format_local) else stringResource(R.string.format_global),
-                                style = MaterialTheme.typography.labelLarge,
-                                color = MaterialTheme.colorScheme.primary
-                            )
                             Icon(
-                                imageVector = Icons.Default.ArrowDropDown,
-                                contentDescription = stringResource(R.string.content_desc_select_mode),
-                                tint = MaterialTheme.colorScheme.primary,
+                                painter = painterResource(align.iconResId),
+                                contentDescription = displayName,
+                                tint = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.size(20.dp)
                             )
-                        }
-
-                        DropdownMenu(expanded = showModeMenu, onDismissRequest = { showModeMenu = false }) {
-                            DropdownMenuItem(
-                                text = {
-                                    Column {
-                                        Text(stringResource(R.string.format_global), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
-                                        Text(stringResource(R.string.auto_scroll_applies_all_files), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    }
-                                },
-                                onClick = { onLocalModeToggle(false); showModeMenu = false },
-                                trailingIcon = { if (!isLocalMode) Icon(Icons.Default.Check, null) }
-                            )
-                            HorizontalDivider()
-                            DropdownMenuItem(
-                                text = {
-                                    Column {
-                                        Text(stringResource(R.string.format_local), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
-                                        Text(stringResource(R.string.auto_scroll_saved_for_file), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    }
-                                },
-                                onClick = { onLocalModeToggle(true); showModeMenu = false },
-                                trailingIcon = { if (isLocalMode) Icon(Icons.Default.Check, null) }
-                            )
-                        }
-                    }
-
-                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
-                        TextButton(onClick = onReset, contentPadding = PaddingValues(horizontal = 8.dp)) {
-                            Text(stringResource(R.string.action_reset))
-                        }
-                        IconButton(onClick = onClose, modifier = Modifier.size(32.dp)) {
-                            Icon(Icons.Default.Close, stringResource(R.string.action_close), tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
-                        }
-                    }
-                }
-
-                Spacer(Modifier.height(16.dp))
-
-                ReaderFormatPreview(
-                    fontFamily = previewFontFamily,
-                    fontSizeMultiplier = currentFontSize,
-                    fontWeight = currentFontWeight,
-                    letterSpacing = currentLetterSpacing,
-                    lineHeightMultiplier = currentLineHeight
-                )
-
-                Spacer(Modifier.height(20.dp))
-
-                // FONT & ALIGNMENT SECTION
-                Text(
-                    text = stringResource(R.string.section_font_alignment),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(start = 4.dp, bottom = 8.dp)
-                )
-
-                // Font Button
-                val fontSelectorDescription = stringResource(R.string.content_desc_select_font_family)
-                Surface(
-                    onClick = onFontOptionClick,
-                    shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.secondaryContainer,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(52.dp)
-                        .semantics {
-                            contentDescription = fontSelectorDescription
-                        }
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        modifier = Modifier.padding(horizontal = 16.dp)
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
-                                text = stringResource(R.string.label_aa_preview),
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSecondaryContainer,
-                                modifier = Modifier.padding(end = 12.dp)
-                            )
-                            Text(
-                                text = currentCustomFontName ?: currentFont.displayName,
-                                style = MaterialTheme.typography.titleSmall,
-                                color = MaterialTheme.colorScheme.onSecondaryContainer,
-                                maxLines = 1, overflow = TextOverflow.Ellipsis
+                                displayName,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontSize = 11.sp,
+                                color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSecondaryContainer,
-                            modifier = Modifier.size(20.dp)
-                        )
                     }
-                }
-
-                Spacer(Modifier.height(8.dp))
-
-                // Alignment Button (Segmented)
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(48.dp)
-                ) {
-                    Row {
-                        ReaderTextAlign.entries.forEach { align ->
-                            val isSelected = currentTextAlign == align
-                            val alignDisplayName = stringResource(align.displayNameRes)
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxHeight()
-                                    .weight(1f)
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent)
-                                    .clickable { onTextAlignChange(align) },
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.Center
-                            ) {
-                                Icon(
-                                    painter = painterResource(id = align.iconResId),
-                                    contentDescription = alignDisplayName,
-                                    tint = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                                Text(
-                                    text = alignDisplayName,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontSize = 11.sp,
-                                    color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                    }
-                }
-
-                Spacer(Modifier.height(24.dp))
-
-                Text(
-                    text = stringResource(R.string.section_typography),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(start = 4.dp, bottom = 8.dp)
-                )
-
-                FormatStepperRow(
-                    label = stringResource(R.string.label_font_size),
-                    valueLabel = formatMultiplier(currentFontSize),
-                    onDecrease = { onFontSizeChange(stepFormatValue(currentFontSize, -0.1f, 0.5f, 3f)) },
-                    onIncrease = { onFontSizeChange(stepFormatValue(currentFontSize, 0.1f, 0.5f, 3f)) },
-                    onClick = { activeAdjustment = ReaderFormatAdjustment.FONT_SIZE }
-                )
-                FormatStepperRow(
-                    label = stringResource(R.string.label_font_weight),
-                    valueLabel = formatFontWeight(currentFontWeight),
-                    onDecrease = { onFontWeightChange(previousFontWeight(currentFontWeight)) },
-                    onIncrease = { onFontWeightChange(nextFontWeight(currentFontWeight)) },
-                    onClick = { activeAdjustment = ReaderFormatAdjustment.FONT_WEIGHT }
-                )
-                FormatStepperRow(
-                    label = stringResource(R.string.label_letter_spacing),
-                    valueLabel = formatLetterSpacing(currentLetterSpacing),
-                    onDecrease = { onLetterSpacingChange(stepFormatValue(currentLetterSpacing, -0.01f, -0.10f, 0.50f, 100f)) },
-                    onIncrease = { onLetterSpacingChange(stepFormatValue(currentLetterSpacing, 0.01f, -0.10f, 0.50f, 100f)) },
-                    onClick = { activeAdjustment = ReaderFormatAdjustment.LETTER_SPACING }
-                )
-
-                Spacer(Modifier.height(20.dp))
-
-                // LAYOUT & SPACING SECTION
-                Text(
-                    text = stringResource(R.string.section_layout_spacing),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(start = 4.dp, bottom = 12.dp)
-                )
-
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FormatStepperRow(
-                        label = stringResource(R.string.label_line_height),
-                        valueLabel = formatMultiplier(currentLineHeight),
-                        onDecrease = { onLineHeightChange(stepFormatValue(currentLineHeight, -0.1f, 1f, 3f)) },
-                        onIncrease = { onLineHeightChange(stepFormatValue(currentLineHeight, 0.1f, 1f, 3f)) },
-                        onClick = { activeAdjustment = ReaderFormatAdjustment.LINE_HEIGHT }
-                    )
-
-                    FormatStepperRow(
-                        label = stringResource(R.string.label_paragraph_gap),
-                        valueLabel = formatMultiplier(currentParagraphGap),
-                        onDecrease = { onParagraphGapChange(stepFormatValue(currentParagraphGap, -0.1f, 0f, 3f)) },
-                        onIncrease = { onParagraphGapChange(stepFormatValue(currentParagraphGap, 0.1f, 0f, 3f)) },
-                        onClick = { activeAdjustment = ReaderFormatAdjustment.PARAGRAPH_GAP }
-                    )
-
-                    FormatStepperRow(
-                        label = stringResource(R.string.label_image_size),
-                        valueLabel = formatMultiplier(currentImageSize),
-                        onDecrease = { onImageSizeChange(stepFormatValue(currentImageSize, -0.1f, 0.5f, 2f)) },
-                        onIncrease = { onImageSizeChange(stepFormatValue(currentImageSize, 0.1f, 0.5f, 2f)) },
-                        onClick = { activeAdjustment = ReaderFormatAdjustment.IMAGE_SIZE }
-                    )
-
-                    FormatStepperRow(
-                        label = stringResource(R.string.label_horizontal_margin),
-                        valueLabel = formatMargin(currentHorizontalMargin),
-                        onDecrease = { onHorizontalMarginChange(stepFormatValue(currentHorizontalMargin, -0.1f, 0f, 3f)) },
-                        onIncrease = { onHorizontalMarginChange(stepFormatValue(currentHorizontalMargin, 0.1f, 0f, 3f)) },
-                        onClick = { activeAdjustment = ReaderFormatAdjustment.HORIZONTAL_MARGIN }
-                    )
-
-                    FormatStepperRow(
-                        label = stringResource(R.string.label_vertical_margin),
-                        valueLabel = formatMargin(currentVerticalMargin),
-                        onDecrease = { onVerticalMarginChange(stepFormatValue(currentVerticalMargin, -0.1f, 0f, 3f)) },
-                        onIncrease = { onVerticalMarginChange(stepFormatValue(currentVerticalMargin, 0.1f, 0f, 3f)) },
-                        onClick = { activeAdjustment = ReaderFormatAdjustment.VERTICAL_MARGIN }
-                    )
                 }
             }
+        },
+        typographyControls = {
+            FormatStepperRow(stringResource(R.string.label_font_size), formatMultiplier(currentFontSize),
+                { onFontSizeChange(stepFormatValue(currentFontSize, -0.1f, 0.5f, 3f)) },
+                { onFontSizeChange(stepFormatValue(currentFontSize, 0.1f, 0.5f, 3f)) }) { activeAdjustment = ReaderFormatAdjustment.FONT_SIZE }
+            FormatStepperRow(stringResource(R.string.label_font_weight), formatFontWeight(currentFontWeight),
+                { onFontWeightChange(previousFontWeight(currentFontWeight)) },
+                { onFontWeightChange(nextFontWeight(currentFontWeight)) }) { activeAdjustment = ReaderFormatAdjustment.FONT_WEIGHT }
+            FormatStepperRow(stringResource(R.string.label_letter_spacing), formatLetterSpacing(currentLetterSpacing),
+                { onLetterSpacingChange(stepFormatValue(currentLetterSpacing, -0.01f, -0.10f, 0.50f, 100f)) },
+                { onLetterSpacingChange(stepFormatValue(currentLetterSpacing, 0.01f, -0.10f, 0.50f, 100f)) }) { activeAdjustment = ReaderFormatAdjustment.LETTER_SPACING }
+        },
+        layoutControls = {
+            FormatStepperRow(stringResource(R.string.label_line_height), formatMultiplier(currentLineHeight),
+                { onLineHeightChange(stepFormatValue(currentLineHeight, -0.1f, 1f, 3f)) },
+                { onLineHeightChange(stepFormatValue(currentLineHeight, 0.1f, 1f, 3f)) }) { activeAdjustment = ReaderFormatAdjustment.LINE_HEIGHT }
+            FormatStepperRow(stringResource(R.string.label_paragraph_gap), formatMultiplier(currentParagraphGap),
+                { onParagraphGapChange(stepFormatValue(currentParagraphGap, -0.1f, 0f, 3f)) },
+                { onParagraphGapChange(stepFormatValue(currentParagraphGap, 0.1f, 0f, 3f)) }) { activeAdjustment = ReaderFormatAdjustment.PARAGRAPH_GAP }
+            FormatStepperRow(stringResource(R.string.label_image_size), formatMultiplier(currentImageSize),
+                { onImageSizeChange(stepFormatValue(currentImageSize, -0.1f, 0.5f, 2f)) },
+                { onImageSizeChange(stepFormatValue(currentImageSize, 0.1f, 0.5f, 2f)) }) { activeAdjustment = ReaderFormatAdjustment.IMAGE_SIZE }
+            FormatStepperRow(stringResource(R.string.label_horizontal_margin), formatMargin(currentHorizontalMargin),
+                { onHorizontalMarginChange(stepFormatValue(currentHorizontalMargin, -0.1f, 0f, 3f)) },
+                { onHorizontalMarginChange(stepFormatValue(currentHorizontalMargin, 0.1f, 0f, 3f)) }) { activeAdjustment = ReaderFormatAdjustment.HORIZONTAL_MARGIN }
+            FormatStepperRow(stringResource(R.string.label_vertical_margin), formatMargin(currentVerticalMargin),
+                { onVerticalMarginChange(stepFormatValue(currentVerticalMargin, -0.1f, 0f, 3f)) },
+                { onVerticalMarginChange(stepFormatValue(currentVerticalMargin, 0.1f, 0f, 3f)) }) { activeAdjustment = ReaderFormatAdjustment.VERTICAL_MARGIN }
         }
-
-        activeAdjustment?.let { adjustment ->
-            ReaderFormatAdjustmentDialog(
-                adjustment = adjustment,
-                fontSize = currentFontSize,
-                fontWeight = currentFontWeight,
-                letterSpacing = currentLetterSpacing,
-                lineHeight = currentLineHeight,
-                paragraphGap = currentParagraphGap,
-                imageSize = currentImageSize,
-                horizontalMargin = currentHorizontalMargin,
-                verticalMargin = currentVerticalMargin,
-                onFontSizeChange = onFontSizeChange,
-                onFontWeightChange = onFontWeightChange,
-                onLetterSpacingChange = onLetterSpacingChange,
-                onLineHeightChange = onLineHeightChange,
-                onParagraphGapChange = onParagraphGapChange,
-                onImageSizeChange = onImageSizeChange,
-                onHorizontalMarginChange = onHorizontalMarginChange,
-                onVerticalMarginChange = onVerticalMarginChange,
-                onDismiss = { activeAdjustment = null }
-            )
-        }
+    )
+    activeAdjustment?.let { adjustment ->
+        ReaderFormatAdjustmentDialog(
+            adjustment, currentFontSize, currentFontWeight, currentLetterSpacing, currentLineHeight,
+            currentParagraphGap, currentImageSize, currentHorizontalMargin, currentVerticalMargin,
+            onFontSizeChange, onFontWeightChange, onLetterSpacingChange, onLineHeightChange,
+            onParagraphGapChange, onImageSizeChange, onHorizontalMarginChange, onVerticalMarginChange
+        ) { activeAdjustment = null }
     }
 }
-
 private enum class ReaderFormatAdjustment(val title: String) {
     FONT_SIZE("Font size"),
     FONT_WEIGHT("Font weight"),
@@ -946,44 +754,6 @@ private enum class ReaderFormatAdjustment(val title: String) {
 }
 
 @Composable
-private fun ReaderFormatPreview(
-    fontFamily: FontFamily,
-    fontSizeMultiplier: Float,
-    fontWeight: Int,
-    letterSpacing: Float,
-    lineHeightMultiplier: Float
-) {
-    Surface(
-        shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(Modifier.padding(horizontal = 18.dp, vertical = 16.dp)) {
-            Text(
-                text = "The art of reading, perfected",
-                fontFamily = fontFamily,
-                fontSize = (18f * fontSizeMultiplier).sp,
-                fontWeight = fontWeight.takeIf { it > 0 }?.let(::FontWeight),
-                letterSpacing = letterSpacing.em,
-                lineHeight = (22f * fontSizeMultiplier * lineHeightMultiplier).sp,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis
-            )
-            Spacer(Modifier.height(4.dp))
-            Text(
-                text = "0123456789  ·  Aa Bb Cc",
-                fontFamily = fontFamily,
-                fontSize = (13f * fontSizeMultiplier).sp,
-                fontWeight = fontWeight.takeIf { it > 0 }?.let(::FontWeight),
-                letterSpacing = letterSpacing.em,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1
-            )
-        }
-    }
-}
-
-@Composable
 private fun FormatStepperRow(
     label: String,
     valueLabel: String,
@@ -991,32 +761,7 @@ private fun FormatStepperRow(
     onIncrease: () -> Unit,
     onClick: () -> Unit
 ) {
-    Surface(
-        onClick = onClick,
-        shape = RoundedCornerShape(12.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Row(
-            modifier = Modifier.padding(start = 16.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text(label, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-                Text(
-                    valueLabel,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary
-                )
-            }
-            IconButton(onClick = onDecrease, modifier = Modifier.size(40.dp)) {
-                Icon(Icons.Default.Remove, contentDescription = "Decrease $label")
-            }
-            IconButton(onClick = onIncrease, modifier = Modifier.size(40.dp)) {
-                Icon(Icons.Default.Add, contentDescription = "Increase $label")
-            }
-        }
-    }
+    SharedReaderFormatStepperRow(label, valueLabel, onDecrease, onIncrease, onClick)
 }
 
 @Composable
@@ -1086,35 +831,25 @@ private fun ReaderFormatAdjustmentDialog(
         }
     }
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(adjustment.title) },
-        text = {
-            Column {
-                Text(
-                    when (adjustment) {
-                        ReaderFormatAdjustment.FONT_WEIGHT -> formatFontWeight(fontWeight)
-                        ReaderFormatAdjustment.LETTER_SPACING -> formatLetterSpacing(letterSpacing)
-                        ReaderFormatAdjustment.HORIZONTAL_MARGIN -> formatMargin(horizontalMargin)
-                        ReaderFormatAdjustment.VERTICAL_MARGIN -> formatMargin(verticalMargin)
-                        else -> formatMultiplier(value)
-                    },
-                    style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                Spacer(Modifier.height(12.dp))
-                Slider(value = value.coerceIn(range), onValueChange = ::update, valueRange = range)
-                if (isWeight && fontWeight == 0) {
-                    Text(
-                        "Original uses the weight supplied by the book or selected font.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
+    SharedReaderFormatAdjustmentDialog(
+        title = adjustment.title,
+        value = value,
+        valueLabel = when (adjustment) {
+            ReaderFormatAdjustment.FONT_WEIGHT -> formatFontWeight(fontWeight)
+            ReaderFormatAdjustment.LETTER_SPACING -> formatLetterSpacing(letterSpacing)
+            ReaderFormatAdjustment.HORIZONTAL_MARGIN -> formatMargin(horizontalMargin)
+            ReaderFormatAdjustment.VERTICAL_MARGIN -> formatMargin(verticalMargin)
+            else -> formatMultiplier(value)
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_done)) } },
-        dismissButton = { TextButton(onClick = ::reset) { Text(stringResource(R.string.action_reset)) } }
+        valueRange = range,
+        originalWeightDescription = if (isWeight && fontWeight == 0) {
+            "Original uses the weight supplied by the book or selected font."
+        } else null,
+        doneLabel = stringResource(R.string.action_done),
+        resetLabel = stringResource(R.string.action_reset),
+        onValueChange = ::update,
+        onReset = ::reset,
+        onDismiss = onDismiss
     )
 }
 
@@ -1330,115 +1065,39 @@ fun VisualOptionsSheet(
     onPullToTurnMultiplierChange: (Float) -> Unit,
     onDismiss: () -> Unit
 ) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val configuration = LocalConfiguration.current
     val maxSheetHeight = readerModalMaxHeightDp(configuration.screenHeightDp).dp
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        containerColor = MaterialTheme.colorScheme.surface,
-        contentWindowInsets = { WindowInsets.navigationBars }
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(max = maxSheetHeight)
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 24.dp, vertical = 8.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(stringResource(R.string.menu_visual_options), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                IconButton(onClick = onDismiss) {
-                    Icon(Icons.Default.Close, contentDescription = stringResource(R.string.action_close))
-                }
-            }
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // System UI
-            Text(stringResource(R.string.visual_options_system_ui), style = MaterialTheme.typography.titleMedium)
-            Text(stringResource(R.string.visual_options_system_ui_desc), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(modifier = Modifier.height(12.dp))
-            OptionSegmentedControl(
-                options = SystemUiMode.entries,
-                selectedOption = systemUiMode,
-                onOptionSelected = onSystemUiModeChange,
-                getLabel = { stringResource(it.titleRes) }
-            )
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            // Progress Bar
-            Text(stringResource(R.string.visual_options_progress_bar), style = MaterialTheme.typography.titleMedium)
-            Text(stringResource(R.string.visual_options_progress_bar_desc), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(modifier = Modifier.height(12.dp))
-            OptionSegmentedControl(
-                options = PageInfoMode.entries,
-                selectedOption = pageInfoMode,
-                onOptionSelected = onPageInfoModeChange,
-                getLabel = { stringResource(it.titleRes) }
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-            Text(stringResource(R.string.visual_options_progress_bar_position), style = MaterialTheme.typography.titleSmall)
-            Spacer(modifier = Modifier.height(8.dp))
-            OptionSegmentedControl(
-                options = PageInfoPosition.entries,
-                selectedOption = pageInfoPosition,
-                onOptionSelected = onPageInfoPositionChange,
-                getLabel = { stringResource(it.titleRes) }
-            )
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            // Pull to change chapter
-            Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { onPullToTurnChange(!pullToTurnEnabled) }
-                            .padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(stringResource(R.string.visual_options_seamless_chapter), style = MaterialTheme.typography.titleMedium)
-                            Text(stringResource(R.string.visual_options_seamless_chapter_desc), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        Spacer(modifier = Modifier.width(16.dp))
-                        Switch(checked = !pullToTurnEnabled, onCheckedChange = { onPullToTurnChange(!it) })
-                    }
-
-                    AnimatedVisibility(visible = pullToTurnEnabled) {
-                        Column(modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp)) {
-                            HorizontalDivider(modifier = Modifier.padding(bottom = 12.dp), color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.2f))
-                            Text(stringResource(R.string.setting_pull_distance_change_chapter), style = MaterialTheme.typography.titleSmall)
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(stringResource(R.string.label_short), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                Slider(
-                                    value = pullToTurnMultiplier,
-                                    onValueChange = onPullToTurnMultiplierChange,
-                                    valueRange = 0.5f..2.0f,
-                                    steps = 14,
-                                    modifier = Modifier.weight(1f).padding(horizontal = 12.dp)
-                                )
-                                Text(stringResource(R.string.label_long), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                        }
-                    }
-                }
-            }
-            Spacer(modifier = Modifier.height(32.dp))
-        }
-    }
+    SharedReaderVisualOptionsSheet(
+        systemUiMode = systemUiMode,
+        onSystemUiModeChange = onSystemUiModeChange,
+        pageInfoMode = pageInfoMode,
+        onPageInfoModeChange = onPageInfoModeChange,
+        pageInfoPosition = pageInfoPosition,
+        onPageInfoPositionChange = onPageInfoPositionChange,
+        pullToTurnEnabled = pullToTurnEnabled,
+        onPullToTurnChange = onPullToTurnChange,
+        pullToTurnMultiplier = pullToTurnMultiplier,
+        onPullToTurnMultiplierChange = onPullToTurnMultiplierChange,
+        maxSheetHeight = maxSheetHeight,
+        labels = SharedReaderVisualOptionsLabels(
+            title = stringResource(R.string.menu_visual_options),
+            close = stringResource(R.string.action_close),
+            systemUi = stringResource(R.string.visual_options_system_ui),
+            systemUiDescription = stringResource(R.string.visual_options_system_ui_desc),
+            systemUiOptions = SystemUiMode.entries.associateWith { stringResource(it.titleRes) },
+            progressBar = stringResource(R.string.visual_options_progress_bar),
+            progressBarDescription = stringResource(R.string.visual_options_progress_bar_desc),
+            pageInfoOptions = PageInfoMode.entries.associateWith { stringResource(it.titleRes) },
+            progressBarPosition = stringResource(R.string.visual_options_progress_bar_position),
+            pageInfoPositionOptions = PageInfoPosition.entries.associateWith { stringResource(it.titleRes) },
+            seamlessChapter = stringResource(R.string.visual_options_seamless_chapter),
+            seamlessChapterDescription = stringResource(R.string.visual_options_seamless_chapter_desc),
+            pullDistance = stringResource(R.string.setting_pull_distance_change_chapter),
+            shortDistance = stringResource(R.string.label_short),
+            longDistance = stringResource(R.string.label_long)
+        ),
+        onDismiss = onDismiss
+    )
 }
 
 @Composable

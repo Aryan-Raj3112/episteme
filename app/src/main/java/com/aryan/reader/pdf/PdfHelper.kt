@@ -130,12 +130,7 @@ private class MenuActionItem(
     val isError: Boolean = false
 )
 
-enum class PdfHighlightColor(val color: Color) {
-    YELLOW(Color(0xFFFBC02D)),
-    GREEN(Color(0xFF388E3C)),
-    BLUE(Color(0xFF1976D2)),
-    RED(Color(0xFFD32F2F));
-}
+typealias PdfHighlightColor = com.aryan.reader.shared.pdf.PdfHighlightColor
 
 data class PdfUserHighlight(
     val id: String = UUID.randomUUID().toString(),

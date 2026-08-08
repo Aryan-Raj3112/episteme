@@ -2,6 +2,8 @@ package com.aryan.reader.pdf
 
 import androidx.compose.ui.geometry.Offset
 import com.aryan.reader.shared.pdf.PdfSpreadLayout
+import com.aryan.reader.shared.pdf.SharedPdfAnnotationSessionPhase
+import com.aryan.reader.shared.pdf.SharedPdfAnnotationSessionState
 import com.aryan.reader.shared.reader.ReaderSettings
 import kotlin.math.roundToInt
 
@@ -15,7 +17,14 @@ internal fun canUsePdfSidecarsForBook(
     activeBookId: String?,
     loadedSidecarBookId: String?,
     areSidecarsLoaded: Boolean
-): Boolean = activeBookId != null && areSidecarsLoaded && loadedSidecarBookId == activeBookId
+): Boolean = SharedPdfAnnotationSessionState(
+    bookId = loadedSidecarBookId,
+    phase = if (areSidecarsLoaded) {
+        SharedPdfAnnotationSessionPhase.READY
+    } else {
+        SharedPdfAnnotationSessionPhase.EMPTY
+    },
+).canUseFor(activeBookId)
 
 internal fun canManagePdfVirtualPages(
     isDocumentReady: Boolean,

@@ -106,7 +106,6 @@ import androidx.compose.material3.rememberTooltipState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.Stable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -185,8 +184,6 @@ import com.aryan.reader.tts.rememberTtsController
 import com.aryan.reader.tts.splitTextIntoChunks
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.commonmark.node.AbstractVisitor
@@ -465,14 +462,7 @@ private fun AiByokSettings.apiKeyFor(provider: String): String {
     }.trim()
 }
 
-data class SearchResult(
-    val locationInSource: Int,
-    val locationTitle: String,
-    val snippet: AnnotatedString,
-    val query: String,
-    val occurrenceIndexInLocation: Int,
-    val chunkIndex: Int
-)
+typealias SearchResult = com.aryan.reader.shared.SearchResult
 
 typealias AiDefinitionResult = com.aryan.reader.shared.AiDefinitionResult
 
@@ -561,59 +551,7 @@ class SummaryCacheManager(context: Context) {
     }
 }
 
-@Stable
-class SearchState(
-    private val scope: CoroutineScope,
-    private val searcher: suspend (String) -> List<SearchResult>
-) {
-    var isSearchActive by mutableStateOf(false)
-    var showSearchResultsPanel by mutableStateOf(true)
-    var searchQuery by mutableStateOf("")
-    var searchResults by mutableStateOf<List<SearchResult>>(emptyList())
-    var isSearchInProgress by mutableStateOf(false)
-    var currentSearchResultIndex by mutableIntStateOf(-1)
-
-    val searchResultsCount by derivedStateOf { searchResults.size }
-    val hasResults by derivedStateOf { searchResults.isNotEmpty() }
-
-    private var searchJob: Job? = null
-
-    fun onQueryChange(newQuery: String) {
-        searchQuery = newQuery
-        searchJob?.cancel()
-        searchJob = scope.launch {
-            if (newQuery.isBlank()) {
-                searchResults = emptyList()
-                currentSearchResultIndex = -1
-                isSearchInProgress = false
-                return@launch
-            }
-            delay(350)
-            showSearchResultsPanel = true
-            isSearchInProgress = true
-            currentSearchResultIndex = -1
-            searchResults = searcher(newQuery)
-            isSearchInProgress = false
-        }
-    }
-
-    fun forceSearch() {
-        searchJob?.cancel()
-        searchJob = scope.launch {
-            if (searchQuery.isBlank()) {
-                searchResults = emptyList()
-                currentSearchResultIndex = -1
-                isSearchInProgress = false
-                return@launch
-            }
-            showSearchResultsPanel = true
-            isSearchInProgress = true
-            currentSearchResultIndex = -1
-            searchResults = searcher(searchQuery)
-            isSearchInProgress = false
-        }
-    }
-}
+typealias SearchState = com.aryan.reader.shared.ReaderSearchState
 
 @Composable
 fun rememberSearchState(
@@ -1060,47 +998,17 @@ fun SearchResultsPanel(
     onResultClick: (SearchResult) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Surface(
-        modifier = modifier.fillMaxSize(),
-        color = MaterialTheme.colorScheme.background
-    ) {
-        when {
-            isSearching -> {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator()
-                }
-            }
-            results.isEmpty() -> {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text(stringResource(R.string.search_no_results_simple), style = MaterialTheme.typography.bodyLarge)
-                }
-            }
-            else -> {
-                Column {
-                    Text(
-                        text = LocalContext.current.resources.getQuantityString(R.plurals.search_results_count, results.size, results.size),
-                        style = MaterialTheme.typography.titleSmall,
-                        modifier = Modifier
-                            .padding(horizontal = 16.dp, vertical = 12.dp)
-                    )
-                    HorizontalDivider()
-                    LazyColumn(modifier = Modifier.testTag("SearchResultsList")) {
-                        items(results.size) { index ->
-                            val result = results[index]
-                            ListItem(
-                                headlineContent = { Text(result.locationTitle, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                                supportingContent = { Text(result.snippet, style = MaterialTheme.typography.bodyMedium) },
-                                modifier = Modifier
-                                    .clickable { onResultClick(result) }
-                                    .testTag("SearchResultItem_${result.locationInSource}")
-                            )
-                            HorizontalDivider()
-                        }
-                    }
-                }
-            }
-        }
-    }
+    val resources = LocalContext.current.resources
+    com.aryan.reader.shared.ui.SharedReaderSearchResultsPanel(
+        results = results,
+        isSearching = isSearching,
+        noResultsText = stringResource(R.string.search_no_results_simple),
+        resultsCountText = { count ->
+            resources.getQuantityString(R.plurals.search_results_count, count, count)
+        },
+        onResultClick = onResultClick,
+        modifier = modifier,
+    )
 }
 
 suspend fun fetchAiDefinition(
@@ -2756,12 +2664,6 @@ fun loadCustomThemes(context: Context): List<ReaderTheme> {
     return themes
 }
 
-private fun calculateContrastRatio(color1: Color, color2: Color): Float {
-    val l1 = max(color1.luminance(), color2.luminance())
-    val l2 = min(color1.luminance(), color2.luminance())
-    return (l1 + 0.05f) / (l2 + 0.05f)
-}
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ReaderThemePanel(
@@ -2778,215 +2680,61 @@ fun ReaderThemePanel(
     onCustomThemesUpdated: (List<ReaderTheme>) -> Unit,
     onDismiss: () -> Unit
 ) {
-    if (!isVisible) return
-    var showBuilder by remember { mutableStateOf(false) }
-    var builderIsTextured by remember { mutableStateOf(false) }
-    var editingTheme by remember { mutableStateOf<ReaderTheme?>(null) }
-    var selectedTabIndex by remember { mutableIntStateOf(if (builtInThemes.find { it.id == currentThemeId }?.textureId != null || customThemes.find { it.id == currentThemeId }?.textureId != null) 1 else 0) }
-
-    val plainBuiltInThemes = builtInThemes.filter { it.textureId == null }
-    val texturedBuiltInThemes = builtInThemes.filter { it.textureId != null }
-    val plainCustomThemes = customThemes.filter { it.textureId == null }
-    val texturedCustomThemes = customThemes.filter { it.textureId != null }
-
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        containerColor = MaterialTheme.colorScheme.surface,
-        contentWindowInsets = { WindowInsets.navigationBars }
-    ) {
-        AnimatedContent(targetState = showBuilder, label = "ThemePanelTransition") { isBuilding ->
-            if (isBuilding) {
-                ThemeBuilderView(
-                    initialTheme = editingTheme,
-                    isTexturedMode = builderIsTextured,
-                    globalTextureAlpha = 1f - globalTextureTransparency,
-                    onSave = { newTheme ->
-                        val updatedList = if (editingTheme != null) {
-                            customThemes.map { if (it.id == newTheme.id) newTheme else it }
-                        } else {
-                            customThemes + newTheme
-                        }
-                        onCustomThemesUpdated(updatedList)
-                        onThemeSelected(newTheme.id)
-                        showBuilder = false
-                        editingTheme = null
-                    },
-                    onCancel = {
-                        showBuilder = false
-                        editingTheme = null
-                    }
-                )
-            } else {
-                Column(modifier = Modifier.fillMaxWidth().fillMaxHeight(0.85f).padding(horizontal = 16.dp)) {
-                    Text(
-                        text = stringResource(R.string.reading_themes),
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(bottom = 16.dp, top = 8.dp)
-                    )
-
-                    TabRow(selectedTabIndex = selectedTabIndex, containerColor = Color.Transparent, divider = {}) {
-                        Tab(selected = selectedTabIndex == 0, onClick = { selectedTabIndex = 0 }) {
-                            Text(stringResource(R.string.theme_solid_colors), modifier = Modifier.padding(12.dp))
-                        }
-                        Tab(selected = selectedTabIndex == 1, onClick = { selectedTabIndex = 1 }) {
-                            Text(stringResource(R.string.theme_textured), modifier = Modifier.padding(12.dp))
-                        }
-                    }
-
-                    Spacer(Modifier.height(16.dp))
-
-                    if (selectedTabIndex == 1) {
-                        Column(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
-                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text(stringResource(R.string.theme_texture_transparency), style = MaterialTheme.typography.labelMedium)
-                                Text("${(globalTextureTransparency * 100).roundToInt()}%", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-                            }
-                            Slider(
-                                value = globalTextureTransparency,
-                                onValueChange = onGlobalTextureTransparencyChange,
-                                valueRange = 0f..1f
+    val context = LocalContext.current
+    com.aryan.reader.shared.ui.SharedReaderThemePanel(
+        isVisible = isVisible,
+        currentThemeId = currentThemeId,
+        excludeImages = excludeImages,
+        onExcludeImagesChange = onExcludeImagesChange,
+        showExcludeImagesOption = showExcludeImagesOption,
+        customThemes = customThemes,
+        builtInThemes = builtInThemes,
+        globalTextureTransparency = globalTextureTransparency,
+        onGlobalTextureTransparencyChange = onGlobalTextureTransparencyChange,
+        onThemeSelected = onThemeSelected,
+        onCustomThemesUpdated = onCustomThemesUpdated,
+        onDismiss = onDismiss,
+        labels = com.aryan.reader.shared.ui.SharedReaderThemePanelLabels(
+            title = stringResource(R.string.reading_themes),
+            solidColors = stringResource(R.string.theme_solid_colors),
+            textured = stringResource(R.string.theme_textured),
+            textureTransparency = stringResource(R.string.theme_texture_transparency),
+            preserveImageColors = stringResource(R.string.theme_preserve_image_colors),
+            preserveImageColorsDescription = stringResource(R.string.theme_preserve_image_colors_desc),
+            presets = stringResource(R.string.theme_presets),
+            myThemes = stringResource(R.string.theme_my_themes),
+            newTheme = stringResource(R.string.theme_new),
+            noCustomThemes = stringResource(R.string.theme_no_custom),
+            edit = stringResource(R.string.action_edit),
+            delete = stringResource(R.string.action_delete),
+            preview = stringResource(R.string.label_aa_preview),
+        ),
+        texturePreview = { textureId, alpha, modifier ->
+            val bitmap = remember(textureId) { loadReaderTextureBitmap(context, textureId) }
+            Box(
+                modifier.then(
+                    bitmap?.let {
+                        Modifier.drawBehind {
+                            drawRect(
+                                ShaderBrush(ImageShader(it, TileMode.Repeated, TileMode.Repeated)),
+                                blendMode = BlendMode.SrcOver,
+                                alpha = alpha,
                             )
                         }
-                    }
-
-                    val activeListBuiltIn = if (selectedTabIndex == 0) plainBuiltInThemes else texturedBuiltInThemes
-                    val activeListCustom = if (selectedTabIndex == 0) plainCustomThemes else texturedCustomThemes
-
-                    LazyVerticalGrid(
-                        columns = GridCells.Fixed(3),
-                        modifier = Modifier.fillMaxWidth().weight(1f),
-                        contentPadding = PaddingValues(bottom = 24.dp),
-                        horizontalArrangement = Arrangement.spacedBy(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(16.dp)
-                    ) {
-                        if (showExcludeImagesOption) {
-                            item(span = { GridItemSpan(maxLineSpan) }) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(stringResource(R.string.theme_preserve_image_colors), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
-                                        Text(stringResource(R.string.theme_preserve_image_colors_desc), style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                                    }
-                                    Switch(checked = excludeImages, onCheckedChange = onExcludeImagesChange)
-                                }
-                            }
-                        }
-
-                        item(span = { GridItemSpan(maxLineSpan) }) {
-                            Text(stringResource(R.string.theme_presets), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                        }
-
-                        items(activeListBuiltIn) { theme ->
-                            ThemeGridItem(
-                                theme = theme,
-                                currentThemeId = currentThemeId,
-                                context = LocalContext.current,
-                                globalTextureAlpha = 1f - globalTextureTransparency,
-                                onThemeSelected = onThemeSelected,
-                                onEdit = null,
-                                onDelete = null
-                            )
-                        }
-
-                        item(span = { GridItemSpan(maxLineSpan) }) {
-                            Spacer(Modifier.height(8.dp))
-                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                Text(stringResource(R.string.theme_my_themes), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                                IconButton(onClick = { editingTheme = null; builderIsTextured = selectedTabIndex == 1; showBuilder = true }) {
-                                    Icon(Icons.Default.Add, contentDescription = stringResource(R.string.theme_new), tint = MaterialTheme.colorScheme.primary)
-                                }
-                            }
-                        }
-
-                        if (activeListCustom.isEmpty()) {
-                            item(span = { GridItemSpan(maxLineSpan) }) {
-                                Text(stringResource(R.string.theme_no_custom), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                        } else {
-                            items(activeListCustom) { theme ->
-                                ThemeGridItem(
-                                    theme = theme,
-                                    currentThemeId = currentThemeId,
-                                    context = LocalContext.current,
-                                    globalTextureAlpha = 1f - globalTextureTransparency,
-                                    onThemeSelected = onThemeSelected,
-                                    onEdit = { editingTheme = it; builderIsTextured = selectedTabIndex == 1; showBuilder = true },
-                                    onDelete = { themeToDelete ->
-                                        val updated = customThemes.filter { it.id != themeToDelete.id }
-                                        onCustomThemesUpdated(updated)
-                                        if (currentThemeId == themeToDelete.id) onThemeSelected("system")
-                                    }
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ThemeGridItem(
-    theme: ReaderTheme,
-    currentThemeId: String,
-    context: Context,
-    globalTextureAlpha: Float,
-    onThemeSelected: (String) -> Unit,
-    onEdit: ((ReaderTheme) -> Unit)?,
-    onDelete: ((ReaderTheme) -> Unit)?,
-    modifier: Modifier = Modifier
-) {
-    val isSelected = currentThemeId == theme.id
-    val bgColor = if (theme.id == "system") MaterialTheme.colorScheme.surfaceVariant else theme.backgroundColor
-    val textColor = if (theme.id == "system") MaterialTheme.colorScheme.onSurfaceVariant else theme.textColor
-    val borderColor = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
-    val textureBitmap = remember(theme.textureId) { loadReaderTextureBitmap(context, theme.textureId) }
-
-    Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
-        Box(
-            modifier = Modifier
-                .size(56.dp)
-                .background(bgColor, CircleShape)
-                .then(textureBitmap?.let { bitmap ->
-                    Modifier.drawBehind {
-                        drawRect(ShaderBrush(ImageShader(bitmap, TileMode.Repeated, TileMode.Repeated)), blendMode = BlendMode.SrcOver, alpha = globalTextureAlpha)
-                    }
-                } ?: Modifier)
-                .border(if (isSelected) 3.dp else 1.dp, borderColor, CircleShape)
-                .clickable { onThemeSelected(theme.id) },
-            contentAlignment = Alignment.Center
-        ) {
-            Text(text = stringResource(R.string.label_aa_preview), color = textColor, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
-        }
-        Spacer(modifier = Modifier.height(8.dp))
-        Text(
-            text = theme.name,
-            style = MaterialTheme.typography.labelSmall,
-            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.clickable { onThemeSelected(theme.id) }
-        )
-
-        if (theme.isCustom && onEdit != null && onDelete != null) {
-            Spacer(modifier = Modifier.height(6.dp))
-            Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
-                Row(modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Edit, stringResource(R.string.action_edit), Modifier.size(28.dp).clip(CircleShape).clickable { onEdit(theme) }.padding(6.dp), tint = MaterialTheme.colorScheme.primary)
-                    Spacer(Modifier.width(4.dp))
-                    Icon(Icons.Default.Delete, stringResource(R.string.action_delete), Modifier.size(28.dp).clip(CircleShape).clickable { onDelete(theme) }.padding(6.dp), tint = MaterialTheme.colorScheme.error)
-                }
-            }
-        }
-    }
+                    } ?: Modifier,
+                ),
+            )
+        },
+        builderContent = { initialTheme, isTexturedMode, globalTextureAlpha, onSave, onCancel ->
+            ThemeBuilderView(
+                initialTheme = initialTheme,
+                isTexturedMode = isTexturedMode,
+                globalTextureAlpha = globalTextureAlpha,
+                onSave = onSave,
+                onCancel = onCancel,
+            )
+        },
+    )
 }
 
 @Composable
@@ -2998,118 +2746,75 @@ fun ThemeBuilderView(
     onCancel: () -> Unit
 ) {
     val context = LocalContext.current
-    val defaultThemeName = stringResource(if (isTexturedMode) R.string.theme_custom_textured_default else R.string.theme_custom_solid_default)
-    var name by remember(initialTheme?.id, isTexturedMode, defaultThemeName) { mutableStateOf(initialTheme?.name ?: defaultThemeName) }
-    var bgColor by remember { mutableStateOf(initialTheme?.backgroundColor ?: Color(0xFFF5F5F5)) }
-    var txtColor by remember { mutableStateOf(initialTheme?.textColor ?: Color(0xFF111111)) }
-    var editingColorType by remember { mutableStateOf<String?>(null) }
-
     var importedTextures by remember { mutableStateOf(getImportedTextures(context)) }
-    var textureId by remember { mutableStateOf(initialTheme?.textureId ?: importedTextures.firstOrNull()) }
 
-    val texturePickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        uri?.let { importReaderTexture(context, it) }?.let { newId ->
-            importedTextures = getImportedTextures(context)
-            textureId = newId
-        }
-    }
-
-    val contrast = calculateContrastRatio(bgColor, txtColor)
-    val isDark = bgColor.luminance() < 0.5f
-
-    Column(modifier = Modifier.fillMaxWidth().fillMaxHeight(0.85f).padding(16.dp)) {
-        Text(
-            text = stringResource(if (initialTheme == null) R.string.theme_new else R.string.theme_edit),
-            fontWeight = FontWeight.Bold,
-            style = MaterialTheme.typography.titleLarge,
-            color = MaterialTheme.colorScheme.onSurface
-        )
-
-        Spacer(Modifier.height(16.dp))
-
-        Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-            OutlinedTextField(
-                value = name,
-                onValueChange = { name = it },
-                label = { Text(stringResource(R.string.theme_name)) },
-                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                singleLine = true
-            )
-
-            // Live Preview Card
-            Surface(
-                modifier = Modifier.fillMaxWidth().height(120.dp).padding(vertical = 8.dp),
-                shape = RoundedCornerShape(12.dp),
-                color = bgColor,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-            ) {
-                val textureBitmap = remember(textureId) { loadReaderTextureBitmap(context, textureId) }
-                Box(modifier = Modifier.fillMaxSize().run {
-                    if (isTexturedMode && textureBitmap != null) {
-                        this.drawBehind {
-                            drawRect(ShaderBrush(ImageShader(textureBitmap, TileMode.Repeated, TileMode.Repeated)), blendMode = BlendMode.SrcOver, alpha = globalTextureAlpha)
+    com.aryan.reader.shared.ui.SharedReaderThemeBuilder(
+        initialTheme = initialTheme,
+        isTexturedMode = isTexturedMode,
+        globalTextureAlpha = globalTextureAlpha,
+        defaultTextureId = importedTextures.firstOrNull(),
+        labels = com.aryan.reader.shared.ui.SharedReaderThemeBuilderLabels(
+            customTexturedDefault = stringResource(R.string.theme_custom_textured_default),
+            customSolidDefault = stringResource(R.string.theme_custom_solid_default),
+            newTheme = stringResource(R.string.theme_new),
+            editTheme = stringResource(R.string.theme_edit),
+            themeName = stringResource(R.string.theme_name),
+            previewQuote = stringResource(R.string.theme_preview_quote),
+            previewAuthor = stringResource(R.string.theme_preview_author),
+            lowContrastWarning = stringResource(R.string.theme_low_contrast_warning),
+            pageColor = stringResource(R.string.theme_page_color),
+            textColor = stringResource(R.string.theme_text_color),
+            cancel = stringResource(R.string.action_cancel),
+            save = stringResource(R.string.action_save),
+        ),
+        newThemeId = { System.currentTimeMillis().toString() },
+        onSave = onSave,
+        onCancel = onCancel,
+        texturePreview = { textureId, alpha, modifier ->
+            val bitmap = remember(textureId) { loadReaderTextureBitmap(context, textureId) }
+            Box(
+                modifier.then(
+                    bitmap?.let {
+                        Modifier.drawBehind {
+                            drawRect(
+                                ShaderBrush(ImageShader(it, TileMode.Repeated, TileMode.Repeated)),
+                                blendMode = BlendMode.SrcOver,
+                                alpha = alpha,
+                            )
                         }
-                    } else this
-                }) {
-                    Column(Modifier.padding(16.dp).fillMaxWidth()) {
-                        Text(text = stringResource(R.string.theme_preview_quote), color = txtColor, style = MaterialTheme.typography.titleMedium)
-                        Spacer(Modifier.height(8.dp))
-                        Text(text = stringResource(R.string.theme_preview_author), color = txtColor, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.End)
-                    }
+                    } ?: Modifier,
+                ),
+            )
+        },
+        texturePickerContent = { selectedTextureId, onTextureSelected ->
+            val texturePickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+                uri?.let { importReaderTexture(context, it) }?.let { newId ->
+                    importedTextures = getImportedTextures(context)
+                    onTextureSelected(newId)
                 }
             }
-
-            AnimatedVisibility(visible = contrast < 4.5f) {
-                Text(stringResource(R.string.theme_low_contrast_warning), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(bottom = 8.dp))
-            }
-
-            Spacer(Modifier.height(16.dp))
-
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                ColorSwatchItem(label = stringResource(R.string.theme_page_color), color = bgColor, onClick = { editingColorType = "bg" }, modifier = Modifier.weight(1f))
-                ColorSwatchItem(label = stringResource(R.string.theme_text_color), color = txtColor, onClick = { editingColorType = "text" }, modifier = Modifier.weight(1f))
-            }
-
-            if (isTexturedMode) {
-                Spacer(Modifier.height(24.dp))
-                CustomTexturePickerSection(
-                    importedTextures = importedTextures,
-                    selectedTextureId = textureId,
-                    onTextureSelected = { textureId = it },
-                    onImportTexture = { texturePickerLauncher.launch(arrayOf("image/png", "image/jpeg", "image/webp", "image/gif", "image/bmp")) }
-                )
-            }
-            Spacer(Modifier.height(16.dp))
-        }
-
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
-            horizontalArrangement = Arrangement.End,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            TextButton(onClick = onCancel) {
-                Text(stringResource(R.string.action_cancel), color = MaterialTheme.colorScheme.primary)
-            }
-            Spacer(Modifier.width(8.dp))
-            Button(onClick = {
-                onSave(ReaderTheme(id = initialTheme?.id ?: System.currentTimeMillis().toString(), name = name, backgroundColor = bgColor, textColor = txtColor, isDark = isDark, textureId = if (isTexturedMode) textureId else null, isCustom = true))
-            }) {
-                Text(stringResource(R.string.action_save), color = MaterialTheme.colorScheme.onPrimary)
-            }
-        }
-    }
-
-    editingColorType?.let { type ->
-        ThemeColorPickerDialog(
-            initialColor = if (type == "bg") bgColor else txtColor,
-            title = if (type == "bg") stringResource(R.string.theme_page_color) else stringResource(R.string.theme_text_color),
-            bgColor = bgColor,
-            textColor = txtColor,
-            editingColorType = type,
-            onDismiss = { editingColorType = null },
-            onColorChanged = { newColor -> if (type == "bg") bgColor = newColor else txtColor = newColor }
-        )
-    }
+            CustomTexturePickerSection(
+                importedTextures = importedTextures,
+                selectedTextureId = selectedTextureId,
+                onTextureSelected = onTextureSelected,
+                onImportTexture = {
+                    texturePickerLauncher.launch(arrayOf("image/png", "image/jpeg", "image/webp", "image/gif", "image/bmp"))
+                },
+            )
+        },
+        colorPickerContent = { target, initialColor, backgroundColor, textColor, onDismiss, onColorChanged ->
+            val isBackground = target == com.aryan.reader.shared.ui.SharedReaderThemeColorTarget.BACKGROUND
+            ThemeColorPickerDialog(
+                initialColor = initialColor,
+                title = stringResource(if (isBackground) R.string.theme_page_color else R.string.theme_text_color),
+                bgColor = backgroundColor,
+                textColor = textColor,
+                editingColorType = if (isBackground) "bg" else "text",
+                onDismiss = onDismiss,
+                onColorChanged = onColorChanged,
+            )
+        },
+    )
 }
 
 @Composable
@@ -3266,21 +2971,6 @@ private fun TextureChoice(
                 textAlign = TextAlign.Center
             )
         }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun ColorSwatchItem(label: String, color: Color, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    Column(modifier = modifier) {
-        Text(label, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(bottom = 8.dp))
-        Surface(
-            onClick = onClick,
-            shape = RoundedCornerShape(12.dp),
-            color = color,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-            modifier = Modifier.fillMaxWidth().height(56.dp)
-        ) {}
     }
 }
 

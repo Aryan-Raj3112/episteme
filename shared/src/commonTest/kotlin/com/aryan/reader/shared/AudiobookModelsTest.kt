@@ -8,6 +8,18 @@ import kotlin.test.assertTrue
 
 class AudiobookModelsTest {
     @Test
+    fun `listening handoff preserves one active Android playback source`() {
+        assertEquals(
+            SharedListeningHandoff.STOP_TTS,
+            sharedListeningHandoff(SharedListeningTarget.IMPORTED_AUDIOBOOK),
+        )
+        assertEquals(
+            SharedListeningHandoff.STOP_AUDIOBOOK,
+            sharedListeningHandoff(SharedListeningTarget.GENERATED_BOOK_TTS),
+        )
+    }
+
+    @Test
     fun `supported imports match Android formats case insensitively`() {
         assertTrue(SharedAudiobookFormats.supportsFileName("Book.M4B"))
         assertTrue(SharedAudiobookFormats.supportsFileName("Book.opus"))

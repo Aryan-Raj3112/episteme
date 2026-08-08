@@ -7,6 +7,8 @@ import com.aryan.reader.shared.AppAction as SharedAppAction
 import com.aryan.reader.shared.AppFontPreference as SharedAppFontPreference
 import com.aryan.reader.shared.AppThemeMode as SharedAppThemeMode
 import com.aryan.reader.shared.LibraryAction as SharedLibraryAction
+import com.aryan.reader.shared.AppReaderSessionPhase
+import com.aryan.reader.shared.reduce
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -42,12 +44,12 @@ class AndroidSharedStateBridgeTest {
         val book = recentFile("book")
         val filters = LibraryFilters(readStatus = ReadStatusFilter.COMPLETED)
 
-        val selected = AndroidSharedStateBridge.reduceLibraryAction(
+        val selected = reduceLibraryAction(
             current = ReaderScreenState(),
             projectedState = ReaderScreenState(rawLibraryFiles = listOf(book)),
             action = SharedLibraryAction.BookSelectionToggled(book.bookId)
         )
-        val filtered = AndroidSharedStateBridge.reduceLibraryAction(
+        val filtered = reduceLibraryAction(
             current = selected,
             projectedState = ReaderScreenState(rawLibraryFiles = listOf(book)),
             action = SharedLibraryAction.FiltersChanged(filters.toSharedLibraryFilters())
@@ -59,7 +61,7 @@ class AndroidSharedStateBridgeTest {
 
     @Test
     fun `reduceLibraryAction drops selection ids that are not in projected Android books`() {
-        val result = AndroidSharedStateBridge.reduceLibraryAction(
+        val result = reduceLibraryAction(
             current = ReaderScreenState(),
             projectedState = ReaderScreenState(rawLibraryFiles = listOf(recentFile("book"))),
             action = SharedLibraryAction.BookSelectionToggled("missing")
@@ -69,38 +71,29 @@ class AndroidSharedStateBridgeTest {
     }
 
     @Test
-    fun `reduceAppAction applies shared app state back to Android fields`() {
-        val result = AndroidSharedStateBridge.reduceAppAction(
-            current = ReaderScreenState(appThemeMode = AppThemeMode.LIGHT),
-            projectedState = ReaderScreenState(),
-            action = SharedAppAction.AppThemeChanged(SharedAppThemeMode.DARK)
-        )
+    fun `shared appearance reducer applies app theme without bridge projection`() {
+        val result = AppAppearanceState(themeMode = AppThemeMode.LIGHT)
+            .reduce(SharedAppAction.AppThemeChanged(SharedAppThemeMode.DARK))
 
-        assertEquals(AppThemeMode.DARK, result.appThemeMode)
+        assertEquals(AppThemeMode.DARK, result.themeMode)
     }
 
     @Test
-    fun `reduceAppAction applies shared app font preference back to Android fields`() {
+    fun `shared appearance reducer applies app font preference without bridge projection`() {
         val preference = SharedAppFontPreference.custom("font")
 
-        val result = AndroidSharedStateBridge.reduceAppAction(
-            current = ReaderScreenState(),
-            projectedState = ReaderScreenState(),
-            action = SharedAppAction.AppFontPreferenceChanged(preference)
-        )
+        val result = AppAppearanceState()
+            .reduce(SharedAppAction.AppFontPreferenceChanged(preference))
 
-        assertEquals(preference, result.appFontPreference)
+        assertEquals(preference, result.fontPreference)
     }
 
     @Test
     fun `setTabsEnabled disables shared tabs but preserves Android active reader session`() {
-        val result = AndroidSharedStateBridge.setTabsEnabled(
+        val result = setTabsEnabled(
             current = ReaderScreenState(
-                isTabsEnabled = true,
-                openTabIds = listOf("one", "two"),
-                activeTabBookId = "two"
+                tabState = AppTabState(true, listOf("one", "two"), "two")
             ),
-            projectedState = ReaderScreenState(),
             enabled = false
         )
 
@@ -111,13 +104,11 @@ class AndroidSharedStateBridgeTest {
 
     @Test
     fun `openBookTab delegates tab ordering and activation to shared reducer`() {
-        val result = AndroidSharedStateBridge.openBookTab(
+        val result = openBookTab(
             current = ReaderScreenState(
-                isTabsEnabled = false,
-                openTabIds = listOf("old"),
-                activeTabBookId = "old"
+                tabState = AppTabState(false, listOf("old"), "old")
             ),
-            projectedState = ReaderScreenState(openTabIds = listOf("old"), activeTabBookId = "old"),
+            availableBookIds = setOf("old", "new"),
             bookId = "new"
         )
 
@@ -130,17 +121,11 @@ class AndroidSharedStateBridgeTest {
     fun `openBookTab ignores stale persisted tab ids missing from projection`() {
         val staleIds = (1..20).map { "missing_$it" }
 
-        val result = AndroidSharedStateBridge.openBookTab(
+        val result = openBookTab(
             current = ReaderScreenState(
-                isTabsEnabled = true,
-                openTabIds = staleIds,
-                activeTabBookId = staleIds.last()
+                tabState = AppTabState(true, staleIds, staleIds.last())
             ),
-            projectedState = ReaderScreenState(
-                isTabsEnabled = true,
-                openTabIds = emptyList(),
-                activeTabBookId = null
-            ),
+            availableBookIds = setOf("new"),
             bookId = "new"
         )
 
@@ -151,13 +136,11 @@ class AndroidSharedStateBridgeTest {
 
     @Test
     fun `closeBookTab selects the previous tab when the active tab closes`() {
-        val result = AndroidSharedStateBridge.closeBookTab(
+        val result = closeBookTab(
             current = ReaderScreenState(
-                isTabsEnabled = true,
-                openTabIds = listOf("one", "two", "three"),
-                activeTabBookId = "three"
+                tabState = AppTabState(true, listOf("one", "two", "three"), "three")
             ),
-            projectedState = ReaderScreenState(openTabIds = listOf("one", "two", "three"), activeTabBookId = "three"),
+            availableBookIds = setOf("one", "two", "three"),
             bookId = "three"
         )
 
@@ -168,13 +151,10 @@ class AndroidSharedStateBridgeTest {
 
     @Test
     fun `closeAllTabs clears Android tab ids through shared reducer`() {
-        val result = AndroidSharedStateBridge.closeAllTabs(
+        val result = closeAllTabs(
             current = ReaderScreenState(
-                isTabsEnabled = true,
-                openTabIds = listOf("one", "two"),
-                activeTabBookId = "two"
-            ),
-            projectedState = ReaderScreenState()
+                tabState = AppTabState(true, listOf("one", "two"), "two")
+            )
         )
 
         assertEquals(true, result.isTabsEnabled)
@@ -187,18 +167,19 @@ class AndroidSharedStateBridgeTest {
         val pinned = recentFile("pinned")
         val unpinned = recentFile("unpinned")
 
-        val result = AndroidSharedStateBridge.togglePinsForSelectedBooks(
+        val result = togglePinsForSelectedBooks(
             current = ReaderScreenState(
                 rawLibraryFiles = listOf(pinned, unpinned),
                 contextualActionItems = setOf(pinned, unpinned),
-                pinnedHomeBookIds = setOf(pinned.bookId)
+                pinState = AppPinState(homeBookIds = setOf(pinned.bookId)),
+                libraryState = LibraryState(selectedBookIds = setOf(pinned.bookId, unpinned.bookId)),
             ),
-            projectedState = ReaderScreenState(rawLibraryFiles = listOf(pinned, unpinned)),
             isHome = true
         )
 
         assertEquals(setOf("pinned", "unpinned"), result.pinnedHomeBookIds)
         assertTrue(result.contextualActionItems.isEmpty())
+        assertTrue(result.libraryState.selectedBookIds.isEmpty())
     }
 
     @Test
@@ -206,18 +187,19 @@ class AndroidSharedStateBridgeTest {
         val first = recentFile("first")
         val second = recentFile("second")
 
-        val result = AndroidSharedStateBridge.togglePinsForSelectedBooks(
+        val result = togglePinsForSelectedBooks(
             current = ReaderScreenState(
                 rawLibraryFiles = listOf(first, second),
                 contextualActionItems = setOf(first, second),
-                pinnedLibraryBookIds = setOf(first.bookId, second.bookId)
+                pinState = AppPinState(libraryBookIds = setOf(first.bookId, second.bookId)),
+                libraryState = LibraryState(selectedBookIds = setOf(first.bookId, second.bookId)),
             ),
-            projectedState = ReaderScreenState(rawLibraryFiles = listOf(first, second)),
             isHome = false
         )
 
         assertTrue(result.pinnedLibraryBookIds.isEmpty())
         assertTrue(result.contextualActionItems.isEmpty())
+        assertTrue(result.libraryState.selectedBookIds.isEmpty())
     }
 
     @Test
@@ -225,7 +207,7 @@ class AndroidSharedStateBridgeTest {
         val visible = recentFile("visible")
         val hidden = recentFile("hidden")
 
-        val result = AndroidSharedStateBridge.replaceBookSelectionWithVisibleBooks(
+        val result = replaceBookSelectionWithVisibleBooks(
             current = ReaderScreenState(),
             projectedState = ReaderScreenState(rawLibraryFiles = listOf(visible, hidden)),
             visibleBooks = listOf(visible)
@@ -238,13 +220,56 @@ class AndroidSharedStateBridgeTest {
     fun `replaceBookSelectionWithVisibleBooks clears when visible books are already selected`() {
         val visible = recentFile("visible")
 
-        val result = AndroidSharedStateBridge.replaceBookSelectionWithVisibleBooks(
+        val result = replaceBookSelectionWithVisibleBooks(
             current = ReaderScreenState(contextualActionItems = setOf(visible)),
             projectedState = ReaderScreenState(rawLibraryFiles = listOf(visible)),
             visibleBooks = listOf(visible)
         )
 
         assertTrue(result.contextualActionItems.isEmpty())
+    }
+
+    @Test
+    fun `reader session reducer preserves Android fields outside portable lifecycle on close`() {
+        val current = ReaderScreenState(
+            readerSession = AppReaderSessionState(
+                bookId = "book",
+                fileType = FileType.EPUB,
+                phase = AppReaderSessionPhase.OPENING,
+            ),
+            isLoading = true,
+            isTemporaryExternalOpen = true,
+            initialCfi = "epubcfi(/6/2)",
+        )
+
+        val projected = readerSessionState(current)
+        val closed = closeReaderSession(current)
+
+        assertEquals(AppReaderSessionPhase.OPENING, projected.phase)
+        assertEquals(null, closed.selectedBookId)
+        assertEquals(null, closed.selectedFileType)
+        assertEquals(false, closed.isLoading)
+        assertEquals(null, closed.errorMessage)
+        assertTrue(closed.isTemporaryExternalOpen)
+        assertEquals("epubcfi(/6/2)", closed.initialCfi)
+    }
+
+    @Test
+    fun `reader session reducer ignores stale completion and closes identity on matching failure`() {
+        val platformState = ReaderScreenState(initialCfi = "keep")
+        val opening = startReaderSession(platformState, "book", FileType.EPUB)
+        val staleReady = markReaderSessionReady(opening, "other")
+        val ready = markReaderSessionReady(opening, "book")
+        val failed = markReaderSessionFailed(opening, "book", "broken", closeReader = true)
+
+        assertTrue(opening.isLoading)
+        assertEquals(opening, staleReady)
+        assertEquals("book", ready.selectedBookId)
+        assertEquals(false, ready.isLoading)
+        assertEquals(null, failed.selectedBookId)
+        assertEquals(null, failed.selectedFileType)
+        assertEquals("broken", failed.errorMessage)
+        assertEquals("keep", failed.initialCfi)
     }
 
     private fun recentFile(

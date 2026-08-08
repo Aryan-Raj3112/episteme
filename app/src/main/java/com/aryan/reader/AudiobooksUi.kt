@@ -1350,7 +1350,7 @@ private fun BookTtsPlayerSheet(item: AudiobookUiItem, onDismiss: () -> Unit) {
     val sourceBook = item.sourceBook ?: return
     val controller = remember(sourceBook.bookId) { BookTtsAudiobookController(context) }
     val prepared by controller.uiState.collectAsStateWithLifecycle()
-    val playback by controller.playbackState.collectAsStateWithLifecycle()
+    val playback by controller.sharedPlaybackState.collectAsStateWithLifecycle()
     var showPlayerMenu by remember(sourceBook.bookId) {
         mutableStateOf(false)
     }
@@ -1369,15 +1369,15 @@ private fun BookTtsPlayerSheet(item: AudiobookUiItem, onDismiss: () -> Unit) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var rate by remember { mutableFloatStateOf(prepared.savedProgress?.speechRate ?: loadTtsSpeechRate(context)) }
     var pitch by remember { mutableFloatStateOf(prepared.savedProgress?.pitch ?: loadTtsPitch(context)) }
-    val isThisBookActive = playback.playbackSource == "AUDIOBOOK_TTS" && playback.bookId == sourceBook.bookId
+    val isThisBookActive = playback.connected && playback.bookId == sourceBook.bookId
     val book = prepared.book
     val currentChapter = if (isThisBookActive) playback.chapterIndex else prepared.savedProgress?.chapterIndex
     val progress = if (isThisBookActive) {
         calculateTtsAudiobookProgress(
             chapterIndex = currentChapter ?: 0,
             chapterCount = book?.chapters?.size ?: 0,
-            chunkIndex = playback.currentChunkIndex,
-            chunkCount = playback.totalChunks
+            chunkIndex = playback.chunkIndex,
+            chunkCount = playback.chunkCount
         )
     } else item.progress
     val currentChapterTitle = currentChapter?.let { book?.chapters?.getOrNull(it)?.title }
@@ -1394,7 +1394,7 @@ private fun BookTtsPlayerSheet(item: AudiobookUiItem, onDismiss: () -> Unit) {
         }
     }
     LaunchedEffect(
-        playback.currentChunkIndex,
+        playback.chunkIndex,
         playback.transcriptStartIndex,
         playback.transcriptChunks.size,
         activePanel
@@ -1405,7 +1405,7 @@ private fun BookTtsPlayerSheet(item: AudiobookUiItem, onDismiss: () -> Unit) {
         ) {
             val localIndex =
                 (
-                        playback.currentChunkIndex -
+                        playback.chunkIndex -
                                 playback.transcriptStartIndex
                         )
                     .coerceIn(
@@ -1622,7 +1622,7 @@ private fun BookTtsPlayerSheet(item: AudiobookUiItem, onDismiss: () -> Unit) {
                                 AudiobookTranscript(
                                     chunks = playback.transcriptChunks,
                                     startIndex = playback.transcriptStartIndex,
-                                    currentIndex = playback.currentChunkIndex,
+                                    currentIndex = playback.chunkIndex,
                                     listState = transcriptListState,
                                     modifier = Modifier.fillMaxSize()
                                 )
@@ -1661,8 +1661,8 @@ private fun BookTtsPlayerSheet(item: AudiobookUiItem, onDismiss: () -> Unit) {
                     Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                         Text("${(progress * 100).toInt()}%", style = MaterialTheme.typography.labelSmall)
                         Text(
-                            if (isThisBookActive && playback.currentChunkIndex >= 0) {
-                                formatReaderTtsChunkLabel(playback.currentChunkIndex, playback.totalChunks).orEmpty()
+                            if (isThisBookActive && playback.chunkIndex >= 0) {
+                                formatReaderTtsChunkLabel(playback.chunkIndex, playback.chunkCount).orEmpty()
                             } else "Chapter ${(currentChapter ?: 0) + 1}",
                             style = MaterialTheme.typography.labelSmall
                         )
@@ -1693,7 +1693,7 @@ private fun BookTtsPlayerSheet(item: AudiobookUiItem, onDismiss: () -> Unit) {
                     // Inner left: previous generated passage/chunk.
                     IconButton(
                         onClick = controller::previousChunk,
-                        enabled = isThisBookActive && playback.currentChunkIndex > 0
+                        enabled = isThisBookActive && playback.chunkIndex > 0
                     ) {
                         Icon(
                             painter = painterResource(R.drawable.skip_previous),
@@ -1741,7 +1741,7 @@ private fun BookTtsPlayerSheet(item: AudiobookUiItem, onDismiss: () -> Unit) {
                     IconButton(
                         onClick = controller::nextChunk,
                         enabled = isThisBookActive &&
-                                playback.currentChunkIndex < playback.totalChunks - 1
+                                playback.chunkIndex < playback.chunkCount - 1
                     ) {
                         Icon(
                             painter = painterResource(R.drawable.skip_next),

@@ -132,30 +132,33 @@ import com.aryan.reader.tts.TtsPlaybackManager.TtsState
 import com.aryan.reader.tts.formatReaderTtsChunkLabel
 import kotlin.math.roundToInt
 
-enum class ReaderTool(@StringRes val titleRes: Int, val category: String) {
-    DICTIONARY(R.string.tool_external_apps, "Top Bar"),
-    THEME(R.string.tooltip_theme_desc, "Top Bar"),
-    BRIGHTNESS(R.string.tool_brightness, "Top Bar"),
-    SLIDER(R.string.tool_navigation_slider, "Bottom Bar"),
-    TOC(R.string.tool_sidebar, "Bottom Bar"),
-    FORMAT(R.string.content_desc_text_formatting, "Bottom Bar"),
-    SEARCH(R.string.action_search, "Bottom Bar"),
-    AI_FEATURES(R.string.ai_features_title, "Bottom Bar"),
-    TTS_CONTROLS(R.string.tool_tts_controls, "Bottom Bar"),
-    FILE_INFO(R.string.file_information, "Overflow Menu"),
-    READING_MODE(R.string.tool_reading_mode, "Overflow Menu"),
-    BOOKMARK(R.string.content_desc_bookmark, "Overflow Menu"),
-    TAP_TO_TURN(R.string.menu_tap_to_turn_pages, "Overflow Menu"),
-    VOLUME_SCROLL(R.string.menu_volume_button_scrolling, "Overflow Menu"),
-    PAGE_TURN_ANIM(R.string.menu_realistic_page_turns, "Overflow Menu"),
-    KEEP_SCREEN_ON(R.string.menu_keep_screen_on, "Overflow Menu"),
-    VISUAL_OPTIONS(R.string.menu_visual_options, "Overflow Menu"),
-    SCREEN_ORIENTATION(R.string.menu_screen_orientation, "Top Bar"),
-    AUTO_SCROLL(R.string.menu_auto_scroll, "Overflow Menu"),
-    TTS_SETTINGS(R.string.menu_tts_settings, "Overflow Menu"),
-    TTS_REPLACEMENTS(R.string.menu_tts_word_replacements, "Overflow Menu"),
-    BOOK_REPLACEMENTS(R.string.menu_book_word_replacements, "Overflow Menu")
-}
+typealias ReaderTool = com.aryan.reader.shared.ReaderTool
+
+val ReaderTool.titleRes: Int
+    @StringRes get() = when (this) {
+        ReaderTool.DICTIONARY -> R.string.tool_external_apps
+        ReaderTool.THEME -> R.string.tooltip_theme_desc
+        ReaderTool.BRIGHTNESS -> R.string.tool_brightness
+        ReaderTool.SLIDER -> R.string.tool_navigation_slider
+        ReaderTool.TOC -> R.string.tool_sidebar
+        ReaderTool.FORMAT -> R.string.content_desc_text_formatting
+        ReaderTool.SEARCH -> R.string.action_search
+        ReaderTool.AI_FEATURES -> R.string.ai_features_title
+        ReaderTool.TTS_CONTROLS -> R.string.tool_tts_controls
+        ReaderTool.FILE_INFO -> R.string.file_information
+        ReaderTool.READING_MODE -> R.string.tool_reading_mode
+        ReaderTool.BOOKMARK -> R.string.content_desc_bookmark
+        ReaderTool.TAP_TO_TURN -> R.string.menu_tap_to_turn_pages
+        ReaderTool.VOLUME_SCROLL -> R.string.menu_volume_button_scrolling
+        ReaderTool.PAGE_TURN_ANIM -> R.string.menu_realistic_page_turns
+        ReaderTool.KEEP_SCREEN_ON -> R.string.menu_keep_screen_on
+        ReaderTool.VISUAL_OPTIONS -> R.string.menu_visual_options
+        ReaderTool.SCREEN_ORIENTATION -> R.string.menu_screen_orientation
+        ReaderTool.AUTO_SCROLL -> R.string.menu_auto_scroll
+        ReaderTool.TTS_SETTINGS -> R.string.menu_tts_settings
+        ReaderTool.TTS_REPLACEMENTS -> R.string.menu_tts_word_replacements
+        ReaderTool.BOOK_REPLACEMENTS -> R.string.menu_book_word_replacements
+    }
 
 enum class FlatItemType { SECTION_HEADER, TOOL, EMPTY_PLACEHOLDER, MORE_HEADER, MORE_TOOL }
 

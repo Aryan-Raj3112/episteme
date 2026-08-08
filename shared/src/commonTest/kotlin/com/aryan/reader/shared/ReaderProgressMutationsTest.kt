@@ -6,6 +6,11 @@ import kotlin.test.assertSame
 
 class ReaderProgressMutationsTest {
     @Test
+    fun `pdf progress keeps Android page calculation and empty document fallback`() {
+        assertEquals(50f, pdfReadingProgressPercentage(pageIndex = 1, totalPages = 4))
+        assertEquals(0f, pdfReadingProgressPercentage(pageIndex = 0, totalPages = 0))
+    }
+    @Test
     fun `pdf progress change advances reading timestamp`() {
         val book = pdfBook().copy(
             lastPageIndex = 1,

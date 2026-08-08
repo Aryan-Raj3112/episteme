@@ -155,6 +155,13 @@ import com.aryan.reader.opds.OpdsEntry
 import com.aryan.reader.opds.OpdsRepository
 import com.aryan.reader.opds.OpdsViewModel
 import com.aryan.reader.shared.LOCAL_FOLDER_SYNC_DATA_DIR
+import com.aryan.reader.shared.ui.SharedMobileLibraryFilterChips
+import com.aryan.reader.shared.ui.SharedMobileLibraryBookListCardFrame
+import com.aryan.reader.shared.ui.SharedMobileLibraryFilterDialog
+import com.aryan.reader.shared.ui.SharedMobileLibraryFilterLabels
+import com.aryan.reader.shared.ui.SharedMobileLibrarySearchTopBar
+import com.aryan.reader.shared.ui.SharedMobileLibrarySortControl
+import com.aryan.reader.shared.ui.SharedMobileShelfListCardFrame
 import com.aryan.reader.shared.opds.SharedOpdsLocalBookMatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
@@ -738,7 +745,6 @@ fun LibraryScreenContent(
 ) {
     val isBookContextualModeActive = selectedItems.isNotEmpty()
     val isShelfContextualModeActive = selectedShelves.isNotEmpty()
-    var showSortMenu by remember { mutableStateOf(false) }
     val searchFocusRequester = remember { FocusRequester() }
     val selectedBookIds = remember(selectedItems) { selectedItems.mapTo(mutableSetOf()) { it.bookId } }
 
@@ -782,55 +788,24 @@ fun LibraryScreenContent(
                         onDeleteClick = onDeleteShelves
                     )
                 } else if (isSearchActive) {
-                    Surface(
-                        shadowElevation = 4.dp,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .statusBarsPadding()
-                                .height(64.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            IconButton(onClick = { onSearchActiveChange(false) }) {
-                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.content_desc_close_search))
-                            }
-                            OutlinedTextField(
-                                value = textFieldValue,
-                                onValueChange = {
-                                    textFieldValue = it
-                                    onSearchQueryChange(it.text)
-                                },
-                                placeholder = { Text(stringResource(R.string.search_placeholder)) },
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .padding(vertical = 4.dp)
-                                    .focusRequester(searchFocusRequester)
-                                    .testTag("LibrarySearchTextField"),
-                                singleLine = true,
-                                colors = TextFieldDefaults.colors(
-                                    focusedContainerColor = Color.Transparent,
-                                    unfocusedContainerColor = Color.Transparent,
-                                    disabledContainerColor = Color.Transparent,
-                                    focusedIndicatorColor = Color.Transparent,
-                                    unfocusedIndicatorColor = Color.Transparent,
-                                ),
-                                trailingIcon = {
-                                    if (searchQuery.isNotEmpty()) {
-                                        IconButton(
-                                            onClick = {
-                                                textFieldValue = TextFieldValue("", TextRange.Zero)
-                                                onSearchQueryChange("")
-                                            }
-                                        ) {
-                                            Icon(Icons.Default.Close, contentDescription = stringResource(R.string.content_desc_clear_query))
-                                        }
-                                    }
-                                }
-                            )
-                        }
-                    }
+                    SharedMobileLibrarySearchTopBar(
+                        value = textFieldValue,
+                        onValueChange = {
+                            textFieldValue = it
+                            onSearchQueryChange(it.text)
+                        },
+                        showClear = searchQuery.isNotEmpty(),
+                        onClose = { onSearchActiveChange(false) },
+                        onClear = {
+                            textFieldValue = TextFieldValue("", TextRange.Zero)
+                            onSearchQueryChange("")
+                        },
+                        placeholder = stringResource(R.string.search_placeholder),
+                        closeContentDescription = stringResource(R.string.content_desc_close_search),
+                        clearContentDescription = stringResource(R.string.content_desc_clear_query),
+                        focusRequester = searchFocusRequester,
+                        textFieldModifier = Modifier.testTag("LibrarySearchTextField"),
+                    )
                 } else {
                     CustomTopAppBar(title = { Text(stringResource(R.string.library_title)) },
                         actions = {
@@ -838,42 +813,20 @@ fun LibraryScreenContent(
                                 IconButton(onClick = onFilterClick) {
                                     Icon(Icons.Default.FilterList, contentDescription = stringResource(R.string.content_desc_filter))
                                 }
-                                Box {
-                                    TextButton(
-                                        onClick = { showSortMenu = true },
-                                        modifier = Modifier.testTag("LibrarySortButton")
-                                    ) {
+                                SharedMobileLibrarySortControl(
+                                    sortOrder = sortOrder,
+                                    labels = SortOrder.entries.associateWith { stringResource(it.labelRes) },
+                                    selectedContentDescription = stringResource(R.string.content_desc_selected),
+                                    onSortOrderChange = onSortOrderChange,
+                                    modifier = Modifier.testTag("LibrarySortButton"),
+                                    icon = {
                                         Icon(
                                             painter = painterResource(id = R.drawable.sort),
                                             contentDescription = stringResource(R.string.content_desc_sort),
-                                            modifier = Modifier.size(20.dp)
+                                            modifier = Modifier.size(20.dp),
                                         )
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        Text(stringResource(sortOrder.labelRes))
-                                    }
-                                    DropdownMenu(
-                                        expanded = showSortMenu,
-                                        onDismissRequest = { showSortMenu = false }
-                                    ) {
-                                        SortOrder.entries.forEach { order ->
-                                            DropdownMenuItem(
-                                                text = { Text(stringResource(order.labelRes)) },
-                                                onClick = {
-                                                    onSortOrderChange(order)
-                                                    showSortMenu = false
-                                                },
-                                                trailingIcon = {
-                                                    if (order == sortOrder) {
-                                                        Icon(
-                                                            Icons.Default.Check,
-                                                            contentDescription = stringResource(R.string.content_desc_selected)
-                                                        )
-                                                    }
-                                                }
-                                            )
-                                        }
-                                    }
-                                }
+                                    },
+                                )
                                 IconButton(onClick = { onSearchActiveChange(true) }) {
                                     Icon(Icons.Default.Search, contentDescription = stringResource(R.string.action_search))
                                 }
@@ -906,49 +859,31 @@ fun LibraryScreenContent(
                     androidx.compose.animation.AnimatedVisibility(
                         visible = libraryFilters.isActive && pagerState.currentPage == 0
                     ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                                .padding(horizontal = 16.dp, vertical = 8.dp)
-                                .horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            if (libraryFilters.fileTypes.isNotEmpty()) {
-                                AssistChip(
-                                    onClick = { onRemoveFilter(libraryFilters.copy(fileTypes = emptySet())) },
-                                    label = { Text(stringResource(R.string.filter_types, libraryFilters.fileTypes.joinToString { it.name })) },
-                                    trailingIcon = { Icon(Icons.Default.Close, contentDescription = stringResource(R.string.action_clear), modifier = Modifier.size(16.dp)) }
-                                )
-                            }
-                            if (libraryFilters.sourceFolders.isNotEmpty()) {
-                                AssistChip(
-                                    onClick = { onRemoveFilter(libraryFilters.copy(sourceFolders = emptySet())) },
-                                    label = { Text(stringResource(R.string.filter_folders, libraryFilters.sourceFolders.size)) },
-                                    trailingIcon = { Icon(Icons.Default.Close, contentDescription = stringResource(R.string.action_clear), modifier = Modifier.size(16.dp)) }
-                                )
-                            }
-                            if (libraryFilters.readStatus != ReadStatusFilter.ALL) {
-                                AssistChip(
-                                    onClick = { onRemoveFilter(libraryFilters.copy(readStatus = ReadStatusFilter.ALL)) },
-                                    label = { Text(stringResource(R.string.filter_status, stringResource(libraryFilters.readStatus.labelRes))) },
-                                    trailingIcon = { Icon(Icons.Default.Close, contentDescription = stringResource(R.string.action_clear), modifier = Modifier.size(16.dp)) }
-                                )
-                            }
-                            if (libraryFilters.tagIds.isNotEmpty()) {
-                                val selectedTags = allTags.filter { it.id in libraryFilters.tagIds }
-                                val tagLabel = when {
-                                    selectedTags.isEmpty() -> pluralStringResource(R.plurals.tag_count, libraryFilters.tagIds.size, libraryFilters.tagIds.size)
-                                    selectedTags.size <= 2 -> selectedTags.joinToString { it.name }
-                                    else -> pluralStringResource(R.plurals.tag_count, selectedTags.size, selectedTags.size)
-                                }
-                                AssistChip(
-                                    onClick = { onRemoveFilter(libraryFilters.copy(tagIds = emptySet())) },
-                                    label = { Text(stringResource(R.string.filter_tags, tagLabel)) },
-                                    trailingIcon = { Icon(Icons.Default.Close, contentDescription = stringResource(R.string.action_clear), modifier = Modifier.size(16.dp)) }
-                                )
-                            }
+                        val selectedTags = allTags.filter { it.id in libraryFilters.tagIds }
+                        val tagLabel = when {
+                            selectedTags.isEmpty() -> pluralStringResource(
+                                R.plurals.tag_count,
+                                libraryFilters.tagIds.size,
+                                libraryFilters.tagIds.size,
+                            )
+                            selectedTags.size <= 2 -> selectedTags.joinToString { it.name }
+                            else -> pluralStringResource(R.plurals.tag_count, selectedTags.size, selectedTags.size)
                         }
+                        SharedMobileLibraryFilterChips(
+                            filters = libraryFilters,
+                            fileTypesLabel = stringResource(
+                                R.string.filter_types,
+                                libraryFilters.fileTypes.joinToString { it.name },
+                            ),
+                            foldersLabel = stringResource(R.string.filter_folders, libraryFilters.sourceFolders.size),
+                            statusLabel = stringResource(
+                                R.string.filter_status,
+                                stringResource(libraryFilters.readStatus.labelRes),
+                            ),
+                            tagsLabel = stringResource(R.string.filter_tags, tagLabel),
+                            clearContentDescription = stringResource(R.string.action_clear),
+                            onRemoveFilters = onRemoveFilter,
+                        )
                     }
                 }
             }
@@ -1751,7 +1686,6 @@ private fun EmptyShelfCover(
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ShelfListItem(
     shelf: Shelf,
@@ -1760,77 +1694,57 @@ private fun ShelfListItem(
     onItemLongClick: () -> Unit,
     showHierarchyIndent: Boolean = true,
 ) {
-    val folderIndent = if (showHierarchyIndent && shelf.type == ShelfType.FOLDER) (shelf.depth * 14).dp else 0.dp
-
-    androidx.compose.material3.ElevatedCard(
-        shape = MaterialTheme.shapes.large,
-        colors = androidx.compose.material3.CardDefaults.elevatedCardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
-        ),
-        elevation = androidx.compose.material3.CardDefaults.elevatedCardElevation(
-            defaultElevation = if (isSelected) 8.dp else 2.dp
-        ),
-        modifier = Modifier
-            .fillMaxWidth()
-            .testTag("ShelfItem_${shelf.id}")
-            .then(
-                if (isSelected) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, MaterialTheme.shapes.large)
-                else Modifier
-            )
-            .clip(MaterialTheme.shapes.large)
-            .combinedClickable(
-                onClick = onItemClick,
-                onLongClick = {
-                    if (shelf.name != "Unshelved") {
-                        onItemLongClick()
-                    }
-                }
-            )
+    val folderIndent = if (showHierarchyIndent && shelf.type == ShelfType.FOLDER) {
+        (shelf.depth * 14).dp
+    } else {
+        0.dp
+    }
+    SharedMobileShelfListCardFrame(
+        isSelected = isSelected,
+        contentStartIndent = folderIndent,
+        onClick = onItemClick,
+        onLongClick = {
+            if (shelf.name != "Unshelved") {
+                onItemLongClick()
+            }
+        },
+        modifier = Modifier.testTag("ShelfItem_${shelf.id}"),
     ) {
-        Row(
-            modifier = Modifier.padding(start = 12.dp + folderIndent, end = 12.dp, top = 8.dp, bottom = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            ShelfCover(shelf = shelf)
-
-            Spacer(modifier = Modifier.width(16.dp))
-
-            Column(modifier = Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    val icon = when (shelf.type) {
-                        ShelfType.SMART -> Icons.Default.Star
-                        ShelfType.TAG -> Icons.AutoMirrored.Filled.LibraryBooks
-                        ShelfType.FOLDER -> Icons.Default.Folder
-                        ShelfType.SERIES -> Icons.AutoMirrored.Filled.LibraryBooks
-                        ShelfType.MANUAL -> Icons.AutoMirrored.Filled.List
-                    }
-                    Icon(
-                        imageVector = icon,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp),
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = shelf.name,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
+        ShelfCover(shelf = shelf)
+        Spacer(Modifier.width(16.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                val icon = when (shelf.type) {
+                    ShelfType.SMART -> Icons.Default.Star
+                    ShelfType.TAG -> Icons.AutoMirrored.Filled.LibraryBooks
+                    ShelfType.FOLDER -> Icons.Default.Folder
+                    ShelfType.SERIES -> Icons.AutoMirrored.Filled.LibraryBooks
+                    ShelfType.MANUAL -> Icons.AutoMirrored.Filled.List
                 }
-                Spacer(modifier = Modifier.height(4.dp))
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+                Spacer(Modifier.width(6.dp))
                 Text(
-                    text = getBookCountString(shelf.bookCount),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    text = shelf.name,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = getBookCountString(shelf.bookCount),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
-
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun LibraryListItem(
     item: RecentFileItem,
@@ -1841,173 +1755,123 @@ private fun LibraryListItem(
     isDownloading: Boolean,
     usePdfFileNameAsDisplayName: Boolean = false,
 ) {
-    androidx.compose.material3.ElevatedCard(
-        shape = MaterialTheme.shapes.large,
-        colors = androidx.compose.material3.CardDefaults.elevatedCardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
-        ),
-        elevation = androidx.compose.material3.CardDefaults.elevatedCardElevation(
-            defaultElevation = if (isSelected) 6.dp else 2.dp
-        ),
-        modifier = Modifier
-            .fillMaxWidth()
-            .testTag("LibraryBookItem_${item.bookId}")
-            .graphicsLayer { alpha = if (item.isAvailable) 1.0f else 0.8f }
-            .then(
-                if (isSelected) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, MaterialTheme.shapes.large)
-                else Modifier
+    SharedMobileLibraryBookListCardFrame(
+        isAvailable = item.isAvailable,
+        isSelected = isSelected,
+        onClick = onItemClick,
+        onLongClick = onItemLongClick,
+        modifier = Modifier.testTag("LibraryBookItem_${item.bookId}"),
+        cover = {
+            ThemedBookCover(
+                item = item,
+                contentDescription = item.displayName,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
             )
-            .clip(MaterialTheme.shapes.large)
-            .combinedClickable(
-                onClick = onItemClick,
-                onLongClick = onItemLongClick
-            )
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 12.dp)
-                .height(132.dp),
-            verticalAlignment = Alignment.Top,
-            horizontalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .aspectRatio(0.7f)
-                    .clip(MaterialTheme.shapes.medium)
-                    .border(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f), MaterialTheme.shapes.medium)
-            ) {
-                ThemedBookCover(
-                    item = item,
-                    contentDescription = item.displayName,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize()
-                )
-                if (isSelected) {
-                    Box(
-                        modifier = Modifier.matchParentSize().background(MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(Icons.Default.Check, contentDescription = stringResource(R.string.content_desc_selected), modifier = Modifier.size(36.dp).background(MaterialTheme.colorScheme.primary, CircleShape).padding(6.dp), tint = MaterialTheme.colorScheme.onPrimary)
-                    }
+            if (isSelected) {
+                Box(
+                    modifier = Modifier.matchParentSize().background(
+                        MaterialTheme.colorScheme.primary.copy(alpha = 0.2f),
+                    ),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        Icons.Default.Check,
+                        contentDescription = stringResource(R.string.content_desc_selected),
+                        modifier = Modifier.size(36.dp)
+                            .background(MaterialTheme.colorScheme.primary, CircleShape)
+                            .padding(6.dp),
+                        tint = MaterialTheme.colorScheme.onPrimary,
+                    )
                 }
             }
-
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight()
-            ) {
-                Row(
-                    verticalAlignment = Alignment.Top,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = item.cardTitle(usePdfFileNameAsDisplayName),
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 2,
-                            minLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                            lineHeight = 20.sp
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = item.cardAuthor(),
-                            style = MaterialTheme.typography.bodySmall,
-                            maxLines = 1,
-                            minLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-
-                    if (item.sourceFolderUri != null || item.isOpdsStream() || isPinned) {
-                        FileStatusBadges(
-                            item = item,
-                            isPinned = isPinned
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    FileTypeBadge(type = item.type, overlay = false)
-
-                    if (item.tags.isNotEmpty()) {
-                        BookTagChipsRow(
-                            tags = item.tags,
-                            compact = true,
-                            modifier = Modifier.weight(1f, fill = false)
-                        )
-                    } else {
-                        Spacer(modifier = Modifier.weight(1f))
-                    }
-
-                    if (!item.isAvailable) {
-                        Surface(
-                            shape = RoundedCornerShape(50),
-                            color = if (isDownloading) {
-                                MaterialTheme.colorScheme.primaryContainer
-                            } else {
-                                MaterialTheme.colorScheme.errorContainer
-                            },
-                            contentColor = if (isDownloading) {
-                                MaterialTheme.colorScheme.onPrimaryContainer
-                            } else {
-                                MaterialTheme.colorScheme.onErrorContainer
-                            }
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                if (isDownloading) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(14.dp),
-                                        strokeWidth = 2.dp
-                                    )
-                                } else {
-                                    Icon(
-                                        Icons.Filled.Info,
-                                        contentDescription = stringResource(R.string.not_available_locally),
-                                        modifier = Modifier.size(14.dp)
-                                    )
-                                }
-                                Text(
-                                    text = if (isDownloading) {
-                                        stringResource(R.string.status_downloading)
-                                    } else {
-                                        stringResource(R.string.not_available_locally)
-                                    },
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.Medium
-                                )
-                            }
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.weight(1f))
-
-                ReadingProgressSection(
-                    progressPercentage = item.progressPercentage,
+        },
+        header = {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = item.cardTitle(usePdfFileNameAsDisplayName),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 2,
+                    minLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    lineHeight = 20.sp,
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = item.cardAuthor(),
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 1,
+                    minLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (item.sourceFolderUri != null || item.isOpdsStream() || isPinned) {
+                FileStatusBadges(item = item, isPinned = isPinned)
+            }
+        },
+        metadata = {
+            FileTypeBadge(type = item.type, overlay = false)
+            if (item.tags.isNotEmpty()) {
+                BookTagChipsRow(
+                    tags = item.tags,
                     compact = true,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.weight(1f, fill = false),
                 )
+            } else {
+                Spacer(Modifier.weight(1f))
             }
-        }
-    }
+            if (!item.isAvailable) {
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = if (isDownloading) {
+                        MaterialTheme.colorScheme.primaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.errorContainer
+                    },
+                    contentColor = if (isDownloading) {
+                        MaterialTheme.colorScheme.onPrimaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.onErrorContainer
+                    },
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        if (isDownloading) {
+                            CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                        } else {
+                            Icon(
+                                Icons.Filled.Info,
+                                contentDescription = stringResource(R.string.not_available_locally),
+                                modifier = Modifier.size(14.dp),
+                            )
+                        }
+                        Text(
+                            text = if (isDownloading) {
+                                stringResource(R.string.status_downloading)
+                            } else {
+                                stringResource(R.string.not_available_locally)
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Medium,
+                        )
+                    }
+                }
+            }
+        },
+        progress = {
+            ReadingProgressSection(
+                progressPercentage = item.progressPercentage,
+                compact = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        },
+    )
 }
-
 @Composable
 private fun RenameShelfDialog(
     initialName: String,
@@ -2513,124 +2377,26 @@ fun LibraryFilterSheet(
     onApply: (LibraryFilters) -> Unit,
     onDismiss: () -> Unit
 ) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    var currentFilters by remember { mutableStateOf(filters) }
-
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            Text(stringResource(R.string.filter_library), style = MaterialTheme.typography.titleLarge)
-
-            Text(stringResource(R.string.filter_file_type), style = MaterialTheme.typography.titleMedium)
-            Row(
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                ANDROID_READABLE_FILE_TYPES.forEach { type ->
-                    FilterChip(
-                        selected = type in currentFilters.fileTypes,
-                        onClick = {
-                            val newSet = if (type in currentFilters.fileTypes) currentFilters.fileTypes - type else currentFilters.fileTypes + type
-                            currentFilters = currentFilters.copy(fileTypes = newSet)
-                        },
-                        label = { Text(type.name) }
-                    )
-                }
-            }
-
-            Text(stringResource(R.string.filter_source_folder), style = MaterialTheme.typography.titleMedium)
-            Row(
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                FilterChip(
-                    selected = "IN_APP_STORAGE" in currentFilters.sourceFolders,
-                    onClick = {
-                        val newSet = if ("IN_APP_STORAGE" in currentFilters.sourceFolders) currentFilters.sourceFolders - "IN_APP_STORAGE" else currentFilters.sourceFolders + "IN_APP_STORAGE"
-                        currentFilters = currentFilters.copy(sourceFolders = newSet)
-                              },
-                    label = { Text(stringResource(R.string.filter_in_app_storage)) }
-                )
-                syncedFolders.forEach { folder ->
-                    FilterChip(
-                        selected = folder.uriString in currentFilters.sourceFolders,
-                        onClick = {
-                            val newSet = if (folder.uriString in currentFilters.sourceFolders) currentFilters.sourceFolders - folder.uriString else currentFilters.sourceFolders + folder.uriString
-                            currentFilters = currentFilters.copy(sourceFolders = newSet)
-                                  },
-                        label = { Text(folder.name) }
-                    )
-                }
-            }
-
-            Text(stringResource(R.string.filter_read_status), style = MaterialTheme.typography.titleMedium)
-            Row(
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                ReadStatusFilter.entries.forEach { status ->
-                    FilterChip(
-                        selected = currentFilters.readStatus == status,
-                        onClick = { currentFilters = currentFilters.copy(readStatus = status) },
-                        label = { Text(stringResource(status.labelRes)) }
-                    )
-                }
-            }
-
-            if (allTags.isNotEmpty()) {
-                Text(stringResource(R.string.section_tags), style = MaterialTheme.typography.titleMedium)
-                FlowRow(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    allTags.forEach { tag ->
-                        val selected = tag.id in currentFilters.tagIds
-                        FilterChip(
-                            selected = selected,
-                            onClick = {
-                                val newSet = if (selected) {
-                                    currentFilters.tagIds - tag.id
-                                } else {
-                                    currentFilters.tagIds + tag.id
-                                }
-                                currentFilters = currentFilters.copy(tagIds = newSet)
-                            },
-                            label = { Text(tag.name) },
-                            leadingIcon = {
-                                Box(
-                                    modifier = Modifier
-                                        .size(10.dp)
-                                        .background(
-                                            Color(tag.color ?: 0xFF64B5F6.toInt()),
-                                            CircleShape
-                                        )
-                                )
-                            }
-                        )
-                    }
-                }
-            }
-
-            Row(modifier = Modifier.fillMaxWidth().padding(top = 16.dp), horizontalArrangement = Arrangement.End) {
-                TextButton(onClick = { currentFilters = LibraryFilters() }) {
-                    Text(stringResource(R.string.clear_all))
-                }
-                Spacer(modifier = Modifier.width(8.dp))
-                androidx.compose.material3.Button(onClick = { onApply(currentFilters); onDismiss() }) {
-                    Text(stringResource(R.string.action_apply))
-                }
-            }
-            Spacer(modifier = Modifier.height(32.dp))
-        }
-    }
+    SharedMobileLibraryFilterDialog(
+        filters = filters,
+        allTags = allTags.map { com.aryan.reader.shared.Tag(it.id, it.name, it.color) },
+        syncedFolders = syncedFolders,
+        readableFileTypes = ANDROID_READABLE_FILE_TYPES,
+        fileTypeLabels = ANDROID_READABLE_FILE_TYPES.associateWith { it.name },
+        readStatusLabels = ReadStatusFilter.entries.associateWith { stringResource(it.labelRes) },
+        labels = SharedMobileLibraryFilterLabels(
+            title = stringResource(R.string.filter_library),
+            fileType = stringResource(R.string.filter_file_type),
+            sourceFolder = stringResource(R.string.filter_source_folder),
+            inAppStorage = stringResource(R.string.filter_in_app_storage),
+            readStatus = stringResource(R.string.filter_read_status),
+            tags = stringResource(R.string.section_tags),
+            clearAll = stringResource(R.string.clear_all),
+            apply = stringResource(R.string.action_apply),
+        ),
+        onApply = onApply,
+        onDismiss = onDismiss,
+    )
 }
 
 @Composable

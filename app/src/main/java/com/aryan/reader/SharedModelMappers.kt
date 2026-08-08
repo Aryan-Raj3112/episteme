@@ -413,14 +413,34 @@ fun SharedReaderScreenState.toAndroidReaderScreenState(
         recentFiles = recentBooks.map { it.toAndroidBook() },
         allRecentFiles = libraryBooks.map { it.toAndroidBook() },
         rawLibraryFiles = rawLibraryBooks.map { it.toAndroidBook() },
-        viewingShelfId = viewingShelfId,
-        isAddingBooksToShelf = isAddingBooksToShelf,
+        libraryState = base.libraryState.copy(
+            searchQuery = searchQuery,
+            sortOrder = sortOrder,
+            filters = libraryFilters,
+            selectedBookIds = selectedBookIds,
+            selectedShelfIds = selectedShelfIds,
+            libraryPage = libraryScreenStartPage,
+            recentLimit = recentFilesLimit,
+        ),
+        shelfState = base.shelfState.copy(
+            viewingShelfId = viewingShelfId,
+            isAddingBooks = isAddingBooksToShelf,
+            addBooksSource = addBooksSource,
+            selectedBookIdsForAdding = booksSelectedForAdding,
+        ),
         contextualActionShelfIds = selectedShelfIds,
         contextualActionItems = selectedBookIds.mapNotNullTo(mutableSetOf()) { bookById(it) },
         shelves = shelves.map { shelf -> shelf.toAndroidShelf { book -> book.toAndroidBook() } },
         openTabs = openTabs.map { it.toAndroidBook() },
-        openTabIds = openTabIds,
-        activeTabBookId = activeTabBookId,
+        tabState = AppTabState(
+            isEnabled = isTabsEnabled,
+            openBookIds = openTabIds,
+            activeBookId = activeTabBookId,
+        ),
+        pinState = AppPinState(
+            homeBookIds = pinnedHomeBookIds,
+            libraryBookIds = pinnedLibraryBookIds,
+        ),
         booksAvailableForAdding = booksAvailableForAdding.map { it.toAndroidBook() },
         allTags = allTags.map { tag -> tagEntitiesById[tag.id] ?: tag.toTagEntity(createdAt = 0L) }
     )

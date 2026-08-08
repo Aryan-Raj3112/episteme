@@ -395,6 +395,31 @@ class SharedPdfAnnotationSerializerTest {
         assertEquals(listOf("reply", "nearby"), grouped.single().replies.map { it.id })
     }
 
+    @Test
+    fun `highlight factory normalizes exclusive Android ranges and shared bounds`() {
+        val bounds = listOf(PdfPageBounds(0.1f, 0.2f, 0.3f, 0.4f))
+
+        val annotation = sharedPdfHighlightAnnotation(
+            id = "highlight",
+            pageIndex = 2,
+            bounds = bounds,
+            text = "marked",
+            note = "note",
+            comments = emptyList(),
+            colorArgb = 0x8C112233.toInt(),
+            highlightStyle = HighlightStyle.UNDERLINE,
+            rangeStart = 7,
+            rangeEndExclusive = 12,
+        )
+
+        assertEquals(PdfAnnotationKind.HIGHLIGHT, annotation.kind)
+        assertEquals(PdfInkTool.HIGHLIGHTER, annotation.tool)
+        assertEquals(bounds.single(), annotation.bounds)
+        assertEquals(bounds, annotation.boundsList)
+        assertEquals(7, annotation.rangeStartIndex)
+        assertEquals(11, annotation.rangeEndIndex)
+    }
+
     private fun embeddedAnnotation(
         id: String,
         index: Int,
@@ -414,6 +439,31 @@ class SharedPdfAnnotationSerializerTest {
             name = name,
             inReplyTo = inReplyTo
         )
+    }
+
+    @Test
+    fun `legacy ink codec preserves compact Android shape and load limits`() {
+        val encoded = SharedPdfLegacyInkCodec.encode(
+            listOf(
+                SharedPdfLegacyInkAnnotation(
+                    id = "ink",
+                    pageIndex = 2,
+                    inkTypeName = "PENCIL",
+                    colorArgb = -16777216,
+                    strokeWidth = 0.25f,
+                    points = listOf(PdfPagePoint(0.123456f, 0.5f, 7L)),
+                    note = "Note",
+                )
+            )
+        )
+
+        assertEquals(
+            "[{\"id\":\"ink\",\"pageIndex\":2,\"annotationType\":\"INK\",\"inkType\":\"PENCIL\",\"color\":-16777216,\"strokeWidth\":0.25,\"note\":\"Note\",\"points\":[{\"x\":0.12346,\"y\":0.5,\"t\":7}]}]",
+            encoded,
+        )
+        val decoded = SharedPdfLegacyInkCodec.decode(encoded) { "generated" }
+        assertEquals("ink", decoded.annotations.single().id)
+        assertEquals(PdfPagePoint(0.12346f, 0.5f, 7L), decoded.annotations.single().points.single())
     }
 
     private val testJson = Json {

@@ -33,15 +33,15 @@ internal expect fun openSharedMobileEpubLookup(action: ReaderExternalLookupActio
 internal expect fun shareSharedMobileEpubImage(bytes: ByteArray, fileName: String): Boolean
 
 /** iOS currently exposes device speech only; cloud TTS stays out of the shared mobile reader. */
-internal enum class SharedMobileEpubLocalTtsState { IDLE, SPEAKING, PAUSED }
+enum class SharedMobileEpubLocalTtsState { IDLE, SPEAKING, PAUSED }
 
-internal data class SharedMobileEpubVoice(
+data class SharedMobileEpubVoice(
     val identifier: String,
     val name: String,
     val language: String
 )
 
-internal interface SharedMobileEpubLocalTts {
+interface SharedMobileEpubLocalTts {
     val state: SharedMobileEpubLocalTtsState
     /** Remains true while moving between document pages, even when no utterance is active. */
     val isSessionActive: Boolean
@@ -60,6 +60,7 @@ internal interface SharedMobileEpubLocalTts {
     fun start(
         chunks: List<ReaderTtsChunk>,
         bookTitle: String,
+        bookId: String? = null,
         startChunkIndex: Int = 0,
         playWhenReady: Boolean = true
     )
@@ -71,6 +72,7 @@ internal interface SharedMobileEpubLocalTts {
     fun setVoice(identifier: String?)
     fun previewVoice(identifier: String?)
     fun stop()
+    fun release() = Unit
 }
 
 @Composable

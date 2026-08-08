@@ -193,6 +193,93 @@ data class AppFontPreference(
     }
 }
 
+data class AppAppearanceState(
+    val themeMode: AppThemeMode = AppThemeMode.SYSTEM,
+    val contrastOption: AppContrastOption = AppContrastOption.STANDARD,
+    val textDimFactorLight: Float = 1.0f,
+    val textDimFactorDark: Float = 1.0f,
+    val seedColor: Color? = null,
+    val fontPreference: AppFontPreference = AppFontPreference.System,
+    val customThemes: List<CustomAppTheme> = emptyList(),
+)
+
+data class AppTabState(
+    val isEnabled: Boolean = true,
+    val openBookIds: List<String> = emptyList(),
+    val activeBookId: String? = null,
+)
+
+/** Portable shelf-navigation and dialog state; persistence and repository writes remain platform adapters. */
+data class AppShelfState(
+    val viewingShelfId: String? = null,
+    val isAddingBooks: Boolean = false,
+    val showCreateDialog: Boolean = false,
+    val createShelfBookIds: Set<String> = emptySet(),
+    val renameDialogShelfId: String? = null,
+    val deleteDialogShelfId: String? = null,
+    val addBooksSource: AddBooksSource = AddBooksSource.UNSHELVED,
+    val selectedBookIdsForAdding: Set<String> = emptySet(),
+)
+
+sealed interface AppShelfAction {
+    data class CreateDialogShown(val bookIds: Set<String> = emptySet()) : AppShelfAction
+    data object CreateDialogDismissed : AppShelfAction
+    data class ShelfOpened(val shelfId: String) : AppShelfAction
+    data class RenameDialogChanged(val shelfId: String?) : AppShelfAction
+    data class DeleteDialogChanged(val shelfId: String?) : AppShelfAction
+    data class ShelfRenameCompleted(val shelfId: String) : AppShelfAction
+    data object ShelfDeleted : AppShelfAction
+    data object ShelfClosed : AppShelfAction
+    data class ParentShelfOpened(val shelfId: String) : AppShelfAction
+    data class AddBooksStarted(val source: AddBooksSource = AddBooksSource.UNSHELVED) : AppShelfAction
+    data object AddBooksDismissed : AppShelfAction
+    data object AddBooksCompleted : AppShelfAction
+    data class AddBooksSourceChanged(val source: AddBooksSource) : AppShelfAction
+    data class BookForAddingToggled(val bookId: String) : AppShelfAction
+}
+
+data class AppPinState(
+    val homeBookIds: Set<String> = emptySet(),
+    val libraryBookIds: Set<String> = emptySet(),
+)
+
+enum class AppReaderSessionPhase {
+    CLOSED,
+    OPENING,
+    READY,
+    FAILED,
+}
+
+/** Portable app-level lifecycle for opening a reader. Platform document handles stay outside this state. */
+data class AppReaderSessionState(
+    val bookId: String? = null,
+    val fileType: FileType? = null,
+    val phase: AppReaderSessionPhase = AppReaderSessionPhase.CLOSED,
+    val errorMessage: String? = null,
+) {
+    val hasActiveReader: Boolean
+        get() = bookId != null && fileType != null && phase != AppReaderSessionPhase.CLOSED
+
+    val isLoading: Boolean
+        get() = phase == AppReaderSessionPhase.OPENING
+
+    val canRestorePersistedReader: Boolean
+        get() = !hasActiveReader
+}
+
+sealed interface AppReaderSessionAction {
+    data class OpenStarted(val bookId: String, val fileType: FileType) : AppReaderSessionAction
+    data class OpenReady(val bookId: String) : AppReaderSessionAction
+    data class OpenFailed(
+        val bookId: String,
+        val message: String?,
+        val closeReader: Boolean = false,
+    ) : AppReaderSessionAction
+    /** Preserves Android's seamless-switch rollback shape until reader routing can replace it atomically. */
+    data object SeamlessSwitchFailed : AppReaderSessionAction
+    data object Closed : AppReaderSessionAction
+}
+
 data class CustomAppTheme(
     val id: String,
     val name: String,

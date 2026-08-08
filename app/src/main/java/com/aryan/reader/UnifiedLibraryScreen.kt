@@ -692,7 +692,20 @@ fun UnifiedLibraryScreen(
         )
     }
     audiobookPlayerItem?.let { item ->
-        AudiobookPlayerSheet(item = item, onBeforePlay = viewModel.ttsController::stop, onDismiss = { audiobookPlayerItem = null })
+        AudiobookPlayerSheet(
+            item = item,
+            onBeforePlay = {
+                when (
+                    com.aryan.reader.shared.sharedListeningHandoff(
+                        com.aryan.reader.shared.SharedListeningTarget.IMPORTED_AUDIOBOOK,
+                    )
+                ) {
+                    com.aryan.reader.shared.SharedListeningHandoff.STOP_TTS -> viewModel.ttsController.stop()
+                    com.aryan.reader.shared.SharedListeningHandoff.STOP_AUDIOBOOK -> Unit
+                }
+            },
+            onDismiss = { audiobookPlayerItem = null },
+        )
     }
     if (showAdvancedFilters) {
         LibraryFilterSheet(

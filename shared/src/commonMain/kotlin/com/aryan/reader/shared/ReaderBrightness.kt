@@ -5,6 +5,14 @@ import kotlin.math.roundToInt
 const val DefaultReaderCustomBrightness = 0.75f
 const val MinimumReaderCustomBrightness = 0.01f
 
+data class ReaderBrightnessSettings(
+    val useSystemBrightness: Boolean = true,
+    val customBrightness: Float = DefaultReaderCustomBrightness
+) {
+    val safeCustomBrightness: Float
+        get() = normalizeReaderBrightness(customBrightness)
+}
+
 fun normalizeReaderBrightness(brightness: Float): Float {
     return (brightness * 100f).roundToInt().coerceIn(1, 100) / 100f
 }
