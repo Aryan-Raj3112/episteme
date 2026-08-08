@@ -16,6 +16,8 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -52,7 +54,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Close
@@ -73,10 +74,12 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.ArrowDropUp
 import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.AlertDialog
@@ -902,66 +905,74 @@ fun SharedMobileEpubReaderScreen(
         gesturesEnabled = drawerState.isOpen,
         drawerContent = {
             ModalDrawerSheet(Modifier.fillMaxWidth(0.86f)) {
+                val drawerPagerState = rememberPagerState(pageCount = { 4 })
+                val drawerScope = rememberCoroutineScope()
+                LaunchedEffect(drawerTab) {
+                    if (drawerTab in 0..3) drawerPagerState.animateScrollToPage(drawerTab)
+                }
                 Text(
                     loadedBook?.title ?: book.displayName,
                     style = MaterialTheme.typography.titleLarge,
                     modifier = Modifier.padding(20.dp)
                 )
-                ScrollableTabRow(selectedTabIndex = drawerTab, edgePadding = 0.dp) {
+                ScrollableTabRow(selectedTabIndex = drawerPagerState.currentPage.coerceIn(0, 3), edgePadding = 0.dp, modifier = Modifier.fillMaxWidth()) {
                     listOf("Chapters", "Bookmarks", "Annotations", "Images").forEachIndexed { index, label ->
-                        Tab(selected = drawerTab == index, onClick = { drawerTab = index }, text = { Text(label, maxLines = 1) })
+                        Tab(
+                            selected = drawerPagerState.currentPage == index,
+                            onClick = { drawerScope.launch { drawerPagerState.animateScrollToPage(index) } },
+                            text = { Text(label, maxLines = 1) }
+                        )
                     }
                 }
-                if (drawerTab == 0) {
-                    SharedMobileEpubToc(
-                        epub = loadedBook,
-                        selectedIndex = selectedTocIndex,
-                        onEntryClick = { index, entry ->
-                            selectedTocIndex = index
-                            loadedBook?.locatorForTocEntry(entry, pages)?.let { locator ->
-                                recordJumpAndNavigate(locator, entry.fragmentId)
+                HorizontalPager(state = drawerPagerState, modifier = Modifier.fillMaxWidth().weight(1f)) { page ->
+                    when (page) {
+                        0 -> SharedMobileEpubToc(
+                            epub = loadedBook,
+                            selectedIndex = selectedTocIndex,
+                            onEntryClick = { index, entry ->
+                                selectedTocIndex = index
+                                loadedBook?.locatorForTocEntry(entry, pages)?.let { locator ->
+                                    recordJumpAndNavigate(locator, entry.fragmentId)
+                                    scope.launch { drawerState.close() }
+                                }
+                            },
+                            modifier = Modifier.fillMaxSize()
+                        )
+                        1 -> SharedMobileEpubBookmarks(
+                            bookmarks = bookmarks,
+                            onBookmarkClick = { bookmark ->
+                                recordJumpAndNavigate(bookmark.locator)
                                 scope.launch { drawerState.close() }
-                            }
-                        },
-                        modifier = Modifier.fillMaxSize()
-                    )
-                } else if (drawerTab == 1) {
-                    SharedMobileEpubBookmarks(
-                        bookmarks = bookmarks,
-                        onBookmarkClick = { bookmark ->
-                            recordJumpAndNavigate(bookmark.locator)
-                            scope.launch { drawerState.close() }
-                        },
-                        onBookmarkRename = { bookmark, label ->
-                            bookmarks = bookmarks.map { existing ->
-                                if (existing.id == bookmark.id) existing.copy(label = label.trim().ifBlank { null }) else existing
-                            }
-                        },
-                        onBookmarkDelete = { bookmark -> bookmarks = bookmarks.filterNot { it.id == bookmark.id } },
-                        modifier = Modifier.fillMaxSize()
-                    )
-                } else if (drawerTab == 2) {
-                    SharedMobileEpubHighlights(
-                        highlights = highlights,
-                        chapters = loadedBook?.chapters.orEmpty(),
-                        onHighlightClick = { highlight ->
-                            recordJumpAndNavigate(highlight.locator)
-                            scope.launch { drawerState.close() }
-                        },
-                        onHighlightEdit = { editingHighlight = it },
-                        modifier = Modifier.fillMaxSize()
-                    )
-                } else {
-                    SharedMobileEpubImages(
-                        images = loadedBook?.readerImageReferences(pages).orEmpty(),
-                        onImageClick = { image ->
-                            loadedBook?.chapters?.getOrNull(image.chapterIndex)?.let {
-                                recordJumpAndNavigate(image.locator)
+                            },
+                            onBookmarkRename = { bookmark, label ->
+                                bookmarks = bookmarks.map { existing ->
+                                    if (existing.id == bookmark.id) existing.copy(label = label.trim().ifBlank { null }) else existing
+                                }
+                            },
+                            onBookmarkDelete = { bookmark -> bookmarks = bookmarks.filterNot { it.id == bookmark.id } },
+                            modifier = Modifier.fillMaxSize()
+                        )
+                        2 -> SharedMobileEpubHighlights(
+                            highlights = highlights,
+                            chapters = loadedBook?.chapters.orEmpty(),
+                            onHighlightClick = { highlight ->
+                                recordJumpAndNavigate(highlight.locator)
                                 scope.launch { drawerState.close() }
-                            }
-                        },
-                        modifier = Modifier.fillMaxSize()
-                    )
+                            },
+                            onHighlightEdit = { editingHighlight = it },
+                            modifier = Modifier.fillMaxSize()
+                        )
+                        else -> SharedMobileEpubImages(
+                            images = loadedBook?.readerImageReferences(pages).orEmpty(),
+                            onImageClick = { image ->
+                                loadedBook?.chapters?.getOrNull(image.chapterIndex)?.let {
+                                    recordJumpAndNavigate(image.locator)
+                                    scope.launch { drawerState.close() }
+                                }
+                            },
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
                 }
             }
         },
@@ -1464,20 +1475,7 @@ fun SharedMobileEpubReaderScreen(
                     if (loadedBook != null && pages.isNotEmpty()) {
                         SharedMobileEpubBottomBar(
                             tools = bottomToolbarTools,
-                            readingMode = settings.readingMode,
                             isBookmarked = isBookmarked,
-                            onReadingModeToggle = {
-                                settings = settings.copy(
-                                    readingMode = if (settings.readingMode == ReaderReadingMode.VERTICAL) {
-                                        ReaderReadingMode.PAGINATED
-                                    } else {
-                                        ReaderReadingMode.VERTICAL
-                                    }
-                                )
-                                showSlider = false
-                                autoScrollModeActive = false
-                                autoScroll = false
-                            },
                             onToc = { openReaderDrawer(0) },
                             onFormat = { showFormatSheet = true },
                             onSearch = { showSearchResultsPanel = true; showSearch = true },
@@ -1934,16 +1932,16 @@ private fun SharedMobileEpubTopBar(
                         Icon(Icons.Default.Search, contentDescription = "Search")
                     }
                     ReaderTool.SLIDER -> IconButton(onClick = onOpenSlider) {
-                        Icon(Icons.Default.SwapHoriz, contentDescription = "Navigation slider")
+                        Icon(SharedReaderIcons.Slider, contentDescription = "Navigation slider")
                     }
                     ReaderTool.TTS_CONTROLS -> IconButton(onClick = onLocalTtsToggle) {
                         Icon(localTtsState.icon(), contentDescription = localTtsState.menuLabel())
                     }
                     ReaderTool.BRIGHTNESS -> IconButton(onClick = onBrightness) {
-                        Icon(Icons.Default.Visibility, contentDescription = "Brightness")
+                        Icon(SharedReaderIcons.Contrast, contentDescription = "Brightness")
                     }
                     ReaderTool.SCREEN_ORIENTATION -> IconButton(onClick = onScreenOrientation) {
-                        Icon(Icons.Default.SwapHoriz, contentDescription = "Screen orientation")
+                        Icon(SharedReaderIcons.ScreenRotation, contentDescription = "Screen orientation")
                     }
                     else -> Unit
                 }
@@ -2083,22 +2081,25 @@ private fun SharedMobileEpubTopBar(
                             )
                             ReaderTool.SLIDER -> DropdownMenuItem(
                                 text = { Text("Navigation slider") }, onClick = { onShowMoreChange(false); onOpenSlider() },
-                                leadingIcon = { Icon(Icons.Default.SwapHoriz, contentDescription = null) }
+                                leadingIcon = { Icon(SharedReaderIcons.Slider, contentDescription = null) }
                             )
                             ReaderTool.TTS_CONTROLS -> DropdownMenuItem(
                                 text = { Text(localTtsState.menuLabel()) }, onClick = { onLocalTtsToggle(); onShowMoreChange(false) }
                             )
                             ReaderTool.TTS_REPLACEMENTS -> DropdownMenuItem(
                                 text = { Text("TTS Word Replacements") },
-                                onClick = { onShowMoreChange(false); onTtsReplacements() }
+                                onClick = { onShowMoreChange(false); onTtsReplacements() },
+                                leadingIcon = { Icon(Icons.Default.GraphicEq, contentDescription = null) }
                             )
                             ReaderTool.TTS_SETTINGS -> DropdownMenuItem(
                                 text = { Text("TTS Voice Settings") },
-                                onClick = { onShowMoreChange(false); onTtsSettings() }
+                                onClick = { onShowMoreChange(false); onTtsSettings() },
+                                leadingIcon = { Icon(Icons.Default.GraphicEq, contentDescription = null) }
                             )
                             ReaderTool.BOOK_REPLACEMENTS -> DropdownMenuItem(
                                 text = { Text("Book Word Replacements") },
-                                onClick = { onShowMoreChange(false); onBookReplacements() }
+                                onClick = { onShowMoreChange(false); onBookReplacements() },
+                                leadingIcon = { Icon(Icons.Default.TextFields, contentDescription = null) }
                             )
                             ReaderTool.KEEP_SCREEN_ON -> SharedMobileEpubSwitchMenuItem("Keep Screen On", keepScreenOn, onKeepScreenOnChange)
                             ReaderTool.AUTO_SCROLL -> DropdownMenuItem(
@@ -2112,7 +2113,7 @@ private fun SharedMobileEpubTopBar(
                             )
                             ReaderTool.SCREEN_ORIENTATION -> DropdownMenuItem(
                                 text = { Text("Screen Orientation") }, onClick = { onScreenOrientation(); onShowMoreChange(false) },
-                                leadingIcon = { Icon(Icons.Default.SwapHoriz, contentDescription = null) }
+                                leadingIcon = { Icon(SharedReaderIcons.ScreenRotation, contentDescription = null) }
                             )
                             ReaderTool.FILE_INFO -> DropdownMenuItem(
                                 text = { Text("File Information") }, onClick = { onFileInfo(); onShowMoreChange(false) },
@@ -2278,9 +2279,7 @@ private fun SharedMobileEpubSwitchMenuItem(
 @Composable
 private fun SharedMobileEpubBottomBar(
     tools: List<ReaderTool>,
-    readingMode: ReaderReadingMode,
     isBookmarked: Boolean,
-    onReadingModeToggle: () -> Unit,
     onToc: () -> Unit,
     onFormat: () -> Unit,
     onSearch: () -> Unit,
@@ -2301,9 +2300,6 @@ private fun SharedMobileEpubBottomBar(
             ) {
                 tools.forEach { tool ->
                     when (tool) {
-                        ReaderTool.READING_MODE -> IconButton(onClick = onReadingModeToggle) {
-                            Icon(Icons.Default.SwapHoriz, contentDescription = if (readingMode == ReaderReadingMode.VERTICAL) "Use paginated mode" else "Use vertical mode")
-                        }
                         ReaderTool.TOC -> IconButton(onClick = onToc) { Icon(Icons.Default.Menu, contentDescription = "Contents") }
                         ReaderTool.FORMAT -> IconButton(onClick = onFormat) { Text("Tᵀ", style = MaterialTheme.typography.titleLarge) }
                         ReaderTool.SEARCH -> IconButton(onClick = onSearch) { Icon(Icons.Default.Search, contentDescription = "Search") }
@@ -2315,7 +2311,7 @@ private fun SharedMobileEpubBottomBar(
                             )
                         }
                         ReaderTool.VISUAL_OPTIONS -> IconButton(onClick = onVisualOptions) { Icon(Icons.Default.Settings, contentDescription = "Visual options") }
-                        ReaderTool.SLIDER -> IconButton(onClick = onOpenSlider) { Icon(Icons.Default.SwapHoriz, contentDescription = "Navigation slider") }
+                        ReaderTool.SLIDER -> IconButton(onClick = onOpenSlider) { Icon(SharedReaderIcons.Slider, contentDescription = "Navigation slider") }
                         ReaderTool.TTS_CONTROLS -> IconButton(onClick = onLocalTtsToggle) {
                             Icon(localTtsState.icon(), contentDescription = localTtsState.menuLabel())
                         }
@@ -2334,7 +2330,7 @@ private fun SharedMobileEpubLocalTtsState.menuLabel(): String = when (this) {
 }
 
 private fun SharedMobileEpubLocalTtsState.icon() = when (this) {
-    SharedMobileEpubLocalTtsState.IDLE -> Icons.AutoMirrored.Filled.VolumeUp
+    SharedMobileEpubLocalTtsState.IDLE -> SharedReaderIcons.TextToSpeech
     SharedMobileEpubLocalTtsState.SPEAKING -> Icons.Default.Pause
     SharedMobileEpubLocalTtsState.PAUSED -> Icons.Default.PlayArrow
 }
@@ -2392,7 +2388,7 @@ private fun SharedMobileEpubTtsControls(
                 Icon(Icons.Default.SkipNext, contentDescription = "Next reading part")
             }
             IconButton(onClick = onLocate, enabled = progress.currentChunk != null) {
-                Icon(Icons.Default.Visibility, contentDescription = "Locate current reading part")
+                Icon(SharedReaderIcons.PinDrop, contentDescription = "Locate current reading part")
             }
             IconButton(onClick = onOpenSettings) {
                 Icon(Icons.Default.Settings, contentDescription = "TTS voice settings")
@@ -4550,7 +4546,7 @@ private fun SharedMobileEpubAutoScrollControls(
                 }
                 IconButton(onClick = onMusicianModeToggle) {
                     Icon(
-                        Icons.AutoMirrored.Filled.VolumeUp,
+                        SharedReaderIcons.MusicNote,
                         contentDescription = if (isMusicianMode) "Disable musician mode" else "Enable musician mode",
                         tint = if (isMusicianMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                     )

@@ -77,7 +77,6 @@ import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.LibraryBooks
 import androidx.compose.material.icons.automirrored.filled.NavigateBefore
 import androidx.compose.material.icons.automirrored.filled.NavigateNext
-import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Ai
@@ -97,6 +96,7 @@ import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderSpecial
 import androidx.compose.material.icons.filled.FormatListNumbered
+import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Fonts
 import androidx.compose.material.icons.filled.Info
@@ -2380,11 +2380,11 @@ private fun SharedMobilePdfReaderTopBar(
                 Row(Modifier.horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
                     topTools.forEach { tool ->
                         when (tool) {
-                            PdfReaderTool.DICTIONARY -> SharedMobilePdfTopToolButton("Dictionary", { onNativeAction(SharedMobilePdfNativeAction.DICTIONARY_SETTINGS) }) { Icon(Icons.Default.Book, contentDescription = null) }
+                            PdfReaderTool.DICTIONARY -> SharedMobilePdfTopToolButton("Dictionary", { onNativeAction(SharedMobilePdfNativeAction.DICTIONARY_SETTINGS) }) { Icon(SharedReaderIcons.Dictionary, contentDescription = null) }
                             PdfReaderTool.THEME -> SharedMobilePdfTopToolButton("Theme", onTheme) { Icon(Icons.Default.Palette, contentDescription = null) }
-                            PdfReaderTool.BRIGHTNESS -> SharedMobilePdfTopToolButton("Brightness", onBrightness) { Icon(Icons.Default.Visibility, contentDescription = null) }
+                            PdfReaderTool.BRIGHTNESS -> SharedMobilePdfTopToolButton("Brightness", onBrightness) { Icon(SharedReaderIcons.Contrast, contentDescription = null) }
                             PdfReaderTool.LOCK_PANNING -> SharedMobilePdfTopToolButton(if (isScrollLocked) "Unlock" else "Lock", onToggleScrollLock) { Icon(if (isScrollLocked) Icons.Default.Lock else Icons.Default.LockOpen, contentDescription = null) }
-                            PdfReaderTool.SLIDER -> SharedMobilePdfTopToolButton("Navigation Slider", onShowSlider, isPdfReaderToolEnabledDuringTts(tool, isTtsPlayingOrLoading)) { Icon(Icons.Default.SwapHoriz, contentDescription = null) }
+                            PdfReaderTool.SLIDER -> SharedMobilePdfTopToolButton("Navigation Slider", onShowSlider, isPdfReaderToolEnabledDuringTts(tool, isTtsPlayingOrLoading)) { Icon(SharedReaderIcons.Slider, contentDescription = null) }
                             PdfReaderTool.TOC -> SharedMobilePdfTopToolButton("Sidebar", onOpenDrawer, isPdfReaderToolEnabledDuringTts(tool, isTtsPlayingOrLoading)) { Icon(Icons.Default.Menu, contentDescription = null) }
                             PdfReaderTool.SEARCH -> SharedMobilePdfTopToolButton("Search", onSearch, isPdfReaderToolEnabledDuringTts(tool, isTtsPlayingOrLoading)) { Icon(Icons.Default.Search, contentDescription = null) }
                             PdfReaderTool.HIGHLIGHT_ALL -> SharedMobilePdfTopToolButton(
@@ -2392,10 +2392,10 @@ private fun SharedMobilePdfReaderTopBar(
                                 onClick = onToggleHighlights,
                                 isActive = showAllTextHighlights,
                                 isLoading = isAllTextHighlightLoading,
-                            ) { Icon(Icons.Default.SelectAll, contentDescription = "Highlight all text") }
+                            ) { Icon(SharedReaderIcons.HighlightText, contentDescription = "Highlight all text") }
                             PdfReaderTool.EDIT_MODE -> SharedMobilePdfTopToolButton("Edit Mode", onEditMode) { Icon(Icons.Default.Edit, contentDescription = null) }
-                            PdfReaderTool.TTS_CONTROLS -> SharedMobilePdfTopToolButton("TTS Controls", onToggleTts) { Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = null) }
-                            PdfReaderTool.SCREEN_ORIENTATION -> SharedMobilePdfTopToolButton("Screen Orientation", onScreenOrientation) { Icon(Icons.Default.SwapHoriz, contentDescription = null) }
+                            PdfReaderTool.TTS_CONTROLS -> SharedMobilePdfTopToolButton(if (isTtsPlayingOrLoading) "Stop Reading" else "Read Aloud", onToggleTts, isActive = isTtsPlayingOrLoading) { Icon(if (isTtsPlayingOrLoading) Icons.Default.Close else SharedReaderIcons.TextToSpeech, contentDescription = null) }
+                            PdfReaderTool.SCREEN_ORIENTATION -> SharedMobilePdfTopToolButton("Screen Orientation", onScreenOrientation) { Icon(SharedReaderIcons.ScreenRotation, contentDescription = null) }
                             else -> Unit
                         }
                     }
@@ -2441,9 +2441,9 @@ private fun SharedMobilePdfReaderTopBar(
                             action()
                         }
                         when (tool) {
-                            PdfReaderTool.DICTIONARY -> SharedMobilePdfOverflowItem("Dictionary", leadingIcon = { Icon(Icons.Default.Book, contentDescription = null) }, onClick = { closeMenuAndRun { onNativeAction(SharedMobilePdfNativeAction.DICTIONARY_SETTINGS) } })
+                            PdfReaderTool.DICTIONARY -> SharedMobilePdfOverflowItem("Dictionary", leadingIcon = { Icon(SharedReaderIcons.Dictionary, contentDescription = null) }, onClick = { closeMenuAndRun { onNativeAction(SharedMobilePdfNativeAction.DICTIONARY_SETTINGS) } })
                             PdfReaderTool.THEME -> SharedMobilePdfOverflowItem("Theme", onClick = { closeMenuAndRun(onTheme) })
-                            PdfReaderTool.BRIGHTNESS -> SharedMobilePdfOverflowItem("Brightness", leadingIcon = { Icon(Icons.Default.Visibility, contentDescription = null) }, onClick = { closeMenuAndRun(onBrightness) })
+                            PdfReaderTool.BRIGHTNESS -> SharedMobilePdfOverflowItem("Brightness", leadingIcon = { Icon(SharedReaderIcons.Contrast, contentDescription = null) }, onClick = { closeMenuAndRun(onBrightness) })
                             PdfReaderTool.LOCK_PANNING -> SharedMobilePdfOverflowItem(if (isScrollLocked) "Unlock Panning" else "Lock Panning", onClick = { closeMenuAndRun(onToggleScrollLock) })
                             PdfReaderTool.SLIDER -> SharedMobilePdfOverflowItem("Navigation Slider", enabled = isPdfReaderToolEnabledDuringTts(tool, isTtsPlayingOrLoading), onClick = { closeMenuAndRun(onShowSlider) })
                             PdfReaderTool.TOC -> SharedMobilePdfOverflowItem("Sidebar", enabled = isPdfReaderToolEnabledDuringTts(tool, isTtsPlayingOrLoading), onClick = { closeMenuAndRun(onOpenDrawer) })
@@ -2455,7 +2455,7 @@ private fun SharedMobilePdfReaderTopBar(
                                         CircularProgressIndicator(Modifier.size(20.dp))
                                     } else {
                                         Icon(
-                                            Icons.Default.SelectAll,
+                                            SharedReaderIcons.HighlightText,
                                             contentDescription = null,
                                             tint = if (showAllTextHighlights) MaterialTheme.colorScheme.primary else LocalContentColor.current,
                                         )
@@ -2465,7 +2465,7 @@ private fun SharedMobilePdfReaderTopBar(
                             )
                             PdfReaderTool.EDIT_MODE -> SharedMobilePdfOverflowItem("Edit Mode", onClick = { closeMenuAndRun(onEditMode) })
                             PdfReaderTool.TTS_CONTROLS -> SharedMobilePdfOverflowItem("TTS Controls", onClick = { closeMenuAndRun(onToggleTts) })
-                            PdfReaderTool.SCREEN_ORIENTATION -> SharedMobilePdfOverflowItem("Screen Orientation", leadingIcon = { Icon(Icons.Default.SwapHoriz, contentDescription = null) }, onClick = { closeMenuAndRun(onScreenOrientation) })
+                            PdfReaderTool.SCREEN_ORIENTATION -> SharedMobilePdfOverflowItem("Screen Orientation", leadingIcon = { Icon(SharedReaderIcons.ScreenRotation, contentDescription = null) }, onClick = { closeMenuAndRun(onScreenOrientation) })
                             else -> Unit
                         }
                     }
@@ -2532,14 +2532,14 @@ private fun SharedMobilePdfReaderTopBar(
                     toolbarPreferences.isVisible(PdfReaderTool.TTS_REPLACEMENTS)
                 if (showVoiceSettings || showWordReplacements) SharedMobilePdfOverflowItem(
                     "TTS Settings",
-                    leadingIcon = { Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = null) },
+                    leadingIcon = { Icon(Icons.Default.GraphicEq, contentDescription = null) },
                     trailingIcon = { Icon(Icons.Default.KeyboardArrowDown, contentDescription = null) },
                     onClick = { showTtsSettingsExpanded = !showTtsSettingsExpanded }
                 )
                 if (showTtsSettingsExpanded) {
                     if (showVoiceSettings) SharedMobilePdfOverflowItem(
                         "Voice Settings",
-                        leadingIcon = { Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = null) },
+                        leadingIcon = { Icon(Icons.Default.GraphicEq, contentDescription = null) },
                         onClick = {
                             showMoreMenu = false
                             onVoiceSettings()
@@ -2547,7 +2547,7 @@ private fun SharedMobilePdfReaderTopBar(
                     )
                     if (showWordReplacements) SharedMobilePdfOverflowItem(
                         "Word Replacements",
-                        leadingIcon = { Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = null) },
+                        leadingIcon = { Icon(Icons.Default.GraphicEq, contentDescription = null) },
                         onClick = {
                             showMoreMenu = false
                             onWordReplacements()
@@ -3064,7 +3064,7 @@ private fun SharedMobilePdfReaderBottomBar(
             ) {
                 tools.forEach { tool ->
                     when (tool) {
-                        PdfReaderTool.SLIDER -> SharedMobilePdfBottomToolButton(enabled = isPdfReaderToolEnabledDuringTts(tool, isTtsPlayingOrLoading), onClick = onShowSlider) { Icon(Icons.Default.SwapHoriz, contentDescription = "Navigation slider") }
+                        PdfReaderTool.SLIDER -> SharedMobilePdfBottomToolButton(enabled = isPdfReaderToolEnabledDuringTts(tool, isTtsPlayingOrLoading), onClick = onShowSlider) { Icon(SharedReaderIcons.Slider, contentDescription = "Navigation slider") }
                         PdfReaderTool.TOC -> SharedMobilePdfBottomToolButton(enabled = isPdfReaderToolEnabledDuringTts(tool, isTtsPlayingOrLoading), onClick = onOpenDrawer) { Icon(Icons.Default.Menu, contentDescription = "Contents") }
                         PdfReaderTool.SEARCH -> SharedMobilePdfBottomToolButton(enabled = isPdfReaderToolEnabledDuringTts(tool, isTtsPlayingOrLoading), onClick = onSearch) { Icon(Icons.Default.Search, contentDescription = "Search") }
                         PdfReaderTool.HIGHLIGHT_ALL -> SharedMobilePdfBottomToolButton(
@@ -3074,7 +3074,7 @@ private fun SharedMobilePdfReaderBottomBar(
                             if (isAllTextHighlightLoading) {
                                 CircularProgressIndicator(Modifier.size(20.dp))
                             } else {
-                                Icon(Icons.Default.SelectAll, contentDescription = "Highlight selectable text")
+                                Icon(SharedReaderIcons.HighlightText, contentDescription = "Highlight selectable text")
                             }
                         }
                         PdfReaderTool.EDIT_MODE -> SharedMobilePdfBottomToolButton(
@@ -3083,19 +3083,15 @@ private fun SharedMobilePdfReaderBottomBar(
                         ) { Icon(Icons.Default.Edit, contentDescription = "Edit mode") }
                         PdfReaderTool.TTS_CONTROLS -> SharedMobilePdfBottomToolButton(onClick = onToggleTts) {
                             Icon(
-                                when (ttsState) {
-                                    SharedMobileEpubLocalTtsState.SPEAKING -> Icons.Default.Pause
-                                    SharedMobileEpubLocalTtsState.PAUSED -> Icons.Default.PlayArrow
-                                    SharedMobileEpubLocalTtsState.IDLE -> Icons.AutoMirrored.Filled.VolumeUp
-                                },
+                                if (ttsState != SharedMobileEpubLocalTtsState.IDLE) Icons.Default.Close else SharedReaderIcons.TextToSpeech,
                                 contentDescription = "Text to speech",
                             )
                         }
-                        PdfReaderTool.DICTIONARY -> SharedMobilePdfBottomToolButton(onClick = onDictionary) { Icon(Icons.Default.Book, contentDescription = "Dictionary") }
+                        PdfReaderTool.DICTIONARY -> SharedMobilePdfBottomToolButton(onClick = onDictionary) { Icon(SharedReaderIcons.Dictionary, contentDescription = "Dictionary") }
                         PdfReaderTool.THEME -> SharedMobilePdfBottomToolButton(onClick = onTheme) { Icon(Icons.Default.Palette, contentDescription = "Theme") }
-                        PdfReaderTool.BRIGHTNESS -> SharedMobilePdfBottomToolButton(onClick = onBrightness) { Icon(Icons.Default.Visibility, contentDescription = "Brightness") }
+                        PdfReaderTool.BRIGHTNESS -> SharedMobilePdfBottomToolButton(onClick = onBrightness) { Icon(SharedReaderIcons.Contrast, contentDescription = "Brightness") }
                         PdfReaderTool.LOCK_PANNING -> SharedMobilePdfBottomToolButton(onClick = onToggleScrollLock) { Icon(if (state.isScrollLocked) Icons.Default.Lock else Icons.Default.LockOpen, contentDescription = if (state.isScrollLocked) "Unlock panning" else "Lock panning") }
-                        PdfReaderTool.SCREEN_ORIENTATION -> SharedMobilePdfBottomToolButton(onClick = onScreenOrientation) { Icon(Icons.Default.SwapHoriz, contentDescription = "Screen orientation") }
+                        PdfReaderTool.SCREEN_ORIENTATION -> SharedMobilePdfBottomToolButton(onClick = onScreenOrientation) { Icon(SharedReaderIcons.ScreenRotation, contentDescription = "Screen orientation") }
                         else -> Unit
                     }
                 }
@@ -3179,7 +3175,7 @@ private fun SharedMobilePdfReaderDrawer(
     onCloseTab: (BookItem) -> Unit,
     onNewTab: () -> Unit,
 ) {
-    var selectedSection by remember { mutableStateOf(SharedMobilePdfDrawerSection.CHAPTERS) }
+    val scope = rememberCoroutineScope()
     val sections = remember(tabsEnabled, tabs.isNotEmpty()) {
         buildList {
             add(SharedMobilePdfDrawerSection.CHAPTERS)
@@ -3189,58 +3185,63 @@ private fun SharedMobilePdfReaderDrawer(
             if (tabsEnabled && tabs.isNotEmpty()) add(SharedMobilePdfDrawerSection.TABS)
         }
     }
-    LaunchedEffect(sections) {
-        if (selectedSection !in sections) selectedSection = SharedMobilePdfDrawerSection.CHAPTERS
+    val pagerState = rememberPagerState(initialPage = 0) { sections.size }
+    LaunchedEffect(sections.size) {
+        val maxPage = sections.size - 1
+        if (pagerState.currentPage > maxPage) pagerState.scrollToPage(maxPage.coerceAtLeast(0))
     }
     ModalDrawerSheet(modifier = Modifier.width(348.dp)) {
         Column(Modifier.fillMaxSize()) {
-            TabRow(selectedTabIndex = sections.indexOf(selectedSection).coerceAtLeast(0)) {
-                sections.forEach { section ->
+            TabRow(selectedTabIndex = pagerState.currentPage.coerceAtMost(sections.lastIndex)) {
+                sections.forEachIndexed { index, section ->
                     Tab(
-                        selected = selectedSection == section,
-                        onClick = { selectedSection = section },
+                        selected = pagerState.currentPage == index,
+                        onClick = { scope.launch { pagerState.animateScrollToPage(index) } },
                         text = { Text(section.label) }
                     )
                 }
             }
-            when (selectedSection) {
-                SharedMobilePdfDrawerSection.CHAPTERS -> SharedMobilePdfChaptersDrawerPage(
-                    entries = tableOfContents,
-                    currentPageIndex = state.currentNearestPdfPageIndex ?: 0,
-                    onGoToPage = onGoToPage,
-                    modifier = Modifier.weight(1f)
-                )
-                SharedMobilePdfDrawerSection.PAGES -> SharedMobilePdfPagesDrawerPage(
-                    book = book,
-                    state = state,
-                    pdfPassword = pdfPassword,
-                    onGoToPage = onGoToDisplayPage,
-                    modifier = Modifier.weight(1f)
-                )
-                SharedMobilePdfDrawerSection.BOOKMARKS -> SharedMobilePdfBookmarksDrawerPage(
-                    state = state,
-                    onGoToPage = onGoToPage,
-                    onRenameBookmark = onRenameBookmark,
-                    onDeleteBookmark = onDeleteBookmark,
-                    modifier = Modifier.weight(1f)
-                )
-                SharedMobilePdfDrawerSection.HIGHLIGHTS -> SharedMobilePdfAnnotationsDrawerPage(
-                    state = state,
-                    onGoToPage = onGoToPage,
-                    onEditNote = onEditNote,
-                    onDeleteHighlight = onDeleteHighlight,
-                    modifier = Modifier.weight(1f)
-                )
-                SharedMobilePdfDrawerSection.TABS -> SharedMobilePdfTabsDrawerPage(
-                    tabs = tabs,
-                    activeTabBookId = activeTabBookId,
-                    isTopTabStripVisible = isTopTabStripVisible,
-                    onTopTabStripVisibilityChange = onTopTabStripVisibilityChange,
-                    onOpenTab = onOpenTab,
-                    onCloseTab = onCloseTab,
-                    onNewTab = onNewTab,
-                    modifier = Modifier.weight(1f),
-                )
+            HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
+                when (sections.getOrNull(page)) {
+                    SharedMobilePdfDrawerSection.CHAPTERS -> SharedMobilePdfChaptersDrawerPage(
+                        entries = tableOfContents,
+                        currentPageIndex = state.currentNearestPdfPageIndex ?: 0,
+                        onGoToPage = onGoToPage,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                    SharedMobilePdfDrawerSection.PAGES -> SharedMobilePdfPagesDrawerPage(
+                        book = book,
+                        state = state,
+                        pdfPassword = pdfPassword,
+                        onGoToPage = onGoToDisplayPage,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                    SharedMobilePdfDrawerSection.BOOKMARKS -> SharedMobilePdfBookmarksDrawerPage(
+                        state = state,
+                        onGoToPage = onGoToPage,
+                        onRenameBookmark = onRenameBookmark,
+                        onDeleteBookmark = onDeleteBookmark,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                    SharedMobilePdfDrawerSection.HIGHLIGHTS -> SharedMobilePdfAnnotationsDrawerPage(
+                        state = state,
+                        onGoToPage = onGoToPage,
+                        onEditNote = onEditNote,
+                        onDeleteHighlight = onDeleteHighlight,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                    SharedMobilePdfDrawerSection.TABS -> SharedMobilePdfTabsDrawerPage(
+                        tabs = tabs,
+                        activeTabBookId = activeTabBookId,
+                        isTopTabStripVisible = isTopTabStripVisible,
+                        onTopTabStripVisibilityChange = onTopTabStripVisibilityChange,
+                        onOpenTab = onOpenTab,
+                        onCloseTab = onCloseTab,
+                        onNewTab = onNewTab,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                    null -> Unit
+                }
             }
         }
     }
@@ -5166,7 +5167,7 @@ private fun SharedMobilePdfAutoScrollControls(
                     }
                     IconButton(onClick = { onMusicianModeChange(!isMusicianMode) }, modifier = Modifier.size(32.dp)) {
                         Icon(
-                            Icons.AutoMirrored.Filled.VolumeUp,
+                            SharedReaderIcons.MusicNote,
                             contentDescription = if (isMusicianMode) "Disable musician mode" else "Enable musician mode",
                             tint = if (isMusicianMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.size(18.dp),
@@ -5525,7 +5526,7 @@ private fun SharedMobilePdfPageScrubbingOverlay(
                 .padding(horizontal = 24.dp, vertical = 16.dp)
         ) {
             Icon(
-                Icons.Default.SwapHoriz,
+                SharedReaderIcons.Slider,
                 contentDescription = null,
                 modifier = Modifier.size(48.dp),
                 tint = MaterialTheme.colorScheme.primary
