@@ -50,6 +50,38 @@ enum class PageInfoPosition(val id: Int, val title: String) {
     TOP(1, "Top")
 }
 
+fun shouldShowEpubPageInfoBar(
+    pageInfoMode: PageInfoMode,
+    showReaderChrome: Boolean
+): Boolean = when (pageInfoMode) {
+    PageInfoMode.DEFAULT -> true
+    PageInfoMode.SYNC -> showReaderChrome
+    PageInfoMode.HIDDEN -> false
+}
+
+fun shouldReserveEpubPageInfoBarSpace(
+    pageInfoMode: PageInfoMode,
+    showReaderChrome: Boolean,
+    isNativeVerticalMode: Boolean
+): Boolean {
+    if (isNativeVerticalMode || pageInfoMode == PageInfoMode.SYNC) return false
+    return shouldShowEpubPageInfoBar(pageInfoMode, showReaderChrome)
+}
+
+fun stepEpubFormatValue(
+    value: Float,
+    delta: Float,
+    minimum: Float,
+    maximum: Float,
+    precision: Float = 10f
+): Float = (((value + delta).coerceIn(minimum, maximum) * precision).roundToInt() / precision)
+
+fun nextEpubFontWeight(value: Int): Int =
+    if (value <= 0) 500 else (value + 100).coerceAtMost(1000)
+
+fun previousEpubFontWeight(value: Int): Int =
+    if (value <= 100) 0 else (value - 100).coerceAtLeast(100)
+
 data class FormatSettings(
     val fontSize: Float,
     val lineHeight: Float,

@@ -435,7 +435,7 @@ fun LibraryScreen(
                 )
             },
             onDeleteCatalogStreams = viewModel::deleteStreamedBooksForCatalog,
-            onSettingsClick = { navController.navigateIfReady(AppDestinations.SETTINGS_SCREEN_ROUTE) },
+            onSettingsClick = { navController.navigateIfReady(com.aryan.reader.shared.ui.SharedMobileAppDestination.SETTINGS) },
             usePdfFileNameAsDisplayName = uiState.usePdfFileNameAsDisplayName
         )
 

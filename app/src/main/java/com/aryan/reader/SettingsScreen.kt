@@ -213,7 +213,7 @@ fun SettingsScreen(
                         }
                         viewModel.showBanner(context.getString(messageRes))
                     }
-                    SharedSettingsAction.CUSTOM_FONTS -> navController.navigateIfReady(AppDestinations.FONTS_SCREEN_ROUTE)
+                    SharedSettingsAction.CUSTOM_FONTS -> navController.navigateIfReady(com.aryan.reader.shared.ui.SharedMobileAppDestination.FONTS)
                     SharedSettingsAction.SIGN_IN -> {
                         scope.launch {
                             context.findActivity()?.let { activity -> viewModel.signIn(activity) }
@@ -229,7 +229,7 @@ fun SettingsScreen(
                     }
                     SharedSettingsAction.FOLDER_SYNC -> viewModel.setFolderSyncEnabled(!uiState.isFolderSyncEnabled)
                     SharedSettingsAction.DEVICE_MANAGEMENT -> viewModel.showDeviceManagementForDebug()
-                    SharedSettingsAction.AI_SETTINGS -> navController.navigateIfReady(AppDestinations.AI_SETTINGS_SCREEN_ROUTE)
+                    SharedSettingsAction.AI_SETTINGS -> navController.navigateIfReady(com.aryan.reader.shared.ui.SharedMobileAppDestination.AI_SETTINGS)
                     SharedSettingsAction.HIDE_READER_AI -> {
                         val nextHidden = !hideReaderAi
                         saveHideReaderAiFeatures(context, nextHidden)
@@ -243,8 +243,8 @@ fun SettingsScreen(
                     SharedSettingsAction.TEST_SPEECH_BUBBLE_DETECTION -> viewModel.testSpeechBubbleDetection(context)
                     SharedSettingsAction.EXPORT_LOGS -> viewModel.exportLogsToFile(context)
                     SharedSettingsAction.DEBUG_ACTIONS -> viewModel.showBanner(context.getString(R.string.debug_actions_existing_menus))
-                    SharedSettingsAction.HELP_FEEDBACK -> navController.navigateIfReady(AppDestinations.FEEDBACK_SCREEN_ROUTE)
-                    SharedSettingsAction.SUPPORT -> navController.navigateIfReady(AppDestinations.SUPPORT_PROJECT_SCREEN_ROUTE)
+                    SharedSettingsAction.HELP_FEEDBACK -> navController.navigateIfReady(com.aryan.reader.shared.ui.SharedMobileAppDestination.FEEDBACK)
+                    SharedSettingsAction.SUPPORT -> navController.navigateIfReady(com.aryan.reader.shared.ui.SharedMobileAppDestination.SUPPORT_PROJECT)
                     SharedSettingsAction.ABOUT -> showAboutDialog = true
                     SharedSettingsAction.PDF_READER_DEFAULTS -> viewModel.showBanner(context.getString(R.string.pdf_specific_settings_existing_reader))
                     SharedSettingsAction.TEXT_READER_DEFAULTS,
@@ -355,7 +355,7 @@ fun SettingsScreen(
         UpgradeDialog(
             onConfirm = {
                 showUpgradeDialog = false
-                navController.navigateIfReady(AppDestinations.PRO_SCREEN_ROUTE)
+                navController.navigateIfReady(com.aryan.reader.shared.ui.SharedMobileAppDestination.PRO)
             },
             onDismiss = { showUpgradeDialog = false }
         )

@@ -192,6 +192,7 @@ import com.aryan.reader.shared.readerAutoScrollPixelsPerSecond
 import com.aryan.reader.shared.readerAutoScrollBoundaryAction
 import com.aryan.reader.shared.migrateLegacyIosReaderAutoScrollSpeed
 import com.aryan.reader.shared.shouldFollowReaderTtsChunk
+import com.aryan.reader.shared.shouldShowEpubPageInfoBar
 import com.aryan.reader.shared.toSharedReaderFontFamily
 import com.aryan.reader.shared.withTtsReplacements
 import com.aryan.reader.shared.withReaderFormatFrom
@@ -242,6 +243,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlin.math.roundToInt
 import kotlin.math.min
+import com.aryan.reader.shared.reader.mobileEpubSystemBarsVisibility
 import org.jetbrains.compose.resources.imageResource
 import org.jetbrains.compose.resources.painterResource
 
@@ -439,12 +441,9 @@ fun SharedMobileEpubReaderScreen(
         tool in SharedMobileEpubToolbarTools && tool.id !in mobileBottomToolIds
     }
     val overflowMenuTools = visibleToolbarTools.filterNot { it in SharedMobileEpubToolbarTools }
-    val systemUiHidden = when (settings.systemUiMode) {
-        SystemUiMode.DEFAULT -> false
-        SystemUiMode.SYNC -> !showChrome
-        SystemUiMode.HIDDEN -> true
-    }
-    val navigationUiHidden = settings.systemUiMode == SystemUiMode.HIDDEN || !showChrome
+    val systemBarsVisibility = mobileEpubSystemBarsVisibility(settings.systemUiMode, showChrome)
+    val systemUiHidden = !systemBarsVisibility.statusBarsVisible
+    val navigationUiHidden = !systemBarsVisibility.navigationBarsVisible
 
     DisposableEffect(readerScreenOrientationMode, onApplyReaderScreenOrientation) {
         onApplyReaderScreenOrientation(readerScreenOrientationMode)
@@ -1350,11 +1349,10 @@ fun SharedMobileEpubReaderScreen(
                 val chapterTitle = loadedBook?.tableOfContents?.getOrNull(selectedTocIndex)?.label
                     ?: loadedBook?.chapters?.getOrNull(currentChapterIndex)?.title
                     ?: "Chapter ${currentChapterIndex + 1}"
-                val pageInfoVisible = when (settings.pageInfoMode) {
-                    PageInfoMode.DEFAULT -> true
-                    PageInfoMode.SYNC -> showChrome
-                    PageInfoMode.HIDDEN -> false
-                } && loadedBook != null && pages.isNotEmpty()
+                val pageInfoVisible = shouldShowEpubPageInfoBar(
+                    pageInfoMode = settings.pageInfoMode,
+                    showReaderChrome = showChrome
+                ) && loadedBook != null && pages.isNotEmpty()
 
                 if (pageInfoVisible) {
                     SharedMobileEpubPageInfo(
@@ -3389,10 +3387,10 @@ private fun SharedMobileEpubFormatAdjustmentDialog(
 }
 
 private fun sharedMobileStep(value: Float, delta: Float, minimum: Float, maximum: Float, precision: Float = 10f): Float =
-    (((value + delta).coerceIn(minimum, maximum) * precision).roundToInt() / precision)
+    com.aryan.reader.shared.stepEpubFormatValue(value, delta, minimum, maximum, precision)
 
-private fun sharedMobileNextWeight(value: Int): Int = if (value <= 0) 500 else (value + 100).coerceAtMost(1000)
-private fun sharedMobilePreviousWeight(value: Int): Int = if (value <= 100) 0 else (value - 100).coerceAtLeast(100)
+private fun sharedMobileNextWeight(value: Int): Int = com.aryan.reader.shared.nextEpubFontWeight(value)
+private fun sharedMobilePreviousWeight(value: Int): Int = com.aryan.reader.shared.previousEpubFontWeight(value)
 private fun sharedMobileFormatWeight(value: Int): String = if (value <= 0) "Original" else value.toString()
 private fun sharedMobileFormatLetterSpacing(value: Float): String =
     if (kotlin.math.abs(value) < 0.001f) "Original" else "${if (value > 0f) "+" else ""}${(value * 100).roundToInt() / 100f}em"

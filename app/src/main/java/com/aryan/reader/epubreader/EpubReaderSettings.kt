@@ -859,10 +859,10 @@ internal fun stepFormatValue(
     minimum: Float,
     maximum: Float,
     precision: Float = 10f
-): Float = (((value + delta).coerceIn(minimum, maximum) * precision).roundToInt() / precision)
+): Float = com.aryan.reader.shared.stepEpubFormatValue(value, delta, minimum, maximum, precision)
 
-internal fun nextFontWeight(value: Int): Int = if (value <= 0) 500 else (value + 100).coerceAtMost(1000)
-internal fun previousFontWeight(value: Int): Int = if (value <= 100) 0 else (value - 100).coerceAtLeast(100)
+internal fun nextFontWeight(value: Int): Int = com.aryan.reader.shared.nextEpubFontWeight(value)
+internal fun previousFontWeight(value: Int): Int = com.aryan.reader.shared.previousEpubFontWeight(value)
 internal fun formatFontWeight(value: Int): String = if (value <= 0) "Original" else value.toString()
 internal fun formatLetterSpacing(value: Float): String =
     if (kotlin.math.abs(value) < 0.001f) "Original" else "%+.2fem".format(value)

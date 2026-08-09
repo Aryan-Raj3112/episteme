@@ -18,6 +18,7 @@ import com.aryan.reader.R
 import com.aryan.reader.pptx.PptxDocumentWrapper
 import io.legere.pdfiumandroid.api.Bookmark
 import io.legere.pdfiumandroid.suspend.PdfDocumentKt
+import com.aryan.reader.shared.ui.getAndroidCompatiblePdfTableOfContents
 import io.legere.pdfiumandroid.suspend.PdfPageKt
 import io.legere.pdfiumandroid.suspend.PdfTextPageKt
 import io.legere.pdfiumandroid.suspend.PdfiumCoreKt
@@ -161,7 +162,7 @@ class PdfDocumentWrapper(val pdfDocument: PdfDocumentKt) : ReaderDocument {
     }
 
     override suspend fun getTableOfContents() = PdfiumEngineProvider.withPdfium {
-        pdfDocument.getFixedTableOfContents()
+        pdfDocument.getAndroidCompatiblePdfTableOfContents()
     }
 
     internal fun getNativeDocumentPointerForLockedAccess(): Long {

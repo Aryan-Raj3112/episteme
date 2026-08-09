@@ -5037,64 +5037,9 @@ private fun headerScale(level: Int): Float {
 }
 
 private fun sharedNativeListMarker(index: Int, isOrdered: Boolean, listStyleType: String?): String {
-    val normalized = listStyleType?.lowercase().orEmpty()
-    if (!isOrdered) {
-        return when (normalized) {
-            "circle" -> "\u25e6"
-            "square" -> "\u25aa"
-            "none" -> ""
-            else -> "\u2022"
-        }
-    }
-
-    val number = index + 1
-    return when (normalized) {
-        "lower-alpha", "lower-latin" -> "${sharedNativeAlphaMarker(number, uppercase = false)}."
-        "upper-alpha", "upper-latin" -> "${sharedNativeAlphaMarker(number, uppercase = true)}."
-        "lower-roman" -> "${sharedNativeRomanMarker(number).lowercase()}."
-        "upper-roman" -> "${sharedNativeRomanMarker(number)}."
-        "none" -> ""
-        else -> "$number."
-    }
-}
-
-private fun sharedNativeAlphaMarker(number: Int, uppercase: Boolean): String {
-    var value = number.coerceAtLeast(1)
-    val chars = ArrayDeque<Char>()
-    while (value > 0) {
-        value -= 1
-        chars.addFirst(('a'.code + (value % 26)).toChar())
-        value /= 26
-    }
-    val marker = chars.joinToString("")
-    return if (uppercase) marker.uppercase() else marker
-}
-
-private fun sharedNativeRomanMarker(number: Int): String {
-    var value = number.coerceIn(1, 3999)
-    val parts = listOf(
-        1000 to "M",
-        900 to "CM",
-        500 to "D",
-        400 to "CD",
-        100 to "C",
-        90 to "XC",
-        50 to "L",
-        40 to "XL",
-        10 to "X",
-        9 to "IX",
-        5 to "V",
-        4 to "IV",
-        1 to "I"
-    )
-    return buildString {
-        parts.forEach { (amount, marker) ->
-            while (value >= amount) {
-                append(marker)
-                value -= amount
-            }
-        }
-    }
+    return com.aryan.reader.paginatedreader.readerListMarker(listStyleType, index + 1, isOrdered)
+        ?.trimEnd()
+        .orEmpty()
 }
 
 internal fun Dp.safeDp(): Dp = if (isSpecified && this > 0.dp) this else 0.dp

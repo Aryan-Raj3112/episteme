@@ -84,6 +84,12 @@ import com.aryan.reader.readerModalMaxHeightDp
 import com.aryan.reader.epub.EpubChapter
 import com.aryan.reader.shared.EpubAnnotationSerializer
 import com.aryan.reader.shared.ReaderLocator
+import com.aryan.reader.shared.DefaultEpubHighlightPaletteArgb
+import com.aryan.reader.shared.sanitizeEpubHighlightPalette
+import com.aryan.reader.shared.legacyEpubHighlightColorForArgb
+import com.aryan.reader.shared.legacyEpubHighlightColorOrNull
+import com.aryan.reader.shared.epubHighlightColorTag
+import com.aryan.reader.shared.epubHighlightColorFromToken
 
 private const val BOOKMARK_PREFS_NAME = "epub_reader_bookmarks"
 
@@ -97,12 +103,7 @@ fun escapeJsString(value: String): String {
 }
 
 private val DefaultHighlightPaletteArgb: List<Int>
-    get() = listOf(
-        HighlightColor.YELLOW.color.toArgb(),
-        HighlightColor.GREEN.color.toArgb(),
-        HighlightColor.BLUE.color.toArgb(),
-        HighlightColor.RED.color.toArgb()
-    )
+    get() = DefaultEpubHighlightPaletteArgb
 
 fun saveHighlightPalette(context: Context, palette: List<Int>) {
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
@@ -140,33 +141,22 @@ fun loadPreferredHighlightStyle(context: Context): HighlightStyle {
     return HighlightStyle.fromId(prefs.getString("preferred_highlight_style", null))
 }
 
-private fun sanitizeHighlightPalette(palette: List<Int>): List<Int> {
-    return palette.takeIf { it.size == 4 } ?: DefaultHighlightPaletteArgb
-}
+private fun sanitizeHighlightPalette(palette: List<Int>): List<Int> = sanitizeEpubHighlightPalette(palette)
 
 internal fun legacyHighlightColorForArgb(argb: Int): HighlightColor {
-    return HighlightColor.entries.firstOrNull { it.color.toArgb() == argb } ?: HighlightColor.YELLOW
+    return legacyEpubHighlightColorForArgb(argb)
 }
 
 internal fun legacyHighlightColorOrNull(argb: Int): HighlightColor? {
-    return HighlightColor.entries.firstOrNull { it.color.toArgb() == argb }
+    return legacyEpubHighlightColorOrNull(argb)
 }
 
 internal fun highlightColorTag(argb: Int): String {
-    return legacyHighlightColorOrNull(argb)?.id ?: "custom_${argb.toUInt().toString(16)}"
+    return epubHighlightColorTag(argb)
 }
 
 internal fun highlightColorFromToken(token: String): Pair<HighlightColor, Int?> {
-    val trimmed = token.trim()
-    val parsedArgb = trimmed.toIntOrNull()
-        ?: trimmed.removePrefix("#").takeIf { it.length == 6 || it.length == 8 }?.toLongOrNull(16)?.let { value ->
-            if (trimmed.removePrefix("#").length == 6) (0xFF000000 or value).toInt() else value.toInt()
-        }
-    if (parsedArgb != null) {
-        return legacyHighlightColorForArgb(parsedArgb) to parsedArgb
-    }
-    val legacy = HighlightColor.entries.find { it.id == trimmed } ?: HighlightColor.YELLOW
-    return legacy to null
+    return epubHighlightColorFromToken(token)
 }
 
 private fun String.sanitizedAnnotationPrefsKey(): String =

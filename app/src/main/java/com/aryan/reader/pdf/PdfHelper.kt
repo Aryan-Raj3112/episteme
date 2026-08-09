@@ -99,6 +99,11 @@ import com.aryan.reader.pdf.ocr.OcrResult
 import com.aryan.reader.pdf.ocr.OcrSymbol
 import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.pdf.DEFAULT_SHARED_PDF_COMMENT_AUTHOR
+import com.aryan.reader.shared.pdf.PdfOcrWord
+import com.aryan.reader.shared.pdf.PdfPageBounds
+import com.aryan.reader.shared.pdf.PdfProcessedText
+import com.aryan.reader.shared.pdf.PdfTextProcessing
+import com.aryan.reader.shared.pdf.PdfTextSelectionEngine
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationComment
 import com.aryan.reader.shared.pdf.pdfCommentChildren
 import com.aryan.reader.shared.pdf.visiblePdfAnnotationComments
@@ -187,35 +192,11 @@ internal suspend fun findWordBoundaries(
     initialCharIndex: Int,
     pageCharCount: Int
 ): Pair<Int, Int>? {
-    if (initialCharIndex !in 0..<pageCharCount) return null
-    val initialChar = textPage.textPageGetUnicode(initialCharIndex).toChar()
-    if (!initialChar.isLetterOrDigit()) {
-        Timber.d("Initial char '$initialChar' at index $initialCharIndex is not letter/digit.")
-        return null
-    }
-    var wordStartIndex = initialCharIndex
-    while (wordStartIndex > 0) {
-        val char = textPage.textPageGetUnicode(wordStartIndex - 1).toChar()
-        if (!char.isLetterOrDigit()) {
-            break
-        }
-        wordStartIndex--
-    }
-    var wordEndIndex = initialCharIndex
-    while (wordEndIndex < pageCharCount) {
-        val char = textPage.textPageGetUnicode(wordEndIndex).toChar()
-        if (!char.isLetterOrDigit()) {
-            break
-        }
-        wordEndIndex++
-    }
-    return if (wordStartIndex < wordEndIndex) {
-        Timber.d("Word boundaries: $wordStartIndex to $wordEndIndex (exclusive)")
-        Pair(wordStartIndex, wordEndIndex)
-    } else {
-        Timber.w("Word boundary detection resulted in startIndex >= endIndex ($wordStartIndex >= $wordEndIndex)")
-        null
-    }
+    return PdfTextSelectionEngine.wordBoundariesSuspending(
+        pageCharCount = pageCharCount,
+        initialCharIndex = initialCharIndex,
+        charAt = { textPage.textPageGetUnicode(it).toChar() }
+    )?.let { it.start to it.end }
 }
 
 @Composable
@@ -540,88 +521,24 @@ private fun CommentItem(author: String?, text: String, depth: Int) {
 }
 
 internal fun mergeRectsIntoLines(rects: List<Rect>): List<Rect> {
-    if (rects.isEmpty()) return emptyList()
-
-    val sortedRects = rects.sortedWith(compareBy({ it.top }, { it.left }))
-
-    val mergedLines = mutableListOf<Rect>()
-    var currentLineCombinedRect: Rect? = null
-
-    for (rect in sortedRects) {
-        if (currentLineCombinedRect == null) {
-            currentLineCombinedRect = Rect(rect)
-        } else {
-            val isSameLine = (maxOf(currentLineCombinedRect.top, rect.top) <
-                    minOf(currentLineCombinedRect.bottom, rect.bottom))
-
-            if (isSameLine) {
-                currentLineCombinedRect.union(rect)
-            } else {
-                mergedLines.add(currentLineCombinedRect)
-                currentLineCombinedRect = Rect(rect)
-            }
-        }
-    }
-
-    currentLineCombinedRect?.let { mergedLines.add(it) }
-    return mergedLines
+    return PdfTextProcessing.mergeScreenBoundsIntoLines(rects.map(Rect::toSharedBounds))
+        .map(PdfPageBounds::toAndroidRect)
 }
 
 internal fun findRectsForTextChunkInOcrVisual(
     visionText: OcrResult,
     textChunkToHighlight: String
 ): List<Rect> {
-    if (textChunkToHighlight.isBlank()) return emptyList()
-
     val allOcrElements = visionText.textBlocks.flatMap { tb -> tb.lines.flatMap { l -> l.elements } }
-    if (allOcrElements.isEmpty()) return emptyList()
-
-    val targetWords = textChunkToHighlight.split(Regex("\\s+")).filter { it.isNotEmpty() }
-    if (targetWords.isEmpty()) return emptyList()
-
-    val matchedRects = mutableListOf<Rect>()
-
-    for (i in 0 .. allOcrElements.size - targetWords.size) {
-        var currentMatch = true
-        val tempRects = mutableListOf<Rect>()
-        var ocrTextCombined = ""
-
-        for (j in targetWords.indices) {
-            val ocrElement = allOcrElements[i + j]
-            ocrTextCombined += ocrElement.text + " "
-            if (!ocrElement.text.equals(targetWords[j], ignoreCase = true) &&
-                !ocrElement.text.replace(Regex("[.,;:!?\"')$]"), "").equals(targetWords[j], ignoreCase = true) &&
-                !targetWords[j].replace(Regex("[.,;:!?\"'(]$"), "").equals(ocrElement.text, ignoreCase = true)
-            ) {
-                currentMatch = false
-                break
-            }
-            ocrElement.boundingBox?.let {
-                tempRects.add(
-                    Rect(
-                        it.left,
-                        it.top,
-                        it.right,
-                        it.bottom
-                    )
-                )
-            }
-        }
-
-        if (currentMatch) {
-            Timber.d("OCR Highlight Match: Found sequence for '$textChunkToHighlight' starting with '${allOcrElements[i].text}' -> Combined: $ocrTextCombined")
-            matchedRects.addAll(tempRects)
-            return matchedRects
-        }
-    }
-    Timber.d("OCR Highlight No Match: Could not find sequence for '$textChunkToHighlight'")
-    return emptyList()
+    return PdfTextProcessing.findOcrWordSequence(
+        words = allOcrElements.map { element ->
+            PdfOcrWord(element.text, element.boundingBox?.toSharedBounds())
+        },
+        textChunk = textChunkToHighlight
+    ).map(PdfPageBounds::toAndroidRect)
 }
 
-internal data class ProcessedText(
-    val cleanText: String,
-    val indexMap: List<Int>
-)
+internal typealias ProcessedText = PdfProcessedText
 
 internal sealed class TtsHighlightData {
     data class Pdfium(val startIndex: Int, val length: Int) : TtsHighlightData()
@@ -629,82 +546,18 @@ internal sealed class TtsHighlightData {
 }
 
 internal fun preprocessTextForTts(rawText: String): ProcessedText {
-    if (rawText.isBlank()) {
-        return ProcessedText("", emptyList())
-    }
-
-    val cleanTextBuilder = StringBuilder(rawText.length)
-    val indexMap = mutableListOf<Int>()
-
-    rawText.forEachIndexed { index, char ->
-        when (char) {
-            '\n' -> {
-                val lastChar = cleanTextBuilder.trimEnd().lastOrNull()
-                if (lastChar != null && lastChar !in ".?!") {
-                    if (cleanTextBuilder.isNotEmpty() && !cleanTextBuilder.last().isWhitespace()) {
-                        cleanTextBuilder.append(' ')
-                        indexMap.add(index)
-                    }
-                }
-            }
-            '\r' -> {
-                // Ignore carriage returns completely
-            }
-            else -> {
-                cleanTextBuilder.append(char)
-                indexMap.add(index)
-            }
-        }
-    }
-    return ProcessedText(cleanTextBuilder.toString().trim(), indexMap)
+    return PdfTextProcessing.preprocessForTts(rawText)
 }
 
 internal fun mergePdfRectsIntoLines(rects: List<RectF>): List<RectF> {
-    if (rects.isEmpty()) return emptyList()
-
-    val normalized = rects.map { r ->
-        floatArrayOf(
-            minOf(r.left, r.right),
-            minOf(r.top, r.bottom),
-            maxOf(r.left, r.right),
-            maxOf(r.top, r.bottom)
-        )
-    }
-
-    val sorted = normalized.sortedWith(compareBy({ -it[3] }, { it[0] }))
-
-    val merged = mutableListOf<FloatArray>()
-    var current: FloatArray? = null
-
-    for (r in sorted) {
-        if (current == null) {
-            current = r.clone()
-        } else {
-            val cMinY = current[1]
-            val cMaxY = current[3]
-            val rMinY = r[1]
-            val rMaxY = r[3]
-
-            val overlapHeight = minOf(cMaxY, rMaxY) - maxOf(cMinY, rMinY)
-            val minHeight = minOf(cMaxY - cMinY, rMaxY - rMinY)
-
-            if (overlapHeight > 0 && overlapHeight >= minHeight * 0.1f) {
-                current[0] = minOf(current[0], r[0])
-                current[1] = minOf(current[1], r[1])
-                current[2] = maxOf(current[2], r[2])
-                current[3] = maxOf(current[3], r[3])
-            } else {
-                merged.add(current)
-                current = r.clone()
-            }
-        }
-    }
-    current?.let { merged.add(it) }
-
-    return merged.map { m ->
-        RectF(m[0], m[3], m[2], m[1])
-    }
+    return PdfTextProcessing.mergePdfBoundsIntoLines(rects.map(RectF::toSharedBounds))
+        .map(PdfPageBounds::toAndroidRectF)
 }
+
+private fun Rect.toSharedBounds() = PdfPageBounds(left.toFloat(), top.toFloat(), right.toFloat(), bottom.toFloat())
+private fun RectF.toSharedBounds() = PdfPageBounds(left, top, right, bottom)
+private fun PdfPageBounds.toAndroidRect() = Rect(left.toInt(), top.toInt(), right.toInt(), bottom.toInt())
+private fun PdfPageBounds.toAndroidRectF() = RectF(left, top, right, bottom)
 
 @Composable
 fun PdfHighlightColorRow(

@@ -2,6 +2,15 @@ package com.aryan.reader.shared.reader
 
 import androidx.compose.ui.text.style.TextAlign
 
+fun resolvePaginatedReaderTextAlign(
+    cssTextAlign: TextAlign,
+    userTextAlign: TextAlign?
+): TextAlign = when {
+    userTextAlign != null -> userTextAlign
+    cssTextAlign == TextAlign.Justify -> TextAlign.Left
+    else -> cssTextAlign
+}
+
 internal fun resolveSharedReaderTextAlign(
     cssTextAlign: TextAlign,
     fallbackTextAlign: TextAlign

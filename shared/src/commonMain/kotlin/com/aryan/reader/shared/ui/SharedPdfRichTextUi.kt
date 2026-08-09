@@ -17,7 +17,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -41,7 +40,6 @@ import com.aryan.reader.shared.pdf.SharedPdfRichTextController
 import com.aryan.reader.shared.pdf.SharedPdfRichTextLog
 import com.aryan.reader.shared.pdf.sharedPdfRichTextSelectionBounds
 import com.aryan.reader.shared.pdf.withoutTrailingSharedPdfPageBreak
-import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 
 @Composable
@@ -50,18 +48,6 @@ fun SharedPdfRichTextHiddenInput(
     enabled: Boolean,
     modifier: Modifier = Modifier
 ) {
-    LaunchedEffect(enabled, controller.activePageIndex) {
-        SharedPdfRichTextLog.d(
-            "ui.hiddenInput enabled=$enabled activePage=${controller.activePageIndex} " +
-                "editingLen=${controller.editingValue.text.length} selection=${controller.editingValue.selection}"
-        )
-        if (enabled && controller.activePageIndex != -1) {
-            controller.requestEditingFocus()
-            delay(16)
-            controller.requestEditingFocus()
-        }
-    }
-
     if (!enabled) return
 
     BasicTextField(
@@ -110,13 +96,13 @@ fun SharedPdfRichTextLayer(
         }
     }
 
-    if (pageWidth <= 0f || pageHeight <= 0f) return
-
     val density = LocalDensity.current
     val textMeasurer = rememberTextMeasurer()
 
-    LaunchedEffect(pageWidth, pageHeight, density, textMeasurer) {
-        controller.updateLayoutConfig(pageWidth, pageHeight, density, textMeasurer)
+    LaunchedEffect(pageWidth, pageHeight, density) {
+        if (pageWidth > 0f && pageHeight > 0f) {
+            controller.updateLayoutConfig(pageWidth, pageHeight, density, textMeasurer)
+        }
     }
 
     val pageLayout = remember(controller.pageLayouts, pageIndex) {
@@ -142,8 +128,8 @@ fun SharedPdfRichTextLayer(
 
     val marginX = pageWidth * 0.1f
     val marginY = pageHeight * 0.08f
-    val editorWidth = (pageWidth - (marginX * 2f)).coerceAtLeast(10f)
-    val editorHeight = (pageHeight - (marginY * 2f)).coerceAtLeast(10f)
+    val editorWidth = pageWidth - (marginX * 2f)
+    val editorHeight = pageHeight - (marginY * 2f)
     val editorWidthDp = with(density) { editorWidth.toDp() }
     val editorHeightDp = with(density) { editorHeight.toDp() }
 
@@ -157,17 +143,9 @@ fun SharedPdfRichTextLayer(
             }
             .size(editorWidthDp, editorHeightDp)
             .graphicsLayer()
-            .clipToBounds()
             .then(
                 if (isTextEditingEnabled && tapHandlingEnabled) {
-                    Modifier.pointerInput(
-                        pageIndex,
-                        editorWidth,
-                        editorHeight,
-                        controller.activePageIndex,
-                        pageLayout?.globalStartIndex,
-                        pageLayout?.globalEndIndex
-                    ) {
+                    Modifier.pointerInput(pageIndex) {
                         detectTapGestures { tapOffset ->
                             SharedPdfRichTextLog.d(
                                 "ui.layer.tap page=$pageIndex offset=${tapOffset.richTextUiOffsetSummary()} " +

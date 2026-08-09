@@ -219,16 +219,15 @@ object SharedPdfReflowHtml {
 
     fun buildEmptyPageSection(pageNumber: Int): String =
         "<section class=\"page-section\">\n" +
-            "<p class=\"page-marker\">-- Page $pageNumber --</p>\n" +
+            "<p class=\"page-marker\">— Page $pageNumber —</p>\n" +
             "<p><em>(No text on this page)</em></p>\n</section>\n"
 
     fun buildFallbackPageSection(pageNumber: Int, rawText: String): String =
         "<section class=\"page-section\">\n" +
-            "<p class=\"page-marker\">-- Page $pageNumber --</p>\n" +
+            "<p class=\"page-marker\">— Page $pageNumber —</p>\n" +
             "<p>${rawText.escapeSharedPdfReflowHtml()}</p>\n</section>\n"
 
     fun detectRepeatingHeaderFooter(samplePageLines: List<List<String>>): Set<String> {
-        if (samplePageLines.size < 5) return emptySet()
         val frequency = HashMap<String, Int>()
         samplePageLines.forEach { lines ->
             val edgeLines = lines
@@ -251,7 +250,7 @@ object SharedPdfReflowHtml {
     ): String {
         val sb = StringBuilder()
         sb.append("<section class=\"page-section\">\n")
-        sb.append("<p class=\"page-marker\">-- Page $pageNumber --</p>\n")
+        sb.append("<p class=\"page-marker\">— Page $pageNumber —</p>\n")
 
         var inParagraph = false
         var inUl = false

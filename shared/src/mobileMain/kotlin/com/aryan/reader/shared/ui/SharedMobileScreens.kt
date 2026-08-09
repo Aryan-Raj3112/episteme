@@ -1897,7 +1897,7 @@ fun SharedMobilePdfReaderScreen(
                     exit = slideOutVertically(tween(PdfChromeMotionDurationMillis)) { it } + fadeOut(tween(PdfChromeMotionDurationMillis)),
                     modifier = Modifier.align(Alignment.BottomCenter)
                 ) {
-                    SharedPdfTextAnnotationDock(
+                    SharedMobilePdfTextDock(
                         style = textStyle,
                         onStyleChange = { newStyle ->
                             textStyle = newStyle
@@ -1906,6 +1906,7 @@ fun SharedMobilePdfReaderScreen(
                             }
                         },
                         onInsertTextBox = ::insertTextBox,
+                        onClose = { setTool(PdfInkTool.NONE) },
                         modifier = Modifier.padding(
                             start = 12.dp,
                             end = 12.dp,

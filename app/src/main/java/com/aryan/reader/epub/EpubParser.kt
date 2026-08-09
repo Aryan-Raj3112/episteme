@@ -26,7 +26,6 @@ import timber.log.Timber
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.ExperimentalSerializationApi
-import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -38,8 +37,6 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStream
 import java.io.ByteArrayOutputStream
-import java.net.URLDecoder
-import java.nio.file.Paths
 import java.util.UUID
 import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
@@ -47,16 +44,44 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import com.aryan.reader.shared.reader.MobileEpubNcxNavigationNode
+import com.aryan.reader.shared.reader.flattenMobileEpubNcxNavigation
+import com.aryan.reader.shared.reader.MobileEpubNcxChapterMetadata as NcxMetadata
+import com.aryan.reader.shared.reader.mobileEpubNcxChapterMetadata
+import com.aryan.reader.shared.reader.resolveMobileEpubMetadata
+import com.aryan.reader.shared.reader.MobileEpubManifestItem as EpubManifestItem
+import com.aryan.reader.shared.reader.mobileEpubSpineItemIds
+import com.aryan.reader.shared.reader.resolveMobileEpubNcxManifestId
+import com.aryan.reader.shared.reader.resolveMobileEpubOpfPath
+import com.aryan.reader.shared.reader.MobileEpubSpineResourceKind
+import com.aryan.reader.shared.reader.mobileEpubSpineResourceKind
+import com.aryan.reader.shared.reader.resolveMobileEpubChapterNavigation
+import com.aryan.reader.shared.reader.MobileEpubNcxPageNode
+import com.aryan.reader.shared.reader.mobileEpubPageTargets
+import com.aryan.reader.shared.reader.decodeMobileEpubUrl
+import com.aryan.reader.shared.reader.mobileEpubImages
+import com.aryan.reader.shared.reader.mobileEpubCoverCandidates
+import com.aryan.reader.shared.reader.mobileEpubCoverBitmapSampleSize
+import com.aryan.reader.shared.reader.mobileEpubCssPaths
+import com.aryan.reader.shared.reader.resolveMobileEpubReference
+import com.aryan.reader.shared.reader.resolveMobileEpubSpineChapterTitle
+import com.aryan.reader.shared.reader.mobileEpubLogicalSectionRanges
+import com.aryan.reader.shared.reader.MobileEpubExtractionAction
+import com.aryan.reader.shared.reader.mobileEpubExtractionAction
+import com.aryan.reader.shared.reader.MOBILE_EPUB_MAX_METADATA_ENTRY_BYTES
+import com.aryan.reader.shared.reader.MOBILE_EPUB_MAX_CACHED_BOOK_METADATA_BYTES
+import com.aryan.reader.shared.reader.MobileEpubExtractionCacheManifest
+import com.aryan.reader.shared.reader.MOBILE_EPUB_EXTRACTION_CACHE_VERSION
+import com.aryan.reader.shared.reader.matchesMobileEpubExtractionCache
+import com.aryan.reader.shared.reader.toMobileEpubExtractionCacheChapter
+import com.aryan.reader.shared.reader.MobileEpubExtractionDirectoryMode
+import com.aryan.reader.shared.reader.mobileEpubExtractionLifecycle
 
 class EpubParser(private val context: Context) {
     private val jsonSerializer = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
     data class EpubDocument(
         val metadata: Node, val manifest: Node, val spine: Node, val opfFilePath: String
-    )
-
-    data class EpubManifestItem(
-        val id: String, val absPath: String, val mediaType: String, val properties: String
     )
 
     data class TempEpubChapter(
@@ -68,22 +93,6 @@ class EpubParser(private val context: Context) {
         val htmlContent: String,
         val depth: Int,
         val isInToc: Boolean
-    )
-
-    // Helper class for NCX parsing results
-    data class NcxMetadata(
-        val title: String,
-        val depth: Int
-    )
-
-    @Serializable
-    private data class EpubExtractionCacheManifest(
-        val bookId: String,
-        val originalBookNameHint: String,
-        val parserVersion: Int,
-        val parseContent: Boolean,
-        val shouldUseToc: Boolean,
-        val sourceFingerprint: String? = null
     )
 
     // EpubFile can still represent in-memory file data during initial parsing before extraction
@@ -101,59 +110,38 @@ class EpubParser(private val context: Context) {
             return result
         }
     }
-    @Serializable
-    data class EpubPageTarget(
-        val id: String?,
-        val value: String?,
-        val label: String?,
-        val contentSrc: String
-    )
-
     companion object {
         const val TAG = "EpubParser"
         private const val BOOK_METADATA_FILE = "book_metadata.json"
         private const val CACHE_MANIFEST_FILE = "epub_cache_manifest.json"
         // v3 also materializes fragment-based navigation sections as reader
         // chapters, rather than treating a large shared spine file as one page.
-        private const val EPUB_EXTRACTION_CACHE_VERSION = 3
-        private const val MAX_METADATA_ENTRY_BYTES = 4 * 1024 * 1024
-        private const val MAX_CACHED_BOOK_METADATA_BYTES = 4L * 1024L * 1024L
-        private const val EPUB_COVER_MAX_DIMENSION = 1024
-        private val EPUB_IMAGE_EXTENSIONS = setOf(".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg")
     }
 
     internal val String.decodedURL: String
-        get() = try {
-            URLDecoder.decode(this, "UTF-8")
-        } catch (e: Exception) {
-            Timber.w(e, "Failed to decode URL: $this")
-            this
-        }
+        get() = decodeMobileEpubUrl(this)
 
     private fun parsePageList(pageListElement: Element?, ncxFileParentDir: File): List<EpubPageTarget> {
         if (pageListElement == null) {
             Timber.d("No <pageList> element found in NCX.")
             return emptyList()
         }
-        val pageTargets = mutableListOf<EpubPageTarget>()
-        pageListElement.selectChildTag("pageTarget").forEach { ptElement ->
+        val nodes = pageListElement.selectChildTag("pageTarget").map { ptElement ->
             val contentSrcRaw = ptElement.selectFirstChildTag("content")?.getAttributeValue("src")?.decodedURL
-            if (contentSrcRaw != null) {
-                val contentPathRelativeToEpubRoot = Paths.get(ncxFileParentDir.path, contentSrcRaw)
-                    .normalize().toString().replace(File.separatorChar, '/')
-
-                pageTargets.add(
-                    EpubPageTarget(
-                        id = ptElement.getAttributeValue("id"),
-                        value = ptElement.getAttributeValue("value"),
-                        label = ptElement.selectFirstChildTag("navLabel")?.selectFirstChildTag("text")?.textContent,
-                        contentSrc = contentPathRelativeToEpubRoot
-                    )
-                )
-            } else {
+            val resolvedContentSrc = contentSrcRaw?.let {
+                resolveMobileEpubReference("${ncxFileParentDir.path}/_", contentSrcRaw)
+            }
+            if (resolvedContentSrc == null) {
                 Timber.w("PageTarget found with no content src: ${ptElement.getAttributeValue("id")}")
             }
-        }
+            MobileEpubNcxPageNode(
+                id = ptElement.getAttributeValue("id"),
+                value = ptElement.getAttributeValue("value"),
+                label = ptElement.selectFirstChildTag("navLabel")?.selectFirstChildTag("text")?.textContent,
+                resolvedContentSrc = resolvedContentSrc
+            )
+        }.toList()
+        val pageTargets = mobileEpubPageTargets(nodes)
         Timber.d("Parsed ${pageTargets.size} page targets from NCX.")
         return pageTargets
     }
@@ -163,30 +151,14 @@ class EpubParser(private val context: Context) {
         filesContentMap: Map<String, EpubFile>,
         extractionRoot: File
     ): Map<String, String> {
-        val listedCss = manifestItems.values
-            .filter { it.mediaType == "text/css" }
-            .mapNotNull { manifestItem ->
-                val bytes = filesContentMap[manifestItem.absPath]?.data?.takeIf { it.isNotEmpty() }
-                    ?: File(extractionRoot, manifestItem.absPath).takeIf { it.exists() }?.readBytes()
+        val cssPaths = mobileEpubCssPaths(manifestItems.values.toList(), filesContentMap.keys.toList())
+        val allCss = cssPaths.mapNotNull { path ->
+            val bytes = filesContentMap[path]?.data?.takeIf { it.isNotEmpty() }
+                ?: File(extractionRoot, path).takeIf { it.exists() }?.readBytes()
+            bytes?.let { path to String(it, Charsets.UTF_8) }
+        }.toMap()
 
-                bytes?.let { manifestItem.absPath to String(it, Charsets.UTF_8) }
-            }
-
-        val listedCssPaths = listedCss.map { it.first }.toSet()
-        val unlistedCss = filesContentMap.asSequence()
-            .filter { (path, _) -> path.endsWith(".css", ignoreCase = true) }
-            .filterNot { (path, _) -> listedCssPaths.contains(path) }
-            .mapNotNull { (path, file) ->
-                val bytes = file.data.takeIf { it.isNotEmpty() }
-                    ?: File(extractionRoot, path).takeIf { it.exists() }?.readBytes()
-
-                bytes?.let { path to String(it, Charsets.UTF_8) }
-            }
-            .toList()
-
-        val allCss = (listedCss + unlistedCss).toMap()
-
-        Timber.d("Parsed ${allCss.size} CSS files (listed: ${listedCss.size}, unlisted: ${unlistedCss.size}): ${allCss.keys.joinToString()}")
+        Timber.d("Parsed ${allCss.size} CSS files: ${allCss.keys.joinToString()}")
         return allCss
     }
 
@@ -202,24 +174,31 @@ class EpubParser(private val context: Context) {
         return withContext(Dispatchers.IO) {
             Timber.d("Parsing EPUB input stream for bookId: $bookId")
 
-            val shouldDeleteExtractionDir = !parseContent && extractionDirOverride == null
-            val extractionDir = if (extractionDirOverride != null) {
-                ImportedFileCache.prepareDirectory(extractionDirOverride)
-            } else if (!parseContent) {
-                ImportedFileCache.createTemporaryBookDir(context, bookId, "metadata")
-            } else {
-                val activeDir = ImportedFileCache.ensureActiveBookDir(context, bookId)
-                readCachedEpubBook(
-                    extractionDir = activeDir,
-                    bookId = bookId,
-                    originalBookNameHint = originalBookNameHint,
-                    shouldUseToc = shouldUseToc,
-                    sourceFingerprint = sourceFingerprint
-                )?.let { cachedBook ->
-                    Timber.tag("FileOpenPerf").d("[EPUB] Loaded extracted book from cache | bookId=$bookId")
-                    return@withContext cachedBook
+            val extractionLifecycle = mobileEpubExtractionLifecycle(
+                parseContent = parseContent,
+                hasDirectoryOverride = extractionDirOverride != null
+            )
+            val extractionDir = when (extractionLifecycle.directoryMode) {
+                MobileEpubExtractionDirectoryMode.OVERRIDE ->
+                    ImportedFileCache.prepareDirectory(requireNotNull(extractionDirOverride))
+                MobileEpubExtractionDirectoryMode.TEMPORARY_METADATA ->
+                    ImportedFileCache.createTemporaryBookDir(context, bookId, "metadata")
+                MobileEpubExtractionDirectoryMode.ACTIVE_CACHE -> {
+                    val activeDir = ImportedFileCache.ensureActiveBookDir(context, bookId)
+                    if (extractionLifecycle.mayReadCache) {
+                        readCachedEpubBook(
+                            extractionDir = activeDir,
+                            bookId = bookId,
+                            originalBookNameHint = originalBookNameHint,
+                            shouldUseToc = shouldUseToc,
+                            sourceFingerprint = sourceFingerprint
+                        )?.let { cachedBook ->
+                            Timber.tag("FileOpenPerf").d("[EPUB] Loaded extracted book from cache | bookId=$bookId")
+                            return@withContext cachedBook
+                        }
+                    }
+                    ImportedFileCache.resetActiveBookDir(context, bookId)
                 }
-                ImportedFileCache.resetActiveBookDir(context, bookId)
             }
 
             val tempFile = File.createTempFile("epub_stream", ".epub", context.cacheDir)
@@ -232,7 +211,7 @@ class EpubParser(private val context: Context) {
                     zipFile = ZipFile(tempFile),
                     extractionDir = extractionDir,
                     parseContent = parseContent,
-                    extractImagesForMetadata = shouldDeleteExtractionDir
+                    extractImagesForMetadata = extractionLifecycle.deleteDirectoryAfterLoad
                 )
             } finally {
                 tempFile.delete()
@@ -241,7 +220,7 @@ class EpubParser(private val context: Context) {
             val document = createEpubDocument(filesMap)
             val book = parseAndCreateEbook(filesMap, document, shouldUseToc, extractionDir.absolutePath,
                 originalBookNameHint, parseContent)
-            if (parseContent && extractionDirOverride == null) {
+            if (extractionLifecycle.mayWriteCache) {
                 writeCachedEpubBook(
                     extractionDir = extractionDir,
                     bookId = bookId,
@@ -251,7 +230,7 @@ class EpubParser(private val context: Context) {
                     book = book
                 )
             }
-            if (shouldDeleteExtractionDir) {
+            if (extractionLifecycle.deleteDirectoryAfterLoad) {
                 extractionDir.deleteRecursively()
             }
             return@withContext book
@@ -270,21 +249,21 @@ class EpubParser(private val context: Context) {
         if (!metadataFile.isFile || !manifestFile.isFile) return null
 
         return try {
-            val manifestText = manifestFile.readTextIfWithinLimit(MAX_METADATA_ENTRY_BYTES.toLong()) ?: return null
-            val manifest = jsonSerializer.decodeFromString<EpubExtractionCacheManifest>(manifestText)
-            val isCompatible = manifest.bookId == bookId &&
-                manifest.originalBookNameHint == originalBookNameHint &&
-                manifest.parserVersion == EPUB_EXTRACTION_CACHE_VERSION &&
-                manifest.parseContent &&
-                manifest.shouldUseToc == shouldUseToc &&
-                manifest.sourceFingerprint == sourceFingerprint
+            val manifestText = manifestFile.readTextIfWithinLimit(MOBILE_EPUB_MAX_METADATA_ENTRY_BYTES.toLong()) ?: return null
+            val manifest = jsonSerializer.decodeFromString<MobileEpubExtractionCacheManifest>(manifestText)
+            val isCompatible = manifest.matchesMobileEpubExtractionCache(
+                bookId = bookId,
+                originalBookNameHint = originalBookNameHint,
+                shouldUseToc = shouldUseToc,
+                sourceFingerprint = sourceFingerprint
+            )
 
             if (!isCompatible) {
                 Timber.d("EPUB extraction cache manifest is stale for bookId=$bookId")
                 return null
             }
 
-            val metadataText = metadataFile.readTextIfWithinLimit(MAX_CACHED_BOOK_METADATA_BYTES) ?: return null
+            val metadataText = metadataFile.readTextIfWithinLimit(MOBILE_EPUB_MAX_CACHED_BOOK_METADATA_BYTES) ?: return null
             val cachedBook = jsonSerializer.decodeFromString<EpubBook>(metadataText)
                 .copy(
                     extractionBasePath = extractionDir.absolutePath,
@@ -325,10 +304,10 @@ class EpubParser(private val context: Context) {
             }
             manifestFile.writeText(
                 jsonSerializer.encodeToString(
-                    EpubExtractionCacheManifest(
+                    MobileEpubExtractionCacheManifest(
                         bookId = bookId,
                         originalBookNameHint = originalBookNameHint,
-                        parserVersion = EPUB_EXTRACTION_CACHE_VERSION,
+                        parserVersion = MOBILE_EPUB_EXTRACTION_CACHE_VERSION,
                         parseContent = true,
                         shouldUseToc = shouldUseToc,
                         sourceFingerprint = sourceFingerprint
@@ -352,10 +331,10 @@ class EpubParser(private val context: Context) {
             tempFile.outputStream().buffered().use { output ->
                 jsonSerializer.encodeToStream(cachedBook, output)
             }
-            if (tempFile.length() > MAX_CACHED_BOOK_METADATA_BYTES) {
+            if (tempFile.length() > MOBILE_EPUB_MAX_CACHED_BOOK_METADATA_BYTES) {
                 Timber.w(
                     "Skipping oversized EPUB extraction metadata cache: " +
-                        "path=${metadataFile.absolutePath} size=${tempFile.length()} limit=$MAX_CACHED_BOOK_METADATA_BYTES"
+                        "path=${metadataFile.absolutePath} size=${tempFile.length()} limit=$MOBILE_EPUB_MAX_CACHED_BOOK_METADATA_BYTES"
                 )
                 tempFile.delete()
                 metadataFile.delete()
@@ -387,20 +366,8 @@ class EpubParser(private val context: Context) {
     private fun EpubBook.toExtractionMetadataCache(): EpubBook {
         return copy(
             coverImage = null,
-            chapters = chapters.map { chapter ->
-                chapter.copy(
-                    plainTextContent = "",
-                    htmlContent = "",
-                    plainTextLength = chapter.plainTextCharacterCount()
-                )
-            },
-            chaptersForPagination = chaptersForPagination.map { chapter ->
-                chapter.copy(
-                    plainTextContent = "",
-                    htmlContent = "",
-                    plainTextLength = chapter.plainTextCharacterCount()
-                )
-            },
+            chapters = chapters.map(EpubChapter::toMobileEpubExtractionCacheChapter),
+            chaptersForPagination = chaptersForPagination.map(EpubChapter::toMobileEpubExtractionCacheChapter),
             css = emptyMap()
         )
     }
@@ -411,7 +378,7 @@ class EpubParser(private val context: Context) {
         return extractionDir.walkTopDown()
             .filter { it.isFile && it.extension.equals("css", ignoreCase = true) }
             .mapNotNull { file ->
-                if (file.length() > MAX_METADATA_ENTRY_BYTES) {
+                if (file.length() > MOBILE_EPUB_MAX_METADATA_ENTRY_BYTES) {
                     Timber.w("Skipping oversized extracted CSS file in EPUB cache: ${file.absolutePath}")
                     return@mapNotNull null
                 }
@@ -431,50 +398,34 @@ class EpubParser(private val context: Context) {
         val filesMap = mutableMapOf<String, EpubFile>()
         zipFile.use { zf ->
             zf.entries().asSequence().filterNot { it.isDirectory }.forEach { entry ->
-                val isEssential = isEssentialFile(entry.name, parseContent)
-                val isImage = isEpubImageFile(entry.name)
-
-                if (!parseContent) {
-                    when {
-                        isEssential -> {
-                            val data = zf.readSmallEntryBytes(entry) ?: return@forEach
-                            filesMap[entry.name] = EpubFile(absPath = entry.name, data = data)
-                        }
-                        isImage && extractImagesForMetadata -> {
-                            val outputFile = safeExtractionFile(extractionDir, entry.name)
-                                ?: return@forEach
-                            outputFile.parentFile?.mkdirs()
-                            zf.getInputStream(entry).use { input ->
-                                FileOutputStream(outputFile).use { output ->
-                                    input.copyTo(output)
-                                }
+                val action = mobileEpubExtractionAction(entry.name, parseContent, extractImagesForMetadata)
+                when (action) {
+                    MobileEpubExtractionAction.SKIP -> Unit
+                    MobileEpubExtractionAction.READ_IN_MEMORY -> {
+                        val data = zf.readSmallEntryBytes(entry) ?: return@forEach
+                        filesMap[entry.name] = EpubFile(absPath = entry.name, data = data)
+                    }
+                    MobileEpubExtractionAction.EXTRACT_WITHOUT_MEMORY,
+                    MobileEpubExtractionAction.EXTRACT_AND_READ -> {
+                        val outputFile = safeExtractionFile(extractionDir, entry.name)
+                            ?: return@forEach
+                        outputFile.parentFile?.mkdirs()
+                        zf.getInputStream(entry).use { input ->
+                            FileOutputStream(outputFile).use { output ->
+                                input.copyTo(output)
                             }
-                            filesMap[entry.name] = EpubFile(absPath = entry.name, data = ByteArray(0))
                         }
-                    }
-                    return@forEach
-                }
-
-                val outputFile = safeExtractionFile(extractionDir, entry.name) ?: return@forEach
-                outputFile.parentFile?.mkdirs()
-                zf.getInputStream(entry).use { input ->
-                    FileOutputStream(outputFile).use { output ->
-                        input.copyTo(output)
+                        val data = if (action == MobileEpubExtractionAction.EXTRACT_AND_READ) {
+                            outputFile.readBytes()
+                        } else {
+                            ByteArray(0)
+                        }
+                        filesMap[entry.name] = EpubFile(absPath = entry.name, data = data)
                     }
                 }
-
-                val lowerName = entry.name.lowercase()
-                val isContainerOrOpf = lowerName.endsWith("container.xml") || lowerName.endsWith(".opf")
-                val data = if (isContainerOrOpf) outputFile.readBytes() else ByteArray(0)
-                filesMap[entry.name] = EpubFile(absPath = entry.name, data = data)
             }
         }
         return filesMap
-    }
-
-    private fun isEpubImageFile(fileName: String): Boolean {
-        val lowerName = fileName.lowercase()
-        return EPUB_IMAGE_EXTENSIONS.any { lowerName.endsWith(it) }
     }
 
     private fun safeExtractionFile(extractionDir: File, entryName: String): File? {
@@ -494,13 +445,13 @@ class EpubParser(private val context: Context) {
     }
 
     private fun ZipFile.readSmallEntryBytes(entry: ZipEntry): ByteArray? {
-        if (entry.size > MAX_METADATA_ENTRY_BYTES.toLong()) {
+        if (entry.size > MOBILE_EPUB_MAX_METADATA_ENTRY_BYTES.toLong()) {
             Timber.w("Skipping oversized EPUB metadata entry: ${entry.name} (${entry.size} bytes)")
             return null
         }
 
         val initialSize = entry.size
-            .takeIf { it in 0..MAX_METADATA_ENTRY_BYTES.toLong() }
+            .takeIf { it in 0..MOBILE_EPUB_MAX_METADATA_ENTRY_BYTES.toLong() }
             ?.toInt()
             ?: DEFAULT_BUFFER_SIZE
         val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
@@ -513,7 +464,7 @@ class EpubParser(private val context: Context) {
                     if (read == -1) break
 
                     totalBytes += read
-                    if (totalBytes > MAX_METADATA_ENTRY_BYTES) {
+                    if (totalBytes > MOBILE_EPUB_MAX_METADATA_ENTRY_BYTES) {
                         Timber.w("Skipping oversized EPUB metadata entry while reading: ${entry.name}")
                         return null
                     }
@@ -533,30 +484,21 @@ class EpubParser(private val context: Context) {
         originalFilePathOrKey: String,
         parseContent: Boolean = true
     ): EpubBook = withContext(Dispatchers.IO) {
-        val metadataTitle =
-            document.metadata.selectFirstChildTag("dc:title")?.textContent ?: File(originalFilePathOrKey).nameWithoutExtension
-        val metadataAuthor =
-            document.metadata.selectFirstChildTag("dc:creator")?.textContent ?: "Unknown Author"
-        val metadataLanguage =
-            document.metadata.selectFirstChildTag("dc:language")?.textContent ?: "en"
-        val metadataCoverId = getMetadataCoverId(document.metadata)
-        val metadataDescription =
-            document.metadata.selectFirstChildTag("dc:description")?.textContent
-
-        Timber.d("EpubParser: Extracted OPF metadata: title='$metadataTitle', author='$metadataAuthor'")
-
-        var metadataSeriesName: String? = null
-        var metadataSeriesIndex: Double? = null
-
-        document.metadata.selectChildTag("meta")
+        val metadataNodes = document.metadata.selectChildTag("meta")
             .ifEmpty { document.metadata.selectChildTag("opf:meta") }
-            .forEach { meta ->
-                val nameAttr = meta.getAttributeValue("name")
-                val contentAttr = meta.getAttributeValue("content")
+        val metadata = resolveMobileEpubMetadata(
+            sourceFileName = originalFilePathOrKey,
+            title = document.metadata.selectFirstChildTag("dc:title")?.textContent,
+            author = document.metadata.selectFirstChildTag("dc:creator")?.textContent,
+            language = document.metadata.selectFirstChildTag("dc:language")?.textContent,
+            description = document.metadata.selectFirstChildTag("dc:description")?.textContent,
+            metaEntries = metadataNodes.map { meta ->
+                meta.getAttributeValue("name") to meta.getAttributeValue("content")
+            }.toList()
+        )
+        val metadataCoverId = getMetadataCoverId(document.metadata)
 
-                if (nameAttr == "calibre:series") metadataSeriesName = contentAttr
-                if (nameAttr == "calibre:series_index") metadataSeriesIndex = contentAttr?.toDoubleOrNull()
-            }
+        Timber.d("EpubParser: Extracted OPF metadata: title='${metadata.title}', author='${metadata.author}'")
 
         val opfRelativePath = document.opfFilePath
         val opfParentDir = File(opfRelativePath).parentFile ?: File("")
@@ -648,10 +590,10 @@ class EpubParser(private val context: Context) {
                 "from ${chaptersFromSpine.size} spine documents."
         )
         return@withContext EpubBook(
-            fileName = metadataTitle.asFileName(),
-            title = metadataTitle,
-            author = metadataAuthor,
-            language = metadataLanguage,
+            fileName = metadata.fileName,
+            title = metadata.title,
+            author = metadata.author,
+            language = metadata.language,
             coverImage = coverImage,
             chapters = logicalBookContent.chapters, chaptersForPagination = logicalBookContent.chapters,
             images = images,
@@ -659,9 +601,9 @@ class EpubParser(private val context: Context) {
             tableOfContents = logicalBookContent.tableOfContents,
             extractionBasePath = extractionBasePath,
             css = cssContent,
-            seriesName = metadataSeriesName,
-            seriesIndex = metadataSeriesIndex,
-            description = metadataDescription
+            seriesName = metadata.seriesName,
+            seriesIndex = metadata.seriesIndex,
+            description = metadata.description
         )
     }
 
@@ -702,35 +644,42 @@ class EpubParser(private val context: Context) {
             }
 
             val bodyChildren = body.children().toList()
-            val sectionStarts = entries.mapNotNull { entry ->
-                val fragmentId = entry.fragmentId ?: return@mapNotNull null
-                val target = body.getElementById(fragmentId)
-                    ?: body.selectFirst("[name='$fragmentId']")
-                val directChild = target?.let { targetElement ->
+            val idChildIndices = mutableMapOf<String, Int>()
+            val nameChildIndices = mutableMapOf<String, Int>()
+            entries.forEach { entry ->
+                val fragmentId = entry.fragmentId ?: return@forEach
+                fun directChildIndex(target: org.jsoup.nodes.Element?): Int? = target?.let { targetElement ->
                     generateSequence(targetElement) { it.parent() }
                         .firstOrNull { it.parent() == body }
-                }
-                directChild?.let(bodyChildren::indexOf)?.takeIf { it >= 0 }?.let { entry to it }
-            }.sortedBy { it.second }
+                }?.let(bodyChildren::indexOf)?.takeIf { it >= 0 }
+                directChildIndex(body.getElementById(fragmentId))?.let { idChildIndices.putIfAbsent(fragmentId, it) }
+                directChildIndex(body.selectFirst("[name='$fragmentId']"))?.let { nameChildIndices.putIfAbsent(fragmentId, it) }
+            }
+            val sectionRanges = mobileEpubLogicalSectionRanges(
+                entries = entries,
+                bodyChildCount = bodyChildren.size,
+                fragmentId = EpubTocEntry::fragmentId,
+                idChildIndex = idChildIndices::get,
+                nameChildIndex = nameChildIndices::get
+            )
 
-            if (sectionStarts.size < 2 || sectionStarts.map { it.second }.distinct().size < 2) {
+            if (sectionRanges.isEmpty()) {
                 logicalChapters += spineChapter
                 return@forEach
             }
 
-            sectionStarts.forEachIndexed { index, (entry, startIndex) ->
-                val endIndex = sectionStarts.getOrNull(index + 1)?.second ?: bodyChildren.size
-                if (startIndex >= endIndex) return@forEachIndexed
-
+            sectionRanges.forEach { range ->
+                val entry = range.entry
                 val sectionDocument = sourceDocument.clone()
                 val sectionBody = sectionDocument.body()
                 sectionBody.empty()
-                bodyChildren.subList(startIndex, endIndex).forEach { sectionBody.appendChild(it.clone()) }
+                bodyChildren.subList(range.startChildIndex, range.endChildIndexExclusive)
+                    .forEach { sectionBody.appendChild(it.clone()) }
 
                 val sourcePath = spineChapter.contentFilePath()
                 val extension = sourcePath.substringAfterLast('.', "xhtml")
                 val baseName = sourcePath.substringBeforeLast('.', sourcePath)
-                val sectionPath = "${baseName}.episteme-section-${index + 1}.$extension"
+                val sectionPath = "${baseName}.episteme-section-${range.materializationIndex + 1}.$extension"
                 val sectionFile = File(extractionRoot, sectionPath)
                 sectionFile.parentFile?.mkdirs()
                 sectionFile.writeText(sectionDocument.outerHtml())
@@ -755,54 +704,40 @@ class EpubParser(private val context: Context) {
         )
     }
 
-    private fun parseTableOfContents(
-        navMapElement: Element,
+    private fun parseNavigationNodes(
+        element: Element,
         ncxParentDir: File
-    ): List<EpubTocEntry> {
-        val result = mutableListOf<EpubTocEntry>()
-
-        fun recurse(element: Element, currentDepth: Int) {
-            val navPoints = element.childElements.filter { it.tagName == "navPoint" }
-            for (navPoint in navPoints) {
+    ): List<MobileEpubNcxNavigationNode> =
+            element.childElements.filter { it.tagName == "navPoint" }.map { navPoint ->
                 val label = navPoint.selectFirstChildTag("navLabel")
-                    ?.selectFirstChildTag("text")?.textContent?.trim() ?: "Untitled"
-
+                    ?.selectFirstChildTag("text")?.textContent?.trim()
                 val contentSrc = navPoint.selectFirstChildTag("content")
                     ?.getAttributeValue("src")?.decodedURL
-
-                if (contentSrc != null) {
-                    val fullPathRaw = Paths.get(ncxParentDir.path, contentSrc)
-                        .normalize().toString().replace(File.separatorChar, '/')
-
+                val pathAndFragment = contentSrc?.let {
+                    val fullPathRaw = resolveMobileEpubReference("${ncxParentDir.path}/_", contentSrc)
                     val parts = fullPathRaw.split("#", limit = 2)
-                    val absolutePath = parts[0]
-                    val fragmentId = if (parts.size > 1) parts[1] else null
-
-                    result.add(EpubTocEntry(label, absolutePath, fragmentId, currentDepth))
-
-                    recurse(navPoint, currentDepth + 1)
+                    parts[0] to parts.getOrNull(1)
                 }
-            }
-        }
+                MobileEpubNcxNavigationNode(
+                    label = label,
+                    absolutePath = pathAndFragment?.first,
+                    fragmentId = pathAndFragment?.second,
+                    children = parseNavigationNodes(navPoint, ncxParentDir)
+                )
+            }.toList()
 
-        recurse(navMapElement, 0)
-        return result
-    }
+    private fun parseTableOfContents(navMapElement: Element, ncxParentDir: File): List<EpubTocEntry> =
+        flattenMobileEpubNcxNavigation(parseNavigationNodes(navMapElement, ncxParentDir))
 
     private fun resolveTocFileItem(
         spine: Node,
         manifestItems: Map<String, EpubManifestItem>
     ): EpubManifestItem? {
-        spine.getAttributeValue("toc")
-            ?.takeIf { it.isNotBlank() }
-            ?.let { tocId -> manifestItems[tocId] }
-            ?.let { return it }
-
-        return manifestItems.values.firstOrNull {
-            it.mediaType.equals("application/x-dtbncx+xml", ignoreCase = true)
-        } ?: manifestItems.values.firstOrNull {
-            it.absPath.endsWith(".ncx", ignoreCase = true)
-        }
+        val id = resolveMobileEpubNcxManifestId(
+            spineTocId = spine.getAttributeValue("toc"),
+            manifest = manifestItems.values.toList()
+        ) ?: return null
+        return manifestItems[id]
     }
 
     @Throws(EpubParserException::class)
@@ -810,11 +745,12 @@ class EpubParser(private val context: Context) {
         val containerFile = files["META-INF/container.xml"]
             ?: throw EpubParserException("META-INF/container.xml file missing")
 
-        val rawOpfPath = parseXMLFile(containerFile.data)?.selectFirstTag("rootfile")
-            ?.getAttributeValue("full-path")?.decodedURL
+        val rawOpfPath = listOf(
+            parseXMLFile(containerFile.data)?.selectFirstTag("rootfile")
+                ?.getAttributeValue("full-path")?.decodedURL
+        )
+        val opfFilePath = resolveMobileEpubOpfPath(rawOpfPath)
             ?: throw EpubParserException("Invalid container.xml: Could not find rootfile full-path.")
-
-        val opfFilePath = rawOpfPath.trimStart('/')
 
         val opfFile = files[opfFilePath]
             ?: throw EpubParserException(".opf file missing at normalized path '$opfFilePath'.")
@@ -849,8 +785,7 @@ class EpubParser(private val context: Context) {
             .ifEmpty { manifest.selectChildTag("opf:item") }
             .mapNotNull { itemElement ->
                 val href = itemElement.getAttribute("href")?.decodedURL ?: return@mapNotNull null
-                val pathRelativeToEpubRoot = Paths.get(opfParentDir.path, href)
-                    .normalize().toString().replace(File.separatorChar, '/')
+                val pathRelativeToEpubRoot = resolveMobileEpubReference("${opfParentDir.path}/_", href)
 
                 EpubManifestItem(
                     id = itemElement.getAttribute("id"),
@@ -863,41 +798,12 @@ class EpubParser(private val context: Context) {
 
     private fun parseNavMapRecursive(
         element: Element,
-        ncxFileParentDir: File,
-        depth: Int = 0
+        ncxFileParentDir: File
     ): Map<String, NcxMetadata> {
-        val result = linkedMapOf<String, NcxMetadata>()
-
-        fun visit(parent: Element, currentDepth: Int) {
-            val navPoints = parent.childElements.filter { it.tagName == "navPoint" }
-            for (navPoint in navPoints) {
-                val navLabelText = navPoint.selectFirstChildTag("navLabel")
-                    ?.selectFirstChildTag("text")?.textContent?.trim()
-                val contentSrcRaw = navPoint.selectFirstChildTag("content")
-                    ?.getAttributeValue("src")?.decodedURL
-
-                if (!navLabelText.isNullOrBlank() && contentSrcRaw != null) {
-                    // Several valid NCX entries may refer to different fragments
-                    // in one spine document. A chapter resource has no fragment,
-                    // so retain its first (outermost) entry rather than letting a
-                    // nested anchor overwrite it (e.g. Moby-Dick -> Extracts).
-                    val contentPathRelativeToEpubRoot = Paths.get(ncxFileParentDir.path, contentSrcRaw)
-                        .normalize().toString().replace(File.separatorChar, '/')
-                        .substringBefore('#')
-
-                    if (result.putIfAbsent(
-                            contentPathRelativeToEpubRoot,
-                            NcxMetadata(navLabelText, currentDepth)
-                        ) == null
-                    ) {
-                        Timber.d("NCX Map: '$contentPathRelativeToEpubRoot' -> '$navLabelText' (Depth $currentDepth)")
-                    }
-                }
-                visit(navPoint, currentDepth + 1)
-            }
+        val result = mobileEpubNcxChapterMetadata(parseNavigationNodes(element, ncxFileParentDir))
+        result.forEach { (path, metadata) ->
+            Timber.d("NCX Map: '$path' -> '${metadata.title}' (Depth ${metadata.depth})")
         }
-
-        visit(element, depth)
         return result
     }
 
@@ -916,11 +822,11 @@ class EpubParser(private val context: Context) {
 
         val spineItems = spine.selectChildTag("itemref")
             .ifEmpty { spine.selectChildTag("opf:itemref") }
+        val spineIds = mobileEpubSpineItemIds(spineItems.map { it.getAttributeValue("idref") }.toList())
 
-        val deferredChapters = spineItems.mapIndexed { index, itemRef ->
+        val deferredChapters = spineIds.mapIndexed { index, idRef ->
             async {
                 parsingSemaphore.withPermit {
-                    val idRef = itemRef.getAttribute("idref")
                     val item = manifestItems[idRef] ?: return@withPermit null
 
                     val fileBytes = filesContentMap[item.absPath]?.data?.takeIf { it.isNotEmpty() }
@@ -930,72 +836,60 @@ class EpubParser(private val context: Context) {
                     val mediaType = item.mediaType
                     val absPath = item.absPath
 
-                    if (mediaType.startsWith("application/xhtml+xml") ||
-                        mediaType.startsWith("text/html") ||
-                        absPath.endsWith(".html", ignoreCase = true) ||
-                        absPath.endsWith(".xhtml", ignoreCase = true) ||
-                        absPath.endsWith(".xml", ignoreCase = true)
-                    ) {
-                        val rawHtml = String(fileBytes, Charsets.UTF_8)
-                        val document = Jsoup.parse(rawHtml)
-                        val plainText = document.text()
+                    when (mobileEpubSpineResourceKind(mediaType, absPath)) {
+                        MobileEpubSpineResourceKind.HTML -> {
+                            val rawHtml = String(fileBytes, Charsets.UTF_8)
+                            val document = Jsoup.parse(rawHtml)
+                            val plainText = document.text()
 
-                        val parser = EpubXMLFileParser(
-                            fileRelativePath = absPath,
-                            data = fileBytes,
-                            fragmentId = null
-                        )
-                        val res = parser.parseForTitleAndPath(document)
+                            val parser = EpubXMLFileParser(
+                                fileRelativePath = absPath,
+                                data = fileBytes,
+                                fragmentId = null
+                            )
+                            val res = parser.parseForTitleAndPath(document)
 
-                        val chapterTitleFromHtml = res.title
-                        val ncxKey = absPath.substringBefore('#')
-                        val ncxData = ncxMetadataMap[ncxKey]
+                            val navigation = resolveMobileEpubChapterNavigation(
+                                absolutePath = absPath,
+                                fallbackTitle = res.title,
+                                navigationMetadata = ncxMetadataMap
+                            )
 
-                        val isEffectiveInToc = if (ncxMetadataMap.isNotEmpty()) {
-                            ncxData != null
-                        } else {
-                            true
+                            TempEpubChapter(
+                                url = absPath,
+                                title = navigation.title,
+                                htmlFilePath = res.effectiveHtmlPath,
+                                chapterIndex = index + 1,
+                                plainTextContent = plainText,
+                                htmlContent = "", // OPTIMIZATION: Don't store HTML in memory, it's on disk
+                                depth = navigation.depth,
+                                isInToc = navigation.isInToc
+                            )
                         }
+                        MobileEpubSpineResourceKind.IMAGE -> {
+                            // Image handling remains similar, but usually small enough
+                            val htmlContent = """
+                                <!DOCTYPE html><html style="margin:0;padding:0;height:100%;"><head><title>Image</title></head><body style="margin:0;padding:0;height:100%;text-align:center;"><img src="$absPath" alt="Image from spine" style="object-fit:contain;width:100%;height:100%;"/></body></html>
+                            """.trimIndent()
 
-                        val finalChapterTitle = if (ncxData != null && ncxData.title.isNotBlank()) {
-                            ncxData.title
-                        } else {
-                            chapterTitleFromHtml
+                            val navigation = resolveMobileEpubChapterNavigation(
+                                absolutePath = absPath,
+                                fallbackTitle = "Image",
+                                navigationMetadata = ncxMetadataMap
+                            )
+
+                            TempEpubChapter(
+                                url = absPath,
+                                title = navigation.title,
+                                htmlFilePath = absPath,
+                                chapterIndex = index + 1,
+                                plainTextContent = "[Image]",
+                                htmlContent = htmlContent,
+                                depth = navigation.depth,
+                                isInToc = navigation.isInToc
+                            )
                         }
-                        val finalDepth = ncxData?.depth ?: 0
-
-                        TempEpubChapter(
-                            url = absPath,
-                            title = finalChapterTitle,
-                            htmlFilePath = res.effectiveHtmlPath,
-                            chapterIndex = index + 1,
-                            plainTextContent = plainText,
-                            htmlContent = "", // OPTIMIZATION: Don't store HTML in memory, it's on disk
-                            depth = finalDepth,
-                            isInToc = isEffectiveInToc
-                        )
-                    } else if (mediaType.startsWith("image/")) {
-                        // Image handling remains similar, but usually small enough
-                        val htmlContent = """
-                            <!DOCTYPE html><html style="margin:0;padding:0;height:100%;"><head><title>Image</title></head><body style="margin:0;padding:0;height:100%;text-align:center;"><img src="$absPath" alt="Image from spine" style="object-fit:contain;width:100%;height:100%;"/></body></html>
-                        """.trimIndent()
-
-                        val ncxKey = absPath.substringBefore('#')
-                        val ncxData = ncxMetadataMap[ncxKey]
-                        val isEffectiveInToc = if (ncxMetadataMap.isNotEmpty()) ncxData != null else true
-
-                        TempEpubChapter(
-                            url = absPath,
-                            title = ncxData?.title ?: "Image",
-                            htmlFilePath = absPath,
-                            chapterIndex = index + 1,
-                            plainTextContent = "[Image]",
-                            htmlContent = htmlContent,
-                            depth = ncxData?.depth ?: 0,
-                            isInToc = isEffectiveInToc
-                        )
-                    } else {
-                        null
+                        MobileEpubSpineResourceKind.UNSUPPORTED -> null
                     }
                 }
             }
@@ -1007,7 +901,7 @@ class EpubParser(private val context: Context) {
             EpubChapter(
                 chapterId = generateId(),
                 absPath = tempChapter.url,
-                title = tempChapter.title?.takeIf { it.isNotBlank() } ?: "Chapter ${tempChapter.chapterIndex}",
+                title = resolveMobileEpubSpineChapterTitle(tempChapter.title, tempChapter.chapterIndex - 1),
                 htmlFilePath = tempChapter.htmlFilePath,
                 plainTextContent = tempChapter.plainTextContent,
                 htmlContent = tempChapter.htmlContent,
@@ -1022,25 +916,9 @@ class EpubParser(private val context: Context) {
         filesContentMap: Map<String, EpubFile>,
         @Suppress("UNUSED_PARAMETER") extractionRoot: File
     ): List<EpubImage> {
-        val listedImages = manifestItems.values
-            .filter { it.mediaType.startsWith("image/") }
-            .map { manifestItem ->
-                EpubImage(absPath = manifestItem.absPath)
-            }
-
-        val listedPaths = listedImages.map { it.absPath }.toSet()
-
-        val unlistedImages = filesContentMap.keys
-            .filter { path ->
-                val lowerPath = path.lowercase()
-                EPUB_IMAGE_EXTENSIONS.any { lowerPath.endsWith(it) } && !listedPaths.contains(path)
-            }
-            .map { path ->
-                EpubImage(absPath = path)
-            }
-
-        Timber.d("Identified ${listedImages.size + unlistedImages.size} images (content not loaded into memory).")
-        return (listedImages + unlistedImages).distinctBy { it.absPath }
+        return mobileEpubImages(manifestItems.values.toList(), filesContentMap.keys.toList()).also {
+            Timber.d("Identified ${it.size} images (content not loaded into memory).")
+        }
     }
 
     private fun parseCoverImage(
@@ -1049,42 +927,10 @@ class EpubParser(private val context: Context) {
         filesContentMap: Map<String, EpubFile>,
         extractionRoot: File
     ): Bitmap? {
-        val coverManifestItem = manifestItems[metadataCoverId]
-        if (coverManifestItem != null) {
-            val coverImage = decodeEpubImage(coverManifestItem.absPath, filesContentMap, extractionRoot)
-            if (coverImage != null) {
-                return coverImage
-            } else {
-                Timber.e("Cover image file content not found for path: ${coverManifestItem.absPath}")
-            }
-        } else {
-            if (metadataCoverId != null) {
-                Timber.w("Cover image ID '$metadataCoverId' not found in manifest.")
-            } else {
-                Timber.d("No cover image ID specified in metadata.")
-            }
-        }
-
-        val commonCoverNames = listOf("cover.jpg", "cover.jpeg", "cover.png")
-        for (name in commonCoverNames) {
-            val possiblePaths = listOf(
-                name, "images/$name", "Images/$name", "image/$name", "Image/$name",
-                "OEBPS/images/$name", "OEBPS/Images/$name", "OEBPS/image/$name", "OEBPS/Image/$name",
-                "OPS/images/$name", "OPS/Images/$name", "OPS/image/$name", "OPS/Image/$name"
-            )
-            for (path in possiblePaths) {
-                if (filesContentMap.containsKey(path)) {
-                    decodeEpubImage(path, filesContentMap, extractionRoot)?.let {
-                        Timber.d("Found fallback cover image at $path")
-                        return it
-                    }
-                }
-                manifestItems.values.find { item -> item.absPath.equals(path, ignoreCase = true) && item.mediaType.startsWith("image/") }?.let { manifestItem ->
-                    decodeEpubImage(manifestItem.absPath, filesContentMap, extractionRoot)?.let {
-                        Timber.d("Found fallback cover image via manifest item (case-insensitive) at ${manifestItem.absPath}")
-                        return it
-                    }
-                }
+        mobileEpubCoverCandidates(metadataCoverId, manifestItems.values.toList(), filesContentMap.keys).forEach { path ->
+            decodeEpubImage(path, filesContentMap, extractionRoot)?.let {
+                Timber.d("Found cover image at $path")
+                return it
             }
         }
         Timber.d("Cover image could not be loaded from metadata or common fallbacks.")
@@ -1110,7 +956,7 @@ class EpubParser(private val context: Context) {
         }
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
         val options = BitmapFactory.Options().apply {
-            inSampleSize = calculateBitmapSampleSize(bounds)
+            inSampleSize = mobileEpubCoverBitmapSampleSize(bounds.outWidth, bounds.outHeight)
         }
         return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
     }
@@ -1121,39 +967,9 @@ class EpubParser(private val context: Context) {
         }
         BitmapFactory.decodeFile(file.absolutePath, bounds)
         val options = BitmapFactory.Options().apply {
-            inSampleSize = calculateBitmapSampleSize(bounds)
+            inSampleSize = mobileEpubCoverBitmapSampleSize(bounds.outWidth, bounds.outHeight)
         }
         return BitmapFactory.decodeFile(file.absolutePath, options)
     }
 
-    private fun calculateBitmapSampleSize(options: BitmapFactory.Options): Int {
-        val width = options.outWidth
-        val height = options.outHeight
-        if (width <= 0 || height <= 0) return 1
-
-        var sampleSize = 1
-        while ((width / sampleSize) > EPUB_COVER_MAX_DIMENSION || (height / sampleSize) > EPUB_COVER_MAX_DIMENSION) {
-            sampleSize *= 2
-        }
-        return sampleSize
-    }
-
-    private fun isEssentialFile(fileName: String, parseContent: Boolean): Boolean {
-        val lowerName = fileName.lowercase()
-
-        if (lowerName.endsWith("container.xml") || lowerName.endsWith(".opf")) {
-            return true
-        }
-
-        if (!parseContent) {
-            return false
-        }
-
-        return lowerName.endsWith(".xml") ||
-                lowerName.endsWith(".ncx") ||
-                lowerName.endsWith(".html") ||
-                lowerName.endsWith(".xhtml") ||
-                lowerName.endsWith(".htm") ||
-                lowerName.endsWith(".css")
-    }
 }

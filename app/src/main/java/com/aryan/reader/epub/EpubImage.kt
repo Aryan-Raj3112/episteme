@@ -19,17 +19,11 @@
  */
 package com.aryan.reader.epub
 
-import kotlinx.serialization.ExperimentalSerializationApi
-import kotlinx.serialization.Serializable
-import kotlinx.serialization.protobuf.ProtoNumber
+import com.aryan.reader.shared.reader.MobileEpubImage
 
 /**
  * Represents an image in an epub book.
  *
  * @param absPath The absolute path of the image.
  */
-@OptIn(ExperimentalSerializationApi::class)
-@Serializable
-data class EpubImage @OptIn(ExperimentalSerializationApi::class) constructor(
-    @ProtoNumber(1) val absPath: String
-)
+typealias EpubImage = MobileEpubImage

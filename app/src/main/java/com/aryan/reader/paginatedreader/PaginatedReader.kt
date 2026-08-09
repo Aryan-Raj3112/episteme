@@ -202,8 +202,6 @@ import timber.log.Timber
 import java.io.File
 import java.net.URI
 import java.net.URLDecoder
-import java.nio.charset.StandardCharsets
-import java.util.Base64
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
@@ -1750,18 +1748,7 @@ private fun imageContentScale(style: BlockStyle): ContentScale {
 }
 
 internal fun nativeVerticalSvgContentFromDataUri(source: String): String? {
-    if (!source.startsWith("data:image/svg+xml", ignoreCase = true)) return null
-    val commaIndex = source.indexOf(',')
-    if (commaIndex < 0) return null
-    val metadata = source.substring(0, commaIndex)
-    val payload = source.substring(commaIndex + 1)
-    return runCatching {
-        if (metadata.contains(";base64", ignoreCase = true)) {
-            String(Base64.getDecoder().decode(payload), StandardCharsets.UTF_8)
-        } else {
-            URLDecoder.decode(payload.replace("+", "%2B"), "UTF-8")
-        }
-    }.getOrNull()
+    return decodeNativeVerticalSvgDataUri(source)
 }
 
 internal fun nativeVerticalImageModelData(source: String): Any {

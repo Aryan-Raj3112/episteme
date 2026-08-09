@@ -83,21 +83,19 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.aryan.reader.R
 import io.legere.pdfiumandroid.api.Bookmark
-import io.legere.pdfiumandroid.suspend.PdfDocumentKt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.json.JSONArray
 import timber.log.Timber
 import androidx.core.graphics.createBitmap
 import com.aryan.reader.cardTitle
 import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.pdf.data.VirtualPage
 import com.aryan.reader.shared.filterReaderTocEntries
+import com.aryan.reader.shared.pdf.LegacyPdfPageBookmark
+import com.aryan.reader.shared.pdf.LegacyPdfPageBookmarkCodec
 
-private const val MAX_FIXED_RECURSION = 128
-
-internal data class PdfBookmark(val pageIndex: Int, val title: String, val totalPages: Int)
+internal typealias PdfBookmark = LegacyPdfPageBookmark
 
 internal data class TocEntry(val title: String, val pageIndex: Int, val nestLevel: Int)
 
@@ -126,92 +124,6 @@ private val PdfDrawerSection.testTag: String?
         PdfDrawerSection.PAGES -> "PagesTab"
         PdfDrawerSection.CHAPTERS -> null
     }
-
-/**
- * Patches the library bug where siblings are truncated due to depth-state leakage.
- */
-suspend fun PdfDocumentKt.getFixedTableOfContents(): List<Bookmark> {
-    val tag = "PdfTocFix"
-    Timber.tag(tag).i("Starting Pure Reflection Traversal...")
-
-    return try {
-        // 1. Get the 'document' field (PdfDocumentU) from PdfDocumentKt
-        val documentField = PdfDocumentKt::class.java.getDeclaredField("document").apply { isAccessible = true }
-        val docUInstance = documentField.get(this) ?: return getTableOfContents()
-
-        // 2. Get the 'nativeDocument' field from PdfDocumentU
-        val nativeDocField = docUInstance.javaClass.getDeclaredField("nativeDocument").apply { isAccessible = true }
-        val nativeDocInstance = nativeDocField.get(docUInstance) ?: return getTableOfContents()
-
-        // 3. Get the native pointer (long) from PdfDocumentU
-        val ptrField = docUInstance.javaClass.getDeclaredField("mNativeDocPtr").apply { isAccessible = true }
-        val mNativeDocPtr = ptrField.get(docUInstance) as Long
-
-        // 4. Look up native methods using primitive 'long' types (mandatory for JNI)
-        val nClass = nativeDocInstance.javaClass
-        val lp = Long::class.javaPrimitiveType!! // Shorthand for 'long'
-
-        val getTitleM = nClass.getMethod("getBookmarkTitle", lp)
-        val getDestIdxM = nClass.getMethod("getBookmarkDestIndex", lp, lp)
-        val getFirstChildM = nClass.getMethod("getFirstChildBookmark", lp, lp)
-        val getSiblingM = nClass.getMethod("getSiblingBookmark", lp, lp)
-
-        val topLevel = mutableListOf<Bookmark>()
-        val visited = mutableSetOf<Long>()
-
-        /**
-         * Corrected traversal: Iterative for siblings, recursive for children.
-         */
-        fun walk(parentList: MutableList<Bookmark>, startPtr: Long, level: Int) {
-            var currentPtr = startPtr
-            var itemIndex = 0
-
-            while (currentPtr != 0L) {
-                if (visited.contains(currentPtr)) break
-                visited.add(currentPtr)
-
-                val title = getTitleM.invoke(nativeDocInstance, currentPtr) as? String ?: "Untitled"
-                val pageIdx = getDestIdxM.invoke(nativeDocInstance, mNativeDocPtr, currentPtr) as Long
-
-                Timber.tag(tag).v("Lvl $level | Item $itemIndex | Ptr: 0x${java.lang.Long.toHexString(currentPtr)} | $title")
-
-                val bookmark = Bookmark().apply {
-                    this.mNativePtr = currentPtr
-                    this.title = title
-                    this.pageIdx = pageIdx
-                }
-                parentList.add(bookmark)
-
-                // Recursive dive into children
-                val firstChild = getFirstChildM.invoke(nativeDocInstance, mNativeDocPtr, currentPtr) as Long
-                if (firstChild != 0L && level < MAX_FIXED_RECURSION) {
-                    walk(bookmark.children, firstChild, level + 1)
-                }
-
-                // Iterative move to next sibling
-                currentPtr = getSiblingM.invoke(nativeDocInstance, mNativeDocPtr, currentPtr) as Long
-                itemIndex++
-            }
-        }
-
-        // 5. Start from the root (Pass 0L as primitive long)
-        val firstRoot = getFirstChildM.invoke(nativeDocInstance, mNativeDocPtr, 0L) as Long
-        if (firstRoot != 0L) {
-            walk(topLevel, firstRoot, 0)
-        }
-
-        if (topLevel.isEmpty()) {
-            Timber.tag(tag).w("No items found, falling back to library.")
-            getTableOfContents()
-        } else {
-            Timber.tag(tag).i("TOC Successfully Patched! Nodes: ${visited.size}")
-            topLevel
-        }
-    } catch (e: Exception) {
-        Timber.tag(tag).e(e, "Reflection traversal critical error.")
-        this.getTableOfContents()
-    }
-}
 
 internal fun flattenToc(bookmarks: List<Bookmark>, level: Int = 0): List<TocEntry> {
     Timber.tag("PdfTocDebug").d("Processing level $level with ${bookmarks.size} items")
@@ -242,26 +154,7 @@ internal fun flattenToc(bookmarks: List<Bookmark>, level: Int = 0): List<TocEntr
 }
 
 internal fun loadPdfBookmarksFromJson(bookmarksJson: String?): Set<PdfBookmark> {
-    if (bookmarksJson.isNullOrBlank()) return emptySet()
-    return try {
-        val jsonArray = JSONArray(bookmarksJson)
-        (0 until jsonArray.length()).mapNotNull { i ->
-            try {
-                val json = jsonArray.getJSONObject(i)
-                PdfBookmark(
-                    pageIndex = json.getInt("pageIndex"),
-                    title = json.getString("title"),
-                    totalPages = json.getInt("totalPages")
-                )
-            } catch (e: Exception) {
-                Timber.e(e, "Failed to parse bookmark from JSON object")
-                null
-            }
-        }.toSet()
-    } catch (e: Exception) {
-        Timber.e(e, "Failed to parse bookmarks from JSON string: $bookmarksJson")
-        emptySet()
-    }
+    return LegacyPdfPageBookmarkCodec.decode(bookmarksJson)
 }
 
 @Composable

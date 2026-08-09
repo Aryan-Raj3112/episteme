@@ -1416,7 +1416,7 @@ fun SharedPdfHighlighterPaletteEditor(
 }
 
 @Composable
-fun SharedPdfTextAnnotationDock(
+fun SharedDesktopPdfTextAnnotationDock(
     style: SharedPdfTextStyleConfig,
     onStyleChange: (SharedPdfTextStyleConfig) -> Unit,
     onInsertTextBox: () -> Unit = {},

@@ -6,6 +6,20 @@ import kotlin.test.assertEquals
 
 class NativeVerticalChapterPolicyTest {
     @Test
+    fun decodesBase64AndPercentEncodedSvgDataUris() {
+        assertEquals(
+            "<svg>++</svg>",
+            decodeNativeVerticalSvgDataUri("data:image/svg+xml,%3Csvg%3E+%2B%3C%2Fsvg%3E")
+        )
+        assertEquals(
+            "<svg/>",
+            decodeNativeVerticalSvgDataUri("data:image/svg+xml;base64,PHN2Zy8+")
+        )
+        assertEquals(null, decodeNativeVerticalSvgDataUri("data:image/png;base64,abc"))
+        assertEquals(null, decodeNativeVerticalSvgDataUri("data:image/svg+xml"))
+    }
+
+    @Test
     fun `progress and compatibility page conversions preserve Android math`() {
         assertEquals(50, nativeVerticalCompatPageForProgress(50f, 101))
         assertEquals(50f, nativeVerticalProgressForCompatPage(50, 101))

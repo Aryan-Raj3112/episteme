@@ -37,3 +37,19 @@ object FontFamilyMapper {
         }
     }
 }
+
+fun resolveReaderFontFamily(
+    fontFamilyNames: List<String>,
+    loadedFontFamilies: Map<String, FontFamily>
+): FontFamily? {
+    if (fontFamilyNames.isEmpty()) return null
+    val normalizedLoadedFonts = loadedFontFamilies.entries.associate { (name, family) ->
+        name.trim().lowercase() to family
+    }
+    return fontFamilyNames.firstNotNullOfOrNull { name ->
+        normalizedLoadedFonts[name.normalizedCssFontFamilyName()]
+    } ?: fontFamilyNames.firstNotNullOfOrNull(FontFamilyMapper::nameToFontFamily)
+}
+
+private fun String.normalizedCssFontFamilyName(): String =
+    trim().removeSurrounding("\"").removeSurrounding("'").lowercase()

@@ -1,6 +1,25 @@
 package com.aryan.reader.paginatedreader
 
+import com.aryan.reader.shared.reader.decodeMobileEpubUrl
+import kotlin.io.encoding.Base64
+import kotlin.io.encoding.ExperimentalEncodingApi
 import kotlin.math.roundToInt
+
+@OptIn(ExperimentalEncodingApi::class)
+fun decodeNativeVerticalSvgDataUri(source: String): String? {
+    if (!source.startsWith("data:image/svg+xml", ignoreCase = true)) return null
+    val commaIndex = source.indexOf(',')
+    if (commaIndex < 0) return null
+    val metadata = source.substring(0, commaIndex)
+    val payload = source.substring(commaIndex + 1)
+    return runCatching {
+        if (metadata.contains(";base64", ignoreCase = true)) {
+            Base64.decode(payload).decodeToString()
+        } else {
+            decodeMobileEpubUrl(payload.replace("+", "%2B"))
+        }
+    }.getOrNull()
+}
 
 data class NativeVerticalChapterPageInfo(
     val currentPage: Int,

@@ -5,6 +5,7 @@ import com.aryan.reader.shared.FileType
 import com.aryan.reader.shared.ReaderFeatureSurface
 import com.aryan.reader.shared.ReaderPlatform
 import com.aryan.reader.shared.SharedFileCapabilities
+import com.aryan.reader.shared.ui.SharedMobileAppDestination
 import com.google.common.truth.Truth.assertThat
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -14,9 +15,9 @@ class AppNavigationTest {
 
     @Test
     fun appDestinations_useStableReaderRoutes() {
-        assertThat(AppDestinations.MAIN_ROUTE).isEqualTo("main")
-        assertThat(AppDestinations.PDF_VIEWER_ROUTE).isEqualTo("pdf_viewer")
-        assertThat(AppDestinations.EPUB_READER_ROUTE).isEqualTo("epub_reader")
+        assertThat(SharedMobileAppDestination.MAIN.route).isEqualTo("main")
+        assertThat(SharedMobileAppDestination.PDF_VIEWER.route).isEqualTo("pdf_viewer")
+        assertThat(SharedMobileAppDestination.EPUB_READER.route).isEqualTo("epub_reader")
     }
 
     @Test
@@ -76,35 +77,35 @@ class AppNavigationTest {
     fun appNavBackInterceptor_handlesNonMainBackStackEntriesDuringTransitions() {
         assertThat(
             shouldInterceptAppNavBack(
-                currentRoute = AppDestinations.PRO_SCREEN_ROUTE,
+                currentRoute = SharedMobileAppDestination.PRO.route,
                 hasPreviousBackStackEntry = true,
                 isCurrentEntryResumed = true
             )
         ).isTrue()
         assertThat(
             shouldInterceptAppNavBack(
-                currentRoute = AppDestinations.MAIN_ROUTE,
+                currentRoute = SharedMobileAppDestination.MAIN.route,
                 hasPreviousBackStackEntry = true,
                 isCurrentEntryResumed = true
             )
         ).isFalse()
         assertThat(
             shouldInterceptAppNavBack(
-                currentRoute = AppDestinations.PDF_VIEWER_ROUTE,
+                currentRoute = SharedMobileAppDestination.PDF_VIEWER.route,
                 hasPreviousBackStackEntry = true,
                 isCurrentEntryResumed = true
             )
         ).isTrue()
         assertThat(
             shouldInterceptAppNavBack(
-                currentRoute = AppDestinations.PRO_SCREEN_ROUTE,
+                currentRoute = SharedMobileAppDestination.PRO.route,
                 hasPreviousBackStackEntry = false,
                 isCurrentEntryResumed = true
             )
         ).isFalse()
         assertThat(
             shouldInterceptAppNavBack(
-                currentRoute = AppDestinations.PRO_SCREEN_ROUTE,
+                currentRoute = SharedMobileAppDestination.PRO.route,
                 hasPreviousBackStackEntry = true,
                 isCurrentEntryResumed = false
             )

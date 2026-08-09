@@ -1,5 +1,6 @@
 package com.aryan.reader.shared.pdf
 
+import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -36,6 +37,20 @@ class PdfTextSelectionEngineTest {
         val backend = StubBackend("  Hello, world!  ")
         assertNull(PdfTextSelectionEngine.wordBoundaries(backend, 0))
         assertNull(PdfTextSelectionEngine.wordBoundaries(backend, 7))
+    }
+
+    @Test
+    fun `suspending word boundaries preserve the synchronous android contract`() = runTest {
+        val text = "Start A1b2 end"
+
+        assertEquals(
+            PdfTextSelectionRange(6, 10),
+            PdfTextSelectionEngine.wordBoundariesSuspending(
+                pageCharCount = text.length,
+                initialCharIndex = 8,
+                charAt = { text[it] }
+            )
+        )
     }
 
     @Test

@@ -360,6 +360,37 @@ class EpubParserUnitTest {
     }
 
     @Test
+    fun `createEpubBook preserves linear no spine items in document order`() = runTest {
+        val parser = EpubParser(contextWithCache(temp.newFolder("cache-linear-no")))
+        val book = parser.createEpubBook(
+            inputStream = ByteArrayInputStream(
+                zipBytes(
+                    "META-INF/container.xml" to
+                        "<container><rootfiles><rootfile full-path='content.opf'/></rootfiles></container>",
+                    "content.opf" to """
+                        <package xmlns:dc="http://purl.org/dc/elements/1.1/">
+                          <metadata><dc:title>Spine Order</dc:title></metadata>
+                          <manifest>
+                            <item id="first" href="first.xhtml" media-type="application/xhtml+xml"/>
+                            <item id="second" href="second.xhtml" media-type="application/xhtml+xml"/>
+                          </manifest>
+                          <spine><itemref idref="first" linear="no"/><itemref idref="second"/></spine>
+                        </package>
+                    """.trimIndent(),
+                    "first.xhtml" to "<html><body><h1>First</h1></body></html>",
+                    "second.xhtml" to "<html><body><h1>Second</h1></body></html>"
+                )
+            ),
+            bookId = "linear-no",
+            shouldUseToc = false,
+            originalBookNameHint = "spine.epub",
+            extractionDirOverride = temp.newFolder("extract-linear-no")
+        )
+
+        assertEquals(listOf("First", "Second"), book.chapters.map { it.title })
+    }
+
+    @Test
     fun `createEpubBook throws parser exception for missing container rootfile or opf`() = runTest {
         val parser = EpubParser(contextWithCache(temp.newFolder("cache-errors")))
 

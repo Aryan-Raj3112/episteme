@@ -105,7 +105,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
@@ -113,7 +112,6 @@ import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.util.lerp
 import androidx.compose.ui.window.PopupPositionProvider
@@ -134,6 +132,11 @@ import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.ui.SharedSelectionMenuRect
 import com.aryan.reader.shared.ui.SharedSelectionMenuSize
 import com.aryan.reader.shared.ui.SharedSelectionMenuViewport
+import com.aryan.reader.shared.ui.SharedPdfRichTextLayer
+import com.aryan.reader.shared.pdf.PdfSelectionHandle
+import com.aryan.reader.shared.pdf.PdfSelectionGeometry
+import com.aryan.reader.shared.pdf.PdfTextSelectionEngine
+import com.aryan.reader.shared.pdf.PdfTextSelectionRange
 import com.aryan.reader.shared.ui.sharedSelectionMenuPlacement
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
@@ -1571,26 +1574,17 @@ internal fun PdfPageComposable(
     }
 
     fun findClosestOcrSymbolIndex(symbols: List<OcrSymbolInfo>, x: Float, y: Float): Int {
-        if (symbols.isEmpty()) return -1
-
-        val containingSymbolIndex = symbols.indexOfFirst {
-            it.symbol.boundingBox?.contains(x.toInt(), y.toInt()) == true
-        }
-        if (containingSymbolIndex != -1) return containingSymbolIndex
-
-        var minDistanceSq = Float.MAX_VALUE
-        var closestSymbolIndex = -1
-
-        symbols.forEachIndexed { index, info ->
-            info.symbol.boundingBox?.let { box ->
-                val distSq = (x - box.exactCenterX()).pow(2) + (y - box.exactCenterY()).pow(2)
-                if (distSq < minDistanceSq) {
-                    minDistanceSq = distSq
-                    closestSymbolIndex = index
+        return PdfSelectionGeometry.nearestBoundsIndex(
+            bounds = symbols.map { info ->
+                info.symbol.boundingBox?.let { box ->
+                    com.aryan.reader.shared.pdf.PdfPageBounds(
+                        box.left.toFloat(), box.top.toFloat(), box.right.toFloat(), box.bottom.toFloat()
+                    )
                 }
-            }
-        }
-        return closestSymbolIndex
+            },
+            pointX = x,
+            pointY = y
+        )
     }
 
     fun updateOcrSymbolSelectionRectsAndHandles(indices: Pair<Int, Int>?) {
@@ -1933,44 +1927,27 @@ internal fun PdfPageComposable(
 
                                                 if (targetSymbolIndex != -1) {
                                                     ocrSelectionSymbolIndices?.let { currentRange ->
-                                                        val (start, end) = currentRange
-                                                        when (activeDraggingHandle) {
-                                                            Handle.START -> {
-                                                                if (targetSymbolIndex >= end - 1) {
-                                                                    activeDraggingHandle =
-                                                                        Handle.END
-                                                                    ocrSelectionSymbolIndices =
-                                                                        Pair(
-                                                                            end - 1,
-                                                                            targetSymbolIndex + 1
-                                                                        )
-                                                                } else {
-                                                                    ocrSelectionSymbolIndices =
-                                                                        Pair(
-                                                                            targetSymbolIndex, end
-                                                                        )
-                                                                }
+                                                        val sharedHandle = when (activeDraggingHandle) {
+                                                            Handle.START -> PdfSelectionHandle.START
+                                                            Handle.END -> PdfSelectionHandle.END
+                                                            null -> null
+                                                        }
+                                                        sharedHandle?.let { handle ->
+                                                            val update = PdfTextSelectionEngine.extendRange(
+                                                                pageCharCount = allOcrSymbolsForSelection.size,
+                                                                current = PdfTextSelectionRange(
+                                                                    currentRange.first,
+                                                                    currentRange.second
+                                                                ),
+                                                                activeHandle = handle,
+                                                                newCharIndex = targetSymbolIndex
+                                                            )
+                                                            activeDraggingHandle = when (update.activeHandle) {
+                                                                PdfSelectionHandle.START -> Handle.START
+                                                                PdfSelectionHandle.END -> Handle.END
                                                             }
-
-                                                            Handle.END -> {
-                                                                if (targetSymbolIndex + 1 <= start + 1) {
-                                                                    activeDraggingHandle =
-                                                                        Handle.START
-                                                                    ocrSelectionSymbolIndices =
-                                                                        Pair(
-                                                                            targetSymbolIndex,
-                                                                            start + 1
-                                                                        )
-                                                                } else {
-                                                                    ocrSelectionSymbolIndices =
-                                                                        Pair(
-                                                                            start,
-                                                                            targetSymbolIndex + 1
-                                                                        )
-                                                                }
-                                                            }
-
-                                                            else -> {}
+                                                            ocrSelectionSymbolIndices =
+                                                                update.range.start to update.range.end
                                                         }
                                                         withContext(
                                                             Dispatchers.Main
@@ -2086,83 +2063,28 @@ internal fun PdfPageComposable(
 
                                                     val currentRange = selectionCharRange.value
                                                     if (currentRange != null) {
-                                                        val (currentStart, currentEnd) = currentRange
-                                                        var newRange: Pair<Int, Int>? = null
-                                                        var newHandle = activeDraggingHandle
-
-                                                        when (activeDraggingHandle) {
-                                                            Handle.START -> {
-                                                                val newStart =
-                                                                    charIndexForUpdate.coerceIn(
-                                                                        0, pageCharCount - 1
-                                                                    )
-                                                                if (newStart >= currentEnd - 1 && pageCharCount > 0) {
-                                                                    val tempOldEndCharIndex =
-                                                                        (currentEnd - 1).coerceAtLeast(
-                                                                            0
-                                                                        )
-                                                                    newHandle = Handle.END
-                                                                    newRange = Pair(
-                                                                        tempOldEndCharIndex,
-                                                                        (newStart + 1).coerceAtMost(
-                                                                            pageCharCount
-                                                                        )
-                                                                    )
-                                                                } else {
-                                                                    newRange = Pair(
-                                                                        newStart, currentEnd
-                                                                    )
-                                                                }
-                                                            }
-
-                                                            Handle.END -> {
-                                                                val newEnd =
-                                                                    (charIndexForUpdate + 1).coerceIn(
-                                                                        1, pageCharCount
-                                                                    )
-                                                                if (newEnd <= currentStart + 1 && pageCharCount > 0) {
-                                                                    newHandle = Handle.START
-                                                                    newRange = Pair(
-                                                                        (newEnd - 1).coerceAtLeast(
-                                                                            0
-                                                                        ),
-                                                                        (currentStart + 1).coerceAtMost(
-                                                                            pageCharCount
-                                                                        )
-                                                                    )
-                                                                } else {
-                                                                    newRange = Pair(
-                                                                        currentStart, newEnd
-                                                                    )
-                                                                }
-                                                            }
-
-                                                            else -> {}
+                                                        val sharedHandle = when (activeDraggingHandle) {
+                                                            Handle.START -> PdfSelectionHandle.START
+                                                            Handle.END -> PdfSelectionHandle.END
+                                                            null -> null
                                                         }
-
-                                                        if (newRange != null) {
-                                                            if (newRange.first >= newRange.second) {
-                                                                if (pageCharCount > 0) {
-                                                                    val fixStart = min(
-                                                                        newRange.first,
-                                                                        newRange.second - 1
-                                                                    ).coerceIn(
-                                                                        0, pageCharCount - 1
-                                                                    )
-                                                                    val fixEnd =
-                                                                        (fixStart + 1).coerceAtMost(
-                                                                            pageCharCount
-                                                                        )
-                                                                    newRange =
-                                                                        if (fixStart < fixEnd) Pair(
-                                                                            fixStart, fixEnd
-                                                                        )
-                                                                        else null
-                                                                } else {
-                                                                    newRange = null
-                                                                }
-                                                            }
+                                                        val update = sharedHandle?.let {
+                                                            PdfTextSelectionEngine.extendRange(
+                                                                pageCharCount = pageCharCount,
+                                                                current = PdfTextSelectionRange(
+                                                                    currentRange.first,
+                                                                    currentRange.second
+                                                                ),
+                                                                activeHandle = it,
+                                                                newCharIndex = charIndexForUpdate
+                                                            )
                                                         }
+                                                        val newHandle = when (update?.activeHandle) {
+                                                            PdfSelectionHandle.START -> Handle.START
+                                                            PdfSelectionHandle.END -> Handle.END
+                                                            null -> activeDraggingHandle
+                                                        }
+                                                        val newRange = update?.range?.let { it.start to it.end }
 
                                                         withContext(
                                                             Dispatchers.Main
@@ -5197,9 +5119,9 @@ private fun PdfPageRenderer(
                     } || richTextController.hasRenderableText
 
                     if (isEditable || hasContent) {
-                        PdfRichTextLayer(
+                        SharedPdfRichTextLayer(
                             pageIndex = selectionData.pageIndex,
-                            controller = richTextController,
+                            controller = richTextController.sharedDelegate,
                             pageWidth = staticData.targetWidth.toFloat(),
                             pageHeight = staticData.targetHeight.toFloat(),
                             isTextEditingEnabled = isEditable && selectedTextBoxId == null,
@@ -5735,145 +5657,6 @@ private fun PdfPageRenderer(
                 }
             }
         }
-    }
-}
-
-@Composable
-fun PdfRichTextLayer(
-    pageIndex: Int,
-    controller: RichTextController,
-    pageWidth: Float,
-    pageHeight: Float,
-    isTextEditingEnabled: Boolean,
-    centeringOffsetX: Float,
-    centeringOffsetY: Float,
-    isDarkMode: Boolean,
-    isScrolling: Boolean
-) {
-    val density = LocalDensity.current
-    val textMeasurer = androidx.compose.ui.text.rememberTextMeasurer()
-
-    LaunchedEffect(pageWidth, pageHeight, density) {
-        if (pageWidth > 0 && pageHeight > 0) {
-            controller.updateLayoutConfig(pageWidth, pageHeight, density, textMeasurer)
-        }
-    }
-
-    val pageLayout = remember(controller.pageLayouts, pageIndex) {
-        controller.pageLayouts.find { it.pageIndex == pageIndex }
-    }
-
-    val marginX = pageWidth * 0.1f
-    val marginY = pageHeight * 0.08f
-    val editorWidth = pageWidth - (marginX * 2)
-    val editorHeight = pageHeight - (marginY * 2)
-
-    val editorWidthDp = with(density) { editorWidth.toDp() }
-    val editorHeightDp = with(density) { editorHeight.toDp() }
-
-    Box(modifier = Modifier
-        .offset {
-            IntOffset(
-                (centeringOffsetX + marginX).roundToInt(), (centeringOffsetY + marginY).roundToInt()
-            )
-        }
-        .size(editorWidthDp, editorHeightDp)
-        .graphicsLayer()
-        .then(
-            if (isTextEditingEnabled) {
-                Modifier.pointerInput(pageIndex) {
-                    detectTapGestures { tapOffset ->
-                        controller.handleTapOnPage(pageIndex, tapOffset)
-                    }
-                }
-            } else {
-                Modifier
-            }
-        )
-    ) {
-        val textToRender = if (controller.activePageIndex == pageIndex) {
-            controller.localTextFieldValue.annotatedString
-        } else {
-            pageLayout?.visibleText?.withoutTrailingPdfPageBreakForRender()
-        }
-
-        if (textToRender != null) {
-            val measureResult = remember(textToRender, editorWidth, density) {
-                textMeasurer.measure(
-                    text = textToRender,
-                    style = TextStyle(fontSize = 16.sp),
-                    constraints = Constraints(maxWidth = editorWidth.toInt()),
-                    density = density
-                )
-            }
-
-            Canvas(modifier = Modifier.fillMaxSize()) {
-                measureResult.multiParagraph.paint(drawContext.canvas)
-            }
-
-            if (isTextEditingEnabled) {
-                val tfv = controller.editingValue
-                val selection = tfv.selection
-
-                @Suppress("ControlFlowWithEmptyBody") if (controller.activePageIndex == pageIndex) {
-                    androidPdfRichTextSelectionBounds(
-                        selectionStart = selection.start,
-                        selectionEnd = selection.end,
-                        textLength = textToRender.length
-                    )?.let { (localStart, localEnd) ->
-                        val selectionPath = measureResult.getPathForRange(localStart, localEnd)
-                        Canvas(modifier = Modifier.fillMaxSize()) {
-                            drawPath(selectionPath, Color(0xFFB3D7FF).copy(alpha = 0.5f))
-                        }
-                    }
-
-                    if (selection.collapsed && controller.isCursorVisible) {
-                        val localStart = selection.start.coerceIn(0, textToRender.length)
-                        val alpha = if (isScrolling) {
-                            1f
-                        } else {
-                            val infiniteTransition = rememberInfiniteTransition(label = "cursor")
-                            infiniteTransition.animateFloat(
-                                initialValue = 1f,
-                                targetValue = 0f,
-                                animationSpec = infiniteRepeatable(tween(500), RepeatMode.Reverse),
-                                label = "cursorAlpha"
-                            ).value
-                        }
-
-                        val cursorRect = measureResult.getCursorRect(localStart)
-                        val cursorColor = if (isDarkMode) Color.White else Color.Black
-                        val styleFontSize = controller.currentStyle.fontSize
-                        val cursorHeight = if (styleFontSize.isSpecified) {
-                            with(density) { styleFontSize.toPx() } * 1.2f
-                        } else {
-                            cursorRect.height
-                        }
-
-                        val centerY = cursorRect.center.y
-                        val newTop = centerY - (cursorHeight / 2f)
-                        val newBottom = centerY + (cursorHeight / 2f)
-
-                        Canvas(modifier = Modifier.fillMaxSize()) {
-                            drawLine(
-                                color = cursorColor.copy(alpha = alpha),
-                                start = Offset(cursorRect.left, newTop),
-                                end = Offset(cursorRect.left, newBottom),
-                                strokeWidth = 2.dp.toPx()
-                            )
-                        }
-                    }
-                } else if (pageLayout != null) { }
-            }
-        }
-    }
-}
-
-private fun AnnotatedString.withoutTrailingPdfPageBreakForRender(): AnnotatedString {
-    return if (text.lastOrNull() == PAGE_BREAK_CHAR) {
-        subSequence(0, length - 1)
-    } else {
-        this
     }
 }
 

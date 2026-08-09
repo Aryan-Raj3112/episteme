@@ -310,23 +310,23 @@ fun UnifiedLibraryScreen(
                         onSyncToggle = viewModel::setSyncEnabled,
                         onUpgradeClick = {
                             scope.launch { accountDrawerState.close() }
-                            navController.navigateIfReady(AppDestinations.PRO_SCREEN_ROUTE)
+                            navController.navigateIfReady(com.aryan.reader.shared.ui.SharedMobileAppDestination.PRO)
                         },
                         onSyncUpsellClick = {
                             scope.launch { accountDrawerState.close() }
-                            navController.navigateIfReady(AppDestinations.PRO_SCREEN_ROUTE)
+                            navController.navigateIfReady(com.aryan.reader.shared.ui.SharedMobileAppDestination.PRO)
                         },
                         onFontsClick = {
                             scope.launch { accountDrawerState.close() }
-                            navController.navigateIfReady(AppDestinations.FONTS_SCREEN_ROUTE)
+                            navController.navigateIfReady(com.aryan.reader.shared.ui.SharedMobileAppDestination.FONTS)
                         },
                         onAiSettingsClick = {
                             scope.launch { accountDrawerState.close() }
-                            navController.navigateIfReady(AppDestinations.AI_SETTINGS_SCREEN_ROUTE)
+                            navController.navigateIfReady(com.aryan.reader.shared.ui.SharedMobileAppDestination.AI_SETTINGS)
                         },
                         onSettingsClick = {
                             scope.launch { accountDrawerState.close() }
-                            navController.navigateIfReady(AppDestinations.SETTINGS_SCREEN_ROUTE)
+                            navController.navigateIfReady(com.aryan.reader.shared.ui.SharedMobileAppDestination.SETTINGS)
                         },
                         navController = navController,
                         onFolderSyncToggle = viewModel::setFolderSyncEnabled,
@@ -360,15 +360,15 @@ fun UnifiedLibraryScreen(
                 },
                 onSettingsClick = {
                     scope.launch { drawerState.close() }
-                    navController.navigateIfReady(AppDestinations.SETTINGS_SCREEN_ROUTE)
+                    navController.navigateIfReady(com.aryan.reader.shared.ui.SharedMobileAppDestination.SETTINGS)
                 },
                 onFontsClick = {
                     scope.launch { drawerState.close() }
-                    navController.navigateIfReady(AppDestinations.FONTS_SCREEN_ROUTE)
+                    navController.navigateIfReady(com.aryan.reader.shared.ui.SharedMobileAppDestination.FONTS)
                 },
                 onAiSettingsClick = {
                     scope.launch { drawerState.close() }
-                    navController.navigateIfReady(AppDestinations.AI_SETTINGS_SCREEN_ROUTE)
+                    navController.navigateIfReady(com.aryan.reader.shared.ui.SharedMobileAppDestination.AI_SETTINGS)
                 }
             )
         }

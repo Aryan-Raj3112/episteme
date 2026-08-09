@@ -93,7 +93,6 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.NavigateBefore
 import androidx.compose.material.icons.automirrored.filled.NavigateNext
@@ -114,8 +113,6 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.ModalDrawerSheet
-import androidx.compose.material3.ModalNavigationDrawer
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -157,10 +154,7 @@ import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerInputChange
@@ -184,7 +178,6 @@ import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
@@ -284,6 +277,24 @@ import com.aryan.reader.shared.pdf.SharedPdfAnnotationSessionState
 import com.aryan.reader.shared.pdf.reduce
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.ui.ReaderMinimalSlider
+import com.aryan.reader.shared.ui.SharedPdfRichTextHiddenInput
+import com.aryan.reader.shared.ui.SharedMobileReaderDrawer
+import com.aryan.reader.shared.ui.SharedMobileReaderScaffold
+import com.aryan.reader.shared.reader.MobilePdfReaderBackAction
+import com.aryan.reader.shared.reader.MobilePdfReaderBackState
+import com.aryan.reader.shared.reader.selectMobilePdfReaderBackAction
+import com.aryan.reader.shared.reader.mobilePdfSystemBarsVisibility
+import com.aryan.reader.shared.reader.MobilePdfDocumentPresentation
+import com.aryan.reader.shared.reader.selectMobilePdfDocumentPresentation
+import com.aryan.reader.shared.ui.SharedMobileReaderLoadingIndicator
+import com.aryan.reader.shared.ui.SharedMobileReaderCenteredError
+import com.aryan.reader.shared.ui.SharedMobilePdfPasswordDialog
+import com.aryan.reader.shared.ui.SharedMobilePdfPasswordLabels
+import com.aryan.reader.shared.ui.SharedMobileSingleChoiceDialog
+import com.aryan.reader.shared.ui.SharedMobileSingleChoiceOption
+import com.aryan.reader.shared.ui.SharedMobileInfoConfirmationDialog
+import com.aryan.reader.shared.ui.SharedMobileExternalLinkDialog
+import com.aryan.reader.shared.ui.SharedMobileDocumentFormatDialog
 import com.aryan.reader.shouldRenderReaderSlider
 import com.aryan.reader.summarizationUrl
 import com.aryan.reader.tts.ReaderTtsOverlaySize
@@ -816,24 +827,14 @@ fun PdfViewerScreen(
     LaunchedEffect(systemUiMode, showStandardBars) {
         if (window != null) {
             val insetsController = WindowCompat.getInsetsController(window, view)
-            when (systemUiMode) {
-                SystemUiMode.DEFAULT -> {
-                    insetsController.show(WindowInsetsCompat.Type.systemBars())
-                }
-                SystemUiMode.SYNC -> {
-                    if (showStandardBars) {
-                        insetsController.show(WindowInsetsCompat.Type.systemBars())
-                    } else {
-                        insetsController.hide(WindowInsetsCompat.Type.systemBars())
-                        insetsController.systemBarsBehavior =
-                            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-                    }
-                }
-                SystemUiMode.HIDDEN -> {
-                    insetsController.hide(WindowInsetsCompat.Type.systemBars())
-                    insetsController.systemBarsBehavior =
-                        WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-                }
+            val visibility = mobilePdfSystemBarsVisibility(systemUiMode, showStandardBars)
+            if (visibility.statusBarsVisible) insetsController.show(WindowInsetsCompat.Type.statusBars())
+            else insetsController.hide(WindowInsetsCompat.Type.statusBars())
+            if (visibility.navigationBarsVisible) insetsController.show(WindowInsetsCompat.Type.navigationBars())
+            else insetsController.hide(WindowInsetsCompat.Type.navigationBars())
+            if (!visibility.statusBarsVisible || !visibility.navigationBarsVisible) {
+                insetsController.systemBarsBehavior =
+                    WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
             }
         }
     }
@@ -4351,54 +4352,59 @@ fun PdfViewerScreen(
     }
 
     BackHandler(enabled = true) {
-        when {
-            showPasswordDialog -> {
-                onNavigateBack()
-            }
-
-            showVisualOptionsSheet -> showVisualOptionsSheet = false
-
-            showReindexDialog != null -> showReindexDialog = null
-
-            isAutoScrollModeActive -> {
+        val backAction = selectMobilePdfReaderBackAction(
+            MobilePdfReaderBackState(
+                passwordPromptVisible = showPasswordDialog,
+                visualOptionsVisible = showVisualOptionsSheet,
+                reindexDialogVisible = showReindexDialog != null,
+                autoScrollActive = isAutoScrollModeActive,
+                drawerOpen = drawerState.isOpen,
+                richTextEditing = isEditMode,
+                aiHubVisible = showAiHubSheet,
+                permissionRationaleVisible = showPermissionRationaleDialog,
+                summarizationUpsellVisible = showSummarizationUpsellDialog,
+                aiDefinitionVisible = showAiDefinitionPopup,
+                dictionaryUpsellVisible = showDictionaryUpsellDialog,
+                toolCustomizationVisible = showCustomizeToolsSheet,
+                searchActive = searchState.isSearchActive,
+                ttsSettingsVisible = showTtsSettingsSheet,
+                ttsReplacementsVisible = showTtsReplacementsSheet,
+                themePanelVisible = showThemePanel,
+            )
+        )
+        when (backAction) {
+            MobilePdfReaderBackAction.EXIT_PASSWORD_PROMPT -> onNavigateBack()
+            MobilePdfReaderBackAction.CLOSE_VISUAL_OPTIONS -> showVisualOptionsSheet = false
+            MobilePdfReaderBackAction.CLOSE_REINDEX_DIALOG -> showReindexDialog = null
+            MobilePdfReaderBackAction.STOP_AUTO_SCROLL -> {
                 isAutoScrollModeActive = false
                 isAutoScrollPlaying = false
                 showBars = true
             }
-
-            drawerState.isOpen -> {
-                coroutineScope.launch { drawerState.close() }
-            }
-
-            isEditMode -> {
+            MobilePdfReaderBackAction.CLOSE_DRAWER -> coroutineScope.launch { drawerState.close() }
+            MobilePdfReaderBackAction.STOP_RICH_TEXT_EDITING -> {
                 richTextController?.clearSelection()
                 isEditMode = false
                 showBars = true
             }
-
-            showAiHubSheet -> showAiHubSheet = false
-            showPermissionRationaleDialog -> showPermissionRationaleDialog = false
-            showSummarizationUpsellDialog -> showSummarizationUpsellDialog = false
-            showAiDefinitionPopup -> showAiDefinitionPopup = false
-            showDictionaryUpsellDialog -> showDictionaryUpsellDialog = false
-            showCustomizeToolsSheet -> showCustomizeToolsSheet = false
-
-            searchState.isSearchActive -> {
+            MobilePdfReaderBackAction.CLOSE_AI_HUB -> showAiHubSheet = false
+            MobilePdfReaderBackAction.CLOSE_PERMISSION_RATIONALE -> showPermissionRationaleDialog = false
+            MobilePdfReaderBackAction.CLOSE_SUMMARIZATION_UPSELL -> showSummarizationUpsellDialog = false
+            MobilePdfReaderBackAction.CLOSE_AI_DEFINITION -> showAiDefinitionPopup = false
+            MobilePdfReaderBackAction.CLOSE_DICTIONARY_UPSELL -> showDictionaryUpsellDialog = false
+            MobilePdfReaderBackAction.CLOSE_TOOL_CUSTOMIZATION -> showCustomizeToolsSheet = false
+            MobilePdfReaderBackAction.CLOSE_SEARCH -> {
                 searchState.isSearchActive = false
                 searchState.onQueryChange("")
             }
-
-            showTtsSettingsSheet -> showTtsSettingsSheet = false
-            showTtsReplacementsSheet -> showTtsReplacementsSheet = false
-            showThemePanel -> showThemePanel = false
-
-            else -> {
-                saveStateAndExit()
-            }
+            MobilePdfReaderBackAction.CLOSE_TTS_SETTINGS -> showTtsSettingsSheet = false
+            MobilePdfReaderBackAction.CLOSE_TTS_REPLACEMENTS -> showTtsReplacementsSheet = false
+            MobilePdfReaderBackAction.CLOSE_THEME_PANEL -> showThemePanel = false
+            MobilePdfReaderBackAction.SAVE_AND_EXIT -> saveStateAndExit()
         }
     }
 
-    ModalNavigationDrawer(
+    SharedMobileReaderDrawer(
         drawerState = drawerState, gesturesEnabled = drawerState.isOpen, drawerContent = {
             ModalDrawerSheet(modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars)) {
                 PdfNavigationDrawerContent(
@@ -4477,7 +4483,7 @@ fun PdfViewerScreen(
             }
         }) {
         @SuppressLint("UnusedMaterial3ScaffoldPaddingParameter")
-        Scaffold(
+        SharedMobileReaderScaffold(
             contentWindowInsets = WindowInsets(0, 0, 0, 0),
         ) { _ ->
             var stylusButtonHovering by remember { mutableStateOf(false) }
@@ -4516,36 +4522,14 @@ fun PdfViewerScreen(
                 val boxMaxWidthFloat = boxConstraints.maxWidth.toFloat()
                 val boxMaxHeightFloat = boxConstraints.maxHeight.toFloat()
 
-                if (richTextController != null && isEditMode && selectedTool == InkType.TEXT) {
-                    BasicTextField(
-                        value = richTextController.editingValue,
-                        onValueChange = { newValue ->
-                            richTextController.onValueChanged(newValue)
-                        },
-                        textStyle = TextStyle(
-                            color = richTextController.currentStyle.color,
-                            fontSize = richTextController.currentStyle.fontSize,
-                            fontWeight = richTextController.currentStyle.fontWeight,
-                            fontStyle = richTextController.currentStyle.fontStyle,
-                            textDecoration = richTextController.currentStyle.textDecoration
-                        ),
+                if (richTextController != null) {
+                    SharedPdfRichTextHiddenInput(
+                        controller = richTextController.sharedDelegate,
+                        enabled = isEditMode && selectedTool == InkType.TEXT,
                         modifier = Modifier
                             .align(Alignment.BottomStart)
                             .windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars))
                             .padding(start = 16.dp, bottom = 120.dp)
-                            .size(1.dp)
-                            .alpha(0f)
-                            .clearAndSetSemantics { }
-                            .focusRequester(richTextController.focusRequester)
-                            .onKeyEvent { event ->
-                                if (event.type == KeyEventType.KeyDown && event.key == Key.Backspace) {
-                                    val handled = richTextController.handleBackspaceAtStart()
-                                    if (handled) Timber.tag("RichTextFlow").d("KeyEvent: Backspace consumed by controller")
-                                    handled
-                                } else {
-                                    false
-                                }
-                            },
                     )
                 }
 
@@ -4554,27 +4538,24 @@ fun PdfViewerScreen(
                     modifier = Modifier
                         .fillMaxSize()
                 ) {
+                    val documentPresentation = selectMobilePdfDocumentPresentation(
+                        loading = isLoadingDocument,
+                        errorPresent = errorMessage != null,
+                        documentPresent = pdfDocument != null,
+                        totalPages = totalPages,
+                    )
                     when {
-                        isLoadingDocument -> {
-                            CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+                        documentPresentation == MobilePdfDocumentPresentation.LOADING -> {
+                            SharedMobileReaderLoadingIndicator()
                         }
 
-                        errorMessage != null -> {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .padding(16.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = errorMessage ?: stringResource(R.string.error_failed_load_pdf),
-                                    color = MaterialTheme.colorScheme.error,
-                                    modifier = Modifier.padding(16.dp)
-                                )
-                            }
+                        documentPresentation == MobilePdfDocumentPresentation.ERROR -> {
+                            SharedMobileReaderCenteredError(
+                                message = errorMessage ?: stringResource(R.string.error_failed_load_pdf),
+                            )
                         }
 
-                        pdfDocument != null && totalPages > 0 -> {
+                        documentPresentation == MobilePdfDocumentPresentation.READY -> {
                             val stablePdfDocument = remember(activeDocumentRenderKey, pdfDocument) { StableHolder(pdfDocument!!) }
                             when (displayMode) {
                                 DisplayMode.PAGINATION -> {
@@ -7635,77 +7616,51 @@ fun PdfViewerScreen(
     }
 
     if (showPermissionRationaleDialog) {
-        AlertDialog(
-            onDismissRequest = { showPermissionRationaleDialog = false },
-            title = { Text(stringResource(R.string.dialog_permission_required)) },
-            text = {
-                Text(
-                    stringResource(R.string.dialog_permission_notification_desc)
-                )
+        SharedMobileInfoConfirmationDialog(
+            title = stringResource(R.string.dialog_permission_required),
+            body = stringResource(R.string.dialog_permission_notification_desc),
+            confirmLabel = stringResource(R.string.action_continue),
+            dismissLabel = stringResource(R.string.action_not_now),
+            icon = null,
+            onConfirm = {
+                showPermissionRationaleDialog = false
+                permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
             },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        showPermissionRationaleDialog = false
-                        permissionLauncher.launch(
-                            Manifest.permission.POST_NOTIFICATIONS
-                        )
-                    }) { Text(stringResource(R.string.action_continue)) }
+            onDismiss = {
+                showPermissionRationaleDialog = false
+                startTts()
             },
-            dismissButton = {
-                TextButton(
-                    onClick = {
-                        showPermissionRationaleDialog = false
-                        startTts()
-                    }) { Text(stringResource(R.string.action_not_now)) }
-            })
+        )
     }
     if (showSummarizationUpsellDialog) {
-        AlertDialog(
-            onDismissRequest = { showSummarizationUpsellDialog = false },
+        SharedMobileInfoConfirmationDialog(
+            title = stringResource(R.string.dialog_unlock_page_summarization),
+            body = stringResource(R.string.dialog_unlock_page_summarization_desc),
+            confirmLabel = stringResource(R.string.action_learn_more),
+            dismissLabel = stringResource(R.string.action_not_now),
             icon = {
-                Icon(
-                    painter = painterResource(id = R.drawable.summarize),
-                    contentDescription = null
-                )
+                Icon(painterResource(id = R.drawable.summarize), contentDescription = null)
             },
-            title = { Text(stringResource(R.string.dialog_unlock_page_summarization)) },
-            text = {
-                Text(
-                    stringResource(R.string.dialog_unlock_page_summarization_desc)
-                )
+            onConfirm = {
+                showSummarizationUpsellDialog = false
+                onNavigateToPro()
             },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        showSummarizationUpsellDialog = false
-                        onNavigateToPro()
-                    }) { Text(stringResource(R.string.action_learn_more)) }
-            },
-            dismissButton = {
-                TextButton(onClick = { showSummarizationUpsellDialog = false }) {
-                    Text(stringResource(R.string.action_not_now))
-                }
-            })
+            onDismiss = { showSummarizationUpsellDialog = false },
+        )
     }
 
     if (showInsufficientCreditsDialog) {
-        AlertDialog(
-            onDismissRequest = { showInsufficientCreditsDialog = false },
+        SharedMobileInfoConfirmationDialog(
+            title = stringResource(R.string.dialog_out_of_credits_title),
+            body = stringResource(R.string.dialog_out_of_credits_desc),
+            confirmLabel = stringResource(R.string.action_get_pro_or_add_credits),
+            dismissLabel = stringResource(R.string.action_cancel),
             icon = { Icon(painterResource(id = R.drawable.crown), contentDescription = null) },
-            title = { Text(stringResource(R.string.dialog_out_of_credits_title)) },
-            text = { Text(stringResource(R.string.dialog_out_of_credits_desc)) },
-            confirmButton = {
-                TextButton(onClick = {
-                    showInsufficientCreditsDialog = false
-                    onNavigateToPro()
-                }) { Text(stringResource(R.string.action_get_pro_or_add_credits)) }
+            onConfirm = {
+                showInsufficientCreditsDialog = false
+                onNavigateToPro()
             },
-            dismissButton = {
-                TextButton(onClick = { showInsufficientCreditsDialog = false }) {
-                    Text(stringResource(R.string.action_cancel))
-                }
-            }
+            onDismiss = { showInsufficientCreditsDialog = false },
         )
     }
 
@@ -7768,33 +7723,33 @@ fun PdfViewerScreen(
     // --- END PANEL POPUP ---
 
     if (showPasswordDialog) {
-        PasswordDialog(
+        SharedMobilePdfPasswordDialog(
+            labels = SharedMobilePdfPasswordLabels(
+                title = stringResource(R.string.title_password_protected),
+                description = stringResource(R.string.desc_password_protected),
+                password = stringResource(R.string.password),
+                incorrectPassword = stringResource(R.string.error_incorrect_password),
+                showPassword = stringResource(R.string.content_desc_show_password),
+                hidePassword = stringResource(R.string.content_desc_hide_password),
+                open = stringResource(R.string.action_open),
+                cancel = stringResource(R.string.action_cancel),
+            ),
             isError = isPasswordError,
             onDismiss = { onNavigateBack() },
             onConfirm = { password -> documentPassword = password })
     }
 
     if (showBubbleZoomDownloadDialog) {
-        AlertDialog(
-            onDismissRequest = { showBubbleZoomDownloadDialog = false },
-            icon = { Icon(Icons.Default.Info, contentDescription = null) },
-            title = { Text(stringResource(R.string.dialog_download_bubble_zoom_model)) },
-            text = {
-                Text(stringResource(R.string.dialog_download_bubble_zoom_model_desc))
+        SharedMobileInfoConfirmationDialog(
+            title = stringResource(R.string.dialog_download_bubble_zoom_model),
+            body = stringResource(R.string.dialog_download_bubble_zoom_model_desc),
+            confirmLabel = stringResource(R.string.action_download),
+            dismissLabel = stringResource(R.string.action_cancel),
+            onConfirm = {
+                showBubbleZoomDownloadDialog = false
+                viewModel.downloadSpeechBubbleModel(context)
             },
-            confirmButton = {
-                TextButton(onClick = {
-                    showBubbleZoomDownloadDialog = false
-                    viewModel.downloadSpeechBubbleModel(context)
-                }) {
-                    Text(stringResource(R.string.action_download))
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showBubbleZoomDownloadDialog = false }) {
-                    Text(stringResource(R.string.action_cancel))
-                }
-            }
+            onDismiss = { showBubbleZoomDownloadDialog = false },
         )
     }
 
@@ -7890,70 +7845,50 @@ fun PdfViewerScreen(
         )
     }
     if (showDictionaryUpsellDialog) {
-        AlertDialog(onDismissRequest = { showDictionaryUpsellDialog = false }, icon = {
-            Icon(
-                painter = painterResource(id = R.drawable.ai),
-                contentDescription = null
-            )
-        }, title = { Text(stringResource(R.string.ai_unlock_smart_dict)) }, text = {
-            Text(
-                stringResource(R.string.ai_unlock_smart_dict_desc)
-            )
-        }, confirmButton = {
-            TextButton(
-                onClick = {
-                    showDictionaryUpsellDialog = false
-                    onNavigateToPro()
-                }) { Text(stringResource(R.string.action_learn_more)) }
-        }, dismissButton = {
-            TextButton(onClick = { showDictionaryUpsellDialog = false }) {
-                Text(stringResource(R.string.action_not_now))
-            }
-        })
+        SharedMobileInfoConfirmationDialog(
+            title = stringResource(R.string.ai_unlock_smart_dict),
+            body = stringResource(R.string.ai_unlock_smart_dict_desc),
+            confirmLabel = stringResource(R.string.action_learn_more),
+            dismissLabel = stringResource(R.string.action_not_now),
+            icon = { Icon(painterResource(id = R.drawable.ai), contentDescription = null) },
+            onConfirm = {
+                showDictionaryUpsellDialog = false
+                onNavigateToPro()
+            },
+            onDismiss = { showDictionaryUpsellDialog = false },
+        )
     }
 
     showReindexDialog?.let { newLanguage ->
         if (BuildConfig.IS_PRO) {
-            AlertDialog(
-                onDismissRequest = { showReindexDialog = null },
-                icon = { Icon(Icons.Default.Info, contentDescription = null) },
-                title = { Text(stringResource(R.string.title_reindex_document)) },
-                text = {
-                    Text(
-                        stringResource(R.string.desc_reindex_document_warning)
-                    )
-                },
-                confirmButton = {
-                    TextButton(
-                        onClick = {
-                            coroutineScope.launch {
-                                ocrLanguage = newLanguage
-                                saveOcrLanguage(context, newLanguage)
-                                hasSelectedOcrLanguage = true
+            SharedMobileInfoConfirmationDialog(
+                title = stringResource(R.string.title_reindex_document),
+                body = stringResource(R.string.desc_reindex_document_warning),
+                confirmLabel = stringResource(R.string.action_reindex),
+                dismissLabel = stringResource(R.string.action_cancel),
+                onDismiss = { showReindexDialog = null },
+                onConfirm = {
+                    coroutineScope.launch {
+                        ocrLanguage = newLanguage
+                        saveOcrLanguage(context, newLanguage)
+                        hasSelectedOcrLanguage = true
 
-                                currentBookId?.let { id ->
-                                    isBackgroundIndexing = true
-                                    backgroundIndexingProgress = 0f
-                                    withContext(Dispatchers.IO) {
-                                        pdfTextRepository.clearBookText(id)
-                                        pdfTextRepository.setBookLanguage(id, newLanguage.name)
-                                    }
-                                    isBackgroundIndexing = false
-                                }
-
-                                pendingActionAfterOcrSelection?.invoke()
-                                pendingActionAfterOcrSelection = null
-                                showReindexDialog = null
-                                showOcrLanguageDialog = false
+                        currentBookId?.let { id ->
+                            isBackgroundIndexing = true
+                            backgroundIndexingProgress = 0f
+                            withContext(Dispatchers.IO) {
+                                pdfTextRepository.clearBookText(id)
+                                pdfTextRepository.setBookLanguage(id, newLanguage.name)
                             }
+                            isBackgroundIndexing = false
                         }
-                    ) { Text(stringResource(R.string.action_reindex)) }
-                },
-                dismissButton = {
-                    TextButton(onClick = { showReindexDialog = null }) {
-                        Text(stringResource(R.string.action_cancel))
+
+                        pendingActionAfterOcrSelection?.invoke()
+                        pendingActionAfterOcrSelection = null
+                        showReindexDialog = null
+                        showOcrLanguageDialog = false
                     }
-                }
+                },
             )
         } else {
             showReindexDialog = null
@@ -7961,14 +7896,22 @@ fun PdfViewerScreen(
     }
 
     if (showOcrLanguageDialog && !isOss) {
-        OcrLanguageSelectionDialog(
-            currentLanguage = ocrLanguage,
-            isFirstRun = !hasSelectedOcrLanguage,
+        SharedMobileSingleChoiceDialog(
+            title = stringResource(R.string.title_select_ocr_language),
+            description = stringResource(R.string.desc_select_ocr_language),
+            cancelLabel = stringResource(R.string.action_cancel),
+            options = OcrLanguage.entries.map { language ->
+                SharedMobileSingleChoiceOption(language, stringResource(language.displayNameRes))
+            },
+            selectedValue = ocrLanguage,
+            firstRunMessage = if (!hasSelectedOcrLanguage) {
+                stringResource(R.string.desc_ocr_language_change_later)
+            } else null,
             onDismiss = {
                 showOcrLanguageDialog = false
                 pendingActionAfterOcrSelection = null
             },
-            onLanguageSelected = { selected ->
+            onSelected = { selected ->
                 coroutineScope.launch {
                     val storedLangName = currentBookId?.let {
                         pdfTextRepository.getBookLanguage(it)
@@ -8188,97 +8131,67 @@ fun PdfViewerScreen(
 
     if (clickedLinkUrl != null) {
         val url = clickedLinkUrl!!
-        AlertDialog(
-            onDismissRequest = { clickedLinkUrl = null },
-            title = { Text(stringResource(R.string.dialog_external_link_title)) },
-            text = { Text(stringResource(R.string.desc_external_link_warning, url)) },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        try {
-                            uriHandler.openUri(url)
-                        } catch (e: Exception) {
-                            Timber.e(e, "Failed to open URI")
-                        }
-                        clickedLinkUrl = null
-                    }) { Text(stringResource(R.string.action_visit)) }
-            },
-            dismissButton = {
-                Row {
-                    TextButton(
-                        onClick = {
-                            clipboardManager.setText(AnnotatedString(url))
-                            clickedLinkUrl = null
-                        }) { Text(stringResource(R.string.action_copy)) }
-                    TextButton(onClick = { clickedLinkUrl = null }) {
-                        Text(stringResource(R.string.action_cancel))
-                    }
+        SharedMobileExternalLinkDialog(
+            title = stringResource(R.string.dialog_external_link_title),
+            warning = stringResource(R.string.desc_external_link_warning, url),
+            visitLabel = stringResource(R.string.action_visit),
+            copyLabel = stringResource(R.string.action_copy),
+            cancelLabel = stringResource(R.string.action_cancel),
+            onVisit = {
+                try {
+                    uriHandler.openUri(url)
+                } catch (e: Exception) {
+                    Timber.e(e, "Failed to open URI")
                 }
-            })
+                clickedLinkUrl = null
+            },
+            onCopy = {
+                clipboardManager.setText(AnnotatedString(url))
+                clickedLinkUrl = null
+            },
+            onDismiss = { clickedLinkUrl = null },
+        )
     }
 
     if (showSaveDialog) {
-        AlertDialog(
-            onDismissRequest = { showSaveDialog = false },
-            title = { Text(stringResource(R.string.title_save_to_device)) },
-            text = { Text(stringResource(R.string.desc_choose_format_save)) },
-            confirmButton = {
-                Column(horizontalAlignment = Alignment.End) {
-                    TextButton(
-                        onClick = {
-                            showSaveDialog = false
-                            launchAnnotatedSaveCopy()
-                        }) { Text(stringResource(R.string.action_with_annotations)) }
-
-                }
+        SharedMobileDocumentFormatDialog(
+            title = stringResource(R.string.title_save_to_device),
+            description = stringResource(R.string.desc_choose_format_save),
+            annotatedLabel = stringResource(R.string.action_with_annotations),
+            originalLabel = stringResource(R.string.action_original),
+            cancelLabel = stringResource(R.string.action_cancel),
+            onAnnotated = {
+                showSaveDialog = false
+                launchAnnotatedSaveCopy()
             },
-            dismissButton = {
-                Row {
-                    TextButton(
-                        onClick = {
-                            showSaveDialog = false
-                            launchOriginalSaveCopy()
-                        }) { Text(stringResource(R.string.action_original)) }
-
-                    Spacer(Modifier.width(8.dp))
-
-                    TextButton(
-                        onClick = {
-                            showSaveDialog = false
-                            pendingSaveMode = null
-                        }) { Text(stringResource(R.string.action_cancel)) }
-                }
-            })
+            onOriginal = {
+                showSaveDialog = false
+                launchOriginalSaveCopy()
+            },
+            onDismiss = {
+                showSaveDialog = false
+                pendingSaveMode = null
+            },
+        )
     }
 
     if (showShareDialog) {
-        AlertDialog(
-            onDismissRequest = { showShareDialog = false },
-            title = { Text(stringResource(R.string.share_chooser_title)) },
-            text = { Text(stringResource(R.string.desc_choose_format_share)) },
-            confirmButton = {
-                Column(horizontalAlignment = Alignment.End) {
-                    TextButton(
-                        onClick = {
-                            showShareDialog = false
-                            shareAnnotatedPdf()
-                        }) { Text(stringResource(R.string.action_with_annotations)) }
-
-                }
+        SharedMobileDocumentFormatDialog(
+            title = stringResource(R.string.share_chooser_title),
+            description = stringResource(R.string.desc_choose_format_share),
+            annotatedLabel = stringResource(R.string.action_with_annotations),
+            originalLabel = stringResource(R.string.action_original),
+            cancelLabel = stringResource(R.string.action_cancel),
+            onAnnotated = {
+                showShareDialog = false
+                shareAnnotatedPdf()
             },
-            dismissButton = {
-                Row {
-                    TextButton(
-                        onClick = {
-                            showShareDialog = false
-                            shareOriginalPdf()
-                        }) { Text(stringResource(R.string.action_original)) }
-                    Spacer(Modifier.width(8.dp))
-                    TextButton(onClick = { showShareDialog = false }) {
-                        Text(stringResource(R.string.action_cancel))
-                    }
-                }
-            })
+            onOriginal = {
+                showShareDialog = false
+                shareOriginalPdf()
+            },
+            onDismiss = { showShareDialog = false },
+        )
     }
 
     if (isShareLoading) {

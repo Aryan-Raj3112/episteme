@@ -364,7 +364,7 @@ internal actual suspend fun loadSharedMobilePdfOutline(
                                 flatten(bookmark.children, level + 1, destination)
                             }
                         }
-                        buildList { flatten(document.getFixedSharedTableOfContents(), 0, this) }
+                        buildList { flatten(document.getAndroidCompatiblePdfTableOfContents(), 0, this) }
                     }
                 }
             }
@@ -377,7 +377,7 @@ internal actual suspend fun loadSharedMobilePdfOutline(
  * which can truncate bookmark siblings. Reflection is intentionally isolated here
  * and falls back to the library traversal if its internals change.
  */
-private suspend fun PdfDocumentKt.getFixedSharedTableOfContents(): List<Bookmark> = runCatching {
+suspend fun PdfDocumentKt.getAndroidCompatiblePdfTableOfContents(): List<Bookmark> = runCatching {
     val documentField = PdfDocumentKt::class.java.getDeclaredField("document").apply { isAccessible = true }
     val documentWrapper = documentField.get(this) ?: return getTableOfContents()
     val nativeDocumentField = documentWrapper.javaClass.getDeclaredField("nativeDocument").apply {

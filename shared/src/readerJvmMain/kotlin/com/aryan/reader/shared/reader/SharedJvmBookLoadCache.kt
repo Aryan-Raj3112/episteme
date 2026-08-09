@@ -14,7 +14,7 @@ import kotlinx.serialization.protobuf.ProtoNumber
 import java.io.File
 
 private const val SharedJvmBookLoadCacheSchemaVersion = 1
-private const val SharedJvmBookLoadCacheProcessingVersion = 8
+private const val SharedJvmBookLoadCacheProcessingVersion = 11
 
 enum class SharedJvmBookLoadSemanticMode {
     FULL,
@@ -117,7 +117,14 @@ private data class CachedSharedEpubBook(
     @ProtoNumber(12) val chapters: List<CachedSharedEpubChapter>,
     @ProtoNumber(13) val tableOfContents: List<CachedSharedEpubTocEntry> = emptyList(),
     @ProtoNumber(14) val semanticMode: String = SharedJvmBookLoadSemanticMode.FULL.name,
-    @ProtoNumber(15) val htmlChapterRange: String? = null
+    @ProtoNumber(15) val htmlChapterRange: String? = null,
+    @ProtoNumber(16) val pageList: List<MobileEpubPageTarget> = emptyList(),
+    @ProtoNumber(17) val language: String = "en",
+    @ProtoNumber(18) val seriesName: String? = null,
+    @ProtoNumber(19) val seriesIndex: Double? = null,
+    @ProtoNumber(20) val description: String? = null,
+    @ProtoNumber(21) val images: List<MobileEpubImage> = emptyList(),
+    @ProtoNumber(22) val coverImagePath: String? = null
 ) {
     fun toBook(): SharedEpubBook {
         return SharedEpubBook(
@@ -127,7 +134,14 @@ private data class CachedSharedEpubBook(
             author = author,
             css = css,
             chapters = chapters.map { it.toChapter() },
-            tableOfContents = tableOfContents.map { it.toEntry() }
+            tableOfContents = tableOfContents.map { it.toEntry() },
+            pageList = pageList,
+            language = language,
+            seriesName = seriesName,
+            seriesIndex = seriesIndex,
+            description = description,
+            images = images,
+            coverImagePath = coverImagePath
         )
     }
 
@@ -148,7 +162,14 @@ private data class CachedSharedEpubBook(
                 chapters = book.chapters.map(CachedSharedEpubChapter::from),
                 tableOfContents = book.tableOfContents.map(CachedSharedEpubTocEntry::from),
                 semanticMode = key.semanticMode.name,
-                htmlChapterRange = key.htmlChapterRange
+                htmlChapterRange = key.htmlChapterRange,
+                pageList = book.pageList,
+                language = book.language,
+                seriesName = book.seriesName,
+                seriesIndex = book.seriesIndex,
+                description = book.description,
+                images = book.images,
+                coverImagePath = book.coverImagePath
             )
         }
     }
@@ -189,7 +210,10 @@ private data class CachedSharedEpubChapter(
     @ProtoNumber(3) val plainText: String,
     @ProtoNumber(4) val semanticBlocks: List<SemanticBlock>,
     @ProtoNumber(5) val htmlContent: String,
-    @ProtoNumber(6) val baseHref: String?
+    @ProtoNumber(6) val baseHref: String?,
+    @ProtoNumber(7) val fragmentId: String? = null,
+    @ProtoNumber(8) val depth: Int = 0,
+    @ProtoNumber(9) val isInToc: Boolean = true
 ) {
     fun toChapter(): SharedEpubChapter {
         return SharedEpubChapter(
@@ -198,7 +222,10 @@ private data class CachedSharedEpubChapter(
             plainText = plainText,
             semanticBlocks = semanticBlocks,
             htmlContent = htmlContent,
-            baseHref = baseHref
+            baseHref = baseHref,
+            fragmentId = fragmentId,
+            depth = depth,
+            isInToc = isInToc
         )
     }
 
@@ -210,7 +237,10 @@ private data class CachedSharedEpubChapter(
                 plainText = chapter.plainText,
                 semanticBlocks = chapter.semanticBlocks,
                 htmlContent = chapter.htmlContent,
-                baseHref = chapter.baseHref
+                baseHref = chapter.baseHref,
+                fragmentId = chapter.fragmentId,
+                depth = chapter.depth,
+                isInToc = chapter.isInToc
             )
         }
     }

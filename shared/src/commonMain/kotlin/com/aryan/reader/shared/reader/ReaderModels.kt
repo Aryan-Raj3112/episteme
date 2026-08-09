@@ -12,7 +12,14 @@ data class SharedEpubBook(
     val author: String? = null,
     val chapters: List<SharedEpubChapter>,
     val css: Map<String, String> = emptyMap(),
-    val tableOfContents: List<SharedEpubTocEntry> = emptyList()
+    val tableOfContents: List<SharedEpubTocEntry> = emptyList(),
+    val pageList: List<MobileEpubPageTarget> = emptyList(),
+    val images: List<MobileEpubImage> = emptyList(),
+    val coverImagePath: String? = null,
+    val language: String = "en",
+    val seriesName: String? = null,
+    val seriesIndex: Double? = null,
+    val description: String? = null
 )
 
 data class SharedEpubTocEntry(
@@ -30,7 +37,9 @@ data class SharedEpubChapter(
     val htmlContent: String = "",
     val baseHref: String? = null,
     /** Fragment that identifies this logical section within [baseHref]. */
-    val fragmentId: String? = null
+    val fragmentId: String? = null,
+    val depth: Int = 0,
+    val isInToc: Boolean = true
 )
 
 typealias ReaderLocator = com.aryan.reader.shared.ReaderLocator

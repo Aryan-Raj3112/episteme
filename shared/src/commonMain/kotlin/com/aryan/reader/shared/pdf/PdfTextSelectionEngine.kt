@@ -137,22 +137,54 @@ object PdfTextSelectionEngine {
     fun wordBoundaries(
         backend: PdfTextSelectionBackend,
         initialCharIndex: Int
+    ): PdfTextSelectionRange? = wordBoundaries(
+        pageCharCount = backend.pageCharCount,
+        initialCharIndex = initialCharIndex,
+        charAt = backend::charAt
+    )
+
+    fun wordBoundaries(
+        pageCharCount: Int,
+        initialCharIndex: Int,
+        charAt: (Int) -> Char
     ): PdfTextSelectionRange? {
-        val pageCharCount = backend.pageCharCount
         if (initialCharIndex !in 0 until pageCharCount) return null
-        val initialChar = backend.charAt(initialCharIndex)
+        val initialChar = charAt(initialCharIndex)
         if (!initialChar.isLetterOrDigit()) return null
 
         var wordStartIndex = initialCharIndex
         while (wordStartIndex > 0) {
-            val char = backend.charAt(wordStartIndex - 1)
+            val char = charAt(wordStartIndex - 1)
             if (!char.isLetterOrDigit()) break
             wordStartIndex--
         }
         var wordEndIndex = initialCharIndex
         while (wordEndIndex < pageCharCount) {
-            val char = backend.charAt(wordEndIndex)
+            val char = charAt(wordEndIndex)
             if (!char.isLetterOrDigit()) break
+            wordEndIndex++
+        }
+        return if (wordStartIndex < wordEndIndex) {
+            PdfTextSelectionRange(wordStartIndex, wordEndIndex)
+        } else {
+            null
+        }
+    }
+
+    suspend fun wordBoundariesSuspending(
+        pageCharCount: Int,
+        initialCharIndex: Int,
+        charAt: suspend (Int) -> Char
+    ): PdfTextSelectionRange? {
+        if (initialCharIndex !in 0 until pageCharCount) return null
+        if (!charAt(initialCharIndex).isLetterOrDigit()) return null
+
+        var wordStartIndex = initialCharIndex
+        while (wordStartIndex > 0 && charAt(wordStartIndex - 1).isLetterOrDigit()) {
+            wordStartIndex--
+        }
+        var wordEndIndex = initialCharIndex
+        while (wordEndIndex < pageCharCount && charAt(wordEndIndex).isLetterOrDigit()) {
             wordEndIndex++
         }
         return if (wordStartIndex < wordEndIndex) {
@@ -174,8 +206,19 @@ object PdfTextSelectionEngine {
         current: PdfTextSelectionRange,
         activeHandle: PdfSelectionHandle,
         newCharIndex: Int
+    ): PdfSelectionHandleUpdate = extendRange(
+        pageCharCount = backend.pageCharCount,
+        current = current,
+        activeHandle = activeHandle,
+        newCharIndex = newCharIndex
+    )
+
+    fun extendRange(
+        pageCharCount: Int,
+        current: PdfTextSelectionRange,
+        activeHandle: PdfSelectionHandle,
+        newCharIndex: Int
     ): PdfSelectionHandleUpdate {
-        val pageCharCount = backend.pageCharCount
         if (pageCharCount <= 0) return PdfSelectionHandleUpdate(activeHandle, current)
         val charIndex = newCharIndex.coerceIn(0, pageCharCount - 1)
         return when (activeHandle) {

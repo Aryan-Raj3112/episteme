@@ -13,11 +13,34 @@ import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.SharedReaderTextAlign
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class ReaderAppearanceModelsTest {
+    @Test
+    fun `epub page info visibility and reserved space match Android`() {
+        assertTrue(shouldShowEpubPageInfoBar(PageInfoMode.DEFAULT, showReaderChrome = false))
+        assertFalse(shouldShowEpubPageInfoBar(PageInfoMode.SYNC, showReaderChrome = false))
+        assertTrue(shouldShowEpubPageInfoBar(PageInfoMode.SYNC, showReaderChrome = true))
+        assertFalse(shouldShowEpubPageInfoBar(PageInfoMode.HIDDEN, showReaderChrome = true))
+        assertTrue(shouldReserveEpubPageInfoBarSpace(PageInfoMode.DEFAULT, false, false))
+        assertFalse(shouldReserveEpubPageInfoBarSpace(PageInfoMode.SYNC, true, false))
+        assertFalse(shouldReserveEpubPageInfoBarSpace(PageInfoMode.DEFAULT, true, true))
+    }
+
+    @Test
+    fun `epub format stepping and font weights match Android`() {
+        assertEquals(0.5f, stepEpubFormatValue(0.49f, 0.01f, -0.1f, 0.5f, 100f))
+        assertEquals(-0.1f, stepEpubFormatValue(-0.1f, -0.01f, -0.1f, 0.5f, 100f))
+        assertEquals(500, nextEpubFontWeight(0))
+        assertEquals(600, nextEpubFontWeight(500))
+        assertEquals(1000, nextEpubFontWeight(1000))
+        assertEquals(0, previousEpubFontWeight(100))
+        assertEquals(500, previousEpubFontWeight(600))
+    }
+
     @Test
     fun `mobile native reader maps selectable font families`() {
         assertEquals(FontFamily.Serif, ReaderSettings(fontFamily = "Merriweather").toSharedReaderFontFamily())

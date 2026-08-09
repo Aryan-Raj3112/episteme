@@ -24,6 +24,20 @@ class SharedPdfReflowTest {
     }
 
     @Test
+    fun `header detection preserves android threshold when some sampled pages have no text`() {
+        assertEquals(
+            setOf("Repeated Header"),
+            SharedPdfReflowHtml.detectRepeatingHeaderFooter(
+                listOf(
+                    listOf("Repeated Header"),
+                    listOf("Repeated Header"),
+                    listOf("Repeated Header")
+                )
+            )
+        )
+    }
+
+    @Test
     fun `buildPageHtml maps Android-style spans headings and lists`() {
         val page = SharedPdfReflowPage(
             pageNumber = 3,
@@ -41,7 +55,7 @@ class SharedPdfReflowTest {
             headerFooterStrings = setOf("Repeated Header")
         )
 
-        assertTrue("<p class=\"page-marker\">-- Page 3 --</p>" in html)
+        assertTrue("<p class=\"page-marker\">— Page 3 —</p>" in html)
         assertFalse("Repeated Header" in html)
         assertTrue("<h1>Chapter Heading</h1>" in html)
         assertTrue("<strong><em>This is a paragraph" in html)
@@ -59,7 +73,7 @@ class SharedPdfReflowTest {
 
         assertEquals(
             "<section class=\"page-section\">\n" +
-                "<p class=\"page-marker\">-- Page 1 --</p>\n" +
+                "<p class=\"page-marker\">— Page 1 —</p>\n" +
                 "<p><em>(No text on this page)</em></p>\n</section>\n",
             html
         )

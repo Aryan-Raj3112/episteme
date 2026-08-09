@@ -125,6 +125,8 @@ import com.aryan.reader.shared.HighlightColor
 import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.PageInfoMode
 import com.aryan.reader.shared.PageInfoPosition
+import com.aryan.reader.shared.shouldShowEpubPageInfoBar
+import com.aryan.reader.shared.shouldReserveEpubPageInfoBarSpace
 import com.aryan.reader.shared.ReaderAiByokSettings
 import com.aryan.reader.shared.ReaderAiFeature
 import com.aryan.reader.shared.ReaderAiResultState
@@ -300,12 +302,14 @@ fun SharedReaderScreen(
     val chromeBarColor = MaterialTheme.colorScheme.surfaceVariant
     val chromeContentColor = MaterialTheme.colorScheme.onSurface
     val pageInfoText = readerState.pageInfoText()
-    val shouldShowPageInfo = settings.pageInfoMode != PageInfoMode.HIDDEN
+    val shouldShowPageInfo = shouldShowEpubPageInfoBar(settings.pageInfoMode, showReaderChrome = !isFullscreen)
     val reserveTopPageInfoSpace =
-        settings.readingMode != ReaderReadingMode.VERTICAL &&
-            !isFullscreen &&
-            shouldShowPageInfo &&
-            settings.pageInfoPosition == PageInfoPosition.TOP
+        settings.pageInfoPosition == PageInfoPosition.TOP &&
+            shouldReserveEpubPageInfoBarSpace(
+                pageInfoMode = settings.pageInfoMode,
+                showReaderChrome = !isFullscreen,
+                isNativeVerticalMode = settings.readingMode == ReaderReadingMode.VERTICAL
+            )
     val activeTtsProgress = readerExtrasState.cloudTts.progress
     val activeTtsChunk = activeTtsProgress.currentChunk
     val activeTtsLocator = activeTtsChunk?.toLocator()

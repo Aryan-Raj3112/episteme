@@ -1,703 +1,130 @@
-/*
- * Episteme Reader - A native Android document reader.
- * Copyright (C) 2026 Episteme
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as
- * published by the Free Software Foundation, either version 3 of the
- * License, or (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
- *
- * mail: epistemereader@gmail.com
- */
 package com.aryan.reader.paginatedreader
 
 import android.os.Build
-import timber.log.Timber
 import androidx.annotation.RequiresApi
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.isSpecified
 import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.ParagraphStyle
-import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.style.BaselineShift
-import androidx.compose.ui.text.style.Hyphens
-import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextDecoration
-import androidx.compose.ui.text.style.TextDirection
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Density
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.em
-import androidx.compose.ui.unit.isSpecified
-import androidx.compose.ui.unit.isUnspecified
-import androidx.compose.ui.unit.sp
 import org.jsoup.Jsoup
+import timber.log.Timber
 import java.io.File
 import java.net.URLDecoder
 
-private const val DEBUG_CONTENT_STYLING = false
-
 @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
 class ContentStyler(
-    private val baseTextStyle: TextStyle,
-    private val fontFamilyMap: Map<String, FontFamily>,
-    private val density: Density,
-    private val isDarkTheme: Boolean,
-    private val themeBackgroundColor: Color,
-    private val themeTextColor: Color,
-    private val chapterAbsPath: String,
-    private val extractionBasePath: String,
-    private val userTextAlign: TextAlign?,
-    private val paragraphGapMultiplier: Float,
-    private val adaptThemeColors: Boolean = true
+    baseTextStyle: TextStyle,
+    fontFamilyMap: Map<String, FontFamily>,
+    density: Density,
+    isDarkTheme: Boolean,
+    themeBackgroundColor: Color,
+    themeTextColor: Color,
+    chapterAbsPath: String,
+    extractionBasePath: String,
+    userTextAlign: TextAlign?,
+    paragraphGapMultiplier: Float,
+    adaptThemeColors: Boolean = true
 ) {
+    private val delegate = SharedContentStyler(
+        baseTextStyle = baseTextStyle,
+        fontFamilyMap = fontFamilyMap,
+        density = density,
+        isDarkTheme = isDarkTheme,
+        themeBackgroundColor = themeBackgroundColor,
+        themeTextColor = themeTextColor,
+        userTextAlign = userTextAlign,
+        paragraphGapMultiplier = paragraphGapMultiplier,
+        adaptThemeColors = adaptThemeColors,
+        applyThemeToSvg = { svg -> applyThemeToSvg(svg, baseTextStyle.color) },
+        embedImagesInSvg = { svg -> embedImagesInSvg(svg, chapterAbsPath, extractionBasePath) },
+        onUnsupportedBlock = { block ->
+            Timber.w("Unsupported or misplaced SemanticBlock type encountered: ${block::class.java.simpleName}")
+        },
+        onStyledText = ::logStyledText
+    )
 
-    fun style(semanticBlocks: List<SemanticBlock>): List<ContentBlock> {
-        return groupFloatingBlocks(semanticBlocks.mapNotNull { styleBlock(it) })
-    }
+    fun style(semanticBlocks: List<SemanticBlock>): List<ContentBlock> = delegate.style(semanticBlocks)
+}
 
-    private fun groupFloatingBlocks(blocks: List<ContentBlock>): List<ContentBlock> {
-        if (blocks.isEmpty()) return emptyList()
-
-        val result = mutableListOf<ContentBlock>()
-        val processingQueue = blocks.toMutableList()
-
-        while (processingQueue.isNotEmpty()) {
-            val currentBlock = processingQueue.removeAt(0)
-            val floatDirection = (currentBlock as? ImageBlock)?.style?.float
-
-            if (currentBlock is ImageBlock && floatDirection in listOf("left", "right")) {
-                val paragraphsToWrap = mutableListOf<ParagraphBlock>()
-
-                while (processingQueue.isNotEmpty()) {
-                    val nextBlock = processingQueue.first()
-                    val nextBlockStyle = nextBlock.style
-                    val shouldClear = nextBlockStyle.clear in listOf("both", floatDirection)
-                    if (nextBlock is ParagraphBlock && !shouldClear) {
-                        val paragraph = processingQueue.removeAt(0) as ParagraphBlock
-                        paragraphsToWrap.add(paragraph)
-                    } else {
-                        break
+private fun embedImagesInSvg(svgContent: String, chapterAbsPath: String, extractionBasePath: String): String {
+    return try {
+        val svgDocument = Jsoup.parseBodyFragment(svgContent)
+        val svgElement = svgDocument.body().children().firstOrNull() ?: return svgContent
+        svgElement.select("image").forEach { imageElement ->
+            val href = imageElement.attr("href").ifBlank { imageElement.attr("xlink:href") }
+            if (href.isNotBlank() && !href.startsWith("data:")) {
+                resolveImagePath(href, chapterAbsPath, extractionBasePath)?.let { imageFile ->
+                    try {
+                        val mimeType = when (imageFile.extension.lowercase()) {
+                            "jpg", "jpeg" -> "image/jpeg"
+                            "png" -> "image/png"
+                            "gif" -> "image/gif"
+                            "webp" -> "image/webp"
+                            else -> "application/octet-stream"
+                        }
+                        val base64 = android.util.Base64.encodeToString(imageFile.readBytes(), android.util.Base64.NO_WRAP)
+                        imageElement.attr("xlink:href", "data:$mimeType;base64,$base64")
+                        imageElement.removeAttr("href")
+                    } catch (error: Exception) {
+                        Timber.e(error, "Failed to read and encode image file '$href' to Base64.")
                     }
                 }
-                val wrappingBlock = WrappingContentBlock(
-                    currentBlock,
-                    paragraphsToWrap,
-                    elementId = currentBlock.elementId,
-                    cfi = currentBlock.cfi,
-                    blockIndex = currentBlock.blockIndex
-                )
-                result.add(wrappingBlock)
-            } else {
-                result.add(currentBlock)
             }
         }
-        return result
+        svgElement.outerHtml()
+    } catch (error: Exception) {
+        Timber.e(error, "Error while embedding images in SVG content.")
+        svgContent
     }
+}
 
-    private fun styleBlock(block: SemanticBlock): ContentBlock? {
-        val themedStyle = applyThemeToStyle(block.style)
+private fun resolveImagePath(src: String, chapterAbsPath: String, extractionBasePath: String): File? {
+    if (src.isBlank()) return null
+    val decodedSrc = try { URLDecoder.decode(src, "UTF-8") } catch (_: Exception) { src }
+    val parentPath = File(chapterAbsPath).parent ?: ""
+    val fromRelativeFile = File(extractionBasePath, File(parentPath, decodedSrc).path)
+    if (fromRelativeFile.exists()) return fromRelativeFile
+    val fromRootFile = File(extractionBasePath, decodedSrc)
+    if (fromRootFile.exists()) return fromRootFile
+    Timber.w("Image not found for SVG embedding. Tried: ${fromRelativeFile.absolutePath} and ${fromRootFile.absolutePath}")
+    return null
+}
 
-        val finalBlockStyle = if (block is SemanticParagraph) {
-            val originalMargin = themedStyle.blockStyle.margin
-            val newMargin = originalMargin.copy(
-                top = originalMargin.top * paragraphGapMultiplier,
-                bottom = originalMargin.bottom * paragraphGapMultiplier
-            )
-            themedStyle.blockStyle.copy(margin = newMargin)
-        } else {
-            themedStyle.blockStyle
+private fun applyThemeToSvg(svgContent: String, textColor: Color): String {
+    if (svgContent.isBlank()) return svgContent
+    return try {
+        val svgDocument = Jsoup.parseBodyFragment(svgContent)
+        val svgElement = svgDocument.body().children().firstOrNull() ?: return svgContent
+        val textColorHex = textColor.toCssHexString()
+        svgElement.select("text").forEach { textElement ->
+            val existingStyle = textElement.attr("style")
+            val styleWithoutFill = existingStyle.replace(Regex("""\bfill\s*:\s*[^;]+;?"""), "")
+            textElement.attr("style", "fill:$textColorHex; $styleWithoutFill".trim())
+            textElement.removeAttr("fill")
         }
-
-        return when (block) {
-            is SemanticParagraph -> {
-                val computedTextAlign = when {
-                    userTextAlign != null -> userTextAlign
-                    themedStyle.paragraphStyle.textAlign == TextAlign.Justify -> TextAlign.Left
-                    else -> themedStyle.paragraphStyle.textAlign
-                }
-
-                ParagraphBlock(
-                    content = buildAnnotatedString(block, themedStyle),
-                    textAlign = computedTextAlign,
-                    style = finalBlockStyle,
-                    elementId = block.elementId,
-                    cfi = block.cfi,
-                    startCharOffsetInSource = block.startCharOffsetInSource,
-                    blockIndex = block.blockIndex
-                )
-            }
-
-            is SemanticHeader -> HeaderBlock(
-                level = block.level,
-                content = buildAnnotatedString(block, themedStyle),
-                textAlign = themedStyle.paragraphStyle.textAlign,
-                style = themedStyle.blockStyle,
-                elementId = block.elementId,
-                cfi = block.cfi,
-                startCharOffsetInSource = block.startCharOffsetInSource,
-                blockIndex = block.blockIndex
-            )
-
-            is SemanticImage -> {
-                var finalBlockStyle = themedStyle.blockStyle
-                if (themedStyle.paragraphStyle.textAlign == TextAlign.Center) {
-                    finalBlockStyle = finalBlockStyle.copy(horizontalAlign = "center")
-                }
-                val shouldInvert = themedStyle.blockStyle.filter == "invert(100%)"
-                ImageBlock(
-                    path = block.path,
-                    altText = block.altText,
-                    intrinsicWidth = block.intrinsicWidth,
-                    intrinsicHeight = block.intrinsicHeight,
-                    style = finalBlockStyle,
-                    elementId = block.elementId,
-                    cfi = block.cfi,
-                    invertOnDarkTheme = shouldInvert,
-                    blockIndex = block.blockIndex
-                )
-            }
-
-            is SemanticMath -> {
-                val svgContent = block.svgContent
-                val nonBlankSvgContent = svgContent?.takeIf { it.isNotBlank() }
-                val finalSvgContent = when {
-                    block.isFromMathJax || nonBlankSvgContent == null -> svgContent
-                    !adaptThemeColors -> embedImagesInSvg(nonBlankSvgContent)
-                    else -> {
-                        val themedSvg = applyThemeToSvg(nonBlankSvgContent)
-                        embedImagesInSvg(themedSvg)
-                    }
-                }
-
-                MathBlock(
-                    svgContent = finalSvgContent,
-                    altText = block.altText,
-                    style = themedStyle.blockStyle,
-                    elementId = block.elementId,
-                    cfi = block.cfi,
-                    svgWidth = block.svgWidth,
-                    svgHeight = block.svgHeight,
-                    svgViewBox = block.svgViewBox,
-                    isFromMathJax = block.isFromMathJax,
-                    blockIndex = block.blockIndex
-                )
-            }
-
-            is SemanticList -> styleList(block, themedStyle)
-            is SemanticTable -> styleTable(block, themedStyle)
-            is SemanticSpacer -> {
-                val height = if (block.isExplicitLineBreak) with(density) { baseTextStyle.fontSize.toDp() } else 8.dp
-                SpacerBlock(height = height, style = themedStyle.blockStyle, elementId = block.elementId, cfi = block.cfi, blockIndex = block.blockIndex)
-            }
-            is SemanticFlexContainer -> if (block.style.blockStyle.display == "reader-chant-flow") {
-                styleChantScore(block, themedStyle)
-            } else {
-                FlexContainerBlock(
-                    children = block.children.mapNotNull { styleBlock(it) },
-                    style = themedStyle.blockStyle,
-                    elementId = block.elementId,
-                    cfi = block.cfi,
-                    blockIndex = block.blockIndex
-                )
-            }
-            is SemanticWrappingBlock -> {
-                val styledImage = styleBlock(block.floatedImage) as? ImageBlock
-                val styledParagraphs = block.paragraphsToWrap.mapNotNull { styleBlock(it) as? ParagraphBlock }
-                if (styledImage != null) {
-                    WrappingContentBlock(
-                        floatedImage = styledImage,
-                        paragraphsToWrap = styledParagraphs,
-                        elementId = block.elementId,
-                        cfi = block.cfi,
-                        blockIndex = block.blockIndex
-                    )
-                } else {
-                    null
-                }
-            }
-            else -> {
-                Timber.w("Unsupported or misplaced SemanticBlock type encountered: ${block::class.java.simpleName}")
-                null
-            }
-        }
+        svgElement.outerHtml()
+    } catch (error: Exception) {
+        Timber.e(error, "Failed to apply dark theme to SVG content.")
+        svgContent
     }
+}
 
-    private fun styleChantScore(block: SemanticFlexContainer, themedStyle: CssStyle): ChantScoreBlock {
-        val units = mutableListOf<ChantUnitBlock>()
+private fun Color.toCssHexString(): String {
+    val red = (red * 255).toInt()
+    val green = (green * 255).toInt()
+    val blue = (blue * 255).toInt()
+    return String.format("#%02X%02X%02X", red, green, blue)
+}
 
-        fun addUnit(unit: SemanticFlexContainer, keepWithNext: Boolean) {
-            val rows = unit.children.mapNotNull { styleBlock(it) as? TextContentBlock }
-            val marker = unit.style.blockStyle.display.orEmpty()
-            val isDropCap = marker == "reader-chant-dropcap"
-            units += ChantUnitBlock(
-                neume = if (isDropCap) AnnotatedString("") else rows.getOrNull(0)?.content ?: AnnotatedString(""),
-                lyric = if (isDropCap) rows.getOrNull(0)?.content ?: AnnotatedString("") else rows.getOrNull(1)?.content ?: AnnotatedString(""),
-                keepWithNext = keepWithNext,
-                underlineBefore = ":before" in marker,
-                underlineAfter = ":after" in marker,
-                isDropCap = isDropCap
-            )
-        }
-
-        block.children.forEach { child ->
-            val container = child as? SemanticFlexContainer ?: return@forEach
-            if (container.style.blockStyle.display == "reader-chant-nonbreaking") {
-                container.children.filterIsInstance<SemanticFlexContainer>().forEachIndexed { index, unit ->
-                    addUnit(unit, keepWithNext = index < container.children.lastIndex)
-                }
-            } else {
-                addUnit(container, keepWithNext = false)
-            }
-        }
-        return ChantScoreBlock(
-            units = units,
-            style = themedStyle.blockStyle,
-            elementId = block.elementId,
-            cfi = block.cfi,
-            blockIndex = block.blockIndex
+private fun logStyledText(block: SemanticTextBlock, styled: AnnotatedString) {
+    if (READER_LINK_DIAGNOSTICS_ENABLED && block.spans.any { !it.linkHref.isNullOrBlank() }) {
+        Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
+            "style_text_block type=${block::class.simpleName ?: "Text"} " +
+                "block=${block.blockIndex} cfi=${block.cfi} " +
+                "rawLinkSpans=${block.spans.count { !it.linkHref.isNullOrBlank() }} " +
+                styled.readerAnnotatedLinkDiagSummary()
         )
-    }
-
-    private fun applyThemeToStyle(style: CssStyle): CssStyle {
-        if (!adaptThemeColors) {
-            return style
-        }
-
-        val newSpanStyle = style.spanStyle.let { original ->
-            val newColor = if (original.color.isSpecified) {
-                CssParser.adaptColorForTheme(original.color, isDarkTheme, isBackground = false, themeBackgroundColor, themeTextColor)
-            } else {
-                original.color
-            }
-            original.copy(color = newColor)
-        }
-
-        val newBlockStyle = style.blockStyle.let { original ->
-            val newBgColor = if (original.backgroundColor.isSpecified) {
-                CssParser.adaptColorForTheme(original.backgroundColor, isDarkTheme, isBackground = true, themeBackgroundColor, themeTextColor)
-            } else {
-                original.backgroundColor
-            }
-
-            fun themeBorder(b: BorderStyle?): BorderStyle? {
-                if (b == null) return null
-                val newColor = CssParser.adaptColorForTheme(b.color, isDarkTheme, isBackground = false, themeBackgroundColor, themeTextColor)
-                return b.copy(color = newColor)
-            }
-
-            original.copy(
-                backgroundColor = newBgColor,
-                borderTop = themeBorder(original.borderTop),
-                borderRight = themeBorder(original.borderRight),
-                borderBottom = themeBorder(original.borderBottom),
-                borderLeft = themeBorder(original.borderLeft)
-            )
-        }
-
-        val newTextDecorationColor = if (style.textDecorationColor.isSpecified) {
-            CssParser.adaptColorForTheme(style.textDecorationColor, isDarkTheme, isBackground = false, themeBackgroundColor, themeTextColor)
-        } else {
-            style.textDecorationColor
-        }
-
-        return style.copy(
-            spanStyle = newSpanStyle,
-            blockStyle = newBlockStyle,
-            textDecorationColor = newTextDecorationColor
-        )
-    }
-
-    private fun embedImagesInSvg(svgContent: String): String {
-        try {
-            val svgDocument = Jsoup.parseBodyFragment(svgContent)
-            val svgElement = svgDocument.body().children().firstOrNull() ?: return svgContent
-
-            svgElement.select("image").forEach { imageElement ->
-                val href = imageElement.attr("href").ifBlank { imageElement.attr("xlink:href") }
-                if (href.isNotBlank() && !href.startsWith("data:")) {
-                    resolveImagePath(href)?.let { imageFile ->
-                        try {
-                            val imageBytes = imageFile.readBytes()
-                            val mimeType = when (imageFile.extension.lowercase()) {
-                                "jpg", "jpeg" -> "image/jpeg"
-                                "png" -> "image/png"
-                                "gif" -> "image/gif"
-                                "webp" -> "image/webp"
-                                else -> "application/octet-stream"
-                            }
-                            val base64 = android.util.Base64.encodeToString(imageBytes, android.util.Base64.NO_WRAP)
-                            val dataUri = "data:$mimeType;base64,$base64"
-                            imageElement.attr("xlink:href", dataUri)
-                            imageElement.removeAttr("href")
-                        } catch (e: Exception) {
-                            Timber.e(e, "Failed to read and encode image file '$href' to Base64.")
-                        }
-                    }
-                }
-            }
-            return svgElement.outerHtml()
-        } catch (e: Exception) {
-            Timber.e(e, "Error while embedding images in SVG content.")
-            return svgContent
-        }
-    }
-
-    private fun resolveImagePath(src: String): File? {
-        if (src.isBlank()) return null
-        val decodedSrc = try { URLDecoder.decode(src, "UTF-8") } catch (_: Exception) { src }
-        val parentPath = File(this.chapterAbsPath).parent ?: ""
-        val fromRelativeFile = File(this.extractionBasePath, File(parentPath, decodedSrc).path)
-        if (fromRelativeFile.exists()) return fromRelativeFile
-        val fromRootFile = File(this.extractionBasePath, decodedSrc)
-        if (fromRootFile.exists()) return fromRootFile
-        Timber.w("Image not found for SVG embedding. Tried: ${fromRelativeFile.absolutePath} and ${fromRootFile.absolutePath}")
-        return null
-    }
-
-    private fun applyThemeToSvg(svgContent: String): String {
-        if (svgContent.isBlank()) return svgContent
-        try {
-            val textColorHex = baseTextStyle.color.toCssHexString()
-            val svgDocument = Jsoup.parseBodyFragment(svgContent)
-            val svgElement = svgDocument.body().children().firstOrNull() ?: return svgContent
-
-            svgElement.select("text").forEach { textElement ->
-                val existingStyle = textElement.attr("style")
-                val styleWithoutFill = existingStyle.replace(Regex("""\bfill\s*:\s*[^;]+;?"""), "")
-                val newStyle = "fill:$textColorHex; $styleWithoutFill".trim()
-                textElement.attr("style", newStyle)
-                textElement.removeAttr("fill")
-            }
-            return svgElement.outerHtml()
-        } catch (e: Exception) {
-            Timber.e(e, "Failed to apply dark theme to SVG content.")
-            return svgContent
-        }
-    }
-
-    private fun Color.toCssHexString(): String {
-        val red = (this.red * 255).toInt()
-        val green = (this.green * 255).toInt()
-        val blue = (this.blue * 255).toInt()
-        return String.format("#%02X%02X%02X", red, green, blue)
-    }
-
-    private fun buildAnnotatedString(
-        block: SemanticTextBlock,
-        blockStyle: CssStyle
-    ): AnnotatedString {
-        if (DEBUG_CONTENT_STYLING) {
-            Timber.d("ContentStyler: Building annotated string. UserAlign=$userTextAlign, CSSAlign=${blockStyle.paragraphStyle.textAlign}")
-        }
-
-        val builtString = buildAnnotatedString {
-            val rootFontFamily = findFirstAvailableFontFamily(blockStyle.fontFamilies, fontFamilyMap)
-            val hyphensValue = if (blockStyle.hyphens == "auto") Hyphens.Auto else Hyphens.None
-            val mergedParagraphStyle = baseTextStyle.toParagraphStyle().merge(blockStyle.paragraphStyle)
-
-            val finalTextAlign = if (block is SemanticParagraph && userTextAlign != null) {
-                userTextAlign
-            } else if (mergedParagraphStyle.textAlign == TextAlign.Justify) {
-                TextAlign.Left
-            } else {
-                mergedParagraphStyle.textAlign
-            }
-
-            val isParagraph = block is SemanticParagraph
-            val finalLineHeight = if (isParagraph && baseTextStyle.lineHeight.isSpecified) {
-                baseTextStyle.lineHeight
-            } else {
-                mergedParagraphStyle.lineHeight
-            }
-
-            val finalParagraphStyle = ParagraphStyle(
-                textAlign = finalTextAlign,
-                textDirection = mergedParagraphStyle.textDirection.takeUnless {
-                    it == TextDirection.Unspecified
-                } ?: TextDirection.ContentOrLtr,
-                lineHeight = finalLineHeight,
-                textIndent = mergedParagraphStyle.textIndent,
-                platformStyle = mergedParagraphStyle.platformStyle,
-                lineHeightStyle = mergedParagraphStyle.lineHeightStyle,
-                // Keep text within the measured page on device/font combinations where the
-                // high-quality breaker can leave a long token wider than its constraints.
-                lineBreak = LineBreak.Simple,
-                hyphens = hyphensValue,
-                textMotion = mergedParagraphStyle.textMotion
-            )
-
-            val isCustomFont = baseTextStyle.fontFamily != null && baseTextStyle.fontFamily != FontFamily.Default
-
-            val effectiveBlockFontFamily = if (rootFontFamily == FontFamily.Monospace) {
-                FontFamily.Monospace
-            } else if (isCustomFont) {
-                baseTextStyle.fontFamily
-            } else {
-                rootFontFamily ?: baseTextStyle.fontFamily
-            }
-
-            var initialSpanStyle = baseTextStyle.toSpanStyle()
-                .merge(blockStyle.spanStyle)
-                .copy(fontFamily = effectiveBlockFontFamily)
-            if (blockStyle.fontSize.isSpecified) {
-                initialSpanStyle = initialSpanStyle.copy(fontSize = blockStyle.fontSize)
-            }
-
-            if (DEBUG_CONTENT_STYLING) {
-                Timber.d("ContentStyler: InitialSpanStyle. BaseFontSize=${baseTextStyle.fontSize}, BlockFontSize=${blockStyle.spanStyle.fontSize} -> Merged=${initialSpanStyle.fontSize}")
-            }
-
-            withStyle(finalParagraphStyle) {
-                withStyle(initialSpanStyle) {
-                    append(block.text)
-                    val linkSpans = mutableListOf<SemanticSpan>()
-                    block.spans.sortedBy { it.start }.forEach { span ->
-                        val spanStart = span.start.coerceIn(0, block.text.length)
-                        val spanEnd = span.end.coerceIn(spanStart, block.text.length)
-                        val themedSpanStyle = applyThemeToStyle(span.style)
-                        val spanFontFamily = findFirstAvailableFontFamily(themedSpanStyle.fontFamilies, fontFamilyMap)
-                        val effectiveSpanFontFamily = if (spanFontFamily == FontFamily.Monospace) {
-                            FontFamily.Monospace
-                        } else if (isCustomFont) {
-                            baseTextStyle.fontFamily
-                        } else {
-                            spanFontFamily
-                        }
-
-                        val baselineShift = when (span.tag) {
-                            "sub" -> BaselineShift.Subscript
-                            "sup" -> BaselineShift.Superscript
-                            else -> null
-                        }
-
-                        var finalSpanStyle = themedSpanStyle.spanStyle.copy(
-                            fontFamily = effectiveSpanFontFamily,
-                            baselineShift = baselineShift
-                        )
-                        if (themedSpanStyle.fontSize.isSpecified) {
-                            finalSpanStyle = finalSpanStyle.copy(fontSize = themedSpanStyle.fontSize)
-                        }
-
-                        if (!span.linkHref.isNullOrBlank()) {
-                            linkSpans.add(span)
-                            finalSpanStyle = finalSpanStyle.withReaderLinkStyle(
-                                isDarkTheme = isDarkTheme,
-                                themeBackgroundColor = themeBackgroundColor,
-                                themeTextColor = themeTextColor
-                            )
-                        }
-
-                        val hasCustomDeco = themedSpanStyle.textDecorationStyle != null ||
-                                themedSpanStyle.textDecorationColor.isSpecified ||
-                                themedSpanStyle.textUnderlineOffset.isSpecified
-
-                        val combinedDeco = finalSpanStyle.textDecoration ?: TextDecoration.None
-
-                        if (hasCustomDeco && combinedDeco.contains(TextDecoration.Underline)) {
-                            val decos = mutableListOf<TextDecoration>()
-                            if (combinedDeco.contains(TextDecoration.LineThrough)) decos.add(TextDecoration.LineThrough)
-                            finalSpanStyle = finalSpanStyle.copy(
-                                textDecoration = if (decos.isNotEmpty()) TextDecoration.combine(decos) else TextDecoration.None
-                            )
-
-                            val styleStr = themedSpanStyle.textDecorationStyle ?: "solid"
-                            val colorStr = if (themedSpanStyle.textDecorationColor.isSpecified) themedSpanStyle.textDecorationColor.value.toString() else "Unspecified"
-                            val offsetStr = if (themedSpanStyle.textUnderlineOffset.isSpecified) themedSpanStyle.textUnderlineOffset.value.toString() else "0"
-
-                            val annotationData = "$styleStr|$colorStr|$offsetStr"
-                            if (spanStart < spanEnd) {
-                                addStringAnnotation("CustomUnderline", annotationData, spanStart, spanEnd)
-                            }
-                        }
-
-                        if (spanStart < spanEnd) {
-                            addStyle(initialSpanStyle.merge(finalSpanStyle), spanStart, spanEnd)
-                        }
-
-                        val ws = themedSpanStyle.wordSpacing
-                        if (ws.isSpecified && ws.value != 0f && spanStart < spanEnd) {
-                            val textToStyle = block.text.substring(spanStart, spanEnd)
-                            for (i in textToStyle.indices) {
-                                if (textToStyle[i] == ' ') {
-                                    addStyle(SpanStyle(letterSpacing = ws), spanStart + i, spanStart + i + 1)
-                                }
-                            }
-                        }
-
-                        span.linkHref?.takeIf { it.isNotBlank() }?.let { linkHref ->
-                            if (spanStart < spanEnd) {
-                                addStringAnnotation("URL", linkHref, spanStart, spanEnd)
-                            }
-                        }
-                        span.elementId?.let { elementId ->
-                            addStringAnnotation("ID", elementId, spanStart, spanEnd)
-                        }
-                    }
-
-                    val forcedLinkStyle = readerLinkSpanStyle(
-                        isDarkTheme = isDarkTheme,
-                        themeBackgroundColor = themeBackgroundColor,
-                        themeTextColor = themeTextColor
-                    )
-                    linkSpans.forEach { span ->
-                        val start = span.start.coerceIn(0, block.text.length)
-                        val end = span.end.coerceIn(start, block.text.length)
-                        if (start < end) {
-                            addStyle(forcedLinkStyle, start, end)
-                        }
-                    }
-                }
-            }
-        }
-        if (READER_LINK_DIAGNOSTICS_ENABLED && block.spans.any { !it.linkHref.isNullOrBlank() }) {
-            Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
-                "style_text_block type=${block::class.simpleName ?: "Text"} " +
-                    "block=${block.blockIndex} cfi=${block.cfi} " +
-                    "rawLinkSpans=${block.spans.count { !it.linkHref.isNullOrBlank() }} " +
-                    builtString.readerAnnotatedLinkDiagSummary()
-            )
-        }
-        return builtString.maybeAdjustLineHeightForEmphasis()
-    }
-
-    private fun AnnotatedString.maybeAdjustLineHeightForEmphasis(): AnnotatedString {
-        if (this.getStringAnnotations("TextEmphasis", 0, this.length).isNotEmpty()) {
-            val currentParagraphStyle = this.paragraphStyles.firstOrNull()?.item ?: ParagraphStyle()
-            val currentLineHeight = currentParagraphStyle.lineHeight
-            val newLineHeight = if (currentLineHeight.isUnspecified || currentLineHeight.value == 0f) {
-                1.8.em
-            } else if (currentLineHeight.isEm) {
-                (currentLineHeight.value * 1.3f).em
-            } else if (currentLineHeight.isSp) {
-                (currentLineHeight.value * 1.3f).sp
-            } else {
-                1.8.em
-            }
-            return buildAnnotatedString {
-                withStyle(ParagraphStyle(lineHeight = newLineHeight)) {
-                    append(this@maybeAdjustLineHeightForEmphasis)
-                }
-            }
-        }
-        return this
-    }
-
-    private fun styleList(list: SemanticList, listStyle: CssStyle): ContentBlock {
-        var itemCounter = 1
-
-        val items = list.items.map { item ->
-            val itemThemedStyle = applyThemeToStyle(item.style)
-            val mergedBlockStyle = listStyle.blockStyle.merge(itemThemedStyle.blockStyle)
-
-            val marker = getListMarker(
-                listStyleType = mergedBlockStyle.listStyleType,
-                counter = itemCounter,
-                isOrdered = list.isOrdered
-            )
-            itemCounter++
-            ListItemBlock(
-                content = buildAnnotatedString(item, itemThemedStyle),
-                itemMarker = marker,
-                itemMarkerImage = item.itemMarkerImage,
-                style = mergedBlockStyle,
-                elementId = item.elementId,
-                cfi = item.cfi,
-                startCharOffsetInSource = item.startCharOffsetInSource,
-                blockIndex = item.blockIndex
-            )
-        }
-        return FlexContainerBlock(items, listStyle.blockStyle, list.elementId, list.cfi, list.blockIndex)
-    }
-
-    private fun styleTable(table: SemanticTable, tableStyle: CssStyle): TableBlock {
-        val rows = table.rows.map { row ->
-            row.map { cell ->
-                val cellCssStyle = applyThemeToStyle(cell.style)
-                TableCell(
-                    content = cell.content.mapNotNull { styleBlock(it) },
-                    isHeader = cell.isHeader,
-                    style = cellCssStyle,
-                    colspan = cell.colspan
-                )
-            }
-        }
-        return TableBlock(
-            rows = rows,
-            style = tableStyle.blockStyle,
-            elementId = table.elementId,
-            cfi = table.cfi,
-            blockIndex = table.blockIndex
-        )
-    }
-
-    private fun findFirstAvailableFontFamily(
-        fontFamilyNames: List<String>,
-        fontFamilyMap: Map<String, FontFamily>
-    ): FontFamily? {
-        if (fontFamilyNames.isEmpty()) return null
-        val normalizedMap = fontFamilyMap.entries.associate { it.key.trim().lowercase() to it.value }
-        val specificFont = fontFamilyNames.firstNotNullOfOrNull { name ->
-            normalizedMap[name.trim().removeSurrounding("\"").removeSurrounding("'").lowercase()]
-        }
-        if (specificFont != null) return specificFont
-        return fontFamilyNames.firstNotNullOfOrNull { name -> FontFamilyMapper.nameToFontFamily(name) }
-    }
-
-    private fun toRoman(number: Int): String {
-        if (number !in 1..3999) return number.toString()
-        val values = listOf(1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1)
-        val symbols = listOf("M", "CM", "D", "CD", "C", "XC", "L", "XL", "X", "IX", "V", "IV", "I")
-        val result = StringBuilder()
-        var num = number
-        for (i in values.indices) {
-            while (num >= values[i]) {
-                num -= values[i]
-                result.append(symbols[i])
-            }
-        }
-        return result.toString()
-    }
-
-    private fun toAlpha(number: Int): String {
-        if (number < 1) return number.toString()
-        var n = number
-        val result = StringBuilder()
-        while (n > 0) {
-            n--
-            result.insert(0, ('a' + n % 26))
-            n /= 26
-        }
-        return result.toString()
-    }
-
-    private fun getListMarker(listStyleType: String?, counter: Int, isOrdered: Boolean): String? {
-        val finalType = listStyleType?.trim()?.lowercase() ?: if (isOrdered) "decimal" else "disc"
-
-        return when (finalType) {
-            "none" -> null
-            "disc" -> "• "
-            "circle" -> "◦ "
-            "square" -> "■ "
-            "decimal" -> "$counter. "
-            "decimal-leading-zero" -> "${counter.toString().padStart(2, '0')}. "
-            "lower-roman" -> toRoman(counter).lowercase() + ". "
-            "upper-roman" -> toRoman(counter).uppercase() + ". "
-            "lower-latin", "lower-alpha" -> toAlpha(counter) + ". "
-            "upper-latin", "upper-alpha" -> toAlpha(counter).uppercase() + ". "
-            else -> if (isOrdered) "$counter. " else "• "
-        }
     }
 }
