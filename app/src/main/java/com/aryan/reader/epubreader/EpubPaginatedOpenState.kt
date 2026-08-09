@@ -9,11 +9,11 @@ internal fun shouldSavePaginatedOpenPosition(
     isReconfigurationRestoring: Boolean,
     pageCount: Int,
     pageToSave: Int
-): Boolean {
-    return isPaginatedMode &&
-        hasPaginator &&
-        isPagerInitialized &&
-        !isReconfigurationRestoring &&
-        pageCount > 0 &&
-        pageToSave in 0 until pageCount
-}
+): Boolean = com.aryan.reader.shared.reader.shouldSaveSharedPaginatedOpenPosition(
+    isPaginatedMode = isPaginatedMode,
+    hasPaginator = hasPaginator,
+    isPagerInitialized = isPagerInitialized,
+    isReconfigurationRestoring = isReconfigurationRestoring,
+    pageCount = pageCount,
+    pageToSave = pageToSave,
+)

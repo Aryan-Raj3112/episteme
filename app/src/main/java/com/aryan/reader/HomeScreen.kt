@@ -501,31 +501,30 @@ fun HomeScreen(
                                 onClearSelectionClick = { viewModel.clearContextualAction() })
                         }
                     }) { paddingValues ->
-                    Box(modifier = Modifier.fillMaxSize()) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(paddingValues)
-                        ) {
-                            if (isHomeEmpty) {
-                                if (isLibraryEmpty) {
-                                    EmptyState(
-                                        title = stringResource(R.string.your_library_empty),
-                                        message = stringResource(R.string.your_library_empty_desc),
-                                        onSelectFileClick = onSelectFileClick,
-                                        modifier = Modifier.weight(1f),
-                                        secondaryButtonText = stringResource(R.string.setup_folder_sync),
-                                        onSecondaryClick = { viewModel.navigateToFolderSync() }
-                                    )
-                                } else {
-                                    EmptyState(
-                                        title = stringResource(R.string.no_recent_files),
-                                        message = stringResource(R.string.no_recent_files_desc),
-                                        onSelectFileClick = onSelectFileClick,
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                }
-                            } else {
+                    com.aryan.reader.shared.ui.SharedAndroidHomeBody(
+                        isHomeEmpty = isHomeEmpty,
+                        isLibraryEmpty = isLibraryEmpty,
+                        isLoading = uiState.isLoading,
+                        contentPadding = paddingValues,
+                        emptyLibrary = { emptyModifier ->
+                            EmptyState(
+                                title = stringResource(R.string.your_library_empty),
+                                message = stringResource(R.string.your_library_empty_desc),
+                                onSelectFileClick = onSelectFileClick,
+                                modifier = emptyModifier,
+                                secondaryButtonText = stringResource(R.string.setup_folder_sync),
+                                onSecondaryClick = { viewModel.navigateToFolderSync() },
+                            )
+                        },
+                        emptyRecents = { emptyModifier ->
+                            EmptyState(
+                                title = stringResource(R.string.no_recent_files),
+                                message = stringResource(R.string.no_recent_files_desc),
+                                onSelectFileClick = onSelectFileClick,
+                                modifier = emptyModifier,
+                            )
+                        },
+                        recentContent = {
                                 RecentFilesContent(
                                     recentFiles = recentFilesForHome,
                                     openTabs = openTabs,
@@ -546,23 +545,8 @@ fun HomeScreen(
                                     hasSyncedFolder = uiState.syncedFolders.any { it.localSyncEnabled },
                                     usePdfFileNameAsDisplayName = uiState.usePdfFileNameAsDisplayName
                                 )
-                            }
-                        }
-
-                        if (uiState.isLoading) {
-                            Surface(
-                                modifier = Modifier.fillMaxSize(),
-                                color = MaterialTheme.colorScheme.background.copy(alpha = 0.7f)
-                            ) {
-                                Box(
-                                    modifier = Modifier.fillMaxSize(),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    CircularProgressIndicator()
-                                }
-                            }
-                        }
-                    }
+                        },
+                    )
 
                     // Dialogs
                     if (showDeleteConfirmDialog) {
@@ -739,12 +723,17 @@ private fun RecentFilesContent(
         selectedContextItems.mapNotNullTo(mutableSetOf()) { it.uriString }
     }
 
-    val content = @Composable {
-        Box(modifier = Modifier.fillMaxSize()) {
+    com.aryan.reader.shared.ui.SharedAndroidHomeRecentContent(
+        canRefresh = canRefresh,
+        isRefreshing = isRefreshing,
+        selectFileLabel = stringResource(R.string.empty_select_file),
+        syncFolderLabel = stringResource(R.string.sync_folder),
+        onRefresh = onRefresh,
+        onSelectFile = onSelectFileClick,
+        onSyncFolder = onNavigateToFolderSync,
+        recentGrid = { gridModifier ->
             RecentFilesGrid(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 16.dp),
+                modifier = gridModifier.padding(horizontal = 16.dp),
                 recentFiles = recentFiles,
                 openTabs = openTabs,
                 isTabsEnabled = isTabsEnabled,
@@ -759,36 +748,8 @@ private fun RecentFilesContent(
                 downloadingBookIds = downloadingBookIds,
                 usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName
             )
-
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = 24.dp),
-                horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                androidx.compose.material3.Button(onClick = onSelectFileClick) {
-                    Text(stringResource(R.string.empty_select_file))
-                }
-                androidx.compose.material3.Button(onClick = onNavigateToFolderSync) {
-                    Text(stringResource(R.string.sync_folder))
-                }
-            }
-        }
-    }
-
-    if (canRefresh) {
-        PullToRefreshBox(
-            isRefreshing = isRefreshing,
-            onRefresh = onRefresh,
-            modifier = Modifier.fillMaxSize()
-        ) {
-            content()
-        }
-    } else {
-        content()
-    }
+        },
+    )
 }
 
 @Composable
@@ -808,81 +769,27 @@ private fun RecentFilesGrid(
     downloadingBookIds: Set<String>,
     usePdfFileNameAsDisplayName: Boolean,
 ) {
-    val gridCells = when (windowSizeClass.widthSizeClass) {
-        WindowWidthSizeClass.Compact -> GridCells.Fixed(3)
-        WindowWidthSizeClass.Medium -> GridCells.Adaptive(minSize = 140.dp)
-        else -> GridCells.Adaptive(minSize = 160.dp)
-    }
-
-    Column(modifier = modifier) {
-        if (isTabsEnabled && openTabs.isNotEmpty()) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 8.dp, top = 24.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = stringResource(R.string.active_tabs),
-                    style = MaterialTheme.typography.titleLarge
-                )
-                IconButton(onClick = onCloseAllTabsClick) {
-                    Icon(
-                        imageVector = Icons.Default.Close,
-                        contentDescription = stringResource(R.string.close_all_tabs),
-                        tint = MaterialTheme.colorScheme.error
-                    )
-                }
-            }
-            LazyRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.fillMaxWidth(),
-                contentPadding = PaddingValues(bottom = 8.dp)
-            ) {
-                items(openTabs, key = { "tab_${it.bookId}" }) { tab ->
-                    InputChip(
-                        selected = false,
-                        onClick = { onItemClick(tab) },
-                        label = {
-                            Text(
-                                text = tab.cardTitle(usePdfFileNameAsDisplayName),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.widthIn(max = 150.dp)
-                            )
-                        },
-                        trailingIcon = {
-                            IconButton(
-                                onClick = { onTabCloseClick(tab.bookId) },
-                                modifier = Modifier.size(24.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Close,
-                                    contentDescription = stringResource(R.string.close_tab),
-                                    modifier = Modifier.size(16.dp)
-                                )
-                            }
-                        },
-                        modifier = Modifier.testTag("HomeTab_${tab.bookId}")
-                    )
-                }
-            }
-        }
-
-        Text(
-            text = stringResource(R.string.recent_files),
-            style = MaterialTheme.typography.titleLarge,
-            modifier = Modifier.padding(bottom = 8.dp, top = if (isTabsEnabled && openTabs.isNotEmpty()) 8.dp else 24.dp)
-        )
-
-        LazyVerticalGrid(
-            columns = gridCells,
-            contentPadding = contentPadding,
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
-            verticalArrangement = Arrangement.spacedBy(24.dp)
-        ) {
-            items(recentFiles, key = { it.bookId }) { item ->
+    com.aryan.reader.shared.ui.SharedAndroidHomeRecentGrid(
+        recentItems = recentFiles,
+        openTabs = openTabs,
+        tabsEnabled = isTabsEnabled,
+        widthClass = when (windowSizeClass.widthSizeClass) {
+            WindowWidthSizeClass.Compact -> com.aryan.reader.shared.ui.SharedAndroidHomeWidthClass.COMPACT
+            WindowWidthSizeClass.Medium -> com.aryan.reader.shared.ui.SharedAndroidHomeWidthClass.MEDIUM
+            else -> com.aryan.reader.shared.ui.SharedAndroidHomeWidthClass.EXPANDED
+        },
+        activeTabsLabel = stringResource(R.string.active_tabs),
+        recentFilesLabel = stringResource(R.string.recent_files),
+        closeAllTabsDescription = stringResource(R.string.close_all_tabs),
+        closeTabDescription = stringResource(R.string.close_tab),
+        itemKey = { it.bookId },
+        itemTitle = { it.cardTitle(usePdfFileNameAsDisplayName) },
+        onItemClick = onItemClick,
+        onCloseTab = { onTabCloseClick(it.bookId) },
+        onCloseAllTabs = onCloseAllTabsClick,
+        contentPadding = contentPadding,
+        modifier = modifier,
+        recentCard = { item ->
                 RecentFileCard(
                     item = item,
                     isSelected = item.uriString in selectedItemUris,
@@ -892,9 +799,8 @@ private fun RecentFilesGrid(
                     isDownloading = item.bookId in downloadingBookIds,
                     usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName
                 )
-            }
-        }
-    }
+        },
+    )
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -911,191 +817,45 @@ fun RecentFileCard(
 ) {
     val progressPercent = item.progressPercentage?.takeIf { it > 0f }?.coerceIn(0f, 100f)?.toInt()
     val authorText = item.author?.takeIf { it.isNotBlank() && !it.equals("Unknown", ignoreCase = true) } ?: " "
-
-    androidx.compose.material3.ElevatedCard(
-        modifier = modifier
-            .testTag("HomeRecentFileCard_${item.bookId}")
-            .graphicsLayer { alpha = if (item.isAvailable) 1.0f else 0.8f }
-            .then(
-                if (isSelected) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, MaterialTheme.shapes.large)
-                else Modifier
-            )
-            .clip(MaterialTheme.shapes.large)
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
-        shape = MaterialTheme.shapes.large,
-        colors = androidx.compose.material3.CardDefaults.elevatedCardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
-        ),
-        elevation = androidx.compose.material3.CardDefaults.elevatedCardElevation(
-            defaultElevation = if (isSelected) 6.dp else 2.dp
-        )
-    ) {
-        Column(modifier = Modifier.fillMaxWidth()) {
-            BoxWithConstraints(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(0.74f)
-            ) {
-                val useCompactCoverBadges = maxWidth < 128.dp
-                val coverBadgePadding = if (useCompactCoverBadges) 5.dp else 8.dp
-
+    com.aryan.reader.shared.ui.SharedAndroidHomeRecentCard(
+        bookId = item.bookId,
+        title = item.cardTitle(usePdfFileNameAsDisplayName),
+        author = authorText,
+        progressPercent = progressPercent,
+        isAvailable = item.isAvailable,
+        isDownloading = isDownloading,
+        isSelected = isSelected,
+        hasCustomCover = !item.coverImagePath.isNullOrBlank(),
+        showStatusBadges = item.sourceFolderUri != null || item.isOpdsStream() || isPinned,
+        unavailableDescription = stringResource(R.string.not_available_locally),
+        selectedDescription = stringResource(R.string.content_desc_selected),
+        onClick = onClick,
+        onLongClick = onLongClick,
+        modifier = modifier,
+        cover = { coverModifier ->
                 ThemedBookCover(
                     item = item,
                     contentDescription = item.displayName,
                     contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize()
+                    modifier = coverModifier,
                 )
-
-                if (!item.coverImagePath.isNullOrBlank()) {
-                    Box(
-                        modifier = Modifier.fillMaxSize().background(
-                            androidx.compose.ui.graphics.Brush.verticalGradient(
-                                0f to Color.Black.copy(alpha = 0.15f),
-                                0.3f to Color.Transparent,
-                                0.6f to Color.Transparent,
-                                1f to Color.Black.copy(alpha = 0.5f)
-                            )
-                        )
-                    )
-                }
-
-                if (item.sourceFolderUri != null || item.isOpdsStream() || isPinned) {
+        },
+        statusBadges = { badgeModifier ->
                     FileStatusBadges(
                         item = item,
                         isPinned = isPinned,
                         overlay = true,
-                        modifier = Modifier
-                            .align(Alignment.TopStart)
-                            .padding(10.dp)
+                modifier = badgeModifier,
                     )
-                }
-
-                if (!item.isAvailable) {
-                    Box(
-                        modifier = Modifier.matchParentSize()
-                            .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.5f)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        if (isDownloading) {
-                            CircularProgressIndicator(color = Color.White)
-                        } else {
-                            Icon(
-                                Icons.Filled.Info,
-                                contentDescription = stringResource(R.string.not_available_locally),
-                                modifier = Modifier.size(48.dp),
-                                tint = Color.White
-                            )
-                        }
-                    }
-                }
-
-                if (isSelected) {
-                    Box(
-                        modifier = Modifier.matchParentSize()
-                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            Icons.Default.Check,
-                            contentDescription = stringResource(R.string.content_desc_selected),
-                            modifier = Modifier.size(48.dp)
-                                .background(MaterialTheme.colorScheme.primary, CircleShape)
-                                .padding(8.dp),
-                            tint = MaterialTheme.colorScheme.onPrimary
-                        )
-                    }
-                }
-
-                Row(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
-                        .padding(coverBadgePadding),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    progressPercent?.let { percent ->
-                        CoverProgressBadge(
-                            percent = percent,
-                            compact = useCompactCoverBadges
-                        )
-                    }
-                    Spacer(modifier = Modifier.weight(1f))
+        },
+        fileTypeBadge = { compact ->
                     FileTypeBadge(
                         type = item.type,
                         overlay = true,
-                        compact = useCompactCoverBadges
+                compact = compact,
                     )
-                }
-            }
-
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.surfaceContainerLow)
-                    .padding(horizontal = 14.dp, vertical = 12.dp),
-                horizontalAlignment = Alignment.Start
-            ) {
-                Text(
-                    text = item.cardTitle(usePdfFileNameAsDisplayName),
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 2,
-                    minLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.fillMaxWidth(),
-                    lineHeight = 20.sp
-                )
-
-                Spacer(modifier = Modifier.height(4.dp))
-
-                Text(
-                    text = authorText,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    minLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                // Availability is already shown over the cover. Keeping the card
-                // footer metadata-only avoids a blank row beneath normal books.
-            }
-        }
-    }
-}
-
-@Composable
-private fun CoverProgressBadge(
-    percent: Int,
-    compact: Boolean,
-    modifier: Modifier = Modifier
-) {
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(50),
-        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.95f),
-        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-        border = androidx.compose.foundation.BorderStroke(
-            1.dp,
-            Color.White.copy(alpha = 0.14f)
-        )
-    ) {
-        Text(
-            text = "$percent%",
-            style = if (compact) {
-                MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp)
-            } else {
-                MaterialTheme.typography.labelSmall
-            },
-            fontWeight = FontWeight.Bold,
-            maxLines = 1,
-            modifier = Modifier.padding(
-                horizontal = if (compact) 6.dp else 10.dp,
-                vertical = if (compact) 3.dp else 4.dp
-            )
-        )
-    }
+        },
+    )
 }
 
 @Suppress("unused", "KotlinConstantConditions")
@@ -1122,182 +882,70 @@ fun DefaultTopAppBar(
     onLanguageClick: () -> Unit,
     onExportLogsClick: () -> Unit,
     onToggleHideReaderAi: () -> Unit,
-    onScreenCaptureProtectionChange: (Boolean) -> Unit
+    onScreenCaptureProtectionChange: (Boolean) -> Unit,
 ) {
-    var showOptionsMenu by remember { mutableStateOf(false) }
-    var showLimitMenu by remember { mutableStateOf(false) }
     val context = LocalContext.current
-    var hideReaderAiFeatures by remember { mutableStateOf(loadHideReaderAiFeatures(context)) }
-
-    CustomTopAppBar(title = { }, navigationIcon = {
-        IconButton(onClick = onDrawerClick) {
-            BadgedBox(
-                badge = {
-                    if (uiState.hasUnreadFeedback) {
-                        Badge()
-                    }
-                }) {
-                Icon(Icons.Default.Menu, contentDescription = stringResource(R.string.content_desc_open_drawer))
-            }
-        }
-    }, actions = {
-        IconButton(onClick = onSettingsClick) {
-            Icon(Icons.Default.Settings, contentDescription = stringResource(R.string.settings))
-        }
-        Box {
-            IconButton(onClick = onAppThemeClick) {
-                Icon(painterResource(id = R.drawable.palette), contentDescription = stringResource(R.string.content_desc_app_theme))
-            }
-        }
-        // Recent Files Limit Menu
-        Box {
-            IconButton(onClick = { showLimitMenu = true }) {
-                Icon(Icons.Default.FormatListNumbered, contentDescription = stringResource(R.string.options_recent_limit))
-            }
-            DropdownMenu(
-                expanded = showLimitMenu, onDismissRequest = { showLimitMenu = false }
-            ) {
-                val limitOptions = listOf(0, 10, 20, 50, 100)
-                limitOptions.forEach { limit ->
-                    DropdownMenuItem(
-                        text = { Text(if (limit == 0) stringResource(R.string.options_no_limit) else stringResource(R.string.options_files_limit, limit)) },
-                        onClick = {
-                            onRecentFilesLimitChange(limit)
-                            showLimitMenu = false
-                        },
-                        trailingIcon = if (uiState.recentFilesLimit == limit) {
-                            { Icon(Icons.Default.Check, contentDescription = stringResource(R.string.content_desc_selected)) }
-                        } else null
-                    )
-                }
-            }
-        }
-
-        // Options Menu (MoreVert)
-        Box {
-            IconButton(onClick = { showOptionsMenu = true }) {
-                Icon(Icons.Default.MoreVert, contentDescription = stringResource(R.string.content_desc_more_options))
-            }
-            DropdownMenu(
-                expanded = showOptionsMenu, onDismissRequest = { showOptionsMenu = false }) {
-                DropdownMenuItem(text = { Text(stringResource(R.string.about_title)) }, onClick = {
-                    onAboutClick()
-                    showOptionsMenu = false
-                })
-
-                HorizontalDivider()
-
-                DropdownMenuItem(text = { Text(stringResource(R.string.options_enable_multi_tab_reading)) }, onClick = {
-                    onTabsToggle(!uiState.isTabsEnabled)
-                    showOptionsMenu = false
-                }, trailingIcon = {
-                    if (uiState.isTabsEnabled) {
-                        Icon(Icons.Default.Check, contentDescription = stringResource(R.string.content_desc_enabled))
-                    }
-                })
-
-                DropdownMenuItem(
-                    text = { Text(stringResource(R.string.options_screen_capture_protection)) },
-                    onClick = {
-                        onScreenCaptureProtectionChange(!uiState.isScreenCaptureProtectionEnabled)
-                        showOptionsMenu = false
-                    },
-                    trailingIcon = {
-                        if (uiState.isScreenCaptureProtectionEnabled) {
-                            Icon(Icons.Default.Check, contentDescription = stringResource(R.string.content_desc_enabled))
-                        }
-                    }
-                )
-
-                DropdownMenuItem(text = { Text(stringResource(R.string.options_external_file_behavior)) }, onClick = {
-                    onExternalFileBehaviorClick()
-                    showOptionsMenu = false
-                })
-
-                DropdownMenuItem(text = { Text(stringResource(R.string.options_use_strict_file_filter)) }, onClick = {
-                    onStrictFilterToggleClick()
-                    showOptionsMenu = false
-                }, trailingIcon = {
-                    if (uiState.useStrictFileFilter) {
-                        Icon(Icons.Default.Check, contentDescription = stringResource(R.string.content_desc_enabled))
-                    }
-                })
-
-                DropdownMenuItem(text = { Text(stringResource(R.string.options_use_pdf_filename_display_name)) }, onClick = {
-                    onUsePdfFileNameAsDisplayNameToggle()
-                    showOptionsMenu = false
-                }, trailingIcon = {
-                    if (uiState.usePdfFileNameAsDisplayName) {
-                        Icon(Icons.Default.Check, contentDescription = stringResource(R.string.content_desc_enabled))
-                    }
-                })
-
-                HorizontalDivider()
-
-                DropdownMenuItem(text = { Text(stringResource(R.string.options_language)) }, onClick = {
-                    onLanguageClick()
-                    showOptionsMenu = false
-                })
-
-                if (!BuildConfig.IS_OFFLINE) {
-                    DropdownMenuItem(
-                        text = { Text(stringResource(if (hideReaderAiFeatures) R.string.options_show_ai_in_reader else R.string.options_hide_ai_in_reader)) },
-                        onClick = {
-                            onToggleHideReaderAi()
-                            hideReaderAiFeatures = !hideReaderAiFeatures
-                            showOptionsMenu = false
-                        },
-                        trailingIcon = {
-                            if (hideReaderAiFeatures) {
-                                Icon(Icons.Default.Check, contentDescription = stringResource(R.string.content_desc_enabled))
-                            }
-                        }
-                    )
-                }
-
-                HorizontalDivider()
-                DropdownMenuItem(text = { Text(stringResource(R.string.options_clear_book_cache)) }, onClick = {
-                    onClearCache()
-                    showOptionsMenu = false
-                })
-                DropdownMenuItem(text = { Text(stringResource(R.string.options_clear_reflow_cache)) }, onClick = {
-                    onClearReflowCache()
-                    showOptionsMenu = false
-                })
-
-                if (BuildConfig.DEBUG) {
-                    HorizontalDivider()
-                    DropdownMenuItem(text = { Text(stringResource(R.string.options_test_panel_ml_detection)) }, onClick = {
-                        onTestPanelDetectionClick()
-                        showOptionsMenu = false
-                    })
-
-                    DropdownMenuItem(text = { Text(stringResource(R.string.options_test_speech_bubble_ml_detection)) }, onClick = {
-                        onTestSpeechBubbleDetectionClick()
-                        showOptionsMenu = false
-                    })
-
-                    DropdownMenuItem(text = { Text(stringResource(R.string.options_export_logs_last_lines, 5000)) }, onClick = {
-                        onExportLogsClick()
-                        showOptionsMenu = false
-                    })
-                }
-
-                if (BuildConfig.DEBUG && BuildConfig.FLAVOR != "oss") {
-                    HorizontalDivider()
-                    DropdownMenuItem(text = { Text(stringResource(R.string.debug_show_device_management)) }, onClick = {
-                        onShowDeviceManagement()
-                        showOptionsMenu = false
-                    })
-                    DropdownMenuItem(text = { Text(stringResource(R.string.debug_clear_cloud_local_data)) },
-                        onClick = {
-                            onClearCloudData()
-                            showOptionsMenu = false
-                        })
-                }
-            }
-        }
-    })
+    com.aryan.reader.shared.ui.SharedAndroidHomeTopBar(
+        strings = com.aryan.reader.shared.ui.SharedAndroidHomeTopBarStrings(
+            openDrawer = stringResource(R.string.content_desc_open_drawer),
+            settings = stringResource(R.string.settings),
+            appTheme = stringResource(R.string.content_desc_app_theme),
+            recentLimit = stringResource(R.string.options_recent_limit),
+            noLimit = stringResource(R.string.options_no_limit),
+            limitLabels = listOf(10, 20, 50, 100).associateWith { stringResource(R.string.options_files_limit, it) },
+            selected = stringResource(R.string.content_desc_selected),
+            moreOptions = stringResource(R.string.content_desc_more_options),
+            about = stringResource(R.string.about_title),
+            multiTab = stringResource(R.string.options_enable_multi_tab_reading),
+            screenCaptureProtection = stringResource(R.string.options_screen_capture_protection),
+            externalFileBehavior = stringResource(R.string.options_external_file_behavior),
+            strictFileFilter = stringResource(R.string.options_use_strict_file_filter),
+            pdfFileName = stringResource(R.string.options_use_pdf_filename_display_name),
+            language = stringResource(R.string.options_language),
+            hideReaderAi = stringResource(R.string.options_hide_ai_in_reader),
+            showReaderAi = stringResource(R.string.options_show_ai_in_reader),
+            enabled = stringResource(R.string.content_desc_enabled),
+            clearBookCache = stringResource(R.string.options_clear_book_cache),
+            clearReflowCache = stringResource(R.string.options_clear_reflow_cache),
+            testPanelDetection = stringResource(R.string.options_test_panel_ml_detection),
+            testSpeechBubbleDetection = stringResource(R.string.options_test_speech_bubble_ml_detection),
+            exportLogs = stringResource(R.string.options_export_logs_last_lines, 5000),
+            showDeviceManagement = stringResource(R.string.debug_show_device_management),
+            clearCloudAndLocalData = stringResource(R.string.debug_clear_cloud_local_data),
+        ),
+        hasUnreadFeedback = uiState.hasUnreadFeedback,
+        recentFilesLimit = uiState.recentFilesLimit,
+        tabsEnabled = uiState.isTabsEnabled,
+        screenCaptureProtectionEnabled = uiState.isScreenCaptureProtectionEnabled,
+        strictFileFilterEnabled = uiState.useStrictFileFilter,
+        usePdfFileNameAsDisplayName = uiState.usePdfFileNameAsDisplayName,
+        initialHideReaderAi = loadHideReaderAiFeatures(context),
+        showReaderAiOption = !BuildConfig.IS_OFFLINE,
+        showDebugActions = BuildConfig.DEBUG,
+        showDebugCloudActions = BuildConfig.DEBUG && BuildConfig.FLAVOR != "oss",
+        onDrawer = onDrawerClick,
+        onSettings = onSettingsClick,
+        onAppTheme = onAppThemeClick,
+        onRecentFilesLimitChange = onRecentFilesLimitChange,
+        onAbout = onAboutClick,
+        onTabsToggle = { onTabsToggle(!uiState.isTabsEnabled) },
+        onScreenCaptureProtectionToggle = { onScreenCaptureProtectionChange(!uiState.isScreenCaptureProtectionEnabled) },
+        onExternalFileBehavior = onExternalFileBehaviorClick,
+        onStrictFileFilterToggle = onStrictFilterToggleClick,
+        onPdfFileNameToggle = onUsePdfFileNameAsDisplayNameToggle,
+        onLanguage = onLanguageClick,
+        onToggleReaderAi = onToggleHideReaderAi,
+        onClearBookCache = onClearCache,
+        onClearReflowCache = onClearReflowCache,
+        onTestPanelDetection = onTestPanelDetectionClick,
+        onTestSpeechBubbleDetection = onTestSpeechBubbleDetectionClick,
+        onExportLogs = onExportLogsClick,
+        onShowDeviceManagement = onShowDeviceManagement,
+        onClearCloudAndLocalData = onClearCloudData,
+        appThemeIcon = {
+            Icon(painterResource(R.drawable.palette), contentDescription = stringResource(R.string.content_desc_app_theme))
+        },
+    )
 }
 
 @Suppress("KotlinConstantConditions")

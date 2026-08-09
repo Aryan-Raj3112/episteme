@@ -6537,19 +6537,6 @@ fun SharedMobileUnifiedLibraryScreen(
     }
 }
 
-private enum class MobileUnifiedLibrarySection(val persistedValue: Int) {
-    HOME(0),
-    SHELVES(1),
-    FOLDERS(2),
-    CATALOGS(3),
-    AUDIOBOOKS(4);
-
-    companion object {
-        fun fromPersisted(value: Int): MobileUnifiedLibrarySection =
-            entries.firstOrNull { it.persistedValue == value } ?: HOME
-    }
-}
-
 @Composable
 private fun SharedMobileUnifiedShelvesSection(
     shelves: List<Shelf>,

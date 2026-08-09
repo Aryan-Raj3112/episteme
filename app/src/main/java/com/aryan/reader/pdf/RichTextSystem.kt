@@ -32,7 +32,6 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.SoftwareKeyboardController
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
@@ -45,6 +44,20 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.sp
 import com.aryan.reader.pdf.data.VirtualPage
+import com.aryan.reader.shared.pdf.SHARED_PDF_PAGE_BREAK_CHAR
+import com.aryan.reader.shared.pdf.SharedPdfRichPageLayout
+import com.aryan.reader.shared.pdf.SharedPdfRichDocument
+import com.aryan.reader.shared.pdf.SharedPdfRichSpan
+import com.aryan.reader.shared.pdf.SharedPdfRichTextPaginationEngine
+import com.aryan.reader.shared.pdf.SharedPdfRichTextMapper
+import com.aryan.reader.shared.pdf.SharedPdfRichTextSerializer
+import com.aryan.reader.shared.pdf.hasRenderableSharedPdfRichText
+import com.aryan.reader.shared.pdf.remapSharedPdfRichTextForLayoutChange
+import com.aryan.reader.shared.pdf.sharedPdfRichTextBlankInsertBreakCount
+import com.aryan.reader.shared.pdf.sharedPdfRichTextInsertionIndexForPage
+import com.aryan.reader.shared.pdf.sharedPdfRichTextSelectionBounds
+import com.aryan.reader.shared.pdf.withRestoredTrailingSharedPdfPageBreak
+import com.aryan.reader.shared.pdf.withoutTrailingSharedPdfPageBreak
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -57,26 +70,21 @@ import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.json.JSONArray
-import org.json.JSONObject
 import timber.log.Timber
 import java.io.File
 
-const val PAGE_BREAK_CHAR = '\u000C'
+const val PAGE_BREAK_CHAR = SHARED_PDF_PAGE_BREAK_CHAR
 private const val ZWSP = "\u200B"
 
 internal fun String.hasRenderableRichText(): Boolean =
-    any { it != PAGE_BREAK_CHAR && !it.isWhitespace() }
+    hasRenderableSharedPdfRichText()
 
 internal fun androidPdfRichTextSelectionBounds(
     selectionStart: Int,
     selectionEnd: Int,
     textLength: Int
 ): Pair<Int, Int>? {
-    val safeLength = textLength.coerceAtLeast(0)
-    val localStart = minOf(selectionStart, selectionEnd).coerceIn(0, safeLength)
-    val localEnd = maxOf(selectionStart, selectionEnd).coerceIn(0, safeLength)
-    return if (localStart < localEnd) localStart to localEnd else null
+    return sharedPdfRichTextSelectionBounds(selectionStart, selectionEnd, textLength)
 }
 
 object PdfFontCache {
@@ -120,28 +128,10 @@ object PdfFontCache {
     }
 }
 
-data class GlobalRichSpan(
-    val start: Int,
-    val end: Int,
-    val color: Int,
-    val backgroundColor: Int,
-    val fontSizeNorm: Float,
-    val isBold: Boolean,
-    val isItalic: Boolean,
-    val isUnderline: Boolean,
-    val isStrikethrough: Boolean,
-    val fontPath: String? = null
-)
-
-data class GlobalRichDocument(val text: String, val spans: List<GlobalRichSpan>)
-
-data class PageTextLayout(
-    val pageIndex: Int,
-    val visibleText: AnnotatedString,
-    val globalStartIndex: Int,
-    val globalEndIndex: Int,
-    val pageHeightPx: Float
-)
+typealias GlobalRichSpan = SharedPdfRichSpan
+typealias GlobalRichDocument = SharedPdfRichDocument
+typealias PageTextLayout = SharedPdfRichPageLayout
+typealias TextPaginationEngine = SharedPdfRichTextPaginationEngine
 
 object RichTextMapper {
     fun toAnnotatedString(
@@ -150,327 +140,30 @@ object RichTextMapper {
         rangeStart: Int = 0,
         rangeEnd: Int = document.text.length
     ): AnnotatedString {
-        val safeGlobalStart = rangeStart.coerceIn(0, document.text.length)
-        val safeGlobalEnd = rangeEnd.coerceIn(safeGlobalStart, document.text.length)
-
-        if (safeGlobalStart == safeGlobalEnd) return AnnotatedString("")
-        val textSubstring = document.text.substring(safeGlobalStart, safeGlobalEnd)
-
-        return buildAnnotatedString {
-            append(textSubstring)
-            var count = 0
-            for (span in document.spans) {
-                if (span.start >= safeGlobalEnd) break
-                if (span.end <= safeGlobalStart) continue
-
-                val intersectionStart = maxOf(span.start, safeGlobalStart)
-                val intersectionEnd = minOf(span.end, safeGlobalEnd)
-
-                val fontFamily = PdfFontCache.getFontFamily(span.fontPath)
-                if (span.fontPath != null) {
-                    Timber.tag("PdfFontDebug").v("toAnnotatedString: Applying font path ${span.fontPath} to span [${span.start}..${span.end}]")
-                }
-
-                if (intersectionStart < intersectionEnd) {
-                    val fontSizePx = if (pageHeightPx > 0) span.fontSizeNorm * pageHeightPx else 16f
-                    val decorations = mutableListOf<TextDecoration>()
-                    if (span.isUnderline) decorations.add(TextDecoration.Underline)
-                    if (span.isStrikethrough) decorations.add(TextDecoration.LineThrough)
-
-                    addStyle(
-                        style = SpanStyle(
-                            color = Color(span.color),
-                            background = Color(span.backgroundColor),
-                            fontSize = fontSizePx.sp,
-                            fontWeight = if (span.isBold) FontWeight.Bold else FontWeight.Normal,
-                            fontStyle = if (span.isItalic) FontStyle.Italic else FontStyle.Normal,
-                            textDecoration = if (decorations.isNotEmpty()) TextDecoration.combine(decorations) else TextDecoration.None,
-                            fontFamily = PdfFontCache.getFontFamily(span.fontPath)
-                        ),
-                        start = intersectionStart - safeGlobalStart,
-                        end = intersectionEnd - safeGlobalStart
-                    )
-                    count++
-                }
-            }
-            Timber.tag("TextAnnotStyle").v("toAnnotatedString: Final local spans: $count")
-        }
+        return SharedPdfRichTextMapper.toAnnotatedString(
+            document = document,
+            pageHeightPx = pageHeightPx,
+            rangeStart = rangeStart,
+            rangeEnd = rangeEnd,
+            fontFamilyResolver = PdfFontCache::getFontFamily,
+        )
     }
 
     fun fromAnnotatedString(text: AnnotatedString, pageHeightPx: Float): GlobalRichDocument {
-        val pageBreakCount = text.text.count { it == PAGE_BREAK_CHAR }
-        Timber.tag("RichTextFlow").v("fromAnnotatedString: Mapping text. Len=${text.length}, PageBreaks=$pageBreakCount")
-        if (text.isEmpty()) return GlobalRichDocument("", emptyList())
-
-        val spans = mutableListOf<GlobalRichSpan>()
-        val changePoints = sortedSetOf(0, text.length)
-        text.spanStyles.forEach {
-            changePoints.add(it.start)
-            changePoints.add(it.end)
-        }
-        val sortedPoints = changePoints.toList()
-
-        for (i in 0 until sortedPoints.size - 1) {
-            val start = sortedPoints[i]
-            val end = sortedPoints[i + 1]
-            if (start >= end) continue
-
-            val activeStyles = text.spanStyles.filter { it.start <= start && it.end >= end }
-            var effective = SpanStyle(color = Color.Black, fontSize = 16.sp)
-            activeStyles.forEach { effective = effective.merge(it.item) }
-
-            val fsNorm = if (effective.fontSize.isSp) {
-                if (pageHeightPx > 0) (effective.fontSize.value / pageHeightPx) else 0.015f
-            } else 0.015f
-
-            val currentDec = effective.textDecoration ?: TextDecoration.None
-            val isUnd = currentDec.contains(TextDecoration.Underline)
-            val isStr = currentDec.contains(TextDecoration.LineThrough)
-
-            val newSpan = GlobalRichSpan(
-                start = start,
-                end = end,
-                color = effective.color.toArgb(),
-                backgroundColor = effective.background.toArgb(),
-                fontSizeNorm = fsNorm,
-                isBold = effective.fontWeight == FontWeight.Bold,
-                isItalic = effective.fontStyle == FontStyle.Italic,
-                isUnderline = isUnd,
-                isStrikethrough = isStr,
-                fontPath = PdfFontCache.getPath(effective.fontFamily)
-            )
-
-            if (spans.isNotEmpty()) {
-                val last = spans.last()
-                if (last.end == start &&
-                    last.color == newSpan.color &&
-                    last.backgroundColor == newSpan.backgroundColor &&
-                    last.fontSizeNorm == newSpan.fontSizeNorm &&
-                    last.isBold == newSpan.isBold &&
-                    last.isItalic == newSpan.isItalic &&
-                    last.isUnderline == newSpan.isUnderline &&
-                    last.isStrikethrough == newSpan.isStrikethrough &&
-                    last.fontPath == newSpan.fontPath
-                ) {
-                    spans[spans.lastIndex] = last.copy(end = end)
-                } else {
-                    spans.add(newSpan)
-                }
-            } else {
-                spans.add(newSpan)
-            }
-        }
-        val result = GlobalRichDocument(text.text, spans)
-        Timber.tag("TextAnnotStyle").d("fromAnnotatedString: Created GlobalRichDocument with ${spans.size} merged spans")
-        return result
-    }
-}
-
-class TextPaginationEngine {
-    fun paginate(
-        globalText: AnnotatedString,
-        pageWidthPx: Float,
-        pageHeightPx: Float,
-        textMeasurer: TextMeasurer,
-        density: Density,
-        marginX: Float,
-        marginY: Float,
-        previousLayouts: List<PageTextLayout> = emptyList(),
-        dirtyGlobalIndex: Int = 0
-    ): List<PageTextLayout> {
-        val totalLen = globalText.length
-        Timber.d(
-            "android.paginate start textLen=$totalLen page=${pageWidthPx.richAndroidLogFloat()}x${pageHeightPx.richAndroidLogFloat()} " +
-                "margin=${marginX.richAndroidLogFloat()},${marginY.richAndroidLogFloat()} prev=${previousLayouts.size} dirty=$dirtyGlobalIndex"
+        return SharedPdfRichTextMapper.fromAnnotatedString(
+            text = text,
+            pageHeightPx = pageHeightPx,
+            fontPathResolver = PdfFontCache::getPath,
         )
-        if (totalLen == 0) {
-            Timber.d("android.paginate empty -> p0:0-0")
-            return listOf(
-                PageTextLayout(0, AnnotatedString(""), 0, 0, pageHeightPx)
-            )
-        }
-        if (pageWidthPx <= 0 || pageHeightPx <= 0) {
-            Timber.d("android.paginate aborted invalid page size")
-            return emptyList()
-        }
-
-        val editorWidth = (pageWidthPx - (marginX * 2)).coerceAtLeast(10f)
-        val editorHeight = (pageHeightPx - (marginY * 2)).coerceAtLeast(10f)
-
-        val newPages = mutableListOf<PageTextLayout>()
-        var currentPageIndex = 0
-        var segmentStart = 0
-        val rawText = globalText.text
-
-        while (segmentStart < totalLen) {
-            val breakIndex = rawText.indexOf(PAGE_BREAK_CHAR, startIndex = segmentStart)
-            val hasExplicitBreak = breakIndex != -1
-            val contentEnd = if (hasExplicitBreak) breakIndex else totalLen
-            val segmentEnd = if (hasExplicitBreak) breakIndex + 1 else totalLen
-
-            currentPageIndex = newPages.appendMeasuredAndroidRichTextSegment(
-                globalText = globalText,
-                segmentStart = segmentStart,
-                contentEnd = contentEnd,
-                explicitBreakEnd = if (hasExplicitBreak) segmentEnd else null,
-                pageIndex = currentPageIndex,
-                pageHeightPx = pageHeightPx,
-                editorWidth = editorWidth,
-                editorHeight = editorHeight,
-                textMeasurer = textMeasurer,
-                density = density
-            )
-            segmentStart = segmentEnd
-        }
-
-        val resultLayouts = newPages.withTrailingAndroidBlankRichTextPageIfNeeded(
-            globalText = globalText,
-            pageHeightPx = pageHeightPx
-        )
-
-        val mapLog = resultLayouts.joinToString("\n") {
-            "  Page ${it.pageIndex}: Global[${it.globalStartIndex}..${it.globalEndIndex}]"
-        }
-        Timber.tag("RichTextMigration").i("Pagination Map Generated:\n$mapLog")
-        Timber.d("android.paginate done -> ${resultLayouts.richAndroidLayoutSummary()}")
-
-        return resultLayouts
     }
-}
-
-private fun MutableList<PageTextLayout>.appendMeasuredAndroidRichTextSegment(
-    globalText: AnnotatedString,
-    segmentStart: Int,
-    contentEnd: Int,
-    explicitBreakEnd: Int?,
-    pageIndex: Int,
-    pageHeightPx: Float,
-    editorWidth: Float,
-    editorHeight: Float,
-    textMeasurer: TextMeasurer,
-    density: Density
-): Int {
-    var nextPageIndex = pageIndex
-    if (segmentStart >= contentEnd) {
-        val breakEnd = explicitBreakEnd ?: return nextPageIndex
-        add(
-            PageTextLayout(
-                pageIndex = nextPageIndex,
-                visibleText = globalText.subSequence(segmentStart, breakEnd),
-                globalStartIndex = segmentStart,
-                globalEndIndex = breakEnd,
-                pageHeightPx = pageHeightPx
-            )
-        )
-        Timber.d(
-            "android.paginate pageBreakOnly page=$nextPageIndex global=$segmentStart..$breakEnd"
-        )
-        return nextPageIndex + 1
-    }
-
-    val contentLength = contentEnd - segmentStart
-    var relativeStart = 0
-    while (relativeStart < contentLength) {
-        val globalStart = segmentStart + relativeStart
-        val remainingText = globalText.subSequence(globalStart, contentEnd)
-        val measureResult = textMeasurer.measure(
-            text = remainingText,
-            style = TextStyle(fontSize = 16.sp, color = Color.Black),
-            constraints = Constraints(maxWidth = editorWidth.toInt(), maxHeight = Constraints.Infinity),
-            density = density
-        )
-        val fitsOnPage = measureResult.size.height.toFloat() <= editorHeight || measureResult.lineCount <= 1
-        var overflowLineIndex: Int? = null
-        val relativeEnd = if (fitsOnPage) {
-            contentLength
-        } else {
-            val lineIndex = measureResult.richAndroidLastFittingLineIndex(editorHeight)
-            overflowLineIndex = lineIndex
-            val localEnd = measureResult.getLineEnd(lineIndex)
-                .coerceIn(0, remainingText.length)
-                .coerceAtLeast(1)
-            (relativeStart + localEnd)
-                .coerceAtLeast(relativeStart + 1)
-                .coerceAtMost(contentLength)
-        }
-        val isLastContentPage = relativeEnd >= contentLength
-        val globalEnd = if (isLastContentPage && explicitBreakEnd != null) {
-            explicitBreakEnd
-        } else {
-            segmentStart + relativeEnd
-        }
-
-        add(
-            PageTextLayout(
-                pageIndex = nextPageIndex,
-                visibleText = globalText.subSequence(globalStart, globalEnd),
-                globalStartIndex = globalStart,
-                globalEndIndex = globalEnd,
-                pageHeightPx = pageHeightPx
-            )
-        )
-        if (isLastContentPage && explicitBreakEnd != null) {
-            Timber.d(
-                "android.paginate pageBreak page=$nextPageIndex global=$globalStart..$globalEnd"
-            )
-        } else if (!fitsOnPage) {
-            Timber.d(
-                "android.paginate overflow page=$nextPageIndex global=$globalStart..$globalEnd line=$overflowLineIndex"
-            )
-        }
-        nextPageIndex++
-        relativeStart = relativeEnd
-    }
-
-    return nextPageIndex
-}
-
-private fun TextLayoutResult.richAndroidLastFittingLineIndex(editorHeight: Float): Int {
-    var lastFitting = 0
-    for (lineIndex in 0 until lineCount) {
-        if (lineIndex == 0 || getLineBottom(lineIndex) <= editorHeight) {
-            lastFitting = lineIndex
-        } else {
-            break
-        }
-    }
-    return lastFitting.coerceIn(0, (lineCount - 1).coerceAtLeast(0))
-}
-
-private fun List<PageTextLayout>.withTrailingAndroidBlankRichTextPageIfNeeded(
-    globalText: AnnotatedString,
-    pageHeightPx: Float
-): List<PageTextLayout> {
-    if (globalText.text.lastOrNull() != PAGE_BREAK_CHAR) return this
-    val lastLayout = lastOrNull()
-    val trailingStart = globalText.length
-    if (lastLayout != null &&
-        lastLayout.globalStartIndex == trailingStart &&
-        lastLayout.globalEndIndex == trailingStart
-    ) {
-        return this
-    }
-    return this + PageTextLayout(
-        pageIndex = (lastLayout?.pageIndex ?: -1) + 1,
-        visibleText = AnnotatedString(""),
-        globalStartIndex = trailingStart,
-        globalEndIndex = trailingStart,
-        pageHeightPx = pageHeightPx
-    )
 }
 
 private fun AnnotatedString.withoutTrailingAndroidPageBreak(): AnnotatedString {
-    return if (text.lastOrNull() == PAGE_BREAK_CHAR) {
-        subSequence(0, length - 1)
-    } else {
-        this
-    }
+    return withoutTrailingSharedPdfPageBreak()
 }
 
 private fun AnnotatedString.withRestoredTrailingAndroidPageBreak(shouldRestore: Boolean): AnnotatedString {
-    if (!shouldRestore) return this
-    if (text.lastOrNull() == PAGE_BREAK_CHAR) return this
-    return this + AnnotatedString(PAGE_BREAK_CHAR.toString())
+    return withRestoredTrailingSharedPdfPageBreak(shouldRestore)
 }
 
 internal fun androidRichTextInsertionIndexForPage(
@@ -478,21 +171,15 @@ internal fun androidRichTextInsertionIndexForPage(
     pageLayouts: List<PageTextLayout>,
     textLength: Int
 ): Int {
-    val rawIndex = if (insertPageIndex <= 0) {
-        0
-    } else {
-        pageLayouts.find { it.pageIndex == insertPageIndex - 1 }?.globalEndIndex ?: textLength
-    }
-    return rawIndex.coerceIn(0, textLength)
+    return sharedPdfRichTextInsertionIndexForPage(
+        insertPageIndex = insertPageIndex,
+        pageLayouts = pageLayouts,
+        textLength = textLength,
+    )
 }
 
 internal fun androidRichTextBlankInsertBreakCount(text: String, insertionCharIndex: Int): Int {
-    val safeIndex = insertionCharIndex.coerceIn(0, text.length)
-    if (safeIndex == 0 || safeIndex == text.length) return 1
-
-    val hasBoundaryBreakBefore = text.getOrNull(safeIndex - 1) == PAGE_BREAK_CHAR
-    val hasBoundaryBreakAfter = text.getOrNull(safeIndex) == PAGE_BREAK_CHAR
-    return if (hasBoundaryBreakBefore || hasBoundaryBreakAfter) 1 else 2
+    return sharedPdfRichTextBlankInsertBreakCount(text, insertionCharIndex)
 }
 
 internal fun remapAndroidRichTextForLayoutChange(
@@ -500,36 +187,16 @@ internal fun remapAndroidRichTextForLayoutChange(
     updatedLayout: List<VirtualPage>,
     pageLayouts: List<PageTextLayout>
 ): AnnotatedString {
-    if (pageLayouts.isEmpty()) return AnnotatedString("")
-
-    val mapping = buildPdfPageIndexMapping(
-        currentLayout = currentLayout,
-        updatedLayout = updatedLayout,
-        sourcePageIndices = pageLayouts.map { it.pageIndex }
+    return remapSharedPdfRichTextForLayoutChange(
+        currentLayout = currentLayout.map(VirtualPage::toSharedRichTextPageIdentity),
+        updatedLayout = updatedLayout.map(VirtualPage::toSharedRichTextPageIdentity),
+        pageLayouts = pageLayouts,
     )
-    if (mapping.isEmpty()) return AnnotatedString("")
+}
 
-    val contentByTargetPage = linkedMapOf<Int, AnnotatedString>()
-    pageLayouts.sortedBy { it.pageIndex }.forEach { layout ->
-        val targetPageIndex = mapping[layout.pageIndex] ?: return@forEach
-        val pageContent = layout.visibleText.withoutTrailingAndroidPageBreak()
-        contentByTargetPage[targetPageIndex] = pageContent
-    }
-
-    val lastPageWithContent = contentByTargetPage
-        .filterValues { it.text.isNotEmpty() }
-        .keys
-        .maxOrNull()
-        ?: return AnnotatedString("")
-
-    val builder = AnnotatedString.Builder()
-    for (pageIndex in 0..lastPageWithContent) {
-        contentByTargetPage[pageIndex]?.let { builder.append(it) }
-        if (pageIndex < lastPageWithContent) {
-            builder.append(PAGE_BREAK_CHAR.toString())
-        }
-    }
-    return builder.toAnnotatedString()
+private fun VirtualPage.toSharedRichTextPageIdentity(): PdfPageIdentity = when (this) {
+    is VirtualPage.PdfPage -> PdfPageIdentity.Pdf(pdfIndex)
+    is VirtualPage.BlankPage -> PdfPageIdentity.Blank(id)
 }
 
 class PdfRichTextRepository(private val context: Context) {
@@ -556,31 +223,11 @@ class PdfRichTextRepository(private val context: Context) {
             }
             try {
                 val jsonString = file.readText()
-                val json = JSONObject(jsonString)
-                val text = json.getString("text")
-                val spansArray = json.getJSONArray("spans")
-                val spans = mutableListOf<GlobalRichSpan>()
-
-                for (i in 0 until spansArray.length()) {
-                    val sObj = spansArray.getJSONObject(i)
-                    spans.add(
-                        GlobalRichSpan(
-                            start = sObj.getInt("s"),
-                            end = sObj.getInt("e"),
-                            color = sObj.getInt("c"),
-                            backgroundColor = sObj.optInt("bg", android.graphics.Color.TRANSPARENT),
-                            fontSizeNorm = sObj.getDouble("sz").toFloat(),
-                            isBold = sObj.optBoolean("b"),
-                            isItalic = sObj.optBoolean("i"),
-                            isUnderline = sObj.optBoolean("u"),
-                            isStrikethrough = sObj.optBoolean("st"),
-                            fontPath = sObj.optString("fp"),
-                        )
-                    )
-                }
-                _document.value = GlobalRichDocument(text, spans)
+                val document = SharedPdfRichTextSerializer.decode(jsonString)
+                _document.value = document
                 Timber.d(
-                    "android.repository.load decoded book=$bookId rawLen=${jsonString.length} textLen=${text.length} spans=${spans.size}"
+                    "android.repository.load decoded book=$bookId rawLen=${jsonString.length} " +
+                        "textLen=${document.text.length} spans=${document.spans.size}"
                 )
             } catch (e: Exception) {
                 Timber.e(e, "android.repository.load failed book=$bookId")
@@ -597,28 +244,8 @@ class PdfRichTextRepository(private val context: Context) {
                 Timber.d(
                     "android.repository.save start book=$bookId textLen=${document.text.length} spans=${document.spans.size}"
                 )
-                val obj = JSONObject().apply {
-                    put("text", document.text)
-                    val spansArray = JSONArray()
-                    document.spans.forEach { span ->
-                        spansArray.put(
-                            JSONObject().apply {
-                                put("s", span.start)
-                                put("e", span.end)
-                                put("c", span.color)
-                                put("bg", span.backgroundColor)
-                                put("sz", span.fontSizeNorm.toDouble())
-                                put("b", span.isBold)
-                                put("i", span.isItalic)
-                                put("u", span.isUnderline)
-                                put("st", span.isStrikethrough)
-                                put("fp", span.fontPath)
-                            })
-                    }
-                    put("spans", spansArray)
-                }
                 val file = getFile(bookId)
-                file.writeText(obj.toString())
+                file.writeText(SharedPdfRichTextSerializer.encode(document))
                 Timber.d(
                     "android.repository.save done book=$bookId bytes=${file.length()} path=${file.absolutePath}"
                 )
@@ -627,22 +254,6 @@ class PdfRichTextRepository(private val context: Context) {
                 Timber.e(e, "Failed to save rich text doc")
             }
         }
-    }
-}
-
-private fun Float.richAndroidLogFloat(): String {
-    return if (isFinite()) {
-        val rounded = kotlin.math.round(this * 10f) / 10f
-        rounded.toString()
-    } else {
-        toString()
-    }
-}
-
-private fun List<PageTextLayout>.richAndroidLayoutSummary(): String {
-    if (isEmpty()) return "[]"
-    return joinToString(prefix = "[", postfix = "]", limit = 8, truncated = "...") { layout ->
-        "p${layout.pageIndex}:${layout.globalStartIndex}-${layout.globalEndIndex}/len${layout.visibleText.length}"
     }
 }
 

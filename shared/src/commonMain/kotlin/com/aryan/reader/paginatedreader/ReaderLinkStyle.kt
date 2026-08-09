@@ -7,29 +7,29 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.style.TextDecoration
 import kotlin.math.abs
 
-internal fun SpanStyle.withReaderLinkStyle(
+fun SpanStyle.withReaderLinkStyle(
     isDarkTheme: Boolean,
     themeBackgroundColor: Color,
-    themeTextColor: Color
+    themeTextColor: Color,
 ): SpanStyle {
     val linkStyle = readerLinkSpanStyle(
         isDarkTheme = isDarkTheme,
         themeBackgroundColor = themeBackgroundColor,
         themeTextColor = themeTextColor,
-        existingDecoration = textDecoration
+        existingDecoration = textDecoration,
     )
     return copy(
         color = linkStyle.color,
         background = linkStyle.background,
-        textDecoration = linkStyle.textDecoration
+        textDecoration = linkStyle.textDecoration,
     )
 }
 
-internal fun readerLinkSpanStyle(
+fun readerLinkSpanStyle(
     isDarkTheme: Boolean,
     themeBackgroundColor: Color,
     themeTextColor: Color,
-    existingDecoration: TextDecoration? = null
+    existingDecoration: TextDecoration? = null,
 ): SpanStyle {
     val background = themeBackgroundColor.takeIf { it.isSpecified }
         ?: if (isDarkTheme) Color.Black else Color.White
@@ -40,15 +40,11 @@ internal fun readerLinkSpanStyle(
     return SpanStyle(
         color = linkColor,
         background = linkColor.copy(alpha = backgroundAlpha),
-        textDecoration = existingDecoration.withUnderline()
+        textDecoration = existingDecoration.withUnderline(),
     )
 }
 
-private fun readerLinkColorForTheme(
-    isDarkTheme: Boolean,
-    background: Color,
-    text: Color
-): Color {
+private fun readerLinkColorForTheme(isDarkTheme: Boolean, background: Color, text: Color): Color {
     val backgroundLuminance = background.safeLuminance()
     val textLuminance = text.safeLuminance()
     val candidates = if (isDarkTheme || backgroundLuminance < 0.45f) {
@@ -57,7 +53,7 @@ private fun readerLinkColorForTheme(
             Color(0xFF5EEAD4),
             Color(0xFFA5B4FC),
             Color(0xFFFDE68A),
-            Color.White
+            Color.White,
         )
     } else {
         listOf(
@@ -65,7 +61,7 @@ private fun readerLinkColorForTheme(
             Color(0xFF006D75),
             Color(0xFF7A1E52),
             Color(0xFF4A148C),
-            Color(0xFF111827)
+            Color(0xFF111827),
         )
     }
     return candidates.firstOrNull {
@@ -88,6 +84,4 @@ private fun Color.contrastRatio(other: Color): Float {
     return (lighter + 0.05f) / (darker + 0.05f)
 }
 
-private fun Color.safeLuminance(): Float {
-    return if (isSpecified) luminance() else 0f
-}
+private fun Color.safeLuminance(): Float = if (isSpecified) luminance() else 0f

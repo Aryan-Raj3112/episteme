@@ -206,9 +206,14 @@ internal object PdfiumAnnotationExporter {
     }
 
     internal fun supportsOriginalPageOrder(virtualPages: List<VirtualPage>?): Boolean {
-        return virtualPages == null || virtualPages.withIndex().all { (index, page) ->
-            page is VirtualPage.PdfPage && page.pdfIndex == index
-        }
+        return supportsOriginalPdfPageOrder(
+            virtualPages?.map { page ->
+                when (page) {
+                    is VirtualPage.PdfPage -> PdfPageIdentity.Pdf(page.pdfIndex)
+                    is VirtualPage.BlankPage -> PdfPageIdentity.Blank(page.id)
+                }
+            },
+        )
     }
 
     @Suppress("UNUSED_PARAMETER")

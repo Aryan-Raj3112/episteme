@@ -7,10 +7,7 @@ import com.aryan.reader.ml.SpeechBubble
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import timber.log.Timber
-import kotlin.math.max
-import kotlin.math.min
 import kotlin.math.roundToInt
-import kotlin.math.sqrt
 import android.graphics.Color as AndroidColor
 
 internal data class ExpandedBubbleRender(
@@ -23,11 +20,12 @@ internal fun computeDynamicBubbleZoomFactor(
     viewportWidth: Float,
     viewportHeight: Float
 ): Float {
-    if (bubbleBounds.width() <= 0f || bubbleBounds.height() <= 0f) return 1.5f
-    val targetWidth = viewportWidth * 0.6f
-    val targetHeight = viewportHeight * 0.32f
-    return min(targetWidth / bubbleBounds.width(), targetHeight / bubbleBounds.height())
-        .coerceIn(1.35f, 4.25f)
+    return computeDynamicBubbleZoomFactor(
+        bubbleWidth = bubbleBounds.width(),
+        bubbleHeight = bubbleBounds.height(),
+        viewportWidth = viewportWidth,
+        viewportHeight = viewportHeight,
+    )
 }
 
 internal fun isTapInsideBubble(
@@ -89,23 +87,3 @@ internal suspend fun renderExpandedBubbleBitmap(
         }
     }
 }
-
-internal fun safePdfBitmapRenderScale(
-    contentWidth: Float,
-    contentHeight: Float,
-    requestedScale: Float
-): Float {
-    if (contentWidth <= 0f || contentHeight <= 0f || requestedScale <= 0f) return 1f
-
-    val requestedWidth = contentWidth * requestedScale
-    val requestedHeight = contentHeight * requestedScale
-    val requestedBytes = requestedWidth.toDouble() * requestedHeight.toDouble() * 4.0
-    val byteScale = sqrt(PDF_MAX_DRAW_BITMAP_BYTES.toDouble() / requestedBytes.coerceAtLeast(1.0))
-    val dimensionScale = PDF_MAX_DRAW_BITMAP_DIMENSION_PX.toDouble() /
-        max(requestedWidth, requestedHeight).toDouble().coerceAtLeast(1.0)
-    val limiter = min(1.0, min(byteScale, dimensionScale)).coerceAtLeast(0.01)
-    return (requestedScale.toDouble() * limiter).coerceAtLeast(0.01).toFloat()
-}
-
-internal const val PDF_MAX_DRAW_BITMAP_BYTES = 64L * 1024L * 1024L
-internal const val PDF_MAX_DRAW_BITMAP_DIMENSION_PX = 4096

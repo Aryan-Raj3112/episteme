@@ -26,6 +26,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
@@ -57,6 +58,8 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
@@ -79,6 +82,240 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aryan.reader.shared.AppFontPreference
 import com.aryan.reader.shared.CustomFontItem
+
+data class SharedAndroidUtilityLinkStrings(
+    val title: String,
+    val backDescription: String,
+    val heading: String,
+    val description: String,
+    val firstTitle: String,
+    val firstDescription: String,
+    val secondTitle: String,
+    val secondDescription: String,
+    val openDescription: String,
+)
+
+data class SharedAndroidAboutStrings(
+    val appName: String,
+    val flavorLabel: String,
+    val versionLabel: String,
+    val buildLabel: String,
+    val githubTitle: String,
+    val githubDescription: String,
+    val privacyTitle: String,
+    val privacyDescription: String,
+    val termsTitle: String,
+    val termsDescription: String,
+    val licensesTitle: String,
+    val licensesDescription: String,
+    val closeAction: String,
+)
+
+/** Exact Android About dialog with flavor/build strings and platform links injected. */
+@Composable
+fun SharedAndroidAboutDialog(
+    strings: SharedAndroidAboutStrings,
+    showGitHub: Boolean,
+    onDismiss: () -> Unit,
+    onGitHubClick: () -> Unit,
+    onPrivacyClick: () -> Unit,
+    onTermsClick: () -> Unit,
+    onLicensesClick: () -> Unit,
+    githubIcon: @Composable () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        shape = RoundedCornerShape(24.dp),
+        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+        title = {
+            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
+                Text(strings.appName, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(2.dp))
+                Text(strings.flavorLabel, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text(strings.versionLabel, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
+                Text(strings.buildLabel, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(20.dp))
+                if (showGitHub) {
+                    SharedAndroidAboutInfoRow(
+                        icon = githubIcon,
+                        title = strings.githubTitle,
+                        subtitle = strings.githubDescription,
+                        onClick = onGitHubClick,
+                    )
+                    Spacer(Modifier.height(10.dp))
+                }
+                SharedAndroidAboutInfoRow(
+                    icon = {
+                        Icon(Icons.Default.Policy, contentDescription = null, modifier = Modifier.size(22.dp), tint = MaterialTheme.colorScheme.primary)
+                    },
+                    title = strings.privacyTitle,
+                    subtitle = strings.privacyDescription,
+                    onClick = onPrivacyClick,
+                )
+                Spacer(Modifier.height(10.dp))
+                SharedAndroidAboutInfoRow(
+                    icon = {
+                        Icon(Icons.Default.Gavel, contentDescription = null, modifier = Modifier.size(22.dp), tint = MaterialTheme.colorScheme.primary)
+                    },
+                    title = strings.termsTitle,
+                    subtitle = strings.termsDescription,
+                    onClick = onTermsClick,
+                )
+                Spacer(Modifier.height(10.dp))
+                SharedAndroidAboutInfoRow(
+                    icon = {
+                        Icon(Icons.Default.FileOpen, contentDescription = null, modifier = Modifier.size(22.dp), tint = MaterialTheme.colorScheme.primary)
+                    },
+                    title = strings.licensesTitle,
+                    subtitle = strings.licensesDescription,
+                    onClick = onLicensesClick,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = onDismiss,
+                shape = RoundedCornerShape(50),
+                modifier = Modifier.padding(horizontal = 8.dp),
+            ) {
+                Text(strings.closeAction, fontWeight = FontWeight.Medium)
+            }
+        },
+    )
+}
+
+@Composable
+private fun SharedAndroidAboutInfoRow(
+    icon: @Composable () -> Unit,
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit,
+) {
+    OutlinedCard(onClick = onClick, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            icon()
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(2.dp))
+                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Spacer(Modifier.width(4.dp))
+            Icon(
+                Icons.AutoMirrored.Filled.ArrowForward,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/** Exact Android feedback/support two-link screen with platform resources injected as slots. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SharedAndroidUtilityLinkScreen(
+    strings: SharedAndroidUtilityLinkStrings,
+    onNavigateBack: () -> Unit,
+    onFirstClick: () -> Unit,
+    onSecondClick: () -> Unit,
+    heroIcon: @Composable () -> Unit,
+    firstIcon: @Composable () -> Unit,
+    secondIcon: @Composable () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Scaffold(
+        modifier = modifier,
+        topBar = {
+            TopAppBar(
+                title = { Text(strings.title) },
+                navigationIcon = {
+                    IconButton(onClick = onNavigateBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = strings.backDescription)
+                    }
+                },
+            )
+        },
+    ) { paddingValues ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues)
+                .padding(horizontal = 16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Spacer(Modifier.height(32.dp))
+            heroIcon()
+            Spacer(Modifier.height(16.dp))
+            Text(strings.heading, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = strings.description,
+                style = MaterialTheme.typography.bodyLarge,
+                textAlign = TextAlign.Center,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 16.dp),
+            )
+            Spacer(Modifier.height(48.dp))
+            SharedAndroidUtilityOptionCard(
+                title = strings.firstTitle,
+                description = strings.firstDescription,
+                openDescription = strings.openDescription,
+                icon = firstIcon,
+                onClick = onFirstClick,
+            )
+            Spacer(Modifier.height(16.dp))
+            SharedAndroidUtilityOptionCard(
+                title = strings.secondTitle,
+                description = strings.secondDescription,
+                openDescription = strings.openDescription,
+                icon = secondIcon,
+                onClick = onSecondClick,
+            )
+            Spacer(Modifier.weight(1f))
+        }
+    }
+}
+
+@Composable
+private fun SharedAndroidUtilityOptionCard(
+    title: String,
+    description: String,
+    openDescription: String,
+    icon: @Composable () -> Unit,
+    onClick: () -> Unit,
+) {
+    OutlinedCard(onClick = onClick, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(20.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            icon()
+            Spacer(Modifier.width(20.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(4.dp))
+                Text(description, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Spacer(Modifier.width(8.dp))
+            Icon(
+                Icons.AutoMirrored.Filled.ArrowForward,
+                contentDescription = openDescription,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
 
 @Composable
 fun SharedCustomFontsScreen(

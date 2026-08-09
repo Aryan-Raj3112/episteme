@@ -335,330 +335,78 @@ internal fun AudiobooksLibrarySection(
     audiobooks: List<AudiobookEntity>,
     libraryBooks: List<RecentFileItem>,
     ttsProgress: List<BookTtsListeningProgressEntity>,
+    playback: com.aryan.reader.shared.SharedAudiobookPlaybackState,
+    ttsPlayback: com.aryan.reader.shared.SharedBookTtsListenState,
     activeItemId: String?,
     onAudiobookClick: (AudiobookUiItem) -> Unit,
     onListenWithTtsClick: (RecentFileItem) -> Unit,
     onAddAudiobookClick: () -> Unit,
 ) {
-    var source by remember {
-        mutableStateOf(ListenSource.ALL)
-    }
-    var status by remember {
-        mutableStateOf(AudiobookUiStatus.ALL)
-    }
-    var sort by remember {
-        mutableStateOf(ListenSort.RECENTLY_LISTENED)
-    }
-    var query by rememberSaveable {
-        mutableStateOf("")
-    }
-
-    val libraryBooksById = remember(libraryBooks) {
-        libraryBooks.associateBy {
-            it.bookId
-        }
-    }
-
-    val ttsProgressById = remember(ttsProgress) {
-        ttsProgress.associateBy {
-            it.bookId
-        }
-    }
-
-    val importedItems = remember(
-        audiobooks,
-        libraryBooksById
-    ) {
+    val adapterLibraryBooksById = remember(libraryBooks) { libraryBooks.associateBy(RecentFileItem::bookId) }
+    val sharedAudiobooks = remember(audiobooks, adapterLibraryBooksById) {
         audiobooks.map { audiobook ->
-            audiobook.toUiItem(
-                libraryItem = libraryBooksById[audiobook.bookId]
+            val libraryItem = adapterLibraryBooksById[audiobook.bookId]
+            com.aryan.reader.shared.SharedAudiobook(
+                bookId = audiobook.bookId,
+                filePath = audiobook.filePath,
+                format = audiobook.format,
+                title = audiobook.title,
+                author = audiobook.author,
+                album = audiobook.album,
+                narrator = audiobook.narrator,
+                durationMs = audiobook.durationMs,
+                positionMs = audiobook.positionMs,
+                playbackSpeed = audiobook.playbackSpeed,
+                coverPath = audiobook.coverPath,
+                addedAt = audiobook.addedAt,
+                lastListenedAt = if (audiobook.positionMs > 0L) {
+                    maxOf(
+                        libraryItem?.readingPositionModifiedTimestamp ?: 0L,
+                        libraryItem?.timestamp ?: 0L,
+                    )
+                } else {
+                    0L
+                },
             )
         }
     }
-
-    val ttsItems = remember(
-        libraryBooks,
-        ttsProgressById
-    ) {
-        libraryBooks
-            .asSequence()
-            .filter {
-                it.type != FileType.AUDIOBOOK &&
-                        BookTtsContentRepository.supports(it.type)
-            }
-            .map { book ->
-                book.toTtsAudiobookUiItem(
-                    ttsProgressById[book.bookId]
+    val sharedTtsItems = remember(libraryBooks, ttsProgress) {
+        com.aryan.reader.shared.buildSharedTtsListenItems(
+            books = libraryBooks.map(RecentFileItem::toSharedBookItem),
+            progress = ttsProgress.map { progress ->
+                com.aryan.reader.shared.SharedBookTtsListeningProgress(
+                    bookId = progress.bookId,
+                    chapterIndex = progress.chapterIndex,
+                    chunkIndex = progress.chunkIndex,
+                    sourceCfi = progress.sourceCfi,
+                    sourceOffset = progress.sourceOffset,
+                    progressPercent = progress.progressPercent,
+                    speechRate = progress.speechRate,
+                    pitch = progress.pitch,
+                    voiceId = progress.voiceId,
+                    completed = progress.completed,
+                    updatedAt = progress.updatedAt,
                 )
-            }
-            .toList()
-    }
-
-    val allItems = remember(
-        importedItems,
-        ttsItems
-    ) {
-        importedItems + ttsItems
-    }
-
-    val sourceItems = remember(
-        allItems,
-        importedItems,
-        ttsItems,
-        source
-    ) {
-        when (source) {
-            ListenSource.ALL -> allItems
-            ListenSource.AUDIOBOOKS -> importedItems
-            ListenSource.TTS -> ttsItems
-        }
-    }
-
-    val visibleItems = remember(
-        sourceItems,
-        status,
-        sort,
-        query
-    ) {
-        sortListenItems(
-            items = filterAudiobooks(
-                items = sourceItems,
-                status = status
-            ).filter {
-                it.matchesListenQuery(query)
             },
-            sort = sort
         )
     }
 
-    val continueItem = remember(
-        visibleItems,
-        activeItemId,
-        query
-    ) {
-        if (query.isNotBlank()) {
-            null
-        } else {
-            visibleItems.firstOrNull {
-                it.id == activeItemId
-            } ?: visibleItems
-                .filter {
-                    it.progress in 0.001f..<1f
-                }
-                .maxByOrNull {
-                    it.lastListenedAt
-                }
-        }
-    }
-
-    val regularListItems = remember(
-        visibleItems,
-        continueItem
-    ) {
-        if (continueItem == null) {
-            visibleItems
-        } else {
-            visibleItems.filterNot {
-                it.id == continueItem.id
-            }
-        }
-    }
-
-    fun openItem(item: AudiobookUiItem) {
-        if (item.isTts) {
-            item.sourceBook?.let {
-                onListenWithTtsClick(it)
-            }
-        } else {
-            onAudiobookClick(item)
-        }
-    }
-
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .testTag("AudiobooksLibrary")
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(
-                    start = 20.dp,
-                    top = 16.dp,
-                    end = 20.dp
-                ),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            ListenSourceSwitcher(
-                selected = source,
-                onSelected = {
-                    source = it
-                }
-            )
-
-            OutlinedTextField(
-                value = query,
-                onValueChange = {
-                    query = it
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("ListenSearch"),
-                placeholder = {
-                    Text(
-                        stringResource(
-                            R.string.listen_search
-                        )
-                    )
-                },
-                leadingIcon = {
-                    Icon(
-                        imageVector = Icons.Default.Search,
-                        contentDescription = null
-                    )
-                },
-                trailingIcon = {
-                    if (query.isNotBlank()) {
-                        IconButton(
-                            onClick = {
-                                query = ""
-                            }
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Close,
-                                contentDescription = stringResource(
-                                    R.string.action_clear
-                                )
-                            )
-                        }
-                    }
-                },
-                singleLine = true,
-                shape = RoundedCornerShape(20.dp)
-            )
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = pluralStringResource(
-                        R.plurals.listen_item_count,
-                        visibleItems.size,
-                        visibleItems.size
-                    ),
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.weight(1f)
-                )
-
-                ListenSortMenu(
-                    selected = sort,
-                    onSelected = {
-                        sort = it
-                    }
-                )
-            }
-        }
-
-        LazyRow(
-            modifier = Modifier.fillMaxWidth(),
-            contentPadding = PaddingValues(
-                start = 20.dp,
-                top = 8.dp,
-                end = 20.dp,
-                bottom = 8.dp
-            ),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            items(
-                items = AudiobookUiStatus.entries,
-                key = {
-                    it.name
-                }
-            ) { option ->
-                FilterChip(
-                    selected = status == option,
-                    onClick = {
-                        status = option
-                    },
-                    label = {
-                        Text(
-                            stringResource(
-                                option.labelRes
-                            )
-                        )
-                    }
-                )
-            }
-        }
-
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f),
-            contentPadding = PaddingValues(
-                top = 8.dp,
-                bottom = 112.dp
-            ),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            continueItem?.let { item ->
-                item(
-                    key = "continue-${item.id}"
-                ) {
-                    AudiobookContinueCard(
-                        item = item,
-                        isActive = item.id == activeItemId,
-                        onClick = {
-                            openItem(
-                                if (item.isTts) {
-                                    item.copy(autoStart = true)
-                                } else {
-                                    item
-                                }
-                            )
-                        },
-                        modifier = Modifier.padding(
-                            horizontal = 20.dp
-                        )
-                    )
-                }
-            }
-
-            if (
-                regularListItems.isEmpty() &&
-                continueItem == null
-            ) {
-                item(
-                    key = "listen-empty"
-                ) {
-                    ListenLibraryEmptyState(
-                        query = query,
-                        onAdd = onAddAudiobookClick
-                    )
-                }
-            } else {
-                items(
-                    items = regularListItems,
-                    key = {
-                        it.id
-                    }
-                ) { item ->
-                    ListenLibraryRow(
-                        item = item,
-                        isActive = item.id == activeItemId,
-                        onClick = {
-                            openItem(item)
-                        },
-                        modifier = Modifier.padding(
-                            horizontal = 20.dp
-                        )
-                    )
-                }
-            }
-        }
-    }
+    com.aryan.reader.shared.ui.SharedMobileAudiobooksSection(
+        audiobooks = sharedAudiobooks,
+        playback = playback,
+        ttsItems = sharedTtsItems,
+        ttsPlayback = ttsPlayback,
+        onOpenPlayer = { sharedBook ->
+            audiobooks.firstOrNull { it.bookId == sharedBook.bookId }
+                ?.toUiItem(adapterLibraryBooksById[sharedBook.bookId])
+                ?.let(onAudiobookClick)
+        },
+        onOpenTtsPlayer = { item, _ ->
+            adapterLibraryBooksById[item.book.id]?.let(onListenWithTtsClick)
+        },
+        onAddAudiobook = onAddAudiobookClick,
+        modifier = modifier,
+    )
 }
 
 private val AudiobookUiStatus.labelRes: Int get() = when (this) {
@@ -827,77 +575,13 @@ internal fun AudiobookAddSheet(
     onDismiss: () -> Unit,
     onChooseTtsBook: (() -> Unit)? = null
 ) {
-    ModalBottomSheet(
-        onDismissRequest = onDismiss
-    ) {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 24.dp)
-                .navigationBarsPadding()
-        ) {
-            Text(
-                stringResource(R.string.listen_add),
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold
-            )
-
-            Text(
-                stringResource(
-                    R.string.audiobooks_add_preview_desc
-                ),
-                color =
-                    MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(bottom = 16.dp)
-            )
-
-            onChooseTtsBook?.let { chooseTtsBook ->
-                AddChoice(
-                    icon = Icons.Default.Book,
-                    title = stringResource(
-                        R.string.listen_choose_tts_book
-                    ),
-                    description = stringResource(
-                        R.string.listen_choose_tts_book_desc
-                    ),
-                    onClick = chooseTtsBook
-                )
-            }
-
-            AddChoice(
-                icon = Icons.AutoMirrored.Filled.VolumeUp,
-                title = stringResource(
-                    R.string.audiobooks_add_file
-                ),
-                description = stringResource(
-                    R.string.audiobooks_add_file_desc
-                ),
-                onClick = onChooseFile
-            )
-
-            AddChoice(
-                icon = Icons.Default.Folder,
-                title = stringResource(
-                    R.string.audiobooks_add_multiple
-                ),
-                description =
-                    "Import several audiobook files at once",
-                onClick = onChooseMultiple
-            )
-
-            AddChoice(
-                icon = Icons.Default.Folder,
-                title = stringResource(
-                    R.string.audiobooks_add_folder
-                ),
-                description =
-                    "Import supported audio files from a folder",
-                onClick = onChooseFolder
-            )
-
-            Spacer(Modifier.height(24.dp))
-        }
-    }
+    com.aryan.reader.shared.ui.SharedMobileAudiobookAddSheet(
+        onChooseFile = onChooseFile,
+        onChooseMultiple = onChooseMultiple,
+        onChooseFolder = onChooseFolder,
+        onDismiss = onDismiss,
+        onChooseTtsBook = onChooseTtsBook,
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -907,234 +591,17 @@ internal fun TtsBookPickerSheet(
     onBookSelected: (RecentFileItem) -> Unit,
     onDismiss: () -> Unit
 ) {
-    val sheetState = rememberModalBottomSheetState(
-        skipPartiallyExpanded = true
+    val booksById = remember(books) { books.associateBy(RecentFileItem::bookId) }
+    com.aryan.reader.shared.ui.SharedMobileTtsBookPickerSheet(
+        books = remember(books) { books.map(RecentFileItem::toSharedBookItem) },
+        onBookSelected = { sharedBook -> booksById[sharedBook.id]?.let(onBookSelected) },
+        onDismiss = onDismiss,
+        coverContent = { sharedBook, modifier ->
+            booksById[sharedBook.id]?.let { book ->
+                ThemedBookCover(item = book, modifier = modifier, contentDescription = book.cardTitle())
+            }
+        },
     )
-
-    var query by rememberSaveable {
-        mutableStateOf("")
-    }
-
-    val visibleBooks = remember(
-        books,
-        query
-    ) {
-        books
-            .asSequence()
-            .filter {
-                it.type != FileType.AUDIOBOOK &&
-                        BookTtsContentRepository.supports(it.type)
-            }
-            .filter { book ->
-                query.isBlank() ||
-                        listOf(
-                            book.cardTitle(),
-                            book.author,
-                            book.displayName
-                        ).any { value ->
-                            value?.contains(
-                                query,
-                                ignoreCase = true
-                            ) == true
-                        }
-            }
-            .sortedBy {
-                it.cardTitle().lowercase()
-            }
-            .toList()
-    }
-
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(max = 680.dp)
-                .padding(horizontal = 20.dp)
-                .navigationBarsPadding()
-        ) {
-            Text(
-                text = stringResource(
-                    R.string.listen_choose_tts_book
-                ),
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold
-            )
-
-            Text(
-                text = stringResource(
-                    R.string.listen_choose_tts_book_desc
-                ),
-                modifier = Modifier.padding(top = 3.dp),
-                color =
-                    MaterialTheme.colorScheme.onSurfaceVariant
-            )
-
-            OutlinedTextField(
-                value = query,
-                onValueChange = {
-                    query = it
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 16.dp),
-                placeholder = {
-                    Text(
-                        stringResource(
-                            R.string.listen_search_library_books
-                        )
-                    )
-                },
-                leadingIcon = {
-                    Icon(
-                        imageVector = Icons.Default.Search,
-                        contentDescription = null
-                    )
-                },
-                trailingIcon = {
-                    if (query.isNotBlank()) {
-                        IconButton(
-                            onClick = {
-                                query = ""
-                            }
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Close,
-                                contentDescription =
-                                    stringResource(
-                                        R.string.action_clear
-                                    )
-                            )
-                        }
-                    }
-                },
-                singleLine = true
-            )
-
-            if (visibleBooks.isEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(220.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = stringResource(
-                            R.string.listen_no_tts_books
-                        ),
-                        color =
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            } else {
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f),
-                    contentPadding = PaddingValues(
-                        top = 14.dp,
-                        bottom = 24.dp
-                    ),
-                    verticalArrangement =
-                        Arrangement.spacedBy(8.dp)
-                ) {
-                    items(
-                        items = visibleBooks,
-                        key = {
-                            it.bookId
-                        }
-                    ) { book ->
-                        Surface(
-                            onClick = {
-                                onBookSelected(book)
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(18.dp),
-                            color =
-                                MaterialTheme.colorScheme.surfaceContainerLow
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(12.dp),
-                                verticalAlignment =
-                                    Alignment.CenterVertically,
-                                horizontalArrangement =
-                                    Arrangement.spacedBy(14.dp)
-                            ) {
-                                ThemedBookCover(
-                                    item = book,
-                                    modifier = Modifier
-                                        .size(
-                                            width = 52.dp,
-                                            height = 78.dp
-                                        )
-                                        .clip(
-                                            RoundedCornerShape(10.dp)
-                                        ),
-                                    contentDescription =
-                                        book.cardTitle()
-                                )
-
-                                Column(
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    Text(
-                                        text = book.cardTitle(),
-                                        fontWeight =
-                                            FontWeight.SemiBold,
-                                        maxLines = 2,
-                                        overflow =
-                                            TextOverflow.Ellipsis
-                                    )
-
-                                    Text(
-                                        text = book.cardAuthor(),
-                                        style =
-                                            MaterialTheme.typography.bodySmall,
-                                        color =
-                                            MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 1,
-                                        overflow =
-                                            TextOverflow.Ellipsis
-                                    )
-
-                                    Text(
-                                        text = book.type.name,
-                                        modifier =
-                                            Modifier.padding(top = 4.dp),
-                                        style =
-                                            MaterialTheme.typography.labelSmall,
-                                        color =
-                                            MaterialTheme.colorScheme.primary
-                                    )
-                                }
-
-                                Icon(
-                                    imageVector =
-                                        Icons.Default.PlayArrow,
-                                    contentDescription =
-                                        stringResource(
-                                            R.string.audiobooks_listen_with_tts
-                                        ),
-                                    tint =
-                                        MaterialTheme.colorScheme.primary
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable private fun AddChoice(icon: ImageVector, title: String, description: String, onClick: () -> Unit) {
-    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).clickable(onClick = onClick).padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-        Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primaryContainer) { Icon(icon, null, Modifier.padding(11.dp)) }
-        Column(Modifier.weight(1f).padding(horizontal = 14.dp)) { Text(title, fontWeight = FontWeight.SemiBold); Text(description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-        Icon(Icons.AutoMirrored.Filled.ArrowForward, null)
-    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -1146,200 +613,38 @@ internal fun TtsBookPickerSheet(
     val context = LocalContext.current
     val controller = remember { AudiobookController(context) }
     val playback by controller.state.collectAsStateWithLifecycle()
-    val sleepTimerLabel by controller.sleepTimerLabel.collectAsStateWithLifecycle()
     LaunchedEffect(item.id) { item.playbackRequest?.let(controller::connect) }
     DisposableEffect(controller) { onDispose(controller::release) }
-    var draggedPosition by remember(item.id) { mutableStateOf<Float?>(null) }
-    var showPlayerMenu by remember(item.id) {
-        mutableStateOf(false)
-    }
-    val duration = playback.durationMs.takeIf { it > 0 } ?: item.playbackRequest?.durationMs ?: 0L
-    val displayedPosition = draggedPosition?.toLong() ?: playback.positionMs
-    var showSpeedDialog by remember(item.id) {
-        mutableStateOf(false)
-    }
-    var showSleepTimerDialog by remember(item.id) {
-        mutableStateOf(false)
-    }
-    ModalBottomSheet(onDismissRequest = onDismiss, dragHandle = null, containerColor = MaterialTheme.colorScheme.surface) {
-        Column(
-            Modifier.fillMaxWidth().background(
-                Brush.verticalGradient(listOf(MaterialTheme.colorScheme.primaryContainer.copy(alpha = .5f), MaterialTheme.colorScheme.surface))
-            ).padding(horizontal = 24.dp).navigationBarsPadding(),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(onClick = onDismiss) {
-                    Icon(
-                        imageVector = Icons.Default.KeyboardArrowDown,
-                        contentDescription = stringResource(
-                            R.string.audiobooks_collapse_player
-                        )
-                    )
-                }
-
-                Column(
-                    modifier = Modifier.weight(1f),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text(
-                        text = stringResource(R.string.audiobooks_now_playing)
-                            .uppercase(),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-
-                    Text(
-                        text = item.chapter,
-                        style = MaterialTheme.typography.labelMedium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-
-                Box {
-                    IconButton(onClick = { showPlayerMenu = true }) {
-                        Icon(
-                            imageVector = Icons.Default.MoreVert,
-                            contentDescription = stringResource(
-                                R.string.content_desc_more_options
-                            )
-                        )
-                    }
-
-                    DropdownMenu(
-                        expanded = showPlayerMenu,
-                        onDismissRequest = { showPlayerMenu = false }
-                    ) {
-                        DropdownMenuItem(
-                            text = {
-                                Text(stringResource(R.string.audiobooks_stop_playback))
-                            },
-                            leadingIcon = {
-                                Icon(
-                                    imageVector = Icons.Default.Close,
-                                    contentDescription = null
-                                )
-                            },
-                            onClick = {
-                                showPlayerMenu = false
-                                controller.stop()
-                                onDismiss()
-                            }
-                        )
-                    }
-                }
-            }
-            MockAudioCover(
-                item = item,
-                modifier = Modifier
-                    .fillMaxWidth(0.68f)
-                    .aspectRatio(1f)
-                    .padding(top = 18.dp)
-                    .shadow(
-                        elevation = 18.dp,
-                        shape = RoundedCornerShape(20.dp)
-                    )
-            )
-            Text(item.title, Modifier.padding(top = 22.dp), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            Text(item.author, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Slider(
-                value = displayedPosition.toFloat().coerceIn(0f, duration.coerceAtLeast(1L).toFloat()),
-                onValueChange = { draggedPosition = it },
-                onValueChangeFinished = { draggedPosition?.toLong()?.let(controller::seekTo); draggedPosition = null },
-                valueRange = 0f..duration.coerceAtLeast(1L).toFloat(),
-                enabled = duration > 0,
-                modifier = Modifier.fillMaxWidth().padding(top = 12.dp)
-            )
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text(formatPlayerTime(displayedPosition), style = MaterialTheme.typography.labelSmall); Text("−${formatPlayerTime((duration - displayedPosition).coerceAtLeast(0L))}", style = MaterialTheme.typography.labelSmall) }
-            playback.error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp)) }
-            Row(Modifier.fillMaxWidth().padding(vertical = 20.dp), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
-                IconButton(
-                    onClick = { controller.seekBy(-30_000) },
-                    enabled = playback.connected
-                ) {
-                    Icon(
-                        painter = painterResource(R.drawable.fast_rewind),
-                        contentDescription = stringResource(
-                            R.string.audiobooks_rewind_30_seconds
-                        ),
-                        modifier = Modifier.size(32.dp)
-                    )
-                }
-                Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primary, shadowElevation = 8.dp) { IconButton(onClick = { controller.togglePlay(onBeforePlay) }, enabled = playback.connected, modifier = Modifier.size(76.dp)) { Icon(if (playback.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, stringResource(if (playback.isPlaying) R.string.content_desc_pause_tts else R.string.content_desc_start_tts), Modifier.size(42.dp), tint = MaterialTheme.colorScheme.onPrimary) } }
-                IconButton(
-                    onClick = { controller.seekBy(30_000) },
-                    enabled = playback.connected
-                ) {
-                    Icon(
-                        painter = painterResource(R.drawable.fast_forward),
-                        contentDescription = stringResource(
-                            R.string.audiobooks_forward_30_seconds
-                        ),
-                        modifier = Modifier.size(32.dp),
-                    )
-                }
-            }
-            val sleepTimerActive = sleepTimerLabel != "Sleep"
-
-            val sleepTimerDockLabel = if (sleepTimerActive) {
-                sleepTimerLabel
-            } else {
-                stringResource(R.string.listen_timer)
-            }
-
-            PlayerControlDock(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 4.dp)
-            ) {
-                PlayerDockAction(
-                    iconRes = R.drawable.speed,
-                    label = audiobookSpeedLabel(playback.speed),
-                    selected = false,
-                    onClick = {
-                        showSpeedDialog = true
-                    }
-                )
-
-                PlayerDockAction(
-                    iconRes = R.drawable.timer,
-                    label = sleepTimerDockLabel,
-                    selected = sleepTimerActive,
-                    onClick = {
-                        if (sleepTimerActive) {
-                            controller.toggleSleepTimer()
-                        } else {
-                            showSleepTimerDialog = true
-                        }
-                    }
-                )
-            }
-            Spacer(Modifier.height(20.dp))
-        }
-    }
-    if (showSpeedDialog) {
-        AudiobookSpeedDialog(
-            currentSpeed = playback.speed,
-            onSpeedSelected = controller::setSpeed,
-            onDismiss = {
-                showSpeedDialog = false
-            }
+    val request = item.playbackRequest
+    val sharedAudiobook = remember(item) {
+        com.aryan.reader.shared.SharedAudiobook(
+            bookId = item.id,
+            filePath = request?.filePath.orEmpty(),
+            format = item.chapter,
+            title = item.title,
+            author = item.author,
+            album = request?.album,
+            narrator = item.narrator,
+            durationMs = request?.durationMs ?: 0L,
+            positionMs = request?.positionMs ?: 0L,
+            playbackSpeed = request?.speed ?: 1f,
+            coverPath = item.coverPath,
+            addedAt = item.addedAt,
+            lastListenedAt = item.lastListenedAt,
         )
     }
-    if (showSleepTimerDialog) {
-        AudiobookSleepTimerDialog(
-            onDurationSelected = { minutes ->
-                controller.toggleSleepTimer(minutes)
-            },
-            onDismiss = {
-                showSleepTimerDialog = false
-            }
-        )
-    }
+    com.aryan.reader.shared.ui.SharedMobileAudiobookPlayerSheet(
+        audiobook = sharedAudiobook,
+        playback = playback,
+        onTogglePlayback = { controller.togglePlay(onBeforePlay) },
+        onSeek = controller::seekTo,
+        onSpeedChange = controller::setSpeed,
+        onSleepTimer = { minutes ->
+            if (minutes == null) controller.toggleSleepTimer() else controller.toggleSleepTimer(minutes)
+        },
+        onStopPlayback = controller::stop,
+        onDismiss = onDismiss,
+    )
 }
 
 @androidx.annotation.OptIn(UnstableApi::class)
@@ -1351,528 +656,73 @@ private fun BookTtsPlayerSheet(item: AudiobookUiItem, onDismiss: () -> Unit) {
     val controller = remember(sourceBook.bookId) { BookTtsAudiobookController(context) }
     val prepared by controller.uiState.collectAsStateWithLifecycle()
     val playback by controller.sharedPlaybackState.collectAsStateWithLifecycle()
-    var showPlayerMenu by remember(sourceBook.bookId) {
-        mutableStateOf(false)
-    }
-    var activePanel by rememberSaveable(sourceBook.bookId) {
-        mutableStateOf(TtsPlayerPanel.COVER)
-    }
-    val sleepTimerLabel by controller.sleepTimerLabel
-        .collectAsStateWithLifecycle()
-    var showSpeedDialog by remember(sourceBook.bookId) {
-        mutableStateOf(false)
-    }
-    var showSleepTimerDialog by remember(sourceBook.bookId) {
-        mutableStateOf(false)
-    }
-    val transcriptListState = rememberLazyListState()
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    var rate by remember { mutableFloatStateOf(prepared.savedProgress?.speechRate ?: loadTtsSpeechRate(context)) }
-    var pitch by remember { mutableFloatStateOf(prepared.savedProgress?.pitch ?: loadTtsPitch(context)) }
-    val isThisBookActive = playback.connected && playback.bookId == sourceBook.bookId
-    val book = prepared.book
-    val currentChapter = if (isThisBookActive) playback.chapterIndex else prepared.savedProgress?.chapterIndex
-    val progress = if (isThisBookActive) {
-        calculateTtsAudiobookProgress(
-            chapterIndex = currentChapter ?: 0,
-            chapterCount = book?.chapters?.size ?: 0,
-            chunkIndex = playback.chunkIndex,
-            chunkCount = playback.chunkCount
+    var adapterRate by remember { mutableFloatStateOf(prepared.savedProgress?.speechRate ?: loadTtsSpeechRate(context)) }
+    var adapterPitch by remember { mutableFloatStateOf(prepared.savedProgress?.pitch ?: loadTtsPitch(context)) }
+    val sharedItem = remember(sourceBook, prepared.savedProgress) {
+        com.aryan.reader.shared.SharedTtsListenItem(
+            book = sourceBook.toSharedBookItem(),
+            progress = prepared.savedProgress?.let { progress ->
+                com.aryan.reader.shared.SharedBookTtsListeningProgress(
+                    bookId = progress.bookId,
+                    chapterIndex = progress.chapterIndex,
+                    chunkIndex = progress.chunkIndex,
+                    sourceCfi = progress.sourceCfi,
+                    sourceOffset = progress.sourceOffset,
+                    progressPercent = progress.progressPercent,
+                    speechRate = progress.speechRate,
+                    pitch = progress.pitch,
+                    voiceId = progress.voiceId,
+                    completed = progress.completed,
+                    updatedAt = progress.updatedAt,
+                )
+            },
         )
-    } else item.progress
-    val currentChapterTitle = currentChapter?.let { book?.chapters?.getOrNull(it)?.title }
-        ?: item.chapter
-
+    }
+    val isThisBookActive = playback.connected && playback.bookId == sourceBook.bookId
     LaunchedEffect(sourceBook.bookId) {
         controller.connect(sourceBook.bookId)
         if (item.autoStart) controller.start(sourceBook.bookId, BookTtsSessionCoordinator.START_RESUME)
     }
     LaunchedEffect(prepared.savedProgress?.updatedAt) {
-        prepared.savedProgress?.let {
-            rate = it.speechRate
-            pitch = it.pitch
+        prepared.savedProgress?.let { progress ->
+            adapterRate = progress.speechRate
+            adapterPitch = progress.pitch
         }
     }
-    LaunchedEffect(
-        playback.chunkIndex,
-        playback.transcriptStartIndex,
-        playback.transcriptChunks.size,
-        activePanel
-    ) {
-        if (
-            activePanel == TtsPlayerPanel.TRANSCRIPT &&
-            playback.transcriptChunks.isNotEmpty()
-        ) {
-            val localIndex =
-                (
-                        playback.chunkIndex -
-                                playback.transcriptStartIndex
-                        )
-                    .coerceIn(
-                        playback.transcriptChunks.indices
-                    )
-
-            transcriptListState.animateScrollToCenter(localIndex)
-        }
-    }
+    val adapterChapterIndex = if (isThisBookActive) playback.chapterIndex else prepared.savedProgress?.chapterIndex ?: 0
+    val adapterChapterTitle = prepared.book?.chapters?.getOrNull(adapterChapterIndex)?.title ?: item.chapter
+    com.aryan.reader.shared.ui.SharedMobileTtsPlayerSheet(
+        item = sharedItem,
+        playback = playback.copy(
+            speechRate = adapterRate,
+            pitch = adapterPitch,
+            chapterIndex = adapterChapterIndex,
+            chapterCount = prepared.book?.chapters?.size ?: playback.chapterCount,
+            chapterTitle = adapterChapterTitle,
+            progressPercent = if (isThisBookActive) playback.progressPercent else item.progress,
+            error = playback.error ?: prepared.error,
+        ),
+        chapterTitles = prepared.book?.chapters?.map { it.title },
+        onTogglePlayback = {
+            if (isThisBookActive) controller.togglePlay()
+            else controller.start(sourceBook.bookId, BookTtsSessionCoordinator.START_RESUME)
+        },
+        onSeekChunk = { target ->
+            if (target < playback.chunkIndex) controller.previousChunk() else controller.nextChunk()
+        },
+        onSeekChapter = { target ->
+            if (isThisBookActive) controller.selectChapter(target)
+            else controller.start(sourceBook.bookId, BookTtsSessionCoordinator.START_CHAPTER, target)
+        },
+        onSpeedChange = { selectedSpeed ->
+            adapterRate = selectedSpeed
+            controller.setParameters(rate = selectedSpeed, pitch = adapterPitch)
+        },
+        onSleepTimer = { minutes -> controller.startSleepTimer(minutes ?: 0) },
+        onStopPlayback = controller::stop,
+        onDismiss = onDismiss,
+    )
     DisposableEffect(controller) { onDispose(controller::release) }
-
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        dragHandle = null,
-        modifier = Modifier.fillMaxSize(),
-        sheetState = sheetState,
-        shape = RectangleShape,
-        containerColor = MaterialTheme.colorScheme.surface
-    ) {
-        Box(
-            Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.verticalGradient(
-                        listOf(
-                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = .5f),
-                            MaterialTheme.colorScheme.surface,
-                            MaterialTheme.colorScheme.surface
-                        )
-                    )
-                )
-        ) {
-            Column(
-                Modifier.fillMaxSize().padding(horizontal = 24.dp).navigationBarsPadding(),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    IconButton(onClick = onDismiss) {
-                        Icon(
-                            imageVector = Icons.Default.KeyboardArrowDown,
-                            contentDescription = stringResource(
-                                R.string.audiobooks_collapse_player
-                            )
-                        )
-                    }
-
-                    Column(
-                        modifier = Modifier.weight(1f),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Text(
-                            text = stringResource(
-                                R.string.audiobooks_listening_with_tts
-                            ).uppercase(),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-
-                        AnimatedContent(
-                            targetState = currentChapterTitle,
-                            transitionSpec = {
-                                (
-                                        fadeIn(tween(220)) +
-                                                slideInVertically(
-                                                    animationSpec = tween(260),
-                                                    initialOffsetY = { it / 2 }
-                                                )
-                                        ) togetherWith (
-                                        fadeOut(tween(150)) +
-                                                slideOutVertically(
-                                                    animationSpec = tween(200),
-                                                    targetOffsetY = { -it / 2 }
-                                                )
-                                        )
-                            },
-                            label = "TtsChapterTitle"
-                        ) { title ->
-                            Text(
-                                text = title,
-                                style = MaterialTheme.typography.labelMedium,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    }
-
-                    Box {
-                        IconButton(onClick = { showPlayerMenu = true }) {
-                            Icon(
-                                imageVector = Icons.Default.MoreVert,
-                                contentDescription = stringResource(
-                                    R.string.content_desc_more_options
-                                )
-                            )
-                        }
-
-                        DropdownMenu(
-                            expanded = showPlayerMenu,
-                            onDismissRequest = { showPlayerMenu = false }
-                        ) {
-                            DropdownMenuItem(
-                                text = {
-                                    Text(stringResource(R.string.audiobooks_stop_playback))
-                                },
-                                leadingIcon = {
-                                    Icon(
-                                        imageVector = Icons.Default.Close,
-                                        contentDescription = null
-                                    )
-                                },
-                                enabled = isThisBookActive,
-                                onClick = {
-                                    showPlayerMenu = false
-                                    controller.stop()
-                                    onDismiss()
-                                }
-                            )
-                        }
-                    }
-                }
-
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f)
-                        .padding(top = 12.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    AnimatedContent(
-                        targetState = activePanel,
-                        transitionSpec = {
-                            val movingForward =
-                                targetState.ordinal > initialState.ordinal
-
-                            val enterOffset: (Int) -> Int = { width ->
-                                if (movingForward) width / 7 else -width / 7
-                            }
-
-                            val exitOffset: (Int) -> Int = { width ->
-                                if (movingForward) -width / 7 else width / 7
-                            }
-
-                            (
-                                    fadeIn(
-                                        animationSpec = tween(durationMillis = 220)
-                                    ) + slideInHorizontally(
-                                        animationSpec = tween(durationMillis = 300),
-                                        initialOffsetX = enterOffset
-                                    )
-                                    ) togetherWith (
-                                    fadeOut(
-                                        animationSpec = tween(durationMillis = 160)
-                                    ) + slideOutHorizontally(
-                                        animationSpec = tween(durationMillis = 240),
-                                        targetOffsetX = exitOffset
-                                    )
-                                    )
-                        },
-                        label = "TtsPlayerPanel"
-                    ) { panel ->
-                        when (panel) {
-                            TtsPlayerPanel.CHAPTERS -> {
-                                LazyColumn(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .testTag("AudiobookChapterList"),
-                                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                                    contentPadding = PaddingValues(
-                                        top = 8.dp,
-                                        bottom = 24.dp
-                                    )
-                                ) {
-                                    items(
-                                        items = book?.chapters.orEmpty(),
-                                        key = { chapter -> chapter.id }
-                                    ) { chapter ->
-                                        val selected =
-                                            chapter.index == currentChapter
-
-                                        ChapterSelectionRow(
-                                            chapterNumber = chapter.index + 1,
-                                            title = chapter.title,
-                                            selected = selected,
-                                            onClick = {
-                                                if (selected && isThisBookActive) {
-                                                    activePanel = TtsPlayerPanel.COVER
-                                                } else {
-                                                    if (isThisBookActive) {
-                                                        controller.selectChapter(
-                                                            chapter.index
-                                                        )
-                                                    } else {
-                                                        controller.start(
-                                                            sourceBook.bookId,
-                                                            BookTtsSessionCoordinator.START_CHAPTER,
-                                                            chapter.index
-                                                        )
-                                                    }
-
-                                                    activePanel = TtsPlayerPanel.COVER
-                                                }
-                                            }
-                                        )
-                                    }
-                                }
-                            }
-
-                            TtsPlayerPanel.TRANSCRIPT -> {
-                                AudiobookTranscript(
-                                    chunks = playback.transcriptChunks,
-                                    startIndex = playback.transcriptStartIndex,
-                                    currentIndex = playback.chunkIndex,
-                                    listState = transcriptListState,
-                                    modifier = Modifier.fillMaxSize()
-                                )
-                            }
-
-                            TtsPlayerPanel.COVER -> {
-                                MockAudioCover(
-                                    item = item,
-                                    modifier = Modifier
-                                        .fillMaxHeight(0.94f)
-                                        .aspectRatio(0.72f)
-                                        .shadow(
-                                            elevation = 18.dp,
-                                            shape = RoundedCornerShape(20.dp)
-                                        )
-                                )
-                            }
-                        }
-                    }
-                }
-                Text(
-                    item.title,
-                    Modifier.padding(top = 24.dp),
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(item.author, color = MaterialTheme.colorScheme.onSurfaceVariant)
-
-                Column(Modifier.fillMaxWidth().padding(top = 24.dp)) {
-                    LinearProgressIndicator(
-                        progress = { progress.coerceIn(0f, 1f) },
-                        modifier = Modifier.fillMaxWidth().height(4.dp).clip(CircleShape)
-                    )
-                    Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("${(progress * 100).toInt()}%", style = MaterialTheme.typography.labelSmall)
-                        Text(
-                            if (isThisBookActive && playback.chunkIndex >= 0) {
-                                formatReaderTtsChunkLabel(playback.chunkIndex, playback.chunkCount).orEmpty()
-                            } else "Chapter ${(currentChapter ?: 0) + 1}",
-                            style = MaterialTheme.typography.labelSmall
-                        )
-                    }
-                }
-
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 20.dp),
-                    horizontalArrangement = Arrangement.SpaceEvenly,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    // Outer left: previous chapter.
-                    IconButton(
-                        onClick = controller::previousChapter,
-                        enabled = isThisBookActive && (currentChapter ?: 0) > 0
-                    ) {
-                        Icon(
-                            painter = painterResource(R.drawable.fast_rewind),
-                            contentDescription = stringResource(
-                                R.string.audiobooks_previous_chapter
-                            ),
-                            modifier = Modifier.size(30.dp)
-                        )
-                    }
-
-                    // Inner left: previous generated passage/chunk.
-                    IconButton(
-                        onClick = controller::previousChunk,
-                        enabled = isThisBookActive && playback.chunkIndex > 0
-                    ) {
-                        Icon(
-                            painter = painterResource(R.drawable.skip_previous),
-                            contentDescription = stringResource(
-                                R.string.audiobooks_previous_passage
-                            ),
-                            modifier = Modifier.size(27.dp)
-                        )
-                    }
-
-                    Surface(
-                        shape = CircleShape,
-                        color = MaterialTheme.colorScheme.primary,
-                        shadowElevation = 8.dp
-                    ) {
-                        IconButton(
-                            onClick = {
-                                if (isThisBookActive) {
-                                    controller.togglePlay()
-                                } else {
-                                    controller.start(
-                                        sourceBook.bookId,
-                                        BookTtsSessionCoordinator.START_RESUME
-                                    )
-                                }
-                            },
-                            modifier = Modifier.size(76.dp)
-                        ) {
-                            AnimatedPlayPauseIcon(
-                                isPlaying = playback.isPlaying,
-                                contentDescription = stringResource(
-                                    if (playback.isPlaying) {
-                                        R.string.content_desc_pause_tts
-                                    } else {
-                                        R.string.content_desc_start_tts
-                                    }
-                                ),
-                                modifier = Modifier.size(42.dp),
-                                tint = MaterialTheme.colorScheme.onPrimary
-                            )
-                        }
-                    }
-
-                    // Inner right: next generated passage/chunk.
-                    IconButton(
-                        onClick = controller::nextChunk,
-                        enabled = isThisBookActive &&
-                                playback.chunkIndex < playback.chunkCount - 1
-                    ) {
-                        Icon(
-                            painter = painterResource(R.drawable.skip_next),
-                            contentDescription = stringResource(
-                                R.string.audiobooks_next_passage
-                            ),
-                            modifier = Modifier.size(27.dp)
-                        )
-                    }
-
-                    // Outer right: next chapter.
-                    IconButton(
-                        onClick = controller::nextChapter,
-                        enabled = isThisBookActive &&
-                                (currentChapter ?: 0) < (book?.chapters?.lastIndex ?: 0)
-                    ) {
-                        Icon(
-                            painter = painterResource(R.drawable.fast_forward),
-                            contentDescription = stringResource(
-                                R.string.audiobooks_next_chapter
-                            ),
-                            modifier = Modifier.size(30.dp)
-                        )
-                    }
-                }
-
-                val sleepTimerActive = sleepTimerLabel != "Sleep"
-
-                val timerDockLabel = if (sleepTimerActive) {
-                    sleepTimerLabel
-                } else {
-                    stringResource(R.string.listen_timer)
-                }
-
-                val chapterDockLabel = if (currentChapter != null) {
-                    stringResource(
-                        R.string.listen_chapter_number,
-                        currentChapter + 1
-                    )
-                } else {
-                    stringResource(R.string.audiobooks_chapters)
-                }
-
-                PlayerControlDock(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(
-                            top = 14.dp,
-                            bottom = 10.dp
-                        )
-                ) {
-                    PlayerDockAction(
-                        iconRes = R.drawable.speed,
-                        label = audiobookSpeedLabel(rate),
-                        selected = false,
-                        onClick = {
-                            showSpeedDialog = true
-                        }
-                    )
-
-                    PlayerDockAction(
-                        iconRes = R.drawable.menu,
-                        label = chapterDockLabel,
-                        selected = activePanel == TtsPlayerPanel.CHAPTERS,
-                        onClick = {
-                            activePanel = if (
-                                activePanel == TtsPlayerPanel.CHAPTERS
-                            ) {
-                                TtsPlayerPanel.COVER
-                            } else {
-                                TtsPlayerPanel.CHAPTERS
-                            }
-                        }
-                    )
-
-                    PlayerDockAction(
-                        iconRes = R.drawable.book,
-                        label = stringResource(
-                            R.string.audiobooks_transcript
-                        ),
-                        selected = activePanel == TtsPlayerPanel.TRANSCRIPT,
-                        onClick = {
-                            activePanel = if (
-                                activePanel == TtsPlayerPanel.TRANSCRIPT
-                            ) {
-                                TtsPlayerPanel.COVER
-                            } else {
-                                TtsPlayerPanel.TRANSCRIPT
-                            }
-                        }
-                    )
-
-                    PlayerDockAction(
-                        iconRes = R.drawable.timer,
-                        label = timerDockLabel,
-                        selected = sleepTimerActive,
-                        onClick = {
-                            if (sleepTimerActive) {
-                                controller.startSleepTimer(0)
-                            } else {
-                                showSleepTimerDialog = true
-                            }
-                        }
-                    )
-                }
-            }
-        }
-    }
-    if (showSpeedDialog) {
-        AudiobookSpeedDialog(
-            currentSpeed = rate,
-            onSpeedSelected = { selectedSpeed ->
-                rate = selectedSpeed
-                controller.setParameters(
-                    rate = selectedSpeed,
-                    pitch = pitch
-                )
-            },
-            onDismiss = {
-                showSpeedDialog = false
-            }
-        )
-    }
-    if (showSleepTimerDialog) {
-        AudiobookSleepTimerDialog(
-            onDurationSelected = controller::startSleepTimer,
-            onDismiss = {
-                showSleepTimerDialog = false
-            }
-        )
-    }
 }
 
 internal fun calculateTtsAudiobookProgress(
@@ -2112,6 +962,33 @@ private suspend fun androidx.compose.foundation.lazy.LazyListState
 
 @Composable
 internal fun AudiobookMiniPlayer(
+    item: AudiobookUiItem,
+    isPlaying: Boolean,
+    progress: Float,
+    onTogglePlay: () -> Unit,
+    onExpand: () -> Unit,
+    onStop: () -> Unit,
+) {
+    com.aryan.reader.shared.ui.SharedMobileAudiobookMiniPlayerFrame(
+        title = item.title,
+        subtitle = item.chapter,
+        progress = progress,
+        isPlaying = isPlaying,
+        onTogglePlayback = onTogglePlay,
+        onExpand = onExpand,
+        onStopPlayback = onStop,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
+        cover = {
+            MockAudioCover(
+                item = item,
+                modifier = Modifier.size(48.dp).clip(RoundedCornerShape(11.dp)),
+            )
+        },
+    )
+}
+
+@Composable
+private fun LegacyAudiobookMiniPlayer(
     item: AudiobookUiItem,
     isPlaying: Boolean,
     progress: Float,

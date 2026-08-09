@@ -546,11 +546,24 @@ private fun LibraryFilters.activeFilterCount(): Int {
         tagIds.size +
         if (readStatus == ReadStatusFilter.ALL) 0 else 1
 }
-internal enum class MobileUnifiedLibraryFilter {
+enum class MobileUnifiedLibraryFilter {
     ALL,
     READING,
     FINISHED,
     UNREAD,
+}
+
+enum class MobileUnifiedLibrarySection(val persistedValue: Int) {
+    HOME(0),
+    SHELVES(1),
+    FOLDERS(2),
+    CATALOGS(3),
+    AUDIOBOOKS(4);
+
+    companion object {
+        fun fromPersisted(value: Int): MobileUnifiedLibrarySection =
+            entries.firstOrNull { it.persistedValue == value } ?: HOME
+    }
 }
 
 internal fun mobileUnifiedLibraryBooks(

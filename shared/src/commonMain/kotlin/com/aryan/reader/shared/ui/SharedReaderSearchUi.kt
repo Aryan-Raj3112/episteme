@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -43,7 +44,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -101,6 +104,62 @@ fun SharedReaderSearchResultsPanel(
     }
 }
 
+/** Android-compatible lazy reader search list for paged providers. */
+@Composable
+fun SharedReaderLazySearchResultsPanel(
+    itemCount: Int,
+    isRefreshing: Boolean,
+    noResultsText: String,
+    resultsCountText: String,
+    itemAt: @Composable (Int) -> SearchResult?,
+    onResultClick: (SearchResult) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        modifier = modifier.fillMaxSize(),
+        color = MaterialTheme.colorScheme.background,
+    ) {
+        if (itemCount == 0 && !isRefreshing) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(noResultsText, style = MaterialTheme.typography.bodyLarge)
+            }
+        } else {
+            Column {
+                Text(
+                    text = resultsCountText,
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                )
+                HorizontalDivider()
+                LazyColumn(modifier = Modifier.testTag("SearchResultsList")) {
+                    items(itemCount, contentType = { "SearchResult" }) { index ->
+                        itemAt(index)?.let { result ->
+                            ListItem(
+                                headlineContent = {
+                                    Text(result.locationTitle, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                },
+                                supportingContent = {
+                                    Text(result.snippet, style = MaterialTheme.typography.bodyMedium)
+                                },
+                                modifier = Modifier
+                                    .testTag("SearchResultItem_${result.locationInSource}")
+                                    .clickable { onResultClick(result) },
+                            )
+                            HorizontalDivider()
+                        }
+                    }
+                }
+            }
+        }
+
+        if (isRefreshing) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator()
+            }
+        }
+    }
+}
+
 /** Android EPUB TOC row moved verbatim into common UI; Android supplies localized semantics. */
 @Composable
 fun SharedAndroidEpubTocTreeItem(
@@ -111,6 +170,34 @@ fun SharedAndroidEpubTocTreeItem(
     isCurrent: Boolean,
     collapseDescription: String,
     expandDescription: String,
+    onToggleExpand: () -> Unit,
+    onClick: () -> Unit,
+) {
+    SharedAndroidReaderTocTreeItem(
+        label = label,
+        depth = depth,
+        isExpanded = isExpanded,
+        hasChildren = hasChildren,
+        isCurrent = isCurrent,
+        collapseDescription = collapseDescription,
+        expandDescription = expandDescription,
+        verticalPadding = 8.dp,
+        onToggleExpand = onToggleExpand,
+        onClick = onClick,
+    )
+}
+
+/** Shared Android reader TOC row; EPUB and PDF retain their exact vertical density. */
+@Composable
+fun SharedAndroidReaderTocTreeItem(
+    label: String,
+    depth: Int,
+    isExpanded: Boolean,
+    hasChildren: Boolean,
+    isCurrent: Boolean,
+    collapseDescription: String,
+    expandDescription: String,
+    verticalPadding: Dp,
     onToggleExpand: () -> Unit,
     onClick: () -> Unit,
 ) {
@@ -130,7 +217,7 @@ fun SharedAndroidEpubTocTreeItem(
             .heightIn(min = 48.dp)
             .background(backgroundColor)
             .clickable(onClick = onClick)
-            .padding(vertical = 8.dp),
+            .padding(vertical = verticalPadding),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Spacer(modifier = Modifier.width((16 * depth).dp))
@@ -186,6 +273,284 @@ data class SharedAndroidEpubBookmarkStrings(
     val deleteDialogTitle: String,
     val deleteDialogDescription: String,
 )
+
+data class SharedAndroidPdfBookmarkStrings(
+    val empty: String,
+    val moreOptionsDescription: String,
+    val renameAction: String,
+    val deleteAction: String,
+    val renameDialogTitle: String,
+    val newTitleLabel: String,
+    val saveAction: String,
+    val cancelAction: String,
+    val deleteDialogTitle: String,
+    val deleteDialogDescription: String,
+)
+
+data class SharedAndroidPdfHighlightStrings(
+    val empty: String,
+    val allFilter: String,
+    val withNotesFilter: String,
+    val defaultHighlight: String,
+    val optionsDescription: String,
+    val addNoteAction: String,
+    val editNoteAction: String,
+    val deleteAction: String,
+    val cancelAction: String,
+    val deleteDialogTitle: String,
+    val deleteDialogDescription: String,
+)
+
+/** Exact Android PDF highlight drawer with model, localization, and persistence injected. */
+@Composable
+fun <T> SharedAndroidPdfHighlightsList(
+    highlights: List<T>,
+    strings: SharedAndroidPdfHighlightStrings,
+    key: (T) -> Any,
+    sortKey: (T) -> Int,
+    text: (T) -> String,
+    note: (T) -> String?,
+    pageLabel: (T) -> String,
+    color: (T) -> Color,
+    onNavigateToHighlight: (T) -> Unit,
+    onNoteRequested: (T) -> Unit,
+    onDeleteHighlight: (T) -> Unit,
+) {
+    if (highlights.isEmpty()) {
+        Box(Modifier.fillMaxSize().padding(16.dp), contentAlignment = Alignment.Center) {
+            Text(strings.empty, style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center)
+        }
+        return
+    }
+
+    var showDeleteConfirmDialogFor by remember { mutableStateOf<T?>(null) }
+    var filterWithNotesOnly by remember { mutableStateOf(false) }
+    Column(modifier = Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+            horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp),
+        ) {
+            androidx.compose.material3.FilterChip(
+                selected = !filterWithNotesOnly,
+                onClick = { filterWithNotesOnly = false },
+                label = { Text(strings.allFilter) },
+            )
+            androidx.compose.material3.FilterChip(
+                selected = filterWithNotesOnly,
+                onClick = { filterWithNotesOnly = true },
+                label = { Text(strings.withNotesFilter) },
+            )
+        }
+
+        val filteredHighlights = if (filterWithNotesOnly) highlights.filter { !note(it).isNullOrBlank() } else highlights
+        val sortedHighlights = remember(filteredHighlights) { filteredHighlights.sortedBy(sortKey) }
+        LazyColumn(modifier = Modifier.fillMaxSize()) {
+            items(sortedHighlights, key = key) { highlight ->
+                ListItem(
+                    headlineContent = {
+                        Text(
+                            text = text(highlight).ifBlank { strings.defaultHighlight },
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    },
+                    supportingContent = {
+                        Column {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(Modifier.size(12.dp).background(color(highlight), androidx.compose.foundation.shape.CircleShape))
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    text = pageLabel(highlight),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            note(highlight)?.takeIf { it.isNotBlank() }?.let { highlightNote ->
+                                Spacer(Modifier.height(8.dp))
+                                Surface(
+                                    shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
+                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Text(
+                                        text = highlightNote,
+                                        style = MaterialTheme.typography.bodySmall.copy(fontStyle = FontStyle.Italic),
+                                        modifier = Modifier.padding(12.dp),
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                        }
+                    },
+                    trailingContent = {
+                        Box {
+                            var menuExpanded by remember { mutableStateOf(false) }
+                            IconButton(onClick = { menuExpanded = true }) {
+                                Icon(Icons.Default.MoreVert, contentDescription = strings.optionsDescription)
+                            }
+                            DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                                DropdownMenuItem(
+                                    text = { Text(if (note(highlight).isNullOrBlank()) strings.addNoteAction else strings.editNoteAction) },
+                                    onClick = {
+                                        onNoteRequested(highlight)
+                                        menuExpanded = false
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(strings.deleteAction) },
+                                    onClick = {
+                                        showDeleteConfirmDialogFor = highlight
+                                        menuExpanded = false
+                                    },
+                                )
+                            }
+                        }
+                    },
+                    modifier = Modifier.clickable { onNavigateToHighlight(highlight) },
+                )
+                HorizontalDivider()
+            }
+        }
+    }
+
+    showDeleteConfirmDialogFor?.let { highlightToDelete ->
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirmDialogFor = null },
+            title = { Text(strings.deleteDialogTitle) },
+            text = { Text(strings.deleteDialogDescription) },
+            confirmButton = {
+                TextButton(onClick = {
+                    onDeleteHighlight(highlightToDelete)
+                    showDeleteConfirmDialogFor = null
+                }) { Text(strings.deleteAction) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirmDialogFor = null }) { Text(strings.cancelAction) }
+            },
+        )
+    }
+}
+
+/** Exact Android PDF bookmark list and dialogs with model/localization supplied by the platform. */
+@Composable
+fun <T> SharedAndroidPdfBookmarksList(
+    bookmarks: List<T>,
+    strings: SharedAndroidPdfBookmarkStrings,
+    key: (index: Int, bookmark: T) -> Any,
+    title: (T) -> String,
+    supportingText: (T) -> String,
+    testTag: (T) -> String,
+    onNavigateToBookmark: (T) -> Unit,
+    onRenameBookmark: (T, String) -> Unit,
+    onDeleteBookmark: (T) -> Unit,
+) {
+    if (bookmarks.isEmpty()) {
+        Box(
+            modifier = Modifier.fillMaxSize().padding(16.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(strings.empty, style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center)
+        }
+        return
+    }
+
+    var bookmarkMenuExpandedFor by remember { mutableStateOf<T?>(null) }
+    var showDeleteConfirmDialogFor by remember { mutableStateOf<T?>(null) }
+    var showRenameBookmarkDialog by remember { mutableStateOf<T?>(null) }
+
+    LazyColumn(modifier = Modifier.fillMaxSize()) {
+        items(bookmarks.size, key = { index -> key(index, bookmarks[index]) }) { index ->
+            val bookmark = bookmarks[index]
+            ListItem(
+                headlineContent = {
+                    Text(
+                        text = title(bookmark),
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                },
+                supportingContent = {
+                    Text(supportingText(bookmark), style = MaterialTheme.typography.bodySmall)
+                },
+                trailingContent = {
+                    Box {
+                        IconButton(onClick = { bookmarkMenuExpandedFor = bookmark }) {
+                            Icon(Icons.Default.MoreVert, contentDescription = strings.moreOptionsDescription)
+                        }
+                        DropdownMenu(
+                            expanded = bookmarkMenuExpandedFor == bookmark,
+                            onDismissRequest = { bookmarkMenuExpandedFor = null },
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text(strings.renameAction) },
+                                onClick = {
+                                    showRenameBookmarkDialog = bookmark
+                                    bookmarkMenuExpandedFor = null
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text(strings.deleteAction) },
+                                onClick = {
+                                    showDeleteConfirmDialogFor = bookmark
+                                    bookmarkMenuExpandedFor = null
+                                },
+                            )
+                        }
+                    }
+                },
+                modifier = Modifier
+                    .clickable { onNavigateToBookmark(bookmark) }
+                    .testTag(testTag(bookmark)),
+            )
+            HorizontalDivider()
+        }
+    }
+
+    showRenameBookmarkDialog?.let { bookmarkToRename ->
+        var newTitle by remember(bookmarkToRename) { mutableStateOf(title(bookmarkToRename)) }
+        AlertDialog(
+            onDismissRequest = { showRenameBookmarkDialog = null },
+            title = { Text(strings.renameDialogTitle) },
+            text = {
+                OutlinedTextField(
+                    value = newTitle,
+                    onValueChange = { newTitle = it },
+                    label = { Text(strings.newTitleLabel) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    onRenameBookmark(bookmarkToRename, newTitle)
+                    showRenameBookmarkDialog = null
+                }) { Text(strings.saveAction) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRenameBookmarkDialog = null }) { Text(strings.cancelAction) }
+            },
+        )
+    }
+
+    showDeleteConfirmDialogFor?.let { bookmarkToDelete ->
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirmDialogFor = null },
+            title = { Text(strings.deleteDialogTitle) },
+            text = { Text(strings.deleteDialogDescription) },
+            confirmButton = {
+                TextButton(onClick = {
+                    onDeleteBookmark(bookmarkToDelete)
+                    showDeleteConfirmDialogFor = null
+                }) { Text(strings.deleteAction) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirmDialogFor = null }) { Text(strings.cancelAction) }
+            },
+        )
+    }
+}
 
 /** Android EPUB bookmark list and dialogs, with platform localization and scrollbar injected. */
 @Composable

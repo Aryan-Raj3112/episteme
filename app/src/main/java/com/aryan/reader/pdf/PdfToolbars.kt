@@ -50,22 +50,7 @@ import kotlin.collections.isNotEmpty
 
 internal val PdfTabStripHeight = 44.dp
 
-internal enum class PdfOverflowMenuSection {
-    CUSTOMIZE_TOOLBAR,
-    HIDDEN_TOOLS,
-    OCR_LANGUAGE,
-    VISUAL_OPTIONS,
-    READING_MODE,
-    TAP_TO_TURN,
-    KEEP_SCREEN_ON,
-    AUTO_SCROLL,
-    TTS_SETTINGS,
-    BOOKMARK,
-    PAGE_MANAGEMENT,
-    REFLOW,
-    FILE_ACTIONS,
-    FILE_INFO
-}
+internal typealias PdfOverflowMenuSection = com.aryan.reader.shared.PdfOverflowMenuSection
 
 internal fun pdfOverflowMenuSections(
     hiddenTools: Set<String>,
@@ -74,37 +59,14 @@ internal fun pdfOverflowMenuSections(
     effectiveFileType: FileType,
     hasFileInfo: Boolean = true,
     canPrintDocument: Boolean = true
-): List<PdfOverflowMenuSection> = buildList {
-    add(PdfOverflowMenuSection.CUSTOMIZE_TOOLBAR)
-    if (hasHiddenToolbarTools) add(PdfOverflowMenuSection.HIDDEN_TOOLS)
-    if (isPro && !hiddenTools.contains(PdfReaderTool.OCR_LANGUAGE.name)) {
-        add(PdfOverflowMenuSection.OCR_LANGUAGE)
-    }
-    if (!hiddenTools.contains(PdfReaderTool.VISUAL_OPTIONS.name)) add(PdfOverflowMenuSection.VISUAL_OPTIONS)
-    if (!hiddenTools.contains(PdfReaderTool.READING_MODE.name)) add(PdfOverflowMenuSection.READING_MODE)
-    if (!hiddenTools.contains(PdfReaderTool.TAP_TO_TURN.name)) add(PdfOverflowMenuSection.TAP_TO_TURN)
-    if (!hiddenTools.contains(PdfReaderTool.KEEP_SCREEN_ON.name)) add(PdfOverflowMenuSection.KEEP_SCREEN_ON)
-    if (!hiddenTools.contains(PdfReaderTool.AUTO_SCROLL.name)) add(PdfOverflowMenuSection.AUTO_SCROLL)
-    if (
-        !hiddenTools.contains(PdfReaderTool.TTS_SETTINGS.name) ||
-        !hiddenTools.contains(PdfReaderTool.TTS_REPLACEMENTS.name)
-    ) {
-        add(PdfOverflowMenuSection.TTS_SETTINGS)
-    }
-    if (!hiddenTools.contains(PdfReaderTool.BOOKMARK.name)) add(PdfOverflowMenuSection.BOOKMARK)
-    if (!hiddenTools.contains(PdfReaderTool.PAGE_MANAGEMENT.name)) add(PdfOverflowMenuSection.PAGE_MANAGEMENT)
-    if (!hiddenTools.contains(PdfReaderTool.REFLOW.name)) add(PdfOverflowMenuSection.REFLOW)
-    if (
-        !hiddenTools.contains(PdfReaderTool.SHARE.name) ||
-        (effectiveFileType == FileType.PDF && !hiddenTools.contains(PdfReaderTool.SAVE_COPY.name)) ||
-        (effectiveFileType == FileType.PDF && canPrintDocument && !hiddenTools.contains(PdfReaderTool.PRINT.name))
-    ) {
-        add(PdfOverflowMenuSection.FILE_ACTIONS)
-    }
-    if (hasFileInfo && !hiddenTools.contains(PdfReaderTool.FILE_INFO.name)) {
-        add(PdfOverflowMenuSection.FILE_INFO)
-    }
-}
+): List<PdfOverflowMenuSection> = com.aryan.reader.shared.pdfOverflowMenuSections(
+    hiddenTools = hiddenTools,
+    hasHiddenToolbarTools = hasHiddenToolbarTools,
+    isPro = isPro,
+    effectiveFileType = effectiveFileType,
+    hasFileInfo = hasFileInfo,
+    canPrintDocument = canPrintDocument,
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -186,10 +148,9 @@ internal fun PdfTopBar(
     onGenerateDemoAnnotations: () -> Unit,
     includeDebugActions: Boolean = BuildConfig.DEBUG
 ) {
-    AnimatedVisibility(
+    com.aryan.reader.shared.ui.SharedReaderBarVisibility(
         visible = showStandardBars,
-        enter = slideInVertically(animationSpec = tween(200)) { fullHeight -> -fullHeight } + fadeIn(animationSpec = tween(200)),
-        exit = slideOutVertically(animationSpec = tween(200)) { fullHeight -> -fullHeight } + fadeOut(animationSpec = tween(200)),
+        edge = com.aryan.reader.shared.ui.SharedReaderBarEdge.TOP,
         modifier = modifier
     ) {
         val isStatusBarVisible = when (systemUiMode) {
@@ -199,16 +160,9 @@ internal fun PdfTopBar(
         }
         val topBarPadding = if (isStatusBarVisible) statusBarHeightDp else 0.dp
 
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            color = MaterialTheme.colorScheme.surface,
-            tonalElevation = 4.dp
-        ) {
+        com.aryan.reader.shared.ui.SharedReaderToolbarSurface {
             Column(modifier = Modifier.fillMaxWidth().padding(top = topBarPadding)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+                com.aryan.reader.shared.ui.SharedPdfTopToolbarRow {
                     if (searchState.isSearchActive) {
                         SearchTopBar(
                             searchState = searchState,
@@ -231,8 +185,12 @@ internal fun PdfTopBar(
                             totalPages > 0 && pagerStatePageCount == 0 -> stringResource(R.string.loading_page)
                             else -> stringResource(R.string.pdf_viewer)
                         }
-                        val topToolbarTools = toolOrder
-                            .filter { isPdfToolbarPlacementTool(it) && !bottomTools.contains(it.name) && !hiddenTools.contains(it.name) }
+                        val topToolbarTools = com.aryan.reader.shared.ui.sharedPdfToolbarTools(
+                            toolOrder = toolOrder,
+                            hiddenToolNamesOrIds = hiddenTools,
+                            bottomToolNamesOrIds = bottomTools,
+                            placement = com.aryan.reader.shared.ui.SharedReaderToolbarPlacement.TOP,
+                        )
                         Text(
                             text = titleText,
                             style = MaterialTheme.typography.titleMedium,
@@ -365,33 +323,22 @@ internal fun PdfTopBar(
                         }
 
                         Box {
-                            var showMoreMenu by remember { mutableStateOf(false) }
-                            var showHiddenToolsExpanded by remember { mutableStateOf(false) }
-                            var showReadingModeExpanded by remember { mutableStateOf(false) }
-                            var showTtsSettingsExpanded by remember { mutableStateOf(false) }
-                            var showFileActionsExpanded by remember { mutableStateOf(false) }
+                            val overflowMenuState = com.aryan.reader.shared.ui.rememberSharedReaderOverflowMenuState()
+                            var showMoreMenu by overflowMenuState.menuExpanded
+                            var showHiddenToolsExpanded by overflowMenuState.hiddenToolsExpanded
+                            var showReadingModeExpanded by overflowMenuState.readingModeExpanded
+                            var showTtsSettingsExpanded by overflowMenuState.ttsSettingsExpanded
+                            var showFileActionsExpanded by overflowMenuState.fileActionsExpanded
                             TooltipIconButton(
                                 text = stringResource(R.string.tooltip_more_options),
                                 description = stringResource(R.string.tooltip_more_options_desc),
-                                onClick = {
-                                    showHiddenToolsExpanded = false
-                                    showReadingModeExpanded = false
-                                    showTtsSettingsExpanded = false
-                                    showFileActionsExpanded = false
-                                    showMoreMenu = true
-                                }) {
+                                onClick = overflowMenuState::open,
+                            ) {
                                 Icon(Icons.Default.MoreVert, contentDescription = stringResource(R.string.tooltip_more_options))
                             }
 
-                            DropdownMenu(
-                                expanded = showMoreMenu,
-                                onDismissRequest = {
-                                    showHiddenToolsExpanded = false
-                                    showReadingModeExpanded = false
-                                    showTtsSettingsExpanded = false
-                                    showFileActionsExpanded = false
-                                    showMoreMenu = false
-                                }
+                            com.aryan.reader.shared.ui.SharedReaderOverflowMenu(
+                                state = overflowMenuState,
                             ) {
                                 val hiddenToolbarTools = toolOrder.filter { isPdfToolbarPlacementTool(it) && hiddenTools.contains(it.name) }
                                 val showTtsVoiceSettings = !hiddenTools.contains(PdfReaderTool.TTS_SETTINGS.name)
@@ -399,14 +346,15 @@ internal fun PdfTopBar(
                                 val showShareAction = !hiddenTools.contains(PdfReaderTool.SHARE.name)
                                 val showSaveCopyAction = effectiveFileType == FileType.PDF && !hiddenTools.contains(PdfReaderTool.SAVE_COPY.name)
                                 val showPrintAction = effectiveFileType == FileType.PDF && canPrintDocument && !hiddenTools.contains(PdfReaderTool.PRINT.name)
-                                pdfOverflowMenuSections(
-                                    hiddenTools = hiddenTools,
-                                    hasHiddenToolbarTools = hiddenToolbarTools.isNotEmpty(),
-                                    isPro = BuildConfig.IS_PRO,
-                                    effectiveFileType = effectiveFileType,
-                                    canPrintDocument = canPrintDocument
-                                ).forEachIndexed { index, section ->
-                                    if (index > 0) HorizontalDivider()
+                                com.aryan.reader.shared.ui.SharedReaderOverflowSectionList(
+                                    sections = pdfOverflowMenuSections(
+                                        hiddenTools = hiddenTools,
+                                        hasHiddenToolbarTools = hiddenToolbarTools.isNotEmpty(),
+                                        isPro = BuildConfig.IS_PRO,
+                                        effectiveFileType = effectiveFileType,
+                                        canPrintDocument = canPrintDocument,
+                                    ),
+                                ) { section ->
                                     when (section) {
                                         PdfOverflowMenuSection.CUSTOMIZE_TOOLBAR -> {
                                             DropdownMenuItem(
@@ -959,25 +907,27 @@ fun PdfBottomBar(
     isBubbleZoomModeActive: Boolean,
     onToggleBubbleZoom: () -> Unit
 ) {
-    AnimatedVisibility(
+    com.aryan.reader.shared.ui.SharedReaderBarVisibility(
         visible = showStandardBars && !searchStateActive,
-        enter = slideInVertically(animationSpec = tween(200)) { fullHeight -> fullHeight } + fadeIn(animationSpec = tween(200)),
-        exit = slideOutVertically(animationSpec = tween(200)) { fullHeight -> fullHeight } + fadeOut(animationSpec = tween(200)),
+        edge = com.aryan.reader.shared.ui.SharedReaderBarEdge.BOTTOM,
         modifier = modifier
     ) {
         val isNavBarVisible = systemUiMode != SystemUiMode.HIDDEN
         val bottomBarPadding = if (isNavBarVisible) navBarHeightDp else 0.dp
 
-        Surface(modifier = Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.surface, tonalElevation = 4.dp) {
+        com.aryan.reader.shared.ui.SharedReaderToolbarSurface {
             val bottomBarScrollState = rememberScrollState()
 
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(bottom = bottomBarPadding).height(56.dp).padding(horizontal = 8.dp).horizontalScroll(bottomBarScrollState),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceEvenly
+            com.aryan.reader.shared.ui.SharedPdfBottomToolbarRow(
+                bottomPadding = bottomBarPadding,
+                scrollState = bottomBarScrollState,
             ) {
-                toolOrder
-                    .filter { isPdfToolbarPlacementTool(it) && bottomTools.contains(it.name) && !hiddenTools.contains(it.name) }
+                com.aryan.reader.shared.ui.sharedPdfToolbarTools(
+                    toolOrder = toolOrder,
+                    hiddenToolNamesOrIds = hiddenTools,
+                    bottomToolNamesOrIds = bottomTools,
+                    placement = com.aryan.reader.shared.ui.SharedReaderToolbarPlacement.BOTTOM,
+                )
                     .forEach { tool ->
                         when (tool) {
                             PdfReaderTool.THEME -> TooltipIconButton(

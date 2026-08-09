@@ -78,131 +78,44 @@ fun FeedbackScreen(
 ) {
     val context = LocalContext.current
     val uriHandler = LocalUriHandler.current
-
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text(stringResource(R.string.drawer_help_feedback)) },
-                navigationIcon = {
-                    IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
-                    }
-                }
-            )
-        }
-    ) { paddingValues ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues)
-                .padding(horizontal = 16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Spacer(modifier = Modifier.height(32.dp))
-
+    com.aryan.reader.shared.ui.SharedAndroidUtilityLinkScreen(
+        strings = com.aryan.reader.shared.ui.SharedAndroidUtilityLinkStrings(
+            title = stringResource(R.string.drawer_help_feedback),
+            backDescription = stringResource(R.string.action_back),
+            heading = stringResource(R.string.get_in_touch),
+            description = stringResource(R.string.feedback_desc),
+            firstTitle = stringResource(R.string.github_issues),
+            firstDescription = stringResource(R.string.github_issues_desc),
+            secondTitle = stringResource(R.string.email_support),
+            secondDescription = stringResource(R.string.email_support_desc),
+            openDescription = stringResource(R.string.action_open),
+        ),
+        onNavigateBack = onNavigateBack,
+        onFirstClick = { uriHandler.openUri("https://github.com/Aryan-Raj3112/episteme/issues") },
+        onSecondClick = { launchEmailFeedback(context) },
+        heroIcon = {
             Icon(
-                imageVector = Icons.Outlined.Feedback,
+                Icons.Outlined.Feedback,
                 contentDescription = null,
                 modifier = Modifier.size(72.dp),
-                tint = MaterialTheme.colorScheme.primary
+                tint = MaterialTheme.colorScheme.primary,
             )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            Text(text = stringResource(R.string.get_in_touch),
-                style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold
-            )
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Text(text = stringResource(R.string.feedback_desc),
-                style = MaterialTheme.typography.bodyLarge,
-                textAlign = TextAlign.Center,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 16.dp)
-            )
-
-            Spacer(modifier = Modifier.height(48.dp))
-
-            FeedbackOptionCard(
-                title = stringResource(R.string.github_issues),
-                description = stringResource(R.string.github_issues_desc),
-                icon = {
-                    Icon(
-                        painter = painterResource(id = R.drawable.github),
-                        contentDescription = stringResource(R.string.github_issues),
-                        modifier = Modifier.size(28.dp),
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                },
-                onClick = {
-                    uriHandler.openUri("https://github.com/Aryan-Raj3112/episteme/issues")
-                }
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            FeedbackOptionCard(
-                title = stringResource(R.string.email_support),
-                description = stringResource(R.string.email_support_desc),
-                icon = {
-                    Icon(
-                        imageVector = Icons.Outlined.Email,
-                        contentDescription = stringResource(R.string.email_support),
-                        modifier = Modifier.size(28.dp),
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                },
-                onClick = {
-                    launchEmailFeedback(context)
-                }
-            )
-
-            Spacer(modifier = Modifier.weight(1f))
-        }
-    }
-}
-
-@Composable
-private fun FeedbackOptionCard(
-    title: String,
-    description: String,
-    icon: @Composable () -> Unit,
-    onClick: () -> Unit
-) {
-    OutlinedCard(
-        onClick = onClick,
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(20.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            icon()
-            Spacer(modifier = Modifier.width(20.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = description,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            Spacer(modifier = Modifier.width(8.dp))
+        },
+        firstIcon = {
             Icon(
-                imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                contentDescription = stringResource(R.string.action_open),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                painterResource(R.drawable.github),
+                contentDescription = stringResource(R.string.github_issues),
+                modifier = Modifier.size(28.dp),
+                tint = MaterialTheme.colorScheme.primary,
             )
-        }
-    }
+        },
+        secondIcon = {
+            Icon(
+                Icons.Outlined.Email,
+                contentDescription = stringResource(R.string.email_support),
+                modifier = Modifier.size(28.dp),
+                tint = MaterialTheme.colorScheme.primary,
+            )
+        },
+    )
 }

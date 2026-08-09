@@ -129,29 +129,19 @@ internal fun resolveTtsChunkSkipTarget(
     currentChunkIndex: Int,
     totalChunks: Int,
     direction: Int
-): Int? {
-    if (totalChunks <= 0) return null
-    if (currentChunkIndex !in 0 until totalChunks) return null
-    if (direction != -1 && direction != 1) return null
-    val targetIndex = currentChunkIndex + direction
-    return targetIndex.takeIf { it in 0 until totalChunks }
-}
+): Int? = com.aryan.reader.shared.resolveSharedTtsChunkSkipTarget(
+    currentChunkIndex = currentChunkIndex,
+    totalChunks = totalChunks,
+    direction = direction,
+)
 
 internal fun resolveTtsStartChunkIndex(
     requestedChunkIndex: Int,
     totalChunks: Int
-): Int {
-    if (totalChunks <= 0) return 0
-    return requestedChunkIndex.coerceIn(0, totalChunks - 1)
-}
+): Int = com.aryan.reader.shared.resolveSharedTtsStartChunkIndex(requestedChunkIndex, totalChunks)
 
-internal fun resolveTtsTranscriptWindow(currentIndex: Int, chunkCount: Int): Pair<Int, IntRange> {
-    if (chunkCount <= 0) return 0 to IntRange.EMPTY
-    val center = currentIndex.coerceIn(0, chunkCount - 1)
-    val start = (center - 2).coerceAtLeast(0)
-    val end = (center + 3).coerceAtMost(chunkCount - 1)
-    return start to (start..end)
-}
+internal fun resolveTtsTranscriptWindow(currentIndex: Int, chunkCount: Int): Pair<Int, IntRange> =
+    com.aryan.reader.shared.resolveSharedTtsTranscriptWindow(currentIndex, chunkCount)
 
 internal fun resolveReusableTtsPlaylistIndex(
     playlistIndex: Int?,

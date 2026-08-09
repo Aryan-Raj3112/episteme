@@ -279,21 +279,6 @@ fun NativeVerticalLocation.locatorForPersistence(): Locator? {
     }
 }
 
-internal fun shouldFallbackNativeVerticalInitialScrollToCompatPage(
-    hasInitialLocator: Boolean,
-    didLocatorScroll: Boolean
-): Boolean = !hasInitialLocator && !didLocatorScroll
-
-internal fun nativeVerticalCenteredScrollDelta(
-    targetOffsetInViewport: Float,
-    viewportHeight: Float
-): Float = targetOffsetInViewport - (viewportHeight * 0.5f)
-
-data class NativeVerticalChapterPageInfo(
-    val currentPage: Int,
-    val totalPages: Int
-)
-
 private data class SelectionBlockKey(
     val pageIndex: Int,
     val blockIndex: Int,
@@ -343,101 +328,11 @@ private data class AndroidEpubRenderedBlockBounds(
     val bottomPx: Int = topPx + heightPx
 }
 
-internal data class NativeVerticalFlowChapter(
-    val chapterIndex: Int,
-    val title: String?,
-    val blocks: List<ContentBlock>,
-    val isLoaded: Boolean = true,
-    val estimatedLocationWeight: Int = 0
-)
-
-private enum class NativeVerticalFlowItemKind {
-    BLOCK,
-    CHAPTER_GAP,
-    EMPTY_CHAPTER,
-    UNLOADED_CHAPTER
-}
-
-private data class NativeVerticalFlowItem(
-    val key: String,
-    val chapterIndex: Int,
-    val blockOrdinal: Int,
-    val block: ContentBlock?,
-    val kind: NativeVerticalFlowItemKind,
-    val locationWeight: Int
-)
-
 private fun buildSelectionBlockKey(
     pageIndex: Int,
     blockIndex: Int,
     blockCharOffset: Int
 ): String = "${pageIndex}_${blockIndex}_${blockCharOffset}"
-
-internal fun nativeVerticalInitialChapterPrefetchOrder(
-    chapterCount: Int,
-    initialChapter: Int,
-    forwardCount: Int = 2,
-    backwardCount: Int = 0
-): List<Int> {
-    if (chapterCount <= 0) return emptyList()
-    val start = initialChapter.coerceIn(0, chapterCount - 1)
-    return buildList {
-        for (offset in 1..forwardCount.coerceAtLeast(0)) {
-            val chapterIndex = start + offset
-            if (chapterIndex < chapterCount) add(chapterIndex)
-        }
-        for (offset in 1..backwardCount.coerceAtLeast(0)) {
-            val chapterIndex = start - offset
-            if (chapterIndex >= 0) add(chapterIndex)
-        }
-    }
-}
-
-internal fun nativeVerticalFlowChaptersAfterLoadResult(
-    currentChapters: List<NativeVerticalFlowChapter>?,
-    placeholderChapters: List<NativeVerticalFlowChapter>,
-    chapterIndex: Int,
-    title: String?,
-    blocks: List<ContentBlock>?,
-    estimatedLocationWeight: Int
-): List<NativeVerticalFlowChapter>? {
-    if (blocks == null || chapterIndex !in placeholderChapters.indices) return null
-    val current = currentChapters ?: placeholderChapters
-    if (chapterIndex !in current.indices) return null
-    return current.toMutableList().also { updated ->
-        updated[chapterIndex] = NativeVerticalFlowChapter(
-            chapterIndex = chapterIndex,
-            title = title,
-            blocks = blocks,
-            isLoaded = true,
-            estimatedLocationWeight = estimatedLocationWeight
-        )
-    }
-}
-
-internal fun nativeVerticalChapterWarmupOrder(
-    chapterCount: Int,
-    anchorChapter: Int,
-    forwardCount: Int = 4,
-    backwardCount: Int = 1
-): List<Int> {
-    if (chapterCount <= 0) return emptyList()
-    val anchor = anchorChapter.coerceIn(0, chapterCount - 1)
-    val maxDistance = maxOf(forwardCount.coerceAtLeast(0), backwardCount.coerceAtLeast(0))
-    return buildList {
-        add(anchor)
-        for (distance in 1..maxDistance) {
-            if (distance <= forwardCount) {
-                val next = anchor + distance
-                if (next < chapterCount) add(next)
-            }
-            if (distance <= backwardCount) {
-                val previous = anchor - distance
-                if (previous >= 0) add(previous)
-            }
-        }
-    }
-}
 
 private fun parseSelectionBlockKey(key: String): SelectionBlockKey? {
     val parts = key.split("_")
@@ -1030,18 +925,15 @@ private fun estimateNativeVerticalCompatPage(
     fallbackPage: Int
 ): Int {
     if (locator == null) return fallbackPage
-    val chapterStart = paginator.chapterStartPageIndices[locator.chapterIndex] ?: return fallbackPage
-    val chapterPageCount = paginator.chapterPageCounts[locator.chapterIndex] ?: 1
-    if (chapterPageCount <= 1) return chapterStart
-
-    val chapterChars = book.chaptersForPagination
-        .getOrNull(locator.chapterIndex)
-        ?.plainTextCharacterCount()
-        ?.coerceAtLeast(1)
-        ?: return fallbackPage
-    val ratio = locator.charOffset.toFloat().coerceAtLeast(0f) / chapterChars.toFloat()
-    val pageInChapter = (ratio.coerceIn(0f, 1f) * (chapterPageCount - 1)).roundToInt()
-    return chapterStart + pageInChapter
+    return nativeVerticalCompatPageForLocator(
+        chapterCharOffset = locator.charOffset,
+        chapterStartPageIndex = paginator.chapterStartPageIndices[locator.chapterIndex],
+        chapterPageCount = paginator.chapterPageCounts[locator.chapterIndex],
+        chapterLengthChars = book.chaptersForPagination
+            .getOrNull(locator.chapterIndex)
+            ?.plainTextCharacterCount(),
+        fallbackPageIndex = fallbackPage,
+    )
 }
 
 private fun estimateNativeVerticalProgressPercent(
@@ -1049,246 +941,26 @@ private fun estimateNativeVerticalProgressPercent(
     locator: Locator?
 ): Float? {
     if (locator == null) return null
-    val totalChars = book.chaptersForPagination
-        .sumOf { it.plainTextCharacterCount().toLong() }
-        .takeIf { it > 0L }
-        ?: return null
-    val completedChars = book.chaptersForPagination
-        .take(locator.chapterIndex)
-        .sumOf { it.plainTextCharacterCount().toLong() }
-    val chapterChars = book.chaptersForPagination
-        .getOrNull(locator.chapterIndex)
-        ?.plainTextCharacterCount()
-        ?.toLong()
-        ?: 0L
-    val chapterOffset = locator.charOffset
-        .toLong()
-        .coerceIn(0L, chapterChars.coerceAtLeast(0L))
-    return (((completedChars + chapterOffset).toDouble() / totalChars.toDouble()) * 100.0)
-        .toFloat()
-        .coerceIn(0f, 100f)
+    return nativeVerticalProgressPercentForLocator(
+        chapterCharacterCounts = book.chaptersForPagination.map { it.plainTextCharacterCount() },
+        chapterIndex = locator.chapterIndex,
+        chapterCharOffset = locator.charOffset,
+    )
 }
 
 private fun locatorForNativeVerticalFlowBlock(chapterIndex: Int, block: ContentBlock): Locator {
-    val firstTextBlock = listOf(block)
-        .extractTextBlocks()
-        .firstOrNull { it.content.text.isNotBlank() }
-        ?: listOf(block).extractTextBlocks().firstOrNull()
-
-    return if (firstTextBlock != null) {
-        Locator(
-            chapterIndex = chapterIndex,
-            blockIndex = firstTextBlock.blockIndex,
-            charOffset = getTextBlockCharOffset(firstTextBlock)
-        )
-    } else {
-        Locator(
-            chapterIndex = chapterIndex,
-            blockIndex = block.blockIndex,
-            charOffset = 0
-        )
-    }
+    return nativeVerticalNavigationTargetForBlock(chapterIndex, block)
 }
 
 private fun findNativeVerticalFlowTextBlockForLocator(
     chapters: List<NativeVerticalFlowChapter>,
     locator: Locator
 ): TextContentBlock? {
-    val blocks = chapters.firstOrNull { it.chapterIndex == locator.chapterIndex }?.blocks
-        ?: return null
-    val textBlocks = blocks.extractTextBlocks()
-    return textBlocks.firstOrNull { block ->
-        val start = getTextBlockCharOffset(block)
-        val end = start + block.content.text.length
-        block.blockIndex == locator.blockIndex && locator.charOffset in start..end
-    } ?: textBlocks.firstOrNull { it.blockIndex >= locator.blockIndex }
-        ?: textBlocks.firstOrNull()
+    return findNativeVerticalFlowTextBlockForTarget(chapters, locator)
 }
 
 private fun nativeVerticalFlowBlockMatchesLocator(block: ContentBlock, locator: Locator): Boolean {
-    if (block.blockIndex == locator.blockIndex) return true
-    return when (block) {
-        is FlexContainerBlock -> block.children.any { nativeVerticalFlowBlockMatchesLocator(it, locator) }
-        is TableBlock -> block.rows.flatten().any { cell ->
-            cell.content.any { nativeVerticalFlowBlockMatchesLocator(it, locator) }
-        }
-        is WrappingContentBlock ->
-            nativeVerticalFlowBlockMatchesLocator(block.floatedImage, locator) ||
-                block.paragraphsToWrap.any { nativeVerticalFlowBlockMatchesLocator(it, locator) }
-        else -> false
-    }
-}
-
-private fun nativeVerticalFlowItemWeight(block: ContentBlock?): Int {
-    if (block == null) return 0
-    val textLength = listOf(block).extractTextBlocks()
-        .sumOf { it.content.text.length }
-    return textLength.coerceAtLeast(
-        when (block) {
-            is ImageBlock -> 250
-            is MathBlock -> 80
-            is SpacerBlock -> 1
-            else -> 24
-        }
-    )
-}
-
-internal fun nativeVerticalCompatPageForProgress(progressPercent: Float, totalPageCount: Int): Int {
-    if (totalPageCount <= 1) return 0
-    return ((progressPercent.coerceIn(0f, 100f) / 100f) * (totalPageCount - 1))
-        .roundToInt()
-        .coerceIn(0, totalPageCount - 1)
-}
-
-internal fun nativeVerticalProgressForCompatPage(pageIndex: Int, totalPageCount: Int): Float {
-    if (totalPageCount <= 1) return 0f
-    return (pageIndex.coerceIn(0, totalPageCount - 1).toFloat() / (totalPageCount - 1).toFloat() * 100f)
-        .coerceIn(0f, 100f)
-}
-
-internal fun nativeVerticalChapterPageInfo(
-    chapterCharOffset: Int?,
-    chapterLengthChars: Int,
-    chapterPageCount: Int?,
-    compatPageIndex: Int,
-    chapterStartPageIndex: Int?
-): NativeVerticalChapterPageInfo? {
-    val total = chapterPageCount?.takeIf { it > 0 } ?: return null
-    val pageIndexInChapter = if (chapterCharOffset != null && chapterLengthChars > 0) {
-        ((chapterCharOffset.coerceIn(0, chapterLengthChars).toFloat() / chapterLengthChars.toFloat()) * (total - 1))
-            .roundToInt()
-    } else if (chapterStartPageIndex != null) {
-        compatPageIndex - chapterStartPageIndex
-    } else {
-        0
-    }.coerceIn(0, total - 1)
-    return NativeVerticalChapterPageInfo(
-        currentPage = pageIndexInChapter + 1,
-        totalPages = total
-    )
-}
-
-internal fun nativeVerticalChapterPageInfoForScroll(
-    itemChapterIndices: List<Int>,
-    itemWeights: List<Int>,
-    firstVisibleItemIndex: Int,
-    firstVisibleItemScrollOffset: Int,
-    firstVisibleItemSize: Int,
-    chapterPageCount: Int?
-): NativeVerticalChapterPageInfo? {
-    val total = chapterPageCount?.takeIf { it > 0 } ?: return null
-    if (itemChapterIndices.isEmpty() || itemWeights.isEmpty()) {
-        return NativeVerticalChapterPageInfo(currentPage = 1, totalPages = total)
-    }
-    val safeIndex = firstVisibleItemIndex.coerceIn(0, minOf(itemChapterIndices.lastIndex, itemWeights.lastIndex))
-    val chapterIndex = itemChapterIndices[safeIndex]
-    val chapterItems = itemChapterIndices.indices.filter { index ->
-        index < itemWeights.size && itemChapterIndices[index] == chapterIndex
-    }
-    val totalChapterWeight = chapterItems.sumOf { itemWeights[it].coerceAtLeast(0) }
-    if (totalChapterWeight <= 0) {
-        return NativeVerticalChapterPageInfo(currentPage = 1, totalPages = total)
-    }
-    val completedWeight = chapterItems
-        .filter { it < safeIndex }
-        .sumOf { itemWeights[it].coerceAtLeast(0) }
-    val currentWeight = itemWeights[safeIndex].coerceAtLeast(0)
-    val currentFraction = if (firstVisibleItemSize > 0) {
-        (firstVisibleItemScrollOffset.toFloat() / firstVisibleItemSize.toFloat())
-            .coerceIn(0f, 1f)
-    } else {
-        0f
-    }
-    val chapterProgress = ((completedWeight + currentWeight * currentFraction) / totalChapterWeight.toFloat())
-        .coerceIn(0f, 1f)
-    val pageIndexInChapter = (chapterProgress * (total - 1)).roundToInt().coerceIn(0, total - 1)
-    return NativeVerticalChapterPageInfo(
-        currentPage = pageIndexInChapter + 1,
-        totalPages = total
-    )
-}
-
-internal fun nativeVerticalProgressToItemIndex(
-    itemWeights: List<Int>,
-    progressPercent: Float
-): Int? {
-    if (itemWeights.isEmpty()) return null
-    val totalWeight = itemWeights.sumOf { it.coerceAtLeast(0) }
-    if (totalWeight <= 0) {
-        return ((progressPercent.coerceIn(0f, 100f) / 100f) * (itemWeights.size - 1))
-            .roundToInt()
-            .coerceIn(0, itemWeights.lastIndex)
-    }
-
-    val targetWeight = totalWeight * (progressPercent.coerceIn(0f, 100f) / 100f)
-    var accumulated = 0
-    var lastWeightedIndex = 0
-    itemWeights.forEachIndexed { index, rawWeight ->
-        val weight = rawWeight.coerceAtLeast(0)
-        if (weight <= 0) return@forEachIndexed
-        lastWeightedIndex = index
-        val next = accumulated + weight
-        if (targetWeight <= next || index == itemWeights.lastIndex) {
-            return index
-        }
-        accumulated = next
-    }
-    return lastWeightedIndex
-}
-
-private fun buildNativeVerticalFlowItems(
-    chapters: List<NativeVerticalFlowChapter>
-): List<NativeVerticalFlowItem> {
-    return chapters.flatMapIndexed { chapterOrdinal, chapter ->
-        val boundary = if (chapterOrdinal > 0) {
-            listOf(
-                NativeVerticalFlowItem(
-                    key = "chapter-${chapter.chapterIndex}-gap",
-                    chapterIndex = chapter.chapterIndex,
-                    blockOrdinal = -2,
-                    block = null,
-                    kind = NativeVerticalFlowItemKind.CHAPTER_GAP,
-                    locationWeight = 0
-                )
-            )
-        } else {
-            emptyList()
-        }
-        if (!chapter.isLoaded) {
-            boundary + listOf(
-                NativeVerticalFlowItem(
-                    key = "chapter-${chapter.chapterIndex}-unloaded",
-                    chapterIndex = chapter.chapterIndex,
-                    blockOrdinal = -1,
-                    block = null,
-                    kind = NativeVerticalFlowItemKind.UNLOADED_CHAPTER,
-                    locationWeight = chapter.estimatedLocationWeight.coerceAtLeast(24)
-                )
-            )
-        } else if (chapter.blocks.isEmpty()) {
-            boundary + listOf(
-                NativeVerticalFlowItem(
-                    key = "chapter-${chapter.chapterIndex}-empty",
-                    chapterIndex = chapter.chapterIndex,
-                    blockOrdinal = -1,
-                    block = null,
-                    kind = NativeVerticalFlowItemKind.EMPTY_CHAPTER,
-                    locationWeight = 0
-                )
-            )
-        } else {
-            boundary + chapter.blocks.mapIndexed { ordinal, block ->
-                NativeVerticalFlowItem(
-                    key = "chapter-${chapter.chapterIndex}-block-$ordinal-${block.blockIndex}",
-                    chapterIndex = chapter.chapterIndex,
-                    blockOrdinal = ordinal,
-                    block = block,
-                    kind = NativeVerticalFlowItemKind.BLOCK,
-                    locationWeight = nativeVerticalFlowItemWeight(block)
-                )
-            }
-        }
-    }
+    return nativeVerticalFlowBlockMatchesTarget(block, locator)
 }
 
 private fun findNativeVerticalFlowItemIndexForProgress(
@@ -1299,31 +971,6 @@ private fun findNativeVerticalFlowItemIndexForProgress(
         itemWeights = items.map { it.locationWeight },
         progressPercent = progressPercent
     )
-}
-
-internal fun estimateNativeVerticalWeightedScrollProgressPercent(
-    itemWeights: List<Int>,
-    firstVisibleItemIndex: Int,
-    firstVisibleItemScrollOffset: Int,
-    firstVisibleItemSize: Int
-): Float? {
-    if (itemWeights.isEmpty()) return null
-    val totalWeight = itemWeights.sumOf { it }.takeIf { it > 0 } ?: return null
-    val safeIndex = firstVisibleItemIndex.coerceIn(0, itemWeights.lastIndex)
-    val completedWeight = itemWeights
-        .take(safeIndex)
-        .sum()
-    val currentItemWeight = itemWeights[safeIndex]
-    val currentFraction = if (firstVisibleItemSize > 0) {
-        (firstVisibleItemScrollOffset.toFloat() / firstVisibleItemSize.toFloat())
-            .coerceIn(0f, 1f)
-    } else {
-        0f
-    }
-    val weightedPosition = completedWeight + (currentItemWeight * currentFraction)
-    return ((weightedPosition.toDouble() / totalWeight.toDouble()) * 100.0)
-        .toFloat()
-        .coerceIn(0f, 100f)
 }
 
 private fun estimateNativeVerticalScrollProgressPercent(
@@ -1345,42 +992,11 @@ private fun findNativeVerticalFlowItemIndexForLocator(
     chapters: List<NativeVerticalFlowChapter>,
     locator: Locator
 ): Int? {
-    val targetTextBlock = findNativeVerticalFlowTextBlockForLocator(chapters, locator)
-    if (targetTextBlock != null && targetTextBlock.blockIndex == locator.blockIndex) {
-        val exactIndex = items.indexOfFirst { item ->
-            item.chapterIndex == locator.chapterIndex &&
-                item.block?.let { block ->
-                    listOf(block).extractTextBlocks().any { textBlock ->
-                        textBlock.cfi == targetTextBlock.cfi ||
-                            (
-                                textBlock.blockIndex == targetTextBlock.blockIndex &&
-                                    getTextBlockCharOffset(textBlock) == getTextBlockCharOffset(targetTextBlock)
-                                )
-                    }
-                } == true
-        }
-        if (exactIndex >= 0) return exactIndex
-    }
-
-    val matchingContainerIndex = items.indexOfFirst { item ->
-        item.chapterIndex == locator.chapterIndex &&
-            item.block?.let { nativeVerticalFlowBlockMatchesLocator(it, locator) } == true
-    }
-    if (matchingContainerIndex >= 0) return matchingContainerIndex
-
-    val blockIndex = items.indexOfFirst { item ->
-        item.chapterIndex == locator.chapterIndex &&
-            (item.block?.blockIndex ?: Int.MAX_VALUE) >= locator.blockIndex
-    }
-    if (blockIndex >= 0) return blockIndex
-
-    return items.indexOfFirst { it.chapterIndex == locator.chapterIndex }
-        .takeIf { it >= 0 }
+    return findNativeVerticalFlowItemIndexForTarget(items, chapters, locator)
 }
 
 private fun locatorForNativeVerticalFlowItem(item: NativeVerticalFlowItem): Locator? {
-    return item.block?.let { locatorForNativeVerticalFlowBlock(item.chapterIndex, it) }
-        ?: Locator(item.chapterIndex, 0, 0)
+    return nativeVerticalNavigationTargetForItem(item)
 }
 
 private fun resolveNativeVerticalScrollDeltaForLocator(

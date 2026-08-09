@@ -169,52 +169,127 @@ object SharedPdfEmbeddedAnnotationThreads {
     ): List<SharedPdfEmbeddedAnnotation> {
         if (annotations.isEmpty()) return emptyList()
 
-        val byName = annotations
-            .filter { it.name.isNotBlank() }
-            .associateBy { it.name }
-        val childrenByParentId = mutableMapOf<String, MutableList<SharedPdfEmbeddedAnnotation>>()
-        val roots = mutableListOf<SharedPdfEmbeddedAnnotation>()
-
-        annotations.forEach { annotation ->
-            val parent = byName[annotation.inReplyTo]
-            if (parent != null && parent.id != annotation.id) {
-                childrenByParentId.getOrPut(parent.id) { mutableListOf() } += annotation
-            } else {
-                roots += annotation
-            }
-        }
+        val plan = buildPdfEmbeddedAnnotationThreadPlan(
+            annotations = annotations.map { annotation ->
+                PdfEmbeddedAnnotationThreadItem(
+                    name = annotation.name,
+                    inReplyTo = annotation.inReplyTo,
+                    bounds = annotation.bounds,
+                    hasVisibleText = annotation.contents.isNotBlank(),
+                    hasVisibleReply = annotation.replies.any { it.hasVisibleText },
+                )
+            },
+            geometryTolerance = geometryTolerance,
+        )
+        val childrenByParentIndex = plan.replyEdges.groupBy(
+            keySelector = PdfEmbeddedAnnotationReplyEdge::parentIndex,
+            valueTransform = PdfEmbeddedAnnotationReplyEdge::replyIndex,
+        )
 
         fun attachReplies(
-            annotation: SharedPdfEmbeddedAnnotation,
-            visitedIds: Set<String> = emptySet()
+            annotationIndex: Int,
+            visitedIndices: Set<Int> = emptySet()
         ): SharedPdfEmbeddedAnnotation {
-            if (annotation.id in visitedIds) return annotation.copy(replies = emptyList())
-            val nextVisited = visitedIds + annotation.id
-            val replies = childrenByParentId[annotation.id]
+            val annotation = annotations[annotationIndex]
+            if (annotationIndex in visitedIndices) return annotation.copy(replies = emptyList())
+            val nextVisited = visitedIndices + annotationIndex
+            val replies = childrenByParentIndex[annotationIndex]
                 .orEmpty()
                 .map { attachReplies(it, nextVisited) }
             return annotation.copy(replies = annotation.replies + replies)
         }
 
-        val groupedRoots = mutableListOf<MutableList<SharedPdfEmbeddedAnnotation>>()
-        roots.map { attachReplies(it) }.forEach { annotation ->
-            val group = groupedRoots.firstOrNull { existingGroup ->
-                existingGroup.firstOrNull()?.bounds?.inflatedBy(geometryTolerance)?.intersects(annotation.bounds) == true
-            }
-            if (group == null) {
-                groupedRoots += mutableListOf(annotation)
-            } else {
-                group += annotation
-            }
+        return plan.displayGroups.map { group ->
+            val root = attachReplies(group.rootIndex)
+            root.copy(
+                replies = root.replies + group.geometricReplyIndices.map { attachReplies(it) },
+            )
         }
-
-        return groupedRoots
-            .mapNotNull { group ->
-                val root = group.firstOrNull() ?: return@mapNotNull null
-                root.copy(replies = root.replies + group.drop(1))
-            }
-            .filter { it.hasVisibleText }
     }
+}
+
+data class PdfEmbeddedAnnotationThreadItem(
+    val name: String?,
+    val inReplyTo: String?,
+    val bounds: PdfPageBounds,
+    val hasVisibleText: Boolean,
+    val hasVisibleReply: Boolean = false,
+)
+
+data class PdfEmbeddedAnnotationReplyEdge(
+    val parentIndex: Int,
+    val replyIndex: Int,
+)
+
+data class PdfEmbeddedAnnotationDisplayGroup(
+    val rootIndex: Int,
+    val geometricReplyIndices: List<Int>,
+)
+
+data class PdfEmbeddedAnnotationThreadPlan(
+    val replyEdges: List<PdfEmbeddedAnnotationReplyEdge>,
+    val displayGroups: List<PdfEmbeddedAnnotationDisplayGroup>,
+)
+
+fun buildPdfEmbeddedAnnotationThreadPlan(
+    annotations: List<PdfEmbeddedAnnotationThreadItem>,
+    geometryTolerance: Float,
+): PdfEmbeddedAnnotationThreadPlan {
+    if (annotations.isEmpty()) {
+        return PdfEmbeddedAnnotationThreadPlan(emptyList(), emptyList())
+    }
+
+    val indicesByName = annotations.indices
+        .filter { !annotations[it].name.isNullOrBlank() }
+        .associateBy { annotations[it].name }
+    val replyEdges = mutableListOf<PdfEmbeddedAnnotationReplyEdge>()
+    val orphanIndices = mutableListOf<Int>()
+    annotations.forEachIndexed { index, annotation ->
+        val parentIndex = annotation.inReplyTo
+            ?.takeUnless(String::isBlank)
+            ?.let(indicesByName::get)
+        if (parentIndex != null) {
+            replyEdges += PdfEmbeddedAnnotationReplyEdge(parentIndex, index)
+        } else {
+            orphanIndices += index
+        }
+    }
+
+    val groupedRoots = mutableListOf<MutableList<Int>>()
+    orphanIndices.forEach { annotationIndex ->
+        val match = groupedRoots.firstOrNull { group ->
+            annotations[group.first()].bounds
+                .inflatedBy(geometryTolerance)
+                .intersects(annotations[annotationIndex].bounds)
+        }
+        if (match == null) {
+            groupedRoots += mutableListOf(annotationIndex)
+        } else {
+            match += annotationIndex
+        }
+    }
+
+    val replyIndicesByParent = replyEdges.groupBy(
+        keySelector = PdfEmbeddedAnnotationReplyEdge::parentIndex,
+        valueTransform = PdfEmbeddedAnnotationReplyEdge::replyIndex,
+    )
+    fun hasDirectVisibleContent(index: Int): Boolean {
+        val annotation = annotations[index]
+        return annotation.hasVisibleText ||
+            annotation.hasVisibleReply ||
+            replyIndicesByParent[index].orEmpty().any { annotations[it].hasVisibleText }
+    }
+
+    val displayGroups = groupedRoots.mapNotNull { group ->
+        val rootIndex = group.first()
+        val geometricReplies = group.drop(1)
+        if (!hasDirectVisibleContent(rootIndex) && geometricReplies.none { annotations[it].hasVisibleText }) {
+            null
+        } else {
+            PdfEmbeddedAnnotationDisplayGroup(rootIndex, geometricReplies)
+        }
+    }
+    return PdfEmbeddedAnnotationThreadPlan(replyEdges, displayGroups)
 }
 
 data class PdfToolConfig(
@@ -351,18 +426,18 @@ object SharedPdfAnnotationSerializer {
 
 private fun PdfPageBounds.inflatedBy(amount: Float): PdfPageBounds {
     return PdfPageBounds(
-        left = (left - amount).coerceAtLeast(0f),
-        top = (top - amount).coerceAtLeast(0f),
-        right = (right + amount).coerceAtMost(1f),
-        bottom = (bottom + amount).coerceAtMost(1f)
+        left = left - amount,
+        top = top - amount,
+        right = right + amount,
+        bottom = bottom + amount
     )
 }
 
 private fun PdfPageBounds.intersects(other: PdfPageBounds): Boolean {
-    return left <= other.right &&
-        right >= other.left &&
-        top <= other.bottom &&
-        bottom >= other.top
+    return left < other.right &&
+        other.left < right &&
+        top < other.bottom &&
+        other.top < bottom
 }
 
 data class PdfZoomSpec(

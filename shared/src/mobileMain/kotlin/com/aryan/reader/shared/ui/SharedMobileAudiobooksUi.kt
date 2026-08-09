@@ -1,13 +1,17 @@
 package com.aryan.reader.shared.ui
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -21,8 +25,11 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -35,9 +42,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Book
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
@@ -66,6 +75,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -79,10 +89,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.PathNode
 import androidx.compose.ui.graphics.vector.PathParser
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -96,6 +108,7 @@ import com.aryan.reader.shared.SharedAudiobookSort
 import com.aryan.reader.shared.SharedAudiobookStatus
 import com.aryan.reader.shared.SharedBookTtsListenState
 import com.aryan.reader.shared.SharedTtsListenItem
+import com.aryan.reader.shared.SharedTtsListenCapabilities
 import com.aryan.reader.shared.filterSharedAudiobooks
 import com.aryan.reader.shared.formatSharedPlaybackTime
 import com.aryan.reader.shared.formatSharedSleepTimerLabel
@@ -107,6 +120,184 @@ import com.aryan.reader.shared.sortSharedAudiobooks
 import com.aryan.reader.shared.toSharedAudiobookLibraryItem
 import kotlin.math.abs
 import kotlin.math.roundToInt
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SharedMobileAudiobookAddSheet(
+    onChooseFile: () -> Unit,
+    onChooseMultiple: () -> Unit,
+    onChooseFolder: () -> Unit,
+    onDismiss: () -> Unit,
+    onChooseTtsBook: (() -> Unit)? = null,
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp)
+                .navigationBarsPadding()
+        ) {
+            Text(readerString("listen_add", "Add"), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            Text(
+                readerString("audiobooks_add_preview_desc", "Add an audiobook or listen to a library book with text-to-speech"),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 16.dp),
+            )
+            onChooseTtsBook?.let { chooseTtsBook ->
+                SharedMobileAudiobookAddChoice(
+                    icon = Icons.Default.Book,
+                    title = readerString("listen_choose_tts_book", "Choose a book for TTS"),
+                    description = readerString("listen_choose_tts_book_desc", "Pick a supported book from your library and start listening"),
+                    onClick = chooseTtsBook,
+                )
+            }
+            SharedMobileAudiobookAddChoice(
+                icon = Icons.AutoMirrored.Filled.VolumeUp,
+                title = readerString("audiobooks_add_file", "Choose audiobook file"),
+                description = readerString("audiobooks_add_file_desc", "Import one supported audiobook file"),
+                onClick = onChooseFile,
+            )
+            SharedMobileAudiobookAddChoice(
+                icon = Icons.Default.Folder,
+                title = readerString("audiobooks_add_multiple", "Choose multiple files"),
+                description = "Import several audiobook files at once",
+                onClick = onChooseMultiple,
+            )
+            SharedMobileAudiobookAddChoice(
+                icon = Icons.Default.Folder,
+                title = readerString("audiobooks_add_folder", "Choose a folder"),
+                description = "Import supported audio files from a folder",
+                onClick = onChooseFolder,
+            )
+            Spacer(Modifier.height(24.dp))
+        }
+    }
+}
+
+@Composable
+private fun SharedMobileAudiobookAddChoice(
+    icon: ImageVector,
+    title: String,
+    description: String,
+    onClick: () -> Unit,
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(18.dp))
+            .clickable(onClick = onClick)
+            .padding(16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primaryContainer) {
+            Icon(icon, contentDescription = null, modifier = Modifier.padding(11.dp))
+        }
+        Column(Modifier.weight(1f).padding(horizontal = 14.dp)) {
+            Text(title, fontWeight = FontWeight.SemiBold)
+            Text(description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null)
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SharedMobileTtsBookPickerSheet(
+    books: List<BookItem>,
+    onBookSelected: (BookItem) -> Unit,
+    onDismiss: () -> Unit,
+    coverContent: @Composable (BookItem, Modifier) -> Unit,
+) {
+    var query by remember { mutableStateOf("") }
+    val visibleBooks = remember(books, query) {
+        books.asSequence()
+            .filter { it.type != com.aryan.reader.shared.FileType.AUDIOBOOK && SharedTtsListenCapabilities.supports(it.type) }
+            .filter { book ->
+                query.isBlank() || listOf(book.sharedListenTitle(), book.author, book.displayName).any { value ->
+                    value?.contains(query, ignoreCase = true) == true
+                }
+            }
+            .sortedBy { it.sharedListenTitle().lowercase() }
+            .toList()
+    }
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 680.dp)
+                .padding(horizontal = 20.dp)
+                .navigationBarsPadding(),
+        ) {
+            Text(readerString("listen_choose_tts_book", "Choose a book for TTS"), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            Text(
+                readerString("listen_choose_tts_book_desc", "Pick a supported book from your library and start listening"),
+                modifier = Modifier.padding(top = 3.dp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
+                placeholder = { Text(readerString("listen_search_library_books", "Search library books")) },
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                trailingIcon = {
+                    if (query.isNotBlank()) {
+                        IconButton(onClick = { query = "" }) {
+                            Icon(Icons.Default.Close, contentDescription = readerString("action_clear", "Clear"))
+                        }
+                    }
+                },
+                singleLine = true,
+            )
+            if (visibleBooks.isEmpty()) {
+                Box(Modifier.fillMaxWidth().height(220.dp), contentAlignment = Alignment.Center) {
+                    Text(readerString("listen_no_tts_books", "No supported books found"), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxWidth().weight(1f),
+                    contentPadding = PaddingValues(top = 14.dp, bottom = 24.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    items(visibleBooks, key = BookItem::id) { book ->
+                        Surface(
+                            onClick = { onBookSelected(book) },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(18.dp),
+                            color = MaterialTheme.colorScheme.surfaceContainerLow,
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                            ) {
+                                coverContent(book, Modifier.size(width = 52.dp, height = 78.dp).clip(RoundedCornerShape(10.dp)))
+                                Column(Modifier.weight(1f)) {
+                                    Text(book.sharedListenTitle(), fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                    Text(
+                                        book.author ?: readerString("unknown_author", "Unknown author"),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    Text(book.type.name, modifier = Modifier.padding(top = 4.dp), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                                }
+                                Icon(Icons.Default.PlayArrow, contentDescription = readerString("audiobooks_listen_with_tts", "Listen with TTS"), tint = MaterialTheme.colorScheme.primary)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun BookItem.sharedListenTitle(): String = title?.takeIf(String::isNotBlank)
+    ?: displayName.substringBeforeLast('.').ifBlank { displayName }
 
 @Composable
 fun SharedMobileAudiobooksSection(
@@ -175,12 +366,19 @@ fun SharedMobileAudiobooksSection(
         }
     }
 
-    val continueEntry = remember(visibleEntries, playback.bookId, ttsPlayback.bookId) {
-        visibleEntries.firstOrNull { !it.isTts && it.id == playback.bookId }
-            ?: visibleEntries.firstOrNull { it.isTts && it.id == ttsPlayback.bookId && ttsPlayback.connected }
-            ?: visibleEntries
-                .filter { it.progress in 0.001f..<1f }
-                .maxByOrNull { if (it.isTts) it.lastListenedAt else 0L }
+    val continueEntry = remember(visibleEntries, playback.bookId, ttsPlayback.bookId, query) {
+        if (query.isNotBlank()) {
+            null
+        } else {
+            visibleEntries.firstOrNull { !it.isTts && it.id == playback.bookId }
+                ?: visibleEntries.firstOrNull { it.isTts && it.id == ttsPlayback.bookId && ttsPlayback.connected }
+                ?: visibleEntries
+                    .filter { it.progress in 0.001f..<1f }
+                    .maxByOrNull { it.lastListenedAt }
+        }
+    }
+    val regularEntries = remember(visibleEntries, continueEntry) {
+        if (continueEntry == null) visibleEntries else visibleEntries.filterNot { it.id == continueEntry.id }
     }
 
     Column(modifier = modifier.fillMaxSize().testTag("AudiobooksLibrary")) {
@@ -188,6 +386,12 @@ fun SharedMobileAudiobooksSection(
             modifier = Modifier.fillMaxWidth().padding(start = 20.dp, top = 16.dp, end = 20.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            ListenSourceSwitcher(
+                selected = source,
+                onSelected = { source = it },
+                modifier = Modifier.fillMaxWidth(),
+            )
+
             OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },
@@ -203,12 +407,6 @@ fun SharedMobileAudiobooksSection(
                 },
                 singleLine = true,
                 shape = RoundedCornerShape(20.dp),
-            )
-
-            ListenSourceSwitcher(
-                selected = source,
-                onSelected = { source = it },
-                modifier = Modifier.fillMaxWidth(),
             )
 
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -264,7 +462,7 @@ fun SharedMobileAudiobooksSection(
                     }
                 }
             }
-            if (visibleEntries.isEmpty()) {
+            if (regularEntries.isEmpty() && continueEntry == null) {
                 item(key = "listen-empty") {
                     if (source == ListenSource.TTS) {
                         TtsLibraryEmptyState(query = query)
@@ -273,7 +471,7 @@ fun SharedMobileAudiobooksSection(
                     }
                 }
             } else {
-                items(visibleEntries, key = { it.id }) { entry ->
+                items(regularEntries, key = { it.id }) { entry ->
                     if (entry.isTts) {
                         entry.tts?.let { item ->
                             SharedMobileTtsRow(
@@ -845,6 +1043,14 @@ private fun ListenSortMenu(selected: SharedAudiobookSort, onSelected: (SharedAud
 
 @Composable
 fun SharedMobileAudiobookCover(audiobook: SharedAudiobook, modifier: Modifier = Modifier) {
+    audiobook.coverPath?.takeIf(String::isNotBlank)?.let { path ->
+        LocalBookCoverImage(
+            path = path,
+            contentDescription = audiobook.title,
+            modifier = modifier.clip(RoundedCornerShape(18.dp)),
+        )
+        return
+    }
     val colors = listOf(Color(0xFF6D4C41), Color(0xFFD7A86E))
     Box(
         modifier = modifier.clip(RoundedCornerShape(18.dp)).background(Brush.verticalGradient(colors)).padding(12.dp),
@@ -896,7 +1102,8 @@ fun SharedMobileAudiobookPlayerSheet(
                         )
                     )
                 )
-                .padding(horizontal = 24.dp),
+                .padding(horizontal = 24.dp)
+                .navigationBarsPadding(),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -1104,11 +1311,6 @@ fun SharedMobileAudiobookSleepTimerDialog(
                         Text(label, style = MaterialTheme.typography.bodyLarge)
                     }
                 }
-                TextButton(onClick = onCancelSleep, modifier = Modifier.align(Alignment.CenterHorizontally)) {
-                    Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text(readerString("audiobooks_turn_off_sleep_timer", "Turn off"))
-                }
             }
         },
         confirmButton = {},
@@ -1182,6 +1384,93 @@ fun SharedMobileAudiobookMiniPlayer(
                         contentDescription = readerString(
                             if (playback.isPlaying) "content_desc_pause_tts" else "content_desc_start_tts",
                             if (playback.isPlaying) "Pause" else "Play",
+                        ),
+                    )
+                }
+                Box {
+                    IconButton(onClick = { menuExpanded = true }) {
+                        Icon(Icons.Default.MoreVert, contentDescription = readerString("content_desc_more_options", "More options"))
+                    }
+                    DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                        DropdownMenuItem(
+                            text = { Text(readerString("audiobooks_stop_playback", "Stop playback")) },
+                            leadingIcon = { Icon(Icons.Default.Close, contentDescription = null) },
+                            onClick = {
+                                menuExpanded = false
+                                onStopPlayback()
+                            },
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Platform-neutral mini-player frame. The cover remains a slot so Android can keep its exact
+ * existing image loading/fallback behavior while the interaction and layout live in shared code.
+ */
+@Composable
+fun SharedMobileAudiobookMiniPlayerFrame(
+    title: String,
+    subtitle: String,
+    progress: Float,
+    isPlaying: Boolean,
+    onTogglePlayback: () -> Unit,
+    onExpand: () -> Unit,
+    onStopPlayback: () -> Unit,
+    modifier: Modifier = Modifier,
+    cover: @Composable () -> Unit,
+) {
+    var verticalDrag by remember { mutableFloatStateOf(0f) }
+    var menuExpanded by remember { mutableStateOf(false) }
+    Surface(
+        modifier = modifier
+            .pointerInput(onExpand) {
+                detectVerticalDragGestures(
+                    onDragStart = { verticalDrag = 0f },
+                    onVerticalDrag = { change, dragAmount ->
+                        change.consume()
+                        verticalDrag += dragAmount
+                    },
+                    onDragEnd = {
+                        if (verticalDrag < -48f) onExpand()
+                        verticalDrag = 0f
+                    },
+                )
+            }
+            .testTag("AudiobookMiniPlayer"),
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        shadowElevation = 8.dp,
+        onClick = onExpand,
+    ) {
+        Column(Modifier.fillMaxWidth()) {
+            LinearProgressIndicator(
+                progress = { progress.coerceIn(0f, 1f) },
+                modifier = Modifier.fillMaxWidth().height(3.dp),
+                color = MaterialTheme.colorScheme.primary,
+                trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+            )
+            Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                cover()
+                Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                    Text(title, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        subtitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                IconButton(onClick = onTogglePlayback) {
+                    Icon(
+                        if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                        contentDescription = readerString(
+                            if (isPlaying) "content_desc_pause_tts" else "content_desc_start_tts",
+                            if (isPlaying) "Pause" else "Play",
                         ),
                     )
                 }
@@ -1409,22 +1698,26 @@ fun SharedMobileTtsPlayerSheet(
         dragHandle = null,
         containerColor = MaterialTheme.colorScheme.surface,
         modifier = Modifier.fillMaxSize(),
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        shape = RectangleShape,
     ) {
-        Column(
-            Modifier.fillMaxWidth()
+        Box(
+            Modifier.fillMaxSize()
                 .background(
                     Brush.verticalGradient(
                         listOf(
                             MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
                             MaterialTheme.colorScheme.surface,
+                            MaterialTheme.colorScheme.surface,
                         )
                     )
-                )
-                .padding(horizontal = 24.dp)
-                .fillMaxSize(),
+                ),
+        ) {
+        Column(
+            Modifier.fillMaxSize().padding(horizontal = 24.dp).navigationBarsPadding(),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.fillMaxWidth().padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onDismiss) {
                     Icon(Icons.Default.KeyboardArrowDown, contentDescription = readerString("audiobooks_collapse_player", "Collapse player"))
                 }
@@ -1436,7 +1729,10 @@ fun SharedMobileTtsPlayerSheet(
                     )
                     AnimatedContent(
                         targetState = if (isActive && !playback.chapterTitle.isNullOrBlank()) playback.chapterTitle else item.title,
-                        transitionSpec = { fadeIn(tween(200)) togetherWith fadeOut(tween(120)) },
+                        transitionSpec = {
+                            (fadeIn(tween(220)) + slideInVertically(tween(260)) { it / 2 }) togetherWith
+                                (fadeOut(tween(150)) + slideOutVertically(tween(200)) { -it / 2 })
+                        },
                         label = "TtsChapterTitle",
                     ) { title ->
                         Text(title, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -1450,29 +1746,25 @@ fun SharedMobileTtsPlayerSheet(
                         DropdownMenuItem(
                             text = { Text(readerString("audiobooks_stop_playback", "Stop playback")) },
                             leadingIcon = { Icon(Icons.Default.Close, contentDescription = null) },
+                            enabled = isActive,
                             onClick = {
                                 showMenu = false
                                 onStopPlayback()
+                                onDismiss()
                             },
                         )
                     }
                 }
             }
 
-            Box(Modifier.fillMaxWidth().weight(1f)) {
+            Box(Modifier.fillMaxWidth().weight(1f).padding(top = 12.dp), contentAlignment = Alignment.Center) {
                 AnimatedContent(
                     targetState = panel,
                     transitionSpec = {
                         val direction = targetState.ordinal - initialState.ordinal
-                        if (direction > 0) {
-                            (slideInHorizontally(tween(220)) { it / 2 } + fadeIn(tween(220)))
-                                .togetherWith(slideOutHorizontally(tween(220)) { -it / 2 } + fadeOut(tween(220)))
-                        } else if (direction < 0) {
-                            (slideInHorizontally(tween(220)) { -it / 2 } + fadeIn(tween(220)))
-                                .togetherWith(slideOutHorizontally(tween(220)) { it / 2 } + fadeOut(tween(220)))
-                        } else {
-                            fadeIn(tween(160)) togetherWith fadeOut(tween(120))
-                        }
+                        val movingForward = direction > 0
+                        (fadeIn(tween(220)) + slideInHorizontally(tween(300)) { if (movingForward) it / 7 else -it / 7 }) togetherWith
+                            (fadeOut(tween(160)) + slideOutHorizontally(tween(240)) { if (movingForward) -it / 7 else it / 7 })
                     },
                     label = "TtsPlayerPanel",
                 ) { target ->
@@ -1482,7 +1774,7 @@ fun SharedMobileTtsPlayerSheet(
                             playback = playback,
                             chapterTitles = chapterTitles,
                             onSeekChapter = { index ->
-                                onSeekChapter(index)
+                                if (!isActive || index != playback.chapterIndex) onSeekChapter(index)
                                 panel = TtsPlayerPanel.COVER
                             },
                         )
@@ -1491,7 +1783,7 @@ fun SharedMobileTtsPlayerSheet(
                 }
             }
 
-            Text(item.title, modifier = Modifier.padding(top = 6.dp), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(item.title, modifier = Modifier.padding(top = 24.dp), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
             Text(item.author, color = MaterialTheme.colorScheme.onSurfaceVariant)
             val chunkLabel = if (isActive && playback.chunkIndex >= 0) {
                 "Chunk ${playback.chunkIndex + 1}/${
@@ -1502,15 +1794,15 @@ fun SharedMobileTtsPlayerSheet(
             }
             LinearProgressIndicator(
                 progress = { playback.progressPercent.coerceIn(0f, 1f) },
-                modifier = Modifier.fillMaxWidth().padding(top = 12.dp).height(4.dp).clip(CircleShape),
+                modifier = Modifier.fillMaxWidth().padding(top = 24.dp).height(4.dp).clip(CircleShape),
             )
-            Row(Modifier.fillMaxWidth().padding(top = 7.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+            Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("${(playback.progressPercent * 100).toInt()}%", style = MaterialTheme.typography.labelSmall)
                 Text(chunkLabel, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             playback.error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp)) }
 
-            Row(Modifier.fillMaxWidth().padding(vertical = 20.dp), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.fillMaxWidth().padding(top = 20.dp), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
                 IconButton(
                     onClick = { onSeekChapter(playback.chapterIndex - 1) },
                     enabled = isActive && playback.chapterIndex > 0,
@@ -1550,7 +1842,7 @@ fun SharedMobileTtsPlayerSheet(
                 }
             }
 
-            PlayerControlDock(modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp)) {
+            PlayerControlDock(modifier = Modifier.fillMaxWidth().padding(top = 14.dp, bottom = 10.dp)) {
                 PlayerDockAction(
                     icon = SpeedIcon,
                     label = audiobookSpeedLabel(playback.speechRate.takeIf { it > 0f } ?: 1f),
@@ -1592,6 +1884,7 @@ fun SharedMobileTtsPlayerSheet(
             }
             Spacer(Modifier.height(20.dp))
         }
+        }
     }
 
     if (showSpeedDialog) {
@@ -1621,11 +1914,12 @@ private fun TtsCoverPanel(item: SharedTtsListenItem, modifier: Modifier = Modifi
     Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Box(
             modifier = Modifier
-                .fillMaxWidth(0.72f)
+                .fillMaxHeight(0.94f)
                 .aspectRatio(0.72f)
                 .shadow(elevation = 18.dp, shape = RoundedCornerShape(20.dp))
                 .clip(RoundedCornerShape(20.dp))
-                .background(MaterialTheme.colorScheme.surfaceContainerHighest),
+                .background(Brush.verticalGradient(listOf(Color(0xFF34495E), Color(0xFF6C5CE7))))
+                .padding(12.dp),
             contentAlignment = Alignment.Center,
         ) {
             if (!item.book.coverImagePath.isNullOrBlank()) {
@@ -1635,7 +1929,10 @@ private fun TtsCoverPanel(item: SharedTtsListenItem, modifier: Modifier = Modifi
                     modifier = Modifier.fillMaxSize(),
                 )
             } else {
-                Icon(Icons.Default.Book, contentDescription = null, modifier = Modifier.size(64.dp), tint = MaterialTheme.colorScheme.primary)
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = null, modifier = Modifier.size(34.dp), tint = Color.White.copy(alpha = 0.9f))
+                    Text(item.title, modifier = Modifier.padding(top = 8.dp), color = Color.White, fontWeight = FontWeight.Bold, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                }
             }
         }
     }
@@ -1676,41 +1973,53 @@ private fun TtsChaptersPanel(
         }
         else -> {
             LazyColumn(
-                modifier = modifier.fillMaxSize(),
-                contentPadding = PaddingValues(vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = modifier.fillMaxSize().testTag("AudiobookChapterList"),
+                contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                itemsIndexed(chapterTitles) { index, title ->
+                itemsIndexed(chapterTitles, key = { index, _ -> index }) { index, title ->
                     val isCurrent = playback.connected && playback.chapterIndex == index
+                    val containerColor by animateColorAsState(
+                        if (isCurrent) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerLow,
+                        animationSpec = tween(220),
+                        label = "ChapterContainerColor",
+                    )
+                    val scale by animateFloatAsState(
+                        if (isCurrent) 1f else 0.985f,
+                        animationSpec = tween(220),
+                        label = "ChapterScale",
+                    )
                     Row(
                         modifier = Modifier.fillMaxWidth()
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(if (isCurrent) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)
+                            .graphicsLayer { scaleX = scale; scaleY = scale }
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(containerColor)
                             .clickable { onSeekChapter(index) }
-                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
                             text = "${index + 1}",
                             style = MaterialTheme.typography.labelLarge,
-                            color = if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.width(28.dp),
+                            color = MaterialTheme.colorScheme.primary,
                         )
                         Text(
                             text = title,
-                            style = MaterialTheme.typography.bodyLarge,
-                            fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
-                            maxLines = 1,
+                            fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Normal,
+                            maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.weight(1f).padding(start = 16.dp),
                         )
-                        if (isCurrent) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.VolumeUp,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp),
-                                tint = MaterialTheme.colorScheme.primary,
-                            )
+                        AnimatedContent(
+                            targetState = isCurrent,
+                            transitionSpec = {
+                                (fadeIn(tween(180)) + scaleIn(tween(180), initialScale = 0.6f)) togetherWith
+                                    (fadeOut(tween(120)) + scaleOut(tween(120), targetScale = 0.6f))
+                            },
+                            label = "SelectedChapterIcon",
+                        ) { selected ->
+                            if (selected) Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = null, modifier = Modifier.size(18.dp))
+                            else Spacer(Modifier.size(18.dp))
                         }
                     }
                 }
@@ -1735,33 +2044,58 @@ private fun TtsTranscriptPanel(playback: SharedBookTtsListenState, modifier: Mod
     val listState = rememberLazyListState()
     LaunchedEffect(playback.chunkIndex, playback.transcriptStartIndex, chunks.size) {
         if (currentLocalIndex >= 0) {
-            listState.scrollToItem(currentLocalIndex.coerceAtMost(chunks.lastIndex))
+            listState.animateSharedAudiobookScrollToCenter(currentLocalIndex.coerceAtMost(chunks.lastIndex))
         }
     }
     LazyColumn(
         state = listState,
-        modifier = modifier.fillMaxSize(),
-        contentPadding = PaddingValues(vertical = 8.dp),
+        modifier = modifier.fillMaxSize().testTag("AudiobookTranscript"),
+        contentPadding = PaddingValues(top = 18.dp, bottom = 18.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        itemsIndexed(chunks) { index, chunkText ->
+        itemsIndexed(chunks, key = { index, _ -> playback.transcriptStartIndex + index }) { index, chunkText ->
             val isCurrent = index == currentLocalIndex
+            val containerColor by animateColorAsState(
+                if (isCurrent) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
+                animationSpec = tween(260),
+                label = "TranscriptContainerColor",
+            )
+            val textColor by animateColorAsState(
+                if (isCurrent) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                animationSpec = tween(260),
+                label = "TranscriptTextColor",
+            )
+            val scale by animateFloatAsState(
+                if (isCurrent) 1f else 0.985f,
+                animationSpec = tween(260),
+                label = "TranscriptItemScale",
+            )
             Surface(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().graphicsLayer { scaleX = scale; scaleY = scale },
                 shape = RoundedCornerShape(16.dp),
-                color = if (isCurrent) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
+                color = containerColor,
                 tonalElevation = if (isCurrent) 2.dp else 0.dp,
             ) {
                 Text(
                     text = chunkText,
-                    modifier = Modifier.padding(12.dp),
-                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                    style = MaterialTheme.typography.bodyLarge,
                     fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
-                    color = if (isCurrent) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+                    color = textColor,
                 )
             }
         }
     }
+}
+
+private suspend fun androidx.compose.foundation.lazy.LazyListState.animateSharedAudiobookScrollToCenter(index: Int) {
+    if (index < 0) return
+    val visibleItems = layoutInfo.visibleItemsInfo
+    val estimatedItemHeight = visibleItems.firstOrNull { it.index == index }?.size
+        ?: visibleItems.takeIf { it.isNotEmpty() }?.map { it.size }?.average()?.toInt()
+        ?: 0
+    val viewportHeight = layoutInfo.viewportEndOffset - layoutInfo.viewportStartOffset
+    animateScrollToItem(index, -((viewportHeight - estimatedItemHeight) / 2))
 }
 
 @Composable

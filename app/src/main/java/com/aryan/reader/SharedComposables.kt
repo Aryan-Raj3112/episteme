@@ -656,170 +656,37 @@ private fun SharedText.resolveAndroidText(context: Context): String {
 fun AboutDialog(onDismiss: () -> Unit) {
     val uriHandler = LocalUriHandler.current
     val isOss = BuildConfig.FLAVOR == "oss"
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        shape = RoundedCornerShape(24.dp),
-        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-        title = {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(
-                    text = stringResource(R.string.about_app_name),
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold
-                )
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = if (isOss) stringResource(R.string.about_oss_version) else stringResource(R.string.about_play_version),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary
-                )
-            }
-        },
-        text = {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState()),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Text(
-                    text = stringResource(R.string.about_version_name, BuildConfig.VERSION_NAME),
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Text(
-                    text = stringResource(R.string.about_build_code, BuildConfig.VERSION_CODE.toString()),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-
-                Spacer(modifier = Modifier.height(20.dp))
-
-                if (isOss) {
-                    AboutInfoRow(
-                        icon = {
-                            Icon(
-                                painter = painterResource(id = R.drawable.github),
-                                contentDescription = stringResource(R.string.about_github),
-                                modifier = Modifier.size(22.dp),
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                        },
-                        text = stringResource(R.string.about_github),
-                        subtitle = stringResource(R.string.about_github_desc),
-                        onClick = { uriHandler.openUri("https://github.com/Aryan-Raj3112/episteme") }
-                    )
-
-                    Spacer(modifier = Modifier.height(10.dp))
-                }
-
-                AboutInfoRow(
-                    icon = {
-                        Icon(
-                            imageVector = Icons.Outlined.Policy,
-                            contentDescription = null,
-                            modifier = Modifier.size(22.dp),
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                    },
-                    text = stringResource(R.string.legal_privacy_policy),
-                    subtitle = stringResource(R.string.about_privacy_desc),
-                    onClick = { uriHandler.openUri(PRIVACY_POLICY_URL) }
-                )
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                AboutInfoRow(
-                    icon = {
-                        Icon(
-                            imageVector = Icons.Outlined.Gavel,
-                            contentDescription = null,
-                            modifier = Modifier.size(22.dp),
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                    },
-                    text = stringResource(R.string.legal_terms_of_service),
-                    subtitle = stringResource(R.string.about_terms_desc),
-                    onClick = { uriHandler.openUri(TERMS_URL) }
-                )
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                AboutInfoRow(
-                    icon = {
-                        Icon(
-                            imageVector = Icons.Outlined.FileOpen,
-                            contentDescription = null,
-                            modifier = Modifier.size(22.dp),
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                    },
-                    text = stringResource(R.string.legal_licenses),
-                    subtitle = stringResource(R.string.about_licenses_desc),
-                    onClick = { uriHandler.openUri(LICENSES_URL) }
-                )
-            }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = onDismiss,
-                shape = RoundedCornerShape(50),
-                modifier = Modifier.padding(horizontal = 8.dp)
-            ) {
-                Text(stringResource(R.string.action_close), fontWeight = FontWeight.Medium)
-            }
-        }
-    )
-}
-
-@Composable
-private fun AboutInfoRow(
-    icon: @Composable () -> Unit,
-    text: String,
-    subtitle: String? = null,
-    onClick: () -> Unit
-) {
-    OutlinedCard(
-        onClick = onClick,
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            icon()
-            Spacer(modifier = Modifier.width(14.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = text,
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = FontWeight.Bold
-                )
-                if (subtitle != null) {
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = subtitle,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-            Spacer(modifier = Modifier.width(4.dp))
+    com.aryan.reader.shared.ui.SharedAndroidAboutDialog(
+        strings = com.aryan.reader.shared.ui.SharedAndroidAboutStrings(
+            appName = stringResource(R.string.about_app_name),
+            flavorLabel = if (isOss) stringResource(R.string.about_oss_version) else stringResource(R.string.about_play_version),
+            versionLabel = stringResource(R.string.about_version_name, BuildConfig.VERSION_NAME),
+            buildLabel = stringResource(R.string.about_build_code, BuildConfig.VERSION_CODE.toString()),
+            githubTitle = stringResource(R.string.about_github),
+            githubDescription = stringResource(R.string.about_github_desc),
+            privacyTitle = stringResource(R.string.legal_privacy_policy),
+            privacyDescription = stringResource(R.string.about_privacy_desc),
+            termsTitle = stringResource(R.string.legal_terms_of_service),
+            termsDescription = stringResource(R.string.about_terms_desc),
+            licensesTitle = stringResource(R.string.legal_licenses),
+            licensesDescription = stringResource(R.string.about_licenses_desc),
+            closeAction = stringResource(R.string.action_close),
+        ),
+        showGitHub = isOss,
+        onDismiss = onDismiss,
+        onGitHubClick = { uriHandler.openUri("https://github.com/Aryan-Raj3112/episteme") },
+        onPrivacyClick = { uriHandler.openUri(PRIVACY_POLICY_URL) },
+        onTermsClick = { uriHandler.openUri(TERMS_URL) },
+        onLicensesClick = { uriHandler.openUri(LICENSES_URL) },
+        githubIcon = {
             Icon(
-                imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                contentDescription = null,
-                modifier = Modifier.size(18.dp),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                painterResource(R.drawable.github),
+                contentDescription = stringResource(R.string.about_github),
+                modifier = Modifier.size(22.dp),
+                tint = MaterialTheme.colorScheme.primary,
             )
-        }
-    }
+        },
+    )
 }
 
 @Composable

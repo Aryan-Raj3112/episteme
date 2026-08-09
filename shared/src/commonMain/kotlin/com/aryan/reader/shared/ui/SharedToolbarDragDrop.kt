@@ -4,14 +4,18 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
@@ -61,6 +65,9 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.zIndex
 import com.aryan.reader.shared.PdfReaderTool
 import com.aryan.reader.shared.PdfToolbarPreferences
@@ -90,6 +97,8 @@ private fun buildSharedToolbarSections(
     bottomTools: List<Pair<String, String>>,
     hiddenTools: List<Pair<String, String>>,
     moreTools: List<Pair<String, String>>,
+    sectionTitle: (SharedToolbarSection) -> String = ::sharedToolbarSectionTitle,
+    moreMenuTitle: String = "More Menu",
 ): List<SharedToolbarFlatItem> {
     val list = mutableListOf<SharedToolbarFlatItem>()
     SharedToolbarSection.entries.forEach { section ->
@@ -103,7 +112,7 @@ private fun buildSharedToolbarSections(
                 id = "header_${section.name}",
                 type = SharedToolbarFlatItemType.SECTION_HEADER,
                 section = section,
-                title = sharedToolbarSectionTitle(section),
+                title = sectionTitle(section),
             )
         )
         if (tools.isEmpty()) {
@@ -132,7 +141,7 @@ private fun buildSharedToolbarSections(
         SharedToolbarFlatItem(
             id = "more_header",
             type = SharedToolbarFlatItemType.MORE_HEADER,
-            title = "More Menu",
+            title = moreMenuTitle,
         )
     )
     moreTools.forEach { (toolId, title) ->
@@ -151,42 +160,62 @@ private fun buildSharedToolbarSections(
 fun buildSharedPdfToolbarItems(
     preferences: PdfToolbarPreferences,
     availableTools: Set<PdfReaderTool>,
+    toolTitle: (PdfReaderTool) -> String = { it.title },
+    sectionTitle: (SharedToolbarSection) -> String = ::sharedToolbarSectionTitle,
+    moreMenuTitle: String = "More Menu",
 ): List<SharedToolbarFlatItem> {
     val sanitized = preferences.sanitized(availableTools)
     val toolOrder = sanitized.toolOrder.filter { it in availableTools }
     val toolbarTools = toolOrder.filter { it.supportsToolbarPlacement }
     val topTools = toolbarTools
         .filter { !sanitized.bottomToolIds.contains(it.id) && !sanitized.hiddenToolIds.contains(it.id) }
-        .map { it.id to it.title }
+        .map { it.id to toolTitle(it) }
     val bottomTools = toolbarTools
         .filter { sanitized.bottomToolIds.contains(it.id) && !sanitized.hiddenToolIds.contains(it.id) }
-        .map { it.id to it.title }
+        .map { it.id to toolTitle(it) }
     val hiddenTools = toolbarTools
         .filter { sanitized.hiddenToolIds.contains(it.id) }
-        .map { it.id to it.title }
-    val moreTools = toolOrder.filterNot { it.supportsToolbarPlacement }.map { it.id to it.title }
-    return buildSharedToolbarSections(topTools, bottomTools, hiddenTools, moreTools)
+        .map { it.id to toolTitle(it) }
+    val moreTools = toolOrder.filterNot { it.supportsToolbarPlacement }.map { it.id to toolTitle(it) }
+    return buildSharedToolbarSections(
+        topTools = topTools,
+        bottomTools = bottomTools,
+        hiddenTools = hiddenTools,
+        moreTools = moreTools,
+        sectionTitle = sectionTitle,
+        moreMenuTitle = moreMenuTitle,
+    )
 }
 
 fun buildSharedEpubToolbarItems(
     preferences: ReaderToolbarPreferences,
     toolbarTools: Set<ReaderTool>,
     availableTools: Set<ReaderTool>,
+    toolTitle: (ReaderTool) -> String = { it.title },
+    sectionTitle: (SharedToolbarSection) -> String = ::sharedToolbarSectionTitle,
+    moreMenuTitle: String = "More Menu",
 ): List<SharedToolbarFlatItem> {
     val sanitized = preferences.sanitized()
     val toolOrder = sanitized.toolOrder.filter { it in availableTools }
     val placementTools = toolOrder.filter { it in toolbarTools }
     val topTools = placementTools
         .filter { !sanitized.bottomToolIds.contains(it.id) && !sanitized.hiddenToolIds.contains(it.id) }
-        .map { it.id to it.title }
+        .map { it.id to toolTitle(it) }
     val bottomTools = placementTools
         .filter { sanitized.bottomToolIds.contains(it.id) && !sanitized.hiddenToolIds.contains(it.id) }
-        .map { it.id to it.title }
+        .map { it.id to toolTitle(it) }
     val hiddenTools = placementTools
         .filter { sanitized.hiddenToolIds.contains(it.id) }
-        .map { it.id to it.title }
-    val moreTools = toolOrder.filterNot { it in toolbarTools }.map { it.id to it.title }
-    return buildSharedToolbarSections(topTools, bottomTools, hiddenTools, moreTools)
+        .map { it.id to toolTitle(it) }
+    val moreTools = toolOrder.filterNot { it in toolbarTools }.map { it.id to toolTitle(it) }
+    return buildSharedToolbarSections(
+        topTools = topTools,
+        bottomTools = bottomTools,
+        hiddenTools = hiddenTools,
+        moreTools = moreTools,
+        sectionTitle = sectionTitle,
+        moreMenuTitle = moreMenuTitle,
+    )
 }
 
 fun sanitizeSharedToolbarPlaceholders(list: List<SharedToolbarFlatItem>): List<SharedToolbarFlatItem> {
@@ -586,9 +615,12 @@ fun SharedToolbarCustomizationHeader(
     title: String,
     onReset: () -> Unit,
     onDismiss: () -> Unit,
+    resetLabel: String = readerString("action_reset", "Reset"),
+    closeLabel: String = readerString("action_close", "Close"),
+    horizontalPadding: Dp = 20.dp,
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = horizontalPadding, vertical = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
@@ -601,10 +633,269 @@ fun SharedToolbarCustomizationHeader(
         TextButton(onClick = onReset) {
             Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(4.dp))
-            Text(readerString("action_reset", "Reset"))
+            Text(resetLabel)
         }
         IconButton(onClick = onDismiss) {
-            Icon(Icons.Default.Close, contentDescription = readerString("action_close", "Close"))
+            Icon(Icons.Default.Close, contentDescription = closeLabel)
+        }
+    }
+}
+
+data class SharedEpubToolbarCustomizationLabels(
+    val title: String,
+    val reset: String,
+    val close: String,
+    val topBar: String,
+    val bottomBar: String,
+    val hiddenTools: String,
+    val dropToolsHere: String,
+    val moreMenu: String,
+)
+
+@Composable
+fun SharedEpubToolbarCustomizationDialog(
+    hiddenToolIds: Set<String>,
+    toolOrder: List<ReaderTool>,
+    bottomToolIds: Set<String>,
+    toolbarTools: Set<ReaderTool>,
+    availableTools: Set<ReaderTool>,
+    labels: SharedEpubToolbarCustomizationLabels,
+    toolTitle: (ReaderTool) -> String,
+    onHiddenToolsUpdate: (Set<String>) -> Unit,
+    onToolOrderUpdate: (List<ReaderTool>) -> Unit,
+    onBottomToolsUpdate: (Set<String>) -> Unit,
+    onDismiss: () -> Unit,
+    toolIcon: @Composable (ReaderTool) -> Unit,
+) {
+    val initialPreferences = remember(hiddenToolIds, toolOrder, bottomToolIds) {
+        ReaderToolbarPreferences(
+            hiddenToolIds = hiddenToolIds,
+            toolOrder = toolOrder,
+            bottomToolIds = bottomToolIds,
+        ).sanitized()
+    }
+    fun sectionTitle(section: SharedToolbarSection): String = when (section) {
+        SharedToolbarSection.TOP -> labels.topBar
+        SharedToolbarSection.BOTTOM -> labels.bottomBar
+        SharedToolbarSection.HIDDEN -> labels.hiddenTools
+    }
+    fun buildItems(preferences: ReaderToolbarPreferences) = buildSharedEpubToolbarItems(
+        preferences = preferences,
+        toolbarTools = toolbarTools,
+        availableTools = availableTools,
+        toolTitle = toolTitle,
+        sectionTitle = ::sectionTitle,
+        moreMenuTitle = labels.moreMenu,
+    )
+
+    var localHiddenTools by remember { mutableStateOf(initialPreferences.hiddenToolIds) }
+    var flatItems by remember { mutableStateOf(buildItems(initialPreferences)) }
+    val lazyListState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val dragDropState = rememberSharedToolbarDragDropState(
+        lazyListState = lazyListState,
+        flatItems = { flatItems },
+        onFlatItemsChange = { flatItems = it },
+    )
+
+    fun commitDragDrop() {
+        val next = buildSharedEpubToolbarCommit(flatItems, localHiddenTools, toolbarTools)
+        localHiddenTools = next.hiddenToolIds
+        onHiddenToolsUpdate(next.hiddenToolIds)
+        onBottomToolsUpdate(next.bottomToolIds)
+        onToolOrderUpdate(next.toolOrder)
+    }
+
+    fun resetToDefault() {
+        val defaults = ReaderToolbarPreferences()
+        localHiddenTools = defaults.hiddenToolIds
+        flatItems = buildItems(defaults)
+        onHiddenToolsUpdate(defaults.hiddenToolIds)
+        onBottomToolsUpdate(defaults.bottomToolIds)
+        onToolOrderUpdate(defaults.toolOrder)
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.navigationBars),
+            color = MaterialTheme.colorScheme.surface,
+        ) {
+            Column(Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
+                SharedToolbarCustomizationHeader(
+                    title = labels.title,
+                    onReset = ::resetToDefault,
+                    onDismiss = onDismiss,
+                    resetLabel = labels.reset,
+                    closeLabel = labels.close,
+                    horizontalPadding = 0.dp,
+                )
+                SharedToolbarDragDropList(
+                    flatItems = flatItems,
+                    dragDropState = dragDropState,
+                    emptyPlaceholderTitle = labels.dropToolsHere,
+                    moreMenuTitle = labels.moreMenu,
+                    toolRow = { item, isDragging ->
+                        val tool = item.toolId?.let(ReaderTool::fromId)
+                        if (tool != null) {
+                            SharedToolbarDragRow(
+                                title = toolTitle(tool),
+                                isDragging = isDragging,
+                                onDragStart = { dragDropState.onDragStart(item.id) },
+                                onDrag = dragDropState::onDrag,
+                                onDragEnd = {
+                                    dragDropState.onDragEnd()
+                                    flatItems = sanitizeSharedToolbarPlaceholders(flatItems)
+                                    commitDragDrop()
+                                },
+                                leadingIcon = { toolIcon(tool) },
+                            )
+                        }
+                    },
+                    moreToolRow = { item ->
+                        val tool = item.toolId?.let(ReaderTool::fromId)
+                        if (tool != null) {
+                            SharedToolbarMoreVisibilityRow(
+                                title = toolTitle(tool),
+                                visible = tool.id !in localHiddenTools,
+                                onToggle = {
+                                    localHiddenTools = if (tool.id in localHiddenTools) {
+                                        localHiddenTools - tool.id
+                                    } else {
+                                        localHiddenTools + tool.id
+                                    }
+                                    onHiddenToolsUpdate(localHiddenTools)
+                                },
+                            )
+                        }
+                    },
+                )
+            }
+        }
+    }
+}
+
+typealias SharedPdfToolbarCustomizationLabels = SharedEpubToolbarCustomizationLabels
+
+@Composable
+fun SharedPdfToolbarCustomizationDialog(
+    hiddenToolIds: Set<String>,
+    toolOrder: List<PdfReaderTool>,
+    bottomToolIds: Set<String>,
+    availableTools: Set<PdfReaderTool>,
+    labels: SharedPdfToolbarCustomizationLabels,
+    toolTitle: (PdfReaderTool) -> String,
+    onHiddenToolsUpdate: (Set<String>) -> Unit,
+    onToolOrderUpdate: (List<PdfReaderTool>) -> Unit,
+    onBottomToolsUpdate: (Set<String>) -> Unit,
+    onDismiss: () -> Unit,
+    toolIcon: @Composable (PdfReaderTool) -> Unit,
+) {
+    val initialPreferences = remember(hiddenToolIds, toolOrder, bottomToolIds, availableTools) {
+        PdfToolbarPreferences(
+            hiddenToolIds = hiddenToolIds,
+            toolOrder = toolOrder,
+            bottomToolIds = bottomToolIds,
+        ).sanitized(availableTools)
+    }
+    fun sectionTitle(section: SharedToolbarSection): String = when (section) {
+        SharedToolbarSection.TOP -> labels.topBar
+        SharedToolbarSection.BOTTOM -> labels.bottomBar
+        SharedToolbarSection.HIDDEN -> labels.hiddenTools
+    }
+    fun buildItems(preferences: PdfToolbarPreferences) = buildSharedPdfToolbarItems(
+        preferences = preferences,
+        availableTools = availableTools,
+        toolTitle = toolTitle,
+        sectionTitle = ::sectionTitle,
+        moreMenuTitle = labels.moreMenu,
+    )
+
+    var localHiddenTools by remember { mutableStateOf(initialPreferences.hiddenToolIds) }
+    var flatItems by remember { mutableStateOf(buildItems(initialPreferences)) }
+    val lazyListState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val dragDropState = rememberSharedToolbarDragDropState(
+        lazyListState = lazyListState,
+        flatItems = { flatItems },
+        onFlatItemsChange = { flatItems = it },
+    )
+
+    fun commitDragDrop() {
+        val next = buildSharedPdfToolbarCommit(flatItems, localHiddenTools, availableTools)
+        localHiddenTools = next.hiddenToolIds
+        onHiddenToolsUpdate(next.hiddenToolIds)
+        onBottomToolsUpdate(next.bottomToolIds)
+        onToolOrderUpdate(next.toolOrder)
+    }
+
+    fun resetToDefault() {
+        val defaults = PdfToolbarPreferences().sanitized(availableTools)
+        localHiddenTools = defaults.hiddenToolIds
+        flatItems = buildItems(defaults)
+        onHiddenToolsUpdate(defaults.hiddenToolIds)
+        onBottomToolsUpdate(defaults.bottomToolIds)
+        onToolOrderUpdate(defaults.toolOrder)
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.navigationBars),
+            color = MaterialTheme.colorScheme.surface,
+        ) {
+            Column(Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
+                SharedToolbarCustomizationHeader(
+                    title = labels.title,
+                    onReset = ::resetToDefault,
+                    onDismiss = onDismiss,
+                    resetLabel = labels.reset,
+                    closeLabel = labels.close,
+                    horizontalPadding = 0.dp,
+                )
+                SharedToolbarDragDropList(
+                    flatItems = flatItems,
+                    dragDropState = dragDropState,
+                    emptyPlaceholderTitle = labels.dropToolsHere,
+                    moreMenuTitle = labels.moreMenu,
+                    toolRow = { item, isDragging ->
+                        val tool = item.toolId?.let(PdfReaderTool::fromId)
+                        if (tool != null) {
+                            SharedToolbarDragRow(
+                                title = toolTitle(tool),
+                                isDragging = isDragging,
+                                onDragStart = { dragDropState.onDragStart(item.id) },
+                                onDrag = dragDropState::onDrag,
+                                onDragEnd = {
+                                    dragDropState.onDragEnd()
+                                    flatItems = sanitizeSharedToolbarPlaceholders(flatItems)
+                                    commitDragDrop()
+                                },
+                                leadingIcon = { toolIcon(tool) },
+                            )
+                        }
+                    },
+                    moreToolRow = { item ->
+                        val tool = item.toolId?.let(PdfReaderTool::fromId)
+                        if (tool != null) {
+                            SharedToolbarMoreVisibilityRow(
+                                title = toolTitle(tool),
+                                visible = tool.id !in localHiddenTools,
+                                onToggle = {
+                                    localHiddenTools = if (tool.id in localHiddenTools) {
+                                        localHiddenTools - tool.id
+                                    } else {
+                                        localHiddenTools + tool.id
+                                    }
+                                    onHiddenToolsUpdate(localHiddenTools)
+                                },
+                            )
+                        }
+                    },
+                )
+            }
         }
     }
 }

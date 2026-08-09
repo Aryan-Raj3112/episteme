@@ -951,19 +951,19 @@ internal fun PdfPageComposable(
                                 val destPageIdx = link.destPageIdx
                                 val bounds = link.bounds
 
-                                if (uri != null || (destPageIdx != null && destPageIdx >= 0)) {
+                                if (isActionablePdfLinkTarget(uri, destPageIdx)) {
                                     val deviceRect = pageWrapper.mapRectToDevice(
                                         startX = 0, startY = 0,
                                         sizeX = actualBitmapWidthPx, sizeY = actualBitmapHeightPx,
                                         rotate = currentPageRotation, coords = bounds
                                     )
-                                    if (deviceRect.width() > 0 && deviceRect.height() > 0) {
-                                        val tapRect = Rect(
-                                            deviceRect.left, deviceRect.top - linkVerticalPaddingPx,
-                                            deviceRect.right, deviceRect.bottom + linkVerticalPaddingPx
-                                        )
-                                        PageLink(deviceRect, tapRect, uri, destPageIdx, LinkSource.ANNOTATION)
-                                    } else null
+                                    buildPdfPageLink(
+                                        highlightBounds = deviceRect.toPdfIntBounds(),
+                                        verticalTapPaddingPx = linkVerticalPaddingPx,
+                                        url = uri,
+                                        destPageIdx = destPageIdx,
+                                        source = LinkSource.ANNOTATION,
+                                    )
                                 } else null
                             }
                             allLinks.addAll(mappedAnnotationLinks)
@@ -989,13 +989,13 @@ internal fun PdfPageComposable(
                                             0, 0, actualBitmapWidthPx, actualBitmapHeightPx,
                                             currentPageRotation, pdfRect
                                         )
-                                        if (deviceRect.width() > 0 && deviceRect.height() > 0) {
-                                            val tapRect = Rect(
-                                                deviceRect.left, deviceRect.top - linkVerticalPaddingPx,
-                                                deviceRect.right, deviceRect.bottom + linkVerticalPaddingPx
-                                            )
-                                            allLinks.add(PageLink(deviceRect, tapRect, url, null, LinkSource.TEXT_CONTENT))
-                                        }
+                                        buildPdfPageLink(
+                                            highlightBounds = deviceRect.toPdfIntBounds(),
+                                            verticalTapPaddingPx = linkVerticalPaddingPx,
+                                            url = url,
+                                            destPageIdx = null,
+                                            source = LinkSource.TEXT_CONTENT,
+                                        )?.let(allLinks::add)
                                     }
                                 }
                             }
@@ -2863,15 +2863,17 @@ internal fun PdfPageComposable(
                         }
 
                         if (clickedLink != null) {
+                            val destinationPage = clickedLink.destPageIdx
+                            val externalUrl = clickedLink.url
                             Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
                                 "page.onTap.fallbackLink page=$pageIndex vertical=$isVerticalScroll " +
-                                    "dest=${clickedLink.destPageIdx} url=${clickedLink.url != null}"
+                                    "dest=$destinationPage url=${externalUrl != null}"
                             )
                             Timber.d("PdfPageComposable: Fallback pageLinks intercepted click.")
-                            if (clickedLink.destPageIdx != null && clickedLink.destPageIdx >= 0) {
-                                onInternalLinkClicked(clickedLink.destPageIdx)
-                            } else if (clickedLink.url != null) {
-                                onLinkClicked(clickedLink.url)
+                            if (destinationPage != null && destinationPage >= 0) {
+                                onInternalLinkClicked(destinationPage)
+                            } else if (externalUrl != null) {
+                                onLinkClicked(externalUrl)
                             }
                             return@launch
                         }
@@ -4630,6 +4632,14 @@ private fun PdfHighlightsLayer(
                 return left < size.width && right > 0 && top < size.height && bottom > 0
             }
 
+            fun isVisible(r: PdfIntBounds): Boolean {
+                val left = r.left + centeringOffsetX
+                val right = r.right + centeringOffsetX
+                val top = r.top + centeringOffsetY
+                val bottom = r.bottom + centeringOffsetY
+                return left < size.width && right > 0 && top < size.height && bottom > 0
+            }
+
             // 1. Page Links
             pageLinks.forEach { link ->
                 if (isVisible(link.highlightBounds)) {
@@ -4637,8 +4647,8 @@ private fun PdfHighlightsLayer(
                         color = linkHighlightColor, topLeft = Offset(
                             link.highlightBounds.left.toFloat(), link.highlightBounds.top.toFloat()
                         ), size = Size(
-                            link.highlightBounds.width().toFloat(),
-                            link.highlightBounds.height().toFloat()
+                            link.highlightBounds.width.toFloat(),
+                            link.highlightBounds.height.toFloat()
                         )
                     )
                 }

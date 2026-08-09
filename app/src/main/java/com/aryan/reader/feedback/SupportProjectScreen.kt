@@ -39,133 +39,44 @@ fun SupportProjectScreen(
     onNavigateBack: () -> Unit
 ) {
     val uriHandler = LocalUriHandler.current
-
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text(stringResource(R.string.support_project_title)) },
-                navigationIcon = {
-                    IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
-                    }
-                }
-            )
-        }
-    ) { paddingValues ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues)
-                .padding(horizontal = 16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Spacer(modifier = Modifier.height(32.dp))
-
+    com.aryan.reader.shared.ui.SharedAndroidUtilityLinkScreen(
+        strings = com.aryan.reader.shared.ui.SharedAndroidUtilityLinkStrings(
+            title = stringResource(R.string.support_project_title),
+            backDescription = stringResource(R.string.action_back),
+            heading = stringResource(R.string.support_project_heading),
+            description = stringResource(R.string.support_project_desc),
+            firstTitle = stringResource(R.string.support_github_sponsor),
+            firstDescription = stringResource(R.string.support_github_sponsor_desc),
+            secondTitle = stringResource(R.string.support_patreon),
+            secondDescription = stringResource(R.string.support_patreon_desc),
+            openDescription = stringResource(R.string.action_open),
+        ),
+        onNavigateBack = onNavigateBack,
+        onFirstClick = { uriHandler.openUri("https://github.com/sponsors/Aryan-Raj3112") },
+        onSecondClick = { uriHandler.openUri("https://www.patreon.com/c/epistemereader") },
+        heroIcon = {
             Icon(
-                imageVector = Icons.Outlined.FavoriteBorder,
+                Icons.Outlined.FavoriteBorder,
                 contentDescription = null,
                 modifier = Modifier.size(72.dp),
-                tint = MaterialTheme.colorScheme.primary
+                tint = MaterialTheme.colorScheme.primary,
             )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            Text(
-                text = stringResource(R.string.support_project_heading),
-                style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold
-            )
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Text(
-                text = stringResource(R.string.support_project_desc),
-                style = MaterialTheme.typography.bodyLarge,
-                textAlign = TextAlign.Center,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 16.dp)
-            )
-
-            Spacer(modifier = Modifier.height(48.dp))
-
-            SupportOptionCard(
-                title = stringResource(R.string.support_github_sponsor),
-                description = stringResource(R.string.support_github_sponsor_desc),
-                icon = {
-                    Icon(
-                        painter = painterResource(id = R.drawable.github),
-                        contentDescription = stringResource(R.string.support_github_sponsor),
-                        modifier = Modifier.size(28.dp),
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                },
-                onClick = {
-                    uriHandler.openUri("https://github.com/sponsors/Aryan-Raj3112")
-                }
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            SupportOptionCard(
-                title = stringResource(R.string.support_patreon),
-                description = stringResource(R.string.support_patreon_desc),
-                icon = {
-                    Icon(
-                        imageVector = Icons.Outlined.FavoriteBorder,
-                        contentDescription = stringResource(R.string.support_patreon),
-                        modifier = Modifier.size(28.dp),
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                },
-                onClick = {
-                    uriHandler.openUri("https://www.patreon.com/c/epistemereader")
-                }
-            )
-
-            Spacer(modifier = Modifier.weight(1f))
-        }
-    }
-}
-
-@Composable
-private fun SupportOptionCard(
-    title: String,
-    description: String,
-    icon: @Composable () -> Unit,
-    onClick: () -> Unit
-) {
-    OutlinedCard(
-        onClick = onClick,
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(20.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            icon()
-            Spacer(modifier = Modifier.width(20.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = description,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            Spacer(modifier = Modifier.width(8.dp))
+        },
+        firstIcon = {
             Icon(
-                imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                contentDescription = stringResource(R.string.action_open),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                painterResource(R.drawable.github),
+                contentDescription = stringResource(R.string.support_github_sponsor),
+                modifier = Modifier.size(28.dp),
+                tint = MaterialTheme.colorScheme.primary,
             )
-        }
-    }
+        },
+        secondIcon = {
+            Icon(
+                Icons.Outlined.FavoriteBorder,
+                contentDescription = stringResource(R.string.support_patreon),
+                modifier = Modifier.size(28.dp),
+                tint = MaterialTheme.colorScheme.primary,
+            )
+        },
+    )
 }

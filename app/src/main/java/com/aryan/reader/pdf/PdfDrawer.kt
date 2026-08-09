@@ -73,6 +73,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontStyle
@@ -273,51 +274,18 @@ internal fun PdfTocTreeItem(
     onToggleExpand: () -> Unit,
     onClick: () -> Unit
 ) {
-    val backgroundColor by animateColorAsState(
-        targetValue = if (isCurrent) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.2f) else Color.Transparent,
-        label = "TocItemBackground"
+    com.aryan.reader.shared.ui.SharedAndroidReaderTocTreeItem(
+        label = label,
+        depth = nestLevel,
+        isExpanded = isExpanded,
+        hasChildren = hasChildren,
+        isCurrent = isCurrent,
+        collapseDescription = stringResource(R.string.content_desc_collapse),
+        expandDescription = stringResource(R.string.content_desc_expand),
+        verticalPadding = 4.dp,
+        onToggleExpand = onToggleExpand,
+        onClick = onClick,
     )
-
-    val contentColor = if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(min = 48.dp)
-            .background(backgroundColor)
-            .clickable(onClick = onClick)
-            .padding(vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Spacer(modifier = Modifier.width((16 * nestLevel).dp))
-
-        Box(
-            modifier = Modifier
-                .size(40.dp)
-                .clickable(enabled = hasChildren, onClick = onToggleExpand),
-            contentAlignment = Alignment.Center
-        ) {
-            if (hasChildren) {
-                Icon(
-                    imageVector = if (isExpanded) Icons.Default.KeyboardArrowDown else Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                    contentDescription = stringResource(
-                        if (isExpanded) R.string.content_desc_collapse else R.string.content_desc_expand
-                    ),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-
-        Text(
-            text = label,
-            style = if (nestLevel == 0) MaterialTheme.typography.bodyLarge else MaterialTheme.typography.bodyMedium,
-            fontWeight = if (isCurrent) FontWeight.Bold else if (nestLevel == 0) FontWeight.SemiBold else FontWeight.Normal,
-            color = contentColor,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f).padding(end = 16.dp)
-        )
-    }
 }
 
 @Composable
@@ -889,294 +857,75 @@ internal fun PdfNavigationDrawerContent(
                 }
 
                 PdfDrawerSection.BOOKMARKS -> { // Bookmarks Page
-                    if (bookmarks.isEmpty()) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(16.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                stringResource(R.string.no_bookmarks_yet),
-                                style = MaterialTheme.typography.bodyLarge,
-                                textAlign = TextAlign.Center
+                    val context = LocalContext.current
+                    val sortedBookmarks = remember(bookmarks) { bookmarks.sortedBy { it.pageIndex } }
+                    com.aryan.reader.shared.ui.SharedAndroidPdfBookmarksList(
+                        bookmarks = sortedBookmarks,
+                        strings = com.aryan.reader.shared.ui.SharedAndroidPdfBookmarkStrings(
+                            empty = stringResource(R.string.no_bookmarks_yet),
+                            moreOptionsDescription = stringResource(R.string.content_desc_more_options_bookmark),
+                            renameAction = stringResource(R.string.action_rename),
+                            deleteAction = stringResource(R.string.action_delete),
+                            renameDialogTitle = stringResource(R.string.dialog_rename_bookmark),
+                            newTitleLabel = stringResource(R.string.label_new_title),
+                            saveAction = stringResource(R.string.action_save),
+                            cancelAction = stringResource(R.string.action_cancel),
+                            deleteDialogTitle = stringResource(R.string.dialog_delete_bookmark),
+                            deleteDialogDescription = stringResource(R.string.dialog_delete_bookmark_desc),
+                        ),
+                        key = { index, bookmark -> "bm_${index}_${bookmark.pageIndex}" },
+                        title = PdfBookmark::title,
+                        supportingText = { bookmark ->
+                            context.resources.getString(
+                                R.string.page_of_pages,
+                                bookmark.pageIndex + 1,
+                                bookmark.totalPages,
                             )
-                        }
-                    } else {
-                        var bookmarkMenuExpandedFor by remember { mutableStateOf<PdfBookmark?>(null) }
-                        var showDeleteConfirmDialogFor by remember { mutableStateOf<PdfBookmark?>(null) }
-                        var showRenameBookmarkDialog by remember { mutableStateOf<PdfBookmark?>(null) }
-
-                        val sortedBookmarks = remember(bookmarks) {
-                            bookmarks.sortedBy { it.pageIndex }
-                        }
-
-                        LazyColumn(modifier = Modifier.fillMaxSize()) {
-                            itemsIndexed(
-                                items = sortedBookmarks, key = { index, bookmark ->
-                                    "bm_${index}_${bookmark.pageIndex}"
-                                }) { _, bookmark ->
-                                ListItem(headlineContent = {
-                                    Text(
-                                        bookmark.title,
-                                        fontWeight = FontWeight.Bold,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }, supportingContent = {
-                                    Text(
-                                        stringResource(R.string.page_of_pages, bookmark.pageIndex + 1, bookmark.totalPages),
-                                        style = MaterialTheme.typography.bodySmall
-                                    )
-                                }, trailingContent = {
-                                    Box {
-                                        IconButton(
-                                            onClick = {
-                                                bookmarkMenuExpandedFor = bookmark
-                                            }) {
-                                            Icon(
-                                                imageVector = Icons.Default.MoreVert,
-                                                contentDescription = stringResource(R.string.content_desc_more_options_bookmark)
-                                            )
-                                        }
-                                        DropdownMenu(
-                                            expanded = bookmarkMenuExpandedFor == bookmark,
-                                            onDismissRequest = {
-                                                bookmarkMenuExpandedFor = null
-                                            }) {
-                                            DropdownMenuItem(text = {
-                                                Text(stringResource(R.string.action_rename))
-                                            }, onClick = {
-                                                showRenameBookmarkDialog = bookmark
-                                                bookmarkMenuExpandedFor = null
-                                            })
-                                            DropdownMenuItem(text = {
-                                                Text(stringResource(R.string.action_delete))
-                                            }, onClick = {
-                                                showDeleteConfirmDialogFor = bookmark
-                                                bookmarkMenuExpandedFor = null
-                                            })
-                                        }
-                                    }
-                                }, modifier = Modifier
-                                    .clickable {
-                                        onCloseDrawer()
-                                        onPageSelected(bookmark.pageIndex)
-                                    }
-                                    .testTag(
-                                        "BookmarkItem_${bookmark.pageIndex}"
-                                    ))
-                                HorizontalDivider()
-                            }
-                        }
-
-                        showRenameBookmarkDialog?.let { bookmarkToRename ->
-                            var newTitle by remember(bookmarkToRename) { mutableStateOf(bookmarkToRename.title) }
-
-                            AlertDialog(onDismissRequest = {
-                                showRenameBookmarkDialog = null
-                            }, title = { Text(stringResource(R.string.dialog_rename_bookmark)) }, text = {
-                                OutlinedTextField(
-                                    value = newTitle,
-                                    onValueChange = { newTitle = it },
-                                    label = { Text(stringResource(R.string.label_new_title)) },
-                                    singleLine = true,
-                                    modifier = Modifier.fillMaxWidth()
-                                )
-                            }, confirmButton = {
-                                TextButton(
-                                    onClick = {
-                                        onRenameBookmark(bookmarkToRename, newTitle)
-                                        showRenameBookmarkDialog = null
-                                    }) { Text(stringResource(R.string.action_save)) }
-                            }, dismissButton = {
-                                TextButton(
-                                    onClick = {
-                                        showRenameBookmarkDialog = null
-                                    }) { Text(stringResource(R.string.action_cancel)) }
-                            })
-                        }
-
-                        showDeleteConfirmDialogFor?.let { bookmarkToDelete ->
-                            AlertDialog(onDismissRequest = {
-                                showDeleteConfirmDialogFor = null
-                            }, title = { Text(stringResource(R.string.dialog_delete_bookmark)) }, text = {
-                                Text(
-                                    stringResource(R.string.dialog_delete_bookmark_desc)
-                                )
-                            }, confirmButton = {
-                                TextButton(
-                                    onClick = {
-                                        onDeleteBookmark(bookmarkToDelete)
-                                        showDeleteConfirmDialogFor = null
-                                    }) { Text(stringResource(R.string.action_delete)) }
-                            }, dismissButton = {
-                                TextButton(
-                                    onClick = {
-                                        showDeleteConfirmDialogFor = null
-                                    }) { Text(stringResource(R.string.action_cancel)) }
-                            })
-                        }
-                    }
+                        },
+                        testTag = { bookmark -> "BookmarkItem_${bookmark.pageIndex}" },
+                        onNavigateToBookmark = { bookmark ->
+                            onCloseDrawer()
+                            onPageSelected(bookmark.pageIndex)
+                        },
+                        onRenameBookmark = onRenameBookmark,
+                        onDeleteBookmark = onDeleteBookmark,
+                    )
                 }
                 PdfDrawerSection.HIGHLIGHTS -> { // Highlights Page
-                    if (userHighlights.isEmpty()) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(16.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                stringResource(R.string.no_highlights_yet),
-                                style = MaterialTheme.typography.bodyLarge,
-                                textAlign = TextAlign.Center
-                            )
-                        }
-                    } else {
-                        var showDeleteConfirmDialogFor by remember { mutableStateOf<PdfUserHighlight?>(null) }
-                        var filterWithNotesOnly by remember { mutableStateOf(false) }
-
-                        Column(modifier = Modifier.fillMaxSize()) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                FilterChip(
-                                    selected = !filterWithNotesOnly,
-                                    onClick = { filterWithNotesOnly = false },
-                                    label = { Text(stringResource(R.string.read_status_all)) }
-                                )
-                                FilterChip(
-                                    selected = filterWithNotesOnly,
-                                    onClick = { filterWithNotesOnly = true },
-                                    label = { Text(stringResource(R.string.filter_with_notes)) }
-                                )
-                            }
-
-                            val filteredHighlights = if (filterWithNotesOnly) {
-                                userHighlights.filter { !it.note.isNullOrBlank() }
-                            } else {
-                                userHighlights.toList()
-                            }
-
-                            val sortedHighlights = remember(filteredHighlights) {
-                                filteredHighlights.sortedBy { it.pageIndex }
-                            }
-
-                            LazyColumn(modifier = Modifier.fillMaxSize()) {
-                                itemsIndexed(
-                                    items = sortedHighlights,
-                                    key = { _, highlight -> highlight.id }
-                                ) { _, highlight ->
-                                    ListItem(
-                                        headlineContent = {
-                                            Text(
-                                                text = highlight.text.ifBlank { stringResource(R.string.msg_highlighted_section_default) },
-                                                maxLines = 2,
-                                                overflow = TextOverflow.Ellipsis,
-                                                fontWeight = FontWeight.SemiBold
-                                            )
-                                        },
-                                        supportingContent = {
-                                            Column {
-                                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                                    val displayColor = highlight.resolvedColor(customHighlightColors)
-
-                                                    Box(
-                                                        modifier = Modifier
-                                                            .size(12.dp)
-                                                            .background(displayColor, CircleShape)
-                                                    )
-                                                    Spacer(Modifier.width(8.dp))
-                                                    Text(
-                                                        stringResource(R.string.pdf_page_short, highlight.pageIndex + 1),
-                                                        style = MaterialTheme.typography.labelMedium,
-                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                                    )
-                                                }
-                                                if (!highlight.note.isNullOrBlank()) {
-                                                    Spacer(Modifier.height(8.dp))
-                                                    Surface(
-                                                        shape = RoundedCornerShape(8.dp),
-                                                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                                                        modifier = Modifier.fillMaxWidth()
-                                                    ) {
-                                                        Text(
-                                                            text = highlight.note,
-                                                            style = MaterialTheme.typography.bodySmall.copy(fontStyle = FontStyle.Italic),
-                                                            modifier = Modifier.padding(12.dp),
-                                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                                        )
-                                                    }
-                                                }
-                                            }
-                                        },
-                                        trailingContent = {
-                                            Box {
-                                                var highlightMenuExpanded by remember { mutableStateOf(false) }
-                                                IconButton(onClick = { highlightMenuExpanded = true }) {
-                                                    Icon(Icons.Default.MoreVert, contentDescription = stringResource(R.string.content_desc_options))
-                                                }
-                                                DropdownMenu(
-                                                    expanded = highlightMenuExpanded,
-                                                    onDismissRequest = { highlightMenuExpanded = false }
-                                                ) {
-                                                    DropdownMenuItem(
-                                                        text = {
-                                                            Text(
-                                                                stringResource(
-                                                                    if (highlight.note.isNullOrBlank()) R.string.menu_add_note else R.string.menu_edit_note
-                                                                )
-                                                            )
-                                                        },
-                                                        onClick = {
-                                                            onNoteRequested(highlight.id)
-                                                            highlightMenuExpanded = false
-                                                            onCloseDrawer()
-                                                        }
-                                                    )
-                                                    DropdownMenuItem(
-                                                        text = { Text(stringResource(R.string.action_delete)) },
-                                                        onClick = {
-                                                            showDeleteConfirmDialogFor = highlight
-                                                            highlightMenuExpanded = false
-                                                        }
-                                                    )
-                                                }
-                                            }
-                                        },
-                                        modifier = Modifier.clickable {
-                                            onCloseDrawer()
-                                            onPageSelected(highlight.pageIndex)
-                                        }
-                                    )
-                                    HorizontalDivider()
-                                }
-                            }
-                        }
-
-                        showDeleteConfirmDialogFor?.let { highlightToDelete ->
-                            AlertDialog(
-                                onDismissRequest = { showDeleteConfirmDialogFor = null },
-                                title = { Text(stringResource(R.string.dialog_delete_highlight)) },
-                                text = { Text(stringResource(R.string.dialog_delete_highlight_desc)) },
-                                confirmButton = {
-                                    TextButton(
-                                        onClick = {
-                                            onDeleteHighlight(highlightToDelete)
-                                            showDeleteConfirmDialogFor = null
-                                        }
-                                    ) { Text(stringResource(R.string.action_delete)) }
-                                },
-                                dismissButton = {
-                                    TextButton(
-                                        onClick = { showDeleteConfirmDialogFor = null }
-                                    ) { Text(stringResource(R.string.action_cancel)) }
-                                }
-                            )
-                        }
-                    }
+                    val context = LocalContext.current
+                    com.aryan.reader.shared.ui.SharedAndroidPdfHighlightsList(
+                        highlights = userHighlights.toList(),
+                        strings = com.aryan.reader.shared.ui.SharedAndroidPdfHighlightStrings(
+                            empty = stringResource(R.string.no_highlights_yet),
+                            allFilter = stringResource(R.string.read_status_all),
+                            withNotesFilter = stringResource(R.string.filter_with_notes),
+                            defaultHighlight = stringResource(R.string.msg_highlighted_section_default),
+                            optionsDescription = stringResource(R.string.content_desc_options),
+                            addNoteAction = stringResource(R.string.menu_add_note),
+                            editNoteAction = stringResource(R.string.menu_edit_note),
+                            deleteAction = stringResource(R.string.action_delete),
+                            cancelAction = stringResource(R.string.action_cancel),
+                            deleteDialogTitle = stringResource(R.string.dialog_delete_highlight),
+                            deleteDialogDescription = stringResource(R.string.dialog_delete_highlight_desc),
+                        ),
+                        key = PdfUserHighlight::id,
+                        sortKey = PdfUserHighlight::pageIndex,
+                        text = PdfUserHighlight::text,
+                        note = PdfUserHighlight::note,
+                        pageLabel = { highlight ->
+                            context.resources.getString(R.string.pdf_page_short, highlight.pageIndex + 1)
+                        },
+                        color = { highlight -> highlight.resolvedColor(customHighlightColors) },
+                        onNavigateToHighlight = { highlight ->
+                            onCloseDrawer()
+                            onPageSelected(highlight.pageIndex)
+                        },
+                        onNoteRequested = { highlight ->
+                            onNoteRequested(highlight.id)
+                            onCloseDrawer()
+                        },
+                        onDeleteHighlight = onDeleteHighlight,
+                    )
                 }
                 PdfDrawerSection.PAGES -> { // Pages Page
                     val listState = rememberLazyListState()

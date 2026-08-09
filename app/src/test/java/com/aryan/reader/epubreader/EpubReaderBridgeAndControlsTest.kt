@@ -6,6 +6,12 @@ import io.mockk.mockk
 import io.mockk.verify
 import kotlinx.coroutines.CompletableDeferred
 import com.aryan.reader.shared.HighlightStyle
+import com.aryan.reader.shared.ReaderToolbarPreferences
+import com.aryan.reader.shared.ui.SharedToolbarFlatItem
+import com.aryan.reader.shared.ui.SharedToolbarFlatItemType
+import com.aryan.reader.shared.ui.SharedToolbarSection
+import com.aryan.reader.shared.ui.buildSharedEpubToolbarItems
+import com.aryan.reader.shared.ui.sanitizeSharedToolbarPlaceholders
 import kotlinx.coroutines.test.runTest
 import org.json.JSONArray
 import org.json.JSONObject
@@ -56,29 +62,29 @@ class EpubReaderBridgeAndControlsTest {
     @Test
     fun `sanitizePlaceholders keeps one header per toolbar section and inserts empty placeholders`() {
         val input = listOf(
-            FlatToolItem("old_header", FlatItemType.SECTION_HEADER, section = ToolbarSection.BOTTOM),
-            FlatToolItem("format", FlatItemType.TOOL, tool = ReaderTool.FORMAT, section = ToolbarSection.BOTTOM),
-            FlatToolItem("more_header", FlatItemType.MORE_HEADER, title = "More"),
-            FlatToolItem("reading_mode", FlatItemType.MORE_TOOL, tool = ReaderTool.READING_MODE)
+            SharedToolbarFlatItem("old_header", SharedToolbarFlatItemType.SECTION_HEADER, section = SharedToolbarSection.BOTTOM),
+            SharedToolbarFlatItem("format", SharedToolbarFlatItemType.TOOL, section = SharedToolbarSection.BOTTOM, toolId = ReaderTool.FORMAT.id),
+            SharedToolbarFlatItem("more_header", SharedToolbarFlatItemType.MORE_HEADER, title = "More"),
+            SharedToolbarFlatItem("reading_mode", SharedToolbarFlatItemType.MORE_TOOL, toolId = ReaderTool.READING_MODE.id)
         )
 
-        val sanitized = sanitizePlaceholders(input)
+        val sanitized = sanitizeSharedToolbarPlaceholders(input)
 
         assertEquals(
             listOf(
-                FlatItemType.SECTION_HEADER,
-                FlatItemType.EMPTY_PLACEHOLDER,
-                FlatItemType.SECTION_HEADER,
-                FlatItemType.TOOL,
-                FlatItemType.SECTION_HEADER,
-                FlatItemType.EMPTY_PLACEHOLDER,
-                FlatItemType.MORE_HEADER,
-                FlatItemType.MORE_TOOL
+                SharedToolbarFlatItemType.SECTION_HEADER,
+                SharedToolbarFlatItemType.EMPTY_PLACEHOLDER,
+                SharedToolbarFlatItemType.SECTION_HEADER,
+                SharedToolbarFlatItemType.TOOL,
+                SharedToolbarFlatItemType.SECTION_HEADER,
+                SharedToolbarFlatItemType.EMPTY_PLACEHOLDER,
+                SharedToolbarFlatItemType.MORE_HEADER,
+                SharedToolbarFlatItemType.MORE_TOOL
             ),
             sanitized.map { it.type }
         )
-        assertEquals(listOf(ToolbarSection.TOP, ToolbarSection.BOTTOM, ToolbarSection.HIDDEN), sanitized.filter { it.type == FlatItemType.SECTION_HEADER }.map { it.section })
-        assertEquals(ReaderTool.FORMAT, sanitized.single { it.type == FlatItemType.TOOL }.tool)
+        assertEquals(listOf(SharedToolbarSection.TOP, SharedToolbarSection.BOTTOM, SharedToolbarSection.HIDDEN), sanitized.filter { it.type == SharedToolbarFlatItemType.SECTION_HEADER }.map { it.section })
+        assertEquals(ReaderTool.FORMAT.id, sanitized.single { it.type == SharedToolbarFlatItemType.TOOL }.toolId)
     }
 
     @Test
@@ -265,25 +271,29 @@ class EpubReaderBridgeAndControlsTest {
             defaultReaderBottomTools()
         )
 
-        val defaultItems = buildReaderToolbarItems(
-            hiddenTools = defaultReaderHiddenTools(),
-            toolOrder = defaultReaderToolOrder(),
-            bottomTools = defaultReaderBottomTools()
+        val defaultItems = buildSharedEpubToolbarItems(
+            preferences = ReaderToolbarPreferences(
+                hiddenToolIds = defaultReaderHiddenTools().mapNotNullTo(mutableSetOf()) { ReaderTool.fromId(it)?.id },
+                toolOrder = defaultReaderToolOrder(),
+                bottomToolIds = defaultReaderBottomTools().mapNotNullTo(mutableSetOf()) { ReaderTool.fromId(it)?.id },
+            ),
+            toolbarTools = epubToolbarTools,
+            availableTools = ReaderTool.entries.toSet(),
         )
 
         assertEquals(
-            ToolbarSection.HIDDEN,
-            defaultItems.single { it.tool == ReaderTool.SCREEN_ORIENTATION }.section
+            SharedToolbarSection.HIDDEN,
+            defaultItems.single { it.toolId == ReaderTool.SCREEN_ORIENTATION.id }.section
         )
         assertEquals(
-            ToolbarSection.HIDDEN,
-            defaultItems.single { it.tool == ReaderTool.BRIGHTNESS }.section
+            SharedToolbarSection.HIDDEN,
+            defaultItems.single { it.toolId == ReaderTool.BRIGHTNESS.id }.section
         )
         assertEquals(
-            ToolbarSection.BOTTOM,
-            defaultItems.single { it.tool == ReaderTool.SLIDER }.section
+            SharedToolbarSection.BOTTOM,
+            defaultItems.single { it.toolId == ReaderTool.SLIDER.id }.section
         )
-        assertTrue(defaultItems.any { it.type == FlatItemType.MORE_TOOL && it.tool == ReaderTool.FILE_INFO })
+        assertTrue(defaultItems.any { it.type == SharedToolbarFlatItemType.MORE_TOOL && it.toolId == ReaderTool.FILE_INFO.id })
     }
 
     @Test

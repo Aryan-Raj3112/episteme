@@ -42,11 +42,7 @@ import java.io.File
 private const val MAX_LOCATOR_ON_DEMAND_HTML_BYTES = 2L * 1024L * 1024L
 private const val MAX_LOCATOR_ON_DEMAND_HTML_CHARS = 2 * 1024 * 1024
 
-data class Locator(
-    val chapterIndex: Int,
-    val blockIndex: Int,
-    val charOffset: Int
-)
+typealias Locator = ReaderNavigationTarget
 
 /**
  * Converts between view-specific locators (like CFI) and the abstract Locator model.

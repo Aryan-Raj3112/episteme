@@ -174,6 +174,8 @@ import com.aryan.reader.shared.ReaderTextureFilePrefix
 import com.aryan.reader.shared.normalizeReaderTextureExtension
 import com.aryan.reader.shared.readerTextureDisplayName as sharedReaderTextureDisplayName
 import com.aryan.reader.shared.readerTextureMimeTypeForExtension
+import com.aryan.reader.shared.ui.SharedHsvColor
+import com.aryan.reader.shared.ui.toSharedHsvColor
 import com.aryan.reader.tts.GEMINI_TTS_SPEAKERS
 import com.aryan.reader.tts.SpeakerSamplePlayer
 import com.aryan.reader.tts.TtsCacheManager
@@ -240,10 +242,12 @@ private const val PREF_AI_TTS_MODEL = "tts_model"
 private const val PREF_AI_MODEL_EMPTY_MIGRATION_DONE = "model_empty_migration_done"
 private const val AI_KEYSTORE_ALIAS = "reader_ai_byok_key_v1"
 private const val ENCRYPTION_PREFIX = "v1:"
-const val GEMINI_CLOUD_TTS_MODEL = "gemini-3.1-flash-live-preview"
-const val GEMINI_CLOUD_TTS_MODEL_ID = "gemini:$GEMINI_CLOUD_TTS_MODEL"
+const val GEMINI_CLOUD_TTS_MODEL = com.aryan.reader.shared.GEMINI_CLOUD_TTS_MODEL
+const val GEMINI_CLOUD_TTS_MODEL_ID = com.aryan.reader.shared.GEMINI_CLOUD_TTS_MODEL_ID
 
-enum class AiFeature { DEFINE, SUMMARIZE, RECAP }
+typealias AiFeature = com.aryan.reader.shared.ReaderAiFeature
+typealias AiModelOption = com.aryan.reader.shared.ReaderAiModelOption
+typealias AiByokSettings = com.aryan.reader.shared.ReaderAiByokSettings
 
 private fun AiFeature.displayName(context: Context): String {
     return when (this) {
@@ -261,35 +265,7 @@ private fun aiProviderDisplayName(context: Context, provider: String): String {
     }
 }
 
-data class AiModelOption(
-    val provider: String,
-    val name: String,
-    val label: String = "${provider.replaceFirstChar { it.titlecase(Locale.ROOT) }} - $name"
-) {
-    val id: String = "$provider:$name"
-}
-
-data class AiByokSettings(
-    val geminiKey: String = "",
-    val groqKey: String = "",
-    val useOneModel: Boolean = true,
-    val modelForAll: String = "",
-    val defineModel: String = "",
-    val summarizeModel: String = "",
-    val recapModel: String = "",
-    val ttsModel: String = ""
-)
-
-val aiByokModelOptions = listOf(
-    AiModelOption("groq", "qwen/qwen3-32b"),
-    AiModelOption("groq", "llama-3.3-70b-versatile"),
-    AiModelOption("groq", "llama-3.1-8b-instant"),
-    AiModelOption("gemini", "gemma-4-26b-a4b-it"),
-    AiModelOption("gemini", "gemma-4-31b-it"),
-    AiModelOption("gemini", "gemini-flash-lite-latest"),
-    AiModelOption("gemini", "gemini-2.5-flash-lite"),
-    AiModelOption("gemini", "gemini-3.1-flash-lite-preview")
-)
+val aiByokModelOptions: List<AiModelOption> = com.aryan.reader.shared.ReaderAiModelOptions
 
 private fun Context.aiPrefs() = getSharedPreferences(AI_PREFS_NAME, Context.MODE_PRIVATE)
 
@@ -442,24 +418,8 @@ fun isByokCloudTtsAvailable(context: Context): Boolean {
             settings.ttsModel == GEMINI_CLOUD_TTS_MODEL_ID
 }
 
-private fun AiByokSettings.modelIdFor(feature: AiFeature): String {
-    return if (useOneModel) modelForAll else when (feature) {
-        AiFeature.DEFINE -> defineModel
-        AiFeature.SUMMARIZE -> summarizeModel
-        AiFeature.RECAP -> recapModel
-    }
-}
-
 fun aiModelById(id: String): AiModelOption? {
     return aiByokModelOptions.firstOrNull { it.id == id }
-}
-
-private fun AiByokSettings.apiKeyFor(provider: String): String {
-    return when (provider) {
-        "gemini" -> geminiKey
-        "groq" -> groqKey
-        else -> ""
-    }.trim()
 }
 
 typealias SearchResult = com.aryan.reader.shared.SearchResult
@@ -563,8 +523,6 @@ fun rememberSearchState(
     }
 }
 
-private val activeTooltipState = mutableStateOf<TooltipState?>(null)
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TooltipIconButton(
@@ -575,77 +533,14 @@ fun TooltipIconButton(
     description: String? = null,
     content: @Composable () -> Unit
 ) {
-    val tooltipState = rememberTooltipState(isPersistent = true)
-    rememberCoroutineScope()
-
-    LaunchedEffect(tooltipState.isVisible) {
-        if (tooltipState.isVisible) {
-            val previous = activeTooltipState.value
-            if (previous != null && previous !== tooltipState) {
-                previous.dismiss()
-            }
-            activeTooltipState.value = tooltipState
-        } else {
-            if (activeTooltipState.value === tooltipState) {
-                activeTooltipState.value = null
-            }
-        }
-    }
-
-    TooltipBox(
-        positionProvider = if (description != null)
-            TooltipDefaults.rememberRichTooltipPositionProvider()
-        else
-            TooltipDefaults.rememberPlainTooltipPositionProvider(),
-        tooltip = {
-            if (description != null) {
-                RichTooltip(
-                    title = {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            content()
-                            Text(
-                                text = text,
-                                style = MaterialTheme.typography.labelLarge,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                        }
-                    },
-                    colors = TooltipDefaults.richTooltipColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                        titleContentColor = MaterialTheme.colorScheme.onSurface
-                    )
-                ) {
-                    Text(
-                        text = description,
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                }
-            } else {
-                PlainTooltip {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        content()
-                        Text(text)
-                    }
-                }
-            }
-        },
-        state = tooltipState
-    ) {
-        IconButton(
-            onClick = onClick,
-            modifier = modifier,
-            enabled = enabled
-        ) {
-            content()
-        }
-    }
+    com.aryan.reader.shared.ui.SharedTooltipIconButton(
+        text = text,
+        onClick = onClick,
+        modifier = modifier,
+        enabled = enabled,
+        description = description,
+        content = content,
+    )
 }
 
 @Composable
@@ -2973,7 +2868,6 @@ private fun TextureChoice(
         }
     }
 }
-
 @Composable
 fun ThemeColorPickerDialog(
     initialColor: Color,
@@ -2984,174 +2878,26 @@ fun ThemeColorPickerDialog(
     onDismiss: () -> Unit,
     onColorChanged: (Color) -> Unit
 ) {
-    val initialHsv = remember(initialColor) {
-        val hsv = FloatArray(3)
-        android.graphics.Color.colorToHSV(initialColor.toArgb(), hsv)
-        hsv
-    }
-
-    var hue by remember { mutableFloatStateOf(initialHsv[0]) }
-    var saturation by remember { mutableFloatStateOf(initialHsv[1]) }
-    var value by remember { mutableFloatStateOf(initialHsv[2]) }
-
-    val currentColor by remember {
-        derivedStateOf {
-            val hsv = floatArrayOf(hue, saturation, value)
-            val argb = android.graphics.Color.HSVToColor(255, hsv)
-            Color(argb)
-        }
-    }
-
-    LaunchedEffect(currentColor) {
-        onColorChanged(currentColor)
-    }
-
-    fun updateFromColor(color: Color) {
-        val hsv = FloatArray(3)
-        android.graphics.Color.colorToHSV(color.toArgb(), hsv)
-        hue = hsv[0]
-        saturation = hsv[1]
-        value = hsv[2]
-    }
-
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
-    ) {
-        val configuration = LocalConfiguration.current
-        val maxDialogHeight = readerModalMaxHeightDp(configuration.screenHeightDp).dp
-
-        Surface(
-            shape = RoundedCornerShape(24.dp),
-            color = Color(0xFF2C2C2C),
-            modifier = Modifier
-                .fillMaxWidth(0.9f)
-                .padding(16.dp)
-                .heightIn(max = maxDialogHeight)
-        ) {
-            Column(
-                modifier = Modifier
-                    .padding(20.dp)
-                    .verticalScroll(rememberScrollState()), // Prevents elements from hiding off-screen
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Box(
-                    modifier = Modifier
-                        .background(Color(0xFF3E3E3E), RoundedCornerShape(16.dp))
-                        .padding(horizontal = 24.dp, vertical = 8.dp)
-                ) {
-                    Text(
-                        text = title,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = Color.White
-                    )
-                }
-
-                Spacer(Modifier.height(16.dp))
-
-                val liveBgColor = if (editingColorType == "bg") currentColor else bgColor
-                val liveTextColor = if (editingColorType == "text") currentColor else textColor
-
-                Surface(
-                    modifier = Modifier.fillMaxWidth().height(64.dp),
-                    shape = RoundedCornerShape(12.dp),
-                    color = liveBgColor,
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-                ) {
-                    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(text = stringResource(R.string.theme_color_live_preview),
-                            color = liveTextColor,
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(text = stringResource(R.string.theme_color_preview_text),
-                            color = liveTextColor,
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                    }
-                }
-
-                Spacer(Modifier.height(20.dp))
-
-                SpectrumBox(
-                    hue = hue,
-                    saturation = saturation,
-                    currentColor = currentColor,
-                    onHueSatChanged = { h, s -> hue = h; saturation = s },
-                    modifier = Modifier.fillMaxWidth().height(220.dp)
-                )
-
-                Spacer(Modifier.height(20.dp))
-
-                BrightnessSlider(
-                    hue = hue,
-                    saturation = saturation,
-                    value = value,
-                    onValueChanged = { value = it },
-                    modifier = Modifier.fillMaxWidth().height(24.dp).clip(RoundedCornerShape(12.dp))
-                )
-
-                Spacer(Modifier.height(24.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.Bottom,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    ColorComparePill(
-                        oldColor = initialColor,
-                        newColor = currentColor,
-                        modifier = Modifier.width(64.dp).height(36.dp)
-                    )
-
-                    Column(
-                        modifier = Modifier.weight(1.6f),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Text(stringResource(R.string.theme_color_hex), color = Color.Gray, fontSize = 12.sp, maxLines = 1)
-                        Spacer(Modifier.height(4.dp))
-                        HexInput(color = currentColor, onHexChanged = { updateFromColor(it) })
-                    }
-
-                    Row(
-                        modifier = Modifier.weight(2.4f),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        RgbInputColumn(label = stringResource(R.string.color_r), value = currentColor.red,
-                            onValueChange = { r -> updateFromColor(currentColor.copy(red = r)) },
-                            modifier = Modifier.weight(1f)
-                        )
-                        RgbInputColumn(label = stringResource(R.string.color_g), value = currentColor.green,
-                            onValueChange = { g -> updateFromColor(currentColor.copy(green = g)) },
-                            modifier = Modifier.weight(1f)
-                        )
-                        RgbInputColumn(label = stringResource(R.string.color_b), value = currentColor.blue,
-                            onValueChange = { b -> updateFromColor(currentColor.copy(blue = b)) },
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                }
-
-                Spacer(Modifier.height(24.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Button(
-                        onClick = onDismiss,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Color.White
-                        )
-                    ) {
-                        Text(stringResource(R.string.action_save), color = Color.Black, fontWeight = FontWeight.Bold)
-                    }
-                }
-            }
-        }
-    }
+    val configuration = LocalConfiguration.current
+    com.aryan.reader.shared.ui.SharedReaderThemeColorPickerDialog(
+        initialColor = initialColor,
+        title = title,
+        backgroundColor = bgColor,
+        textColor = textColor,
+        editingBackground = editingColorType == "bg",
+        maxDialogHeight = readerModalMaxHeightDp(configuration.screenHeightDp).dp,
+        labels = com.aryan.reader.shared.ui.SharedReaderThemeColorPickerLabels(
+            livePreview = stringResource(R.string.theme_color_live_preview),
+            previewText = stringResource(R.string.theme_color_preview_text),
+            hex = stringResource(R.string.theme_color_hex),
+            red = stringResource(R.string.color_r),
+            green = stringResource(R.string.color_g),
+            blue = stringResource(R.string.color_b),
+            save = stringResource(R.string.action_save),
+        ),
+        onDismiss = onDismiss,
+        onColorChanged = onColorChanged,
+    )
 }
 
 @Composable
@@ -3165,29 +2911,23 @@ fun HighlightColorPickerDialog(
     var selectedSlot by remember { mutableStateOf(initialSelection) }
 
     val initialActiveColor = currentColors[selectedSlot] ?: selectedSlot.color
-    val initialHsv = remember(initialActiveColor) {
-        val hsv = FloatArray(3)
-        android.graphics.Color.colorToHSV(initialActiveColor.toArgb(), hsv)
-        hsv
-    }
+    val initialHsv = remember(initialActiveColor) { initialActiveColor.toSharedHsvColor() }
 
-    var hue by remember { mutableFloatStateOf(initialHsv[0]) }
-    var saturation by remember { mutableFloatStateOf(initialHsv[1]) }
-    var value by remember { mutableFloatStateOf(initialHsv[2]) }
+    var hue by remember { mutableFloatStateOf(initialHsv.hue) }
+    var saturation by remember { mutableFloatStateOf(initialHsv.saturation) }
+    var value by remember { mutableFloatStateOf(initialHsv.value) }
 
     LaunchedEffect(selectedSlot) {
         val color = currentColors[selectedSlot] ?: selectedSlot.color
-        val hsv = FloatArray(3)
-        android.graphics.Color.colorToHSV(color.toArgb(), hsv)
-        hue = hsv[0]
-        saturation = hsv[1]
-        value = hsv[2]
+        val hsv = color.toSharedHsvColor()
+        hue = hsv.hue
+        saturation = hsv.saturation
+        value = hsv.value
     }
 
     val currentColor by remember {
         derivedStateOf {
-            val hsv = floatArrayOf(hue, saturation, value)
-            Color(android.graphics.Color.HSVToColor(255, hsv))
+            SharedHsvColor(hue, saturation, value).toComposeColor()
         }
     }
 
@@ -3196,11 +2936,10 @@ fun HighlightColorPickerDialog(
     }
 
     fun updateFromColor(color: Color) {
-        val hsv = FloatArray(3)
-        android.graphics.Color.colorToHSV(color.toArgb(), hsv)
-        hue = hsv[0]
-        saturation = hsv[1]
-        value = hsv[2]
+        val hsv = color.toSharedHsvColor()
+        hue = hsv.hue
+        saturation = hsv.saturation
+        value = hsv.value
     }
 
     Dialog(
