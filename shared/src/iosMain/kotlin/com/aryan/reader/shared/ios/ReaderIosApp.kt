@@ -102,6 +102,10 @@ import com.aryan.reader.shared.mobileExternalOpenAction
 import com.aryan.reader.shared.MobileReaderSessionRestoreAction
 import com.aryan.reader.shared.MobileReaderSessionRestoreCandidate
 import com.aryan.reader.shared.mobileReaderSessionRestoreAction
+import com.aryan.reader.shared.MobileSettingsMutation
+import com.aryan.reader.shared.MobileSettingsMutationState
+import com.aryan.reader.shared.MobileStrictFileFilterEffect
+import com.aryan.reader.shared.planMobileSettingsMutation
 import com.aryan.reader.shared.normalizedExternalFileBehavior
 import com.aryan.reader.shared.planMobileImportBatch
 import com.aryan.reader.shared.singleSelectionOpenBook
@@ -2723,21 +2727,44 @@ private fun ReaderIosApp(
                                 utilityScreen = null
                             },
                             onAction = { action ->
+                                val portableMutation = planMobileSettingsMutation(
+                                    action = action,
+                                    state = MobileSettingsMutationState(
+                                        tabsEnabled = state.isTabsEnabled,
+                                        strictFileFilterEnabled = state.useStrictFileFilter,
+                                        pdfFileNameAsDisplayName = state.usePdfFileNameAsDisplayName,
+                                        folderSyncEnabled = state.isFolderSyncEnabled,
+                                    ),
+                                )
+                                when (portableMutation) {
+                                    is MobileSettingsMutation.SetTabsEnabled -> {
+                                        state = state.reduce(AppAction.TabsEnabledChanged(portableMutation.enabled))
+                                    }
+                                    is MobileSettingsMutation.ChangeStrictFileFilter -> {
+                                        when (portableMutation.effect) {
+                                            MobileStrictFileFilterEffect.DISABLE -> {
+                                                state = state.copy(useStrictFileFilter = false)
+                                            }
+                                            MobileStrictFileFilterEffect.CONFIRM_ENABLE -> {
+                                                showStrictFilterConfirmation = true
+                                            }
+                                        }
+                                    }
+                                    is MobileSettingsMutation.SetPdfFileNameAsDisplayName -> {
+                                        state = state.copy(
+                                            usePdfFileNameAsDisplayName = portableMutation.enabled
+                                        )
+                                    }
+                                    is MobileSettingsMutation.SetFolderSyncEnabled -> {
+                                        setFolderSyncEnabled(portableMutation.enabled)
+                                    }
+                                    null -> Unit
+                                }
                                 when (action) {
                                     SharedSettingsAction.APP_THEME -> showAppThemePanel = true
                                     SharedSettingsAction.LANGUAGE -> {
                                         languageReturnScreen = IosUtilityScreen.SETTINGS
                                         utilityScreen = IosUtilityScreen.LANGUAGE
-                                    }
-                                    SharedSettingsAction.TABS_TOGGLE -> {
-                                        state = state.reduce(AppAction.TabsEnabledChanged(!state.isTabsEnabled))
-                                    }
-                                    SharedSettingsAction.STRICT_FILE_FILTER -> {
-                                        if (state.useStrictFileFilter) {
-                                            state = state.copy(useStrictFileFilter = false)
-                                        } else {
-                                            showStrictFilterConfirmation = true
-                                        }
                                     }
                                     SharedSettingsAction.CUSTOM_FONTS -> utilityScreen = IosUtilityScreen.FONTS
                                     SharedSettingsAction.SIGN_IN -> utilityScreen = IosUtilityScreen.ACCOUNT
@@ -2754,9 +2781,6 @@ private fun ReaderIosApp(
                                             if (enabled) requestCloudSyncIfEligible()
                                         }
                                     }
-                                    SharedSettingsAction.FOLDER_SYNC -> {
-                                        setFolderSyncEnabled(!state.isFolderSyncEnabled)
-                                    }
                                     SharedSettingsAction.HELP_FEEDBACK -> utilityScreen = IosUtilityScreen.FEEDBACK
                                     SharedSettingsAction.SUPPORT -> utilityScreen = IosUtilityScreen.SUPPORT
                                     SharedSettingsAction.ABOUT -> utilityScreen = IosUtilityScreen.ABOUT
@@ -2765,11 +2789,6 @@ private fun ReaderIosApp(
                                     }
                                     SharedSettingsAction.EXTERNAL_FILE_BEHAVIOR -> {
                                         showExternalFileBehaviorDialog = true
-                                    }
-                                    SharedSettingsAction.PDF_FILENAME_DISPLAY_NAME -> {
-                                        state = state.copy(
-                                            usePdfFileNameAsDisplayName = !state.usePdfFileNameAsDisplayName
-                                        )
                                     }
                                     SharedSettingsAction.TTS_SETTINGS -> {
                                         showTtsSettings = true
@@ -2781,7 +2800,11 @@ private fun ReaderIosApp(
                                     SharedSettingsAction.PDF_READER_DEFAULTS,
                                     SharedSettingsAction.READER_TOOLBAR,
                                     SharedSettingsAction.TTS_REPLACEMENTS,
-                                    SharedSettingsAction.LOCAL_OVERRIDE_NOTE -> Unit
+                                    SharedSettingsAction.LOCAL_OVERRIDE_NOTE,
+                                    SharedSettingsAction.TABS_TOGGLE,
+                                    SharedSettingsAction.STRICT_FILE_FILTER,
+                                    SharedSettingsAction.PDF_FILENAME_DISPLAY_NAME,
+                                    SharedSettingsAction.FOLDER_SYNC -> Unit
                                     SharedSettingsAction.SCREEN_CAPTURE_PROTECTION,
                                     SharedSettingsAction.HIDE_READER_AI,
                                     SharedSettingsAction.CLEAR_BOOK_CACHE,
