@@ -472,7 +472,7 @@ class ReaderWorkspaceModelsTest {
     }
 
     @Test
-    fun `retired auto scroll preferences are ignored for desktop reader tools`() {
+    fun `mobile auto scroll preferences are ignored for desktop reader tools`() {
         val session = ReaderEngine().createSession(readerFixtureBook())
         val preferences = ReaderToolbarPreferences(
             hiddenToolIds = setOf("auto_scroll"),
@@ -495,8 +495,8 @@ class ReaderWorkspaceModelsTest {
             externalLookupAvailable = false
         )
 
-        assertNull(ReaderTool.fromId("auto_scroll"))
-        assertFalse("auto_scroll" in preferences.sanitized().hiddenToolIds)
+        assertEquals(ReaderTool.AUTO_SCROLL, ReaderTool.fromId("auto_scroll"))
+        assertTrue("auto_scroll" in preferences.sanitized().hiddenToolIds)
         assertFalse(tools.any { it.id == "auto_scroll" })
         // The generic tools action remains available for the appearance and reading
         // inspectors; retiring auto-scroll must not hide those unrelated controls.

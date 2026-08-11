@@ -1,4 +1,3 @@
-// Common.kt
 @file:OptIn(ExperimentalMaterial3Api::class) @file:Suppress("KotlinConstantConditions")
 
 package com.aryan.reader

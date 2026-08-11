@@ -271,9 +271,9 @@ class EpubReaderPreferencesAndAnnotationsTest {
         assertEquals(1, countWords("word"))
         assertEquals(3, countWords(" one\ttwo\nthree "))
 
-        val source = java.io.File("app/src/main/java/com/aryan/reader/Common.kt")
+        val source = java.io.File("app/src/main/java/com/aryan/reader/AndroidAiClient.kt")
             .takeIf { it.isFile }
-            ?: java.io.File("src/main/java/com/aryan/reader/Common.kt")
+            ?: java.io.File("src/main/java/com/aryan/reader/AndroidAiClient.kt")
         assertFalse(source.readText().contains("split(Regex("))
     }
 

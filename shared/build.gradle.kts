@@ -205,6 +205,11 @@ kotlin {
             implementation(kotlin("test"))
             implementation(libs.kotlinx.coroutines.test)
         }
+        val desktopTest by getting {
+            dependencies {
+                runtimeOnly(compose.desktop.currentOs)
+            }
+        }
     }
 }
 

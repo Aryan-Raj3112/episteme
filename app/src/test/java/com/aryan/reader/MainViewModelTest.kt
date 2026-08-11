@@ -531,7 +531,7 @@ class MainViewModelTest {
 
         assertEquals(null, viewModel.uiState.value.showExternalFileSavePromptFor)
         coVerify(exactly = 0) { anyConstructed<RecentFilesRepository>().deleteFilePermanently(listOf(selected.selectedBookId!!)) }
-        coVerify(exactly = 0) { anyConstructed<BookImporter>().deleteBookByUriString(externalUri.toString()) }
+        coVerify(exactly = 0) { anyConstructed<BookImporter>().deleteBookByUriString("content://external/temp.pdf") }
         assertEquals(Unit, finishEvent.await())
     }
 
