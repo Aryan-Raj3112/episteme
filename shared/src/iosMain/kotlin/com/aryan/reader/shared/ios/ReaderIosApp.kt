@@ -99,13 +99,15 @@ import com.aryan.reader.shared.enqueueMobileFolderScan
 import com.aryan.reader.shared.mobileExternalFileCloseAction
 import com.aryan.reader.shared.MobileExternalOpenAction
 import com.aryan.reader.shared.mobileExternalOpenAction
+import com.aryan.reader.shared.MobileReaderSessionRestoreAction
+import com.aryan.reader.shared.MobileReaderSessionRestoreCandidate
+import com.aryan.reader.shared.mobileReaderSessionRestoreAction
 import com.aryan.reader.shared.normalizedExternalFileBehavior
 import com.aryan.reader.shared.planMobileImportBatch
 import com.aryan.reader.shared.singleSelectionOpenBook
 import com.aryan.reader.shared.mobileBookOpenPreflightAction
 import com.aryan.reader.shared.MobileBookOpenPreflightAction
 import com.aryan.reader.shared.reduce
-import com.aryan.reader.shared.resolveMobileReaderSessionBook
 import com.aryan.reader.shared.withMobileBookOpened
 import com.aryan.reader.shared.withMobileBookClosed
 import com.aryan.reader.shared.withMobileLibrarySearchActive
@@ -953,16 +955,29 @@ private fun persistIosLibrarySnapshot(state: SharedReaderScreenState) {
 private fun loadIosReaderSessionBook(books: Collection<BookItem>): BookItem? {
     val defaults = NSUserDefaults.standardUserDefaults
     val bookId = defaults.stringForKey(IosLastOpenBookIdDefaultsKey)
-    val fileType = defaults.stringForKey(IosLastOpenFileTypeDefaultsKey)
-        ?.let { runCatching { FileType.valueOf(it) }.getOrNull() }
-    val book = resolveMobileReaderSessionBook(books, bookId, fileType)
-        ?.takeIf { candidate ->
-            candidate.path?.let(NSFileManager.defaultManager::fileExistsAtPath) == true
+    val fileTypeName = defaults.stringForKey(IosLastOpenFileTypeDefaultsKey)
+    val book = books.firstOrNull { it.id == bookId }
+    val action = mobileReaderSessionRestoreAction(
+        persistedBookId = bookId,
+        persistedFileTypeName = fileTypeName,
+        candidate = book?.let { candidate ->
+            MobileReaderSessionRestoreCandidate(
+                bookId = candidate.id,
+                fileType = candidate.type,
+                isAvailable = candidate.isAvailable,
+                hasReadableLocation = candidate.path
+                    ?.let(NSFileManager.defaultManager::fileExistsAtPath) == true,
+            )
+        },
+    )
+    return when (action) {
+        MobileReaderSessionRestoreAction.NONE -> null
+        MobileReaderSessionRestoreAction.CLEAR_PERSISTED_SESSION -> {
+            clearIosReaderSession()
+            null
         }
-    if (book == null && (bookId != null || fileType != null)) {
-        clearIosReaderSession()
+        MobileReaderSessionRestoreAction.RESTORE -> book
     }
-    return book
 }
 
 private fun persistIosReaderSession(book: BookItem) {

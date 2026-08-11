@@ -121,6 +121,9 @@ import com.aryan.reader.shared.SharedImportOutcomeCounts
 import com.aryan.reader.shared.SharedImportPlanner
 import com.aryan.reader.shared.MobileExternalFileCloseAction
 import com.aryan.reader.shared.mobileExternalFileCloseAction
+import com.aryan.reader.shared.MobileReaderSessionRestoreAction
+import com.aryan.reader.shared.MobileReaderSessionRestoreCandidate
+import com.aryan.reader.shared.mobileReaderSessionRestoreAction
 import com.aryan.reader.shared.MAX_SYNCED_FOLDER_COUNT
 import com.aryan.reader.shared.SyncedFolderAddDecision
 import com.aryan.reader.shared.AppShelfAction
@@ -1514,28 +1517,37 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             return
         }
 
-        val persistedType = prefs.getString(KEY_LAST_OPEN_FILE_TYPE, null)?.let { typeName ->
-            runCatching { FileType.valueOf(typeName) }.getOrNull()
-        }
+        val persistedTypeName = prefs.getString(KEY_LAST_OPEN_FILE_TYPE, null)
         val restoreBookId = prefs.getString(KEY_LAST_OPEN_BOOK_ID, null) ?: return
-        if (restoreBookId in pendingExternalFileRemovals().map { it.bookId }) {
-            clearPersistedReaderSession()
-            return
-        }
-        if (persistedType == null) {
-            clearPersistedReaderSession()
-            return
-        }
 
         viewModelScope.launch {
             val item = bookStore.getFileByBookId(restoreBookId)
             val restoreUri = item?.getUri()
-            if (item == null || restoreUri == null || item.type != persistedType) {
-                Timber.tag("ReaderRestore")
-                    .w("Skipping restore for bookId=$restoreBookId. Item missing, URI missing, or type mismatch.")
-                clearPersistedReaderSession()
-                return@launch
+            val restoreAction = mobileReaderSessionRestoreAction(
+                persistedBookId = restoreBookId,
+                persistedFileTypeName = persistedTypeName,
+                pendingRemovalBookIds = pendingExternalFileRemovals().mapTo(mutableSetOf()) { it.bookId },
+                candidate = item?.let { candidate ->
+                    MobileReaderSessionRestoreCandidate(
+                        bookId = candidate.bookId,
+                        fileType = candidate.type,
+                        isAvailable = candidate.isAvailable,
+                        hasReadableLocation = restoreUri != null,
+                    )
+                },
+            )
+            when (restoreAction) {
+                MobileReaderSessionRestoreAction.NONE -> return@launch
+                MobileReaderSessionRestoreAction.CLEAR_PERSISTED_SESSION -> {
+                    Timber.tag("ReaderRestore")
+                        .w("Skipping stale or unavailable restore for bookId=$restoreBookId.")
+                    clearPersistedReaderSession()
+                    return@launch
+                }
+                MobileReaderSessionRestoreAction.RESTORE -> Unit
             }
+            checkNotNull(item)
+            checkNotNull(restoreUri)
 
             when {
                 item.type in PDF_VIEWER_FILE_TYPES -> {
