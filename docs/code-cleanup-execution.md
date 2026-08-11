@@ -80,6 +80,10 @@ Verification: focused shared library controller tests and Android shelf/tag View
 - Then split shared chrome, EPUB, annotations, and non-reader surfaces along existing feature boundaries.
 - Exit: public entry points remain stable or intentionally migrated; feature-private APIs are internal; no cycles; Android/iOS compile.
 
+Result (2026-08-11): complete. The 10,229-line `SharedMobileScreens.kt` aggregation is now a 277-line app-drawer surface plus separate PDF host (3,496), PDF rendering (2,385), library screens (2,494), and library components (1,923) files. `NonReaderScreens.kt` changed from 2,916 lines into screen orchestration (1,758) and library content (1,234). `SharedPdfAnnotationUi.kt` changed from 2,944 lines into controls/editors (1,824) and rendering/geometry (1,178). Public entry-point names were retained; only cross-file feature implementation seams became `internal`.
+
+Verification: `NonReaderLayoutModelsTest` and `SharedPdfAnnotationUiTest` pass. Common metadata, Android shared, iOS simulator, Android OSS, and Android Pro compilation pass; portable-source enforcement remains applicable and `git diff --check` passes. This phase intentionally performs no UI redesign or state-policy changes.
+
 ### Phase 3 — Android reader-host decomposition
 
 - Process paginated, PDF, and EPUB hosts one vertical slice at a time.
@@ -113,8 +117,8 @@ Verification: focused shared library controller tests and Android shelf/tag View
 | Phase | Status | Android LOC delta | Shared LOC delta | Commit | Verification/result |
 | --- | --- | ---: | ---: | --- | --- |
 | 0 | Complete (2026-08-11) | 0 | 0 | `45b7ffc4` | Baseline, standards, largest-file inventory, safety matrix, and portable-source verification established. |
-| 1 | Complete (2026-08-11) | +92 | 0 | pending | Composition-root ownership, physical library persistence split, and narrow book/folder/artifact/legacy capabilities. `RecentFilesRepository` 1,001 → 883 LOC; direct feature constructions and broad repository references in `MainViewModel` are both zero. |
-| 2 | Pending | — | — | — | — |
+| 1 | Complete (2026-08-11) | +92 | 0 | `9fcf1971` | Composition-root ownership, physical library persistence split, and narrow book/folder/artifact/legacy capabilities. `RecentFilesRepository` 1,001 → 883 LOC; direct feature constructions and broad repository references in `MainViewModel` are both zero. |
+| 2 | Complete (2026-08-11) | 0 | +479 | pending | Split three shared UI aggregations into nine responsibility-owned files; largest resulting file is 3,496 LOC instead of 10,229. Added LOC is file-local imports and explicit internal seams, not duplicated behavior. |
 | 3 | Pending | — | — | — | — |
 | 4 | Pending | — | — | — | — |
 | 5 | Pending | — | — | — | — |
