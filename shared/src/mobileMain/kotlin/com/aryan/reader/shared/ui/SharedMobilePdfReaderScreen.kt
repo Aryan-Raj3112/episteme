@@ -167,6 +167,7 @@ import com.aryan.reader.shared.pdf.PdfAnnotationKind
 import com.aryan.reader.shared.pdf.PdfInkTool
 import com.aryan.reader.shared.pdf.PdfTtsSessionPlanner
 import com.aryan.reader.shared.pdf.shouldStopPdfTtsForManualPageTurn
+import com.aryan.reader.shared.pdf.shouldStopPdfTtsForNavigation
 import com.aryan.reader.shared.pdf.PdfAutoScrollProfile
 import com.aryan.reader.shared.pdf.PdfPageBounds
 import com.aryan.reader.shared.pdf.PdfPagePoint
@@ -530,6 +531,12 @@ fun SharedMobilePdfReaderScreen(
     fun dispatch(action: SharedPdfReaderAction) {
         readerState = readerState.reduce(action)
     }
+    fun stopPdfTtsSession() {
+        pdfTts.stop()
+        pendingTtsStart = null
+        pendingTtsStartAtLastChunk = false
+        ttsHighlightBounds = emptyList()
+    }
 
     fun navigateToPage(
         pageIndex: Int,
@@ -538,6 +545,12 @@ fun SharedMobilePdfReaderScreen(
         reason: PdfNavigationReason = PdfNavigationReason.PAGE_SLIDER
     ) {
         val target = pageIndex.coerceIn(0, (displayPageCount - 1).coerceAtLeast(0))
+        if (shouldStopPdfTtsForNavigation(
+                readerState.displayMode == PdfDisplayMode.PAGINATION,
+                reason, target != readerState.pageIndex, isPdfTtsPlayingOrLoading,
+            )) {
+            stopPdfTtsSession()
+        }
         if (recordHistory) jumpHistory = jumpHistory.record(readerState.pageIndex, target, displayPageCount)
         dispatch(SharedPdfReaderAction.GoToPage(target))
         navigationRequestPage = target
@@ -564,17 +577,10 @@ fun SharedMobilePdfReaderScreen(
     }
 
     fun stopPdfTtsForManualPagination() {
-        if (
-            shouldStopPdfTtsForManualPageTurn(
-                isPaginationMode = readerState.displayMode == PdfDisplayMode.PAGINATION,
-                isUserInitiated = true,
-                isTtsPlayingOrLoading = isPdfTtsPlayingOrLoading,
-            )
-        ) {
-            pdfTts.stop()
-            pendingTtsStart = null
-            pendingTtsStartAtLastChunk = false
-            ttsHighlightBounds = emptyList()
+        if (shouldStopPdfTtsForManualPageTurn(
+                readerState.displayMode == PdfDisplayMode.PAGINATION, true, isPdfTtsPlayingOrLoading,
+            )) {
+            stopPdfTtsSession()
         }
     }
 
@@ -585,18 +591,13 @@ fun SharedMobilePdfReaderScreen(
     }
 
     fun navigateToSearchResult(resultIndex: Int) {
-        if (searchResults.isEmpty()) return
-        val previousPage = readerState.pageIndex
+        val result = searchResults.getOrNull(resultIndex) ?: return
         readerState = readerState.reduce(SharedPdfReaderAction.GoToSearchResult(resultIndex, searchResults))
-        val resolvedIndex = readerState.activeSearchResultIndex
-        searchResults.getOrNull(resolvedIndex)?.let { result ->
-            val targetDisplay = sharedPdfDisplayIndexFor(virtualLayout, result.pageIndex)
-            jumpHistory = jumpHistory.record(previousPage, targetDisplay, displayPageCount)
-            navigationRequestPage = targetDisplay
-            navigationCenterFraction = result.boundsList.centerYFraction()
-            navigationReason = PdfNavigationReason.SEARCH_RESULT
-            navigationRequestToken++
-        }
+        navigateToPage(
+            sharedPdfDisplayIndexFor(virtualLayout, result.pageIndex),
+            centerFraction = result.boundsList.centerYFraction(),
+            reason = PdfNavigationReason.SEARCH_RESULT,
+        )
     }
 
     fun insertBlankPageAtCurrentPosition() {

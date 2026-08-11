@@ -48,6 +48,16 @@ fun shouldStopPdfTtsForManualPageTurn(
     isTtsPlayingOrLoading: Boolean,
 ): Boolean = isPaginationMode && isUserInitiated && isTtsPlayingOrLoading
 
+fun shouldStopPdfTtsForNavigation(
+    isPaginationMode: Boolean,
+    reason: PdfNavigationReason,
+    pageWillChange: Boolean,
+    isTtsPlayingOrLoading: Boolean,
+): Boolean = isPaginationMode &&
+    reason != PdfNavigationReason.TTS &&
+    pageWillChange &&
+    isTtsPlayingOrLoading
+
 fun pdfAutoScrollPixelsPerSecond(speedMultiplier: Float): Float =
     80f * (speedMultiplier.coerceIn(0.1f, 10f) * 0.5f)
 

@@ -16,6 +16,19 @@ class PdfTtsSessionTest {
     }
 
     @Test
+    fun `all non tts pagination navigation stops speech only when the page changes`() {
+        PdfNavigationReason.entries
+            .filterNot { it == PdfNavigationReason.TTS }
+            .forEach { reason ->
+                assertTrue(shouldStopPdfTtsForNavigation(true, reason, true, true), reason.name)
+            }
+        assertFalse(shouldStopPdfTtsForNavigation(true, PdfNavigationReason.TTS, true, true))
+        assertFalse(shouldStopPdfTtsForNavigation(false, PdfNavigationReason.PAGE_SLIDER, true, true))
+        assertFalse(shouldStopPdfTtsForNavigation(true, PdfNavigationReason.PAGE_SLIDER, false, true))
+        assertFalse(shouldStopPdfTtsForNavigation(true, PdfNavigationReason.PAGE_SLIDER, true, false))
+    }
+
+    @Test
     fun `pdf auto scroll uses android base speed and bounds`() {
         assertEquals(4f, pdfAutoScrollPixelsPerSecond(0f))
         assertEquals(40f, pdfAutoScrollPixelsPerSecond(1f))
