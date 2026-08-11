@@ -1796,7 +1796,7 @@ private fun ReaderIosApp(
         selectLibraryTab(SharedMobileLibraryTab.BOOKS)
     }
 
-    fun startIosPdfReflow(pdfBook: BookItem) {
+    fun startIosPdfReflow(pdfBook: BookItem, password: String?) {
         val reflowBookId = "${pdfBook.id}_reflow"
         val existing = state.rawLibraryBooks.firstOrNull { it.id == reflowBookId }
         if (existing != null) {
@@ -1822,6 +1822,7 @@ private fun ReaderIosApp(
             val success = generateIosPdfReflowHtml(
                 pdfPath = pdfPath,
                 destPath = destPath,
+                password = password,
                 onProgress = { progress -> pdfReflowProgress = progress },
             )
             if (!success) {
@@ -2305,13 +2306,13 @@ private fun ReaderIosApp(
                                     }
                                 }
                             },
-                            onNativePdfAction = { pdfBook, action ->
+                            onNativePdfAction = { pdfBook, action, password ->
                                 when (action) {
                                     SharedMobilePdfNativeAction.DICTIONARY_SETTINGS -> {
                                         showDictionarySettingsSheet = true
                                     }
                                     SharedMobilePdfNativeAction.TEXT_VIEW -> {
-                                        startIosPdfReflow(pdfBook)
+                                        startIosPdfReflow(pdfBook, password)
                                     }
                                     else -> {
                                         val handled = bridge.performPdfNativeAction(pdfBook, action)

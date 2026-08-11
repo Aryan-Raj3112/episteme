@@ -62,13 +62,14 @@ import kotlin.math.roundToInt
 internal suspend fun generateIosPdfReflowHtml(
     pdfPath: String,
     destPath: String,
+    password: String?,
     onProgress: (Float) -> Unit,
 ): Boolean {
     if (!pdfPath.endsWith(".pdf", ignoreCase = true)) return false
     return withContext(Dispatchers.Default) {
         IosPdfiumRuntime.mutex.withLock {
             IosPdfiumRuntime.ensureInitialized()
-            val document = FPDF_LoadDocument(pdfPath, null) ?: return@withLock false
+            val document = FPDF_LoadDocument(pdfPath, password) ?: return@withLock false
             try {
                 val totalPages = FPDF_GetPageCount(document).coerceAtLeast(0)
                 if (totalPages == 0) return@withLock false
