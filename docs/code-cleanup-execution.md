@@ -110,6 +110,18 @@ Documented cohesion exceptions retained under the mega-file ratchet:
 - Preserve generated output where byte compatibility matters and add golden/fixture tests only where necessary.
 - Exit: small public entry points, independently testable components, portable source enforcement passing.
 
+Result (2026-08-11): complete. `ReaderHtmlDocumentBuilder.kt` changed from a 5,610-line mixed generator into a 420-line public façade plus a 95-line document assembler, 518-line styles module, 774-line semantic/media renderer, 706-line highlight/locator/sanitization module, and navigation (1,143), selection (1,049), and annotation (963) JavaScript fragments behind a seven-line script assembler. Existing public builder APIs remain unchanged. The generated document suite passes after the split; only non-semantic template indentation is allowed to differ across assembly seams.
+
+`SharedNativePaginatedReader.kt` changed from 5,106 lines into host/controller (795), page and selection surfaces (905), vertical rendering (1,422), page geometry (232), text rendering (705), and highlight/selection mapping (1,238). `SharedReaderChrome.kt` changed from 4,970 lines into host orchestration (797), search/highlight chrome (755), format/theme controls (1,248), TTS/toolbars (1,006), and navigation/sidebar (1,390). `SharedMobileEpubReader.kt` changed from 4,679 lines into its 1,707-line composition root plus chrome (848), library/annotation sheets (515), formatting/themes (855), navigation/search adapters (679), and auto-scroll/musician controls (347).
+
+All extracted implementation APIs are feature-internal; public screen and builder entry points remain stable. No Android/JVM imports entered portable source sets and no platform behavior or UI decision was intentionally changed.
+
+Verification: the complete `ReaderHtmlDocumentBuilderTest` suite, shared native pagination interaction tests, native vertical-flow tests, and native image-style tests pass. Common/desktop, Android shared, and iOS simulator compilation pass; portable-source enforcement and `git diff --check` pass. No emulator was run.
+
+Documented cohesion exception retained under the mega-file ratchet:
+
+- `SharedMobileEpubReader.kt` (1,707 LOC): mobile EPUB composition root owning state/effect wiring across the extracted feature surfaces. It may not grow. A further split requires a typed reader-session state holder rather than a large parameter bag; that state-holder work remains paired with the Android host exceptions and is enforced by the Phase 6 ratchet.
+
 ### Phase 5 — Legacy duplication and naming cleanup
 
 - Eliminate `Common.kt` into feature-owned files.
@@ -131,7 +143,7 @@ Documented cohesion exceptions retained under the mega-file ratchet:
 | 0 | Complete (2026-08-11) | 0 | 0 | `45b7ffc4` | Baseline, standards, largest-file inventory, safety matrix, and portable-source verification established. |
 | 1 | Complete (2026-08-11) | +92 | 0 | `9fcf1971` | Composition-root ownership, physical library persistence split, and narrow book/folder/artifact/legacy capabilities. `RecentFilesRepository` 1,001 → 883 LOC; direct feature constructions and broad repository references in `MainViewModel` are both zero. |
 | 2 | Complete (2026-08-11) | 0 | +479 | `7d47b7af` | Split three shared UI aggregations into nine responsibility-owned files; largest resulting file is 3,496 LOC instead of 10,229. Added LOC is file-local imports and explicit internal seams, not duplicated behavior. |
-| 3 | Complete (2026-08-11) | +466 | 0 | this phase commit | Split Android reader rendering/selection/preferences, extracted PDF persistence ownership, and mapped Android PDF jump history to the tested shared policy. Focused reader tests and OSS/Pro compilation pass. |
-| 4 | Pending | — | — | — | — |
+| 3 | Complete (2026-08-11) | +466 | 0 | `437508fc` | Split Android reader rendering/selection/preferences, extracted PDF persistence ownership, and mapped Android PDF jump history to the tested shared policy. Focused reader tests and OSS/Pro compilation pass. |
+| 4 | Complete (2026-08-11) | 0 | +754 | this phase commit | Split HTML generation, native pagination, reader chrome, and mobile EPUB into responsibility-owned modules; focused tests, cross-platform compilation, and portable-source enforcement pass. |
 | 5 | Pending | — | — | — | — |
 | 6 | Pending | — | — | — | — |
