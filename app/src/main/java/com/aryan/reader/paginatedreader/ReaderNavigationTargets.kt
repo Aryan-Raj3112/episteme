@@ -2,7 +2,7 @@
 
 package com.aryan.reader.paginatedreader
 
-import com.aryan.reader.SearchResult
+import com.aryan.reader.shared.SearchResult
 
 internal fun flattenTextContentBlocksForNavigation(blocks: List<ContentBlock>): List<TextContentBlock> {
     return flattenTextContentBlocksForSharedNavigation(blocks)

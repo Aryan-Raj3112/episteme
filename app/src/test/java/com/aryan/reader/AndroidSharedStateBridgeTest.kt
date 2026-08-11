@@ -52,7 +52,7 @@ class AndroidLibraryProjectionAdapterTest {
         val filtered = reduceLibraryAction(
             current = selected,
             projectedState = ReaderScreenState(rawLibraryFiles = listOf(book)),
-            action = SharedLibraryAction.FiltersChanged(filters.toSharedLibraryFilters())
+            action = SharedLibraryAction.FiltersChanged(filters)
         )
 
         assertEquals(setOf(book), selected.contextualActionItems)

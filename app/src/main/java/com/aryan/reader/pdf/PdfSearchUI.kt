@@ -42,7 +42,7 @@ import androidx.paging.LoadState
 import androidx.paging.compose.LazyPagingItems
 import androidx.paging.compose.itemContentType
 import com.aryan.reader.R
-import com.aryan.reader.SearchResult
+import com.aryan.reader.shared.SearchResult
 
 @Composable
 internal fun SearchNavigationPill(

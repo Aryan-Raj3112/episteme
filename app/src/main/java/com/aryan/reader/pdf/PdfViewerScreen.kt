@@ -203,8 +203,8 @@ import androidx.media3.common.util.UnstableApi
 import androidx.paging.compose.collectAsLazyPagingItems
 import androidx.work.WorkInfo
 import com.aryan.reader.AiDefinitionPopup
-import com.aryan.reader.AiDefinitionResult
-import com.aryan.reader.AiFeature
+import com.aryan.reader.shared.AiDefinitionResult
+import com.aryan.reader.shared.ReaderAiFeature as AiFeature
 import com.aryan.reader.AiHubBottomSheet
 import com.aryan.reader.BuildConfig
 import com.aryan.reader.COMIC_ARCHIVE_FILE_TYPES
@@ -219,8 +219,8 @@ import com.aryan.reader.ReaderFileInfoDialogs
 import com.aryan.reader.ReaderScreenOrientationEffect
 import com.aryan.reader.ReaderScreenOrientationSheet
 import com.aryan.reader.ReaderThemePanel
-import com.aryan.reader.SearchResult
-import com.aryan.reader.SummarizationResult
+import com.aryan.reader.shared.SearchResult
+import com.aryan.reader.shared.SummarizationResult
 import com.aryan.reader.SummaryCacheManager
 import com.aryan.reader.TtsSettingsSheet
 import com.aryan.reader.TtsWordReplacementsSheet

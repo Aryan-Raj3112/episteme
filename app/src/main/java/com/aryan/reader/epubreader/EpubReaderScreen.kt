@@ -148,7 +148,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.platform.LocalContext
 import androidx.media3.common.util.UnstableApi
-import com.aryan.reader.AiDefinitionResult
+import com.aryan.reader.shared.AiDefinitionResult
 import com.aryan.reader.BuildConfig
 import com.aryan.reader.copyPlainTextToClipboard
 import com.aryan.reader.BookWordReplacementsSheet
@@ -162,8 +162,8 @@ import com.aryan.reader.ReaderScreenOrientationEffect
 import com.aryan.reader.ReaderScreenOrientationSheet
 import com.aryan.reader.ReaderThemePanel
 import com.aryan.reader.RenderMode
-import com.aryan.reader.SearchResult
-import com.aryan.reader.SummarizationResult
+import com.aryan.reader.shared.SearchResult
+import com.aryan.reader.shared.SummarizationResult
 import com.aryan.reader.SummaryCacheManager
 import com.aryan.reader.TtsSettingsSheet
 import com.aryan.reader.TtsWordReplacementsSheet

@@ -129,6 +129,12 @@ Documented cohesion exception retained under the mega-file ratchet:
 - Consolidate remaining Android/shared model pairs and explicitly name truly platform-specific types.
 - Exit: no speculative production abstractions, no ambiguous platform types, and no new generic dumping grounds.
 
+Result (2026-08-11): complete. The 3,539-line `Common.kt` dumping ground was deleted and its unchanged Android implementations were regrouped into nine responsibility-owned files for AI settings/client/hub, search UI, TTS settings, reader color controls, textures, theme persistence, and theme editing. The largest resulting file is 670 LOC. The generic package aliases formerly supplied by `Common.kt` were removed; affected production and test consumers now import their shared model types explicitly. The remaining Android models are Android-resource or Android-framework owners, while identical mobile domain state continues to be the shared type rather than a duplicated platform model.
+
+The contract audit also removed six identity conversion wrappers for `FileType`, `LibraryFilters`, and `SyncedFolder`; they had no transformation boundary and no production consumers. Their tautological wrapper tests were removed while the real Android file-capability assertions remain. The final generic `NavigationEvent` package alias was replaced with an explicit shared import. Existing feature-local aliases with domain-specific names (for example rich PDF layout and EPUB navigation names) remain intentional vocabulary adapters, not duplicate model implementations.
+
+Verification: focused Android shared-state, model-mapper, EPUB search, PDF settings/theme, and TTS preference tests pass. OSS production and unit-test compilation, Pro production compilation, Android instrumented-test compilation, `git diff --check`, and the `.gitignore` invariant pass. No emulator was run. No Android behavior, UI, persistence format, preference key, or pagination alignment policy was intentionally changed.
+
 ### Phase 6 — Permanent quality gates and completion audit
 
 - Retain portable import enforcement and add dependency-direction and mega-file ratchet checks.
@@ -144,6 +150,6 @@ Documented cohesion exception retained under the mega-file ratchet:
 | 1 | Complete (2026-08-11) | +92 | 0 | `9fcf1971` | Composition-root ownership, physical library persistence split, and narrow book/folder/artifact/legacy capabilities. `RecentFilesRepository` 1,001 → 883 LOC; direct feature constructions and broad repository references in `MainViewModel` are both zero. |
 | 2 | Complete (2026-08-11) | 0 | +479 | `7d47b7af` | Split three shared UI aggregations into nine responsibility-owned files; largest resulting file is 3,496 LOC instead of 10,229. Added LOC is file-local imports and explicit internal seams, not duplicated behavior. |
 | 3 | Complete (2026-08-11) | +466 | 0 | `437508fc` | Split Android reader rendering/selection/preferences, extracted PDF persistence ownership, and mapped Android PDF jump history to the tested shared policy. Focused reader tests and OSS/Pro compilation pass. |
-| 4 | Complete (2026-08-11) | 0 | +754 | this phase commit | Split HTML generation, native pagination, reader chrome, and mobile EPUB into responsibility-owned modules; focused tests, cross-platform compilation, and portable-source enforcement pass. |
-| 5 | Pending | — | — | — | — |
+| 4 | Complete (2026-08-11) | 0 | +754 | `eaa35428` | Split HTML generation, native pagination, reader chrome, and mobile EPUB into responsibility-owned modules; focused tests, cross-platform compilation, and portable-source enforcement pass. |
+| 5 | Complete (2026-08-11) | +291 | 0 | this phase commit | Deleted `Common.kt`, regrouped its implementation into nine feature files, removed ambiguous generic aliases and six identity wrappers, and passed focused tests plus OSS/Pro and Android-test compilation. |
 | 6 | Pending | — | — | — | — |

@@ -41,9 +41,9 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.aryan.reader.RenderMode
 import com.aryan.reader.SearchNavigationControls
-import com.aryan.reader.SearchResult
+import com.aryan.reader.shared.SearchResult
 import com.aryan.reader.SearchResultsPanel
-import com.aryan.reader.SearchState
+import com.aryan.reader.shared.ReaderSearchState as SearchState
 import com.aryan.reader.epub.EpubBook
 import com.aryan.reader.epub.contentFilePath
 import com.aryan.reader.paginatedreader.IPaginator

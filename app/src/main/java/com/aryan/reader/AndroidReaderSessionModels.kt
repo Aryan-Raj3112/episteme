@@ -15,8 +15,6 @@ data class AndroidPreparedImport(
     val type: FileType get() = result.type
 }
 
-typealias NavigationEvent = com.aryan.reader.shared.NavigationEvent
-
 internal fun readerSessionState(current: ReaderScreenState): AppReaderSessionState = current.readerSession
 
 internal fun closeReaderSession(current: ReaderScreenState): ReaderScreenState =

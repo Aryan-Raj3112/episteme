@@ -4,6 +4,8 @@
 )
 package com.aryan.reader.pdf
 
+import com.aryan.reader.shared.ReaderTheme
+
 import android.graphics.Bitmap
 import android.graphics.Rect
 import android.graphics.RectF
@@ -86,7 +88,7 @@ import androidx.compose.ui.util.lerp
 import androidx.core.graphics.createBitmap
 import androidx.core.graphics.scale
 import com.aryan.reader.R
-import com.aryan.reader.SearchResult
+import com.aryan.reader.shared.SearchResult
 import com.aryan.reader.loadReaderTextureBitmap
 import com.aryan.reader.ml.SpeechBubble
 import com.aryan.reader.pdf.data.PdfAnnotation
@@ -231,7 +233,7 @@ internal fun PdfPageComposable(
     resetZoomTrigger: Long = 0L,
     onTtsHighlightCenterCalculated: ((Float) -> Unit)? = null,
     onSearchHighlightCenterCalculated: ((Float) -> Unit)? = null,
-    activeTheme: com.aryan.reader.ReaderTheme = com.aryan.reader.ReaderTheme("no_theme", "No Theme", Color.Unspecified, Color.Unspecified, false),
+    activeTheme: ReaderTheme = ReaderTheme("no_theme", "No Theme", Color.Unspecified, Color.Unspecified, false),
     activeTextureAlpha: Float = 0.55f,
     excludeImages: Boolean = false,
     onDoubleTap: ((Offset) -> Unit)? = null,

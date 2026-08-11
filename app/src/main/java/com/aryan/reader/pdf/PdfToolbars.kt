@@ -40,7 +40,7 @@ import androidx.compose.ui.unit.sp
 import com.aryan.reader.BuildConfig
 import com.aryan.reader.FileType
 import com.aryan.reader.R
-import com.aryan.reader.SearchState
+import com.aryan.reader.shared.ReaderSearchState as SearchState
 import com.aryan.reader.SearchTopBar
 import com.aryan.reader.TooltipIconButton
 import com.aryan.reader.areReaderAiFeaturesEnabled

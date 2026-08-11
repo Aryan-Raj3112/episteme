@@ -6,7 +6,6 @@ import com.aryan.reader.data.TagEntity
 import com.aryan.reader.data.toBookMetadata
 import com.aryan.reader.data.toRecentFileItem
 import com.aryan.reader.shared.ReaderFeatureSurface
-import com.aryan.reader.shared.FileType as SharedFileType
 import com.aryan.reader.shared.AppTabState
 import com.aryan.reader.shared.LibraryFeatureState
 import com.aryan.reader.shared.Shelf as SharedShelf
@@ -187,27 +186,7 @@ class SharedModelMappersTest {
     }
 
     @Test
-    fun `enum filter and folder mappers round trip between android and shared`() {
-        val filters = LibraryFilters(
-            fileTypes = setOf(FileType.PDF, FileType.EPUB),
-            sourceFolders = setOf("IN_APP_STORAGE", "content://folder"),
-            readStatus = ReadStatusFilter.IN_PROGRESS,
-            tagIds = setOf("tag")
-        )
-        val folder = SyncedFolder(
-            uriString = "content://folder",
-            name = "Folder",
-            lastScanTime = 42L,
-            allowedFileTypes = setOf(FileType.PDF, FileType.CBZ)
-        )
-
-        assertEquals(FileType.PDF, SharedFileType.PDF.toAndroidFileType())
-        assertEquals(SharedFileType.CBZ, FileType.CBZ.toSharedFileType())
-        assertSame(FileType.UNKNOWN, SharedFileType.UNKNOWN.toAndroidFileType())
-        assertSame(filters, filters.toSharedLibraryFilters())
-        assertSame(folder, folder.toSharedSyncedFolder())
-        assertEquals(filters, filters.toSharedLibraryFilters().toAndroidLibraryFilters())
-        assertEquals(folder, folder.toSharedSyncedFolder().toAndroidSyncedFolder())
+    fun `file capability sets expose only supported Android reader surfaces`() {
         assertTrue(FileType.PPTX in PDF_VIEWER_FILE_TYPES)
         assertTrue(FileType.CBT in PDF_VIEWER_FILE_TYPES)
         assertEquals(ReaderFeatureSurface.PDF_VIEWER, FileType.PPTX.readerSurfaceOnAndroid())

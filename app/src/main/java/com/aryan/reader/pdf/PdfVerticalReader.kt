@@ -22,6 +22,8 @@
 
 package com.aryan.reader.pdf
 
+import com.aryan.reader.shared.ReaderTheme
+
 import android.annotation.SuppressLint
 import android.graphics.Bitmap
 import android.graphics.RectF
@@ -109,7 +111,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import com.aryan.reader.shared.HighlightStyle
-import com.aryan.reader.SearchResult
+import com.aryan.reader.shared.SearchResult
 import com.aryan.reader.ml.SpeechBubble
 import com.aryan.reader.pdf.data.PdfAnnotation
 import com.aryan.reader.pdf.data.PdfTextBox
@@ -213,7 +215,7 @@ internal fun PdfVerticalReader(
     state: VerticalPdfReaderState,
     pdfDocument: StableHolder<ReaderDocument>,
     documentKey: String,
-    activeTheme: com.aryan.reader.ReaderTheme,
+    activeTheme: ReaderTheme,
     activeTextureAlpha: Float = 0.55f,
     excludeImages: Boolean = false,
     totalPages: Int,
