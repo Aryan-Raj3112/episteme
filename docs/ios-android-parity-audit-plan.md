@@ -232,6 +232,20 @@ remain unchanged.
 
 Exit: the relevant sequence is owned once in shared and both platform hosts execute typed effects.
 
+Result (2026-08-11): complete. Android and iOS now consume shared decisions for external-file
+open/close routing, terminal import outcomes, persisted reader-session validation, and portable
+settings mutations. Native URI/file copying, security-scoped access, Room/defaults persistence,
+localized feedback, and reader launching remain platform effects. Existing shared ownership was
+retained where it was already the correct seam: `LocalFolderSyncEngine` reconciles folder scans for
+both hosts, and the shared EPUB metadata editor/mutation policies own portable file and model edits.
+No wrapper controller was added merely to rename those engines. The composition-root ratchet caught
+initial host growth; persistence and translation adapters were moved into responsibility-owned files,
+leaving `MainViewModel.kt` at 7,626 lines (below its 7,647 limit) and `ReaderIosApp.kt` at its 4,364-line
+limit. Focused shared/Android tests, OSS and Pro compilation, iOS main/test compilation, the generic
+arm64 iOS Swift build, `verifyCodebaseArchitecture`, and `git diff --check` pass without launching an
+emulator. Production Kotlin changed Android 109,033 → 109,088 (+55), shared 116,711 → 116,897
+(+186), and iOS 10,075 → 10,131 (+56); the Swift host changed by -7 LOC.
+
 ### Phase 2 — EPUB and local-TTS parity
 
 Implement and verify the P0 EPUB/TTS list in lifecycle-sized slices: start/interrupt/resume/finish,

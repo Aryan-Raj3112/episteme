@@ -99,9 +99,6 @@ import com.aryan.reader.shared.enqueueMobileFolderScan
 import com.aryan.reader.shared.mobileExternalFileCloseAction
 import com.aryan.reader.shared.MobileExternalOpenAction
 import com.aryan.reader.shared.mobileExternalOpenAction
-import com.aryan.reader.shared.MobileReaderSessionRestoreAction
-import com.aryan.reader.shared.MobileReaderSessionRestoreCandidate
-import com.aryan.reader.shared.mobileReaderSessionRestoreAction
 import com.aryan.reader.shared.MobileSettingsMutation
 import com.aryan.reader.shared.MobileSettingsMutationState
 import com.aryan.reader.shared.MobileStrictFileFilterEffect
@@ -456,8 +453,7 @@ class ReaderIosBridge internal constructor(
 
     fun externalFileBehavior(): String = loadIosLibrarySnapshot().externalFileBehavior
 
-    fun shouldAddExternalFileToLibrary(): Boolean =
-        mobileExternalOpenAction(externalFileBehavior()) == MobileExternalOpenAction.OPEN_LIBRARY_COPY
+    fun shouldAddExternalFileToLibrary(): Boolean = mobileExternalOpenAction(externalFileBehavior()) == MobileExternalOpenAction.OPEN_LIBRARY_COPY
 
     fun usesStrictFileFilter(): Boolean = loadIosLibrarySnapshot().useStrictFileFilter
 
@@ -925,10 +921,6 @@ private const val IosReaderOrientationDefaultsKey = "reader_ios_reader_orientati
 private const val IosKeepScreenOnDefaultsKey = "reader_ios_keep_screen_on_v1"
 private const val IosNativeVerticalRendererDefaultsKey = "reader_native_vertical_renderer"
 private const val IosStylusOnlyModeDefaultsKey = "reader_ios_stylus_only_mode_v1"
-private const val IosReaderPreferencesDefaultsKey = "reader_ios_reader_preferences_v1"
-private const val IosLibrarySnapshotDefaultsKey = "reader_ios_library_snapshot_v1"
-private const val IosLastOpenBookIdDefaultsKey = "reader_ios_last_open_book_id_v1"
-private const val IosLastOpenFileTypeDefaultsKey = "reader_ios_last_open_file_type_v1"
 private const val IosPendingExternalBookIdDefaultsKey = "reader_ios_pending_external_book_id_v1"
 private const val IosPendingExternalPathDefaultsKey = "reader_ios_pending_external_path_v1"
 private const val IosViewingShelfIdDefaultsKey = "reader_ios_viewing_shelf_id_v1"
@@ -936,65 +928,6 @@ private const val IosAddingBooksToShelfDefaultsKey = "reader_ios_adding_books_to
 private const val IosAddBooksSourceDefaultsKey = "reader_ios_add_books_source_v1"
 private const val IosUnifiedLibrarySectionDefaultsKey = "reader_ios_unified_library_section_v1"
 private const val IosSyncEnabledDefaultsKey = "reader_ios_sync_enabled_v1"
-
-private fun loadIosLibrarySnapshot(): SharedLibrarySnapshot {
-    val defaults = NSUserDefaults.standardUserDefaults
-    val encoded = defaults.stringForKey(IosLibrarySnapshotDefaultsKey)
-        ?: defaults.stringForKey(IosReaderPreferencesDefaultsKey)
-        ?: return SharedLibrarySnapshot()
-    return SharedLibrarySnapshotJson.decodeOrEmpty(encoded)
-        .withResolvedIosBookPaths()
-        .withResolvedIosAudiobookPaths()
-}
-
-private fun persistIosLibrarySnapshot(state: SharedReaderScreenState) {
-    val encoded = SharedLibrarySnapshotJson.encode(
-        state.toSharedMobileLibrarySnapshot()
-            .withStableIosBookPaths()
-            .withStableIosAudiobookPaths()
-    )
-    NSUserDefaults.standardUserDefaults.setObject(encoded, forKey = IosLibrarySnapshotDefaultsKey)
-}
-
-private fun loadIosReaderSessionBook(books: Collection<BookItem>): BookItem? {
-    val defaults = NSUserDefaults.standardUserDefaults
-    val bookId = defaults.stringForKey(IosLastOpenBookIdDefaultsKey)
-    val fileTypeName = defaults.stringForKey(IosLastOpenFileTypeDefaultsKey)
-    val book = books.firstOrNull { it.id == bookId }
-    val action = mobileReaderSessionRestoreAction(
-        persistedBookId = bookId,
-        persistedFileTypeName = fileTypeName,
-        candidate = book?.let { candidate ->
-            MobileReaderSessionRestoreCandidate(
-                bookId = candidate.id,
-                fileType = candidate.type,
-                isAvailable = candidate.isAvailable,
-                hasReadableLocation = candidate.path
-                    ?.let(NSFileManager.defaultManager::fileExistsAtPath) == true,
-            )
-        },
-    )
-    return when (action) {
-        MobileReaderSessionRestoreAction.NONE -> null
-        MobileReaderSessionRestoreAction.CLEAR_PERSISTED_SESSION -> {
-            clearIosReaderSession()
-            null
-        }
-        MobileReaderSessionRestoreAction.RESTORE -> book
-    }
-}
-
-private fun persistIosReaderSession(book: BookItem) {
-    val defaults = NSUserDefaults.standardUserDefaults
-    defaults.setObject(book.id, forKey = IosLastOpenBookIdDefaultsKey)
-    defaults.setObject(book.type.name, forKey = IosLastOpenFileTypeDefaultsKey)
-}
-
-private fun clearIosReaderSession() {
-    val defaults = NSUserDefaults.standardUserDefaults
-    defaults.removeObjectForKey(IosLastOpenBookIdDefaultsKey)
-    defaults.removeObjectForKey(IosLastOpenFileTypeDefaultsKey)
-}
 
 private fun loadPendingIosExternalFileRemoval(): IosPendingExternalFileRemoval? {
     val defaults = NSUserDefaults.standardUserDefaults
@@ -1056,7 +989,7 @@ private fun persistIosSyncEnabled(enabled: Boolean) {
     NSUserDefaults.standardUserDefaults.setBool(enabled, forKey = IosSyncEnabledDefaultsKey)
 }
 
-private fun SharedLibrarySnapshot.withResolvedIosBookPaths(): SharedLibrarySnapshot {
+internal fun SharedLibrarySnapshot.withResolvedIosBookPaths(): SharedLibrarySnapshot {
     val resolvedBooks = books
         .map { book ->
             val resolvedPath = book.path?.resolvedIosImportedFilePath()
@@ -1072,7 +1005,7 @@ private fun SharedLibrarySnapshot.withResolvedIosBookPaths(): SharedLibrarySnaps
     return copy(books = resolvedBooks)
 }
 
-private fun SharedLibrarySnapshot.withStableIosBookPaths(): SharedLibrarySnapshot {
+internal fun SharedLibrarySnapshot.withStableIosBookPaths(): SharedLibrarySnapshot {
     val stableBooks = books
         .map { book ->
             book.copy(
@@ -1084,14 +1017,14 @@ private fun SharedLibrarySnapshot.withStableIosBookPaths(): SharedLibrarySnapsho
     return copy(books = stableBooks)
 }
 
-private fun SharedLibrarySnapshot.withResolvedIosAudiobookPaths(): SharedLibrarySnapshot {
+internal fun SharedLibrarySnapshot.withResolvedIosAudiobookPaths(): SharedLibrarySnapshot {
     val resolvedAudiobooks = audiobooks
         .map { audiobook -> audiobook.copy(filePath = audiobook.filePath.resolvedIosImportedFilePath()) }
         .distinctBy { it.bookId }
     return copy(audiobooks = resolvedAudiobooks)
 }
 
-private fun SharedLibrarySnapshot.withStableIosAudiobookPaths(): SharedLibrarySnapshot {
+internal fun SharedLibrarySnapshot.withStableIosAudiobookPaths(): SharedLibrarySnapshot {
     val stableAudiobooks = audiobooks
         .map { audiobook -> audiobook.copy(filePath = audiobook.filePath.stableIosImportedFilePath()) }
         .distinctBy { it.bookId }

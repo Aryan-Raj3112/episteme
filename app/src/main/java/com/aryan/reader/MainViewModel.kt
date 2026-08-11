@@ -124,8 +124,6 @@ import com.aryan.reader.shared.record
 import com.aryan.reader.shared.MobileExternalFileCloseAction
 import com.aryan.reader.shared.mobileExternalFileCloseAction
 import com.aryan.reader.shared.MobileReaderSessionRestoreAction
-import com.aryan.reader.shared.MobileReaderSessionRestoreCandidate
-import com.aryan.reader.shared.mobileReaderSessionRestoreAction
 import com.aryan.reader.shared.MAX_SYNCED_FOLDER_COUNT
 import com.aryan.reader.shared.SyncedFolderAddDecision
 import com.aryan.reader.shared.AppShelfAction
@@ -194,11 +192,6 @@ private data class CachedSpeechBubble(
     val rightFraction: Float,
     val bottomFraction: Float,
     val maskBitmap: Bitmap?
-)
-
-private data class PendingExternalFileRemoval(
-    val bookId: String,
-    val uriString: String?
 )
 
 private const val BANNER_AUTO_DISMISS_MILLIS = 3_000L
@@ -1486,32 +1479,6 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    private fun encodePendingExternalFileRemoval(removal: PendingExternalFileRemoval): String {
-        return JSONObject()
-            .put("bookId", removal.bookId)
-            .apply {
-                if (!removal.uriString.isNullOrBlank()) {
-                    put("uriString", removal.uriString)
-                }
-            }
-            .toString()
-    }
-
-    private fun decodePendingExternalFileRemoval(value: String): PendingExternalFileRemoval? {
-        val trimmed = value.trim()
-        if (trimmed.isBlank()) return null
-        return if (trimmed.startsWith("{")) {
-            runCatching {
-                val json = JSONObject(trimmed)
-                val bookId = json.optString("bookId").takeIf { it.isNotBlank() }
-                val uriString = json.optString("uriString").takeIf { it.isNotBlank() }
-                bookId?.let { PendingExternalFileRemoval(it, uriString) }
-            }.getOrNull()
-        } else {
-            PendingExternalFileRemoval(trimmed, null)
-        }
-    }
-
     private fun restoreReaderSessionIfNeeded() {
         val currentState = _internalState.value
         val readerSession = readerSessionState(currentState)
@@ -1525,18 +1492,12 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         viewModelScope.launch {
             val item = bookStore.getFileByBookId(restoreBookId)
             val restoreUri = item?.getUri()
-            val restoreAction = mobileReaderSessionRestoreAction(
-                persistedBookId = restoreBookId,
-                persistedFileTypeName = persistedTypeName,
-                pendingRemovalBookIds = pendingExternalFileRemovals().mapTo(mutableSetOf()) { it.bookId },
-                candidate = item?.let { candidate ->
-                    MobileReaderSessionRestoreCandidate(
-                        bookId = candidate.bookId,
-                        fileType = candidate.type,
-                        isAvailable = candidate.isAvailable,
-                        hasReadableLocation = restoreUri != null,
-                    )
-                },
+            val restoreAction = androidReaderSessionRestoreAction(
+                restoreBookId,
+                persistedTypeName,
+                pendingExternalFileRemovals().mapTo(mutableSetOf()) { it.bookId },
+                item,
+                restoreUri,
             )
             when (restoreAction) {
                 MobileReaderSessionRestoreAction.NONE -> return@launch
