@@ -263,6 +263,11 @@ private func refreshImportedFolders(bridge: ReaderIosBridge) {
             relativeTo: nil,
             bookmarkDataIsStale: &isStale
         ) else {
+            recordImportedFolderScan(
+                bridge: bridge,
+                folderName: folderName,
+                scan: ImportedFolderScan(files: [], succeeded: false)
+            )
             continue
         }
         if isStale {
@@ -447,10 +452,15 @@ private func copyImportedFolderToAppSupport(_ sourceURL: URL) -> ImportedFolderS
             .fileSizeKey,
             .contentModificationDateKey
         ]
+        var enumerationFailed = false
         guard let enumerator = fileManager.enumerator(
             at: sourceURL,
             includingPropertiesForKeys: resourceKeys,
-            options: [.skipsHiddenFiles, .skipsPackageDescendants]
+            options: [.skipsHiddenFiles, .skipsPackageDescendants],
+            errorHandler: { _, _ in
+                enumerationFailed = true
+                return false
+            }
         ) else {
             try? fileManager.removeItem(at: stagingRoot)
             return ImportedFolderScan(files: [], succeeded: false)
@@ -476,7 +486,8 @@ private func copyImportedFolderToAppSupport(_ sourceURL: URL) -> ImportedFolderS
                 try fileManager.copyItem(at: itemURL, to: stagingURL)
                 guard let contentId = sha256FileId(stagingURL) else {
                     try? fileManager.removeItem(at: stagingURL)
-                    continue
+                    enumerationFailed = true
+                    break
                 }
                 imported.append(
                     ImportedReaderFile(
@@ -491,6 +502,10 @@ private func copyImportedFolderToAppSupport(_ sourceURL: URL) -> ImportedFolderS
                     )
                 )
             }
+        }
+        guard !enumerationFailed else {
+            try? fileManager.removeItem(at: stagingRoot)
+            return ImportedFolderScan(files: [], succeeded: false)
         }
         if fileManager.fileExists(atPath: folderRoot.path) {
             _ = try fileManager.replaceItemAt(folderRoot, withItemAt: stagingRoot)
