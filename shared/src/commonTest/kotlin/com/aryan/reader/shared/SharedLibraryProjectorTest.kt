@@ -19,7 +19,7 @@ class SharedLibraryProjectorTest {
 
         val result = SharedLibraryStateProjector().project(
             SharedLibraryProjectionInput(
-                state = SharedReaderScreenState(),
+                state = LibraryFeatureState(),
                 booksFromStore = listOf(original, duplicate),
                 shelfRecords = emptyList(),
                 shelfRefs = emptyList(),
@@ -27,7 +27,7 @@ class SharedLibraryProjectorTest {
             )
         )
 
-        assertEquals(listOf("original"), result.rawLibraryBooks.ids())
+        assertEquals(listOf("original"), result.rawBooks.ids())
         assertEquals(listOf("original"), result.libraryBooks.ids())
     }
 
@@ -124,10 +124,9 @@ class SharedLibraryProjectorTest {
         val existing = book("existing")
         val result = SharedLibraryStateProjector().project(
             SharedLibraryProjectionInput(
-                state = SharedReaderScreenState(
+                state = LibraryFeatureState(
                     selectedBookIds = setOf("existing", "missing"),
-                    openTabIds = listOf("missing", "existing"),
-                    activeTabBookId = "missing",
+                    tabs = AppTabState(openBookIds = listOf("missing", "existing"), activeBookId = "missing"),
                     viewingShelfId = "missing_shelf",
                     isAddingBooksToShelf = true,
                     selectedShelfIds = setOf("missing_shelf")
@@ -141,8 +140,8 @@ class SharedLibraryProjectorTest {
 
         assertEquals(setOf("existing"), result.selectedBookIds)
         assertEquals(listOf("existing"), result.openTabs.ids())
-        assertEquals(listOf("existing"), result.openTabIds)
-        assertNull(result.activeTabBookId)
+        assertEquals(listOf("existing"), result.tabs.openBookIds)
+        assertNull(result.tabs.activeBookId)
         assertNull(result.viewingShelfId)
         assertFalse(result.isAddingBooksToShelf)
         assertTrue(result.selectedShelfIds.isEmpty())
@@ -155,8 +154,8 @@ class SharedLibraryProjectorTest {
 
         val result = SharedLibraryStateProjector().project(
             SharedLibraryProjectionInput(
-                state = SharedReaderScreenState(
-                    rawLibraryBooks = listOf(older, newer),
+                state = LibraryFeatureState(
+                    rawBooks = listOf(older, newer),
                     pinnedHomeBookIds = setOf("older"),
                     pinnedLibraryBookIds = setOf("older"),
                     sortOrder = SortOrder.TITLE_ASC
@@ -180,7 +179,7 @@ class SharedLibraryProjectorTest {
 
         val result = SharedLibraryStateProjector().project(
             SharedLibraryProjectionInput(
-                state = SharedReaderScreenState(sortOrder = SortOrder.TITLE_ASC),
+                state = LibraryFeatureState(sortOrder = SortOrder.TITLE_ASC),
                 booksFromStore = listOf(olderTitleFirst, newerTitleLast, middleNotRecent),
                 shelfRecords = emptyList(),
                 shelfRefs = emptyList(),
@@ -225,9 +224,11 @@ class SharedLibraryProjectorTest {
         }
         val result = SharedLibraryStateProjector().project(
             SharedLibraryProjectionInput(
-                state = SharedReaderScreenState(
-                    openTabIds = pdfs.map { it.id } + pdfs.first().id,
-                    activeTabBookId = pdfs.last().id,
+                state = LibraryFeatureState(
+                    tabs = AppTabState(
+                        openBookIds = pdfs.map { it.id } + pdfs.first().id,
+                        activeBookId = pdfs.last().id,
+                    ),
                 ),
                 booksFromStore = pdfs,
                 shelfRecords = emptyList(),
@@ -236,9 +237,9 @@ class SharedLibraryProjectorTest {
             )
         )
 
-        assertEquals(pdfs.take(MAX_OPEN_PDF_TABS).map { it.id }, result.openTabIds)
-        assertNull(result.activeTabBookId)
-        assertEquals(result.openTabIds, result.openTabs.map { it.id })
+        assertEquals(pdfs.take(MAX_OPEN_PDF_TABS).map { it.id }, result.tabs.openBookIds)
+        assertNull(result.tabs.activeBookId)
+        assertEquals(result.tabs.openBookIds, result.openTabs.map { it.id })
     }
 
     @Test
@@ -257,7 +258,7 @@ class SharedLibraryProjectorTest {
             }
         ).project(
             SharedLibraryProjectionInput(
-                state = SharedReaderScreenState(
+                state = LibraryFeatureState(
                     syncedFolders = listOf(SyncedFolder("content://library", "Library", lastScanTime = 1L)),
                     sortOrder = SortOrder.TITLE_ASC
                 ),
@@ -320,7 +321,7 @@ class SharedLibraryProjectorTest {
 
         val result = SharedLibraryStateProjector().project(
             SharedLibraryProjectionInput(
-                state = SharedReaderScreenState(),
+                state = LibraryFeatureState(),
                 booksFromStore = listOf(loose),
                 shelfRecords = listOf(ShelfRecord("unshelved", "Legacy shelf")),
                 shelfRefs = listOf(BookShelfRef(bookId = loose.id, shelfId = "unshelved", addedAt = 1L)),
@@ -347,7 +348,7 @@ class SharedLibraryProjectorTest {
             }
         ).project(
             SharedLibraryProjectionInput(
-                state = SharedReaderScreenState(),
+                state = LibraryFeatureState(),
                 booksFromStore = listOf(folderBook),
                 shelfRecords = emptyList(),
                 shelfRefs = emptyList(),
@@ -377,7 +378,7 @@ class SharedLibraryProjectorTest {
 
         val result = SharedLibraryStateProjector().project(
             SharedLibraryProjectionInput(
-                state = SharedReaderScreenState(sortOrder = SortOrder.TITLE_ASC),
+                state = LibraryFeatureState(sortOrder = SortOrder.TITLE_ASC),
                 booksFromStore = listOf(wrongType, wrongProgress, matching),
                 shelfRecords = listOf(ShelfRecord("smart", "Almost Done PDFs", isSmart = true, smartRulesJson = smartRules)),
                 shelfRefs = emptyList(),
@@ -418,7 +419,7 @@ class SharedLibraryProjectorTest {
         assertFalse(imported.rawLibraryBooks.first().isRecent)
         val projected = SharedLibraryStateProjector().project(
             SharedLibraryProjectionInput(
-                state = imported,
+                state = LibraryFeatureState(rawBooks = imported.rawLibraryBooks),
                 booksFromStore = imported.rawLibraryBooks,
                 shelfRecords = emptyList(),
                 shelfRefs = emptyList(),

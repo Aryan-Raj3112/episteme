@@ -3,10 +3,8 @@ package com.aryan.reader
 import android.net.Uri
 import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.data.TagEntity
-import com.aryan.reader.epub.CalibreBundleResult
 import com.aryan.reader.epub.EpubBook
 import com.aryan.reader.paginatedreader.Locator
-import com.aryan.reader.shared.AppReaderSessionAction
 import com.aryan.reader.shared.AppAction as SharedAppAction
 import com.aryan.reader.shared.LibraryAction as SharedLibraryAction
 import com.aryan.reader.shared.reconcileAvailableBooks
@@ -27,19 +25,6 @@ typealias AppTabState = com.aryan.reader.shared.AppTabState
 typealias AppShelfState = com.aryan.reader.shared.AppShelfState
 typealias AppPinState = com.aryan.reader.shared.AppPinState
 typealias LibraryState = com.aryan.reader.shared.LibraryState
-
-data class ImportResult(
-    val internalUri: Uri,
-    val bookId: String,
-    val type: FileType,
-    val bundleResult: CalibreBundleResult? = null
-)
-
-data class NavigationEvent(
-    val route: String,
-    val bookId: String? = null,
-    val uri: Uri? = null
-)
 
 data class DeviceItem(val deviceId: String, val deviceName: String, val lastSeen: Date?)
 
@@ -135,37 +120,6 @@ data class ReaderScreenState(
     val appFontPreference: AppFontPreference get() = appAppearance.fontPreference
     val customAppThemes: List<CustomAppTheme> get() = appAppearance.customThemes
 }
-
-internal fun readerSessionState(current: ReaderScreenState): AppReaderSessionState = current.readerSession
-
-internal fun closeReaderSession(current: ReaderScreenState): ReaderScreenState =
-    current.withReaderSessionState(current.readerSession.reduce(AppReaderSessionAction.Closed))
-
-internal fun startReaderSession(
-    current: ReaderScreenState,
-    bookId: String,
-    fileType: FileType,
-): ReaderScreenState = current.withReaderSessionState(
-    current.readerSession.reduce(AppReaderSessionAction.OpenStarted(bookId, fileType)),
-)
-
-internal fun markReaderSessionReady(current: ReaderScreenState, bookId: String): ReaderScreenState =
-    current.withReaderSessionState(current.readerSession.reduce(AppReaderSessionAction.OpenReady(bookId)))
-
-internal fun markReaderSessionFailed(
-    current: ReaderScreenState,
-    bookId: String,
-    message: String?,
-    closeReader: Boolean = false,
-): ReaderScreenState = current.withReaderSessionState(
-    current.readerSession.reduce(AppReaderSessionAction.OpenFailed(bookId, message, closeReader)),
-)
-
-private fun ReaderScreenState.withReaderSessionState(session: AppReaderSessionState): ReaderScreenState = copy(
-    readerSession = session,
-    isLoading = session.isLoading,
-    errorMessage = session.errorMessage,
-)
 
 internal fun setTabsEnabled(current: ReaderScreenState, enabled: Boolean): ReaderScreenState {
     val reduced = current.tabState.reduce(SharedAppAction.TabsEnabledChanged(enabled))

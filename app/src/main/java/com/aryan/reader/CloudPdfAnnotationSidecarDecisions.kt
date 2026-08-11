@@ -1,48 +1,43 @@
 package com.aryan.reader
 
 import java.io.File
+import com.aryan.reader.shared.PdfAnnotationArtifactInventory
+import com.aryan.reader.shared.PdfAnnotationSyncInput
+import com.aryan.reader.shared.PdfAnnotationSyncOperation
+import com.aryan.reader.shared.PdfCloudAnnotationSyncPlanner
 
-internal data class AndroidPdfCloudSidecarState(
-    val hasInk: Boolean,
-    val inkTimestamp: Long,
-    val hasDeletedInk: Boolean = false,
-    val deletedInkTimestamp: Long = 0L,
-    val hasRichText: Boolean,
-    val richTextTimestamp: Long,
-    val hasLayout: Boolean,
-    val layoutTimestamp: Long,
-    val hasTextBoxes: Boolean,
-    val textBoxesTimestamp: Long,
-    val hasHighlights: Boolean,
-    val highlightsTimestamp: Long
-) {
-    val hasAnnotationPayload: Boolean
-        get() = hasInk || hasDeletedInk || hasRichText || hasTextBoxes || hasHighlights
+internal typealias AndroidPdfCloudSidecarState = PdfAnnotationArtifactInventory
 
-    val annotationPayloadTimestamp: Long
-        get() = maxOf(
-            inkTimestamp.takeIf { hasInk } ?: 0L,
-            deletedInkTimestamp.takeIf { hasDeletedInk } ?: 0L,
-            richTextTimestamp.takeIf { hasRichText } ?: 0L,
-            textBoxesTimestamp.takeIf { hasTextBoxes } ?: 0L,
-            highlightsTimestamp.takeIf { hasHighlights } ?: 0L
-        )
-
-    val bundleTimestamp: Long
-        get() = if (hasAnnotationPayload) {
-            maxOf(annotationPayloadTimestamp, layoutTimestamp.takeIf { hasLayout } ?: 0L)
-        } else {
-            0L
-        }
-}
+internal fun androidPdfCloudSidecarInventory(
+    inkFile: File?,
+    deletedInkFile: File?,
+    richTextFile: File,
+    layoutFile: File,
+    textBoxFile: File,
+    highlightFile: File
+) = AndroidPdfCloudSidecarState(
+    hasInk = inkFile.hasSyncableCloudAnnotationPayload(),
+    inkTimestamp = inkFile?.lastModified() ?: 0L,
+    hasDeletedInk = deletedInkFile.hasSyncableCloudAnnotationPayload(),
+    deletedInkTimestamp = deletedInkFile?.lastModified() ?: 0L,
+    hasRichText = richTextFile.hasSyncableCloudAnnotationPayload(),
+    richTextTimestamp = richTextFile.lastModified(),
+    hasLayout = layoutFile.exists(),
+    layoutTimestamp = layoutFile.lastModified(),
+    hasTextBoxes = textBoxFile.hasSyncableCloudAnnotationPayload(),
+    textBoxesTimestamp = textBoxFile.lastModified(),
+    hasHighlights = highlightFile.hasSyncableCloudAnnotationPayload(),
+    highlightsTimestamp = highlightFile.lastModified()
+)
 
 internal fun shouldUploadLocalPdfCloudAnnotations(
     localSidecars: AndroidPdfCloudSidecarState,
     remoteHasAnnotations: Boolean,
     remoteAnnotationModifiedTimestamp: Long
 ): Boolean {
-    return localSidecars.hasAnnotationPayload &&
-        (!remoteHasAnnotations || localSidecars.annotationPayloadTimestamp > remoteAnnotationModifiedTimestamp)
+    return PdfCloudAnnotationSyncPlanner.plan(
+        PdfAnnotationSyncInput(localSidecars, remoteHasAnnotations, remoteAnnotationModifiedTimestamp)
+    ) == PdfAnnotationSyncOperation.UPLOAD_LOCAL
 }
 
 internal fun shouldDownloadRemotePdfCloudAnnotations(
@@ -52,8 +47,9 @@ internal fun shouldDownloadRemotePdfCloudAnnotations(
     remoteAnnotationModifiedTimestamp: Long
 ): Boolean {
     if (localAnnotationsShouldUpload || !remoteHasAnnotations) return false
-    return !localSidecars.hasAnnotationPayload ||
-        remoteAnnotationModifiedTimestamp > localSidecars.annotationPayloadTimestamp
+    return PdfCloudAnnotationSyncPlanner.plan(
+        PdfAnnotationSyncInput(localSidecars, remoteHasAnnotations, remoteAnnotationModifiedTimestamp)
+    ) == PdfAnnotationSyncOperation.DOWNLOAD_REMOTE
 }
 
 internal fun File?.hasSyncableCloudAnnotationPayload(): Boolean {

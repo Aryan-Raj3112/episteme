@@ -7,7 +7,8 @@ import com.aryan.reader.data.toBookMetadata
 import com.aryan.reader.data.toRecentFileItem
 import com.aryan.reader.shared.ReaderFeatureSurface
 import com.aryan.reader.shared.FileType as SharedFileType
-import com.aryan.reader.shared.SharedReaderScreenState
+import com.aryan.reader.shared.AppTabState
+import com.aryan.reader.shared.LibraryFeatureState
 import com.aryan.reader.shared.Shelf as SharedShelf
 import com.aryan.reader.shared.ShelfType as SharedShelfType
 import org.junit.Assert.assertEquals
@@ -102,21 +103,20 @@ class SharedModelMappersTest {
             books = listOf(sharedBook),
             directBooks = listOf(sharedBook)
         )
-        val projected = SharedReaderScreenState(
+        val projected = LibraryFeatureState(
             recentBooks = listOf(sharedBook),
             libraryBooks = listOf(sharedBook),
-            rawLibraryBooks = listOf(sharedBook),
+            rawBooks = listOf(sharedBook),
             selectedBookIds = setOf("book", "missing"),
             selectedShelfIds = setOf("manual"),
             shelves = listOf(sharedShelf),
             openTabs = listOf(sharedBook),
-            openTabIds = listOf("book"),
-            activeTabBookId = "book",
+            tabs = AppTabState(openBookIds = listOf("book"), activeBookId = "book"),
             booksAvailableForAdding = listOf(sharedBook),
-            allTags = listOf(tag.toSharedTag())
+            tags = listOf(tag.toSharedTag())
         )
 
-        val android = projected.toAndroidLibraryProjectionState(
+        val android = projected.applyToAndroidLibraryState(
             base = ReaderScreenState(contextualActionItems = setOf(recentFile("missing"))),
             androidBooksById = mapOf(book.bookId to book),
             tagEntitiesById = mapOf(tag.id to tag)
@@ -147,16 +147,16 @@ class SharedModelMappersTest {
             books = listOf(sharedBook),
             directBooks = listOf(sharedBook)
         )
-        val projected = SharedReaderScreenState(
+        val projected = LibraryFeatureState(
             recentBooks = listOf(sharedBook),
             libraryBooks = listOf(sharedBook),
-            rawLibraryBooks = listOf(sharedBook),
+            rawBooks = listOf(sharedBook),
             shelves = listOf(sharedShelf),
             openTabs = listOf(sharedBook),
             booksAvailableForAdding = listOf(sharedBook)
         )
 
-        val android = projected.toAndroidLibraryProjectionState(
+        val android = projected.applyToAndroidLibraryState(
             base = ReaderScreenState(),
             androidBooksById = mapOf(book.bookId to book)
         )

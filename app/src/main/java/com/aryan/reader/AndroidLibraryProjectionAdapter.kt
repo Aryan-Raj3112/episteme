@@ -3,9 +3,9 @@ package com.aryan.reader
 import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.data.TagEntity
 import com.aryan.reader.shared.SharedFolderPathResolver
+import com.aryan.reader.shared.LibraryFeatureState
 import com.aryan.reader.shared.SharedLibraryProjectionInput
 import com.aryan.reader.shared.SharedLibraryStateProjector
-import com.aryan.reader.shared.SharedReaderScreenState
 
 /** Android persistence/model conversion around the shared library projector. */
 internal object AndroidLibraryProjectionAdapter {
@@ -21,9 +21,8 @@ internal object AndroidLibraryProjectionAdapter {
             .associateBy { it.bookId }
         val projectionState = input.state.withAndroidFolderFallbacks(androidBooksById.values)
         val sharedInput = SharedLibraryProjectionInput(
-            state = projectionState.toSharedLibraryProjectionState(
+            state = projectionState.toSharedLibraryFeatureState(
                 rawBooks = taggedBooks,
-                dbTags = input.dbTags
             ),
             booksFromStore = taggedBooks
                 .filterNot { it.bookId.endsWith("_reflow") }
@@ -44,15 +43,15 @@ internal object AndroidLibraryProjectionAdapter {
         )
     }
 
-    fun project(context: AndroidLibraryProjectionContext): SharedReaderScreenState =
+    fun project(context: AndroidLibraryProjectionContext): LibraryFeatureState =
         SharedLibraryStateProjector(context.folderPathResolver).project(context.sharedInput)
 
     fun restoreAndroidState(
         base: ReaderScreenState,
-        sharedState: SharedReaderScreenState,
+        sharedState: LibraryFeatureState,
         androidBooksById: Map<String, RecentFileItem>,
         tagEntitiesById: Map<String, TagEntity>
-    ): ReaderScreenState = sharedState.toAndroidLibraryProjectionState(
+    ): ReaderScreenState = sharedState.applyToAndroidLibraryState(
         base = base,
         androidBooksById = androidBooksById,
         tagEntitiesById = tagEntitiesById

@@ -11,41 +11,6 @@ data class ImportedBookFile(
     val id: String? = null
 )
 
-interface BookRepository {
-    fun observeBooks(): Flow<List<BookItem>>
-    suspend fun getBook(bookId: String): BookItem?
-    suspend fun upsertBook(book: BookItem)
-    suspend fun removeBooks(bookIds: Set<String>)
-}
-
-interface LibraryRepository {
-    fun observeLibraryState(): Flow<LibraryState>
-    suspend fun updateSortOrder(sortOrder: SortOrder)
-    suspend fun updateFilters(filters: LibraryFilters)
-    suspend fun updateSearchQuery(query: String)
-}
-
-interface SettingsRepository {
-    fun observeAppThemeMode(): Flow<AppThemeMode>
-    fun observeReaderTheme(): Flow<ReaderTheme>
-    suspend fun setAppThemeMode(mode: AppThemeMode)
-    suspend fun setReaderTheme(theme: ReaderTheme)
-}
-
-interface FileImporter {
-    suspend fun importFiles(files: List<ImportedBookFile>): List<BookItem>
-}
-
-interface ReaderDocumentLoader {
-    suspend fun canLoad(type: FileType): Boolean
-    suspend fun loadDocument(book: BookItem): SharedReaderDocument
-}
-
-interface SyncAdapter {
-    val isAvailable: Boolean
-    suspend fun syncNow()
-}
-
 interface AiAdapter {
     val isAvailable: Boolean
     suspend fun define(text: String, context: String? = null): AiDefinitionResult
@@ -82,12 +47,6 @@ interface TtsAdapter {
     suspend fun pause() = Unit
     suspend fun resume() = Unit
     suspend fun stop()
-}
-
-interface AudiobookRepository {
-    fun observeAudiobooks(): Flow<List<SharedAudiobook>>
-    suspend fun upsertAudiobook(audiobook: SharedAudiobook)
-    suspend fun updatePlayback(bookId: String, positionMs: Long, speed: Float)
 }
 
 interface BookTtsListeningProgressRepository {

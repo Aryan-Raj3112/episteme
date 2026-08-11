@@ -44,14 +44,49 @@ fun SharedLibrarySnapshot.toSharedMobileReaderState(): SharedReaderScreenState {
     )
     return SharedLibraryStateProjector().project(
         SharedLibraryProjectionInput(
-            state = base,
+            state = base.toLibraryFeatureState(),
             booksFromStore = books,
             shelfRecords = shelfRecords,
             shelfRefs = shelfRefs,
             tags = tags,
         )
-    )
+    ).let(base::withLibraryFeatureState)
 }
+
+private fun SharedReaderScreenState.toLibraryFeatureState() = LibraryFeatureState(
+    sortOrder = sortOrder,
+    filters = libraryFilters,
+    syncedFolders = syncedFolders,
+    pinnedHomeBookIds = pinnedHomeBookIds,
+    pinnedLibraryBookIds = pinnedLibraryBookIds,
+    recentLimit = recentFilesLimit,
+    tabs = AppTabState(isTabsEnabled, openTabIds, activeTabBookId),
+)
+
+private fun SharedReaderScreenState.withLibraryFeatureState(feature: LibraryFeatureState) = copy(
+    sortOrder = feature.sortOrder,
+    shelves = feature.shelves,
+    viewingShelfId = feature.viewingShelfId,
+    isAddingBooksToShelf = feature.isAddingBooksToShelf,
+    addBooksSource = feature.addBooksSource,
+    booksSelectedForAdding = feature.selectedBookIdsForAdding,
+    selectedBookIds = feature.selectedBookIds,
+    selectedShelfIds = feature.selectedShelfIds,
+    recentBooks = feature.recentBooks,
+    libraryBooks = feature.libraryBooks,
+    rawLibraryBooks = feature.rawBooks,
+    pinnedHomeBookIds = feature.pinnedHomeBookIds,
+    pinnedLibraryBookIds = feature.pinnedLibraryBookIds,
+    libraryFilters = feature.filters,
+    recentFilesLimit = feature.recentLimit,
+    isTabsEnabled = feature.tabs.isEnabled,
+    openTabIds = feature.tabs.openBookIds,
+    openTabs = feature.openTabs,
+    activeTabBookId = feature.tabs.activeBookId,
+    booksAvailableForAdding = feature.booksAvailableForAdding,
+    allTags = feature.tags,
+    syncedFolders = feature.syncedFolders,
+)
 
 /**
  * Captures all durable state owned by the shared mobile application shell.

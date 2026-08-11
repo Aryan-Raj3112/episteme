@@ -5,7 +5,7 @@ import com.aryan.reader.data.BookTagCrossRef
 import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.data.ShelfEntity
 import com.aryan.reader.data.TagEntity
-import com.aryan.reader.shared.SharedReaderScreenState
+import com.aryan.reader.shared.LibraryFeatureState
 import com.aryan.reader.shared.applyLibraryFilters as sharedApplyLibraryFilters
 import com.aryan.reader.shared.filterBySearch as sharedFilterBySearch
 import com.aryan.reader.shared.sortBooks as sharedSortBooks
@@ -128,7 +128,7 @@ class LibraryStateProjector(
 
     private data class CachedProjection(
         val key: ProjectionCacheKey,
-        val projected: SharedReaderScreenState,
+        val projected: LibraryFeatureState,
         val androidBooksById: Map<String, RecentFileItem>,
         val tagEntitiesById: Map<String, TagEntity>
     )

@@ -13,6 +13,31 @@ data class BookShelfRef(
     val addedAt: Long
 )
 
+/** Portable library-only state. It deliberately excludes reader handles, account, settings, and platform UI state. */
+data class LibraryFeatureState(
+    val sortOrder: SortOrder = SortOrder.RECENT,
+    val searchQuery: String = "",
+    val filters: LibraryFilters = LibraryFilters(),
+    val syncedFolders: List<SyncedFolder> = emptyList(),
+    val pinnedHomeBookIds: Set<String> = emptySet(),
+    val pinnedLibraryBookIds: Set<String> = emptySet(),
+    val recentLimit: Int = 0,
+    val tabs: AppTabState = AppTabState(),
+    val viewingShelfId: String? = null,
+    val isAddingBooksToShelf: Boolean = false,
+    val addBooksSource: AddBooksSource = AddBooksSource.UNSHELVED,
+    val selectedBookIdsForAdding: Set<String> = emptySet(),
+    val selectedBookIds: Set<String> = emptySet(),
+    val selectedShelfIds: Set<String> = emptySet(),
+    val recentBooks: List<BookItem> = emptyList(),
+    val libraryBooks: List<BookItem> = emptyList(),
+    val rawBooks: List<BookItem> = emptyList(),
+    val shelves: List<Shelf> = emptyList(),
+    val openTabs: List<BookItem> = emptyList(),
+    val booksAvailableForAdding: List<BookItem> = emptyList(),
+    val tags: List<Tag> = emptyList(),
+)
+
 fun interface SharedFolderPathResolver {
     fun relativeFolderSegments(item: BookItem): List<String>
 }
@@ -22,7 +47,7 @@ object EmptySharedFolderPathResolver : SharedFolderPathResolver {
 }
 
 data class SharedLibraryProjectionInput(
-    val state: SharedReaderScreenState,
+    val state: LibraryFeatureState,
     val booksFromStore: List<BookItem>,
     val shelfRecords: List<ShelfRecord>,
     val shelfRefs: List<BookShelfRef>,
@@ -32,12 +57,12 @@ data class SharedLibraryProjectionInput(
 class SharedLibraryStateProjector(
     private val folderPathResolver: SharedFolderPathResolver = EmptySharedFolderPathResolver
 ) {
-    fun project(input: SharedLibraryProjectionInput): SharedReaderScreenState {
+    fun project(input: SharedLibraryProjectionInput): LibraryFeatureState {
         val current = input.state
         val allLibraryBooks = input.booksFromStore.distinctBy { it.sharedLibraryIdentity() }
         val syncedFolders = current.syncedFolders.withSourceFolderFallbacks(allLibraryBooks)
         val queried = filterBySearch(allLibraryBooks, current.searchQuery)
-        val filtered = applyLibraryFilters(queried, current.libraryFilters)
+        val filtered = applyLibraryFilters(queried, current.filters)
         val sortedLibraryBooks = sortBooks(filtered, current.sortOrder)
             .withPinnedFirst(current.pinnedLibraryBookIds)
         val visibleRecentBooks = sortBooks(
@@ -45,13 +70,9 @@ class SharedLibraryStateProjector(
             SortOrder.RECENT
         )
             .withPinnedFirst(current.pinnedHomeBookIds)
-            .take(if (current.recentFilesLimit > 0) current.recentFilesLimit else Int.MAX_VALUE)
+            .take(if (current.recentLimit > 0) current.recentLimit else Int.MAX_VALUE)
         val booksById = allLibraryBooks.associateBy { it.id }
-        val tabState = AppTabState(
-            isEnabled = current.isTabsEnabled,
-            openBookIds = current.openTabIds,
-            activeBookId = current.activeTabBookId,
-        ).reconcileAvailableBooks(booksById.keys)
+        val tabState = current.tabs.reconcileAvailableBooks(booksById.keys)
         val openTabs = tabState.openBookIds.mapNotNull(booksById::get)
         val shelfProjection = buildShelves(
             allLibraryBooks = allLibraryBooks,
@@ -78,7 +99,7 @@ class SharedLibraryStateProjector(
         return current.copy(
             recentBooks = visibleRecentBooks,
             libraryBooks = sortedLibraryBooks,
-            rawLibraryBooks = allLibraryBooks,
+            rawBooks = allLibraryBooks,
             viewingShelfId = viewingShelfId,
             isAddingBooksToShelf = current.isAddingBooksToShelf && viewingShelfId != null,
             selectedShelfIds = selectedShelfIds,
@@ -87,10 +108,9 @@ class SharedLibraryStateProjector(
             },
             shelves = shelfProjection.shelves,
             openTabs = openTabs,
-            openTabIds = tabState.openBookIds,
-            activeTabBookId = tabState.activeBookId,
+            tabs = tabState,
             booksAvailableForAdding = booksAvailableForAdding,
-            allTags = input.tags,
+            tags = input.tags,
             syncedFolders = syncedFolders
         )
     }

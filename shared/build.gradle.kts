@@ -207,3 +207,27 @@ kotlin {
         }
     }
 }
+
+val verifyPortableSharedSources by tasks.registering {
+    group = "verification"
+    description = "Rejects platform APIs from portable shared source sets."
+    val portableSources = files(
+        fileTree("src/commonMain/kotlin") { include("**/*.kt") },
+        fileTree("src/mobileMain/kotlin") { include("**/*.kt") },
+    )
+    inputs.files(portableSources)
+    doLast {
+        val forbiddenImport = Regex("(?m)^import\\s+(android|java|javax)\\.")
+        val violations = inputs.files.files
+            .filter { forbiddenImport.containsMatchIn(it.readText()) }
+            .map { it.path }
+            .sorted()
+        check(violations.isEmpty()) {
+            "Portable shared sources must use expect/actual or platform ports; forbidden imports: ${violations.joinToString()}"
+        }
+    }
+}
+
+tasks.matching { it.name == "check" }.configureEach {
+    dependsOn(verifyPortableSharedSources)
+}
