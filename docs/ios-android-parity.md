@@ -1,5 +1,8 @@
 # iOS ↔ Android parity audit
 
+> Historical implementation log. The current authoritative gap audit and implementation roadmap is
+> [`ios-android-parity-audit-plan.md`](ios-android-parity-audit-plan.md).
+
 Android is the behavioral benchmark. Shared code should own portable rules; iOS
 should provide only the native storage, authentication, purchase, and system
 integration boundaries.
