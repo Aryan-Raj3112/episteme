@@ -254,6 +254,18 @@ actions. Add shared tests for portable decisions and iOS adapter tests for nativ
 
 Exit: the Android benchmark matrix passes on iOS for all four reading modes and local TTS.
 
+Result (2026-08-11): implementation and static/test pass complete; native runtime gate pending under
+the project rule that an emulator is not launched without explicit user direction. Both iOS local
+speech paths now translate AVAudioSession interruptions and output-route loss through one shared
+policy, pause at the native word offset, resume only when the system permits, and release observers
+and audio state deterministically. Existing shared lifecycle, search, four-layout restoration,
+auto-scroll, musician-mode, image-action, and TTS progression policies were traced against Android
+and their focused tests retained. Common tests, iOS test-source compilation, Android OSS compilation,
+and the architecture gate pass without an emulator. Production Kotlin changed Android 109,088 →
+109,088 (0), all shared production 116,897 → 117,646 (+749), and the iOS-specific Kotlin subset
+10,131 → 10,286 (+155); Swift changed by 0 LOC. The runtime checklist remains required before final
+parity closure and is not represented as proven by compilation.
+
 ### Phase 3 — PDF interaction parity
 
 Proceed in this order to control risk:
