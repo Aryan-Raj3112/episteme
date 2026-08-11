@@ -11,6 +11,18 @@ data class PdfZoomPoint(val x: Float, val y: Float) {
 
 data class PdfZoomSize(val width: Float, val height: Float)
 
+fun shouldResetPdfZoomForOrientationChange(
+    previousViewport: PdfZoomSize?,
+    currentViewport: PdfZoomSize,
+    isPaginated: Boolean,
+): Boolean {
+    if (!isPaginated || previousViewport == null) return false
+    if (previousViewport.width <= 0f || previousViewport.height <= 0f) return false
+    if (currentViewport.width <= 0f || currentViewport.height <= 0f) return false
+    return (previousViewport.width > previousViewport.height) !=
+        (currentViewport.width > currentViewport.height)
+}
+
 data class PdfZoomCamera(
     val scale: Float = 1f,
     val offset: PdfZoomPoint = PdfZoomPoint(0f, 0f)

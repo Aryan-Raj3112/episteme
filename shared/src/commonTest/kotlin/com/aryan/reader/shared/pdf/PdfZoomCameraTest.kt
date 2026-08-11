@@ -36,6 +36,17 @@ class PdfZoomCameraTest {
     }
 
     @Test
+    fun paginatedOrientationChangeResetsCameraButResizeAndVerticalModeDoNot() {
+        val portrait = PdfZoomSize(400f, 800f)
+        val landscape = PdfZoomSize(800f, 400f)
+
+        assertTrue(shouldResetPdfZoomForOrientationChange(portrait, landscape, isPaginated = true))
+        assertEquals(false, shouldResetPdfZoomForOrientationChange(portrait, PdfZoomSize(500f, 900f), true))
+        assertEquals(false, shouldResetPdfZoomForOrientationChange(portrait, landscape, false))
+        assertEquals(false, shouldResetPdfZoomForOrientationChange(null, landscape, true))
+    }
+
+    @Test
     fun oneHandZoomDoublesOverBenchmarkDistance() {
         assertEquals(2f, pdfOneHandZoomScale(1f, 240f, 240f))
         assertTrue(pdfOneHandZoomScale(4f, 240f, 240f) <= 4f)

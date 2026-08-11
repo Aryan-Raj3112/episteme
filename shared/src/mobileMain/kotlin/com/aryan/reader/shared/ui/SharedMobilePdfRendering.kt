@@ -208,8 +208,6 @@ import org.jetbrains.compose.resources.imageResource
 import kotlin.math.roundToInt
 import kotlin.time.TimeSource
 
-
-
 @Composable
 internal fun sharedMobilePdfViewerBackground(theme: ReaderTheme, displayMode: PdfDisplayMode): Color {
     return when (theme.id) {
@@ -299,6 +297,8 @@ internal fun SharedMobilePdfZoomViewport(
         onCameraChanged(next)
         onZoomChanged(next.scale)
     }
+
+    SharedMobilePdfOrientationZoomResetEffect(viewport, verticalDocumentMode) { updateCamera(PdfZoomCamera()) }
 
     fun animateCameraTo(target: PdfZoomCamera, durationMillis: Int) {
         cameraAnimationJob?.cancel()
