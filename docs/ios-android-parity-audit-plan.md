@@ -40,8 +40,9 @@ adapters, and proven on both platforms.
 
 The principal remaining risks are:
 
-1. iOS runtime behavior is under-tested. `iosTest` contains one 107-line EPUB metadata test file.
-2. `ReaderIosApp.kt` remains a 4,364-line application composition root with library, import, folder,
+1. iOS runtime behavior remains under-tested. `iosTest` now has focused metadata, PDF export,
+   settings-reachability, and bridge-effect tests, but these do not replace native runtime evidence.
+2. `ReaderIosApp.kt` remains a 4,359-line application composition root with library, import, folder,
    reader, settings, persistence, and native-effect orchestration. Portable changes can still be
    implemented directly in this iOS host instead of through a shared controller.
 3. Android reader hosts and the iOS shared-mobile reader hosts are not identical entry points.
@@ -80,9 +81,10 @@ bulk LOC migration.
 
 ### P0 — Native runtime verification and testability
 
-- The iOS target has only one native test file. Shared/desktop tests prove portable policy but do not
-  exercise AVSpeechSynthesizer, AVAudioSession, WKWebView, PDFium iOS sessions, UIKit controllers,
-  security-scoped folders, scene lifecycle, or Swift bridge sequencing.
+- The iOS target now has four focused native test files (318 LOC). Shared/desktop and iOS adapter
+  tests prove portable policy and selected bridge sequencing, but do not directly exercise all of
+  AVSpeechSynthesizer, AVAudioSession, WKWebView, PDFium rendering sessions, UIKit controllers, or
+  security-scoped folder-provider behavior.
 - No current evidence proves the complete free/non-auth flow on both phone and tablet-class iOS
   viewports after the latest migrations.
 - Timing-sensitive behavior (debounce, interruption, auto-scroll, chapter/page transitions, gesture
@@ -282,6 +284,22 @@ Remove stale compatibility APIs only after the relevant slice is routed and test
 
 Exit: focused shared and platform tests pass, followed by a complete iOS PDF runtime checklist.
 
+Result (2026-08-11): implementation and static/test pass complete; native runtime gate pending under
+the project rule that an emulator is not launched without explicit user direction. Shared/iOS now
+cover password-aware restore, spread/RTL navigation, zoom reset, search/selection/link handling,
+manual-navigation TTS cancellation, close-time persistence, ink/highlight/comment/text/rich-text
+Save Copy export, embedded PDF comment extraction and thread presentation, reflow password
+forwarding, and native Share/Save Copy/Print routing. Export fails explicitly instead of silently
+falling back to an unannotated source; changed virtual-page ordering remains unsupported because the
+Android benchmark exporter also rejects it. Focused and full shared tests, Android OSS/Pro
+compilation, iOS device/simulator main and simulator test-source compilation, architecture checks,
+and `git diff --check` pass without an emulator. Production Kotlin changed Android 109,088 →
+109,088 (0), all shared production 117,646 → 118,593 (+947), and the iOS-specific Kotlin subset
+10,286 → 10,995 (+709); Swift changed by 0 LOC. Largest-file ratchets remain
+`SharedMobilePdfRendering.kt` 2,385, `SharedMobilePdfReaderScreen.kt` 3,496, and
+`ReaderIosApp.kt` 4,359 LOC. Runtime gesture, rendering, keyboard, persistence-reopen, and native
+presentation checks remain required before final parity closure.
+
 ### Phase 4 — Library/import/folder/settings parity
 
 Implement gaps found by the runtime matrix in transaction-shaped slices. Prefer shared intent-level
@@ -323,7 +341,9 @@ Every phase must select the relevant rows; the final closure requires all non-de
 
 ## Immediate implementation order
 
-After approval to implement, begin with Phase 0 testability and the EPUB local-TTS interruption
-slice. It has the highest combination of user impact, native lifecycle risk, and insufficient iOS
-evidence. Follow with PDF open/restore/navigation before annotation editing. Do not begin cloud or
-paid work in parallel.
+Phase 0 and the implementation/static portions of Phases 1–3 are complete. Continue with Phase 4 in
+this order: import outcome/failure parity, folder reconciliation and permission-loss recovery,
+snapshot migration/restoration, then settings/platform-effect reachability. Follow with Phase 5
+visual/accessibility closure. Keep the Phase 2–3 native runtime matrices pending until simulator or
+device execution is explicitly authorized. Do not begin cloud or paid work in parallel; only
+transport-neutral foundations may be prepared before authentication is ready.
