@@ -2197,7 +2197,7 @@ private fun ReaderIosApp(
         }
         val presentationCandidates = state.rawLibraryBooks.filter { book ->
             book.path != null &&
-                book.type in setOf(FileType.PDF, FileType.EPUB, FileType.MOBI, FileType.CBZ) &&
+                book.type in IosPresentationMetadataTypes &&
                 (
                     book.coverImagePath.isNullOrBlank() ||
                         book.title.isNullOrBlank() ||

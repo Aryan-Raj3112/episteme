@@ -5,6 +5,7 @@ package com.aryan.reader.shared.ios
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.FileType
 import com.aryan.reader.shared.currentTimestamp
+import com.aryan.reader.shared.sharedDocumentMetadataArchivePath
 import com.aryan.reader.shared.mobi.MOBI_ENCRYPTION_NONE
 import com.aryan.reader.shared.mobi.MOBI_SUCCESS
 import com.aryan.reader.shared.mobi.MOBIFiletype
@@ -59,19 +60,6 @@ import com.aryan.reader.shared.reader.SharedMobiTocPoint
 import com.aryan.reader.shared.reader.rewriteMobiResourceReferences
 import com.aryan.reader.shared.reader.splitMobiHtml
 import com.aryan.reader.shared.reader.readComicTarEntries
-import com.aryan.reader.shared.pdf.IosPdfiumRuntime
-import com.aryan.reader.shared.pdfium.c.FPDFBitmap_Create
-import com.aryan.reader.shared.pdfium.c.FPDFBitmap_Destroy
-import com.aryan.reader.shared.pdfium.c.FPDFBitmap_FillRect
-import com.aryan.reader.shared.pdfium.c.FPDFBitmap_GetBuffer
-import com.aryan.reader.shared.pdfium.c.FPDFBitmap_GetStride
-import com.aryan.reader.shared.pdfium.c.FPDF_CloseDocument
-import com.aryan.reader.shared.pdfium.c.FPDF_ClosePage
-import com.aryan.reader.shared.pdfium.c.FPDF_GetPageHeightF
-import com.aryan.reader.shared.pdfium.c.FPDF_GetPageWidthF
-import com.aryan.reader.shared.pdfium.c.FPDF_LoadDocument
-import com.aryan.reader.shared.pdfium.c.FPDF_LoadPage
-import com.aryan.reader.shared.pdfium.c.FPDF_RenderPageBitmap
 import com.aryan.reader.shared.opds.SharedOpdsStreamUri
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.alloc
@@ -98,11 +86,6 @@ import platform.posix.memcpy
 import platform.posix.fclose
 import platform.posix.fopen
 import platform.posix.free
-import org.jetbrains.skia.ColorAlphaType
-import org.jetbrains.skia.ColorType
-import org.jetbrains.skia.Image
-import org.jetbrains.skia.ImageInfo
-import kotlin.math.roundToInt
 import platform.zlib.MAX_WBITS
 import platform.zlib.Z_FINISH
 import platform.zlib.Z_OK
@@ -230,6 +213,14 @@ internal fun extractIosBookPresentation(book: BookItem): IosBookPresentation = r
         FileType.EPUB -> extractIosEpubPresentation(book)
         FileType.MOBI -> extractIosMobiPresentation(book)
         FileType.PDF -> extractIosPdfPresentation(book)
+        FileType.DOCX,
+        FileType.PPTX,
+        FileType.ODT -> extractIosZipDocumentPresentation(
+            book,
+            requireNotNull(sharedDocumentMetadataArchivePath(book.type)),
+        )
+        FileType.FODT -> extractIosFlatDocumentPresentation(book)
+        FileType.FB2 -> extractIosFb2Presentation(book)
         FileType.CBZ -> {
             val path = book.path.resolveIosEpubSourcePath() ?: return@runCatching IosBookPresentation()
             val archive = IosZipEpubArchive(path)
@@ -244,44 +235,6 @@ internal fun extractIosBookPresentation(book: BookItem): IosBookPresentation = r
 }.getOrElse { throwable ->
     println("[ReaderLibraryIOS] Presentation extraction failed id=${book.id} type=${book.type} message=${throwable.message}")
     IosBookPresentation()
-}
-
-private fun extractIosPdfPresentation(book: BookItem): IosBookPresentation {
-    val path = book.path.resolveIosEpubSourcePath() ?: return IosBookPresentation()
-    IosPdfiumRuntime.ensureInitialized()
-    val document = FPDF_LoadDocument(path, null) ?: return IosBookPresentation()
-    try {
-        val page = FPDF_LoadPage(document, 0) ?: return IosBookPresentation()
-        try {
-            val pageWidth = FPDF_GetPageWidthF(page).toDouble().coerceAtLeast(1.0)
-            val pageHeight = FPDF_GetPageHeightF(page).toDouble().coerceAtLeast(1.0)
-            val width = 480
-            val height = (width * pageHeight / pageWidth).roundToInt().coerceIn(1, 960)
-            val bitmap = FPDFBitmap_Create(width, height, 1) ?: return IosBookPresentation()
-            try {
-                FPDFBitmap_FillRect(bitmap, 0, 0, width, height, 0xFFFFFFFFu)
-                FPDF_RenderPageBitmap(bitmap, page, 0, 0, width, height, 0, 0)
-                val buffer = FPDFBitmap_GetBuffer(bitmap) ?: return IosBookPresentation()
-                val stride = FPDFBitmap_GetStride(bitmap).coerceAtLeast(width * 4)
-                val pixels = ByteArray(stride * height)
-                pixels.usePinned { pinned ->
-                    memcpy(pinned.addressOf(0), buffer, pixels.size.convert())
-                }
-                val encoded = Image.makeRaster(
-                    ImageInfo(width, height, ColorType.BGRA_8888, ColorAlphaType.OPAQUE),
-                    pixels,
-                    stride,
-                ).encodeToData()
-                return IosBookPresentation(coverBytes = encoded?.bytes)
-            } finally {
-                FPDFBitmap_Destroy(bitmap)
-            }
-        } finally {
-            FPDF_ClosePage(page)
-        }
-    } finally {
-        FPDF_CloseDocument(document)
-    }
 }
 
 private fun extractIosEpubPresentation(book: BookItem): IosBookPresentation {
@@ -1365,7 +1318,7 @@ internal fun String?.resolveIosEpubSourcePath(): String? {
         .firstOrNull(NSFileManager.defaultManager::fileExistsAtPath)
 }
 
-private fun String.readIosFileBytes(): ByteArray {
+internal fun String.readIosFileBytes(): ByteArray {
     val data = NSFileManager.defaultManager.contentsAtPath(this) ?: error("Could not read EPUB file: $this")
     require(data.length <= ZipMaximumArchiveBytes.toULong()) { "EPUB file is too large" }
     val output = ByteArray(data.length.toInt())
@@ -1375,7 +1328,7 @@ private fun String.readIosFileBytes(): ByteArray {
     return output
 }
 
-private fun ByteArray.decodeEpubText(): String {
+internal fun ByteArray.decodeEpubText(): String {
     if (size >= 2 && this[0] == 0xFF.toByte() && this[1] == 0xFE.toByte()) {
         return buildString((size - 2) / 2) {
             var index = 2

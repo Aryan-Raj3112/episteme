@@ -3,7 +3,6 @@ package com.aryan.reader
 
 import android.content.Context
 import android.provider.OpenableColumns
-import android.util.Xml
 import androidx.core.net.toUri
 import androidx.work.BackoffPolicy
 import androidx.work.CoroutineWorker
@@ -17,9 +16,10 @@ import com.aryan.reader.pdf.PdfiumCoreProvider
 import com.aryan.reader.pdf.PdfiumEngineProvider
 import com.aryan.reader.shared.ReaderPlatform
 import com.aryan.reader.shared.SharedFileCapabilities
+import com.aryan.reader.shared.parseSharedDocumentXmlMetadata
+import com.aryan.reader.shared.sharedDocumentMetadataArchivePath
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import org.xmlpull.v1.XmlPullParser
 import timber.log.Timber
 import java.io.File
 import java.util.concurrent.TimeUnit
@@ -146,10 +146,10 @@ class MetadataExtractionWorker(
                             }
                         }
                         FileType.PDF -> parsePdfTextMetadata(uri)
-                        FileType.ODT -> parseZipTextMetadata(uri, "meta.xml")
+                        FileType.ODT -> parseZipTextMetadata(uri, requireNotNull(sharedDocumentMetadataArchivePath(item.type)))
                         FileType.FODT -> parseFlatXmlTextMetadata(uri)
-                        FileType.DOCX -> parseZipTextMetadata(uri, "docProps/core.xml")
-                        FileType.PPTX -> parseZipTextMetadata(uri, "docProps/core.xml")
+                        FileType.DOCX,
+                        FileType.PPTX -> parseZipTextMetadata(uri, requireNotNull(sharedDocumentMetadataArchivePath(item.type)))
                         else -> TextMetadata()
                     }
 
@@ -333,36 +333,8 @@ class MetadataExtractionWorker(
     }
 
     private fun parseXmlTextMetadata(xml: String): TextMetadata {
-        val parser = Xml.newPullParser()
-        parser.setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, true)
-        parser.setInput(xml.reader())
-
-        var title: String? = null
-        var author: String? = null
-        var event = parser.eventType
-
-        while (event != XmlPullParser.END_DOCUMENT) {
-            if (event == XmlPullParser.START_TAG) {
-                val name = parser.name.substringAfter(':').lowercase()
-                when {
-                    title == null && name == "title" -> title = parser.nextTextOrNull()
-                    author == null && (name == "creator" || name == "initial-creator") -> {
-                        author = parser.nextTextOrNull()
-                    }
-                }
-            }
-            event = parser.next()
-        }
-
-        return TextMetadata(title = title, author = author)
-    }
-
-    private fun XmlPullParser.nextTextOrNull(): String? {
-        return try {
-            nextText()?.trim()?.takeIf { it.isNotBlank() }
-        } catch (_: Exception) {
-            null
-        }
+        val metadata = parseSharedDocumentXmlMetadata(xml)
+        return TextMetadata(title = metadata.title, author = metadata.author)
     }
 
     private fun ZipInputStream.readTextEntry(): String {
