@@ -2306,13 +2306,19 @@ private fun ReaderIosApp(
                                     }
                                 }
                             },
-                            onNativePdfAction = { pdfBook, action, password ->
+                            onNativePdfAction = { pdfBook, action, password, pdfState ->
                                 when (action) {
                                     SharedMobilePdfNativeAction.DICTIONARY_SETTINGS -> {
                                         showDictionarySettingsSheet = true
                                     }
                                     SharedMobilePdfNativeAction.TEXT_VIEW -> {
                                         startIosPdfReflow(pdfBook, password)
+                                    }
+                                    SharedMobilePdfNativeAction.SAVE_COPY -> scope.launch {
+                                        when (val export = prepareIosPdfSaveCopy(pdfBook, password, pdfState)) {
+                                            is IosPdfSaveCopyPreparation.Ready -> if (!bridge.performPdfNativeAction(export.book, action)) showMessage("Unable to export ${pdfBook.displayName}.")
+                                            is IosPdfSaveCopyPreparation.Unavailable -> showMessage(export.message)
+                                        }
                                     }
                                     else -> {
                                         val handled = bridge.performPdfNativeAction(pdfBook, action)

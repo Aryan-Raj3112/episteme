@@ -231,7 +231,7 @@ data class SharedMobilePdfReflowUiState(
 fun SharedMobilePdfReaderScreen(
     book: BookItem,
     onBack: () -> Unit,
-    onNativePdfAction: (BookItem, SharedMobilePdfNativeAction, password: String?) -> Unit,
+    onNativePdfAction: (BookItem, SharedMobilePdfNativeAction, password: String?, SharedPdfReaderState) -> Unit,
     pdfReflowUiState: SharedMobilePdfReflowUiState = SharedMobilePdfReflowUiState(),
     pdfTabsEnabled: Boolean = false,
     openPdfTabs: List<BookItem> = emptyList(),
@@ -1058,7 +1058,7 @@ fun SharedMobilePdfReaderScreen(
                                 if (action == SharedMobilePdfNativeAction.PRINT && pdfPassword != null) {
                                     showPasswordProtectedPrintWarning = true
                                 } else {
-                                    onNativePdfAction(book, action, pdfPassword)
+                                    onNativePdfAction(book, action, pdfPassword, readerState.copy(richTextDocumentJson = richTextDocumentJson))
                                 }
                             },
                             isCurrentPageBlank = isCurrentPageBlank,
@@ -1133,7 +1133,7 @@ fun SharedMobilePdfReaderScreen(
                             )
                         },
                         onScreenOrientation = { showScreenOrientationSheet = true },
-                        onDictionary = { onNativePdfAction(book, SharedMobilePdfNativeAction.DICTIONARY_SETTINGS, pdfPassword) },
+                        onDictionary = { onNativePdfAction(book, SharedMobilePdfNativeAction.DICTIONARY_SETTINGS, pdfPassword, readerState) },
                         showAllTextHighlights = showAllTextHighlights,
                         isAllTextHighlightLoading = isAllTextHighlightLoading,
                         onToggleHighlights = ::toggleAllTextHighlights,
