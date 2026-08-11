@@ -119,6 +119,8 @@ import com.aryan.reader.shared.SharedFileCapabilities
 import com.aryan.reader.shared.SharedLibraryEditor
 import com.aryan.reader.shared.SharedImportOutcomeCounts
 import com.aryan.reader.shared.SharedImportPlanner
+import com.aryan.reader.shared.MobileImportOutcome
+import com.aryan.reader.shared.record
 import com.aryan.reader.shared.MobileExternalFileCloseAction
 import com.aryan.reader.shared.mobileExternalFileCloseAction
 import com.aryan.reader.shared.MobileReaderSessionRestoreAction
@@ -5066,10 +5068,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 ).withClearedLibraryBookSelection()
             }
 
-            var importedCount = 0
-            var duplicateCount = 0
-            var unsupportedCount = 0
-            var failedCount = 0
+            var outcomeCounts = SharedImportOutcomeCounts()
 
             withContext(Dispatchers.IO) {
                 for (externalUri in uris) {
@@ -5089,17 +5088,17 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                             sourceFolderUri = null,
                             bundleResult = importResult.bundleResult
                         )
-                        importedCount++
+                        outcomeCounts = outcomeCounts.record(MobileImportOutcome.ADDED)
                     } else {
                         val hash = FileHasher.calculateSha256 {
                             appContext.contentResolver.openInputStream(externalUri)
                         }
                         if (hash != null && bookStore.getFileByBookId(hash) != null) {
-                            duplicateCount++
+                            outcomeCounts = outcomeCounts.record(MobileImportOutcome.DUPLICATE)
                         } else if (getFileTypeFromUri(externalUri, appContext) == null) {
-                            unsupportedCount++
+                            outcomeCounts = outcomeCounts.record(MobileImportOutcome.UNSUPPORTED)
                         } else {
-                            failedCount++
+                            outcomeCounts = outcomeCounts.record(MobileImportOutcome.FAILED)
                         }
                     }
                 }
@@ -5107,16 +5106,11 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
             _internalState.update {
                 val feedback = SharedImportPlanner.feedbackForCounts(
-                    counts = SharedImportOutcomeCounts(
-                        addedCount = importedCount,
-                        duplicateCount = duplicateCount,
-                        unsupportedCount = unsupportedCount,
-                        failedCount = failedCount
-                    ),
+                    counts = outcomeCounts,
                     importedMessage = appContext.resources.getQuantityString(
                         R.plurals.banner_books_imported_library_tab,
-                        importedCount,
-                        importedCount
+                        outcomeCounts.addedCount,
+                        outcomeCounts.addedCount
                     ),
                     duplicateMessage = appContext.getString(R.string.banner_duplicate_files_already_in_library),
                     unsupportedMessage = appContext.getString(R.string.error_unsupported_file_type),
@@ -5131,7 +5125,12 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 )
             }
 
-            Timber.tag("BulkImport").i("Bulk import complete. $importedCount new files, $duplicateCount duplicates, $unsupportedCount unsupported, $failedCount failed.")
+            Timber.tag("BulkImport").i(
+                "Bulk import complete. ${outcomeCounts.addedCount} new files, " +
+                    "${outcomeCounts.duplicateCount} duplicates, " +
+                    "${outcomeCounts.unsupportedCount} unsupported, " +
+                    "${outcomeCounts.failedCount} failed."
+            )
         }
     }
 

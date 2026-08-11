@@ -251,12 +251,7 @@ fun planMobileImportBatch(
     )
     return SharedMobileImportBatchOutcome(
         plan = plan,
-        counts = SharedImportOutcomeCounts(
-            addedCount = plan.importedCount,
-            duplicateCount = plan.duplicateCount,
-            unsupportedCount = plan.unsupportedCount,
-            failedCount = failedCount.coerceAtLeast(0),
-        ),
+        counts = plan.outcomeCounts(failedCount),
     )
 }
 

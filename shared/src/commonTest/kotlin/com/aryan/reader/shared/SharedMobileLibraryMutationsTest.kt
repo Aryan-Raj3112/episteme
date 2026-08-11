@@ -355,6 +355,27 @@ class SharedMobileLibraryMutationsTest {
     }
 
     @Test
+    fun `mobile import outcome reducer counts every terminal result`() {
+        val counts = listOf(
+            MobileImportOutcome.ADDED,
+            MobileImportOutcome.ADDED,
+            MobileImportOutcome.DUPLICATE,
+            MobileImportOutcome.UNSUPPORTED,
+            MobileImportOutcome.FAILED,
+        ).fold(SharedImportOutcomeCounts()) { current, outcome -> current.record(outcome) }
+
+        assertEquals(
+            SharedImportOutcomeCounts(
+                addedCount = 2,
+                duplicateCount = 1,
+                unsupportedCount = 1,
+                failedCount = 1,
+            ),
+            counts,
+        )
+    }
+
+    @Test
     fun `mobile library navigation restores only an existing shelf`() {
         val shelf = Shelf("reading", "Reading", ShelfType.MANUAL, books = emptyList())
         val state = SharedReaderScreenState(shelves = listOf(shelf))
