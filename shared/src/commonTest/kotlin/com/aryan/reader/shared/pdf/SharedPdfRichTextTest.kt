@@ -4,6 +4,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -430,5 +431,21 @@ class SharedPdfRichTextTest {
         assertEquals("asset:fonts/lora.ttf", resolvedFontPath)
         assertEquals(FontWeight.Bold, controller.currentStyle.fontWeight)
         assertEquals(2, focusRequests)
+    }
+
+    @Test
+    fun `immediate save captures the latest edit before debounce completes`() = runTest {
+        var saved = SharedPdfRichDocument()
+        val controller = SharedPdfRichTextController(
+            scope = this,
+            onDocumentChange = { saved = it },
+            documentToAnnotatedString = { document, _ -> AnnotatedString(document.text) },
+            annotatedStringToDocument = { text, _ -> SharedPdfRichDocument(text.text) },
+        )
+
+        controller.onValueChanged(TextFieldValue("latest edit"))
+        controller.saveImmediate()
+
+        assertEquals("latest edit", saved.text)
     }
 }

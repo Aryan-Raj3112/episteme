@@ -464,8 +464,8 @@ fun SharedMobilePdfReaderScreen(
             }
         )
     }
-    DisposableEffect(book.id, richTextController) {
-        onDispose { scope.launch { richTextController.saveImmediate() } }
+    val closeReader = {
+        scope.saveAndCloseSharedMobilePdfReader(richTextController, readerState, { richTextDocumentJson }, onReaderStateChange, onBack)
     }
     // Document metadata must not follow the visible page. A newly requested page starts with
     // SharedMobilePdfPageRender's loading value (pageCount = 1); using that transient value here
@@ -996,7 +996,7 @@ fun SharedMobilePdfReaderScreen(
                             isSearchActive = readerState.isSearchActive,
                             searchQuery = readerState.searchQuery,
                             isBookmarked = readerState.bookmarks.any { it.pageIndex == currentPdfIndex },
-                            onBack = onBack,
+                            onBack = closeReader,
                             onOpenDrawer = { scope.launch { drawerState.open() } },
                             onSearch = { dispatch(SharedPdfReaderAction.SearchOpened) },
                             onSearchQueryChange = { query ->
@@ -1666,7 +1666,7 @@ fun SharedMobilePdfReaderScreen(
     }
     if (documentRender.openError == SharedMobilePdfOpenError.PASSWORD_REQUIRED) {
         AlertDialog(
-            onDismissRequest = onBack,
+            onDismissRequest = closeReader,
             title = { Text("Password protected") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -1696,7 +1696,7 @@ fun SharedMobilePdfReaderScreen(
                 }
             },
             dismissButton = {
-                TextButton(onClick = onBack) { Text("Cancel") }
+                TextButton(onClick = closeReader) { Text("Cancel") }
             },
             properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false),
         )
