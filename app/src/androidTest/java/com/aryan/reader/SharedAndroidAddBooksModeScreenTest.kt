@@ -43,7 +43,7 @@ class SharedAndroidAddBooksModeScreenTest {
         }
 
         composeTestRule.onNodeWithText("All books").performClick()
-        composeTestRule.onNodeWithText("Add (1)").performClick()
+        composeTestRule.onNodeWithText("Add (1)", useUnmergedTree = true).performClick()
         composeTestRule.runOnIdle {
             assertThat(source).isEqualTo(AddBooksSource.ALL_BOOKS)
             assertThat(addClicks).isEqualTo(1)

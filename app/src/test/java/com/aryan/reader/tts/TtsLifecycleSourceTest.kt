@@ -30,7 +30,10 @@ class TtsLifecycleSourceTest {
         val source = sourceFile("com/aryan/reader/UnifiedLibraryScreen.kt").readText()
 
         assertFalse(source.contains("LaunchedEffect(viewModel.ttsController) { viewModel.ttsController.connect() }"))
-        assertTrue(source.contains("if (shouldStart) viewModel.ttsController.connect()"))
+        assertTrue(
+            Regex("if \\(shouldStart\\) \\{\\s*viewModel\\.ttsController\\.connect\\(\\)")
+                .containsMatchIn(source)
+        )
     }
 
     @Test
@@ -77,11 +80,11 @@ class TtsLifecycleSourceTest {
             .substringBefore("class TtsService")
 
         assertTrue(sessionPlayerBody.contains("fun invalidateDirectLocalState()"))
-        assertTrue(sessionPlayerBody.contains("Player.EVENT_PLAYBACK_STATE_CHANGED"))
-        assertTrue(sessionPlayerBody.contains("Player.EVENT_PLAY_WHEN_READY_CHANGED"))
-        assertTrue(sessionPlayerBody.contains("Player.EVENT_IS_PLAYING_CHANGED"))
+        assertTrue(sessionPlayerBody.contains("EVENT_PLAYBACK_STATE_CHANGED"))
+        assertTrue(sessionPlayerBody.contains("EVENT_PLAY_WHEN_READY_CHANGED"))
+        assertTrue(sessionPlayerBody.contains("EVENT_IS_PLAYING_CHANGED"))
         assertTrue(sessionPlayerBody.contains("if (isDirectLocalPlayback()) return C.TIME_UNSET"))
-        assertTrue(sessionPlayerBody.contains(".remove(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM)"))
+        assertTrue(sessionPlayerBody.contains(".remove(COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM)"))
 
         val managerSource = sourceFile("com/aryan/reader/tts/TtsPlaybackManager.kt").readText()
         val metadataBody = managerSource.substringAfter("private fun updateLocalMediaItem")

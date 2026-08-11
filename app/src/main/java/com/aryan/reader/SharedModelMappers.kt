@@ -304,7 +304,7 @@ fun BookShelfCrossRef.toSharedBookShelfRef(): SharedBookShelfRef {
     )
 }
 
-fun ReaderScreenState.toSharedReaderScreenState(
+internal fun ReaderScreenState.toSharedLibraryProjectionState(
     rawBooks: List<RecentFileItem> = rawLibraryFiles,
     dbTags: List<TagEntity> = allTags,
     includeReaderAnnotations: Boolean = true
@@ -394,7 +394,7 @@ fun List<RecentFileItem>.withResolvedTags(
     }
 }
 
-fun SharedReaderScreenState.toAndroidReaderScreenState(
+internal fun SharedReaderScreenState.toAndroidLibraryProjectionState(
     base: ReaderScreenState,
     androidBooksById: Map<String, RecentFileItem>,
     tagEntitiesById: Map<String, TagEntity> = emptyMap()

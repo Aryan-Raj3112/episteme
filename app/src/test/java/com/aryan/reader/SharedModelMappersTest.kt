@@ -116,7 +116,7 @@ class SharedModelMappersTest {
             allTags = listOf(tag.toSharedTag())
         )
 
-        val android = projected.toAndroidReaderScreenState(
+        val android = projected.toAndroidLibraryProjectionState(
             base = ReaderScreenState(contextualActionItems = setOf(recentFile("missing"))),
             androidBooksById = mapOf(book.bookId to book),
             tagEntitiesById = mapOf(tag.id to tag)
@@ -156,7 +156,7 @@ class SharedModelMappersTest {
             booksAvailableForAdding = listOf(sharedBook)
         )
 
-        val android = projected.toAndroidReaderScreenState(
+        val android = projected.toAndroidLibraryProjectionState(
             base = ReaderScreenState(),
             androidBooksById = mapOf(book.bookId to book)
         )

@@ -13,7 +13,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-class AndroidSharedStateBridgeTest {
+class AndroidLibraryProjectionAdapterTest {
 
     @Test
     fun `prepareLibraryProjection builds shared input and Android lookup context`() {
@@ -21,7 +21,7 @@ class AndroidSharedStateBridgeTest {
         val book = recentFile("book", sourceFolderUri = "content://folder")
         val reflowCopy = recentFile("book_reflow", sourceFolderUri = "content://folder")
 
-        val context = AndroidSharedStateBridge.prepareLibraryProjection(
+        val context = AndroidLibraryProjectionAdapter.prepare(
             input = LibraryProjectionInput(
                 state = ReaderScreenState(),
                 recentFilesFromDb = listOf(book, reflowCopy),
@@ -36,7 +36,7 @@ class AndroidSharedStateBridgeTest {
         assertEquals(listOf("book"), context.androidBooksById.keys.toList())
         assertEquals(listOf("book"), context.sharedInput.booksFromStore.map { it.id })
         assertEquals(listOf("tag"), context.sharedInput.booksFromStore.single().tags.map { it.id })
-        assertEquals(listOf(AndroidSharedFolderProjectionKey("content://folder", "Local Folder")), context.folderKeys)
+        assertEquals(listOf(AndroidFolderProjectionKey("content://folder", "Local Folder")), context.folderKeys)
     }
 
     @Test

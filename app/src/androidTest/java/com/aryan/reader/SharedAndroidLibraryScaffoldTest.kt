@@ -4,6 +4,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -25,6 +26,7 @@ class SharedAndroidLibraryScaffoldTest {
     @Test
     fun shelfFabIsOwnedBySharedScaffoldAndHiddenDuringSelection() {
         var newShelfClicks = 0
+        val hasShelfSelection = mutableStateOf(false)
         composeTestRule.setContent {
             MaterialTheme {
                 val pagerState = rememberPagerState(initialPage = 1, pageCount = { 2 })
@@ -33,7 +35,7 @@ class SharedAndroidLibraryScaffoldTest {
                     scope = rememberCoroutineScope(),
                     tabTitles = listOf("Library", "Shelves"),
                     hasBookSelection = false,
-                    hasShelfSelection = false,
+                    hasShelfSelection = hasShelfSelection.value,
                     isSearchActive = false,
                     searchQuery = "",
                     showAddFileFab = false,
@@ -57,26 +59,7 @@ class SharedAndroidLibraryScaffoldTest {
         composeTestRule.onNodeWithTag("LibraryNewShelfFab").performClick()
         composeTestRule.runOnIdle { assertThat(newShelfClicks).isEqualTo(1) }
 
-        composeTestRule.setContent {
-            MaterialTheme {
-                val pagerState = rememberPagerState(initialPage = 1, pageCount = { 2 })
-                SharedAndroidLibraryScaffold(
-                    pagerState = pagerState,
-                    scope = rememberCoroutineScope(),
-                    tabTitles = listOf("Library", "Shelves"),
-                    hasBookSelection = false,
-                    hasShelfSelection = true,
-                    isSearchActive = false,
-                    searchQuery = "",
-                    showAddFileFab = false,
-                    strings = strings(),
-                    onSearchQueryChange = {}, onSearchActiveChange = {}, onSelectFile = {}, onNewShelf = {},
-                    onTabAnimationStarted = { _, _ -> }, onTabAnimationFinished = { _, _ -> }, nowNanos = { 0L },
-                    bookContextualTopBar = {}, shelfContextualTopBar = {}, normalTopBarActions = {},
-                    filterChips = {}, pageContent = {},
-                )
-            }
-        }
+        composeTestRule.runOnIdle { hasShelfSelection.value = true }
         composeTestRule.onAllNodesWithTag("LibraryNewShelfFab").assertCountEquals(0)
     }
 
