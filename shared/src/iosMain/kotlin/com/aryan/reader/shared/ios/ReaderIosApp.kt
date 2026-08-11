@@ -97,6 +97,8 @@ import com.aryan.reader.shared.canUseCloudSync
 import com.aryan.reader.shared.mergeCloudLibrarySnapshotWithDownloadedBooks
 import com.aryan.reader.shared.enqueueMobileFolderScan
 import com.aryan.reader.shared.mobileExternalFileCloseAction
+import com.aryan.reader.shared.MobileExternalOpenAction
+import com.aryan.reader.shared.mobileExternalOpenAction
 import com.aryan.reader.shared.normalizedExternalFileBehavior
 import com.aryan.reader.shared.planMobileImportBatch
 import com.aryan.reader.shared.singleSelectionOpenBook
@@ -447,6 +449,9 @@ class ReaderIosBridge internal constructor(
     }
 
     fun externalFileBehavior(): String = loadIosLibrarySnapshot().externalFileBehavior
+
+    fun shouldAddExternalFileToLibrary(): Boolean =
+        mobileExternalOpenAction(externalFileBehavior()) == MobileExternalOpenAction.OPEN_LIBRARY_COPY
 
     fun usesStrictFileFilter(): Boolean = loadIosLibrarySnapshot().useStrictFileFilter
 

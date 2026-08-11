@@ -216,14 +216,7 @@ struct ContentView: View {
     }
 
     private func handleExternalURL(_ url: URL) {
-        switch bridge.externalFileBehavior().uppercased() {
-        case "ASK", "KEEP", "COPY", "DELETE":
-            openExternalURL(url, addToLibrary: true)
-        case "TEMPORARY":
-            openExternalURL(url, addToLibrary: false)
-        default:
-            openExternalURL(url, addToLibrary: true)
-        }
+        openExternalURL(url, addToLibrary: bridge.shouldAddExternalFileToLibrary())
     }
 
     private func openExternalURL(_ url: URL, addToLibrary: Bool) {

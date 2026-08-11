@@ -327,13 +327,31 @@ class SharedMobileLibraryMutationsTest {
             mobileExternalFileCloseAction("TEMPORARY"),
         )
         assertEquals(
-            MobileExternalFileCloseAction.PROMPT,
+            MobileExternalFileCloseAction.KEEP,
             mobileExternalFileCloseAction("unknown"),
+        )
+        assertEquals(
+            MobileExternalFileCloseAction.KEEP,
+            mobileExternalFileCloseAction(null),
         )
         assertEquals(
             MobileExternalFileCloseAction.DELETE,
             mobileExternalFileCloseAction("KEEP", isTemporarySession = true),
         )
+    }
+
+    @Test
+    fun `external open routing matches the Android activity decision`() {
+        assertEquals(
+            MobileExternalOpenAction.OPEN_TEMPORARY,
+            mobileExternalOpenAction("TEMPORARY"),
+        )
+        listOf(null, "ASK", "KEEP", "COPY", "DELETE", "temporary", "unknown").forEach { behavior ->
+            assertEquals(
+                MobileExternalOpenAction.OPEN_LIBRARY_COPY,
+                mobileExternalOpenAction(behavior),
+            )
+        }
     }
 
     @Test

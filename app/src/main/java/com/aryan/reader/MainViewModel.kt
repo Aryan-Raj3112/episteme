@@ -119,6 +119,8 @@ import com.aryan.reader.shared.SharedFileCapabilities
 import com.aryan.reader.shared.SharedLibraryEditor
 import com.aryan.reader.shared.SharedImportOutcomeCounts
 import com.aryan.reader.shared.SharedImportPlanner
+import com.aryan.reader.shared.MobileExternalFileCloseAction
+import com.aryan.reader.shared.mobileExternalFileCloseAction
 import com.aryan.reader.shared.MAX_SYNCED_FOLDER_COUNT
 import com.aryan.reader.shared.SyncedFolderAddDecision
 import com.aryan.reader.shared.AppShelfAction
@@ -3073,26 +3075,31 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             } else {
                 prefs.getString(KEY_EXTERNAL_FILE_BEHAVIOR, EXTERNAL_FILE_BEHAVIOR_ASK) ?: EXTERNAL_FILE_BEHAVIOR_ASK
             }
-            if (behavior == "ASK") {
-                _internalState.update { it.copy(showExternalFileSavePromptFor = closingBookId) }
-            } else if (behavior == "DELETE") {
-                removesExternalFileOnClose = true
-                deletePendingExternalFileRemoval(closingBookId, uriString)
-            } else if (behavior == EXTERNAL_FILE_BEHAVIOR_TEMPORARY) {
-                removesExternalFileOnClose = true
-                val shouldDeleteImportedCopy = closingBookId == externalOpenedBookId
-                if (shouldDeleteImportedCopy) {
-                    viewModelScope.launch {
-                        deletePendingExternalFileRemoval(PendingExternalFileRemoval(closingBookId, uriString))
-                        _temporaryExternalOpenFinished.send(Unit)
-                    }
-                } else {
-                    viewModelScope.launch {
-                        _temporaryExternalOpenFinished.send(Unit)
+            when (mobileExternalFileCloseAction(behavior, isTemporaryExternalSession)) {
+                MobileExternalFileCloseAction.PROMPT -> {
+                    _internalState.update { it.copy(showExternalFileSavePromptFor = closingBookId) }
+                }
+                MobileExternalFileCloseAction.DELETE -> {
+                    removesExternalFileOnClose = true
+                    if (behavior == EXTERNAL_FILE_BEHAVIOR_TEMPORARY) {
+                        val shouldDeleteImportedCopy = closingBookId == externalOpenedBookId
+                        if (shouldDeleteImportedCopy) {
+                            viewModelScope.launch {
+                                deletePendingExternalFileRemoval(PendingExternalFileRemoval(closingBookId, uriString))
+                                _temporaryExternalOpenFinished.send(Unit)
+                            }
+                        } else {
+                            viewModelScope.launch {
+                                _temporaryExternalOpenFinished.send(Unit)
+                            }
+                        }
+                    } else {
+                        deletePendingExternalFileRemoval(closingBookId, uriString)
                     }
                 }
-            } else {
-                clearPendingExternalFileRemovals(setOf(closingBookId))
+                MobileExternalFileCloseAction.KEEP -> {
+                    clearPendingExternalFileRemovals(setOf(closingBookId))
+                }
             }
             externalOpenedBookId = null
             temporaryExternalSessionBookId = null

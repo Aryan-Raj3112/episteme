@@ -2,6 +2,22 @@ package com.aryan.reader.shared
 
 const val MAX_OPEN_PDF_TABS = 20
 
+enum class MobileExternalOpenAction {
+    OPEN_LIBRARY_COPY,
+    OPEN_TEMPORARY,
+}
+
+/**
+ * Android routes only the persisted TEMPORARY value to its temporary reader
+ * activity. All other values use the normal import/open flow.
+ */
+fun mobileExternalOpenAction(behavior: String?): MobileExternalOpenAction =
+    if (behavior == "TEMPORARY") {
+        MobileExternalOpenAction.OPEN_TEMPORARY
+    } else {
+        MobileExternalOpenAction.OPEN_LIBRARY_COPY
+    }
+
 enum class MobileExternalFileCloseAction {
     KEEP,
     PROMPT,
@@ -13,10 +29,11 @@ fun mobileExternalFileCloseAction(
     isTemporarySession: Boolean = false,
 ): MobileExternalFileCloseAction {
     if (isTemporarySession) return MobileExternalFileCloseAction.DELETE
-    return when (normalizedExternalFileBehavior(behavior)) {
-        "KEEP" -> MobileExternalFileCloseAction.KEEP
+    return when (behavior) {
+        "KEEP", "COPY" -> MobileExternalFileCloseAction.KEEP
         "DELETE", "TEMPORARY" -> MobileExternalFileCloseAction.DELETE
-        else -> MobileExternalFileCloseAction.PROMPT
+        "ASK" -> MobileExternalFileCloseAction.PROMPT
+        else -> MobileExternalFileCloseAction.KEEP
     }
 }
 
