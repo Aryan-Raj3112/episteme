@@ -47,6 +47,23 @@ data class PdfPageBounds(
     val bottom: Float
 )
 
+internal fun normalizedPdfPageBounds(
+    left: Float,
+    bottom: Float,
+    right: Float,
+    top: Float,
+    pageWidth: Float,
+    pageHeight: Float,
+): PdfPageBounds? {
+    if (pageWidth <= 0f || pageHeight <= 0f) return null
+    val normalizedLeft = minOf(left, right) / pageWidth
+    val normalizedRight = maxOf(left, right) / pageWidth
+    val normalizedTop = (pageHeight - maxOf(top, bottom)) / pageHeight
+    val normalizedBottom = (pageHeight - minOf(top, bottom)) / pageHeight
+    return PdfPageBounds(normalizedLeft, normalizedTop, normalizedRight, normalizedBottom)
+        .takeIf { it.right > it.left && it.bottom > it.top }
+}
+
 @Serializable
 data class SharedPdfAnnotationComment(
     val id: String,

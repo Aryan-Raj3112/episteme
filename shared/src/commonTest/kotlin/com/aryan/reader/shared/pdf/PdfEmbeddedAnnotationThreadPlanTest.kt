@@ -2,8 +2,26 @@ package com.aryan.reader.shared.pdf
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 
 class PdfEmbeddedAnnotationThreadPlanTest {
+    @Test
+    fun `pdf coordinates normalize into top-left shared coordinates`() {
+        assertEquals(
+            PdfPageBounds(left = 0.1f, top = 0.2f, right = 0.3f, bottom = 0.6f),
+            normalizedPdfPageBounds(
+                left = 10f,
+                bottom = 40f,
+                right = 30f,
+                top = 80f,
+                pageWidth = 100f,
+                pageHeight = 100f,
+            ),
+        )
+        assertNull(normalizedPdfPageBounds(10f, 20f, 10f, 30f, 100f, 100f))
+        assertNull(normalizedPdfPageBounds(10f, 20f, 30f, 40f, 0f, 100f))
+    }
+
     @Test
     fun `named replies attach to the last annotation with the matching name`() {
         val plan = buildPdfEmbeddedAnnotationThreadPlan(

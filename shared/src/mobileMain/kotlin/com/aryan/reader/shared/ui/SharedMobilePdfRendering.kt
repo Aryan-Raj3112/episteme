@@ -1943,9 +1943,8 @@ internal fun SharedMobilePdfPageSurface(
         if (searchHighlightMode == SearchHighlightMode.ALL) searchResults.flatMap(::searchResultBounds)
         else emptyList()
     }
-    val focusedSearchHighlights = remember(textSession, focusedSearchResult) {
-        focusedSearchResult?.let(::searchResultBounds).orEmpty()
-    }
+    val focusedSearchHighlights = remember(textSession, focusedSearchResult) { focusedSearchResult?.let(::searchResultBounds).orEmpty() }
+    val embeddedAnnotations = rememberSharedMobilePdfEmbeddedAnnotations(book, pageIndex, pdfPassword)
     val textureBitmap = sharedMobilePdfTextureBitmap(activeTheme)
     val highResolutionTiles = rememberSharedMobilePdfTileRenders(
         book = book,
@@ -2193,6 +2192,7 @@ internal fun SharedMobilePdfPageSurface(
                 eraserPosition = eraserOverridePosition,
                 showEraserIndicator = isEraserOverrideActive
             )
+            SharedMobilePdfEmbeddedAnnotationLayer(embeddedAnnotations, localCanvasSize)
             textDraft?.takeIf { it.pageIndex == pageIndex }?.let { draft ->
                 SharedPdfTextBoxEditorOverlay(
                     id = draft.id,

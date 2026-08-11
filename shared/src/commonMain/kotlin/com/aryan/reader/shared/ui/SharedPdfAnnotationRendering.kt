@@ -315,24 +315,42 @@ fun SharedPdfPageNumberOverlay(
 fun SharedPdfEmbeddedAnnotationOverlay(
     annotations: List<SharedPdfEmbeddedAnnotation>,
     canvasSize: IntSize,
-    selectedAnnotationId: String? = null
+    selectedAnnotationId: String? = null,
+    onAnnotationTap: (SharedPdfEmbeddedAnnotation) -> Unit = {},
 ) {
     if (annotations.isEmpty() || canvasSize.width <= 0 || canvasSize.height <= 0) return
-    Canvas(Modifier.fillMaxSize()) {
+    Box(Modifier.fillMaxSize()) {
+        Canvas(Modifier.fillMaxSize()) {
+            annotations.forEach { annotation ->
+                val bounds = annotation.bounds
+                val isSelected = annotation.id == selectedAnnotationId
+                val color = if (isSelected) Color(0xFF1976D2) else Color(0xFFFF9800)
+                drawRect(
+                    color = color.copy(alpha = if (isSelected) 0.12f else 0.07f),
+                    topLeft = bounds.topLeft(canvasSize),
+                    size = bounds.size(canvasSize)
+                )
+                drawRect(
+                    color = color,
+                    topLeft = bounds.topLeft(canvasSize),
+                    size = bounds.size(canvasSize),
+                    style = Stroke(width = if (isSelected) 2.5f else 1.25f)
+                )
+            }
+        }
         annotations.forEach { annotation ->
             val bounds = annotation.bounds
-            val isSelected = annotation.id == selectedAnnotationId
-            val color = if (isSelected) Color(0xFF1976D2) else Color(0xFFFF9800)
-            drawRect(
-                color = color.copy(alpha = if (isSelected) 0.12f else 0.07f),
-                topLeft = bounds.topLeft(canvasSize),
-                size = bounds.size(canvasSize)
-            )
-            drawRect(
-                color = color,
-                topLeft = bounds.topLeft(canvasSize),
-                size = bounds.size(canvasSize),
-                style = Stroke(width = if (isSelected) 2.5f else 1.25f)
+            val widthPx = ((bounds.right - bounds.left) * canvasSize.width).coerceAtLeast(24f)
+            val heightPx = ((bounds.bottom - bounds.top) * canvasSize.height).coerceAtLeast(24f)
+            Box(
+                Modifier
+                    .offset { IntOffset((bounds.left * canvasSize.width).roundToInt(), (bounds.top * canvasSize.height).roundToInt()) }
+                    .size(with(LocalDensity.current) { widthPx.toDp() }, with(LocalDensity.current) { heightPx.toDp() })
+                    .semantics {
+                        contentDescription = "PDF comment by ${annotation.author.ifBlank { "Unknown author" }}"
+                        selected = annotation.id == selectedAnnotationId
+                    }
+                    .clickable { onAnnotationTap(annotation) }
             )
         }
     }
