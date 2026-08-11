@@ -8,6 +8,7 @@ import com.aryan.reader.shared.pdfium.c.FPDFAnnot_AppendAttachmentPoints
 import com.aryan.reader.shared.pdfium.c.FPDFAnnot_SetBorder
 import com.aryan.reader.shared.pdfium.c.FPDFAnnot_SetColor
 import com.aryan.reader.shared.pdfium.c.FPDFAnnot_SetRect
+import com.aryan.reader.shared.pdfium.c.FPDFAnnot_SetFlags
 import com.aryan.reader.shared.pdfium.c.FPDFAnnot_SetStringValue
 import com.aryan.reader.shared.pdfium.c.FPDFPage_CloseAnnot
 import com.aryan.reader.shared.pdfium.c.FPDFPage_CreateAnnot
@@ -15,6 +16,7 @@ import com.aryan.reader.shared.pdfium.c.FPDF_ANNOT_HIGHLIGHT
 import com.aryan.reader.shared.pdfium.c.FPDF_ANNOT_INK
 import com.aryan.reader.shared.pdfium.c.FPDF_ANNOT_SQUIGGLY
 import com.aryan.reader.shared.pdfium.c.FPDF_ANNOT_STRIKEOUT
+import com.aryan.reader.shared.pdfium.c.FPDF_ANNOT_TEXT
 import com.aryan.reader.shared.pdfium.c.FPDF_ANNOT_UNDERLINE
 import com.aryan.reader.shared.pdfium.c.FPDF_CloseDocument
 import com.aryan.reader.shared.pdfium.c.FPDF_ClosePage
@@ -46,6 +48,8 @@ import platform.posix.FILE
 import platform.posix.fclose
 import platform.posix.fopen
 import platform.posix.fwrite
+
+private const val IOS_PDF_ANNOTATION_FLAG_PRINT = 4
 
 internal suspend fun exportIosPdfAnnotations(
     sourcePath: String,
@@ -119,6 +123,7 @@ private fun addIosPdfInkAnnotation(
             FPDFAnnot_SetRect(annotation, bounds.ptr)
             FPDFAnnot_SetBorder(annotation, 0f, 0f, ink.strokeWidth * pageWidth)
             setIosPdfAnnotationColor(annotation, ink.colorArgb)
+            FPDFAnnot_SetFlags(annotation, IOS_PDF_ANNOTATION_FLAG_PRINT)
             setIosPdfAnnotationMetadata(annotation, ink.id, ink.contents)
             true
         }
@@ -162,8 +167,45 @@ private fun addIosPdfHighlightAnnotation(
             }
             FPDFAnnot_SetRect(annotation, rect.ptr)
             setIosPdfAnnotationColor(annotation, highlight.colorArgb)
+            FPDFAnnot_SetFlags(annotation, IOS_PDF_ANNOTATION_FLAG_PRINT)
             setIosPdfAnnotationMetadata(annotation, highlight.id, highlight.contents)
-            attachmentPointsWritten
+            val commentsWritten = highlight.comments.all { comment ->
+                addIosPdfHighlightComment(page, comment, rect, pageWidth, pageHeight, highlight.colorArgb)
+            }
+            attachmentPointsWritten && commentsWritten
+        }
+    } finally {
+        FPDFPage_CloseAnnot(annotation)
+    }
+}
+
+private fun addIosPdfHighlightComment(
+    page: com.aryan.reader.shared.pdfium.c.FPDF_PAGE,
+    comment: SharedPdfHighlightCommentExport,
+    highlightRect: FS_RECTF,
+    pageWidth: Float,
+    pageHeight: Float,
+    commentColorArgb: Int,
+): Boolean {
+    val annotation = FPDFPage_CreateAnnot(page, FPDF_ANNOT_TEXT) ?: return false
+    return try {
+        memScoped {
+            val size = 24f.coerceAtMost(minOf(pageWidth, pageHeight))
+            val left = highlightRect.right.coerceIn(0f, (pageWidth - size).coerceAtLeast(0f))
+            val bottom = (highlightRect.top - size).coerceIn(0f, (pageHeight - size).coerceAtLeast(0f))
+            val rect = alloc<FS_RECTF> {
+                this.left = left
+                right = left + size
+                this.bottom = bottom
+                top = bottom + size
+            }
+            FPDFAnnot_SetRect(annotation, rect.ptr)
+            setIosPdfAnnotationColor(annotation, commentColorArgb)
+            FPDFAnnot_SetFlags(annotation, IOS_PDF_ANNOTATION_FLAG_PRINT)
+            setIosPdfAnnotationString(annotation, "NM", comment.id)
+            if (comment.author.isNotBlank()) setIosPdfAnnotationString(annotation, "T", comment.author)
+            setIosPdfAnnotationString(annotation, "Contents", comment.contents)
+            true
         }
     } finally {
         FPDFPage_CloseAnnot(annotation)

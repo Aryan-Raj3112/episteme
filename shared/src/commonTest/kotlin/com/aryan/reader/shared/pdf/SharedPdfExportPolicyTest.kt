@@ -53,20 +53,5 @@ class SharedPdfExportPolicyTest {
                 SharedPdfReaderState(blankPageInsertions = listOf(SharedPdfBlankPageInsertion(0))),
             ),
         )
-        assertEquals(
-            SharedPdfExportMode.UNSUPPORTED_TEXT_CONTENT,
-            sharedPdfExportMode(
-                SharedPdfReaderState(
-                    annotations = listOf(
-                        text.copy(
-                            kind = PdfAnnotationKind.HIGHLIGHT,
-                            tool = PdfInkTool.HIGHLIGHTER,
-                            bounds = PdfPageBounds(0.1f, 0.1f, 0.2f, 0.2f),
-                            comments = listOf(SharedPdfAnnotationComment("comment", contents = "Do not lose this")),
-                        ),
-                    ),
-                ),
-            ),
-        )
     }
 }

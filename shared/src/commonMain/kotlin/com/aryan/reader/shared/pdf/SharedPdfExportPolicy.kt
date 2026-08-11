@@ -16,9 +16,7 @@ fun sharedPdfExportMode(state: SharedPdfReaderState): SharedPdfExportMode {
 
     val richDocument = SharedPdfRichTextSerializer.decode(state.richTextDocumentJson)
     val hasTextContent = richDocument.text.any { !it.isWhitespace() } ||
-        state.annotations.any {
-            it.kind == PdfAnnotationKind.TEXT || it.tool == PdfInkTool.TEXT || it.comments.any { comment -> comment.contents.isNotBlank() }
-        }
+        state.annotations.any { it.kind == PdfAnnotationKind.TEXT || it.tool == PdfInkTool.TEXT }
     if (hasTextContent) return SharedPdfExportMode.UNSUPPORTED_TEXT_CONTENT
 
     return if (SharedPdfAnnotationExportMapper.build(state.annotations).hasPdfAnnotations) {
