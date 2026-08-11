@@ -91,6 +91,18 @@ Verification: `NonReaderLayoutModelsTest` and `SharedPdfAnnotationUiTest` pass. 
 - Move newly discovered portable decisions to shared before mapping Android to them.
 - Exit: host composables do not make persistence/cloud decisions; Android output and behavior remain unchanged.
 
+Result (2026-08-11): complete. The 9,416-line `PaginatedReader.kt` aggregation is now a 894-line coordinator, 3,386-line paginated content renderer, 1,961-line selection/diagnostics boundary, and 3,504-line native-vertical renderer. `PdfPageComposable.kt` changed from 5,690 lines into a 4,309-line interaction/page coordinator and 1,432-line native rendering/geometry boundary. EPUB preference/effect helpers moved into a 346-line feature file. PDF sidecar repository ownership, save serialization, hash/no-op policy, deletion ordering, mutex ownership, position/bookmark persistence, and cloud-upload queuing moved from `PdfViewerScreen` into the 207-line document-scoped `PdfReaderPersistence` component.
+
+Android PDF jump history no longer carries a second mutable-list policy: it now consumes the existing tested `SharedPdfJumpHistory` model, preserving Android's reverse-adjacent-jump handling, pruning, and 21-entry cap. Public screen entry points and UI wiring remain unchanged. No portable decision discovered in this phase was left duplicated on Android.
+
+Verification: focused Android paginated-reader, PDF core/repository, and EPUB reader tests pass; the shared `PdfReaderSessionTest` parity suite passes; Android OSS and Pro compilation and `git diff --check` pass. Existing compiler warnings were left unchanged rather than mixed with this structural phase. No emulator was run.
+
+Documented cohesion exceptions retained under the mega-file ratchet:
+
+- `PdfViewerScreen.kt` (8,133 LOC): Android PDF composition root and native lifecycle/UI wiring. Persistence policy and page rendering are now external. It must not grow; the next safe seam is a typed PDF document-session state holder, after Phase 4 establishes the corresponding shared reader-engine boundaries.
+- `EpubReaderScreen.kt` (7,422 LOC): Android EPUB composition root coordinating WebView/native modes, lifecycle, TTS, and UI wiring. Preferences/helpers are external and jump-history policy is already shared. It must not grow; the next safe seam is typed TTS/navigation session ownership aligned with the Phase 4 shared EPUB engine.
+- `NativeVerticalReaderScreen.kt` (3,504 LOC), `PaginatedReaderContent.kt` (3,386 LOC), and `PdfPageComposable.kt` (4,309 LOC): cohesive Android native render/gesture boundaries retained to avoid parameter-bag abstractions. Phase 6 ratchets these files and requires an explicit exception review for any growth.
+
 ### Phase 4 — Shared reader-engine modularization
 
 - Split HTML document construction into document, styles, scripts, pagination, annotation, media, and sanitization responsibilities.
@@ -118,8 +130,8 @@ Verification: `NonReaderLayoutModelsTest` and `SharedPdfAnnotationUiTest` pass. 
 | --- | --- | ---: | ---: | --- | --- |
 | 0 | Complete (2026-08-11) | 0 | 0 | `45b7ffc4` | Baseline, standards, largest-file inventory, safety matrix, and portable-source verification established. |
 | 1 | Complete (2026-08-11) | +92 | 0 | `9fcf1971` | Composition-root ownership, physical library persistence split, and narrow book/folder/artifact/legacy capabilities. `RecentFilesRepository` 1,001 → 883 LOC; direct feature constructions and broad repository references in `MainViewModel` are both zero. |
-| 2 | Complete (2026-08-11) | 0 | +479 | pending | Split three shared UI aggregations into nine responsibility-owned files; largest resulting file is 3,496 LOC instead of 10,229. Added LOC is file-local imports and explicit internal seams, not duplicated behavior. |
-| 3 | Pending | — | — | — | — |
+| 2 | Complete (2026-08-11) | 0 | +479 | `7d47b7af` | Split three shared UI aggregations into nine responsibility-owned files; largest resulting file is 3,496 LOC instead of 10,229. Added LOC is file-local imports and explicit internal seams, not duplicated behavior. |
+| 3 | Complete (2026-08-11) | +466 | 0 | this phase commit | Split Android reader rendering/selection/preferences, extracted PDF persistence ownership, and mapped Android PDF jump history to the tested shared policy. Focused reader tests and OSS/Pro compilation pass. |
 | 4 | Pending | — | — | — | — |
 | 5 | Pending | — | — | — | — |
 | 6 | Pending | — | — | — | — |

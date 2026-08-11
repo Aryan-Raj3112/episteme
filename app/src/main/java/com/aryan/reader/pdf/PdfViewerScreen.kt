@@ -274,6 +274,7 @@ import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.pdf.PdfSpreadLayout
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationSessionAction
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationSessionState
+import com.aryan.reader.shared.pdf.SharedPdfJumpHistory
 import com.aryan.reader.shared.pdf.reduce
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.ui.ReaderMinimalSlider
@@ -316,8 +317,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -1254,62 +1253,18 @@ fun PdfViewerScreen(
         }
     }
 
-    val jumpHistory = remember { mutableStateListOf<Int>() }
-    var jumpHistoryCursor by remember { mutableIntStateOf(-1) }
+    var jumpHistory by remember(currentBookId) { mutableStateOf(SharedPdfJumpHistory()) }
 
     fun pruneJumpHistoryForDocument() {
-        if (totalPages <= 0) {
-            jumpHistory.clear()
-            jumpHistoryCursor = -1
-            return
-        }
-
-        var index = jumpHistory.lastIndex
-        while (index >= 0) {
-            if (jumpHistory[index] !in 0 until totalPages) {
-                jumpHistory.removeAt(index)
-                if (jumpHistoryCursor >= index) jumpHistoryCursor--
-            }
-            index--
-        }
-        jumpHistoryCursor = jumpHistoryCursor.coerceIn(-1, jumpHistory.lastIndex)
+        jumpHistory = jumpHistory.pruned(totalPages)
     }
 
     fun recordJumpHistory(currentPageIndex: Int, targetPageIndex: Int) {
-        if (totalPages <= 0 || currentPageIndex !in 0 until totalPages || targetPageIndex !in 0 until totalPages || currentPageIndex == targetPageIndex) {
-            return
-        }
-
-        pruneJumpHistoryForDocument()
-        while (jumpHistory.lastIndex > jumpHistoryCursor) {
-            jumpHistory.removeAt(jumpHistory.lastIndex)
-        }
-
-        if (jumpHistoryCursor > 0 && jumpHistory.getOrNull(jumpHistoryCursor - 1) == currentPageIndex) {
-            jumpHistory[jumpHistoryCursor] = targetPageIndex
-            return
-        }
-
-        if (jumpHistoryCursor == -1 || jumpHistory.getOrNull(jumpHistoryCursor) != currentPageIndex) {
-            jumpHistory.add(currentPageIndex)
-            jumpHistoryCursor = jumpHistory.lastIndex
-        }
-
-        if (jumpHistory.lastOrNull() != targetPageIndex) {
-            jumpHistory.add(targetPageIndex)
-            jumpHistoryCursor = jumpHistory.lastIndex
-        }
-
-        while (jumpHistory.size > 21) {
-            jumpHistory.removeAt(0)
-            jumpHistoryCursor--
-        }
-        jumpHistoryCursor = jumpHistoryCursor.coerceIn(0, jumpHistory.lastIndex)
+        jumpHistory = jumpHistory.record(currentPageIndex, targetPageIndex, totalPages)
     }
 
     fun clearJumpHistory() {
-        jumpHistory.clear()
-        jumpHistoryCursor = -1
+        jumpHistory = SharedPdfJumpHistory()
     }
 
     fun navigateToJumpHistoryPage(targetPageIndex: Int) {
@@ -1342,9 +1297,6 @@ fun PdfViewerScreen(
     }
 
     val lifecycleOwner = LocalLifecycleOwner.current
-    val saveMutex = remember { Mutex() }
-
-    val lastSavedHashes = remember(currentBookId) { IntArray(5) { -1 } }
 
     val sidecarsReadyForCurrentBook = annotationSession.canUseFor(currentBookId)
     val textBoxesSnapshot by remember { derivedStateOf { textBoxes.toList() } }
@@ -1380,12 +1332,28 @@ fun PdfViewerScreen(
     val currentPdfUri by rememberUpdatedState(effectivePdfUri)
     val currentVisibleAllAnnotations by rememberUpdatedState(visibleAllAnnotations)
 
-    val saveAllData = remember(currentBookId, annotationRepository, textBoxRepository, highlightRepository) {
+    val readerPersistence = remember(
+        currentBookId,
+        annotationRepository,
+        textBoxRepository,
+        highlightRepository,
+        onBookmarksChanged,
+        onSavePosition
+    ) {
+        PdfReaderPersistence(
+            annotationRepository = annotationRepository,
+            textBoxRepository = textBoxRepository,
+            highlightRepository = highlightRepository,
+            onBookmarksChanged = onBookmarksChanged,
+            onSavePosition = onSavePosition,
+            queueCloudUpload = viewModel::queuePdfSidecarCloudUpload
+        )
+    }
+
+    val saveAllData = remember(currentBookId, readerPersistence) {
         { force: Boolean ->
             val bookIdSnapshot = currentBookId
             val annotationSessionSnapshot = currentAnnotationSession
-            val loadedSidecarBookIdSnapshot = annotationSessionSnapshot.bookId
-            val canSaveSidecarsSnapshot = annotationSessionSnapshot.canUseFor(bookIdSnapshot)
             // saveAllData is remembered for the life of a document. Read these changing
             // values through rememberUpdatedState so a pause never saves the initial
             // restoration target after the reader has moved on.
@@ -1400,157 +1368,39 @@ fun PdfViewerScreen(
             val currentPageSnapshot = currentPageState
             val pendingPageSnapshot = currentPendingPage
             viewModel.viewModelScope.launch {
-                val bookId = bookIdSnapshot ?: return@launch
-
-                if (!isDocumentReadySnapshot && !force) {
-                    Timber.tag("PdfPositionDebug").w("UI: Save ignored. Document not ready.")
-                    return@launch
-                }
-
-                val annots = annotsSnapshot
-                val boxes = boxesSnapshot
-                val highlights = highlightsSnapshot
-                val bms = bookmarksSnapshot
-                val totalPgs = totalPagesSnapshot
-
-                val restoreTarget = pendingPageSnapshot ?: 0
-                val page = pdfPageToPersist(
-                    initialRestorationComplete = initialScrollDoneSnapshot,
-                    currentPage = currentPageSnapshot,
-                    pendingRestorePage = pendingPageSnapshot
+                readerPersistence.save(
+                    snapshot = PdfReaderSaveSnapshot(
+                        bookId = bookIdSnapshot,
+                        annotationSession = annotationSessionSnapshot,
+                        isDocumentReady = isDocumentReadySnapshot,
+                        initialRestorationComplete = initialScrollDoneSnapshot,
+                        pdfUri = pdfUriSnapshot,
+                        annotations = annotsSnapshot,
+                        textBoxes = boxesSnapshot,
+                        highlights = highlightsSnapshot,
+                        bookmarks = bookmarksSnapshot,
+                        totalPages = totalPagesSnapshot,
+                        currentPage = currentPageSnapshot,
+                        pendingRestorePage = pendingPageSnapshot
+                    ),
+                    force = force
                 )
-                if (!initialScrollDoneSnapshot) {
-                    Timber.tag("PdfPositionDebug").i("UI: Save during restoration | Using restoreTarget: $restoreTarget (CurrentUI: $currentPageSnapshot)")
-                }
-
-                Timber.tag("PdfPositionDebug").v("UI: Save logic | Choosing: $page (UI: $currentPageSnapshot, Target: $restoreTarget, Done: $initialScrollDoneSnapshot)")
-
-                val annotsHash = annots.hashCode()
-                val boxesHash = boxes.hashCode()
-                val highlightsHash = highlights.hashCode()
-                val bmsHash = bms.hashCode()
-
-                withContext(NonCancellable) {
-                    saveMutex.withLock {
-                        withContext(Dispatchers.IO) {
-                            @Suppress("VariableNeverRead") var didSave = false
-                            var sidecarsSaved = false
-
-                            if (canSaveSidecarsSnapshot) {
-                                if (annotsHash != lastSavedHashes[0]) {
-                                    logCloudAnnotationSyncTrace {
-                                        "android.reader.save_ink book=$bookId force=$force oldHash=${lastSavedHashes[0]} " +
-                                            "newHash=$annotsHash pages=${annots.keys.sorted()} count=${annots.values.sumOf { it.size }}"
-                                    }
-                                    annotationRepository.saveAnnotations(bookId, annots)
-                                    lastSavedHashes[0] = annotsHash
-                                    didSave = true
-                                    sidecarsSaved = true
-                                } else if (force) {
-                                    logCloudAnnotationSyncTrace {
-                                        "android.reader.save_ink_noop book=$bookId force=true hash=$annotsHash"
-                                    }
-                                }
-                                if (boxesHash != lastSavedHashes[1]) {
-                                    logCloudAnnotationSyncTrace {
-                                        "android.reader.save_textboxes book=$bookId force=$force oldHash=${lastSavedHashes[1]} " +
-                                            "newHash=$boxesHash count=${boxes.size}"
-                                    }
-                                    textBoxRepository.saveTextBoxes(bookId, boxes)
-                                    lastSavedHashes[1] = boxesHash
-                                    didSave = true
-                                    sidecarsSaved = true
-                                } else if (force) {
-                                    logCloudAnnotationSyncTrace {
-                                        "android.reader.save_textboxes_noop book=$bookId force=true hash=$boxesHash"
-                                    }
-                                }
-                                if (highlightsHash != lastSavedHashes[2]) {
-                                    logCloudAnnotationSyncTrace {
-                                        "android.reader.save_highlights book=$bookId force=$force oldHash=${lastSavedHashes[2]} " +
-                                            "newHash=$highlightsHash count=${highlights.size}"
-                                    }
-                                    highlightRepository.saveHighlights(bookId, highlights)
-                                    lastSavedHashes[2] = highlightsHash
-                                    didSave = true
-                                    sidecarsSaved = true
-                                } else if (force) {
-                                    logCloudAnnotationSyncTrace {
-                                        "android.reader.save_highlights_noop book=$bookId force=true hash=$highlightsHash"
-                                    }
-                                }
-                            } else {
-                                Timber.tag("PdfTabSync").d(
-                                    "Skipping PDF sidecar save for $bookId; loaded sidecars belong to $loadedSidecarBookIdSnapshot"
-                                )
-                            }
-                            if (force || bmsHash != lastSavedHashes[3]) {
-                                val objectList = bms.map { bookmark ->
-                                    JSONObject().apply {
-                                        put("pageIndex", bookmark.pageIndex)
-                                        put("title", bookmark.title)
-                                        put("totalPages", bookmark.totalPages)
-                                    }
-                                }
-                                val bookmarksJson = JSONArray(objectList).toString()
-                                withContext(Dispatchers.Main) { onBookmarksChanged(bookmarksJson) }
-                                lastSavedHashes[3] = bmsHash
-                                didSave = true
-                            }
-
-                            if (force || page != lastSavedHashes[4]) {
-                                Timber.tag("PdfPositionDebug").d("UI: COMMIT SAVE | Page: $page | Total: $totalPgs | Force: $force")
-                                if (totalPgs > 0) {
-                                    withContext(Dispatchers.Main) {
-                                        onSavePosition(pdfUriSnapshot, page, totalPgs)
-                                    }
-                                }
-                                lastSavedHashes[4] = page
-                            }
-                            if (sidecarsSaved) {
-                                logCloudAnnotationSyncTrace {
-                                    "android.reader.sidecar_upload_queue book=$bookId force=$force"
-                                }
-                                viewModel.queuePdfSidecarCloudUpload(bookId)
-                            }
-                        }
-                    }
-                }
             }
         }
     }
 
-    val persistInkAnnotationsNow = remember(currentBookId, annotationRepository) {
+    val persistInkAnnotationsNow = remember(currentBookId, readerPersistence) {
         { annotationsSnapshot: Map<Int, List<PdfAnnotation>>, deletedAnnotations: Collection<PdfAnnotation>, reason: String ->
             val bookIdSnapshot = currentBookId
             val annotationSessionSnapshot = currentAnnotationSession
-            val loadedSidecarBookIdSnapshot = annotationSessionSnapshot.bookId
-            val canSaveSidecarsSnapshot = annotationSessionSnapshot.canUseFor(bookIdSnapshot)
             viewModel.viewModelScope.launch {
-                val bookId = bookIdSnapshot ?: return@launch
-                if (!canSaveSidecarsSnapshot) {
-                    logCloudAnnotationSyncTrace {
-                        "android.reader.persist_ink_skip book=$bookId reason=$reason loadedSidecarBook=$loadedSidecarBookIdSnapshot"
-                    }
-                    return@launch
-                }
-                val deletedIds = deletedAnnotations.mapNotNull { it.id.takeIf(String::isNotBlank) }.toSet()
-                withContext(NonCancellable) {
-                    saveMutex.withLock {
-                        withContext(Dispatchers.IO) {
-                            if (deletedIds.isNotEmpty()) {
-                                annotationRepository.markAnnotationsDeleted(bookId, deletedIds)
-                            }
-                            annotationRepository.saveAnnotations(bookId, annotationsSnapshot)
-                            lastSavedHashes[0] = annotationsSnapshot.hashCode()
-                        }
-                    }
-                }
-                logCloudAnnotationSyncTrace {
-                    "android.reader.persist_ink book=$bookId reason=$reason count=${annotationsSnapshot.values.sumOf { it.size }} " +
-                        "deletedIds=${deletedIds.sorted()}"
-                }
-                viewModel.queuePdfSidecarCloudUpload(bookId)
+                readerPersistence.persistInk(
+                    bookId = bookIdSnapshot,
+                    annotationSession = annotationSessionSnapshot,
+                    annotations = annotationsSnapshot,
+                    deletedAnnotations = deletedAnnotations,
+                    reason = reason
+                )
             }
         }
     }
@@ -2651,9 +2501,7 @@ fun PdfViewerScreen(
         allAnnotations = loaded
         textBoxes.addAll(loadedBoxes)
         userHighlights.addAll(loadedHighlights)
-        lastSavedHashes[0] = loaded.hashCode()
-        lastSavedHashes[1] = loadedBoxes.hashCode()
-        lastSavedHashes[2] = loadedHighlights.hashCode()
+        readerPersistence.recordLoadedSidecars(loaded, loadedBoxes, loadedHighlights)
         annotationSession = annotationSession.reduce(
             SharedPdfAnnotationSessionAction.LoadCompleted(
                 bookId = loadingBookId,
@@ -2665,7 +2513,7 @@ fun PdfViewerScreen(
         logCloudAnnotationSyncTrace {
             "android.reader.sidecar_load book=$loadingBookId inkPages=${loaded.keys.sorted()} " +
                 "inkCount=${loaded.values.sumOf { it.size }} textBoxes=${loadedBoxes.size} " +
-                "highlights=${loadedHighlights.size} hashes=${lastSavedHashes.copyOfRange(0, 3).joinToString()}"
+                "highlights=${loadedHighlights.size} hashes=${readerPersistence.loadedSidecarHashesLabel()}"
         }
         Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
             "ui.sidecarLoad.done bookId=$loadingBookId annotationPages=${loaded.keys.sorted()} " +
@@ -6113,8 +5961,8 @@ fun PdfViewerScreen(
                     }
                 }
 
-                val jumpBackPage = jumpHistory.getOrNull(jumpHistoryCursor - 1)
-                val jumpForwardPage = jumpHistory.getOrNull(jumpHistoryCursor + 1)
+                val jumpBackPage = jumpHistory.backPage
+                val jumpForwardPage = jumpHistory.forwardPage
                 val effectiveNavBarForJumpBar = if (systemUiMode == SystemUiMode.DEFAULT || (systemUiMode == SystemUiMode.SYNC && showStandardBars)) with(density) { navBarHeight.toDp() } else 0.dp
                 val isPdfJumpHistoryVisible = showStandardBars && !searchState.isSearchActive && (jumpBackPage != null || jumpForwardPage != null)
                 val pdfBottomChromePadding = 56.dp + effectiveNavBarForJumpBar
@@ -6736,13 +6584,13 @@ fun PdfViewerScreen(
                     forwardPage = jumpForwardPage,
                     onBack = {
                         jumpBackPage?.let { target ->
-                            jumpHistoryCursor = (jumpHistoryCursor - 1).coerceAtLeast(0)
+                            jumpHistory = jumpHistory.stepBack()
                             navigateToJumpHistoryPage(target)
                         }
                     },
                     onForward = {
                         jumpForwardPage?.let { target ->
-                            jumpHistoryCursor = (jumpHistoryCursor + 1).coerceAtMost(jumpHistory.lastIndex)
+                            jumpHistory = jumpHistory.stepForward()
                             navigateToJumpHistoryPage(target)
                         }
                     },

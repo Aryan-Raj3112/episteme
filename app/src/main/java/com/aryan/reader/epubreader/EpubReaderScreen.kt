@@ -24,6 +24,8 @@
 
 package com.aryan.reader.epubreader
 
+import kotlinx.serialization.ExperimentalSerializationApi
+
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
@@ -32,8 +34,6 @@ import android.content.pm.PackageManager
 import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
-import android.view.RoundedCorner
-import android.view.View
 import android.webkit.WebView
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -137,10 +137,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
-import androidx.core.content.edit
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -227,7 +225,6 @@ import com.aryan.reader.shared.ReaderLocator as SharedReaderLocator
 import com.aryan.reader.shared.EpubBlockPosition
 import com.aryan.reader.shared.EpubVisibleTextRange
 import com.aryan.reader.shared.findEpubBookmarkForLocation
-import com.aryan.reader.tts.ReaderTtsOverlaySize
 import com.aryan.reader.tts.SpeakerSamplePlayer
 import com.aryan.reader.tts.TtsPlaybackManager
 import com.aryan.reader.tts.loadTtsMode
@@ -241,7 +238,6 @@ import com.aryan.reader.shared.reader.mobileEpubChapterScrollFraction
 import com.aryan.reader.shared.reader.mobileEpubCharacterProgress
 import com.aryan.reader.shared.reader.mobileEpubCharacterDisplayProgress
 import kotlinx.coroutines.Dispatchers
-import java.util.Date
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
@@ -251,7 +247,6 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
-import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.protobuf.ProtoBuf
 import org.jsoup.Jsoup
 import com.aryan.reader.shared.ui.SharedMobileReaderDrawer
@@ -265,7 +260,6 @@ import timber.log.Timber
 import java.io.File
 import kotlin.math.ceil
 import kotlin.math.floor
-import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -296,293 +290,7 @@ private const val TAG_VERTICAL_JITTER = "EpubVerticalJitter"
 private const val TAG_STABLE_PAGE_NAV = "StablePageNav"
 private const val TAG_PAGINATED_HIGHLIGHT_DIAG = "PaginatedHighlightDiag"
 
-private fun epubHighlightDiagSnippet(text: String, maxLength: Int = 80): String {
-    return text
-        .replace('\n', ' ')
-        .replace('\r', ' ')
-        .replace('\t', ' ')
-        .take(maxLength)
-}
 
-private fun List<TtsChunk>.withInitialChunkOverride(
-    startChunkIndex: Int,
-    initialChunk: TtsChunk?
-): List<TtsChunk> {
-    if (initialChunk == null || startChunkIndex !in indices) return this
-    val existing = this[startChunkIndex]
-    if (
-        existing.text == initialChunk.text &&
-        existing.sourceCfi == initialChunk.sourceCfi &&
-        existing.startOffsetInSource == initialChunk.startOffsetInSource
-    ) {
-        return this
-    }
-
-    return toMutableList().also { chunks ->
-        chunks[startChunkIndex] = initialChunk
-    }
-}
-
-@Composable
-private fun rememberReaderClockTime(): String {
-    val context = LocalContext.current
-    val formatter = remember(context) {
-        android.text.format.DateFormat.getTimeFormat(context)
-    }
-    var currentTimeMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(Unit) {
-        while (true) {
-            val now = System.currentTimeMillis()
-            currentTimeMillis = now
-            delay(60_000L - now.mod(60_000L))
-        }
-    }
-    return formatter.format(Date(currentTimeMillis))
-}
-
-private fun View.bottomRoundedCornerRadiusPx(): Int {
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return 0
-
-    val insets = rootWindowInsets ?: return 0
-    return max(
-        insets.getRoundedCorner(RoundedCorner.POSITION_BOTTOM_LEFT)?.radius ?: 0,
-        insets.getRoundedCorner(RoundedCorner.POSITION_BOTTOM_RIGHT)?.radius ?: 0
-    )
-}
-
-@Composable
-private fun rememberBottomRoundedCornerPadding(view: View): Dp {
-    val density = LocalDensity.current
-    val configuration = LocalConfiguration.current
-    var radiusPx by remember(view) { mutableIntStateOf(view.bottomRoundedCornerRadiusPx()) }
-
-    DisposableEffect(
-        view,
-        configuration.orientation,
-        configuration.screenWidthDp,
-        configuration.screenHeightDp
-    ) {
-        val listener = View.OnLayoutChangeListener { updatedView, _, _, _, _, _, _, _, _ ->
-            radiusPx = updatedView.bottomRoundedCornerRadiusPx()
-        }
-        view.addOnLayoutChangeListener(listener)
-        radiusPx = view.bottomRoundedCornerRadiusPx()
-
-        onDispose {
-            view.removeOnLayoutChangeListener(listener)
-        }
-    }
-
-    return with(density) { radiusPx.toDp() }
-}
-
-private fun saveHiddenTools(context: Context, hiddenTools: Set<String>) {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    prefs.edit {
-        putStringSet(HIDDEN_TOOLS_KEY, hiddenTools)
-        putInt(HIDDEN_TOOLS_DEFAULTS_VERSION_KEY, HIDDEN_TOOLS_DEFAULTS_VERSION)
-    }
-}
-
-private fun loadHiddenTools(context: Context): Set<String> {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    val savedHiddenTools = prefs.getStringSet(HIDDEN_TOOLS_KEY, emptySet()).orEmpty()
-    val defaultsVersion = prefs.getInt(HIDDEN_TOOLS_DEFAULTS_VERSION_KEY, 0)
-    if (defaultsVersion < HIDDEN_TOOLS_DEFAULTS_VERSION) {
-        val migratedHiddenTools = savedHiddenTools + readerHiddenToolsIntroducedAfter(defaultsVersion)
-        prefs.edit {
-            putStringSet(HIDDEN_TOOLS_KEY, migratedHiddenTools)
-            putInt(HIDDEN_TOOLS_DEFAULTS_VERSION_KEY, HIDDEN_TOOLS_DEFAULTS_VERSION)
-        }
-        return migratedHiddenTools
-    }
-    return savedHiddenTools
-}
-
-private fun readerHiddenToolsIntroducedAfter(defaultsVersion: Int): Set<String> {
-    return buildSet {
-        if (defaultsVersion < 1) add(ReaderTool.SCREEN_ORIENTATION.name)
-        if (defaultsVersion < 2) add(ReaderTool.BRIGHTNESS.name)
-    }
-}
-
-private fun saveToolOrder(context: Context, toolOrder: List<ReaderTool>) {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    prefs.edit { putString(TOOL_ORDER_KEY, toolOrder.joinToString(",") { it.name }) }
-}
-
-private fun loadToolOrder(context: Context): List<ReaderTool> {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    val savedTools = prefs.getString(TOOL_ORDER_KEY, null)
-        ?.split(',')
-        ?.filter { it.isNotBlank() }
-        ?.mapNotNull { name -> ReaderTool.entries.firstOrNull { it.name == name } }
-        .orEmpty()
-    return (savedTools + defaultReaderToolOrder().filterNot { it in savedTools }).distinct()
-}
-
-private fun saveBottomTools(context: Context, bottomTools: Set<String>) {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    prefs.edit { putStringSet(BOTTOM_TOOLS_KEY, bottomTools) }
-}
-
-private fun loadBottomTools(context: Context): Set<String> {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    return prefs.getStringSet(
-        BOTTOM_TOOLS_KEY,
-        defaultReaderBottomTools()
-    ) ?: defaultReaderBottomTools()
-}
-
-private fun saveKeepScreenOn(context: Context, isEnabled: Boolean) {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    prefs.edit { putBoolean(KEEP_SCREEN_ON_KEY, isEnabled) }
-}
-
-private fun loadKeepScreenOn(context: Context): Boolean {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    return prefs.getBoolean(KEEP_SCREEN_ON_KEY, false)
-}
-
-private fun saveMusicianMode(context: Context, isEnabled: Boolean) {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    prefs.edit { putBoolean(MUSICIAN_MODE_KEY, isEnabled) }
-}
-
-private fun loadMusicianMode(context: Context): Boolean {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    return prefs.getBoolean(MUSICIAN_MODE_KEY, false)
-}
-
-private fun getBookIdForPrefs(title: String): String {
-    return title.hashCode().toString()
-}
-
-private fun saveAutoScrollLocalMode(context: Context, bookId: String, isLocal: Boolean) {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    prefs.edit { putBoolean(AUTO_SCROLL_IS_LOCAL_PREFIX + bookId, isLocal) }
-}
-
-private fun loadAutoScrollLocalMode(context: Context, bookId: String): Boolean {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    return prefs.getBoolean(AUTO_SCROLL_IS_LOCAL_PREFIX + bookId, false)
-}
-
-private fun saveAutoScrollLocalSettings(context: Context, bookId: String, speed: Float, min: Float, max: Float) {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    prefs.edit {
-        putFloat(AUTO_SCROLL_LOCAL_SPEED_PREFIX + bookId, speed)
-        putFloat(AUTO_SCROLL_LOCAL_MIN_PREFIX + bookId, min)
-        putFloat(AUTO_SCROLL_LOCAL_MAX_PREFIX + bookId, max)
-    }
-}
-
-private fun loadAutoScrollLocalSettings(context: Context, bookId: String): Triple<Float, Float, Float>? {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    if (!prefs.contains(AUTO_SCROLL_LOCAL_SPEED_PREFIX + bookId)) return null
-
-    val speed = prefs.getFloat(AUTO_SCROLL_LOCAL_SPEED_PREFIX + bookId, 3.0f)
-    val min = prefs.getFloat(AUTO_SCROLL_LOCAL_MIN_PREFIX + bookId, 0.1f)
-    val max = prefs.getFloat(AUTO_SCROLL_LOCAL_MAX_PREFIX + bookId, 10.0f)
-    return Triple(speed, min, max)
-}
-
-private fun savePageTurnAnimationSetting(context: Context, isEnabled: Boolean) {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    prefs.edit { putBoolean(PAGE_TURN_ANIMATION_KEY, isEnabled) }
-}
-
-private fun loadPageTurnAnimationSetting(context: Context): Boolean {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    return prefs.getBoolean(PAGE_TURN_ANIMATION_KEY, false)
-}
-
-private fun saveAutoScrollMinSpeed(context: Context, speed: Float) {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    prefs.edit { putFloat(AUTO_SCROLL_MIN_SPEED_KEY, speed) }
-}
-
-private fun loadAutoScrollMinSpeed(context: Context): Float {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    return prefs.getFloat(AUTO_SCROLL_MIN_SPEED_KEY, 0.1f)
-}
-
-private fun saveAutoScrollMaxSpeed(context: Context, speed: Float) {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    prefs.edit { putFloat(AUTO_SCROLL_MAX_SPEED_KEY, speed) }
-}
-
-private fun loadAutoScrollMaxSpeed(context: Context): Float {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    return prefs.getFloat(AUTO_SCROLL_MAX_SPEED_KEY, 10.0f)
-}
-
-private fun saveAutoScrollUseSlider(context: Context, useSlider: Boolean) {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    prefs.edit { putBoolean(AUTO_SCROLL_USE_SLIDER_KEY, useSlider) }
-}
-
-private fun loadAutoScrollUseSlider(context: Context): Boolean {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    return prefs.getBoolean(AUTO_SCROLL_USE_SLIDER_KEY, false)
-}
-
-private fun saveTtsMode(context: Context, modeName: String) {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    prefs.edit { putString(TTS_MODE_KEY, modeName) }
-}
-
-private const val PREF_USE_ONLINE_DICT = "use_online_dictionary"
-private const val PREF_EXTERNAL_DICT_PKG = "external_dictionary_package"
-private const val PREF_EXTERNAL_TRANSLATE_PKG = "external_translate_package"
-private const val PREF_EXTERNAL_SEARCH_PKG = "external_search_package"
-
-private fun loadUseOnlineDict(context: Context): Boolean {
-    @Suppress("KotlinConstantConditions") if (BuildConfig.FLAVOR == "oss" && BuildConfig.IS_OFFLINE) return false
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    return prefs.getBoolean(PREF_USE_ONLINE_DICT, true)
-}
-
-private fun saveUseOnlineDict(context: Context, useOnline: Boolean) {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    prefs.edit { putBoolean(PREF_USE_ONLINE_DICT, useOnline) }
-}
-
-private fun loadExternalDictPackage(context: Context): String? {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    return prefs.getString(PREF_EXTERNAL_DICT_PKG, null)
-}
-
-private fun saveExternalDictPackage(context: Context, packageName: String) {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    prefs.edit { putString(PREF_EXTERNAL_DICT_PKG, packageName) }
-}
-
-private fun loadExternalTranslatePackage(context: Context): String? {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    return prefs.getString(PREF_EXTERNAL_TRANSLATE_PKG, null)
-}
-
-private fun saveExternalTranslatePackage(context: Context, packageName: String) {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    prefs.edit { putString(PREF_EXTERNAL_TRANSLATE_PKG, packageName) }
-}
-
-private fun loadExternalSearchPackage(context: Context): String? {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    return prefs.getString(PREF_EXTERNAL_SEARCH_PKG, null)
-}
-
-private fun saveExternalSearchPackage(context: Context, packageName: String) {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    prefs.edit { putString(PREF_EXTERNAL_SEARCH_PKG, packageName) }
-}
-
-const val PREF_READER_THEME = "reader_theme_id"
-const val PREF_CUSTOM_THEMES = "custom_themes_json"
-
-@UnstableApi
-@RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
 @Composable
 fun EpubReaderScreen(
     epubBook: EpubBook,
