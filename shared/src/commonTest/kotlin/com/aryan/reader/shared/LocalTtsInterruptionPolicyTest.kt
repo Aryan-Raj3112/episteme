@@ -37,4 +37,18 @@ class LocalTtsInterruptionPolicyTest {
             interrupted.state.reduce(LocalTtsInterruptionEvent.Ended(false)).action,
         )
     }
+
+    @Test
+    fun noisyOutputPausesWithoutLeavingAnAutomaticResumeIntent() {
+        val transition = LocalTtsInterruptionState(resumeWhenInterruptionEnds = true).reduce(
+            LocalTtsInterruptionEvent.OutputBecameNoisy(playbackWasActive = true)
+        )
+
+        assertEquals(LocalTtsInterruptionAction.PAUSE, transition.action)
+        assertEquals(LocalTtsInterruptionState(), transition.state)
+        assertEquals(
+            LocalTtsInterruptionAction.NONE,
+            transition.state.reduce(LocalTtsInterruptionEvent.Ended(true)).action,
+        )
+    }
 }

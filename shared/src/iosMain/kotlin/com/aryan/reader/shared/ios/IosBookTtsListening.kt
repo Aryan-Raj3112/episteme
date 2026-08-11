@@ -321,6 +321,10 @@ internal class IosBookTtsListeningController {
             is IosTtsAudioInterruption.Ended -> LocalTtsInterruptionEvent.Ended(
                 systemAllowsResume = interruption.systemAllowsResume
             )
+            IosTtsAudioInterruption.OutputBecameUnavailable ->
+                LocalTtsInterruptionEvent.OutputBecameNoisy(
+                    playbackWasActive = state.isPlaying || state.isLoading
+                )
         }
         val transition = interruptionState.reduce(event)
         interruptionState = transition.state

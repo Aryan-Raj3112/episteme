@@ -5,6 +5,8 @@ package com.aryan.reader.shared.ios
 import platform.AVFAudio.AVAudioSessionInterruptionNotification
 import platform.AVFAudio.AVAudioSessionInterruptionOptionKey
 import platform.AVFAudio.AVAudioSessionInterruptionTypeKey
+import platform.AVFAudio.AVAudioSessionRouteChangeNotification
+import platform.AVFAudio.AVAudioSessionRouteChangeReasonKey
 import platform.Foundation.NSNotificationCenter
 import platform.Foundation.NSNumber
 import platform.Foundation.NSOperationQueue
@@ -13,6 +15,7 @@ import platform.Foundation.NSOperationQueue
 internal sealed interface IosTtsAudioInterruption {
     data object Began : IosTtsAudioInterruption
     data class Ended(val systemAllowsResume: Boolean) : IosTtsAudioInterruption
+    data object OutputBecameUnavailable : IosTtsAudioInterruption
 }
 
 internal class IosTtsAudioInterruptionMonitor(
@@ -38,9 +41,20 @@ internal class IosTtsAudioInterruptionMonitor(
             }
         }
     }
+    private val routeObserver = center.addObserverForName(
+        name = AVAudioSessionRouteChangeNotification,
+        `object` = null,
+        queue = NSOperationQueue.mainQueue,
+    ) { notification ->
+        val reason = (notification?.userInfo?.get(AVAudioSessionRouteChangeReasonKey) as? NSNumber)?.intValue
+        if (reason == ROUTE_OLD_DEVICE_UNAVAILABLE) {
+            onEvent(IosTtsAudioInterruption.OutputBecameUnavailable)
+        }
+    }
 
     fun close() {
         center.removeObserver(interruptionObserver)
+        center.removeObserver(routeObserver)
     }
 
     private companion object {
@@ -48,5 +62,6 @@ internal class IosTtsAudioInterruptionMonitor(
         const val INTERRUPTION_ENDED = 0
         const val INTERRUPTION_BEGAN = 1
         const val INTERRUPTION_OPTION_SHOULD_RESUME = 1
+        const val ROUTE_OLD_DEVICE_UNAVAILABLE = 2
     }
 }

@@ -382,6 +382,10 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
             is IosTtsAudioInterruption.Ended -> LocalTtsInterruptionEvent.Ended(
                 systemAllowsResume = interruption.systemAllowsResume
             )
+            IosTtsAudioInterruption.OutputBecameUnavailable ->
+                LocalTtsInterruptionEvent.OutputBecameNoisy(
+                    playbackWasActive = state == SharedMobileEpubLocalTtsState.SPEAKING
+                )
         }
         val transition = interruptionState.reduce(event)
         interruptionState = transition.state

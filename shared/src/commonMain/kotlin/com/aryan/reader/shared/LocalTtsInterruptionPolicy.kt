@@ -7,6 +7,7 @@ data class LocalTtsInterruptionState(
 sealed interface LocalTtsInterruptionEvent {
     data class Began(val playbackWasActive: Boolean) : LocalTtsInterruptionEvent
     data class Ended(val systemAllowsResume: Boolean) : LocalTtsInterruptionEvent
+    data class OutputBecameNoisy(val playbackWasActive: Boolean) : LocalTtsInterruptionEvent
 }
 
 enum class LocalTtsInterruptionAction {
@@ -35,6 +36,14 @@ fun LocalTtsInterruptionState.reduce(
         state = LocalTtsInterruptionState(),
         action = if (resumeWhenInterruptionEnds && event.systemAllowsResume) {
             LocalTtsInterruptionAction.RESUME
+        } else {
+            LocalTtsInterruptionAction.NONE
+        },
+    )
+    is LocalTtsInterruptionEvent.OutputBecameNoisy -> LocalTtsInterruptionTransition(
+        state = LocalTtsInterruptionState(),
+        action = if (event.playbackWasActive) {
+            LocalTtsInterruptionAction.PAUSE
         } else {
             LocalTtsInterruptionAction.NONE
         },
