@@ -5,6 +5,11 @@ import com.aryan.reader.shared.ui.SharedMobilePdfNativeAction
 import platform.UIKit.UIApplication
 import platform.UIKit.UIScreen
 
+internal data class IosAppLifecycleState(
+    val isActive: Boolean = true,
+    val eventId: Long = 0L,
+)
+
 /** Native reader-window effects kept behind a replaceable boundary for lifecycle tests. */
 internal interface IosReaderSystemEffects {
     val brightness: Double

@@ -35,6 +35,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -835,11 +836,6 @@ private data class IosSystemUiState(
     val edgeToEdge: Boolean
 )
 
-internal data class IosAppLifecycleState(
-    val isActive: Boolean = true,
-    val eventId: Long = 0L,
-)
-
 private enum class IosUtilityScreen {
     ACCOUNT,
     PRO,
@@ -1517,6 +1513,7 @@ private fun ReaderIosApp(
     }
     val audiobookPlayer = remember { IosAudiobookPlayback(bridge) }
     val ttsListenController = remember { IosBookTtsListeningController() }
+    DisposableEffect(ttsListenController) { onDispose(ttsListenController::release) }
     val audiobookPlaybackSnapshot = bridge.audiobookPlaybackSnapshot
     var lastAudiobookPersistAt by remember { mutableStateOf(0L) }
     LaunchedEffect(audiobookPlaybackSnapshot) {

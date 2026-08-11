@@ -14,11 +14,15 @@ import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.FileType
 import com.aryan.reader.shared.ReaderTtsReplacementEngine
 import com.aryan.reader.shared.ReaderTtsReplacementPreferences
+import com.aryan.reader.shared.LocalTtsInterruptionAction
+import com.aryan.reader.shared.LocalTtsInterruptionEvent
+import com.aryan.reader.shared.LocalTtsInterruptionState
 import com.aryan.reader.shared.SharedBookTtsListenState
 import com.aryan.reader.shared.SharedBookTtsListeningProgress
 import com.aryan.reader.shared.SharedTtsListenStartPolicy
 import com.aryan.reader.shared.calculateSharedTtsAudiobookProgress
 import com.aryan.reader.shared.currentTimestamp
+import com.aryan.reader.shared.reduce
 import com.aryan.reader.shared.splitSharedTtsListenChunks
 import com.aryan.reader.shared.reader.loadSharedEpubTtsChapters
 import com.aryan.reader.shared.pdf.IosPdfiumRuntime
@@ -47,6 +51,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.ExperimentalSerializationApi
@@ -152,8 +157,10 @@ internal class IosBookTtsListeningController {
     private var latestWordOffset = 0
     private var wantsPlayback = false
     private var audioSessionActive = false
+    private var interruptionState = LocalTtsInterruptionState()
     private var sleepTimerJob: Job? = null
     private var persistJob: Job? = null
+    private val interruptionMonitor = IosTtsAudioInterruptionMonitor(::handleAudioInterruption)
 
     init {
         synthesizer.delegate = delegate
@@ -260,6 +267,11 @@ internal class IosBookTtsListeningController {
     }
 
     fun pause() {
+        interruptionState = LocalTtsInterruptionState()
+        pauseInternal()
+    }
+
+    private fun pauseInternal() {
         if (currentChunks.isEmpty()) return
         iosTtsListenLog("pause() chunk=$currentChunkIndex")
         wantsPlayback = false
@@ -271,6 +283,7 @@ internal class IosBookTtsListeningController {
     }
 
     fun resume() {
+        interruptionState = LocalTtsInterruptionState()
         if (currentChunks.isEmpty() || currentChunkIndex < 0) return
         if (state.isPlaying || state.isLoading) return
         iosTtsListenLog("resume() chunk=$currentChunkIndex wordOffset=$latestWordOffset")
@@ -279,6 +292,7 @@ internal class IosBookTtsListeningController {
     }
 
     fun stop() {
+        interruptionState = LocalTtsInterruptionState()
         iosTtsListenLog("stop() bookId=$currentBookId chunk=$currentChunkIndex")
         sleepTimerJob?.cancel()
         sleepTimerJob = null
@@ -291,6 +305,33 @@ internal class IosBookTtsListeningController {
         wantsPlayback = false
         state = SharedBookTtsListenState(sessionEndedByStop = true)
         deactivateAudioSession()
+    }
+
+    fun release() {
+        stop()
+        interruptionMonitor.close()
+        scope.cancel()
+    }
+
+    private fun handleAudioInterruption(interruption: IosTtsAudioInterruption) {
+        val event = when (interruption) {
+            IosTtsAudioInterruption.Began -> LocalTtsInterruptionEvent.Began(
+                playbackWasActive = state.isPlaying || state.isLoading
+            )
+            is IosTtsAudioInterruption.Ended -> LocalTtsInterruptionEvent.Ended(
+                systemAllowsResume = interruption.systemAllowsResume
+            )
+        }
+        val transition = interruptionState.reduce(event)
+        interruptionState = transition.state
+        when (transition.action) {
+            LocalTtsInterruptionAction.NONE -> Unit
+            LocalTtsInterruptionAction.PAUSE -> pauseInternal()
+            LocalTtsInterruptionAction.RESUME -> {
+                configureAudioSession(active = true)
+                resume()
+            }
+        }
     }
 
     fun previousChunk() = moveByChunk(-1)
