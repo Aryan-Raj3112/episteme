@@ -158,6 +158,7 @@ class MainViewModelTest {
         mockkConstructor(FontsRepository::class)
         mockkConstructor(TtsController::class)
         mockkConstructor(BookImporter::class)
+        mockkConstructor(AndroidLibraryMutationStore::class)
 
         every { anyConstructed<BillingClientWrapper>().proUpgradeState } returns billingStateFlow
         every { anyConstructed<BillingClientWrapper>().initializeConnection() } just Runs
@@ -176,20 +177,20 @@ class MainViewModelTest {
         every { anyConstructed<TtsController>().connect() } just Runs
         every { anyConstructed<TtsController>().release() } just Runs
         every { anyConstructed<RecentFilesRepository>().getRecentFilesFlow() } returns recentFilesFlow
-        every { anyConstructed<RecentFilesRepository>().activeShelvesFlow } returns shelvesFlow
-        every { anyConstructed<RecentFilesRepository>().shelfCrossRefsFlow } returns shelfRefsFlow
-        every { anyConstructed<RecentFilesRepository>().tagsFlow } returns tagsFlow
-        every { anyConstructed<RecentFilesRepository>().tagCrossRefsFlow } returns tagRefsFlow
+        every { anyConstructed<AndroidLibraryMutationStore>().activeShelvesFlow } returns shelvesFlow
+        every { anyConstructed<AndroidLibraryMutationStore>().shelfCrossRefsFlow } returns shelfRefsFlow
+        every { anyConstructed<AndroidLibraryMutationStore>().tagsFlow } returns tagsFlow
+        every { anyConstructed<AndroidLibraryMutationStore>().tagCrossRefsFlow } returns tagRefsFlow
 
-        coEvery { anyConstructed<RecentFilesRepository>().migrateLegacyShelvesToRoom() } just Runs
-        coEvery { anyConstructed<RecentFilesRepository>().seedTagsIfEmpty(any()) } just Runs
-        coEvery { anyConstructed<RecentFilesRepository>().assignTagToBook(any(), any()) } just Runs
-        coEvery { anyConstructed<RecentFilesRepository>().removeTagFromBook(any(), any()) } just Runs
-        coEvery { anyConstructed<RecentFilesRepository>().deleteTag(any()) } just Runs
-        coEvery { anyConstructed<RecentFilesRepository>().removeBooksFromShelf(any(), any()) } just Runs
-        coEvery { anyConstructed<RecentFilesRepository>().addShelf(any()) } just Runs
-        coEvery { anyConstructed<RecentFilesRepository>().addBooksToShelf(any(), any()) } just Runs
-        coEvery { anyConstructed<RecentFilesRepository>().deleteShelf(any()) } just Runs
+        coEvery { anyConstructed<AndroidLibraryMutationStore>().migrateLegacyShelves() } just Runs
+        coEvery { anyConstructed<AndroidLibraryMutationStore>().seedTagsIfEmpty(any()) } just Runs
+        coEvery { anyConstructed<AndroidLibraryMutationStore>().assignTagToBooks(any(), any()) } just Runs
+        coEvery { anyConstructed<AndroidLibraryMutationStore>().removeTagFromBooks(any(), any()) } just Runs
+        coEvery { anyConstructed<AndroidLibraryMutationStore>().deleteTag(any()) } just Runs
+        coEvery { anyConstructed<AndroidLibraryMutationStore>().removeBooksFromShelf(any(), any()) } just Runs
+        coEvery { anyConstructed<AndroidLibraryMutationStore>().createShelf(any(), any()) } just Runs
+        coEvery { anyConstructed<AndroidLibraryMutationStore>().addBooksToShelf(any(), any()) } just Runs
+        coEvery { anyConstructed<AndroidLibraryMutationStore>().deleteShelf(any()) } just Runs
         coEvery { anyConstructed<RecentFilesRepository>().deleteFilePermanently(any()) } just Runs
         coEvery { anyConstructed<RecentFilesRepository>().addRecentFile(any()) } just Runs
         coEvery { anyConstructed<BookImporter>().deleteBookByUriString(any()) } returns true
@@ -907,16 +908,15 @@ class MainViewModelTest {
 
         viewModel.toggleTagForBooks("favorite", setOf(" book ", "", "other"), assign = true)
         advanceUntilIdle()
-        coVerify { anyConstructed<RecentFilesRepository>().assignTagToBook("book", "favorite") }
-        coVerify { anyConstructed<RecentFilesRepository>().assignTagToBook("other", "favorite") }
+        coVerify { anyConstructed<AndroidLibraryMutationStore>().assignTagToBooks("favorite", setOf("book", "other")) }
 
         viewModel.toggleTagForBooks("favorite", setOf("book"), assign = false)
         advanceUntilIdle()
-        coVerify { anyConstructed<RecentFilesRepository>().removeTagFromBook("book", "favorite") }
+        coVerify { anyConstructed<AndroidLibraryMutationStore>().removeTagFromBooks("favorite", setOf("book")) }
 
         viewModel.toggleTagForBooks(" ", setOf("book"), assign = true)
         advanceUntilIdle()
-        coVerify(exactly = 0) { anyConstructed<RecentFilesRepository>().assignTagToBook("book", " ") }
+        coVerify(exactly = 0) { anyConstructed<AndroidLibraryMutationStore>().assignTagToBooks(" ", any()) }
     }
 
     @Test
@@ -930,7 +930,7 @@ class MainViewModelTest {
         viewModel.deleteTag(" favorite ")
         advanceUntilIdle()
 
-        coVerify { anyConstructed<RecentFilesRepository>().deleteTag("favorite") }
+        coVerify { anyConstructed<AndroidLibraryMutationStore>().deleteTag("favorite") }
         val filteredState = viewModel.uiState.first { it.libraryFilters.tagIds == setOf("keep") }
         assertEquals(setOf("keep"), filteredState.libraryFilters.tagIds)
         verify { mockEditor.putStringSet(KEY_FILTER_TAG_IDS, setOf("keep")) }
@@ -980,8 +980,8 @@ class MainViewModelTest {
         viewModel.addSelectedBooksToShelves(setOf(" manual ", "other"), setOf(" book "))
         advanceUntilIdle()
 
-        coVerify { anyConstructed<RecentFilesRepository>().addBooksToShelf("manual", listOf("book")) }
-        coVerify { anyConstructed<RecentFilesRepository>().addBooksToShelf("other", listOf("book")) }
+        coVerify { anyConstructed<AndroidLibraryMutationStore>().addBooksToShelf("manual", setOf("book")) }
+        coVerify { anyConstructed<AndroidLibraryMutationStore>().addBooksToShelf("other", setOf("book")) }
         val clearedState = viewModel.uiState.first {
             it.showAddSelectedToShelfDialogFor.isEmpty() && it.contextualActionItems.isEmpty()
         }
@@ -1005,7 +1005,7 @@ class MainViewModelTest {
         viewModel.addSelectedBooksToShelves(setOf("manual"), emptySet())
         advanceUntilIdle()
 
-        coVerify(exactly = 0) { anyConstructed<RecentFilesRepository>().addBooksToShelf(any(), any()) }
+        coVerify(exactly = 0) { anyConstructed<AndroidLibraryMutationStore>().addBooksToShelf(any(), any()) }
     }
 
     @Test
@@ -1025,8 +1025,8 @@ class MainViewModelTest {
         viewModel.createShelf("New shelf")
         advanceUntilIdle()
 
-        coVerify { anyConstructed<RecentFilesRepository>().addShelf(match { it.name == "New shelf" }) }
-        coVerify { anyConstructed<RecentFilesRepository>().addBooksToShelf(any(), listOf("book")) }
+        coVerify { anyConstructed<AndroidLibraryMutationStore>().createShelf(match { it.name == "New shelf" }, any()) }
+        coVerify { anyConstructed<AndroidLibraryMutationStore>().addBooksToShelf(any(), setOf("book")) }
         val clearedState = viewModel.uiState.first {
             !it.showCreateShelfDialog &&
                 it.createShelfSelectedBookIds.isEmpty() &&
@@ -1155,8 +1155,8 @@ class MainViewModelTest {
         viewModel.deleteSelectedShelves()
         advanceUntilIdle()
 
-        coVerify { anyConstructed<RecentFilesRepository>().deleteShelf("manual") }
-        coVerify(exactly = 0) { anyConstructed<RecentFilesRepository>().deleteShelf("unshelved") }
+        coVerify { anyConstructed<AndroidLibraryMutationStore>().deleteShelf("manual") }
+        coVerify(exactly = 0) { anyConstructed<AndroidLibraryMutationStore>().deleteShelf("unshelved") }
         val clearedState = viewModel.uiState.first { it.contextualActionShelfIds.isEmpty() }
         assertTrue(clearedState.contextualActionShelfIds.isEmpty())
     }
@@ -1226,7 +1226,7 @@ class MainViewModelTest {
         viewModel.addBooksToShelf("manual")
         advanceUntilIdle()
 
-        coVerify { anyConstructed<RecentFilesRepository>().addBooksToShelf("manual", listOf("loose")) }
+        coVerify { anyConstructed<AndroidLibraryMutationStore>().addBooksToShelf("manual", setOf("loose")) }
         val state = viewModel.uiState.first {
             !it.isAddingBooksToShelf && it.booksSelectedForAdding.isEmpty()
         }
@@ -1248,7 +1248,7 @@ class MainViewModelTest {
 
         assertFalse(state.isAddingBooksToShelf)
         assertTrue(state.booksSelectedForAdding.isEmpty())
-        coVerify(exactly = 0) { anyConstructed<RecentFilesRepository>().addBooksToShelf("unshelved", any()) }
+        coVerify(exactly = 0) { anyConstructed<AndroidLibraryMutationStore>().addBooksToShelf("unshelved", any()) }
     }
 
     @Test
@@ -1268,7 +1268,7 @@ class MainViewModelTest {
         viewModel.removeContextualItemsFromShelf()
         advanceUntilIdle()
 
-        coVerify { anyConstructed<RecentFilesRepository>().removeBooksFromShelf("manual", listOf("book")) }
+        coVerify { anyConstructed<AndroidLibraryMutationStore>().removeBooksFromShelf("manual", setOf("book")) }
         val clearedState = viewModel.uiState.first { it.contextualActionItems.isEmpty() }
         assertTrue(clearedState.contextualActionItems.isEmpty())
     }

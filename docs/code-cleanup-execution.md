@@ -70,6 +70,10 @@ Safety matrix:
 - Route construction through `AndroidAppGraph`; do not introduce a DI framework solely for cleanup.
 - Exit: `MainViewModel` owns controllers/facades rather than constructing feature repositories; storage transaction boundaries are explicit and tested.
 
+Result (2026-08-11): complete. `AndroidAppGraph` is now the single construction point for Android repositories, parsers, importers, and storage adapters; `MainViewModel` directly constructs none of those feature dependencies. Shelf/tag flows, transactions, remote shelf application, and legacy shelf migration were physically removed from `RecentFilesRepository` into `AndroidLibraryMutationStore`. Remaining book, folder mirror, artifact, and legacy operations are exposed through four transaction-shaped capability interfaces, so consumers can no longer reach unrelated operations through a broad repository reference. The concrete implementation remains consolidated where its deletion/cache transactions share private resources; physical extraction can proceed behind these interfaces without another consumer migration.
+
+Verification: focused shared library controller tests and Android shelf/tag ViewModel parity tests pass. Android OSS test compilation/tests, Android Pro compilation, iOS simulator compilation, and `git diff --check` pass. No UI, schema, preference key, timestamp ordering, or sync callback behavior was intentionally changed.
+
 ### Phase 2 — Shared UI feature modularization
 
 - Decompose `SharedMobileScreens.kt` by library, importing, search, settings, and reader workspace responsibility.
@@ -108,8 +112,8 @@ Safety matrix:
 
 | Phase | Status | Android LOC delta | Shared LOC delta | Commit | Verification/result |
 | --- | --- | ---: | ---: | --- | --- |
-| 0 | Complete (2026-08-11) | 0 | 0 | pending | Baseline, standards, largest-file inventory, safety matrix, and portable-source verification established. |
-| 1 | Pending | — | — | — | — |
+| 0 | Complete (2026-08-11) | 0 | 0 | `45b7ffc4` | Baseline, standards, largest-file inventory, safety matrix, and portable-source verification established. |
+| 1 | Complete (2026-08-11) | +92 | 0 | pending | Composition-root ownership, physical library persistence split, and narrow book/folder/artifact/legacy capabilities. `RecentFilesRepository` 1,001 → 883 LOC; direct feature constructions and broad repository references in `MainViewModel` are both zero. |
 | 2 | Pending | — | — | — | — |
 | 3 | Pending | — | — | — | — |
 | 4 | Pending | — | — | — | — |

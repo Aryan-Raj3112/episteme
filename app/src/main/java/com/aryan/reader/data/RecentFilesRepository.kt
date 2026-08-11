@@ -44,7 +44,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
-import androidx.room.withTransaction
 import java.io.File
 import java.io.FileOutputStream
 import com.aryan.reader.pdf.data.PdfAnnotationRepository
@@ -54,8 +53,6 @@ import com.aryan.reader.pdf.data.PdfTextRepository
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationSidecarCodec
 import org.json.JSONObject
 import org.json.JSONArray
-import java.util.UUID
-import androidx.core.content.edit
 import androidx.room.withTransaction
 
 private const val COVER_CACHE_DIR = "cover_cache"
@@ -63,7 +60,11 @@ private const val DIRECT_EMBEDDED_COVER_MAX_BYTES = 8L * 1024L * 1024L
 private const val EMBEDDED_COVER_MAX_DIMENSION = 1200
 private val EMBEDDED_COVER_EXTENSIONS = setOf("jpg", "jpeg", "png", "gif", "webp", "bmp")
 
-class RecentFilesRepository(private val context: Context) {
+class RecentFilesRepository(private val context: Context) :
+    AndroidBookStore,
+    AndroidFolderMirrorStore,
+    AndroidBookArtifactStore,
+    AndroidLegacyMigrationStore {
 
     private val database = AppDatabase.getDatabase(context)
     private val recentFileDao = database.recentFileDao()
@@ -78,113 +79,35 @@ class RecentFilesRepository(private val context: Context) {
     private val pdfTextRepository by lazy { PdfTextRepository(context) }
     private val bookCacheDao by lazy { BookCacheDatabase.getDatabase(context).bookCacheDao() }
 
-    val activeShelvesFlow = database.shelfDao().getAllActiveShelves()
-    val shelfCrossRefsFlow = database.shelfDao().getAllBookShelfCrossRefs()
-    val tagsFlow = database.tagDao().getAllTags()
-    val tagCrossRefsFlow = database.tagDao().getAllBookTagCrossRefs()
-
     init {
         if (!coverCacheDir.exists()) {
             coverCacheDir.mkdirs()
         }
     }
 
-    fun getRecentFilesFlow(): Flow<List<RecentFileItem>> {
+    override fun getRecentFilesFlow(): Flow<List<RecentFileItem>> {
         return recentFileDao.getRecentFiles().map { entities ->
             entities.map { it.toRecentFileItem() }
         }
     }
 
-    suspend fun getFileByBookId(bookId: String): RecentFileItem? = withContext(Dispatchers.IO) {
+    override suspend fun getFileByBookId(bookId: String): RecentFileItem? = withContext(Dispatchers.IO) {
         return@withContext recentFileDao.getFileByBookId(bookId)?.toRecentFileItem()
     }
 
-    suspend fun getFileByUri(uriString: String): RecentFileItem? = withContext(Dispatchers.IO) {
+    override suspend fun getFileByUri(uriString: String): RecentFileItem? = withContext(Dispatchers.IO) {
         return@withContext recentFileDao.getFileByUri(uriString)?.toRecentFileItem()
     }
 
-    suspend fun addShelf(shelf: ShelfEntity) = withContext(Dispatchers.IO) {
-        AppDatabase.getDatabase(context).shelfDao().insertShelf(shelf)
-    }
-
-    suspend fun addBooksToShelf(shelfId: String, bookIds: List<String>) = withContext(Dispatchers.IO) {
-        val timestamp = System.currentTimeMillis()
-        val dao = AppDatabase.getDatabase(context).shelfDao()
-        dao.insertBookShelfCrossRefs(bookIds.map { BookShelfCrossRef(it, shelfId, timestamp) })
-        dao.touchShelf(shelfId, timestamp)
-    }
-
-    suspend fun renameShelf(shelfId: String, newName: String) = withContext(Dispatchers.IO) {
-        AppDatabase.getDatabase(context).shelfDao().updateShelfName(shelfId, newName, System.currentTimeMillis())
-    }
-
-    suspend fun deleteShelf(shelfId: String) = withContext(Dispatchers.IO) {
-        AppDatabase.getDatabase(context).shelfDao().markShelfAsDeleted(shelfId, System.currentTimeMillis())
-    }
-
-    suspend fun removeBooksFromShelf(shelfId: String, bookIds: List<String>) = withContext(Dispatchers.IO) {
-        val dao = AppDatabase.getDatabase(context).shelfDao()
-        dao.removeBooksFromShelf(shelfId, bookIds)
-        dao.touchShelf(shelfId, System.currentTimeMillis())
-    }
-
-    suspend fun applyRemoteShelf(shelfId: String, name: String, bookIds: List<String>, timestamp: Long, isDeleted: Boolean): Boolean = withContext(Dispatchers.IO) {
-        val database = AppDatabase.getDatabase(context)
-        database.withTransaction {
-            val dao = database.shelfDao()
-            val existing = dao.getShelfById(shelfId)
-            if (existing?.isSmart == true) return@withTransaction false
-
-            dao.insertShelf(
-                ShelfEntity(
-                    id = shelfId,
-                    name = name,
-                    createdAt = existing?.createdAt ?: timestamp,
-                    updatedAt = timestamp,
-                    isDeleted = isDeleted
-                )
-            )
-            dao.clearBooksFromShelf(shelfId)
-            if (!isDeleted && bookIds.isNotEmpty()) {
-                dao.insertBookShelfCrossRefs(bookIds.map { BookShelfCrossRef(it, shelfId, timestamp) })
-            }
-            true
-        }
-    }
-
-    suspend fun getFilesBySourceFolder(sourceFolderUri: String): List<RecentFileItem> = withContext(Dispatchers.IO) {
+    override suspend fun getFilesBySourceFolder(sourceFolderUri: String): List<RecentFileItem> = withContext(Dispatchers.IO) {
         return@withContext recentFileDao.getFilesBySourceFolder(sourceFolderUri).map { it.toRecentFileItem() }
     }
 
-    suspend fun getAllFilesForSync(): List<RecentFileItem> = withContext(Dispatchers.IO) {
+    override suspend fun getAllFilesForSync(): List<RecentFileItem> = withContext(Dispatchers.IO) {
         return@withContext recentFileDao.getAllFiles().map { it.toRecentFileItem() }
     }
 
-    suspend fun createTag(tag: TagEntity) = withContext(Dispatchers.IO) {
-        AppDatabase.getDatabase(context).tagDao().insertTag(tag)
-    }
-
-    suspend fun seedTagsIfEmpty(tags: List<TagEntity>) = withContext(Dispatchers.IO) {
-        if (tags.isEmpty()) return@withContext
-        val tagDao = AppDatabase.getDatabase(context).tagDao()
-        if (tagDao.getTagCount() == 0) {
-            tagDao.insertTags(tags)
-        }
-    }
-
-    suspend fun assignTagToBook(bookId: String, tagId: String) = withContext(Dispatchers.IO) {
-        AppDatabase.getDatabase(context).tagDao().insertBookTagCrossRef(BookTagCrossRef(bookId, tagId))
-    }
-
-    suspend fun removeTagFromBook(bookId: String, tagId: String) = withContext(Dispatchers.IO) {
-        AppDatabase.getDatabase(context).tagDao().removeTagFromBook(tagId, bookId)
-    }
-
-    suspend fun deleteTag(tagId: String) = withContext(Dispatchers.IO) {
-        AppDatabase.getDatabase(context).tagDao().deleteTag(tagId)
-    }
-
-    suspend fun clearAllLocalData() = withContext(Dispatchers.IO) {
+    override suspend fun clearAllLocalData() = withContext(Dispatchers.IO) {
         recentFileDao.clearAll()
         if (coverCacheDir.exists()) {
             coverCacheDir.deleteRecursively()
@@ -206,7 +129,7 @@ class RecentFilesRepository(private val context: Context) {
         Timber.d("Cleared all local book data, sidecars, and cover cache.")
     }
 
-    suspend fun addRecentFile(item: RecentFileItem) = withContext(Dispatchers.IO) {
+    override suspend fun addRecentFile(item: RecentFileItem) = withContext(Dispatchers.IO) {
         Timber.d("SyncDebug: addRecentFile called for bookId: ${item.bookId}")
         Timber.d("SyncDebug:   -> Incoming item: title='${item.title}', uri='${item.uriString}', isAvailable=${item.isAvailable}, isDeleted=${item.isDeleted}, isRecent=${item.isRecent}")
         val existingItem = recentFileDao.getFileByBookId(item.bookId)
@@ -362,12 +285,12 @@ class RecentFilesRepository(private val context: Context) {
         return current.orEmpty().trim() != original.orEmpty().trim()
     }
 
-    suspend fun updateUserEditableMetadata(
+    override suspend fun updateUserEditableMetadata(
         bookId: String,
         metadata: BookMetadataEdit,
-        fileSize: Long = 0L,
-        fileContentModifiedTimestamp: Long = 0L,
-        coverImagePath: String? = null
+        fileSize: Long,
+        fileContentModifiedTimestamp: Long,
+        coverImagePath: String?
     ) = withContext(Dispatchers.IO) {
         val currentTime = System.currentTimeMillis()
         recentFileDao.updateUserEditableMetadata(
@@ -385,30 +308,30 @@ class RecentFilesRepository(private val context: Context) {
         Timber.d("Updated user-editable metadata for $bookId")
     }
 
-    suspend fun updateCustomName(bookId: String, customName: String?) = withContext(Dispatchers.IO) {
+    override suspend fun updateCustomName(bookId: String, customName: String?) = withContext(Dispatchers.IO) {
         val currentTime = System.currentTimeMillis()
         recentFileDao.updateCustomName(bookId, customName, currentTime)
         Timber.d("Updated custom display name for $bookId")
     }
 
-    suspend fun restoreOriginalMetadata(
+    override suspend fun restoreOriginalMetadata(
         bookId: String,
-        fileSize: Long = 0L,
-        fileContentModifiedTimestamp: Long = 0L,
-        coverImagePath: String? = null
+        fileSize: Long,
+        fileContentModifiedTimestamp: Long,
+        coverImagePath: String?
     ) = withContext(Dispatchers.IO) {
         val currentTime = System.currentTimeMillis()
         recentFileDao.restoreOriginalMetadata(bookId, coverImagePath, fileSize, fileContentModifiedTimestamp, currentTime)
         Timber.d("Restored original metadata for $bookId")
     }
 
-    suspend fun updateHighlights(bookId: String, highlightsJson: String) = withContext(Dispatchers.IO) {
+    override suspend fun updateHighlights(bookId: String, highlightsJson: String) = withContext(Dispatchers.IO) {
         val currentTime = System.currentTimeMillis()
         recentFileDao.updateHighlights(bookId, highlightsJson, currentTime)
         Timber.d("Updated highlights for $bookId")
     }
 
-    suspend fun syncLocalMetadataToFolder(bookId: String, force: Boolean = false) = withContext(Dispatchers.IO) {
+    override suspend fun syncLocalMetadataToFolder(bookId: String, force: Boolean) = withContext(Dispatchers.IO) {
         val entity = recentFileDao.getFileByBookId(bookId) ?: return@withContext
         val folderUriString = entity.sourceFolderUri
 
@@ -465,7 +388,7 @@ class RecentFilesRepository(private val context: Context) {
         }
     }
 
-    suspend fun syncLocalAnnotationsToFolder(bookId: String) = withContext(Dispatchers.IO) {
+    override suspend fun syncLocalAnnotationsToFolder(bookId: String) = withContext(Dispatchers.IO) {
         Timber.tag("FolderAnnotationSync").d("syncLocalAnnotationsToFolder called for bookId: $bookId")
         val entity = recentFileDao.getFileByBookId(bookId) ?: run {
             Timber.tag("FolderAnnotationSync").w("Entity not found for bookId: $bookId")
@@ -560,10 +483,10 @@ class RecentFilesRepository(private val context: Context) {
         )
     }
 
-    suspend fun importAnnotationBundle(
+    override suspend fun importAnnotationBundle(
         bookId: String,
         jsonString: String,
-        lastModifiedTimestamp: Long? = null
+        lastModifiedTimestamp: Long?
     ) = withContext(Dispatchers.IO) {
         Timber.tag("FolderAnnotationSync").d("importAnnotationBundle: Processing bundle for $bookId")
         try {
@@ -631,7 +554,7 @@ class RecentFilesRepository(private val context: Context) {
         }
     }
 
-    suspend fun deleteFilesBySourceFolder(folderUriString: String) = withContext(Dispatchers.IO) {
+    override suspend fun deleteFilesBySourceFolder(folderUriString: String) = withContext(Dispatchers.IO) {
         val start = ReaderPerfLog.nowNanos()
         val filesToRemove = recentFileDao.getFilesBySourceFolder(folderUriString)
         recentFileDao.deleteFilesBySourceFolder(folderUriString)
@@ -644,7 +567,7 @@ class RecentFilesRepository(private val context: Context) {
         }
     }
 
-    suspend fun updateEpubReadingPosition(uriString: String, locator: Locator, cfiForWebView: String?, progress: Float) = withContext(Dispatchers.IO) {
+    override suspend fun updateEpubReadingPosition(uriString: String, locator: Locator, cfiForWebView: String?, progress: Float) = withContext(Dispatchers.IO) {
         val item = recentFileDao.getFileByUri(uriString)
         if (item != null) {
             val currentTime = System.currentTimeMillis()
@@ -661,9 +584,9 @@ class RecentFilesRepository(private val context: Context) {
         }
     }
 
-    suspend fun getFolderBooksNeedingTextMetadata(
-        sourceFolderUri: String? = null,
-        limit: Int = Int.MAX_VALUE
+    override suspend fun getFolderBooksNeedingTextMetadata(
+        sourceFolderUri: String?,
+        limit: Int
     ): List<RecentFileItem> = withContext(Dispatchers.IO) {
         val queryLimit = limit.coerceAtLeast(1)
         val entities = if (sourceFolderUri.isNullOrBlank()) {
@@ -674,7 +597,7 @@ class RecentFilesRepository(private val context: Context) {
         return@withContext entities.map { it.toRecentFileItem() }
     }
 
-    suspend fun hasFolderBooksNeedingTextMetadata(sourceFolderUri: String? = null): Boolean = withContext(Dispatchers.IO) {
+    override suspend fun hasFolderBooksNeedingTextMetadata(sourceFolderUri: String?): Boolean = withContext(Dispatchers.IO) {
         val count = if (sourceFolderUri.isNullOrBlank()) {
             recentFileDao.countFolderBooksNeedingTextMetadata()
         } else {
@@ -683,7 +606,7 @@ class RecentFilesRepository(private val context: Context) {
         return@withContext count > 0
     }
 
-    suspend fun updateExtractedMetadata(items: List<RecentFileItem>) = withContext(Dispatchers.IO) {
+    override suspend fun updateExtractedMetadata(items: List<RecentFileItem>) = withContext(Dispatchers.IO) {
         if (items.isEmpty()) return@withContext
         items.chunked(300).forEach { chunk ->
             database.withTransaction {
@@ -707,7 +630,7 @@ class RecentFilesRepository(private val context: Context) {
         Timber.tag(ReaderPerfLog.TAG).d("Metadata extraction batch updated ${items.size} rows.")
     }
 
-    suspend fun detachAllFolderBooks() = withContext(Dispatchers.IO) {
+    override suspend fun detachAllFolderBooks() = withContext(Dispatchers.IO) {
         recentFileDao.detachAllFolderBooks()
         Timber.d("Detached all folder books. They are now standard local files.")
     }
@@ -721,13 +644,13 @@ class RecentFilesRepository(private val context: Context) {
         )
     }
 
-    suspend fun updateBookmarks(bookId: String, bookmarksJson: String) = withContext(Dispatchers.IO) {
+    override suspend fun updateBookmarks(bookId: String, bookmarksJson: String) = withContext(Dispatchers.IO) {
         val currentTime = System.currentTimeMillis()
         recentFileDao.updateBookmarks(bookId, bookmarksJson, currentTime)
         Timber.d("Updated bookmarks for $bookId")
     }
 
-    suspend fun updatePdfReadingPosition(uriString: String, page: Int, progress: Float) = withContext(Dispatchers.IO) {
+    override suspend fun updatePdfReadingPosition(uriString: String, page: Int, progress: Float) = withContext(Dispatchers.IO) {
         val item = recentFileDao.getFileByUri(uriString)
         if (item != null) {
             val currentTime = System.currentTimeMillis()
@@ -742,13 +665,13 @@ class RecentFilesRepository(private val context: Context) {
     }
 
     @Suppress("unused")
-    suspend fun makeBookAvailable(bookId: String, internalUri: Uri) = withContext(Dispatchers.IO) {
+    override suspend fun makeBookAvailable(bookId: String, internalUri: Uri) = withContext(Dispatchers.IO) {
         val currentTime = System.currentTimeMillis()
         recentFileDao.updateBookAvailability(bookId, internalUri.toString(), currentTime)
         Timber.d("Made book available locally: $bookId at URI $internalUri")
     }
 
-    suspend fun markAsNotRecent(bookIds: List<String>) = withContext(Dispatchers.IO) {
+    override suspend fun markAsNotRecent(bookIds: List<String>) = withContext(Dispatchers.IO) {
         bookIds.chunked(900).forEach { chunk ->
             if (chunk.isNotEmpty()) {
                 Timber.d("DeleteDebug: DAO - Marking ${chunk.size} items as not recent.")
@@ -757,7 +680,7 @@ class RecentFilesRepository(private val context: Context) {
         }
     }
 
-    suspend fun markAsDeleted(bookIds: List<String>) = withContext(Dispatchers.IO) {
+    override suspend fun markAsDeleted(bookIds: List<String>) = withContext(Dispatchers.IO) {
         bookIds.chunked(900).forEach { chunk ->
             if (chunk.isNotEmpty()) {
                 recentFileDao.markAsDeleted(chunk, System.currentTimeMillis())
@@ -766,7 +689,7 @@ class RecentFilesRepository(private val context: Context) {
         }
     }
 
-    suspend fun deleteFilePermanently(bookIds: List<String>) = withContext(Dispatchers.IO) {
+    override suspend fun deleteFilePermanently(bookIds: List<String>) = withContext(Dispatchers.IO) {
         if (bookIds.isEmpty()) return@withContext
 
         bookIds.chunked(900).forEach { chunk ->
@@ -822,7 +745,7 @@ class RecentFilesRepository(private val context: Context) {
         return coverCacheDir
     }
 
-    suspend fun saveCoverToCache(bitmap: Bitmap, uri: Uri): String? = withContext(Dispatchers.IO) {
+    override suspend fun saveCoverToCache(bitmap: Bitmap, uri: Uri): String? = withContext(Dispatchers.IO) {
         val cacheDir = getCoverCacheDirInternal()
         val filename = "cover_${uri.toString().hashCode()}_${System.currentTimeMillis()}.png"
         val file = File(cacheDir, filename)
@@ -850,7 +773,7 @@ class RecentFilesRepository(private val context: Context) {
         }
     }
 
-    suspend fun saveEmbeddedCoverToCache(bytes: ByteArray, uri: Uri, extension: String): String? = withContext(Dispatchers.IO) {
+    override suspend fun saveEmbeddedCoverToCache(bytes: ByteArray, uri: Uri, extension: String): String? = withContext(Dispatchers.IO) {
         if (bytes.isEmpty()) return@withContext null
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
@@ -922,7 +845,7 @@ class RecentFilesRepository(private val context: Context) {
         return deleted
     }
 
-    suspend fun migrateBookIdLocally(oldId: String, newId: String) = withContext(Dispatchers.IO) {
+    override suspend fun migrateBookIdLocally(oldId: String, newId: String) = withContext(Dispatchers.IO) {
         val oldEntity = recentFileDao.getFileByBookId(oldId) ?: return@withContext
         val newEntity = oldEntity.copy(bookId = newId)
         recentFileDao.insertOrUpdateFile(newEntity)
@@ -955,7 +878,7 @@ class RecentFilesRepository(private val context: Context) {
         Timber.tag("SyncMigration").d("Migrated local sidecars from $oldId to $newId")
     }
 
-    suspend fun clearLocalCachesForBook(bookId: String) = withContext(Dispatchers.IO) {
+    override suspend fun clearLocalCachesForBook(bookId: String) = withContext(Dispatchers.IO) {
         try {
             recentFileDao.getFileByBookId(bookId)?.coverImagePath?.let { deleteCachedCover(it) }
             pdfRichTextRepository.getFileForSync(bookId).delete()
@@ -967,7 +890,7 @@ class RecentFilesRepository(private val context: Context) {
         }
     }
 
-    suspend fun addRecentFiles(items: List<RecentFileItem>) = withContext(Dispatchers.IO) {
+    override suspend fun addRecentFiles(items: List<RecentFileItem>) = withContext(Dispatchers.IO) {
         if (items.isEmpty()) return@withContext
         items.chunked(900).forEach { chunk ->
             val entities = chunk.map { it.toRecentFileEntity() }
@@ -976,45 +899,4 @@ class RecentFilesRepository(private val context: Context) {
         Timber.d("Batch inserted/updated ${items.size} recent files in DB.")
     }
 
-    suspend fun migrateLegacyShelvesToRoom() = withContext(Dispatchers.IO) {
-        val prefs = context.getSharedPreferences("reader_user_prefs", Context.MODE_PRIVATE)
-        if (prefs.getBoolean("is_shelves_migrated_to_room", false)) return@withContext
-
-        Timber.i("Starting migration of legacy SharedPreferences shelves to Room DB...")
-
-        val shelfNames = prefs.getStringSet("shelf_names", emptySet()) ?: emptySet()
-        if (shelfNames.isEmpty()) {
-            prefs.edit { putBoolean("is_shelves_migrated_to_room", true) }
-            return@withContext
-        }
-
-        val db = AppDatabase.getDatabase(context)
-        val shelfDao = db.shelfDao()
-
-        val validBookIds = recentFileDao.getAllFiles().map { it.bookId }.toSet()
-
-        shelfNames.forEach { name ->
-            val shelfId = UUID.nameUUIDFromBytes(name.toByteArray()).toString()
-            val timestamp = prefs.getLong("shelf_timestamp_$name", System.currentTimeMillis())
-            val isDeleted = prefs.getBoolean("shelf_deleted_$name", false)
-            val bookIds = prefs.getStringSet("shelf_content_$name", emptySet()) ?: emptySet()
-
-            val shelf = ShelfEntity(
-                id = shelfId, name = name, isSmart = false, smartRulesJson = null,
-                createdAt = timestamp, updatedAt = timestamp, isDeleted = isDeleted
-            )
-            shelfDao.insertShelf(shelf)
-
-            val crossRefs = bookIds.filter { it in validBookIds }.map { bookId ->
-                BookShelfCrossRef(bookId = bookId, shelfId = shelfId, addedAt = timestamp)
-            }
-
-            if (crossRefs.isNotEmpty()) {
-                shelfDao.insertBookShelfCrossRefs(crossRefs)
-            }
-        }
-
-        prefs.edit { putBoolean("is_shelves_migrated_to_room", true) }
-        Timber.i("Successfully migrated legacy shelves to Room.")
-    }
 }
