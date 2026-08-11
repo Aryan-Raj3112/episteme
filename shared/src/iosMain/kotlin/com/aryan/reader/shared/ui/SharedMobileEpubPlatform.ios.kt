@@ -22,8 +22,14 @@ import com.aryan.reader.shared.ReaderTtsChunk
 import com.aryan.reader.shared.ReaderTtsProgress
 import com.aryan.reader.shared.ReaderExternalLookupAction
 import com.aryan.reader.shared.ReaderExternalLookupService
+import com.aryan.reader.shared.LocalTtsInterruptionAction
+import com.aryan.reader.shared.LocalTtsInterruptionEvent
+import com.aryan.reader.shared.LocalTtsInterruptionState
 import com.aryan.reader.shared.externalLookupUrl
 import com.aryan.reader.shared.ios.loadIosEpubBook
+import com.aryan.reader.shared.ios.IosTtsAudioInterruption
+import com.aryan.reader.shared.ios.IosTtsAudioInterruptionMonitor
+import com.aryan.reader.shared.reduce
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonPrimitive
@@ -254,6 +260,8 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
     private var activeUtteranceBaseOffset = 0
     private var wantsPlayback = true
     private var audioSessionActive = false
+    private var interruptionState = LocalTtsInterruptionState()
+    private val interruptionMonitor = IosTtsAudioInterruptionMonitor(::handleAudioInterruption)
 
     init {
         synthesizer.delegate = delegate
@@ -290,6 +298,11 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
     }
 
     override fun pause() {
+        interruptionState = LocalTtsInterruptionState()
+        pauseInternal()
+    }
+
+    private fun pauseInternal() {
         wantsPlayback = false
         synthesizer.pauseSpeakingAtBoundary(AVSpeechBoundary.AVSpeechBoundaryImmediate)
         if (activeUtterance != null) state = SharedMobileEpubLocalTtsState.PAUSED
@@ -297,6 +310,7 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
     }
 
     override fun resume() {
+        interruptionState = LocalTtsInterruptionState()
         wantsPlayback = true
         synthesizer.continueSpeaking()
         if (activeUtterance != null) state = SharedMobileEpubLocalTtsState.SPEAKING
@@ -342,6 +356,7 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
     }
 
     override fun stop() {
+        interruptionState = LocalTtsInterruptionState()
         sessionId += 1
         errorMessage = null
         invalidateActiveUtterance()
@@ -356,6 +371,27 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
         if (audioSessionActive) {
             configureAudioSession(active = false)
             audioSessionActive = false
+        }
+    }
+
+    private fun handleAudioInterruption(interruption: IosTtsAudioInterruption) {
+        val event = when (interruption) {
+            IosTtsAudioInterruption.Began -> LocalTtsInterruptionEvent.Began(
+                playbackWasActive = state == SharedMobileEpubLocalTtsState.SPEAKING
+            )
+            is IosTtsAudioInterruption.Ended -> LocalTtsInterruptionEvent.Ended(
+                systemAllowsResume = interruption.systemAllowsResume
+            )
+        }
+        val transition = interruptionState.reduce(event)
+        interruptionState = transition.state
+        when (transition.action) {
+            LocalTtsInterruptionAction.NONE -> Unit
+            LocalTtsInterruptionAction.PAUSE -> pauseInternal()
+            LocalTtsInterruptionAction.RESUME -> {
+                configureAudioSession(active = true)
+                resume()
+            }
         }
     }
 
@@ -510,6 +546,7 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
 
     override fun release() {
         stop()
+        interruptionMonitor.close()
         previewSynthesizer.stopSpeakingAtBoundary(AVSpeechBoundary.AVSpeechBoundaryImmediate)
         synthesizer.delegate = null
         val commands = MPRemoteCommandCenter.sharedCommandCenter()
