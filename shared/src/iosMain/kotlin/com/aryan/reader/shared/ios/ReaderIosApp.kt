@@ -199,7 +199,6 @@ import platform.UIKit.UIActivityViewController
 import platform.UIKit.UIDocumentPickerViewController
 import platform.UIKit.UIModalPresentationFullScreen
 import platform.UIKit.UIPrintInteractionController
-import platform.UIKit.UIScreen
 import platform.posix.fclose
 import platform.posix.fopen
 import platform.posix.fwrite
@@ -225,7 +224,15 @@ private val IOS_NATIVE_READER_FILE_TYPES = setOf(
 
 private val IosLegalLinks = sharedLegalLinksForProfile(SharedLegalProfile.STANDARD)
 
-class ReaderIosBridge {
+class ReaderIosBridge internal constructor(
+    private val readerSystemEffects: IosReaderSystemEffects,
+    private val pdfNativeActionPresenter: IosPdfNativeActionPresenter,
+) {
+    constructor() : this(
+        readerSystemEffects = UIKitReaderSystemEffects,
+        pdfNativeActionPresenter = IosPdfNativeActionPresenter(::performIosPdfNativeAction),
+    )
+
     private var systemUiHandler: ((statusHidden: Boolean, navigationHidden: Boolean, lightContent: Boolean, backgroundArgb: Long, edgeToEdge: Boolean) -> Unit)? = null
     private var latestSystemUiState: IosSystemUiState? = null
     private var originalReaderBrightness: Double? = null
@@ -604,7 +611,7 @@ class ReaderIosBridge {
     }
 
     fun setKeepScreenOn(enabled: Boolean) {
-        UIApplication.sharedApplication.idleTimerDisabled = enabled
+        readerSystemEffects.setKeepScreenOn(enabled)
     }
 
     fun updateAppActive(active: Boolean) {
@@ -615,17 +622,23 @@ class ReaderIosBridge {
     }
 
     fun setReaderBrightness(brightness: Float?) {
-        val screen = UIScreen.mainScreen
         if (originalReaderBrightness == null) {
-            originalReaderBrightness = screen.brightness
+            originalReaderBrightness = readerSystemEffects.brightness
         }
-        screen.brightness = brightness?.toDouble() ?: originalReaderBrightness ?: screen.brightness
+        readerSystemEffects.setBrightness(
+            brightness?.toDouble() ?: originalReaderBrightness ?: readerSystemEffects.brightness
+        )
     }
 
     fun restoreReaderBrightness() {
-        originalReaderBrightness?.let { UIScreen.mainScreen.brightness = it }
+        originalReaderBrightness?.let(readerSystemEffects::setBrightness)
         originalReaderBrightness = null
     }
+
+    internal fun performPdfNativeAction(
+        book: BookItem,
+        action: SharedMobilePdfNativeAction,
+    ): Boolean = pdfNativeActionPresenter.perform(book, action)
 
     fun setOrientationHandler(handler: (mode: Int) -> Unit) {
         orientationHandler = handler
@@ -2347,7 +2360,7 @@ private fun ReaderIosApp(
                                         startIosPdfReflow(pdfBook)
                                     }
                                     else -> {
-                                        val handled = performIosPdfNativeAction(pdfBook, action)
+                                        val handled = bridge.performPdfNativeAction(pdfBook, action)
                                         if (!handled) {
                                             showMessage(
                                                 when (action) {
@@ -2749,7 +2762,18 @@ private fun ReaderIosApp(
                                     SharedSettingsAction.READER_TOOLBAR,
                                     SharedSettingsAction.TTS_REPLACEMENTS,
                                     SharedSettingsAction.LOCAL_OVERRIDE_NOTE -> Unit
-                                    else -> showMessage("${action.name.lowercase().replace('_', ' ')} is not available on iOS")
+                                    SharedSettingsAction.SCREEN_CAPTURE_PROTECTION,
+                                    SharedSettingsAction.HIDE_READER_AI,
+                                    SharedSettingsAction.CLEAR_BOOK_CACHE,
+                                    SharedSettingsAction.DEVICE_MANAGEMENT,
+                                    SharedSettingsAction.AI_SETTINGS,
+                                    SharedSettingsAction.CLEAR_CLOUD_LOCAL_DATA,
+                                    SharedSettingsAction.TEST_PANEL_DETECTION,
+                                    SharedSettingsAction.TEST_SPEECH_BUBBLE_DETECTION,
+                                    SharedSettingsAction.EXPORT_LOGS,
+                                    SharedSettingsAction.DEBUG_ACTIONS -> {
+                                        showMessage("${action.name.lowercase().replace('_', ' ')} is not available on iOS")
+                                    }
                                 }
                             },
                             modifier = Modifier.fillMaxSize(),

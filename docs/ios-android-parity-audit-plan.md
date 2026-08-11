@@ -204,6 +204,18 @@ the phase completes.
 
 Exit: every free/non-auth capability has an owner, handler, automated evidence, and runtime-test case.
 
+Result (2026-08-11): complete. Every shared settings action now has an exhaustive iOS parity-scope
+classification, and iOS settings dispatch can no longer hide a new action behind a catch-all branch.
+The inventory records three free parity items for Phase 4 (`SCREEN_CAPTURE_PROTECTION`,
+`HIDE_READER_AI`, and `CLEAR_BOOK_CACHE`); screenshot blocking and the Android-only JVM book cache
+remain intentional platform constraints, while the portable hide-AI preference is an implementation
+gap. Reader brightness/idle-timer effects and PDF native presentation now cross injectable iOS ports,
+with native tests covering brightness restoration, keep-awake state, lifecycle event ordering, and
+PDF action forwarding. Existing folder and audiobook callbacks are already injected bridge ports and
+their behavioral slices remain in Phases 2 and 4. iOS test compilation passes without launching an
+emulator. Production Kotlin changed Android 109,033 → 109,033 (0), shared 116,600 → 116,711
+(+111), and iOS 9,964 → 10,075 (+111); iOS test source added 130 LOC.
+
 ### Phase 1 — Shared application feature controllers
 
 Extract feature orchestration from `ReaderIosApp.kt` only through real vertical use cases:
