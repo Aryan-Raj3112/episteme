@@ -2321,7 +2321,6 @@ private fun ReaderIosApp(
                                                     SharedMobilePdfNativeAction.SHARE -> "Unable to share ${pdfBook.displayName}."
                                                     SharedMobilePdfNativeAction.SAVE_COPY -> "Unable to export ${pdfBook.displayName}."
                                                     SharedMobilePdfNativeAction.PRINT -> "Printing is unavailable."
-                                                    else -> "${action.iosPdfActionLabel()} is not available yet."
                                                 }
                                             )
                                         }
@@ -4200,15 +4199,6 @@ private fun performIosPdfNativeAction(
         }
         else -> false
     }
-}
-
-private fun SharedMobilePdfNativeAction.iosPdfActionLabel(): String = when (this) {
-    SharedMobilePdfNativeAction.DICTIONARY_SETTINGS -> "Dictionary settings"
-    SharedMobilePdfNativeAction.INSERT_BLANK_PAGE -> "Insert blank page"
-    SharedMobilePdfNativeAction.SHARE -> "Share"
-    SharedMobilePdfNativeAction.SAVE_COPY -> "Save copy"
-    SharedMobilePdfNativeAction.PRINT -> "Print"
-    SharedMobilePdfNativeAction.TEXT_VIEW -> "Text View"
 }
 
 private fun presentIosShareSheet(url: NSURL): Boolean {

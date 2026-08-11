@@ -32,6 +32,43 @@ class PdfReaderSessionTest {
     }
 
     @Test
+    fun `initial shared reader keeps requested page until document count is known`() {
+        val state = initialSharedPdfReaderState(
+            persistedState = null,
+            defaults = com.aryan.reader.shared.reader.ReaderSettings(themeId = "no_theme"),
+            initialPageIndex = 37,
+        )
+
+        assertEquals(37, state.pageIndex)
+        assertEquals(38, state.pageCount)
+        assertEquals(12, state.copy(pageCount = 13).coerced().pageIndex)
+    }
+
+    @Test
+    fun `legacy persisted reader without page count preserves its stored page`() {
+        val restored = SharedPdfReaderStateSerializer.decode(
+            raw = """{"pageIndex":37,"displayMode":"VERTICAL_SCROLL"}""",
+            fallbackPageCount = 1,
+            fallbackPageIndex = 12,
+        )
+
+        assertEquals(37, restored?.pageIndex)
+        assertEquals(38, restored?.pageCount)
+    }
+
+    @Test
+    fun `legacy persisted reader without position uses library restore page`() {
+        val restored = SharedPdfReaderStateSerializer.decode(
+            raw = """{"displayMode":"VERTICAL_SCROLL"}""",
+            fallbackPageCount = 1,
+            fallbackPageIndex = 12,
+        )
+
+        assertEquals(12, restored?.pageIndex)
+        assertEquals(13, restored?.pageCount)
+    }
+
+    @Test
     fun `page navigation clamps to document bounds`() {
         val state = SharedPdfReaderState.initial(pageCount = 3, initialPageIndex = 1)
             .reduce(SharedPdfReaderAction.NextPage)

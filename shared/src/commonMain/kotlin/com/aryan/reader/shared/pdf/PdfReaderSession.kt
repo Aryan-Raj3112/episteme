@@ -190,9 +190,16 @@ object SharedPdfReaderStateSerializer {
         if (raw.isNullOrBlank()) return null
         val store = runCatching { json.decodeFromString<SharedPdfReaderStore>(raw) }.getOrNull()
             ?: return null
+        val restoredPageIndex = if (store.pageCount > 0) {
+            store.pageIndex
+        } else {
+            store.pageIndex.takeIf { it > 0 } ?: fallbackPageIndex
+        }.coerceAtLeast(0)
+        val restoredPageCount = store.pageCount.takeIf { it > 0 }
+            ?: maxOf(fallbackPageCount, restoredPageIndex + 1, 1)
         return SharedPdfReaderState(
-            pageIndex = store.pageIndex,
-            pageCount = store.pageCount.takeIf { it > 0 } ?: fallbackPageCount,
+            pageIndex = restoredPageIndex,
+            pageCount = restoredPageCount,
             displayMode = store.displayMode,
             themeId = store.themeId,
             zoom = store.zoom,
@@ -211,9 +218,7 @@ object SharedPdfReaderStateSerializer {
             lastActivePenTool = store.lastActivePenTool,
             lastActiveHighlighterTool = store.lastActiveHighlighterTool,
             richTextDocumentJson = store.richTextDocumentJson
-        ).coerced().let { state ->
-            if (state.pageCount > 0) state else state.copy(pageIndex = fallbackPageIndex)
-        }
+        ).coerced()
     }
 }
 
@@ -445,7 +450,12 @@ fun initialSharedPdfReaderState(
     return persistedState
         ?.copy(themeId = defaults.themeId ?: persistedState.themeId)
         ?.coerced()
-        ?: SharedPdfReaderState.initial(pageCount = 1, initialPageIndex = initialPageIndex)
+        // Opening is asynchronous. Preserve the requested restore page until the renderer reports
+        // the real page count instead of clamping every non-zero restore to page zero.
+        ?: SharedPdfReaderState.initial(
+            pageCount = (initialPageIndex.coerceAtLeast(0) + 1).coerceAtLeast(1),
+            initialPageIndex = initialPageIndex,
+        )
             .copy(
                 displayMode = PdfDisplayMode.VERTICAL_SCROLL,
                 themeId = defaults.themeId ?: "no_theme",

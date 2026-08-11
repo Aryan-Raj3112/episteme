@@ -213,7 +213,6 @@ import kotlinx.coroutines.withContext
 
 enum class SharedMobilePdfNativeAction {
     DICTIONARY_SETTINGS,
-    INSERT_BLANK_PAGE,
     SHARE,
     SAVE_COPY,
     PRINT,
