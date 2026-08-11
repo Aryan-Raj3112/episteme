@@ -191,6 +191,7 @@ import com.aryan.reader.shared.pdf.toAnnotation
 import com.aryan.reader.shared.pdf.withStyle
 import com.aryan.reader.shared.pdf.SharedPdfReaderAction
 import com.aryan.reader.shared.pdf.SharedPdfReaderState
+import com.aryan.reader.shared.pdf.SharedPdfExportSnapshot
 import com.aryan.reader.shared.pdf.SharedPdfJumpHistory
 import com.aryan.reader.shared.pdf.SharedPdfSearchResult
 import com.aryan.reader.shared.pdf.SharedPdfVirtualPage
@@ -211,7 +212,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 
-
 enum class SharedMobilePdfNativeAction {
     DICTIONARY_SETTINGS,
     SHARE,
@@ -231,7 +231,7 @@ data class SharedMobilePdfReflowUiState(
 fun SharedMobilePdfReaderScreen(
     book: BookItem,
     onBack: () -> Unit,
-    onNativePdfAction: (BookItem, SharedMobilePdfNativeAction, password: String?, SharedPdfReaderState) -> Unit,
+    onNativePdfAction: (BookItem, SharedMobilePdfNativeAction, password: String?, SharedPdfExportSnapshot) -> Unit,
     pdfReflowUiState: SharedMobilePdfReflowUiState = SharedMobilePdfReflowUiState(),
     pdfTabsEnabled: Boolean = false,
     openPdfTabs: List<BookItem> = emptyList(),
@@ -1058,7 +1058,7 @@ fun SharedMobilePdfReaderScreen(
                                 if (action == SharedMobilePdfNativeAction.PRINT && pdfPassword != null) {
                                     showPasswordProtectedPrintWarning = true
                                 } else {
-                                    onNativePdfAction(book, action, pdfPassword, readerState.copy(richTextDocumentJson = richTextDocumentJson))
+                                    onNativePdfAction(book, action, pdfPassword, SharedPdfExportSnapshot(readerState.copy(richTextDocumentJson = richTextDocumentJson), richTextController.pageLayouts))
                                 }
                             },
                             isCurrentPageBlank = isCurrentPageBlank,
@@ -1133,7 +1133,7 @@ fun SharedMobilePdfReaderScreen(
                             )
                         },
                         onScreenOrientation = { showScreenOrientationSheet = true },
-                        onDictionary = { onNativePdfAction(book, SharedMobilePdfNativeAction.DICTIONARY_SETTINGS, pdfPassword, readerState) },
+                        onDictionary = { onNativePdfAction(book, SharedMobilePdfNativeAction.DICTIONARY_SETTINGS, pdfPassword, SharedPdfExportSnapshot(readerState)) },
                         showAllTextHighlights = showAllTextHighlights,
                         isAllTextHighlightLoading = isAllTextHighlightLoading,
                         onToggleHighlights = ::toggleAllTextHighlights,

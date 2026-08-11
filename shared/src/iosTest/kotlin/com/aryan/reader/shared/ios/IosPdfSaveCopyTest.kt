@@ -8,6 +8,7 @@ import com.aryan.reader.shared.pdf.PdfAnnotationKind
 import com.aryan.reader.shared.pdf.PdfPagePoint
 import com.aryan.reader.shared.pdf.SharedPdfAnnotation
 import com.aryan.reader.shared.pdf.SharedPdfBlankPageInsertion
+import com.aryan.reader.shared.pdf.SharedPdfExportSnapshot
 import com.aryan.reader.shared.pdf.SharedPdfReaderState
 import kotlinx.coroutines.test.runTest
 import platform.Foundation.NSFileManager
@@ -34,9 +35,9 @@ class IosPdfSaveCopyTest {
         val result = prepareIosPdfSaveCopy(
             book = book(source),
             password = "secret",
-            state = SharedPdfReaderState(annotations = listOf(annotation)),
-            exporter = { sourcePath, destinationPath, password, annotations ->
-                exportArguments = listOf(sourcePath, destinationPath, password, annotations.single().id)
+            snapshot = SharedPdfExportSnapshot(SharedPdfReaderState(annotations = listOf(annotation))),
+            exporter = { sourcePath, destinationPath, password, snapshot ->
+                exportArguments = listOf(sourcePath, destinationPath, password, snapshot.state.annotations.single().id)
                 true
             },
         )
@@ -58,7 +59,7 @@ class IosPdfSaveCopyTest {
         val result = prepareIosPdfSaveCopy(
             book(source),
             password = null,
-            state = SharedPdfReaderState(blankPageInsertions = listOf(SharedPdfBlankPageInsertion(0))),
+            snapshot = SharedPdfExportSnapshot(SharedPdfReaderState(blankPageInsertions = listOf(SharedPdfBlankPageInsertion(0)))),
             exporter = { _, _, _, _ -> called = true; true },
         )
 

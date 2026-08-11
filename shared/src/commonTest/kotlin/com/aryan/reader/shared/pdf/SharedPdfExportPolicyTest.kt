@@ -40,10 +40,29 @@ class SharedPdfExportPolicyTest {
             sharedPdfExportMode(SharedPdfReaderState(annotations = listOf(text))),
         )
         assertEquals(
-            SharedPdfExportMode.UNSUPPORTED_TEXT_CONTENT,
+            SharedPdfExportMode.ANNOTATED,
             sharedPdfExportMode(
                 SharedPdfReaderState(
+                    annotations = listOf(text.copy(bounds = PdfPageBounds(0.1f, 0.2f, 0.4f, 0.3f))),
+                ),
+            ),
+        )
+        assertEquals(
+            SharedPdfExportMode.UNSUPPORTED_TEXT_CONTENT,
+            sharedPdfExportMode(SharedPdfReaderState(
                     richTextDocumentJson = SharedPdfRichTextSerializer.encode(SharedPdfRichDocument("Keep this")),
+                )),
+        )
+        assertEquals(
+            SharedPdfExportMode.ANNOTATED,
+            sharedPdfExportMode(
+                SharedPdfExportSnapshot(
+                    state = SharedPdfReaderState(
+                        richTextDocumentJson = SharedPdfRichTextSerializer.encode(SharedPdfRichDocument("Keep this")),
+                    ),
+                    richTextPageLayouts = listOf(
+                        SharedPdfRichPageLayout(0, androidx.compose.ui.text.AnnotatedString("Keep this"), 0, 9, 1000f),
+                    ),
                 ),
             ),
         )

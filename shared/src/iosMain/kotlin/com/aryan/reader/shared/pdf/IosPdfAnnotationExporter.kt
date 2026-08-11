@@ -3,6 +3,9 @@
 package com.aryan.reader.shared.pdf
 
 import com.aryan.reader.shared.pdfium.c.FPDFANNOT_COLORTYPE_Color
+import com.aryan.reader.shared.pdfium.c.FPDFBitmap_BGRA
+import com.aryan.reader.shared.pdfium.c.FPDFBitmap_CreateEx
+import com.aryan.reader.shared.pdfium.c.FPDFBitmap_Destroy
 import com.aryan.reader.shared.pdfium.c.FPDFAnnot_AddInkStroke
 import com.aryan.reader.shared.pdfium.c.FPDFAnnot_AppendAttachmentPoints
 import com.aryan.reader.shared.pdfium.c.FPDFAnnot_SetBorder
@@ -12,6 +15,11 @@ import com.aryan.reader.shared.pdfium.c.FPDFAnnot_SetFlags
 import com.aryan.reader.shared.pdfium.c.FPDFAnnot_SetStringValue
 import com.aryan.reader.shared.pdfium.c.FPDFPage_CloseAnnot
 import com.aryan.reader.shared.pdfium.c.FPDFPage_CreateAnnot
+import com.aryan.reader.shared.pdfium.c.FPDFPage_GenerateContent
+import com.aryan.reader.shared.pdfium.c.FPDFPage_InsertObject
+import com.aryan.reader.shared.pdfium.c.FPDFPageObj_NewImageObj
+import com.aryan.reader.shared.pdfium.c.FPDFImageObj_SetBitmap
+import com.aryan.reader.shared.pdfium.c.FPDFImageObj_SetMatrix
 import com.aryan.reader.shared.pdfium.c.FPDF_ANNOT_HIGHLIGHT
 import com.aryan.reader.shared.pdfium.c.FPDF_ANNOT_INK
 import com.aryan.reader.shared.pdfium.c.FPDF_ANNOT_SQUIGGLY
@@ -55,18 +63,24 @@ internal suspend fun exportIosPdfAnnotations(
     sourcePath: String,
     destinationPath: String,
     password: String?,
-    annotations: List<SharedPdfAnnotation>,
+    snapshot: SharedPdfExportSnapshot,
 ): Boolean = withContext(Dispatchers.Default) {
     IosPdfiumRuntime.mutex.withLock {
         IosPdfiumRuntime.ensureInitialized()
         val document = FPDF_LoadDocument(sourcePath, password) ?: return@withLock false
         try {
             val pageCount = FPDF_GetPageCount(document).coerceAtLeast(0)
-            val payload = SharedPdfAnnotationExportMapper.build(annotations)
+            val payload = SharedPdfAnnotationExportMapper.build(snapshot.state.annotations)
             val inkByPage = payload.inkAnnotations.groupBy { it.pageIndex }
             val highlightsByPage = payload.highlightAnnotations.groupBy { it.pageIndex }
+            val textPageIndices = snapshot.state.annotations
+                .filter { it.kind == PdfAnnotationKind.TEXT && it.text.isNotBlank() }
+                .mapTo(mutableSetOf(), SharedPdfAnnotation::pageIndex)
+            val richTextPageIndices = snapshot.richTextPageLayouts
+                .filter { it.visibleText.any { char -> !char.isWhitespace() } }
+                .mapTo(mutableSetOf(), SharedPdfRichPageLayout::pageIndex)
             var annotationsWritten = true
-            (inkByPage.keys + highlightsByPage.keys).forEach { pageIndex ->
+            (inkByPage.keys + highlightsByPage.keys + textPageIndices + richTextPageIndices).forEach { pageIndex ->
                 if (pageIndex !in 0 until pageCount) {
                     annotationsWritten = false
                     return@forEach
@@ -85,6 +99,20 @@ internal suspend fun exportIosPdfAnnotations(
                     highlightsByPage[pageIndex].orEmpty().forEach {
                         annotationsWritten = addIosPdfHighlightAnnotation(page, it, width, height) && annotationsWritten
                     }
+                    val rasterization = buildIosPdfTextRasterOverlays(
+                        pageIndex,
+                        width,
+                        height,
+                        snapshot.state.annotations,
+                        snapshot.richTextPageLayouts,
+                    )
+                    rasterization.overlays.forEach { overlay ->
+                        annotationsWritten = addIosPdfRasterOverlay(document, page, overlay, width, height) && annotationsWritten
+                    }
+                    if (rasterization.overlays.isNotEmpty()) {
+                        annotationsWritten = FPDFPage_GenerateContent(page) != 0 && annotationsWritten
+                    }
+                    annotationsWritten = rasterization.complete && annotationsWritten
                 } finally {
                     FPDF_ClosePage(page)
                 }
@@ -93,6 +121,37 @@ internal suspend fun exportIosPdfAnnotations(
         } finally {
             FPDF_CloseDocument(document)
         }
+    }
+}
+
+private fun addIosPdfRasterOverlay(
+    document: com.aryan.reader.shared.pdfium.c.FPDF_DOCUMENT,
+    page: com.aryan.reader.shared.pdfium.c.FPDF_PAGE,
+    overlay: IosPdfRasterOverlay,
+    pageWidth: Float,
+    pageHeight: Float,
+): Boolean = overlay.bgraPixels.usePinned { pixels ->
+    val bitmap = FPDFBitmap_CreateEx(
+        overlay.width,
+        overlay.height,
+        FPDFBitmap_BGRA,
+        pixels.addressOf(0),
+        overlay.width * 4,
+    ) ?: return@usePinned false
+    try {
+        val image = FPDFPageObj_NewImageObj(document) ?: return@usePinned false
+        if (FPDFImageObj_SetBitmap(null, 0, image, bitmap) == 0) return@usePinned false
+        val left = overlay.bounds.left * pageWidth
+        val bottom = (1f - overlay.bounds.bottom) * pageHeight
+        val width = (overlay.bounds.right - overlay.bounds.left) * pageWidth
+        val height = (overlay.bounds.bottom - overlay.bounds.top) * pageHeight
+        if (FPDFImageObj_SetMatrix(image, width.toDouble(), 0.0, 0.0, height.toDouble(), left.toDouble(), bottom.toDouble()) == 0) {
+            return@usePinned false
+        }
+        FPDFPage_InsertObject(page, image)
+        true
+    } finally {
+        FPDFBitmap_Destroy(bitmap)
     }
 }
 

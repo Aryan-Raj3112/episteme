@@ -148,6 +148,7 @@ import com.aryan.reader.shared.opds.SharedOpdsDownloadState
 import com.aryan.reader.shared.opds.SharedOpdsStreamUri
 import com.aryan.reader.shared.opds.opdsStreamBooksForCatalog
 import com.aryan.reader.shared.pdf.SharedPdfReaderState
+import com.aryan.reader.shared.pdf.SharedPdfExportSnapshot
 import com.aryan.reader.shared.pdf.SharedPdfReaderStateSerializer
 import com.aryan.reader.shared.pdf.PdfAutoScrollProfile
 import com.aryan.reader.shared.pdf.generateIosPdfReflowHtml
@@ -2306,7 +2307,7 @@ private fun ReaderIosApp(
                                     }
                                 }
                             },
-                            onNativePdfAction = { pdfBook, action, password, pdfState ->
+                            onNativePdfAction = { pdfBook, action, password, pdfExport ->
                                 when (action) {
                                     SharedMobilePdfNativeAction.DICTIONARY_SETTINGS -> {
                                         showDictionarySettingsSheet = true
@@ -2315,7 +2316,7 @@ private fun ReaderIosApp(
                                         startIosPdfReflow(pdfBook, password)
                                     }
                                     SharedMobilePdfNativeAction.SAVE_COPY -> scope.launch {
-                                        when (val export = prepareIosPdfSaveCopy(pdfBook, password, pdfState)) {
+                                        when (val export = prepareIosPdfSaveCopy(pdfBook, password, pdfExport)) {
                                             is IosPdfSaveCopyPreparation.Ready -> if (!bridge.performPdfNativeAction(export.book, action)) showMessage("Unable to export ${pdfBook.displayName}.")
                                             is IosPdfSaveCopyPreparation.Unavailable -> showMessage(export.message)
                                         }
