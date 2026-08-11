@@ -12,6 +12,7 @@ internal enum class IosSettingsActionDisposition {
     IMPLEMENTED_ON_IOS,
     PARITY_GAP,
     DEFERRED_CLOUD_OR_PAID,
+    INTENTIONAL_PLATFORM_DIFFERENCE,
     DEBUG_ONLY,
 }
 
@@ -34,14 +35,14 @@ internal fun SharedSettingsAction.iosDisposition(): IosSettingsActionDisposition
     SharedSettingsAction.SIGN_OUT,
     SharedSettingsAction.FOLDER_SYNC,
     SharedSettingsAction.TTS_SETTINGS,
+    SharedSettingsAction.HIDE_READER_AI,
     SharedSettingsAction.CLEAR_REFLOW_CACHE,
     SharedSettingsAction.HELP_FEEDBACK,
     SharedSettingsAction.SUPPORT,
     SharedSettingsAction.ABOUT -> IosSettingsActionDisposition.IMPLEMENTED_ON_IOS
 
     SharedSettingsAction.SCREEN_CAPTURE_PROTECTION,
-    SharedSettingsAction.HIDE_READER_AI,
-    SharedSettingsAction.CLEAR_BOOK_CACHE -> IosSettingsActionDisposition.PARITY_GAP
+    SharedSettingsAction.CLEAR_BOOK_CACHE -> IosSettingsActionDisposition.INTENTIONAL_PLATFORM_DIFFERENCE
 
     SharedSettingsAction.CLOUD_SYNC,
     SharedSettingsAction.DEVICE_MANAGEMENT,

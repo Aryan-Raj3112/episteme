@@ -5,6 +5,7 @@ data class MobileSettingsMutationState(
     val strictFileFilterEnabled: Boolean,
     val pdfFileNameAsDisplayName: Boolean,
     val folderSyncEnabled: Boolean,
+    val hideReaderAi: Boolean,
 )
 
 enum class MobileStrictFileFilterEffect {
@@ -17,6 +18,7 @@ sealed interface MobileSettingsMutation {
     data class ChangeStrictFileFilter(val effect: MobileStrictFileFilterEffect) : MobileSettingsMutation
     data class SetPdfFileNameAsDisplayName(val enabled: Boolean) : MobileSettingsMutation
     data class SetFolderSyncEnabled(val enabled: Boolean) : MobileSettingsMutation
+    data class SetHideReaderAi(val hidden: Boolean) : MobileSettingsMutation
 }
 
 /**
@@ -40,5 +42,7 @@ fun planMobileSettingsMutation(
         MobileSettingsMutation.SetPdfFileNameAsDisplayName(!state.pdfFileNameAsDisplayName)
     SharedSettingsAction.FOLDER_SYNC ->
         MobileSettingsMutation.SetFolderSyncEnabled(!state.folderSyncEnabled)
+    SharedSettingsAction.HIDE_READER_AI ->
+        MobileSettingsMutation.SetHideReaderAi(!state.hideReaderAi)
     else -> null
 }

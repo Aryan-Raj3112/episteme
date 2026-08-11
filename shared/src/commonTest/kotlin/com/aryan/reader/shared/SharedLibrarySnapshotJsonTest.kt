@@ -25,6 +25,7 @@ class SharedLibrarySnapshotJsonTest {
         assertEquals(LibraryFilters(), decoded.libraryFilters)
         assertEquals(0, decoded.mainScreenStartPage)
         assertEquals(0, decoded.libraryScreenStartPage)
+        assertFalse(decoded.hideReaderAi)
     }
 
     @Test

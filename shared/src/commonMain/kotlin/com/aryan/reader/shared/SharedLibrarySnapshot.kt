@@ -47,6 +47,7 @@ data class SharedLibrarySnapshot(
     val useStrictFileFilter: Boolean = false,
     val externalFileBehavior: String = "ASK",
     val usePdfFileNameAsDisplayName: Boolean = false,
+    val hideReaderAi: Boolean = false,
     val appLanguageTag: String? = null,
     val appThemeMode: AppThemeMode = AppThemeMode.SYSTEM,
     val appContrastOption: AppContrastOption = AppContrastOption.STANDARD,
@@ -67,7 +68,7 @@ data class SharedLibrarySnapshot(
 )
 
 object SharedLibrarySnapshotJson {
-    private const val SCHEMA_VERSION = 29
+    private const val SCHEMA_VERSION = 30
 
     private val json = Json {
         prettyPrint = true
@@ -121,6 +122,7 @@ object SharedLibrarySnapshotJson {
             useStrictFileFilter = root.boolean("useStrictFileFilter", false),
             externalFileBehavior = normalizedExternalFileBehavior(root.string("externalFileBehavior")),
             usePdfFileNameAsDisplayName = root.boolean("usePdfFileNameAsDisplayName", false),
+            hideReaderAi = root.boolean("hideReaderAi", false),
             appLanguageTag = root.string("appLanguageTag"),
             appThemeMode = root.string("appThemeMode")
                 ?.let { runCatching { AppThemeMode.valueOf(it) }.getOrNull() }
@@ -201,6 +203,7 @@ object SharedLibrarySnapshotJson {
                 "useStrictFileFilter" to JsonPrimitive(snapshot.useStrictFileFilter),
                 "externalFileBehavior" to JsonPrimitive(snapshot.externalFileBehavior),
                 "usePdfFileNameAsDisplayName" to JsonPrimitive(snapshot.usePdfFileNameAsDisplayName),
+                "hideReaderAi" to JsonPrimitive(snapshot.hideReaderAi),
                 "appLanguageTag" to snapshot.appLanguageTag.asJson(),
                 "appThemeMode" to JsonPrimitive(snapshot.appThemeMode.name),
                 "appContrastOption" to JsonPrimitive(snapshot.appContrastOption.name),

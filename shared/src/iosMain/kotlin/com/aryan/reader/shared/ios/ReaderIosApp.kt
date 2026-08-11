@@ -2620,7 +2620,7 @@ private fun ReaderIosApp(
                                 includeLanguage = true,
                                 includeScreenCaptureProtection = false,
                                 includeCloudLocalDataClear = false,
-                                includeHideReaderAi = false,
+                                includeHideReaderAi = true,
                                 supportProjectAvailable = true,
                                 isTabsEnabled = state.isTabsEnabled,
                                 isSyncEnabled = state.isSyncEnabled,
@@ -2628,6 +2628,7 @@ private fun ReaderIosApp(
                                 useStrictFileFilter = state.useStrictFileFilter,
                                 includePdfFileNameDisplayName = true,
                                 usePdfFileNameAsDisplayName = state.usePdfFileNameAsDisplayName,
+                                hideReaderAi = state.hideReaderAi,
                                 languageSummary = sharedAppLanguageLabel(state.appLanguageTag),
                             )
                         )
@@ -2671,6 +2672,7 @@ private fun ReaderIosApp(
                                         strictFileFilterEnabled = state.useStrictFileFilter,
                                         pdfFileNameAsDisplayName = state.usePdfFileNameAsDisplayName,
                                         folderSyncEnabled = state.isFolderSyncEnabled,
+                                        hideReaderAi = state.hideReaderAi,
                                     ),
                                 )
                                 when (portableMutation) {
@@ -2688,13 +2690,12 @@ private fun ReaderIosApp(
                                         }
                                     }
                                     is MobileSettingsMutation.SetPdfFileNameAsDisplayName -> {
-                                        state = state.copy(
-                                            usePdfFileNameAsDisplayName = portableMutation.enabled
-                                        )
+                                        state = state.copy(usePdfFileNameAsDisplayName = portableMutation.enabled)
                                     }
                                     is MobileSettingsMutation.SetFolderSyncEnabled -> {
                                         setFolderSyncEnabled(portableMutation.enabled)
                                     }
+                                    is MobileSettingsMutation.SetHideReaderAi -> state = state.copy(hideReaderAi = portableMutation.hidden)
                                     null -> Unit
                                 }
                                 when (action) {
@@ -2721,9 +2722,7 @@ private fun ReaderIosApp(
                                     SharedSettingsAction.HELP_FEEDBACK -> utilityScreen = IosUtilityScreen.FEEDBACK
                                     SharedSettingsAction.SUPPORT -> utilityScreen = IosUtilityScreen.SUPPORT
                                     SharedSettingsAction.ABOUT -> utilityScreen = IosUtilityScreen.ABOUT
-                                    SharedSettingsAction.RECENT_LIMIT -> {
-                                        showRecentLimitDialog = true
-                                    }
+                                    SharedSettingsAction.RECENT_LIMIT -> showRecentLimitDialog = true
                                     SharedSettingsAction.EXTERNAL_FILE_BEHAVIOR -> {
                                         showExternalFileBehaviorDialog = true
                                     }
@@ -2741,9 +2740,9 @@ private fun ReaderIosApp(
                                     SharedSettingsAction.TABS_TOGGLE,
                                     SharedSettingsAction.STRICT_FILE_FILTER,
                                     SharedSettingsAction.PDF_FILENAME_DISPLAY_NAME,
+                                    SharedSettingsAction.HIDE_READER_AI,
                                     SharedSettingsAction.FOLDER_SYNC -> Unit
                                     SharedSettingsAction.SCREEN_CAPTURE_PROTECTION,
-                                    SharedSettingsAction.HIDE_READER_AI,
                                     SharedSettingsAction.CLEAR_BOOK_CACHE,
                                     SharedSettingsAction.DEVICE_MANAGEMENT,
                                     SharedSettingsAction.AI_SETTINGS,

@@ -10,6 +10,7 @@ class MobileSettingsEffectsTest {
         strictFileFilterEnabled = false,
         pdfFileNameAsDisplayName = false,
         folderSyncEnabled = false,
+        hideReaderAi = false,
     )
 
     @Test
@@ -25,6 +26,10 @@ class MobileSettingsEffectsTest {
         assertEquals(
             MobileSettingsMutation.SetFolderSyncEnabled(true),
             planMobileSettingsMutation(SharedSettingsAction.FOLDER_SYNC, disabled),
+        )
+        assertEquals(
+            MobileSettingsMutation.SetHideReaderAi(true),
+            planMobileSettingsMutation(SharedSettingsAction.HIDE_READER_AI, disabled),
         )
     }
 

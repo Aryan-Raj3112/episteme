@@ -15,18 +15,17 @@ class IosSettingsParityTest {
     }
 
     @Test
-    fun nonCloudNonPaidSettingsGapsRemainExplicit() {
+    fun noNonCloudNonPaidSettingsGapsRemain() {
         val gaps = SharedSettingsAction.entries
             .filter { it.iosDisposition() == IosSettingsActionDisposition.PARITY_GAP }
             .toSet()
 
+        assertTrue(gaps.isEmpty())
         assertEquals(
-            setOf(
-                SharedSettingsAction.SCREEN_CAPTURE_PROTECTION,
-                SharedSettingsAction.HIDE_READER_AI,
-                SharedSettingsAction.CLEAR_BOOK_CACHE,
-            ),
-            gaps,
+            setOf(SharedSettingsAction.SCREEN_CAPTURE_PROTECTION, SharedSettingsAction.CLEAR_BOOK_CACHE),
+            SharedSettingsAction.entries
+                .filter { it.iosDisposition() == IosSettingsActionDisposition.INTENTIONAL_PLATFORM_DIFFERENCE }
+                .toSet(),
         )
     }
 }

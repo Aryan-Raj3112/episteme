@@ -198,6 +198,7 @@ fun SettingsScreen(
                         strictFileFilterEnabled = uiState.useStrictFileFilter,
                         pdfFileNameAsDisplayName = uiState.usePdfFileNameAsDisplayName,
                         folderSyncEnabled = uiState.isFolderSyncEnabled,
+                        hideReaderAi = hideReaderAi,
                     ),
                 )
                 when (portableMutation) {
@@ -211,6 +212,10 @@ fun SettingsScreen(
                         viewModel.setUsePdfFileNameAsDisplayName(portableMutation.enabled)
                     is MobileSettingsMutation.SetFolderSyncEnabled ->
                         viewModel.setFolderSyncEnabled(portableMutation.enabled)
+                    is MobileSettingsMutation.SetHideReaderAi -> {
+                        saveHideReaderAiFeatures(context, portableMutation.hidden)
+                        hideReaderAi = portableMutation.hidden
+                    }
                     null -> Unit
                 }
                 when (action) {
@@ -244,11 +249,7 @@ fun SettingsScreen(
                     }
                     SharedSettingsAction.DEVICE_MANAGEMENT -> viewModel.showDeviceManagementForDebug()
                     SharedSettingsAction.AI_SETTINGS -> navController.navigateIfReady(com.aryan.reader.shared.ui.SharedMobileAppDestination.AI_SETTINGS)
-                    SharedSettingsAction.HIDE_READER_AI -> {
-                        val nextHidden = !hideReaderAi
-                        saveHideReaderAiFeatures(context, nextHidden)
-                        hideReaderAi = nextHidden
-                    }
+                    SharedSettingsAction.HIDE_READER_AI -> Unit
                     SharedSettingsAction.TTS_SETTINGS -> showTtsSettingsSheet = true
                     SharedSettingsAction.CLEAR_BOOK_CACHE -> showClearBookCacheDialog = true
                     SharedSettingsAction.CLEAR_REFLOW_CACHE -> showClearReflowCacheDialog = true

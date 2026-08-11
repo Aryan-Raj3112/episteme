@@ -65,6 +65,7 @@ class SharedMobileLibraryPersistenceTest {
             useStrictFileFilter = true,
             externalFileBehavior = "TEMPORARY",
             usePdfFileNameAsDisplayName = true,
+            hideReaderAi = true,
             appLanguageTag = "fr",
             appThemeMode = AppThemeMode.DARK,
         )
@@ -92,6 +93,7 @@ class SharedMobileLibraryPersistenceTest {
         assertTrue(restored.useStrictFileFilter)
         assertEquals("TEMPORARY", restored.externalFileBehavior)
         assertTrue(restored.usePdfFileNameAsDisplayName)
+        assertTrue(restored.hideReaderAi)
         assertEquals("fr", restored.appLanguageTag)
         assertEquals(AppThemeMode.DARK, restored.appThemeMode)
         assertTrue(restored.shelves.any { it.id == manual.id && it.books.map(BookItem::id) == listOf(first.id) })
