@@ -305,6 +305,20 @@ class SharedMobileLibraryMutationsTest {
     }
 
     @Test
+    fun `mobile folder names preserve first identity and fill the first available suffix`() {
+        assertEquals("Books", availableMobileFolderName(" Books ", emptyList()))
+        assertEquals("Folder", availableMobileFolderName(" ", emptyList()))
+        assertEquals(
+            "Books (2)",
+            availableMobileFolderName("Books", listOf("Books", "Books (3)")),
+        )
+        assertEquals(
+            "Books (4)",
+            availableMobileFolderName("Books", listOf("Books", "Books (2)", "Books (3)")),
+        )
+    }
+
+    @Test
     fun `external file close policy matches Android managed-copy lifecycle`() {
         assertEquals(
             MobileExternalFileCloseAction.PROMPT,

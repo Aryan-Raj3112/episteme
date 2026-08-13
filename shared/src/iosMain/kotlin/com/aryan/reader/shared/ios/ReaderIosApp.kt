@@ -72,6 +72,7 @@ import com.aryan.reader.shared.SharedImportPlanner
 import com.aryan.reader.shared.SharedFileCapabilities
 import com.aryan.reader.shared.SharedFolderScannedFile
 import com.aryan.reader.shared.SharedMobileFolderScanResult
+import com.aryan.reader.shared.availableMobileFolderName
 import com.aryan.reader.shared.SharedReaderScreenState
 import com.aryan.reader.shared.SharedSettingsAction
 import com.aryan.reader.shared.SharedSettingsDestination
@@ -420,6 +421,11 @@ class ReaderIosBridge internal constructor(
             "Imported ${imported.size} file(s) from $folderName"
         }
     }
+
+    fun availableImportedFolderName(
+        preferredName: String,
+        existingNames: List<String>,
+    ): String = availableMobileFolderName(preferredName, existingNames)
 
     fun recordImportedFonts(fileNames: List<String>, filePaths: List<String> = fileNames) {
         if (fileNames.isEmpty()) {

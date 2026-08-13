@@ -48,6 +48,23 @@ data class SharedMobileFolderScanResult(
     val succeeded: Boolean = true,
 )
 
+/**
+ * Keeps folders with the same provider display name independently addressable.
+ * The first folder retains Android's existing display name and later collisions
+ * receive the smallest available numeric suffix.
+ */
+fun availableMobileFolderName(
+    preferredName: String,
+    existingNames: Collection<String>,
+): String {
+    val baseName = preferredName.trim().ifBlank { "Folder" }
+    val usedNames = existingNames.toHashSet()
+    if (baseName !in usedNames) return baseName
+    var suffix = 2
+    while ("$baseName ($suffix)" in usedNames) suffix += 1
+    return "$baseName ($suffix)"
+}
+
 fun enqueueMobileFolderScan(
     queue: List<SharedMobileFolderScanResult>,
     result: SharedMobileFolderScanResult,

@@ -70,11 +70,11 @@ struct ContentView: View {
             switch result {
             case .success(let urls):
                 if importKind == .folder, let folderURL = urls.first {
-                    rememberImportedFolder(folderURL)
+                    let folderName = rememberImportedFolder(folderURL, bridge: bridge)
                     recordImportedFolderScan(
                         bridge: bridge,
-                        folderName: folderURL.lastPathComponent,
-                        scan: copyImportedFolderToAppSupport(folderURL)
+                        folderName: folderName,
+                        scan: copyImportedFolderToAppSupport(folderURL, folderName: folderName)
                     )
                     return
                 }
@@ -238,19 +238,61 @@ struct ContentView: View {
 
 private let importedFolderBookmarksKey = "reader.ios.importedFolderBookmarks.v1"
 
-private func rememberImportedFolder(_ url: URL) {
+@discardableResult
+private func rememberImportedFolder(_ url: URL, bridge: ReaderIosBridge) -> String {
+    let baseName = url.lastPathComponent
+    var bookmarks = UserDefaults.standard.dictionary(forKey: importedFolderBookmarksKey) as? [String: Data] ?? [:]
     do {
         let bookmark = try url.bookmarkData(
             options: [.minimalBookmark],
             includingResourceValuesForKeys: nil,
             relativeTo: nil
         )
-        var bookmarks = UserDefaults.standard.dictionary(forKey: importedFolderBookmarksKey) as? [String: Data] ?? [:]
-        bookmarks[url.lastPathComponent] = bookmark
+        var matchedFolderName: String?
+        var shouldRefreshMatch = false
+        for (folderName, existingBookmark) in bookmarks {
+            var isStale = false
+            if existingBookmark == bookmark || (try? URL(
+                resolvingBookmarkData: existingBookmark,
+                options: [.withoutUI],
+                relativeTo: nil,
+                bookmarkDataIsStale: &isStale
+            ).standardizedFileURL) == url.standardizedFileURL {
+                matchedFolderName = folderName
+                shouldRefreshMatch = isStale
+                break
+            }
+        }
+        if let matchedFolderName {
+            if shouldRefreshMatch { bookmarks[matchedFolderName] = bookmark }
+            UserDefaults.standard.set(bookmarks, forKey: importedFolderBookmarksKey)
+            return matchedFolderName
+        }
+        let folderName = bridge.availableImportedFolderName(
+            preferredName: baseName,
+            existingNames: Array(bookmarks.keys)
+        )
+        bookmarks[folderName] = bookmark
         UserDefaults.standard.set(bookmarks, forKey: importedFolderBookmarksKey)
+        return folderName
     } catch {
         // The managed copy remains usable if a document provider cannot issue a bookmark.
+        return bridge.availableImportedFolderName(
+            preferredName: baseName,
+            existingNames: Array(bookmarks.keys)
+        )
     }
+}
+
+private func updateImportedFolderBookmark(_ url: URL, folderName: String) {
+    guard let bookmark = try? url.bookmarkData(
+        options: [.minimalBookmark],
+        includingResourceValuesForKeys: nil,
+        relativeTo: nil
+    ) else { return }
+    var bookmarks = UserDefaults.standard.dictionary(forKey: importedFolderBookmarksKey) as? [String: Data] ?? [:]
+    bookmarks[folderName] = bookmark
+    UserDefaults.standard.set(bookmarks, forKey: importedFolderBookmarksKey)
 }
 
 private func refreshImportedFolders(bridge: ReaderIosBridge) {
@@ -271,12 +313,12 @@ private func refreshImportedFolders(bridge: ReaderIosBridge) {
             continue
         }
         if isStale {
-            rememberImportedFolder(folderURL)
+            updateImportedFolderBookmark(folderURL, folderName: folderName)
         }
         recordImportedFolderScan(
             bridge: bridge,
             folderName: folderName,
-            scan: copyImportedFolderToAppSupport(folderURL)
+            scan: copyImportedFolderToAppSupport(folderURL, folderName: folderName)
         )
     }
 }
@@ -319,7 +361,7 @@ private func deleteImportedFolderFiles(folderName: String, managedPaths: [String
         return
     }
     if isStale {
-        rememberImportedFolder(sourceRoot)
+        updateImportedFolderBookmark(sourceRoot, folderName: folderName)
     }
 
     let managedRoot = appSupport
@@ -364,7 +406,7 @@ private func replaceImportedFolderFile(folderName: String, managedPath: String) 
         return nil
     }
     if isStale {
-        rememberImportedFolder(sourceRoot)
+        updateImportedFolderBookmark(sourceRoot, folderName: folderName)
     }
 
     let managedRoot = appSupport
@@ -421,7 +463,7 @@ private func recordImportedFolderScan(
     )
 }
 
-private func copyImportedFolderToAppSupport(_ sourceURL: URL) -> ImportedFolderScan {
+private func copyImportedFolderToAppSupport(_ sourceURL: URL, folderName: String? = nil) -> ImportedFolderScan {
     let didStartAccessing = sourceURL.startAccessingSecurityScopedResource()
     defer {
         if didStartAccessing {
@@ -440,7 +482,7 @@ private func copyImportedFolderToAppSupport(_ sourceURL: URL) -> ImportedFolderS
         )
         let folderRoot = appSupport
             .appendingPathComponent("LocalFolders", isDirectory: true)
-            .appendingPathComponent(safeLocalFolderName(sourceURL.lastPathComponent), isDirectory: true)
+            .appendingPathComponent(safeLocalFolderName(folderName ?? sourceURL.lastPathComponent), isDirectory: true)
         let stagingRoot = folderRoot.deletingLastPathComponent()
             .appendingPathComponent(".\(folderRoot.lastPathComponent)-\(UUID().uuidString).staging", isDirectory: true)
         pendingStagingRoot = stagingRoot
