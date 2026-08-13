@@ -61,13 +61,33 @@ suspend fun paginateReaderBlocks(
             continue
         }
 
-        val blockHeight = measurementProvider.measure(block)
         val previousBottomMargin = currentPageContent.lastOrNull()?.let {
             with(density) { it.style.margin.bottom.toPx() }
         }
         val rawTopMargin = with(density) { block.style.margin.top.toPx() }
         val effectiveTopMargin = effectiveTopMarginPxForPagination(currentPageContent.isEmpty(), rawTopMargin)
         val spaceBetweenBlocks = collapsedVerticalMarginPxForPagination(previousBottomMargin, effectiveTopMargin)
+        val heightForSplitting = remainingHeight - spaceBetweenBlocks
+
+        // Measuring a large vertical container before asking it to split measures every child on
+        // every successive page (N + (N-k) + ...). Probe its incremental splitter first so each
+        // child is visited only for the fragment where it can appear. The final fragment still
+        // follows the normal full-measure path, preserving the existing fit decisions.
+        if (
+            block is FlexContainerBlock &&
+            block.style.flexDirection != "row" &&
+            !block.style.avoidsReaderPageBreakInside() &&
+            heightForSplitting > 50
+        ) {
+            measurementProvider.split(block, heightForSplitting)?.let { (part1, part2) ->
+                currentPageContent += preparedSplitPart(part1, spaceBetweenBlocks)
+                remainingBlocks.add(0, part2)
+                commitPage("incremental_vertical_container_split")
+                continue
+            }
+        }
+
+        val blockHeight = measurementProvider.measure(block)
         if ((previousBottomMargin != null && previousBottomMargin < 0f) || effectiveTopMargin < 0f) {
             onCutoffDiagnostic(
                 "cutoff_probe layer=android_paginator_margin_clamp page=${pageIndex + 1} " +
@@ -101,7 +121,6 @@ suspend fun paginateReaderBlocks(
         }
 
         var wasSplit = false
-        val heightForSplitting = remainingHeight - spaceBetweenBlocks
         if (heightForSplitting > 50) {
             when (block) {
                 is ParagraphBlock -> if (!block.style.avoidsReaderPageBreakInside()) {
