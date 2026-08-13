@@ -14,6 +14,8 @@ import com.aryan.reader.shared.localFolderSyncAnnotationTempFileName
 import com.aryan.reader.shared.localFolderSyncMetadataFileName
 import com.aryan.reader.shared.localFolderSyncMetadataTempFileName
 import com.aryan.reader.shared.localFolderSyncSidecarStem
+import com.aryan.reader.shared.pdf.SharedPdfAnnotationSidecarCodec
+import com.aryan.reader.shared.pdf.SharedPdfAnnotationSidecarSnapshot
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -30,9 +32,17 @@ object LocalSyncUtils {
     )
 
     private data class ParsedAnnotationSidecar(
+        val name: String,
         val bookId: String,
         val timestamp: Long,
         val data: String
+    )
+
+    private data class ResolvedAnnotationSidecar(
+        val timestamp: Long,
+        val data: String,
+        val files: List<DocumentFile>,
+        val hasUnreadableCandidate: Boolean
     )
 
     private fun syncSubfolderDocId(rootDocId: String): String {
@@ -269,23 +279,31 @@ object LocalSyncUtils {
         try {
             val rootTree = DocumentFile.fromTreeUri(context, sourceFolderUri) ?: return@withContext
             val syncDir = getOrCreateSyncDir(rootTree) ?: return@withContext
-            val currentBest = resolveAndCleanAnnotationConflicts(context, syncDir, bookId)
+            val currentBest = resolveAnnotationConflicts(context, syncDir, bookId)
             val targetName = localFolderSyncAnnotationFileName(bookId)
             val tempName = uniqueFolderSyncTempName(localFolderSyncAnnotationTempFileName(bookId))
 
-            if (currentBest != null) {
-                val (remoteTs, _) = currentBest
-                if (remoteTs >= timestamp) {
-                    Timber.tag("FolderAnnotationSync").d("AnnotationSync: Remote sidecar (ts=$remoteTs) is newer or same as local (ts=$timestamp). Aborting write.")
-                    return@withContext
-                }
+            if (currentBest?.hasUnreadableCandidate == true) {
+                Timber.tag("FolderAnnotationSync").w(
+                    "Refusing to overwrite $targetName while a matching sidecar is unreadable."
+                )
+                return@withContext
             }
+
+            val mergedPayload = currentBest?.let { remote ->
+                SharedPdfAnnotationSidecarCodec.mergeAnnotationDataJson(
+                    localDataJson = jsonPayload,
+                    remoteDataJson = remote.data,
+                    preferRemoteOnConflict = remote.timestamp > timestamp
+                )
+            } ?: jsonPayload
+            val mergedTimestamp = maxOf(timestamp, currentBest?.timestamp ?: 0L)
 
             val wrapper = JSONObject()
             wrapper.put("version", 1)
             wrapper.put("bookId", bookId)
-            wrapper.put("timestamp", timestamp)
-            wrapper.put("data", JSONObject(jsonPayload))
+            wrapper.put("timestamp", mergedTimestamp)
+            wrapper.put("data", JSONObject(mergedPayload))
             val contentBytes = wrapper.toString().toByteArray()
 
             val tempFile = syncDir.createFile("application/json", tempName)
@@ -312,16 +330,37 @@ object LocalSyncUtils {
 
             @Suppress("KotlinConstantConditions") if (writeSuccess) {
                 val existingMain = syncDir.findFile(targetName)
+                var previousMain: DocumentFile? = null
                 if (existingMain != null) {
-                    if (!existingMain.delete()) {
-                        Timber.tag("FolderAnnotationSync").w("Failed to delete existing sidecar before rename. Attempting rename anyway (might fail on some SAF providers).")
+                    val backupName = "$targetName.sync-conflict-episteme-${System.currentTimeMillis()}.json"
+                    if (!existingMain.renameTo(backupName)) {
+                        Timber.tag("FolderAnnotationSync").e("Could not preserve existing sidecar before replacement.")
+                        tempFile.delete()
+                        return@withContext
                     }
+                    previousMain = existingMain
                 }
 
                 if (tempFile.renameTo(targetName)) {
-                    Timber.tag("FolderAnnotationSync").d("AnnotationSync: Atomic save successful for $targetName")
+                    val installed = syncDir.findFile(targetName)?.let { file ->
+                        parseAnnotationSidecar(
+                            context,
+                            SyncFileEntry(targetName, file.uri),
+                            fallbackBookId = bookId
+                        )
+                    }
+                    if (installed == null) {
+                        Timber.tag("FolderAnnotationSync").e("Installed sidecar failed validation; preserving recovery copy.")
+                        return@withContext
+                    }
+                    currentBest?.files.orEmpty()
+                        .filter { it.uri != previousMain?.uri && it.uri != syncDir.findFile(targetName)?.uri }
+                        .forEach { candidate -> runCatching { candidate.delete() } }
+                    previousMain?.delete()
+                    Timber.tag("FolderAnnotationSync").d("AnnotationSync: merged save successful for $targetName")
                 } else {
                     Timber.tag("FolderAnnotationSync").e("AnnotationSync: Failed to rename temp sidecar to $targetName")
+                    previousMain?.renameTo(targetName)
                 }
             }
 
@@ -350,8 +389,9 @@ object LocalSyncUtils {
                 .groupBy { it.bookId }
 
             for ((bookId, sidecars) in parsedSidecars) {
-                val best = sidecars.maxByOrNull { it.timestamp }
-                if (best != null) results[bookId] = best.timestamp to best.data
+                mergeParsedAnnotationSidecars(sidecars)?.let { merged ->
+                    results[bookId] = merged.timestamp to merged.data
+                }
             }
         } catch (e: Exception) {
             Timber.tag("FolderAnnotationSync").e(e, "Error preloading annotation sidecars")
@@ -368,8 +408,9 @@ object LocalSyncUtils {
         try {
             val rootTree = DocumentFile.fromTreeUri(context, sourceFolderUri) ?: return@withContext null
             val syncDir = rootTree.findFile(SYNC_SUBFOLDER_NAME) ?: return@withContext null
-            val bestFile = resolveAndCleanAnnotationConflicts(context, syncDir, bookId)
-            return@withContext bestFile
+            val resolved = resolveAnnotationConflicts(context, syncDir, bookId) ?: return@withContext null
+            if (resolved.hasUnreadableCandidate) return@withContext null
+            return@withContext resolved.timestamp to resolved.data
 
         } catch (e: Exception) {
             Timber.tag(TAG).e(e, "Failed to read annotation sidecar for $bookId")
@@ -377,68 +418,35 @@ object LocalSyncUtils {
         return@withContext null
     }
 
-    private fun resolveAndCleanAnnotationConflicts(
+    private fun resolveAnnotationConflicts(
         context: Context,
         syncDir: DocumentFile,
         bookId: String,
         knownFiles: List<DocumentFile>? = null
-    ): Pair<Long, String>? {
+    ): ResolvedAnnotationSidecar? {
         val allFiles = knownFiles ?: syncDir.listFiles().asList()
-
-        val candidates = allFiles.mapNotNull { file ->
+        val candidateFiles = allFiles.filter { file ->
+            file.name?.let { isAnnotationCandidateForBook(it, bookId) } == true
+        }
+        if (candidateFiles.isEmpty()) return null
+        var hasUnreadableCandidate = false
+        val candidates = candidateFiles.mapNotNull { file ->
             val name = file.name ?: return@mapNotNull null
-            if (!isAnnotationSidecarCandidateName(name)) return@mapNotNull null
-            parseAnnotationSidecar(
+            val parsed = parseAnnotationSidecar(
                 context = context,
                 file = SyncFileEntry(name = name, uri = file.uri),
                 fallbackBookId = extractLegacyAnnotationBookId(name)
-            )?.takeIf { it.bookId == bookId }?.let { file to it }
+            )
+            if (parsed == null) hasUnreadableCandidate = true
+            parsed?.takeIf { it.bookId == bookId }
         }
-
-        if (candidates.isEmpty()) return null
-
-        var bestTs = -1L
-        var bestData: String? = null
-        var bestFile: DocumentFile? = null
-        val filesToDelete = mutableListOf<DocumentFile>()
-
-        for ((file, sidecar) in candidates) {
-            if (sidecar.timestamp > bestTs) {
-                if (bestFile != null) {
-                    filesToDelete.add(bestFile)
-                }
-                bestTs = sidecar.timestamp
-                bestData = sidecar.data
-                bestFile = file
-            } else {
-                filesToDelete.add(file)
-            }
-        }
-
-        if (filesToDelete.isNotEmpty()) {
-            Timber.tag("FolderAnnotationSync").i("Resolving conflicts for $bookId. Found ${filesToDelete.size} obsolete/conflict files.")
-            for (toDelete in filesToDelete) {
-                try {
-                    Timber.tag("FolderAnnotationSync").v("Deleting loser: ${toDelete.name}")
-                    toDelete.delete()
-                } catch (_: Exception) {}
-            }
-        }
-
-        if (bestFile != null) {
-            val correctName = localFolderSyncAnnotationFileName(bookId)
-            if (bestFile.name != correctName) {
-                Timber.tag("FolderAnnotationSync").i("Renaming winner ${bestFile.name} to $correctName")
-                val existingTarget = syncDir.findFile(correctName)
-                if (existingTarget != null && existingTarget.uri != bestFile.uri) {
-                    existingTarget.delete()
-                }
-                bestFile.renameTo(correctName)
-            }
-            return Pair(bestTs, bestData!!)
-        }
-
-        return null
+        val merged = mergeParsedAnnotationSidecars(candidates)
+        return ResolvedAnnotationSidecar(
+            timestamp = merged?.timestamp ?: 0L,
+            data = merged?.data ?: "{}",
+            files = candidateFiles,
+            hasUnreadableCandidate = hasUnreadableCandidate || merged == null
+        )
     }
 
     /**
@@ -557,6 +565,27 @@ object LocalSyncUtils {
         return temp.ifBlank { null }
     }
 
+    private fun isAnnotationCandidateForBook(name: String, bookId: String): Boolean {
+        if (!isAnnotationSidecarCandidateName(name)) return false
+        val normalized = name.normalizedSidecarName()
+        val hashedStem = "${localFolderSyncSidecarStem(bookId)}$ANNOTATION_SUFFIX"
+        val legacyStem = "$bookId$ANNOTATION_SUFFIX"
+        return normalized.matchesJsonSidecarStem(hashedStem) ||
+            normalized.matchesJsonSidecarStem(legacyStem)
+    }
+
+    private fun mergeParsedAnnotationSidecars(
+        sidecars: List<ParsedAnnotationSidecar>
+    ): ParsedAnnotationSidecar? {
+        val bookId = sidecars.firstOrNull()?.bookId ?: return null
+        val merged = SharedPdfAnnotationSidecarCodec.mergeAnnotationSnapshots(
+            sidecars.map { sidecar ->
+                SharedPdfAnnotationSidecarSnapshot(sidecar.name, sidecar.timestamp, sidecar.data)
+            }
+        ) ?: return null
+        return ParsedAnnotationSidecar(merged.name, bookId, merged.timestamp, merged.data)
+    }
+
     private fun isMetadataSidecarCandidateName(name: String): Boolean {
         if (name.contains(ANNOTATION_SUFFIX)) return false
         if (name.contains(".tmp") || name.contains(".syncthing.")) return false
@@ -600,6 +629,7 @@ object LocalSyncUtils {
                 ?: return null
             val data = json.optJSONObject("data")?.toString() ?: return null
             ParsedAnnotationSidecar(
+                name = file.name,
                 bookId = bookId,
                 timestamp = json.optLong("timestamp", 0L),
                 data = data

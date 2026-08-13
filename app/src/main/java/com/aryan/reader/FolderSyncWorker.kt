@@ -410,7 +410,11 @@ class FolderSyncWorker(
 
             if (remoteTs > (localTs + 1000)) {
                 Timber.tag("FolderAnnotationSync").i(">>> Newer sidecar found for ${book.displayName}. Importing.")
-                recentFilesRepository.importAnnotationBundle(book.bookId, jsonPayload)
+                recentFilesRepository.importAnnotationBundle(
+                    bookId = book.bookId,
+                    jsonString = jsonPayload,
+                    lastModifiedTimestamp = remoteTs
+                )
                 imported++
             } else {
                 Timber.tag("FolderAnnotationSync").v("Sidecar for ${book.displayName} is not newer. Skipping.")

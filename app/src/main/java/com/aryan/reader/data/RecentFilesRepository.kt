@@ -404,12 +404,14 @@ class RecentFilesRepository(private val context: Context) :
         }
 
         val inkFile = pdfAnnotationRepository.getAnnotationFileForSync(bookId)
+        val deletedInkFile = pdfAnnotationRepository.getDeletedAnnotationsFileForSync(bookId)
         val richTextFile = pdfRichTextRepository.getFileForSync(bookId)
         val layoutFile = pageLayoutRepository.getLayoutFile(bookId)
         val textBoxFile = pdfTextBoxRepository.getFileForSync(bookId)
         val highlightFile = pdfHighlightRepository.getFileForSync(bookId)
 
         val hasInk = inkFile?.exists() == true
+        val hasDeletedInk = deletedInkFile?.exists() == true
         val hasRichText = richTextFile.exists()
         val hasLayout = layoutFile.exists()
         val hasTextBoxes = textBoxFile.exists()
@@ -421,7 +423,7 @@ class RecentFilesRepository(private val context: Context) :
                 "richBytes=${if (hasRichText) richTextFile.length() else 0L} folder=$folderUriString"
         )
 
-        if (!hasInk && !hasRichText && !hasLayout && !hasTextBoxes && !hasHighlights) {
+        if (!hasInk && !hasDeletedInk && !hasRichText && !hasLayout && !hasTextBoxes && !hasHighlights) {
             Timber.tag("FolderAnnotationSync").d("No annotations found locally for bookId: $bookId. Aborting sync.")
             return@withContext
         }
@@ -451,18 +453,22 @@ class RecentFilesRepository(private val context: Context) :
         }
 
         if (hasInk) putJsonSafe("ink", inkFile)
+        if (hasDeletedInk) {
+            putJsonSafe(SharedPdfAnnotationSidecarCodec.KEY_PDF_ANNOTATION_DELETIONS, deletedInkFile)
+        }
         if (hasRichText) putJsonSafe("text", richTextFile)
         if (hasLayout) putJsonSafe("layout", layoutFile)
         if (hasTextBoxes) putJsonSafe("textBoxes", textBoxFile)
         if (hasHighlights) putJsonSafe("highlights", highlightFile)
 
         val tsInk = if(hasInk) inkFile.lastModified() else 0L
+        val tsDeletedInk = if (hasDeletedInk) deletedInkFile.lastModified() else 0L
         val tsText = if(hasRichText) richTextFile.lastModified() else 0L
         val tsLayout = if(hasLayout) layoutFile.lastModified() else 0L
         val tsBox = if(hasTextBoxes) textBoxFile.lastModified() else 0L
         val tsHighlight = if(hasHighlights) highlightFile.lastModified() else 0L
 
-        val maxFileTs = maxOf(tsInk, tsText, tsLayout, tsBox, tsHighlight)
+        val maxFileTs = maxOf(tsInk, tsDeletedInk, tsText, tsLayout, tsBox, tsHighlight)
         val finalTs = maxOf(maxFileTs, System.currentTimeMillis())
 
         Timber.tag("FolderAnnotationSync").d("Pushing annotation bundle for $bookId to folder. finalTs=$finalTs")
@@ -481,6 +487,19 @@ class RecentFilesRepository(private val context: Context) :
             jsonPayload = canonicalBundleJson,
             timestamp = finalTs
         )
+
+        val savedSidecar = LocalSyncUtils.getAnnotationSidecar(
+            context = context,
+            sourceFolderUri = folderUriString.toUri(),
+            bookId = bookId
+        )
+        if (savedSidecar != null && savedSidecar.second != canonicalBundleJson) {
+            importAnnotationBundle(
+                bookId = bookId,
+                jsonString = savedSidecar.second,
+                lastModifiedTimestamp = savedSidecar.first
+            )
+        }
     }
 
     override suspend fun importAnnotationBundle(

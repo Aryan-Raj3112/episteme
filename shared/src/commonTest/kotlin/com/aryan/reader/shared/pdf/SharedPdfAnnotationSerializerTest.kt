@@ -358,6 +358,55 @@ class SharedPdfAnnotationSerializerTest {
     }
 
     @Test
+    fun `sidecar snapshot merge preserves concurrent additions at equal timestamps`() {
+        fun annotation(id: String, createdAt: Long) = SharedPdfAnnotation(
+            id = id,
+            pageIndex = 0,
+            kind = PdfAnnotationKind.INK,
+            points = listOf(PdfPagePoint(0.1f, 0.2f, createdAt)),
+            colorArgb = 0xFF000000.toInt(),
+            createdAt = createdAt
+        )
+        fun payload(value: SharedPdfAnnotation): String = testJson.encodeToString(
+            JsonElement.serializer(),
+            JsonObject(
+                mapOf(
+                    SharedPdfAnnotationSidecarCodec.KEY_PDF_ANNOTATIONS to
+                        SharedPdfAnnotationSidecarCodec.encodeAnnotationsElement(listOf(value))
+                )
+            )
+        )
+
+        val merged = SharedPdfAnnotationSidecarCodec.mergeAnnotationSnapshots(
+            listOf(
+                SharedPdfAnnotationSidecarSnapshot("tablet", 100L, payload(annotation("tablet", 1L))),
+                SharedPdfAnnotationSidecarSnapshot("phone", 100L, payload(annotation("phone", 2L)))
+            )
+        )
+
+        assertNotNull(merged)
+        assertEquals(100L, merged.timestamp)
+        assertEquals(2, SharedPdfAnnotationSidecarCodec.annotationCountFromDataJson(merged.data))
+    }
+
+    @Test
+    fun `sidecar merge preserves sections present on only one device`() {
+        val local = """{"layout":{"mode":"local"}}"""
+        val remote = """{"text":{"blocks":[]}}"""
+
+        val merged = testJson.parseToJsonElement(
+            SharedPdfAnnotationSidecarCodec.mergeAnnotationDataJson(
+                localDataJson = local,
+                remoteDataJson = remote,
+                preferRemoteOnConflict = false
+            )
+        ).jsonObject
+
+        assertNotNull(merged["layout"])
+        assertNotNull(merged["text"])
+    }
+
+    @Test
     fun `embedded annotation threads link replies and nearby orphan comments`() {
         val root = embeddedAnnotation(
             id = "root",

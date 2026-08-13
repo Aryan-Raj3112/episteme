@@ -89,7 +89,9 @@ object SharedPdfAnnotationSidecarCodec {
         second.forEach { annotation ->
             if (annotation.id !in mergedDeletions) mergedById[annotation.id] = annotation
         }
-        val base = (if (preferRemoteOnConflict) remoteCanonical else localCanonical).toMutableMap()
+        val preferredBase = if (preferRemoteOnConflict) remoteCanonical else localCanonical
+        val fallbackBase = if (preferRemoteOnConflict) localCanonical else remoteCanonical
+        val base = (fallbackBase + preferredBase).toMutableMap()
         base[KEY_PDF_ANNOTATIONS] = encodeAnnotationsElement(mergedById.values.toList().sortedForSync())
         if (mergedDeletions.isNotEmpty()) {
             base[KEY_PDF_ANNOTATION_DELETIONS] = encodeAnnotationDeletionsElement(mergedDeletions)
@@ -97,6 +99,26 @@ object SharedPdfAnnotationSidecarCodec {
             base.remove(KEY_PDF_ANNOTATION_DELETIONS)
         }
         return json.encodeToString(JsonElement.serializer(), JsonObject(base))
+    }
+
+    fun mergeAnnotationSnapshots(
+        snapshots: List<SharedPdfAnnotationSidecarSnapshot>
+    ): SharedPdfAnnotationSidecarSnapshot? {
+        val ordered = snapshots.sortedWith(
+            compareBy<SharedPdfAnnotationSidecarSnapshot> { it.timestamp }.thenBy { it.name }
+        )
+        val first = ordered.firstOrNull() ?: return null
+        return ordered.drop(1).fold(first) { accumulated, next ->
+            SharedPdfAnnotationSidecarSnapshot(
+                name = next.name,
+                timestamp = maxOf(accumulated.timestamp, next.timestamp),
+                data = mergeAnnotationDataJson(
+                    localDataJson = accumulated.data,
+                    remoteDataJson = next.data,
+                    preferRemoteOnConflict = true
+                )
+            )
+        }
     }
 
     fun annotationCountFromDataJson(rawDataJson: String): Int {
@@ -559,3 +581,9 @@ object SharedPdfAnnotationSidecarCodec {
     }
 
 }
+
+data class SharedPdfAnnotationSidecarSnapshot(
+    val name: String,
+    val timestamp: Long,
+    val data: String
+)
