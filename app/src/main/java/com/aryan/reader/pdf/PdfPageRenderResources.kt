@@ -12,6 +12,9 @@ import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
+import com.aryan.reader.shared.pdf.PdfInkTool
+import com.aryan.reader.shared.pdf.PdfPagePoint
+import com.aryan.reader.shared.pdf.shouldReplaceLastPdfInkPoint
 import androidx.core.graphics.createBitmap
 import androidx.core.graphics.set
 import com.aryan.reader.pdf.data.PdfAnnotation
@@ -394,7 +397,16 @@ class PdfDrawingState {
     }
 
     fun onDraw(point: PdfPoint) {
-        currentPoints.add(point)
+        val annotation = currentAnnotation ?: return
+        val sharedTool = annotation.inkType.toSharedInkTool()
+        val sharedPoints = currentPoints.takeLast(2).map { PdfPagePoint(it.x, it.y, it.timestamp) }
+        val replaceEndpoint = shouldReplaceLastPdfInkPoint(
+            points = sharedPoints,
+            next = PdfPagePoint(point.x, point.y, point.timestamp),
+            inkTool = sharedTool,
+            strokeWidth = annotation.strokeWidth,
+        )
+        if (replaceEndpoint) currentPoints[currentPoints.lastIndex] = point else currentPoints.add(point)
         currentAnnotation = currentAnnotation?.copy(points = currentPoints.toList())
     }
 
@@ -408,6 +420,16 @@ class PdfDrawingState {
         currentAnnotation = null
         currentPoints.clear()
         return finalAnnot
+    }
+
+    private fun InkType.toSharedInkTool(): PdfInkTool = when (this) {
+        InkType.PEN -> PdfInkTool.PEN
+        InkType.HIGHLIGHTER -> PdfInkTool.HIGHLIGHTER
+        InkType.HIGHLIGHTER_ROUND -> PdfInkTool.HIGHLIGHTER_ROUND
+        InkType.ERASER -> PdfInkTool.ERASER
+        InkType.FOUNTAIN_PEN -> PdfInkTool.FOUNTAIN_PEN
+        InkType.PENCIL -> PdfInkTool.PENCIL
+        InkType.TEXT -> PdfInkTool.TEXT
     }
 
     fun updateDrag(point: PdfPoint) {

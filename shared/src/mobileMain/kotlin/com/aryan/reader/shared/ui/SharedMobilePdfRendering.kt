@@ -176,6 +176,7 @@ import com.aryan.reader.shared.pdf.SharedPdfTextDraft
 import com.aryan.reader.shared.pdf.SharedPdfTextDragState
 import com.aryan.reader.shared.pdf.sharedPdfTextDropBounds
 import com.aryan.reader.shared.pdf.containsNormalizedPoint
+import com.aryan.reader.shared.pdf.shouldReplaceLastPdfInkPoint
 import com.aryan.reader.shared.pdf.withBounds
 import com.aryan.reader.shared.pdf.withText
 import com.aryan.reader.shared.pdf.SharedPdfReaderState
@@ -689,7 +690,15 @@ internal fun SharedMobilePdfVerticalPages(
                 contentPadding = PaddingValues(0.dp),
                 verticalArrangement = Arrangement.spacedBy(if (showPageGap) 8.dp else 0.dp)
             ) {
-                items(pageCount) { page ->
+                items(
+                    count = pageCount,
+                    key = { page ->
+                        when (val virtualPage = virtualLayout[page]) {
+                            is SharedPdfVirtualPage.PdfPage -> "pdf-${virtualPage.pdfIndex}"
+                            is SharedPdfVirtualPage.BlankPage -> "blank-$page-${virtualPage.insertion.id}"
+                        }
+                    }
+                ) { page ->
                     val pdfPage = sharedPdfPdfPageIndexAt(virtualLayout, page)
                     if (pdfPage == null) {
                         SharedMobilePdfBlankPageSurface(
@@ -2037,7 +2046,21 @@ internal fun SharedMobilePdfPageSurface(
                                     lastPoint = change.position
                                 } else {
                                     if (localCanvasSize.width > 0 && localCanvasSize.height > 0) {
-                                        (activeStroke as? MutableList<PdfPagePoint>)?.add(change.position.toSharedMobilePdfPoint(localCanvasSize))
+                                        val mutableStroke = activeStroke as? MutableList<PdfPagePoint>
+                                        if (mutableStroke != null) {
+                                            val nextPoint = change.position.toSharedMobilePdfPoint(localCanvasSize)
+                                            val replaceEndpoint = shouldReplaceLastPdfInkPoint(
+                                                points = mutableStroke,
+                                                next = nextPoint,
+                                                inkTool = if (eraserOverride) PdfInkTool.ERASER else selectedTool,
+                                                strokeWidth = strokeWidth,
+                                            )
+                                            if (replaceEndpoint) {
+                                                mutableStroke[mutableStroke.lastIndex] = nextPoint
+                                            } else {
+                                                mutableStroke.add(nextPoint)
+                                            }
+                                        }
                                         if (eraserOverride) eraserOverridePosition = change.position
                                     }
                                     change.consume()

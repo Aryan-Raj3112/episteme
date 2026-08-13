@@ -47,6 +47,23 @@ class PdfVerticalReaderPolicyTest {
         )
     }
 
+    @Test
+    fun `geometry refinement keeps the same point under the viewport anchor`() {
+        assertEquals(
+            -1_200f,
+            preservedPdfVerticalPanY(
+                oldPanY = -900f,
+                oldZoom = 1f,
+                newZoom = 1f,
+                viewportAnchorY = 600f,
+                oldPageTopY = 1_000f,
+                oldPageHeight = 1_000f,
+                newPageTopY = 1_200f,
+                newPageHeight = 1_200f,
+            ),
+        )
+    }
+
     private fun theme(id: String, background: Color): ReaderTheme = ReaderTheme(
         id = id,
         name = id,

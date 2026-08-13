@@ -3634,40 +3634,6 @@ fun PdfViewerScreen(
                             repeat(pagesCount) { computedRatios.add(ratio) }
                         }
 
-                        launch(Dispatchers.IO) {
-                            val refinedRatios = ArrayList<Float>(computedRatios)
-                            var hasChanges = false
-
-                            for (i in 0 until pagesCount) {
-                                if (!isActive) break
-                                try {
-                                    doc.openPage(i)?.use { page ->
-                                        val width = page.getPageWidthPoint()
-                                        val height = page.getPageHeightPoint()
-                                        val ratio =
-                                            if (height > 0) width.toFloat() / height.toFloat()
-                                            else 1.0f
-
-                                        if (refinedRatios[i] != ratio) {
-                                            refinedRatios[i] = ratio
-                                            hasChanges = true
-                                        }
-                                    }
-                                } catch (e: Exception) {
-                                    Timber.w(e, "Failed to calculate ratio for page $i")
-                                }
-                            }
-
-                            if (hasChanges && isActive) {
-                                withContext(Dispatchers.Main) {
-                                    pageAspectRatios = ArrayList(refinedRatios)
-                                }
-                                // Save to cache
-                                pdfTextRepository.savePageRatios(
-                                    currentBookId!!, refinedRatios
-                                )
-                            }
-                        }
                         computedRatios
                     }
 
@@ -3716,15 +3682,18 @@ fun PdfViewerScreen(
                                     }
                                 }
 
-                                if (hasChanges && (i % 500 == 0 || i == pagesCount - 1)) {
-                                    withContext(Dispatchers.Main) {
-                                        pageAspectRatios = ArrayList(refinedRatios)
-                                    }
-                                    hasChanges = false
-                                }
                             } catch (e: Exception) {
                                 Timber.w(e, "Failed to calculate ratio for page $i")
                             }
+                        }
+
+                        // Publish document geometry once. Incremental replacements alter the
+                        // height of every following page and move content under an active scroll.
+                        if (hasChanges && isActive) {
+                            withContext(Dispatchers.Main) {
+                                pageAspectRatios = ArrayList(refinedRatios)
+                            }
+                            pdfTextRepository.savePageRatios(currentBookId!!, refinedRatios)
                         }
                     }
                 } else {

@@ -19,6 +19,23 @@ data class PdfLockedOrientationResetCamera(
     val panY: Float,
 )
 
+fun preservedPdfVerticalPanY(
+    oldPanY: Float,
+    oldZoom: Float,
+    newZoom: Float,
+    viewportAnchorY: Float,
+    oldPageTopY: Float,
+    oldPageHeight: Float,
+    newPageTopY: Float,
+    newPageHeight: Float,
+): Float {
+    val oldDocumentAnchor = (viewportAnchorY - oldPanY) / oldZoom.coerceAtLeast(0.01f)
+    val pageFraction = ((oldDocumentAnchor - oldPageTopY) / oldPageHeight.coerceAtLeast(1f))
+        .coerceIn(0f, 1f)
+    val newDocumentAnchor = newPageTopY + newPageHeight * pageFraction
+    return viewportAnchorY - newDocumentAnchor * newZoom
+}
+
 fun calculateLockedOrientationResetCamera(
     pageTopY: Float,
     totalDocHeight: Float,
