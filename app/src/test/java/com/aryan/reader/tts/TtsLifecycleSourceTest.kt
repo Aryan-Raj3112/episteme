@@ -1,0 +1,132 @@
+package com.aryan.reader.tts
+
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import java.io.File
+
+class TtsLifecycleSourceTest {
+
+    @Test
+    fun `main view model does not eagerly connect the tts service`() {
+        val source = sourceFile("com/aryan/reader/MainViewModel.kt").readText()
+
+        assertTrue(source.contains("val ttsController by lazy { TtsController(appContext) }"))
+        assertFalse(source.contains("TtsController(appContext).apply { connect() }"))
+    }
+
+    @Test
+    fun `direct local engine initializes only when speech is requested`() {
+        val source = sourceFile("com/aryan/reader/tts/DirectLocalTtsPlayer.kt").readText()
+
+        assertFalse(source.contains("init {\n        initialize()"))
+        assertTrue(source.contains("if (!initialized) {\n            initialize()"))
+        assertTrue(source.contains("tts?.speak(request.text, request.queueMode"))
+        assertFalse(source.contains("synthesizeToFile"))
+    }
+
+    @Test
+    fun `audiobook tab does not bind tts until a play action`() {
+        val source = sourceFile("com/aryan/reader/UnifiedLibraryScreen.kt").readText()
+
+        assertFalse(source.contains("LaunchedEffect(viewModel.ttsController) { viewModel.ttsController.connect() }"))
+        assertTrue(
+            Regex("if \\(shouldStart\\) \\{\\s*viewModel\\.ttsController\\.connect\\(\\)")
+                .containsMatchIn(source)
+        )
+    }
+
+    @Test
+    fun `explicit stop shuts down the local engine before service destruction`() {
+        val source = sourceFile("com/aryan/reader/tts/TtsPlaybackManager.kt").readText()
+        val stopBody = source.substringAfter("private fun handleStopTts")
+            .substringBefore("fun stopForAppTaskRemoval")
+
+        assertTrue(stopBody.contains("if (userInitiated) directLocalTtsPlayer.shutdown()"))
+        assertTrue(source.contains("fun stopBookListeningSession()"))
+    }
+
+    @Test
+    fun `direct local notification metadata uses a valid synthetic media uri`() {
+        val source = sourceFile("com/aryan/reader/tts/TtsPlaybackManager.kt").readText()
+        val updateLocalMediaItemBody = source.substringAfter("private fun updateLocalMediaItem")
+            .substringBefore("override fun onReady")
+
+        assertTrue(updateLocalMediaItemBody.contains(".setUri(\"tts-local://chunk/\$chunkIndex\")"))
+        assertTrue(updateLocalMediaItemBody.contains(".setMediaMetadata(metadata)"))
+    }
+
+    @Test
+    fun `direct local state is bridged independently of dormant exoplayer state`() {
+        val managerSource = sourceFile("com/aryan/reader/tts/TtsPlaybackManager.kt").readText()
+        val stateButtonBody = managerSource.substringAfter("private fun createStateButton")
+            .substringBefore("private fun createStopCommandButton")
+        assertTrue(stateButtonBody.contains("putBoolean(\"isPlaying\", state.isPlaying)"))
+        assertTrue(stateButtonBody.contains("if (isDirectLocalPlayback()) localPlaybackState()"))
+
+        val controllerSource = sourceFile("com/aryan/reader/tts/TtsController.kt").readText()
+        val updateStateBody = controllerSource.substringAfter("private fun updateStateFromController")
+            .substringBefore("fun setPlaybackParameters")
+        assertTrue(updateStateBody.contains("customState.getBoolean(\"isPlaying\", false)"))
+        assertTrue(updateStateBody.contains("customState.getInt(\"playbackState\", controller.playbackState)"))
+        assertTrue(updateStateBody.contains("isPlaying = effectiveIsPlaying"))
+        assertTrue(updateStateBody.contains("playbackState = effectivePlaybackState"))
+    }
+
+    @Test
+    fun `direct local media session emits real state changes without a timeline`() {
+        val serviceSource = sourceFile("com/aryan/reader/tts/TtsService.kt").readText()
+        val sessionPlayerBody = serviceSource.substringAfter("private class TtsSessionPlayer")
+            .substringBefore("class TtsService")
+
+        assertTrue(sessionPlayerBody.contains("fun invalidateDirectLocalState()"))
+        assertTrue(sessionPlayerBody.contains("EVENT_PLAYBACK_STATE_CHANGED"))
+        assertTrue(sessionPlayerBody.contains("EVENT_PLAY_WHEN_READY_CHANGED"))
+        assertTrue(sessionPlayerBody.contains("EVENT_IS_PLAYING_CHANGED"))
+        assertTrue(sessionPlayerBody.contains("if (isDirectLocalPlayback()) return C.TIME_UNSET"))
+        assertTrue(sessionPlayerBody.contains(".remove(COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM)"))
+
+        val managerSource = sourceFile("com/aryan/reader/tts/TtsPlaybackManager.kt").readText()
+        val metadataBody = managerSource.substringAfter("private fun updateLocalMediaItem")
+            .substringBefore("override fun onReady")
+        assertTrue(metadataBody.contains(".setArtworkUri(coverImageUri?.toUri())"))
+    }
+
+    @Test
+    fun `local speed and pitch are sent before immediately restarting speech`() {
+        val controlsSource = sourceFile("com/aryan/reader/epubreader/EpubReaderControls.kt").readText()
+        val saveAndApplyBody = controlsSource.substringAfter("val saveAndApply = {")
+            .substringBefore("Surface(")
+        assertTrue(saveAndApplyBody.contains("ttsController.setPlaybackParameters(rate, pitch)"))
+        assertFalse(saveAndApplyBody.contains("ttsController.sliceAndRetainPosition()"))
+
+        val managerSource = sourceFile("com/aryan/reader/tts/TtsPlaybackManager.kt").readText()
+        val parameterCommandBody = managerSource.substringAfter("SET_PLAYBACK_PARAMS_COMMAND -> {")
+            .substringBefore("SKIP_TO_PREVIOUS_TTS_CHUNK_COMMAND")
+        assertTrue(parameterCommandBody.contains("localSpeechRate = speed"))
+        assertTrue(parameterCommandBody.contains("localSpeechPitch = pitch"))
+        assertTrue(parameterCommandBody.contains("restartLocalSpeechFromCurrentPosition()"))
+    }
+
+    @Test
+    fun `task removal stops playback engine and service`() {
+        val source = sourceFile("com/aryan/reader/tts/TtsService.kt").readText()
+        val taskRemovalBody = source.substringAfter("override fun onTaskRemoved")
+            .substringBefore("override fun onGetSession")
+
+        assertTrue(taskRemovalBody.contains("playbackManager.stopForAppTaskRemoval()"))
+        assertTrue(taskRemovalBody.contains("stopSelf()"))
+
+        val managerSource = sourceFile("com/aryan/reader/tts/TtsPlaybackManager.kt").readText()
+        assertTrue(managerSource.contains("directLocalTtsPlayer.shutdown()"))
+    }
+
+    private fun sourceFile(relativePath: String): File {
+        val candidates = listOf(
+            File("src/main/java/$relativePath"),
+            File("app/src/main/java/$relativePath")
+        )
+        return candidates.firstOrNull(File::isFile)
+            ?: error("Unable to locate $relativePath from ${File(".").absolutePath}")
+    }
+}

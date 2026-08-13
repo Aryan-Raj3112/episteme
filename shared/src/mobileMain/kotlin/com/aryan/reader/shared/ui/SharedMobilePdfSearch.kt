@@ -5,5 +5,6 @@ import com.aryan.reader.shared.pdf.SharedPdfSearchResult
 
 internal expect suspend fun searchSharedMobilePdf(
     book: BookItem,
-    query: String
+    query: String,
+    password: String? = null,
 ): List<SharedPdfSearchResult>

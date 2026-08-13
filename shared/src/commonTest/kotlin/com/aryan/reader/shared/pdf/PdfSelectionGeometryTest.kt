@@ -80,4 +80,17 @@ class PdfSelectionGeometryTest {
             bounds
         )
     }
+
+    @Test
+    fun `nearest bounds prefers containment then euclidean center like android ocr selection`() {
+        val bounds = listOf(
+            PdfPageBounds(0f, 0f, 10f, 10f),
+            null,
+            PdfPageBounds(20f, 0f, 30f, 10f)
+        )
+
+        assertEquals(0, PdfSelectionGeometry.nearestBoundsIndex(bounds, 9f, 9f))
+        assertEquals(2, PdfSelectionGeometry.nearestBoundsIndex(bounds, 18f, 5f))
+        assertEquals(-1, PdfSelectionGeometry.nearestBoundsIndex(listOf(null), 5f, 5f))
+    }
 }

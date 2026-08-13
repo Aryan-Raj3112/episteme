@@ -42,7 +42,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
-import kotlin.math.ceil
 import kotlin.math.roundToInt
 import kotlin.coroutines.coroutineContext
 
@@ -51,44 +50,9 @@ private const val AndroidEpubCutoffLogTag = "EpistemeEpubCutoff"
 private const val AndroidEpubPageGapDiagLogTag = "EpistemePageGapDiag"
 private const val JustifiedSplitGapProbeMinFraction = 0.18f
 
-internal fun measuredTextHeightForPagination(
-    layoutHeightPx: Int,
-    lastLineBottomPx: Float
-): Int {
-    return maxOf(layoutHeightPx, ceil(lastLineBottomPx.toDouble()).toInt())
-}
-
 private fun TextLayoutResult.paginationMeasuredHeightPx(): Int {
     val lastLineBottomPx = if (lineCount > 0) getLineBottom(lineCount - 1) else 0f
     return measuredTextHeightForPagination(size.height, lastLineBottomPx)
-}
-
-internal fun effectiveTopMarginPxForPagination(
-    isPageStart: Boolean,
-    currentTopMarginPx: Float
-): Float {
-    return if (isPageStart) 0f else currentTopMarginPx
-}
-internal fun collapsedVerticalMarginPxForPagination(
-    previousBottomMarginPx: Float?,
-    currentTopMarginPx: Float
-): Int {
-    val currentTop = currentTopMarginPx.coerceAtLeast(0f)
-    val collapsed = previousBottomMarginPx?.let { previousBottom ->
-        maxOf(previousBottom.coerceAtLeast(0f), currentTop)
-    } ?: currentTop
-    return collapsed.roundToInt()
-}
-
-internal fun availableBlockWidthPxForPagination(
-    containerWidthPx: Int,
-    marginLeftPx: Float,
-    marginRightPx: Float,
-    isCenterAligned: Boolean
-): Float {
-    if (isCenterAligned) return containerWidthPx.toFloat().coerceAtLeast(0f)
-    return (containerWidthPx.toFloat() - marginLeftPx.coerceAtLeast(0f) - marginRightPx.coerceAtLeast(0f))
-        .coerceAtLeast(0f)
 }
 
 private fun logAndroidEpubCutoff(message: String) {
@@ -135,14 +99,6 @@ private fun CharSequence.previousWordEndBefore(index: Int): Int {
     return trimTrailingWhitespaceBefore(current)
 }
 
-interface BlockMeasurementProvider {
-    suspend fun measure(block: ContentBlock): Int
-    suspend fun split(block: ParagraphBlock, availableHeight: Int): Pair<ParagraphBlock, ParagraphBlock>?
-    suspend fun split(block: WrappingContentBlock, availableHeight: Int): Pair<WrappingContentBlock, List<ContentBlock>>?
-    suspend fun split(block: TableBlock, availableHeight: Int): Pair<TableBlock, TableBlock>?
-    suspend fun split(block: FlexContainerBlock, availableHeight: Int): Pair<FlexContainerBlock, FlexContainerBlock>?
-}
-
 @RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
 class SuspendingAndroidBlockMeasurementProvider(
     private val textMeasurer: TextMeasurer,
@@ -152,13 +108,23 @@ class SuspendingAndroidBlockMeasurementProvider(
     private val imageSizeMultiplier: Float
 ) : BlockMeasurementProvider {
     private val measurementCache = ConcurrentHashMap<Int, Int>()
+    private val chantUnitMeasurementCache = ConcurrentHashMap<Int, Pair<Int, Int>>()
 
     override suspend fun measure(block: ContentBlock): Int {
         coroutineContext.ensureActive()
         val cacheKey = blockMeasurementCacheKey(block)
         measurementCache[cacheKey]?.let { return it }
 
-        val measured = measureBlockHeight(
+        val measured = if (block is ChantScoreBlock) {
+            measureChantRows(
+                block.units,
+                textMeasurer,
+                constraints.maxWidth,
+                textStyle,
+                density,
+                chantUnitMeasurementCache
+            ).sumOf { it.heightPx }
+        } else measureBlockHeight(
             block = block,
             textMeasurer = textMeasurer,
             constraints = constraints,
@@ -477,6 +443,31 @@ class SuspendingAndroidBlockMeasurementProvider(
 
     override suspend fun split(block: FlexContainerBlock, availableHeight: Int): Pair<FlexContainerBlock, FlexContainerBlock>? {
         coroutineContext.ensureActive()
+        if (block.style.display == "reader-chant-flow") {
+            val maxWidth = constraints.maxWidth.coerceAtLeast(1)
+            var rowWidth = 0
+            var rowHeight = 0
+            var usedHeight = 0
+            var splitIndex = block.children.size
+            for ((index, unit) in block.children.withIndex()) {
+                val unitWidth = chantUnitEstimatedWidthPx(unit, textStyle, density).coerceAtMost(maxWidth)
+                val unitHeight = measure(unit)
+                if (rowWidth > 0 && rowWidth + unitWidth > maxWidth) {
+                    if (usedHeight + rowHeight + unitHeight > availableHeight) {
+                        splitIndex = index
+                        break
+                    }
+                    usedHeight += rowHeight
+                    rowWidth = 0
+                    rowHeight = 0
+                }
+                rowWidth += unitWidth
+                rowHeight = maxOf(rowHeight, unitHeight)
+            }
+            if (splitIndex <= 0 || splitIndex >= block.children.size) return null
+            return block.copy(children = block.children.take(splitIndex)) to
+                block.copy(children = block.children.drop(splitIndex))
+        }
         if (block.style.flexDirection == "row") return null
 
         var currentHeight = 0
@@ -515,6 +506,20 @@ class SuspendingAndroidBlockMeasurementProvider(
 
         return part1 to part2
     }
+
+    override suspend fun split(block: ChantScoreBlock, availableHeight: Int): Pair<ChantScoreBlock, ChantScoreBlock>? {
+        val rows = measureChantRows(block.units, textMeasurer, constraints.maxWidth, textStyle, density, chantUnitMeasurementCache)
+        var used = 0
+        var splitIndex = 0
+        for (row in rows) {
+            if (used + row.heightPx > availableHeight) break
+            used += row.heightPx
+            splitIndex = row.endExclusive
+        }
+        if (splitIndex <= 0 || splitIndex >= block.units.size) return null
+        return block.copy(units = block.units.take(splitIndex)) to
+            block.copy(units = block.units.drop(splitIndex))
+    }
 }
 
 private fun copyBlockWithNewStyle(block: ContentBlock, newStyle: BlockStyle): ContentBlock {
@@ -528,424 +533,26 @@ private fun copyBlockWithNewStyle(block: ContentBlock, newStyle: BlockStyle): Co
         is WrappingContentBlock -> block.copy(style = newStyle)
         is TableBlock -> block.copy(style = newStyle)
         is FlexContainerBlock -> block.copy(style = newStyle)
+        is ChantScoreBlock -> block.copy(style = newStyle)
         is MathBlock -> block.copy(style = newStyle)
     }
 }
 
 @Suppress("UNCHECKED_CAST")
-private fun <T : ContentBlock> setBlockExpectedHeight(block: T, height: Int): T {
-    return when (block) {
-        is ParagraphBlock -> block.copy(expectedHeight = height)
-        is HeaderBlock -> block.copy(expectedHeight = height)
-        is ImageBlock -> block.copy(expectedHeight = height)
-        is SpacerBlock -> block.copy(expectedHeight = height)
-        is QuoteBlock -> block.copy(expectedHeight = height)
-        is ListItemBlock -> block.copy(expectedHeight = height)
-        is WrappingContentBlock -> block.copy(expectedHeight = height)
-        is TableBlock -> block.copy(expectedHeight = height)
-        is FlexContainerBlock -> block.copy(expectedHeight = height)
-        is MathBlock -> block.copy(expectedHeight = height)
-    } as T
-}
-
-private fun BlockStyle.avoidsBreakInside(): Boolean =
-    pageBreakInsideAvoid || breakInside in setOf("avoid", "avoid-page", "avoid-column")
-
-private fun BlockStyle.forcesBreakBefore(): Boolean =
-    breakBefore in setOf("page", "always", "left", "right", "recto", "verso")
-
-private fun BlockStyle.forcesBreakAfter(): Boolean =
-    breakAfter in setOf("page", "always", "left", "right", "recto", "verso")
-
-private fun ContentBlock.pageGapDiagLabel(): String {
-    val kind = this::class.simpleName ?: "Block"
-    return "block=$blockIndex kind=$kind textChars=${paginationTextCharCount()} " +
-        "avoidInside=${style.avoidsBreakInside()} breakBefore=${style.breakBefore} breakAfter=${style.breakAfter} " +
-        "pageBreakInsideAvoid=${style.pageBreakInsideAvoid} pageBreakAfterAvoid=${style.pageBreakAfterAvoid}"
-}
-
-private fun List<ContentBlock>.pageGapDiagBlockList(): String {
-    return joinToString(",") { block -> "${block.blockIndex}:${block::class.simpleName ?: "Block"}:${block.expectedHeight}" }
-}
 @RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
 suspend fun paginate(
     blocks: List<ContentBlock>,
     pageHeight: Int,
     measurementProvider: BlockMeasurementProvider,
     density: Density
-): List<Page> {
-    if (blocks.isEmpty()) {
-        return emptyList()
-    }
-    if (DEBUG_PAGINATION_LOGS) {
-        Timber.d("Starting pagination for ${blocks.size} blocks with page height $pageHeight.")
-    }
-
-    val pages = mutableListOf<Page>()
-    var currentPageContent = mutableListOf<ContentBlock>()
-    var remainingHeight = pageHeight
-    val remainingBlocks = blocks.toMutableList()
-    var pageIndex = 0
-    val safetyMarginPerBlock = 0
-
-    while (remainingBlocks.isNotEmpty()) {
-        coroutineContext.ensureActive()
-        val block = remainingBlocks.removeAt(0)
-
-        if (currentPageContent.isNotEmpty() && block.style.forcesBreakBefore()) {
-            logAndroidEpubPageGapDiag(
-                "decision=commit_page reason=forced_break_before page=${pageIndex + 1} " +
-                    "nextBlock=${block.blockIndex} remainingPx=$remainingHeight blockCount=${currentPageContent.size} " +
-                    "blocks=${currentPageContent.pageGapDiagBlockList()}"
-            )
-            zeroOutBottomMargin(currentPageContent)
-            pages.add(Page(content = currentPageContent.toList()))
-            pageIndex++
-            currentPageContent = mutableListOf()
-            remainingHeight = pageHeight
-            remainingBlocks.add(0, block)
-            continue
-        }
-
-        val blockHeight = measurementProvider.measure(block)
-        val blockHeightWithSafetyMargin = blockHeight + safetyMarginPerBlock
-        val isPageStart = currentPageContent.isEmpty()
-        val previousBottomMarginPx = currentPageContent.lastOrNull()?.let { previousBlock ->
-            with(density) { previousBlock.style.margin.bottom.toPx() }
-        }
-        val rawCurrentTopMarginPx = with(density) { block.style.margin.top.toPx() }
-        val currentTopMarginPx = effectiveTopMarginPxForPagination(
-            isPageStart = isPageStart,
-            currentTopMarginPx = rawCurrentTopMarginPx
-        )
-        val spaceBetweenBlocks = collapsedVerticalMarginPxForPagination(
-            previousBottomMarginPx = previousBottomMarginPx,
-            currentTopMarginPx = currentTopMarginPx
-        )
-        if ((previousBottomMarginPx != null && previousBottomMarginPx < 0f) || currentTopMarginPx < 0f) {
-            val blockKind = block::class.simpleName ?: "Block"
-            val previousBottomMarginLabel = previousBottomMarginPx?.toString() ?: "none"
-            logAndroidEpubCutoff(
-                "cutoff_probe layer=android_paginator_margin_clamp page=${pageIndex + 1} " +
-                    "block=${block.blockIndex} kind=$blockKind " +
-                    "prevBottomMarginPx=$previousBottomMarginLabel " +
-                    "currentTopMarginPx=$currentTopMarginPx collapsedMarginPx=$spaceBetweenBlocks " +
-                    "remainingBeforePx=$remainingHeight blockHeightPx=$blockHeight"
-            )
-        }
-
-        val spaceRequired = blockHeightWithSafetyMargin + spaceBetweenBlocks
-        logAndroidEpubPageGapDiag(
-            "decision=consider page=${pageIndex + 1} ${block.pageGapDiagLabel()} " +
-                "pageStart=$isPageStart currentPageBlocks=${currentPageContent.size} remainingBeforePx=$remainingHeight " +
-                "pageHeightPx=$pageHeight blockHeightPx=$blockHeight safetyPx=$safetyMarginPerBlock " +
-                "rawTopMarginPx=$rawCurrentTopMarginPx effectiveTopMarginPx=$currentTopMarginPx " +
-                "previousBottomMarginPx=${previousBottomMarginPx ?: "none"} collapsedMarginPx=$spaceBetweenBlocks " +
-                "spaceRequiredPx=$spaceRequired fits=${spaceRequired <= remainingHeight} " +
-                "currentBlocks=${currentPageContent.pageGapDiagBlockList()}"
-        )
-
-        if (DEBUG_PAGINATION_LOGS) {
-            Timber.tag("PAGINATION_DEBUG")
-                .d("Processing ${block::class.simpleName}: req=$spaceRequired, remaining=$remainingHeight, margin=$spaceBetweenBlocks, heightOnly=$blockHeight")
-        }
-
-        if (spaceRequired <= remainingHeight) {
-            var blockToAdd = block
-            val collapsedMarginDp = with(density) { spaceBetweenBlocks.toDp() }
-
-            if (currentPageContent.isNotEmpty()) {
-                val prevBlock = currentPageContent.last()
-                val newPrevStyle =
-                    prevBlock.style.copy(margin = prevBlock.style.margin.copy(bottom = 0.dp))
-                val newPrevBlock = setBlockExpectedHeight(
-                    copyBlockWithNewStyle(prevBlock, newPrevStyle),
-                    prevBlock.expectedHeight
-                )
-                currentPageContent[currentPageContent.size - 1] = newPrevBlock
-            }
-            val newCurrentStyle =
-                block.style.copy(margin = block.style.margin.copy(top = collapsedMarginDp))
-            blockToAdd = copyBlockWithNewStyle(block, newCurrentStyle)
-
-            blockToAdd = setBlockExpectedHeight(blockToAdd, spaceRequired)
-
-            currentPageContent.add(blockToAdd)
-            remainingHeight -= spaceRequired
-            logAndroidEpubPageGapDiag(
-                "decision=place_fit page=${pageIndex + 1} ${block.pageGapDiagLabel()} " +
-                    "spaceRequiredPx=$spaceRequired remainingAfterPx=$remainingHeight " +
-                    "pageBlockCount=${currentPageContent.size} expectedHeightPx=${blockToAdd.expectedHeight}"
-            )
-
-            if (block.style.forcesBreakAfter() && remainingBlocks.isNotEmpty()) {
-                logAndroidEpubPageGapDiag(
-                    "decision=commit_page reason=forced_break_after page=${pageIndex + 1} " +
-                        "block=${block.blockIndex} remainingPx=$remainingHeight blockCount=${currentPageContent.size} " +
-                        "blocks=${currentPageContent.pageGapDiagBlockList()}"
-                )
-                zeroOutBottomMargin(currentPageContent)
-                pages.add(Page(content = currentPageContent.toList()))
-                pageIndex++
-                currentPageContent = mutableListOf()
-                remainingHeight = pageHeight
-            }
-        } else {
-            var wasSplit = false
-            val heightForSplitting = remainingHeight - spaceBetweenBlocks
-
-            if (heightForSplitting > 50) {
-                when (block) {
-                    is ParagraphBlock -> {
-                        if (!block.style.avoidsBreakInside()) {
-                            measurementProvider.split(block, heightForSplitting)
-                                ?.let { (part1, part2) ->
-                                    if (part1.content.isNotEmpty()) {
-                                        val collapsedMarginDp =
-                                            with(density) { spaceBetweenBlocks.toDp() }
-                                        if (currentPageContent.isNotEmpty()) {
-                                            val prevBlock = currentPageContent.last()
-                                            val newPrevStyle = prevBlock.style.copy(
-                                                margin = prevBlock.style.margin.copy(bottom = 0.dp)
-                                            )
-                                            currentPageContent[currentPageContent.size - 1] =
-                                                setBlockExpectedHeight(
-                                                    copyBlockWithNewStyle(
-                                                        prevBlock,
-                                                        newPrevStyle
-                                                    ), prevBlock.expectedHeight
-                                                )
-                                        }
-                                        val newPart1Style =
-                                            part1.style.copy(margin = part1.style.margin.copy(top = collapsedMarginDp))
-                                        var finalPart1 = part1.copy(style = newPart1Style)
-
-                                        val part1Height = measurementProvider.measure(finalPart1)
-                                        val part1Total = part1Height + spaceBetweenBlocks
-                                        finalPart1 = setBlockExpectedHeight(finalPart1, part1Total)
-
-                                        currentPageContent.add(finalPart1)
-                                        logAndroidEpubPageGapDiag(
-                                            "decision=place_split page=${pageIndex + 1} ${block.pageGapDiagLabel()} " +
-                                                "heightForSplittingPx=$heightForSplitting part1HeightPx=$part1Height part1TotalPx=$part1Total " +
-                                                "remainingBeforePx=$remainingHeight pageBlockCount=${currentPageContent.size} " +
-                                                "part1ExpectedHeightPx=${finalPart1.expectedHeight}"
-                                        )
-                                        if (part2.content.isNotEmpty()) remainingBlocks.add(
-                                            0,
-                                            part2
-                                        )
-                                        wasSplit = true
-                                    }
-                                }
-                        }
-                    }
-
-                    is WrappingContentBlock -> {
-                        if (!block.style.avoidsBreakInside()) measurementProvider.split(block, heightForSplitting)
-                            ?.let { (part1, part2) ->
-                                if (part1.paragraphsToWrap.any { it.content.isNotBlank() }) {
-                                    val collapsedMarginDp =
-                                        with(density) { spaceBetweenBlocks.toDp() }
-                                    if (currentPageContent.isNotEmpty()) {
-                                        val prevBlock = currentPageContent.last()
-                                        val newPrevStyle = prevBlock.style.copy(
-                                            margin = prevBlock.style.margin.copy(bottom = 0.dp)
-                                        )
-                                        currentPageContent[currentPageContent.size - 1] =
-                                            setBlockExpectedHeight(
-                                                copyBlockWithNewStyle(
-                                                    prevBlock,
-                                                    newPrevStyle
-                                                ), prevBlock.expectedHeight
-                                            )
-                                    }
-                                    val newPart1Style =
-                                        part1.style.copy(margin = part1.style.margin.copy(top = collapsedMarginDp))
-                                    var finalPart1 = part1.copy(style = newPart1Style)
-
-                                    val part1Height = measurementProvider.measure(finalPart1)
-                                    val part1Total = part1Height + spaceBetweenBlocks
-                                    finalPart1 = setBlockExpectedHeight(finalPart1, part1Total)
-
-                                    currentPageContent.add(finalPart1)
-                                        logAndroidEpubPageGapDiag(
-                                            "decision=place_split page=${pageIndex + 1} ${block.pageGapDiagLabel()} " +
-                                                "heightForSplittingPx=$heightForSplitting part1HeightPx=$part1Height part1TotalPx=$part1Total " +
-                                                "remainingBeforePx=$remainingHeight pageBlockCount=${currentPageContent.size} " +
-                                                "part1ExpectedHeightPx=${finalPart1.expectedHeight}"
-                                        )
-                                    if (part2.isNotEmpty()) {
-                                        remainingBlocks.addAll(0, part2)
-                                    }
-                                    wasSplit = true
-                                }
-                            }
-                    }
-
-                    is TableBlock -> {
-                        if (!block.style.avoidsBreakInside()) measurementProvider.split(block, heightForSplitting)
-                            ?.let { (part1, part2) ->
-                                val collapsedMarginDp = with(density) { spaceBetweenBlocks.toDp() }
-                                if (currentPageContent.isNotEmpty()) {
-                                    val prevBlock = currentPageContent.last()
-                                    val newPrevStyle = prevBlock.style.copy(
-                                        margin = prevBlock.style.margin.copy(bottom = 0.dp)
-                                    )
-                                    currentPageContent[currentPageContent.size - 1] =
-                                        setBlockExpectedHeight(
-                                            copyBlockWithNewStyle(
-                                                prevBlock,
-                                                newPrevStyle
-                                            ), prevBlock.expectedHeight
-                                        )
-                                }
-
-                                val newPart1Style =
-                                    part1.style.copy(margin = part1.style.margin.copy(top = collapsedMarginDp))
-                                var finalPart1 = copyBlockWithNewStyle(part1, newPart1Style)
-
-                                val part1Height = measurementProvider.measure(finalPart1)
-                                val part1Total = part1Height + spaceBetweenBlocks
-                                finalPart1 = setBlockExpectedHeight(finalPart1, part1Total)
-
-                                currentPageContent.add(finalPart1)
-                                        logAndroidEpubPageGapDiag(
-                                            "decision=place_split page=${pageIndex + 1} ${block.pageGapDiagLabel()} " +
-                                                "heightForSplittingPx=$heightForSplitting part1HeightPx=$part1Height part1TotalPx=$part1Total " +
-                                                "remainingBeforePx=$remainingHeight pageBlockCount=${currentPageContent.size} " +
-                                                "part1ExpectedHeightPx=${finalPart1.expectedHeight}"
-                                        )
-                                remainingBlocks.add(0, part2)
-                                wasSplit = true
-                            }
-                    }
-
-                    is FlexContainerBlock -> {
-                        if (!block.style.avoidsBreakInside()) measurementProvider.split(block, heightForSplitting)
-                            ?.let { (part1, part2) ->
-                                val collapsedMarginDp = with(density) { spaceBetweenBlocks.toDp() }
-                                if (currentPageContent.isNotEmpty()) {
-                                    val prevBlock = currentPageContent.last()
-                                    val newPrevStyle = prevBlock.style.copy(
-                                        margin = prevBlock.style.margin.copy(bottom = 0.dp)
-                                    )
-                                    currentPageContent[currentPageContent.size - 1] =
-                                        setBlockExpectedHeight(
-                                            copyBlockWithNewStyle(
-                                                prevBlock,
-                                                newPrevStyle
-                                            ), prevBlock.expectedHeight
-                                        )
-                                }
-
-                                val newPart1Style =
-                                    part1.style.copy(margin = part1.style.margin.copy(top = collapsedMarginDp))
-                                var finalPart1 = copyBlockWithNewStyle(part1, newPart1Style)
-
-                                val part1Height = measurementProvider.measure(finalPart1)
-                                val part1Total = part1Height + spaceBetweenBlocks
-                                finalPart1 = setBlockExpectedHeight(finalPart1, part1Total)
-
-                                currentPageContent.add(finalPart1)
-                                        logAndroidEpubPageGapDiag(
-                                            "decision=place_split page=${pageIndex + 1} ${block.pageGapDiagLabel()} " +
-                                                "heightForSplittingPx=$heightForSplitting part1HeightPx=$part1Height part1TotalPx=$part1Total " +
-                                                "remainingBeforePx=$remainingHeight pageBlockCount=${currentPageContent.size} " +
-                                                "part1ExpectedHeightPx=${finalPart1.expectedHeight}"
-                                        )
-                                remainingBlocks.add(0, part2)
-                                wasSplit = true
-                            }
-                    }
-
-                    else -> {
-                        if (DEBUG_PAGINATION_LOGS) {
-                            Timber.d("Page ${pageIndex + 1}: Block type is not splittable.")
-                        }
-                    }
-                }
-            } else {
-                if (DEBUG_PAGINATION_LOGS) {
-                    Timber.d("Page ${pageIndex + 1}: Not enough height for splitting ($heightForSplitting <= 50).")
-                }
-            }
-
-            if (!wasSplit) {
-                if (currentPageContent.isEmpty()) {
-                    if (DEBUG_PAGINATION_LOGS) {
-                        Timber.tag("PAGINATION_DEBUG")
-                            .w("FORCING block ${block::class.simpleName} onto page because it is the first block, even though req($spaceRequired) > remaining($remainingHeight)")
-                    }
-                    val forcedHeight = blockHeight + spaceBetweenBlocks
-                    logAndroidEpubCutoff(
-                        "cutoff_probe layer=android_paginator_forced_oversize_block page=${pageIndex + 1} " +
-                            "block=${block.blockIndex} kind=${block::class.simpleName ?: "Block"} " +
-                            "pageHeightPx=$pageHeight remainingHeightPx=$remainingHeight " +
-                            "spaceRequiredPx=$spaceRequired forcedHeightPx=$forcedHeight blockHeightPx=$blockHeight " +
-                            "marginPx=$spaceBetweenBlocks textChars=${block.paginationTextCharCount()} " +
-                            "avoidsBreakInside=${block.style.avoidsBreakInside()}"
-                    )
-                    val blockToAdd = setBlockExpectedHeight(block, forcedHeight)
-                    currentPageContent.add(blockToAdd)
-                    logAndroidEpubPageGapDiag(
-                        "decision=force_oversize page=${pageIndex + 1} ${block.pageGapDiagLabel()} " +
-                            "spaceRequiredPx=$spaceRequired forcedHeightPx=$forcedHeight remainingBeforePx=$remainingHeight " +
-                            "pageHeightPx=$pageHeight blockCount=${currentPageContent.size}"
-                    )
-                } else {
-                    if (DEBUG_PAGINATION_LOGS) {
-                        Timber.tag("PAGINATION_DEBUG")
-                            .d("Block ${block::class.simpleName} did not fit and was not split. Moving to next page.")
-                    }
-                    logAndroidEpubCutoff(
-                        "cutoff_probe layer=android_paginator_page_gap page=${pageIndex + 1} " +
-                            "nextPageBlock=${block.blockIndex} kind=${block::class.simpleName ?: "Block"} " +
-                            "remainingHeightPx=$remainingHeight heightForSplittingPx=$heightForSplitting " +
-                            "spaceRequiredPx=$spaceRequired blockHeightPx=$blockHeight marginPx=$spaceBetweenBlocks " +
-                            "currentPageBlocks=${currentPageContent.size} lastPageBlock=${currentPageContent.lastOrNull()?.blockIndex ?: -1} " +
-                            "avoidsBreakInside=${block.style.avoidsBreakInside()} textChars=${block.paginationTextCharCount()}"
-                    )
-                    logAndroidEpubPageGapDiag(
-                        "decision=move_to_next_page page=${pageIndex + 1} ${block.pageGapDiagLabel()} " +
-                            "remainingPx=$remainingHeight heightForSplittingPx=$heightForSplitting " +
-                            "spaceRequiredPx=$spaceRequired blockHeightPx=$blockHeight collapsedMarginPx=$spaceBetweenBlocks " +
-                            "blockCount=${currentPageContent.size} blocks=${currentPageContent.pageGapDiagBlockList()}"
-                    )
-                    remainingBlocks.add(0, block)
-                }
-            }
-
-            logAndroidEpubPageGapDiag(
-                "decision=commit_page reason=overflow_or_split page=${pageIndex + 1} " +
-                    "remainingPx=$remainingHeight blockCount=${currentPageContent.size} " +
-                    "blocks=${currentPageContent.pageGapDiagBlockList()}"
-            )
-            zeroOutBottomMargin(currentPageContent)
-
-            pages.add(Page(content = currentPageContent.toList()))
-            pageIndex++
-            currentPageContent = mutableListOf()
-            remainingHeight = pageHeight
-        }
-    }
-    if (currentPageContent.isNotEmpty()) {
-        logAndroidEpubPageGapDiag(
-            "decision=commit_page reason=final page=${pageIndex + 1} " +
-                "remainingPx=$remainingHeight blockCount=${currentPageContent.size} " +
-                "blocks=${currentPageContent.pageGapDiagBlockList()}"
-        )
-        zeroOutBottomMargin(currentPageContent)
-
-        pages.add(Page(content = currentPageContent.toList()))
-    }
-
-    if (DEBUG_PAGINATION_LOGS) {
-        Timber.i("Pagination complete. Produced ${pages.size} pages from ${blocks.size} initial blocks.")
-    }
-    return pages
-}
-
+): List<Page> = paginateReaderBlocks(
+    blocks = blocks,
+    pageHeight = pageHeight,
+    measurementProvider = measurementProvider,
+    density = density,
+    onCutoffDiagnostic = ::logAndroidEpubCutoff,
+    onPageGapDiagnostic = ::logAndroidEpubPageGapDiag
+)
 private suspend fun measureBlockHeight(
     block: ContentBlock,
     textMeasurer: TextMeasurer,
@@ -1159,7 +766,24 @@ private suspend fun measureBlockHeight(
         is FlexContainerBlock -> {
             val isRow = block.style.flexDirection == "row"
             val childrenForMeasure = block.childrenForFlexPaginationMeasurement()
-            val height = if (isRow) {
+            val height = if (block.style.display == "reader-chant-flow") {
+                var totalHeight = 0
+                var rowWidth = 0
+                var rowHeight = 0
+                childrenForMeasure.forEach { child ->
+                    val childWidth = chantUnitEstimatedWidthPx(child, defaultStyle, density)
+                        .coerceAtMost(adjustedConstraints.maxWidth)
+                    val childHeight = measureBlockHeight(child, textMeasurer, adjustedConstraints, defaultStyle, headerStyle, density, imageSizeMultiplier)
+                    if (rowWidth > 0 && rowWidth + childWidth > adjustedConstraints.maxWidth) {
+                        totalHeight += rowHeight
+                        rowWidth = 0
+                        rowHeight = 0
+                    }
+                    rowWidth += childWidth
+                    rowHeight = maxOf(rowHeight, childHeight)
+                }
+                totalHeight + rowHeight
+            } else if (isRow) {
                 childrenForMeasure.maxOfOrNull { child ->
                     measureBlockHeight(child, textMeasurer, adjustedConstraints, defaultStyle, headerStyle, density, imageSizeMultiplier)
                 } ?: 0
@@ -1170,6 +794,13 @@ private suspend fun measureBlockHeight(
             }
             height
         }
+        is ChantScoreBlock -> measureChantRows(
+            block.units,
+            textMeasurer,
+            adjustedConstraints.maxWidth,
+            defaultStyle,
+            density
+        ).sumOf { it.heightPx }
         is MathBlock -> {
             val fontSizePx = with(density) { defaultStyle.fontSize.toPx() }
             val containerWidthPx = adjustedConstraints.maxWidth
@@ -1212,6 +843,66 @@ private suspend fun measureBlockHeight(
         Timber.tag("PAGINATION_DEBUG").v("Measure result for ${block::class.simpleName}: content=$contentHeight, paddingV=$verticalPaddingPx, borderV=$verticalBorderPx, total=$finalHeight")
     }
     return finalHeight
+}
+
+private fun chantUnitEstimatedWidthPx(block: ContentBlock, textStyle: TextStyle, density: Density): Int {
+    val container = block as? FlexContainerBlock
+    if (container?.style?.display == "reader-chant-nonbreaking") {
+        return container.children.sumOf { chantUnitEstimatedWidthPx(it, textStyle, density) }
+    }
+    val textRows = container?.children.orEmpty().filterIsInstance<TextContentBlock>()
+    val longest = textRows.maxOfOrNull { row ->
+        val fontScale = if (row.content.spanStyles.any { it.item.fontSize.isSpecified }) 1.75f else 1f
+        row.content.text.codePointCount(0, row.content.length) * fontScale
+    } ?: 1f
+    val fontPx = with(density) { textStyle.fontSize.toPx() }
+    return (longest * fontPx * 0.68f + with(density) { 6.dp.toPx() }).roundToInt().coerceAtLeast(1)
+}
+
+private data class MeasuredChantRow(val endExclusive: Int, val heightPx: Int)
+
+private suspend fun measureChantRows(
+    units: List<ChantUnitBlock>,
+    textMeasurer: TextMeasurer,
+    maxWidth: Int,
+    textStyle: TextStyle,
+    density: Density,
+    unitCache: MutableMap<Int, Pair<Int, Int>>? = null
+): List<MeasuredChantRow> = withContext(Dispatchers.Main) {
+    if (units.isEmpty()) return@withContext emptyList()
+    val gap = with(density) { 4.dp.toPx() }.roundToInt()
+    val maxTextWidth = maxWidth.coerceAtLeast(1)
+    val measured = units.map { unit ->
+        val key = 31 * unit.hashCode() + maxTextWidth
+        unitCache?.get(key) ?: run {
+            val neume = if (unit.isDropCap) null else textMeasurer.measure(unit.neume, style = textStyle, constraints = Constraints(maxWidth = maxTextWidth))
+            val lyric = textMeasurer.measure(unit.lyric, style = textStyle, constraints = Constraints(maxWidth = maxTextWidth))
+            val size = maxOf(neume?.size?.width ?: 0, lyric.size.width).coerceAtLeast(1) + gap to
+                ((neume?.size?.height ?: 0) + lyric.size.height + gap)
+            unitCache?.set(key, size)
+            size
+        }
+    }
+    val rows = mutableListOf<MeasuredChantRow>()
+    var rowWidth = 0
+    var rowHeight = 0
+    var index = 0
+    while (index < units.size) {
+        var groupEnd = index + 1
+        while (groupEnd < units.size && units[groupEnd - 1].keepWithNext) groupEnd++
+        val groupWidth = (index until groupEnd).sumOf { measured[it].first }
+        val groupHeight = (index until groupEnd).maxOf { measured[it].second }
+        if (rowWidth > 0 && rowWidth + groupWidth > maxTextWidth) {
+            rows += MeasuredChantRow(index, rowHeight)
+            rowWidth = 0
+            rowHeight = 0
+        }
+        rowWidth += groupWidth
+        rowHeight = maxOf(rowHeight, groupHeight)
+        index = groupEnd
+    }
+    rows += MeasuredChantRow(units.size, rowHeight)
+    rows
 }
 
 private suspend fun measureTableRowHeight(
@@ -2091,23 +1782,6 @@ private suspend fun splitParagraphBlock(
     return part1 to part2
 }
 
-internal fun parseSvgDimension(
-    dimension: String?,
-    fontSizePx: Float,
-    containerWidthPx: Int,
-    density: Density
-): Float? {
-    if (dimension.isNullOrBlank()) return null
-    return when {
-        dimension.endsWith("ex") -> dimension.removeSuffix("ex").toFloatOrNull()?.let { it * 0.5f * fontSizePx }
-        dimension.endsWith("em") -> dimension.removeSuffix("em").toFloatOrNull()?.let { it * fontSizePx }
-        dimension.endsWith("px") -> dimension.removeSuffix("px").toFloatOrNull()
-        dimension.endsWith("pt") -> dimension.removeSuffix("pt").toFloatOrNull()?.let { it * 1.333f * density.density }
-        dimension.endsWith("%") -> dimension.removeSuffix("%").toFloatOrNull()?.let { (it / 100f) * containerWidthPx }
-        else -> dimension.toFloatOrNull()
-    }
-}
-
 private suspend fun calculateContentHeightWithMargins(
     children: List<ContentBlock>,
     textMeasurer: TextMeasurer,
@@ -2207,23 +1881,6 @@ private fun computeBlockBoxMetrics(
     )
 }
 
-internal fun centeredTextSafetyPaddingPx(
-    style: TextStyle,
-    density: Density,
-    enabled: Boolean = true
-): Int {
-    if (!enabled || style.textAlign != TextAlign.Center) return 0
-
-    val fallbackLineHeight = if (style.fontSize.isSpecified) {
-        style.fontSize * 1.2f
-    } else {
-        16.sp * 1.2f
-    }
-    val effectiveLineHeight = if (style.lineHeight.isSpecified) style.lineHeight else fallbackLineHeight
-
-    return with(density) { effectiveLineHeight.toPx().roundToInt() }
-}
-
 private fun measureScaledImageHeightPx(
     block: ImageBlock,
     density: Density,
@@ -2268,21 +1925,3 @@ private fun measureScaledImageSizePx(
  * must use the same default; only an explicit CSS width should stretch an
  * image to the available column.
  */
-internal fun intrinsicImageWidthPx(
-    intrinsicWidth: Float,
-    density: Density,
-    maxWidthPx: Float
-): Float {
-    if (intrinsicWidth <= 0f || maxWidthPx <= 0f) return 0f
-    return with(density) { intrinsicWidth.dp.toPx() }.coerceAtMost(maxWidthPx)
-}
-
-private fun zeroOutBottomMargin(blocks: MutableList<ContentBlock>) {
-    if (blocks.isNotEmpty()) {
-        val lastBlock = blocks.last()
-        val newLastStyle = lastBlock.style.copy(margin = lastBlock.style.margin.copy(bottom = 0.dp))
-        val newLastBlock =
-            setBlockExpectedHeight(copyBlockWithNewStyle(lastBlock, newLastStyle), lastBlock.expectedHeight)
-        blocks[blocks.size - 1] = newLastBlock
-    }
-}

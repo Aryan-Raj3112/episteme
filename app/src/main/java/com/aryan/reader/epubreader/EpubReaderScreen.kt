@@ -24,6 +24,8 @@
 
 package com.aryan.reader.epubreader
 
+import kotlinx.serialization.ExperimentalSerializationApi
+
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
@@ -32,8 +34,6 @@ import android.content.pm.PackageManager
 import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
-import android.view.RoundedCorner
-import android.view.View
 import android.webkit.WebView
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -89,8 +89,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.ModalNavigationDrawer
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
@@ -129,7 +127,6 @@ import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -140,10 +137,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
-import androidx.core.content.edit
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -151,8 +146,9 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.compose.ui.platform.LocalContext
 import androidx.media3.common.util.UnstableApi
-import com.aryan.reader.AiDefinitionResult
+import com.aryan.reader.shared.AiDefinitionResult
 import com.aryan.reader.BuildConfig
 import com.aryan.reader.copyPlainTextToClipboard
 import com.aryan.reader.BookWordReplacementsSheet
@@ -166,8 +162,8 @@ import com.aryan.reader.ReaderScreenOrientationEffect
 import com.aryan.reader.ReaderScreenOrientationSheet
 import com.aryan.reader.ReaderThemePanel
 import com.aryan.reader.RenderMode
-import com.aryan.reader.SearchResult
-import com.aryan.reader.SummarizationResult
+import com.aryan.reader.shared.SearchResult
+import com.aryan.reader.shared.SummarizationResult
 import com.aryan.reader.SummaryCacheManager
 import com.aryan.reader.TtsSettingsSheet
 import com.aryan.reader.TtsWordReplacementsSheet
@@ -226,7 +222,9 @@ import com.aryan.reader.shouldRenderReaderSlider
 import com.aryan.reader.shared.ReaderBookReplacementPreferences
 import com.aryan.reader.shared.ReaderTtsReplacementPreferences
 import com.aryan.reader.shared.ReaderLocator as SharedReaderLocator
-import com.aryan.reader.tts.ReaderTtsOverlaySize
+import com.aryan.reader.shared.EpubBlockPosition
+import com.aryan.reader.shared.EpubVisibleTextRange
+import com.aryan.reader.shared.findEpubBookmarkForLocation
 import com.aryan.reader.tts.SpeakerSamplePlayer
 import com.aryan.reader.tts.TtsPlaybackManager
 import com.aryan.reader.tts.loadTtsMode
@@ -236,6 +234,9 @@ import com.aryan.reader.tts.saveReaderTtsOverlaySize
 import com.aryan.reader.tts.splitTextIntoChunks
 import com.aryan.reader.withTtsReplacements
 import com.aryan.reader.shared.reader.ReaderJumpHistory
+import com.aryan.reader.shared.reader.mobileEpubChapterScrollFraction
+import com.aryan.reader.shared.reader.mobileEpubCharacterProgress
+import com.aryan.reader.shared.reader.mobileEpubCharacterDisplayProgress
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -246,16 +247,19 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
-import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.protobuf.ProtoBuf
 import org.jsoup.Jsoup
+import com.aryan.reader.shared.ui.SharedMobileReaderDrawer
+import com.aryan.reader.shared.ui.SharedMobileReaderScaffold
+import com.aryan.reader.shared.ui.SharedMobileReaderRecoveryGate
+import com.aryan.reader.shared.reader.MobileEpubReaderBackAction
+import com.aryan.reader.shared.reader.selectMobileEpubReaderBackAction
 import org.json.JSONArray
 import org.json.JSONObject
 import timber.log.Timber
 import java.io.File
 import kotlin.math.ceil
 import kotlin.math.floor
-import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -286,276 +290,7 @@ private const val TAG_VERTICAL_JITTER = "EpubVerticalJitter"
 private const val TAG_STABLE_PAGE_NAV = "StablePageNav"
 private const val TAG_PAGINATED_HIGHLIGHT_DIAG = "PaginatedHighlightDiag"
 
-private fun epubHighlightDiagSnippet(text: String, maxLength: Int = 80): String {
-    return text
-        .replace('\n', ' ')
-        .replace('\r', ' ')
-        .replace('\t', ' ')
-        .take(maxLength)
-}
 
-private fun List<TtsChunk>.withInitialChunkOverride(
-    startChunkIndex: Int,
-    initialChunk: TtsChunk?
-): List<TtsChunk> {
-    if (initialChunk == null || startChunkIndex !in indices) return this
-    val existing = this[startChunkIndex]
-    if (
-        existing.text == initialChunk.text &&
-        existing.sourceCfi == initialChunk.sourceCfi &&
-        existing.startOffsetInSource == initialChunk.startOffsetInSource
-    ) {
-        return this
-    }
-
-    return toMutableList().also { chunks ->
-        chunks[startChunkIndex] = initialChunk
-    }
-}
-
-private fun View.bottomRoundedCornerRadiusPx(): Int {
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return 0
-
-    val insets = rootWindowInsets ?: return 0
-    return max(
-        insets.getRoundedCorner(RoundedCorner.POSITION_BOTTOM_LEFT)?.radius ?: 0,
-        insets.getRoundedCorner(RoundedCorner.POSITION_BOTTOM_RIGHT)?.radius ?: 0
-    )
-}
-
-@Composable
-private fun rememberBottomRoundedCornerPadding(view: View): Dp {
-    val density = LocalDensity.current
-    val configuration = LocalConfiguration.current
-    var radiusPx by remember(view) { mutableIntStateOf(view.bottomRoundedCornerRadiusPx()) }
-
-    DisposableEffect(
-        view,
-        configuration.orientation,
-        configuration.screenWidthDp,
-        configuration.screenHeightDp
-    ) {
-        val listener = View.OnLayoutChangeListener { updatedView, _, _, _, _, _, _, _, _ ->
-            radiusPx = updatedView.bottomRoundedCornerRadiusPx()
-        }
-        view.addOnLayoutChangeListener(listener)
-        radiusPx = view.bottomRoundedCornerRadiusPx()
-
-        onDispose {
-            view.removeOnLayoutChangeListener(listener)
-        }
-    }
-
-    return with(density) { radiusPx.toDp() }
-}
-
-private fun saveHiddenTools(context: Context, hiddenTools: Set<String>) {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    prefs.edit {
-        putStringSet(HIDDEN_TOOLS_KEY, hiddenTools)
-        putInt(HIDDEN_TOOLS_DEFAULTS_VERSION_KEY, HIDDEN_TOOLS_DEFAULTS_VERSION)
-    }
-}
-
-private fun loadHiddenTools(context: Context): Set<String> {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    val savedHiddenTools = prefs.getStringSet(HIDDEN_TOOLS_KEY, emptySet()).orEmpty()
-    val defaultsVersion = prefs.getInt(HIDDEN_TOOLS_DEFAULTS_VERSION_KEY, 0)
-    if (defaultsVersion < HIDDEN_TOOLS_DEFAULTS_VERSION) {
-        val migratedHiddenTools = savedHiddenTools + readerHiddenToolsIntroducedAfter(defaultsVersion)
-        prefs.edit {
-            putStringSet(HIDDEN_TOOLS_KEY, migratedHiddenTools)
-            putInt(HIDDEN_TOOLS_DEFAULTS_VERSION_KEY, HIDDEN_TOOLS_DEFAULTS_VERSION)
-        }
-        return migratedHiddenTools
-    }
-    return savedHiddenTools
-}
-
-private fun readerHiddenToolsIntroducedAfter(defaultsVersion: Int): Set<String> {
-    return buildSet {
-        if (defaultsVersion < 1) add(ReaderTool.SCREEN_ORIENTATION.name)
-        if (defaultsVersion < 2) add(ReaderTool.BRIGHTNESS.name)
-    }
-}
-
-private fun saveToolOrder(context: Context, toolOrder: List<ReaderTool>) {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    prefs.edit { putString(TOOL_ORDER_KEY, toolOrder.joinToString(",") { it.name }) }
-}
-
-private fun loadToolOrder(context: Context): List<ReaderTool> {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    val savedTools = prefs.getString(TOOL_ORDER_KEY, null)
-        ?.split(',')
-        ?.filter { it.isNotBlank() }
-        ?.mapNotNull { name -> ReaderTool.entries.firstOrNull { it.name == name } }
-        .orEmpty()
-    return (savedTools + defaultReaderToolOrder().filterNot { it in savedTools }).distinct()
-}
-
-private fun saveBottomTools(context: Context, bottomTools: Set<String>) {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    prefs.edit { putStringSet(BOTTOM_TOOLS_KEY, bottomTools) }
-}
-
-private fun loadBottomTools(context: Context): Set<String> {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    return prefs.getStringSet(
-        BOTTOM_TOOLS_KEY,
-        defaultReaderBottomTools()
-    ) ?: defaultReaderBottomTools()
-}
-
-private fun saveKeepScreenOn(context: Context, isEnabled: Boolean) {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    prefs.edit { putBoolean(KEEP_SCREEN_ON_KEY, isEnabled) }
-}
-
-private fun loadKeepScreenOn(context: Context): Boolean {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    return prefs.getBoolean(KEEP_SCREEN_ON_KEY, false)
-}
-
-private fun saveMusicianMode(context: Context, isEnabled: Boolean) {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    prefs.edit { putBoolean(MUSICIAN_MODE_KEY, isEnabled) }
-}
-
-private fun loadMusicianMode(context: Context): Boolean {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    return prefs.getBoolean(MUSICIAN_MODE_KEY, false)
-}
-
-private fun getBookIdForPrefs(title: String): String {
-    return title.hashCode().toString()
-}
-
-private fun saveAutoScrollLocalMode(context: Context, bookId: String, isLocal: Boolean) {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    prefs.edit { putBoolean(AUTO_SCROLL_IS_LOCAL_PREFIX + bookId, isLocal) }
-}
-
-private fun loadAutoScrollLocalMode(context: Context, bookId: String): Boolean {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    return prefs.getBoolean(AUTO_SCROLL_IS_LOCAL_PREFIX + bookId, false)
-}
-
-private fun saveAutoScrollLocalSettings(context: Context, bookId: String, speed: Float, min: Float, max: Float) {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    prefs.edit {
-        putFloat(AUTO_SCROLL_LOCAL_SPEED_PREFIX + bookId, speed)
-        putFloat(AUTO_SCROLL_LOCAL_MIN_PREFIX + bookId, min)
-        putFloat(AUTO_SCROLL_LOCAL_MAX_PREFIX + bookId, max)
-    }
-}
-
-private fun loadAutoScrollLocalSettings(context: Context, bookId: String): Triple<Float, Float, Float>? {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    if (!prefs.contains(AUTO_SCROLL_LOCAL_SPEED_PREFIX + bookId)) return null
-
-    val speed = prefs.getFloat(AUTO_SCROLL_LOCAL_SPEED_PREFIX + bookId, 3.0f)
-    val min = prefs.getFloat(AUTO_SCROLL_LOCAL_MIN_PREFIX + bookId, 0.1f)
-    val max = prefs.getFloat(AUTO_SCROLL_LOCAL_MAX_PREFIX + bookId, 10.0f)
-    return Triple(speed, min, max)
-}
-
-private fun savePageTurnAnimationSetting(context: Context, isEnabled: Boolean) {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    prefs.edit { putBoolean(PAGE_TURN_ANIMATION_KEY, isEnabled) }
-}
-
-private fun loadPageTurnAnimationSetting(context: Context): Boolean {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    return prefs.getBoolean(PAGE_TURN_ANIMATION_KEY, false)
-}
-
-private fun saveAutoScrollMinSpeed(context: Context, speed: Float) {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    prefs.edit { putFloat(AUTO_SCROLL_MIN_SPEED_KEY, speed) }
-}
-
-private fun loadAutoScrollMinSpeed(context: Context): Float {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    return prefs.getFloat(AUTO_SCROLL_MIN_SPEED_KEY, 0.1f)
-}
-
-private fun saveAutoScrollMaxSpeed(context: Context, speed: Float) {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    prefs.edit { putFloat(AUTO_SCROLL_MAX_SPEED_KEY, speed) }
-}
-
-private fun loadAutoScrollMaxSpeed(context: Context): Float {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    return prefs.getFloat(AUTO_SCROLL_MAX_SPEED_KEY, 10.0f)
-}
-
-private fun saveAutoScrollUseSlider(context: Context, useSlider: Boolean) {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    prefs.edit { putBoolean(AUTO_SCROLL_USE_SLIDER_KEY, useSlider) }
-}
-
-private fun loadAutoScrollUseSlider(context: Context): Boolean {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    return prefs.getBoolean(AUTO_SCROLL_USE_SLIDER_KEY, false)
-}
-
-private fun saveTtsMode(context: Context, modeName: String) {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    prefs.edit { putString(TTS_MODE_KEY, modeName) }
-}
-
-private const val PREF_USE_ONLINE_DICT = "use_online_dictionary"
-private const val PREF_EXTERNAL_DICT_PKG = "external_dictionary_package"
-private const val PREF_EXTERNAL_TRANSLATE_PKG = "external_translate_package"
-private const val PREF_EXTERNAL_SEARCH_PKG = "external_search_package"
-
-private fun loadUseOnlineDict(context: Context): Boolean {
-    @Suppress("KotlinConstantConditions") if (BuildConfig.FLAVOR == "oss" && BuildConfig.IS_OFFLINE) return false
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    return prefs.getBoolean(PREF_USE_ONLINE_DICT, true)
-}
-
-private fun saveUseOnlineDict(context: Context, useOnline: Boolean) {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    prefs.edit { putBoolean(PREF_USE_ONLINE_DICT, useOnline) }
-}
-
-private fun loadExternalDictPackage(context: Context): String? {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    return prefs.getString(PREF_EXTERNAL_DICT_PKG, null)
-}
-
-private fun saveExternalDictPackage(context: Context, packageName: String) {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    prefs.edit { putString(PREF_EXTERNAL_DICT_PKG, packageName) }
-}
-
-private fun loadExternalTranslatePackage(context: Context): String? {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    return prefs.getString(PREF_EXTERNAL_TRANSLATE_PKG, null)
-}
-
-private fun saveExternalTranslatePackage(context: Context, packageName: String) {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    prefs.edit { putString(PREF_EXTERNAL_TRANSLATE_PKG, packageName) }
-}
-
-private fun loadExternalSearchPackage(context: Context): String? {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    return prefs.getString(PREF_EXTERNAL_SEARCH_PKG, null)
-}
-
-private fun saveExternalSearchPackage(context: Context, packageName: String) {
-    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-    prefs.edit { putString(PREF_EXTERNAL_SEARCH_PKG, packageName) }
-}
-
-const val PREF_READER_THEME = "reader_theme_id"
-const val PREF_CUSTOM_THEMES = "custom_themes_json"
-
-@UnstableApi
-@RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
 @Composable
 fun EpubReaderScreen(
     epubBook: EpubBook,
@@ -612,23 +347,11 @@ fun EpubReaderScreen(
             "Book content not found. Reopen the book to recreate its cache."
         }
 
-        Box(modifier = Modifier.fillMaxSize()) {
-            if (isRecovering) {
-                CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
-            }
-            Text(
-                text = message,
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(24.dp),
-                color = if (uiState.errorMessage != null) {
-                    MaterialTheme.colorScheme.error
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                },
-                textAlign = TextAlign.Center
-            )
-        }
+        SharedMobileReaderRecoveryGate(
+            message = message,
+            recovering = isRecovering,
+            isError = uiState.errorMessage != null,
+        )
         return
     }
 
@@ -1098,11 +821,14 @@ fun EpubReaderHost(
     }
 
     var readerImages by remember(epubBook) { mutableStateOf<List<EpubReaderImageReference>>(emptyList()) }
+    var readerImagesLoaded by remember(epubBook) { mutableStateOf(false) }
 
-    LaunchedEffect(epubBook) {
+    LaunchedEffect(epubBook, drawerState.isOpen) {
+        if (!drawerState.isOpen || readerImagesLoaded) return@LaunchedEffect
         readerImages = withContext(Dispatchers.IO) {
             epubBook.readerImageReferencesForDrawer()
         }
+        readerImagesLoaded = true
     }
 
     var currentChapterIndex by rememberSaveable(epubBook.title) {
@@ -1250,26 +976,23 @@ fun EpubReaderHost(
                     chapters.take(currentChapterIndex)
                         .sumOf { it.plainTextCharacterCount().toLong() }
 
-                val progressWithinChapter =
-                    if (currentScrollHeightValue > currentClientHeightValue) {
-                        val scrollableHeight = (currentScrollHeightValue - currentClientHeightValue).toFloat()
-                        if (scrollableHeight > 0) (currentScrollYPosition.toFloat() / scrollableHeight).coerceIn(0f, 1f) else 1f
-                    } else if (currentScrollHeightValue > 0) {
-                        1f // Fully scrolled if content is smaller than viewport
-                    } else {
-                        0f
-                    }
+                val progressWithinChapter = mobileEpubChapterScrollFraction(
+                    scrollY = currentScrollYPosition,
+                    scrollHeight = currentScrollHeightValue,
+                    clientHeight = currentClientHeightValue
+                )
 
                 val currentChapterLengthChars =
                     chapters.getOrNull(currentChapterIndex)?.plainTextCharacterCount()?.toLong() ?: 0L
                 val charsScrolledInCurrentChapter = (progressWithinChapter * currentChapterLengthChars).toLong()
-                val totalCharsScrolled = completedCharsInPreviousChapters + charsScrolledInCurrentChapter
-                val calculatedProgress = ((totalCharsScrolled.toDouble() / totalBookLengthChars.toDouble()) * 100.0).toFloat()
-
                 val isLastChapter = currentChapterIndex == chapters.size - 1
                 val isAtEndOfBook = isLastChapter && (currentScrollYPosition + currentClientHeightValue) >= (currentScrollHeightValue - 2)
-
-                if (isAtEndOfBook) 100f else calculatedProgress
+                mobileEpubCharacterProgress(
+                    totalBookCharacters = totalBookLengthChars,
+                    completedChapterCharacters = completedCharsInPreviousChapters,
+                    currentChapterOffset = charsScrolledInCurrentChapter,
+                    isAtEndOfBook = isAtEndOfBook
+                )
             } else {
                 0f
             }
@@ -1287,6 +1010,8 @@ fun EpubReaderHost(
     var currentImageSize by remember(initialFormatSettings) { mutableFloatStateOf(initialFormatSettings.imageSize) }
     var currentHorizontalMargin by remember(initialFormatSettings) { mutableFloatStateOf(initialFormatSettings.horizontalMargin) }
     var currentVerticalMargin by remember(initialFormatSettings) { mutableFloatStateOf(initialFormatSettings.verticalMargin) }
+    var currentFontWeight by remember(initialFormatSettings) { mutableIntStateOf(initialFormatSettings.fontWeight) }
+    var currentLetterSpacing by remember(initialFormatSettings) { mutableFloatStateOf(initialFormatSettings.letterSpacing) }
     var currentTextAlign by remember(initialFormatSettings) { mutableStateOf(initialFormatSettings.textAlign) }
     var currentFontFamily by remember(initialFormatSettings) { mutableStateOf(initialFormatSettings.font) }
     var currentCustomFontPath by remember(initialFormatSettings) { mutableStateOf(initialFormatSettings.customPath) }
@@ -1302,14 +1027,14 @@ fun EpubReaderHost(
     var showFontSelectionSheet by remember { mutableStateOf(false) }
     val fontSheetState = rememberModalBottomSheetState()
 
-    LaunchedEffect(currentFontSizeEm, currentLineHeight, currentParagraphGap, currentImageSize, currentHorizontalMargin, currentVerticalMargin, currentFontFamily, currentCustomFontPath, currentTextAlign, isFormatLocal) {
+    LaunchedEffect(currentFontSizeEm, currentLineHeight, currentParagraphGap, currentImageSize, currentHorizontalMargin, currentVerticalMargin, currentFontFamily, currentCustomFontPath, currentTextAlign, currentFontWeight, currentLetterSpacing, isFormatLocal) {
         if (isFormatLocal) {
             saveLocalReaderSettings(
-                context, bookId, currentFontSizeEm, currentLineHeight, currentParagraphGap, currentImageSize, currentHorizontalMargin, currentVerticalMargin, currentFontFamily, currentCustomFontPath, currentTextAlign
+                context, bookId, currentFontSizeEm, currentLineHeight, currentParagraphGap, currentImageSize, currentHorizontalMargin, currentVerticalMargin, currentFontFamily, currentCustomFontPath, currentTextAlign, currentFontWeight, currentLetterSpacing
             )
         } else {
             saveReaderSettings(
-                context, currentFontSizeEm, currentLineHeight, currentParagraphGap, currentImageSize, currentHorizontalMargin, currentVerticalMargin, currentFontFamily, currentCustomFontPath, currentTextAlign
+                context, currentFontSizeEm, currentLineHeight, currentParagraphGap, currentImageSize, currentHorizontalMargin, currentVerticalMargin, currentFontFamily, currentCustomFontPath, currentTextAlign, currentFontWeight, currentLetterSpacing
             )
         }
     }
@@ -1590,17 +1315,14 @@ fun EpubReaderHost(
         val exactOffset = locatorConverter.getTextOffset(epubBook, locator)?.coerceAtLeast(0) ?: 0
         val boundedOffset = exactOffset.coerceAtMost(chapterLengthChars.toInt()).toLong()
 
-        val progress = if (totalBookLengthChars > 0) {
-            val completedCharsInPreviousChapters =
-                chapters.take(locator.chapterIndex).sumOf { it.plainTextCharacterCount().toLong() }
-            val totalCharsScrolled = completedCharsInPreviousChapters + boundedOffset
-            val calculatedProgress =
-                ((totalCharsScrolled.toDouble() / totalBookLengthChars.toDouble()) * 100.0).toFloat()
-            val isAtEndOfBook = locator.chapterIndex == chapters.lastIndex && chapterLengthChars > 0 && boundedOffset >= chapterLengthChars
-            if (isAtEndOfBook) 100f else calculatedProgress
-        } else {
-            0f
-        }
+        val completedCharsInPreviousChapters =
+            chapters.take(locator.chapterIndex).sumOf { it.plainTextCharacterCount().toLong() }
+        val progress = mobileEpubCharacterProgress(
+            totalBookCharacters = totalBookLengthChars,
+            completedChapterCharacters = completedCharsInPreviousChapters,
+            currentChapterOffset = boundedOffset,
+            isAtEndOfBook = locator.chapterIndex == chapters.lastIndex && chapterLengthChars > 0 && boundedOffset >= chapterLengthChars
+        )
 
         Timber.tag("TTS_LOCATE")
             .d("Saving resolved locator position. chapter=${locator.chapterIndex}, block=${locator.blockIndex}, progress=$progress")
@@ -2700,10 +2422,13 @@ fun EpubReaderHost(
                 val completedCharsInPreviousChapters = chapters.take(chapterIndex).sumOf { it.plainTextCharacterCount().toLong() }
                 val currentPageInChapter = (bookPaginator.chapterStartPageIndices[chapterIndex] ?: 0).let { pageToSave - it }
                 val charsScrolledInCurrentChapter = bookPaginator.getCharactersScrolledInChapter(chapterIndex, currentPageInChapter)
-                val totalCharsScrolled = completedCharsInPreviousChapters + charsScrolledInCurrentChapter
-                val calculatedProgress = ((totalCharsScrolled.toDouble() / totalBookLengthChars.toDouble()) * 100.0).toFloat()
                 val isLastPageOfBook = pageToSave == paginatedPagerState.pageCount - 1
-                if (isLastPageOfBook) 100f else calculatedProgress
+                mobileEpubCharacterProgress(
+                    totalBookCharacters = totalBookLengthChars,
+                    completedChapterCharacters = completedCharsInPreviousChapters,
+                    currentChapterOffset = charsScrolledInCurrentChapter,
+                    isAtEndOfBook = isLastPageOfBook
+                )
 
             } else {
                 0f
@@ -2856,12 +2581,13 @@ fun EpubReaderHost(
                                         locatorCharsScrolledInCurrentChapter
                                             ?.coerceAtLeast(pageCharsScrolledInCurrentChapter)
                                             ?: pageCharsScrolledInCurrentChapter
-                                    val totalCharsScrolled =
-                                        completedCharsInPreviousChapters + charsScrolledInCurrentChapter
-                                    val calculatedProgress =
-                                        ((totalCharsScrolled.toDouble() / totalBookLengthChars.toDouble()) * 100.0).toFloat()
                                     val isLastPageOfBook = pageToSave == nativeVerticalTotalPages - 1
-                                    if (isLastPageOfBook) 100f else calculatedProgress
+                                    mobileEpubCharacterProgress(
+                                        totalBookCharacters = totalBookLengthChars,
+                                        completedChapterCharacters = completedCharsInPreviousChapters,
+                                        currentChapterOffset = charsScrolledInCurrentChapter,
+                                        isAtEndOfBook = isLastPageOfBook
+                                    )
                                 } else {
                                     nativeVerticalProgress
                                 }
@@ -2903,10 +2629,13 @@ fun EpubReaderHost(
                                 val completedCharsInPreviousChapters = chapters.take(chapterIndex).sumOf { it.plainTextCharacterCount().toLong() }
                                 val currentPageInChapter = (bookPaginator.chapterStartPageIndices[chapterIndex] ?: 0).let { pageToSave - it }
                                 val charsScrolledInCurrentChapter = bookPaginator.getCharactersScrolledInChapter(chapterIndex, currentPageInChapter)
-                                val totalCharsScrolled = completedCharsInPreviousChapters + charsScrolledInCurrentChapter
-                                val calculatedProgress = ((totalCharsScrolled.toDouble() / totalBookLengthChars.toDouble()) * 100.0).toFloat()
                                 val isLastPageOfBook = pageToSave == paginatedPagerState.pageCount - 1
-                                if (isLastPageOfBook) 100f else calculatedProgress
+                                mobileEpubCharacterProgress(
+                                    totalBookCharacters = totalBookLengthChars,
+                                    completedChapterCharacters = completedCharsInPreviousChapters,
+                                    currentChapterOffset = charsScrolledInCurrentChapter,
+                                    isAtEndOfBook = isLastPageOfBook
+                                )
 
                             } else {
                                 0f
@@ -3559,25 +3288,28 @@ fun EpubReaderHost(
     }
 
     BackHandler(enabled = true) {
-        if (drawerState.isOpen) {
-            scope.launch {
+        when (selectMobileEpubReaderBackAction(drawerState.isOpen, isAutoScrollModeActive, searchState.isSearchActive)) {
+            MobileEpubReaderBackAction.CLOSE_DRAWER -> scope.launch {
                 Timber.d("Back pressed: Closing drawer")
                 drawerState.close()
             }
-        } else if (isAutoScrollModeActive) {
-            isAutoScrollModeActive = false
-            isAutoScrollPlaying = false
-            showBars = true
-        } else if (searchState.isSearchActive) {
-            searchState.isSearchActive = false
-            searchState.onQueryChange("")
-        } else {
-            Timber.d("Back pressed: Navigating back. Position will be saved first.")
-            triggerSaveAndExit()
+            MobileEpubReaderBackAction.STOP_AUTO_SCROLL -> {
+                isAutoScrollModeActive = false
+                isAutoScrollPlaying = false
+                showBars = true
+            }
+            MobileEpubReaderBackAction.CLOSE_SEARCH -> {
+                searchState.isSearchActive = false
+                searchState.onQueryChange("")
+            }
+            MobileEpubReaderBackAction.SAVE_AND_EXIT -> {
+                Timber.d("Back pressed: Navigating back. Position will be saved first.")
+                triggerSaveAndExit()
+            }
         }
     }
 
-    ModalNavigationDrawer(
+    SharedMobileReaderDrawer(
         drawerState = drawerState,
         gesturesEnabled = drawerState.isOpen,
         drawerContent = {
@@ -4428,7 +4160,7 @@ fun EpubReaderHost(
             }
         }
 
-        Scaffold(
+        SharedMobileReaderScaffold(
             snackbarHost = { SnackbarHost(snackbarHostState) },
             contentWindowInsets = WindowInsets.statusBars,
         ) { scaffoldPaddingValues ->
@@ -4666,6 +4398,8 @@ fun EpubReaderHost(
                                     horizontalMarginMultiplier = currentHorizontalMargin,
                                     verticalMarginMultiplier = currentVerticalMargin,
                                     fontFamily = activeFontFamily,
+                                    fontWeight = currentFontWeight,
+                                    letterSpacing = currentLetterSpacing,
                                     textAlign = currentTextAlign,
                                     bookReplacementPreferences = bookReplacementPreferences,
                                     bookReplacementFileId = bookId,
@@ -4828,6 +4562,10 @@ fun EpubReaderHost(
                                     label = "ChapterChangeAnimation",
                                     modifier = Modifier.fillMaxSize()
                                 ) { targetChapterIndex ->
+                                    // AnimatedContent may keep composing its outgoing state after a
+                                    // replacement book has supplied a shorter chapter list.
+                                    val chapterToRender = chapters.getOrNull(targetChapterIndex)
+                                        ?: return@AnimatedContent
                                     if (isChapterParsing) {
                                         Box(
                                             modifier = Modifier.fillMaxSize(),
@@ -4879,7 +4617,6 @@ fun EpubReaderHost(
                                             </html>
                                         """.trimIndent()
 
-                                        val chapterToRender = chapters[targetChapterIndex]
                                         val chapterFontFaceCss = remember(
                                             chapterHead,
                                             chapterToRender.absPath,
@@ -5262,6 +4999,8 @@ fun EpubReaderHost(
                                             currentHorizontalMargin = currentHorizontalMargin,
                                             currentVerticalMargin = currentVerticalMargin,
                                             currentFontFamily = currentFontFamily,
+                                            currentFontWeight = currentFontWeight,
+                                            currentLetterSpacing = currentLetterSpacing,
                                             customFontPath = currentCustomFontPath,
                                             epubFontFaceCss = listOf(epubFontFaceCss, chapterFontFaceCss)
                                                 .filter { it.isNotBlank() }
@@ -5624,19 +5363,11 @@ fun EpubReaderHost(
                                                         Timber.tag("PosSaveDiag").d("✅ Converted CFI to Locator successfully: chapter=${locator.chapterIndex}, block=${locator.blockIndex}, charOffset=${locator.charOffset}")
                                                         lastKnownLocator = locator
 
-                                                        val progressWithinChapter =
-                                                            if (currentScrollHeightValue > currentClientHeightValue) {
-                                                                val scrollableHeight =
-                                                                    (currentScrollHeightValue - currentClientHeightValue).toFloat()
-                                                                if (scrollableHeight > 0) (currentScrollYPosition.toFloat() / scrollableHeight).coerceIn(
-                                                                    0f,
-                                                                    1f
-                                                                ) else 1f
-                                                            } else if (currentScrollHeightValue > 0) {
-                                                                1f
-                                                            } else {
-                                                                0f
-                                                            }
+                                                        val progressWithinChapter = mobileEpubChapterScrollFraction(
+                                                            scrollY = currentScrollYPosition,
+                                                            scrollHeight = currentScrollHeightValue,
+                                                            clientHeight = currentClientHeightValue
+                                                        )
 
                                                         val currentChapterLengthChars =
                                                             chapters.getOrNull(
@@ -5675,15 +5406,16 @@ fun EpubReaderHost(
 
                                                             val charsScrolledInCurrentChapter =
                                                                 (progressWithinChapter * currentChapterLengthChars).toLong()
-                                                            val totalCharsScrolled =
-                                                                completedCharsInPreviousChapters + charsScrolledInCurrentChapter
-                                                            val calculatedProgress =
-                                                                ((totalCharsScrolled.toDouble() / totalBookLengthChars.toDouble()) * 100.0).toFloat()
                                                             val isLastChapter =
                                                                 latestChapterIndex == chapters.size - 1
                                                             val isAtEndOfBook =
                                                                 isLastChapter && (currentScrollYPosition + currentClientHeightValue) >= (currentScrollHeightValue - 2)
-                                                            if (isAtEndOfBook) 100f else calculatedProgress
+                                                            mobileEpubCharacterProgress(
+                                                                totalBookCharacters = totalBookLengthChars,
+                                                                completedChapterCharacters = completedCharsInPreviousChapters,
+                                                                currentChapterOffset = charsScrolledInCurrentChapter,
+                                                                isAtEndOfBook = isAtEndOfBook
+                                                            )
 
                                                         } else {
                                                             0f
@@ -5848,6 +5580,8 @@ fun EpubReaderHost(
                                 horizontalMarginMultiplier = currentHorizontalMargin,
                                 verticalMarginMultiplier = currentVerticalMargin,
                                 fontFamily = activeFontFamily,
+                                fontWeight = currentFontWeight,
+                                letterSpacing = currentLetterSpacing,
                                 textAlign = currentTextAlign,
                                 bookReplacementPreferences = bookReplacementPreferences,
                                 bookReplacementFileId = bookId,
@@ -6085,32 +5819,28 @@ fun EpubReaderHost(
                                 bookmarkPageMap,
                                 bookmarks
                             ) {
-                                val visibleRanges = nativeVerticalLocation?.visibleTextRanges.orEmpty()
-                                val visibleRangeBookmark = bookmarks.find { bookmark ->
-                                    val bookmarkLocator = bookmarkLocatorMap[bookmark.cfi] ?: return@find false
-                                    visibleRanges.any { range ->
-                                        range.chapterIndex == bookmarkLocator.chapterIndex &&
-                                            range.blockIndex == bookmarkLocator.blockIndex &&
-                                            bookmarkLocator.charOffset in range.startCharOffset..range.endCharOffset
-                                    }
-                                }
-                                if (visibleRangeBookmark != null) return@remember visibleRangeBookmark
-
-                                val locator = currentNativeLocator
-                                val locatorBookmark = if (locator != null) {
-                                    bookmarks.find { bookmark ->
-                                        val bookmarkLocator = bookmarkLocatorMap[bookmark.cfi]
-                                        bookmarkLocator != null &&
-                                            bookmarkLocator.chapterIndex == locator.chapterIndex &&
-                                            bookmarkLocator.blockIndex == locator.blockIndex &&
-                                            abs(bookmarkLocator.charOffset - locator.charOffset) <= 160
-                                    }
-                                } else {
-                                    null
-                                }
-                                locatorBookmark ?: bookmarks.find { bookmark ->
-                                    bookmarkPageMap[bookmark.cfi] == nativeVerticalCurrentPage
-                                }
+                                findEpubBookmarkForLocation(
+                                    bookmarks = bookmarks,
+                                    visibleRanges = nativeVerticalLocation?.visibleTextRanges.orEmpty().map { range ->
+                                        EpubVisibleTextRange(
+                                            chapterIndex = range.chapterIndex,
+                                            blockIndex = range.blockIndex,
+                                            startCharOffset = range.startCharOffset,
+                                            endCharOffset = range.endCharOffset
+                                        )
+                                    },
+                                    currentPosition = currentNativeLocator?.let { locator ->
+                                        EpubBlockPosition(locator.chapterIndex, locator.blockIndex, locator.charOffset)
+                                    },
+                                    currentPage = nativeVerticalCurrentPage,
+                                    cfi = { it.cfi },
+                                    positionForCfi = { cfi ->
+                                        bookmarkLocatorMap[cfi]?.let { locator ->
+                                            EpubBlockPosition(locator.chapterIndex, locator.blockIndex, locator.charOffset)
+                                        }
+                                    },
+                                    pageForCfi = bookmarkPageMap::get
+                                )
                             }
 
                             isBookmarked = bookmarkedOnPage != null
@@ -6328,6 +6058,7 @@ fun EpubReaderHost(
                     } else {
                         0.dp
                     }
+                val readerClockTime = rememberReaderClockTime()
 
                 // Page Info Bar (Vertical)
                 AnimatedVisibility(
@@ -6357,6 +6088,13 @@ fun EpubReaderHost(
                             currentScrollHeightValue <= 0 || isChapterParsing -> ""
                             else -> " ($currentPageInChapter/$totalPagesInCurrentChapter)"
                         }
+
+                        Text(
+                            text = readerClockTime,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = effectiveText.copy(alpha = 0.8f),
+                            modifier = Modifier.align(Alignment.CenterStart)
+                        )
 
                         Text(
                             text = "$chapterTitle$displayPageInfo",
@@ -6422,6 +6160,13 @@ fun EpubReaderHost(
                         }
 
                         Text(
+                            text = readerClockTime,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = effectiveText.copy(alpha = 0.8f),
+                            modifier = Modifier.align(Alignment.CenterStart)
+                        )
+
+                        Text(
                             text = textToShow,
                             style = MaterialTheme.typography.bodySmall,
                             color = effectiveText.copy(alpha = 0.8f),
@@ -6446,14 +6191,13 @@ fun EpubReaderHost(
                                     0
                                 }
                                 val charsScrolledInCurrentChapter = bookPaginator.getCharactersScrolledInChapter(chapterIndex, currentPageInChapter)
-                                val totalCharsScrolled = completedCharsInPreviousChapters + charsScrolledInCurrentChapter
-                                val calculatedProgress = (totalCharsScrolled.toDouble() / totalBookLengthChars.toDouble()) * 100.0
                                 val isLastPageOfBook = paginatedPagerState.currentPage == paginatedPagerState.pageCount - 1
-                                val displayProgress = if (isLastPageOfBook) {
-                                    100.0
-                                } else {
-                                    floor(calculatedProgress.coerceAtMost(100.0) * 10) / 10.0
-                                }
+                                val displayProgress = mobileEpubCharacterDisplayProgress(
+                                    totalBookCharacters = totalBookLengthChars,
+                                    completedChapterCharacters = completedCharsInPreviousChapters,
+                                    currentChapterOffset = charsScrolledInCurrentChapter,
+                                    isLastPageOfBook = isLastPageOfBook
+                                )
 
                                 Text(
                                     text = "%.1f%%".format(displayProgress),
@@ -7146,6 +6890,11 @@ fun EpubReaderHost(
                     currentVerticalMargin = currentVerticalMargin,
                     onVerticalMarginChange = { currentVerticalMargin = it },
                     currentFont = currentFontFamily,
+                    currentFontWeight = currentFontWeight,
+                    onFontWeightChange = { currentFontWeight = it },
+                    currentLetterSpacing = currentLetterSpacing,
+                    onLetterSpacingChange = { currentLetterSpacing = it },
+                    previewFontFamily = activeFontFamily,
                     currentCustomFontName = if(currentCustomFontPath != null) {
                         customFonts.find { it.path == currentCustomFontPath }?.displayName ?: stringResource(R.string.custom_font_fallback)
                     } else null,
@@ -7164,6 +6913,8 @@ fun EpubReaderHost(
                         currentImageSize = DEFAULT_IMAGE_SIZE_VAL
                         currentHorizontalMargin = DEFAULT_HORIZONTAL_MARGIN_VAL
                         currentVerticalMargin = DEFAULT_VERTICAL_MARGIN_VAL
+                        currentFontWeight = DEFAULT_FONT_WEIGHT_VAL
+                        currentLetterSpacing = DEFAULT_LETTER_SPACING_VAL
                         currentFontFamily = ReaderFont.ORIGINAL
                         currentCustomFontPath = null
                         currentTextAlign = ReaderTextAlign.DEFAULT
@@ -7386,6 +7137,53 @@ fun EpubReaderHost(
                         htmlContent = activeFootnoteHtml!!,
                         effectiveBg = effectiveBg,
                         effectiveText = effectiveText,
+                        onInternalLinkClick = { href ->
+                            scope.launch {
+                                val bookPaginator = paginator as? BookPaginator
+                                val currentChapterPath = chapters.getOrNull(currentChapterIndex)?.absPath.orEmpty()
+                                val extractionBaseUrl = "file://${epubBook.extractionBasePath.trimEnd('/')}/"
+                                val decodedHref = runCatching {
+                                    java.net.URLDecoder.decode(href, "UTF-8")
+                                }.getOrDefault(href)
+                                val bookRelativeHref = decodedHref.removePrefix(extractionBaseUrl).trimStart('/')
+                                val hrefPath = bookRelativeHref.substringBefore('#')
+                                val hasBookRootPath = chapters.any { chapter ->
+                                    chapter.absPath.trimStart('/') == hrefPath
+                                }
+                                val hrefForNavigation = if (hasBookRootPath) bookRelativeHref else href
+                                val resolutionBase = if (hasBookRootPath) "" else currentChapterPath
+                                val (targetLocator, targetPage) = withContext(Dispatchers.IO) {
+                                    val locator = bookPaginator?.findStableLocatorForHref(resolutionBase, hrefForNavigation)
+                                    locator to (locator?.let { bookPaginator.findStablePageForLocator(it) }
+                                        ?: bookPaginator?.findStablePageForHref(resolutionBase, hrefForNavigation))
+                                }
+                                if (targetLocator == null && targetPage == null) return@launch
+
+                                val destination = targetLocator
+                                    ?: targetPage?.let { bookPaginator?.getLocatorForPage(it) }
+                                destination?.let {
+                                    lastKnownLocator = it
+                                    recordEpubJump(it.toEpubJumpLocator(targetPage))
+                                }
+                                when {
+                                    isNativeVerticalMode -> requestNativeVerticalLocatorScroll(
+                                        locator = destination,
+                                        fallbackPage = targetPage,
+                                        fallbackChapterIndex = destination?.chapterIndex
+                                    )
+                                    currentRenderMode == RenderMode.VERTICAL_SCROLL -> {
+                                        val targetChapter = destination?.chapterIndex
+                                            ?: targetPage?.let { bookPaginator?.findChapterIndexForPage(it) }
+                                        if (targetChapter != null) {
+                                            fragmentToLoad = hrefForNavigation.substringAfter('#', "").takeIf(String::isNotBlank)
+                                            initialScrollTargetForChapter = null
+                                            currentChapterIndex = targetChapter
+                                        }
+                                    }
+                                    targetPage != null -> paginatedPagerState.scrollToPage(targetPage)
+                                }
+                            }
+                        },
                         onDismiss = { activeFootnoteHtml = null }
                     )
                 }

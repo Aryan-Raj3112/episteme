@@ -6,6 +6,16 @@ import kotlin.test.assertEquals
 
 class SharedStringsTest {
     @Test
+    fun resolvesModelOwnedLiteralWithFallback() {
+        val resolver = SharedStringResolver(
+            resolveLiteral = { text -> if (text == "Settings") "Einstellungen" else null }
+        )
+
+        assertEquals("Einstellungen", resolver.literal("Settings"))
+        assertEquals("Unmapped copy", resolver.literal("Unmapped copy"))
+    }
+
+    @Test
     fun formatsAndroidIndexedPlaceholders() {
         val formatted = formatAndroidString(
             "Remove \"%1\$s\" and its %2\$d books?",

@@ -1,5 +1,7 @@
 package com.aryan.reader.shared.reader
 
+import com.aryan.reader.paginatedreader.SemanticTextBlock
+
 class SimplePaginator {
     fun paginate(
         book: SharedEpubBook,
@@ -78,7 +80,8 @@ class SimplePaginator {
                     chapterTitle = chapter.title,
                     text = "",
                     startOffset = 0,
-                    endOffset = 0
+                    endOffset = 0,
+                    semanticBlocks = chapter.semanticBlocks
                 )
             )
         }
@@ -95,7 +98,13 @@ class SimplePaginator {
                     chapterTitle = chapter.title,
                     text = normalized.substring(start, end).trim(),
                     startOffset = start,
-                    endOffset = end
+                    endOffset = end,
+                    semanticBlocks = chapter.semanticBlocks.filter { block ->
+                        val textBlock = block as? SemanticTextBlock ?: return@filter true
+                        val blockStart = textBlock.startCharOffsetInSource
+                        val blockEnd = blockStart + textBlock.text.length
+                        blockStart < end && blockEnd >= start
+                    }
                 )
             )
             start = end

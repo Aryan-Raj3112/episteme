@@ -245,6 +245,12 @@ object CssParser {
                 color
             }
         } else {
+            val chroma = maxOf(color.red, color.green, color.blue) - minOf(color.red, color.green, color.blue)
+            // Preserve deliberate author colors (rubrics, syntax colors, musical
+            // notation, etc.). Replacing saturated colors with the reader text
+            // color destroys meaning; neutral near-black/white text is the part
+            // that should follow the selected reader theme.
+            if (chroma >= 0.2f) return color
             if (contrast >= 4.5f) {
                 return color
             }
@@ -1130,6 +1136,11 @@ object CssParser {
                     "font-variant" -> {
                         if (value.contains("small-caps")) {
                             spanStyle = spanStyle.copy(fontFeatureSettings = "\"smcp\" on")
+                        }
+                    }
+                    "font-feature-settings", "-webkit-font-feature-settings" -> {
+                        if (valueLower != "normal" && value.isNotBlank()) {
+                            spanStyle = spanStyle.copy(fontFeatureSettings = value)
                         }
                     }
                     "margin" -> {

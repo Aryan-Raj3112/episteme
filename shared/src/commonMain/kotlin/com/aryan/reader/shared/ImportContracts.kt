@@ -52,6 +52,34 @@ data class SharedImportOutcomeCounts(
     val failedCount: Int = 0
 )
 
+enum class MobileImportOutcome {
+    ADDED,
+    DUPLICATE,
+    UNSUPPORTED,
+    FAILED,
+}
+
+fun SharedImportOutcomeCounts.record(outcome: MobileImportOutcome): SharedImportOutcomeCounts =
+    when (outcome) {
+        MobileImportOutcome.ADDED -> copy(addedCount = addedCount + 1)
+        MobileImportOutcome.DUPLICATE -> copy(duplicateCount = duplicateCount + 1)
+        MobileImportOutcome.UNSUPPORTED -> copy(unsupportedCount = unsupportedCount + 1)
+        MobileImportOutcome.FAILED -> copy(failedCount = failedCount + 1)
+    }
+
+fun SharedImportPlan.outcomeCounts(failedCount: Int = 0): SharedImportOutcomeCounts {
+    val planned = decisions.fold(SharedImportOutcomeCounts()) { counts, decision ->
+        counts.record(
+            when (decision.status) {
+                SharedImportDecisionStatus.IMPORTABLE -> MobileImportOutcome.ADDED
+                SharedImportDecisionStatus.DUPLICATE -> MobileImportOutcome.DUPLICATE
+                SharedImportDecisionStatus.UNSUPPORTED -> MobileImportOutcome.UNSUPPORTED
+            }
+        )
+    }
+    return planned.copy(failedCount = failedCount.coerceAtLeast(0))
+}
+
 data class SharedImportFeedback(
     val message: String,
     val isError: Boolean

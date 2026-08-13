@@ -4,11 +4,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -57,7 +60,10 @@ class SharedPdfRichTextTest {
 
         val roundTrip = SharedPdfRichTextMapper.fromAnnotatedString(annotated, pageHeightPx = 1_000f)
         assertEquals("4567", roundTrip.text)
-        assertEquals("asset:fonts/lora.ttf", roundTrip.spans.single().fontPath)
+        assertEquals(2, roundTrip.spans.size)
+        assertEquals("asset:fonts/lora.ttf", roundTrip.spans.first().fontPath)
+        assertEquals(0 to 2, roundTrip.spans.first().let { it.start to it.end })
+        assertEquals(2 to 4, roundTrip.spans.last().let { it.start to it.end })
     }
 
     @Test
@@ -140,6 +146,49 @@ class SharedPdfRichTextTest {
     }
 
     @Test
+    fun `serializer preserves Android compact ordering ranges and absent font default`() {
+        val document = SharedPdfRichDocument(
+            text = "x",
+            spans = listOf(
+                SharedPdfRichSpan(
+                    start = 4,
+                    end = 2,
+                    color = 7,
+                    backgroundColor = 0,
+                    fontSizeNorm = 0.5f,
+                    isBold = false,
+                    isItalic = false,
+                    isUnderline = false,
+                    isStrikethrough = false,
+                    fontPath = null,
+                ),
+            ),
+        )
+
+        val encoded = SharedPdfRichTextSerializer.encode(document)
+        val decoded = SharedPdfRichTextSerializer.decode(encoded)
+
+        assertEquals(
+            "{\"text\":\"x\",\"spans\":[{\"s\":4,\"e\":2,\"c\":7,\"bg\":0,\"sz\":0.5," +
+                "\"b\":false,\"i\":false,\"u\":false,\"st\":false}]}",
+            encoded,
+        )
+        assertEquals(4, decoded.spans.single().start)
+        assertEquals(2, decoded.spans.single().end)
+        assertEquals("", decoded.spans.single().fontPath)
+    }
+
+    @Test
+    fun `serializer rejects a partially malformed Android sidecar as one document`() {
+        assertEquals(
+            SharedPdfRichDocument(),
+            SharedPdfRichTextSerializer.decode(
+                "{\"text\":\"x\",\"spans\":[{\"s\":0,\"e\":1,\"c\":1,\"sz\":0.1},{}]}",
+            ),
+        )
+    }
+
+    @Test
     fun `loaded rich text rescales font spans when real page height arrives`() {
         val document = SharedPdfRichDocument(
             text = "Stable size",
@@ -165,7 +214,7 @@ class SharedPdfRichTextTest {
         val savedAgain = SharedPdfRichTextMapper.fromAnnotatedString(loadedAtActualHeight, actualHeight)
 
         assertEquals(20.sp, loadedAtActualHeight.spanStyles.single().item.fontSize)
-        assertEquals(0.02f, savedAgain.spans.single().fontSizeNorm, 0.0001f)
+        assertEquals(0.02f, savedAgain.spans.first().fontSizeNorm, 0.0001f)
     }
 
     @Test
@@ -319,5 +368,84 @@ class SharedPdfRichTextTest {
                 textLength = text.length
             )
         )
+    }
+
+    @Test
+    fun `layout config follows Android geometry and density change policy`() {
+        val density = Density(density = 2f, fontScale = 1.1f)
+
+        assertFalse(
+            shouldUpdateSharedPdfRichTextLayoutConfig(
+                previousWidth = 1_000f,
+                previousHeight = 1_414f,
+                previousDensity = density,
+                width = 1_000f,
+                height = 1_414f,
+                density = density,
+            )
+        )
+        assertTrue(
+            shouldUpdateSharedPdfRichTextLayoutConfig(
+                previousWidth = 1_000f,
+                previousHeight = 1_414f,
+                previousDensity = density,
+                width = 1_000f,
+                height = 1_200f,
+                density = density,
+            )
+        )
+        assertTrue(
+            shouldUpdateSharedPdfRichTextLayoutConfig(
+                previousWidth = 1_000f,
+                previousHeight = 1_414f,
+                previousDensity = density,
+                width = 1_000f,
+                height = 1_414f,
+                density = Density(density = 2f, fontScale = 1.2f),
+            )
+        )
+    }
+
+    @Test
+    fun `controller platform adapters preserve Android load-if-empty and focus behavior`() = runTest {
+        var focusRequests = 0
+        var resolvedFontPath: String? = null
+        val controller = SharedPdfRichTextController(
+            scope = this,
+            documentToAnnotatedString = { document, _ -> AnnotatedString(document.text) },
+            annotatedStringToDocument = { text, _ -> SharedPdfRichDocument(text.text) },
+            styleForFontPath = { style, path ->
+                resolvedFontPath = path
+                style.copy(fontWeight = FontWeight.Bold)
+            },
+            onEditingFocusRequested = { focusRequests++ },
+        )
+
+        controller.loadDocumentIfEmpty(SharedPdfRichDocument(text = "first"))
+        controller.loadDocumentIfEmpty(SharedPdfRichDocument(text = "second"))
+        controller.requestEditingFocus()
+        controller.updateCurrentStyle(SpanStyle(), fontPath = "asset:fonts/lora.ttf")
+
+        assertEquals("first", controller.globalTextFieldValue.text)
+        assertTrue(controller.hasRenderableText)
+        assertEquals("asset:fonts/lora.ttf", resolvedFontPath)
+        assertEquals(FontWeight.Bold, controller.currentStyle.fontWeight)
+        assertEquals(2, focusRequests)
+    }
+
+    @Test
+    fun `immediate save captures the latest edit before debounce completes`() = runTest {
+        var saved = SharedPdfRichDocument()
+        val controller = SharedPdfRichTextController(
+            scope = this,
+            onDocumentChange = { saved = it },
+            documentToAnnotatedString = { document, _ -> AnnotatedString(document.text) },
+            annotatedStringToDocument = { text, _ -> SharedPdfRichDocument(text.text) },
+        )
+
+        controller.onValueChanged(TextFieldValue("latest edit"))
+        controller.saveImmediate()
+
+        assertEquals("latest edit", saved.text)
     }
 }

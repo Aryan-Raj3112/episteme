@@ -19,6 +19,7 @@ import com.aryan.reader.shared.reader.SharedEpubBook
 import com.aryan.reader.shared.reader.SharedEpubChapter
 import com.aryan.reader.shared.reader.resolveSharedReaderFontFeatureSettings
 import com.aryan.reader.shared.reader.resolveSharedReaderTextAlign
+import com.aryan.reader.shared.reader.resolvePaginatedReaderTextAlign
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -96,6 +97,10 @@ class SharedNativeVerticalReaderFlowTest {
 
     @Test
     fun `css justify downgrades unless shared setting explicitly forces alignment`() {
+        assertEquals(TextAlign.Left, resolvePaginatedReaderTextAlign(TextAlign.Justify, null))
+        assertEquals(TextAlign.Justify, resolvePaginatedReaderTextAlign(TextAlign.Justify, TextAlign.Justify))
+        assertEquals(TextAlign.Right, resolvePaginatedReaderTextAlign(TextAlign.Center, TextAlign.Right))
+        assertEquals(TextAlign.Center, resolvePaginatedReaderTextAlign(TextAlign.Center, null))
         assertEquals(
             TextAlign.Left,
             resolveSharedReaderTextAlign(
@@ -115,6 +120,13 @@ class SharedNativeVerticalReaderFlowTest {
             resolveSharedReaderTextAlign(
                 cssTextAlign = TextAlign.Center,
                 fallbackTextAlign = TextAlign.Right
+            )
+        )
+        assertEquals(
+            TextAlign.Left,
+            resolveSharedReaderTextAlign(
+                cssTextAlign = TextAlign.Center,
+                fallbackTextAlign = TextAlign.Left
             )
         )
     }

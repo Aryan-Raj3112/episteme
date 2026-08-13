@@ -770,6 +770,15 @@ internal fun PdfReaderScreen(
         val settleSequence = pdfZoomSettleSequence
         val activePageIndex = currentPdfPageIndex
         val activeDisplayMode = currentPdfDisplayMode
+        if (DesktopTrackpadZoomTraceActivity.isRecent()) {
+            logDesktopTrackpadZoom {
+                "event=pdf_commit_start sequence=$settleSequence mode=$activeDisplayMode " +
+                    "page=${activePageIndex + 1} old=${oldZoom.formatLogFloat()} " +
+                    "new=${newZoom.formatLogFloat()} anchor=${anchor.formatLogOffset()} " +
+                    "h=${pageHorizontalScrollState.value} v=${pageVerticalScrollState.value} " +
+                    "list=${verticalListState.firstVisibleItemIndex}:${verticalListState.firstVisibleItemScrollOffset}"
+            }
+        }
         logPdfZoomPerf {
             "commit_start mode=$activeDisplayMode page=${activePageIndex + 1} old=${oldZoom.formatLogFloat()} " +
                 "new=${newZoom.formatLogFloat()} anchor=${anchor.formatLogOffset()} " +
@@ -1117,6 +1126,14 @@ internal fun PdfReaderScreen(
             pageRootOffset = previewPageRootOffset,
             diagnosticSequence = settleSequence
         )
+        if (DesktopTrackpadZoomTraceActivity.isRecent()) {
+            logDesktopTrackpadZoom {
+                "event=pdf_preview sequence=$settleSequence mode=$activeDisplayMode " +
+                    "page=${activePageIndex + 1} previewPage=${previewPageIndex + 1} " +
+                    "base=${baseZoom.formatLogFloat()} new=${newZoom.formatLogFloat()} " +
+                    "anchor=${anchor.formatLogOffset()} existing=${existingPreview != null}"
+            }
+        }
         logPdfZoomSettle {
             "preview_update seq=$settleSequence mode=$activeDisplayMode page=${activePageIndex + 1} " +
                 "previewPage=${previewPageIndex + 1} oldEvent=${oldZoom.formatLogFloat()} " +
@@ -1144,6 +1161,43 @@ internal fun PdfReaderScreen(
             renderedPageIndex == activePageIndex
         ) {
             renderJob?.cancel()
+        }
+    }
+
+    LaunchedEffect(documentHandleId, zoomSpec) {
+        logDesktopTrackpadZoom {
+            "event=pdf_collector_start document=$documentHandleId zoom=${currentPdfScale.formatLogFloat()} " +
+                "mode=$currentPdfDisplayMode"
+        }
+        DesktopTrackpadMagnificationEvents.events.collect { event ->
+            val oldZoom = pdfZoomPreview?.zoom ?: currentPdfScale
+            val newZoom = desktopPdfZoomTarget(oldZoom, zoomSpec, event.factor)
+            if (newZoom == oldZoom) {
+                logDesktopTrackpadZoom {
+                    "event=pdf_event_ignored reason=zoom_unchanged old=${oldZoom.formatLogFloat()} factor=${event.factor}"
+                }
+                return@collect
+            }
+            val anchor = event.rootPosition
+                ?.minus(pdfZoomViewportRootOffset)
+                ?.takeIf {
+                    it.x >= 0f &&
+                        it.y >= 0f &&
+                        it.x <= pdfZoomViewportSize.width &&
+                        it.y <= pdfZoomViewportSize.height
+                }
+                ?: Offset(
+                    x = pdfZoomViewportSize.width / 2f,
+                    y = pdfZoomViewportSize.height / 2f
+                )
+            logDesktopTrackpadZoom {
+                "event=pdf_event_apply old=${oldZoom.formatLogFloat()} new=${newZoom.formatLogFloat()} " +
+                    "factor=${event.factor} root=${event.rootPosition.formatLogOffset()} " +
+                    "viewportRoot=${pdfZoomViewportRootOffset.formatLogOffset()} " +
+                    "viewport=${pdfZoomViewportSize.width}x${pdfZoomViewportSize.height} " +
+                    "anchor=${anchor.formatLogOffset()} mode=$currentPdfDisplayMode"
+            }
+            previewAnchoredPdfZoom(oldZoom, newZoom, anchor)
         }
     }
 
@@ -3647,7 +3701,13 @@ internal fun PdfReaderScreen(
                                                     event.changes.forEach { it.consume() }
                                                     continue
                                                 }
-                                                if (selectedTool != PdfInkTool.TEXT) {
+                                                if (
+                                                    selectedTool != PdfInkTool.TEXT &&
+                                                    !desktopPdfTextSelectionGestureEnabled(
+                                                        isTextSelectionMode,
+                                                        selectedTool
+                                                    )
+                                                ) {
                                                     val linkTarget = document.linkAt(pageIndex, point, pageCanvasSize)
                                                     if (linkTarget != null) {
                                                         logPdfChromeTap {
@@ -3677,7 +3737,8 @@ internal fun PdfReaderScreen(
                                                     event.changes.forEach { it.consume() }
                                                 } else if (
                                                     currentTextSelection != null &&
-                                                    selectionMenuOffset == null
+                                                    event.changes.none { it.isConsumed } &&
+                                                    currentTextSelection?.handleAt(point, pageCanvasSize) == null
                                                 ) {
                                                     logPdfChromeTap {
                                                         "page_press_passthrough source=paginated_inline_page page=${pageIndex + 1} " +
@@ -3716,7 +3777,11 @@ internal fun PdfReaderScreen(
                                     isRichTextMode,
                                     displayPageIsCurrent
                                 ) {
-                                    if (!displayPageIsCurrent || isRichTextMode || !isTextSelectionMode) return@pointerInput
+                                    if (
+                                        !displayPageIsCurrent ||
+                                        isRichTextMode ||
+                                        !desktopPdfTextSelectionGestureEnabled(isTextSelectionMode, selectedTool)
+                                    ) return@pointerInput
                                     detectDesktopPdfTextSelectionLongPress(
                                         source = "paginated_inline_page",
                                         pageIndex = pageIndex
@@ -3752,7 +3817,12 @@ internal fun PdfReaderScreen(
                                     isRichTextMode,
                                     displayPageIsCurrent
                                 ) {
-                                    if (!displayPageIsCurrent || isRichTextMode || isTextSelectionMode || selectedTool != PdfInkTool.NONE) return@pointerInput
+                                    if (
+                                        !displayPageIsCurrent ||
+                                        isRichTextMode ||
+                                        desktopPdfTextSelectionGestureEnabled(isTextSelectionMode, selectedTool) ||
+                                        selectedTool != PdfInkTool.NONE
+                                    ) return@pointerInput
                                     awaitEachGesture {
                                         val down = awaitFirstDown(requireUnconsumed = false)
                                         if (!currentEvent.buttons.isPrimaryPressed) return@awaitEachGesture
@@ -3800,7 +3870,7 @@ internal fun PdfReaderScreen(
                                     currentPageRender.height
                                 ) {
                                     if (!displayPageIsCurrent || isRichTextMode) return@pointerInput
-                                    if (isTextSelectionMode) {
+                                    if (desktopPdfTextSelectionGestureEnabled(isTextSelectionMode, selectedTool)) {
                                         var latestSelectionDragPoint: Offset? = null
                                         var lastSelectionPreviewAt = 0L
                                         detectDragGestures(
@@ -3852,7 +3922,7 @@ internal fun PdfReaderScreen(
                                                     val previousEndIndex = selectionEndIndex
                                                     selectionEndIndex = endIndex
                                                     if (endIndex != previousEndIndex || textSelection == null) {
-                                                        textSelection = if (startIndex != null && endIndex != null) {
+                                                        val previewSelection = if (startIndex != null && endIndex != null) {
                                                             document.selectionPreviewBetweenIndexes(
                                                                 pageIndex = pageIndex,
                                                                 startIndex = startIndex,
@@ -3861,6 +3931,9 @@ internal fun PdfReaderScreen(
                                                             )
                                                         } else {
                                                             null
+                                                        }
+                                                        if (previewSelection != null) {
+                                                            textSelection = previewSelection
                                                         }
                                                     }
                                                 }
@@ -4129,24 +4202,6 @@ internal fun PdfReaderScreen(
                                 SharedPdfPageNumberOverlay(
                                     pageIndex = pageIndex,
                                     pageCount = document.pageCount
-                                )
-                            }
-                            if (textSelection != null && selectionMenuOffset != null) {
-                                Box(
-                                    modifier = Modifier
-                                        .matchParentSize()
-                                        .pointerInput(pageIndex, selectionMenuOffset) {
-                                            detectTapGestures {
-                                                logPdfChromeTap {
-                                                    "selection_menu_scrim_tap source=paginated_inline_page page=${pageIndex + 1} " +
-                                                        "consumedByScrim=true"
-                                                }
-                                                selectionMenuOffset = null
-                                                textSelection = null
-                                                selectionStartHit = null
-                                                selectionEndHit = null
-                                            }
-                                        }
                                 )
                             }
                             PdfSelectionMenu(

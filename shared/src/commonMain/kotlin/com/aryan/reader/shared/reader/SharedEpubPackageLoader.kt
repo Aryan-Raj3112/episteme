@@ -4,6 +4,7 @@ package com.aryan.reader.shared.reader
 
 import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
+import com.aryan.reader.shared.sharedHtmlToPlainText
 
 /**
  * Platform-neutral view of an EPUB ZIP archive. Platform source sets only provide archive I/O;
@@ -17,78 +18,123 @@ interface SharedEpubArchive {
     fun readText(path: String): String? = readBytes(path)?.decodeToString()
 }
 
+private class ParsedMobileEpubPackage(
+    private val archive: SharedEpubArchive,
+    val entryPaths: List<String>,
+    val packageRoot: SharedEpubXmlNode,
+    val metadata: SharedEpubXmlNode,
+    val manifest: Map<String, MobileEpubManifestItem>,
+    val spineNode: SharedEpubXmlNode,
+    val spineIds: List<String>
+) {
+    private val entryPathSet = entryPaths.toSet()
+
+    fun actualPath(path: String): String? {
+        val safe = safeEpubPathOrNull(path) ?: return null
+        return safe.takeIf { it in entryPathSet }
+    }
+
+    fun text(path: String): String? = actualPath(path)?.let(archive::readText)
+
+    fun bytes(path: String): ByteArray? = actualPath(path)?.let(archive::readBytes)
+}
+
+private fun parseMobileEpubPackage(archive: SharedEpubArchive): ParsedMobileEpubPackage {
+    val entryPaths = archive.entryPaths.mapNotNull(::safeEpubPathOrNull)
+    val entryPathSet = entryPaths.toSet()
+    fun text(path: String): String? {
+        val safe = safeEpubPathOrNull(path)?.takeIf { it in entryPathSet } ?: return null
+        return archive.readText(safe)
+    }
+
+    val container = text("META-INF/container.xml") ?: error("META-INF/container.xml file missing")
+    val containerRoot = parseSharedEpubXml(container)
+    val rootfiles = containerRoot?.descendantsNamed("rootfile")?.toList().orEmpty()
+    val opfPath = resolveMobileEpubOpfPath(
+        rootfiles.map { it.attribute("full-path")?.let(::decodeMobileEpubUrl) }
+    )?.let(::safeEpubPathOrNull)
+        ?: error("Invalid container.xml: Could not find rootfile full-path")
+    val opf = text(opfPath) ?: error("EPUB package document is missing: $opfPath")
+    val packageRoot = parseSharedEpubXml(opf) ?: error("EPUB package document is malformed: $opfPath")
+    val metadata = packageRoot.firstDescendantNamed("metadata", "opf:metadata")
+        ?: error("EPUB package metadata section is missing: $opfPath")
+    val manifestNode = packageRoot.firstDescendantNamed("manifest", "opf:manifest")
+        ?: error("EPUB package manifest section is missing: $opfPath")
+    val spineNode = packageRoot.firstDescendantNamed("spine", "opf:spine")
+        ?: error("EPUB package spine section is missing: $opfPath")
+    val manifest = manifestNode.children.filter { it.name == "item" }
+        .ifEmpty { manifestNode.children.filter { it.name == "opf:item" } }
+        .mapNotNull { item ->
+            val href = item.attribute("href") ?: return@mapNotNull null
+            val id = item.attribute("id").orEmpty()
+            id to MobileEpubManifestItem(
+                id = id,
+                absPath = resolveMobileEpubPackagePath(opfPath, href),
+                mediaType = item.attribute("media-type").orEmpty(),
+                properties = item.attribute("properties").orEmpty()
+            )
+        }
+        .toMap()
+    val spineIds = mobileEpubSpineItemIds(
+        spineNode.children.filter { it.name == "itemref" }
+            .ifEmpty { spineNode.children.filter { it.name == "opf:itemref" } }
+            .map { it.attribute("idref") }
+    )
+    return ParsedMobileEpubPackage(
+        archive = archive,
+        entryPaths = entryPaths,
+        packageRoot = packageRoot,
+        metadata = metadata,
+        manifest = manifest,
+        spineNode = spineNode,
+        spineIds = spineIds
+    )
+}
+
 object SharedEpubPackageLoader {
     fun load(
         archive: SharedEpubArchive,
         sourceId: String,
-        fileName: String
+        fileName: String,
+        shouldUseToc: Boolean = true
     ): SharedEpubBook {
-        val normalizedEntries = archive.entryPaths
-            .mapNotNull(::safeEpubPathOrNull)
-            .associateBy { it.lowercase() }
-        fun actualPath(path: String): String? {
-            val safe = safeEpubPathOrNull(path) ?: return null
-            return normalizedEntries[safe.lowercase()]
-        }
-        fun text(path: String): String? = actualPath(path)?.let(archive::readText)
-        fun bytes(path: String): ByteArray? = actualPath(path)?.let(archive::readBytes)
-
-        val container = text("META-INF/container.xml")
-        val containerRoot = container?.let(::parseSharedEpubXml)
-        val containerRootFiles = containerRoot?.descendants("rootfile")?.toList().orEmpty()
-        val preferredRootFile = containerRootFiles.firstOrNull {
-            it.attribute("media-type").equals("application/oebps-package+xml", ignoreCase = true)
-        } ?: containerRootFiles.firstOrNull()
-        val opfPath = preferredRootFile
-            ?.attribute("full-path")
-            ?.trim()
-            ?.takeIf(String::isNotBlank)
-            ?.let(::safeEpubPathOrNull)
-            ?: normalizedEntries.values.firstOrNull { it.endsWith(".opf", ignoreCase = true) }
-            ?: error("EPUB package document was not found")
-        val opf = text(opfPath) ?: error("EPUB package document is missing: $opfPath")
-        val packageRoot = parseSharedEpubXml(opf) ?: error("EPUB package document is malformed: $opfPath")
-        val metadata = packageRoot.firstDescendant("metadata")
-        val manifestNode = packageRoot.firstDescendant("manifest")
-        val spineNode = packageRoot.firstDescendant("spine")
-        val manifest = manifestNode?.children
-            .orEmpty()
-            .filter { it.localName == "item" }
-            .mapNotNull { item ->
-                val id = item.attribute("id").orEmpty().trim()
-                val href = item.attribute("href").orEmpty().trim()
-                if (id.isBlank() || href.isBlank()) null else {
-                    id to SharedEpubManifestItem(
-                        id = id,
-                        path = resolveEpubPath(opfPath, href),
-                        mediaType = item.attribute("media-type").orEmpty().trim().lowercase(),
-                        properties = item.attribute("properties")
-                            .orEmpty()
-                            .split(Regex("\\s+"))
-                            .filter(String::isNotBlank)
-                            .map(String::lowercase)
-                            .toSet()
-                    )
-                }
-            }
-            .toMap()
-        val manifestMimeTypes = manifest.values.associate { it.path.lowercase() to it.mediaType }
+        val parsedPackage = parseMobileEpubPackage(archive)
+        val normalizedEntries = parsedPackage.entryPaths
+        val normalizedEntrySet = normalizedEntries.toSet()
+        fun text(path: String): String? = parsedPackage.text(path)
+        fun bytes(path: String): ByteArray? = parsedPackage.bytes(path)
+        val packageRoot = parsedPackage.packageRoot
+        val metadata = parsedPackage.metadata
+        val manifest = parsedPackage.manifest
+        val spineNode = parsedPackage.spineNode
+        val manifestMimeTypes = manifest.values.associate { it.absPath.lowercase() to it.mediaType }
         fun resourceMimeType(path: String): String = manifestMimeTypes[path.lowercase()]
             ?.takeIf(String::isNotBlank)
             ?: epubMimeType(path)
 
         val uniqueIdentifier = packageRoot.attribute("unique-identifier")
-            ?.let { uniqueId -> metadata?.descendants()?.firstOrNull { it.attribute("id") == uniqueId } }
+            ?.let { uniqueId -> metadata.descendants().firstOrNull { it.attribute("id") == uniqueId } }
             ?.textContent()
             ?.trim()
             .orEmpty()
-        val title = metadata?.descendants("title")?.firstOrNull()?.textContent()?.decodeEpubEntities()
-            ?.normalizeEpubWhitespace()
-            ?.takeIf(String::isNotBlank)
-            ?: fileName.substringBeforeLast('.', fileName)
-        val author = metadata?.descendants("creator")?.firstOrNull()?.textContent()?.decodeEpubEntities()
-            ?.normalizeEpubWhitespace()
-            ?.takeIf(String::isNotBlank)
+        val resolvedMetadata = resolveMobileEpubMetadata(
+            sourceFileName = fileName,
+            title = metadata.firstChildNamed("dc:title")?.textContent()?.decodeEpubEntities(),
+            author = metadata.firstChildNamed("dc:creator")?.textContent()?.decodeEpubEntities(),
+            language = metadata.firstChildNamed("dc:language")?.textContent()?.decodeEpubEntities(),
+            description = metadata.firstChildNamed("dc:description")?.textContent()?.decodeEpubEntities(),
+            metaEntries = metadata.androidMetadataChildren("meta", "opf:meta")
+                .map { it.attribute("name") to it.attribute("content") }
+        )
+        val metadataCoverId = metadata.androidMetadataChildren("meta", "opf:meta")
+            .firstOrNull { it.attribute("name") == "cover" }
+            ?.attribute("content")
+        val images = mobileEpubImages(manifest.values.toList(), normalizedEntries)
+        val coverImagePath = mobileEpubCoverCandidates(
+            metadataCoverId = metadataCoverId,
+            manifest = manifest.values.toList(),
+            archivePaths = normalizedEntrySet
+        ).firstOrNull { path -> bytes(path)?.isNotEmpty() == true }
 
         val fontObfuscation = parseFontObfuscation(text("META-INF/encryption.xml"), uniqueIdentifier)
         fun resourceBytes(path: String): ByteArray? {
@@ -135,19 +181,11 @@ object SharedEpubPackageLoader {
             return output
         }
 
-        (manifest.values
-            .filter { it.mediaType == "text/css" || it.path.endsWith(".css", ignoreCase = true) }
-            .map(SharedEpubManifestItem::path) + normalizedEntries.values.filter { it.endsWith(".css", ignoreCase = true) })
-            .distinct()
+        mobileEpubCssPaths(manifest.values.toList(), normalizedEntries)
             .forEach(::css)
 
-        val spineIds = spineNode?.children
-            .orEmpty()
-            .filter { it.localName == "itemref" && !it.attribute("linear").equals("no", ignoreCase = true) }
-            .mapNotNull { it.attribute("idref")?.trim()?.takeIf(String::isNotBlank) }
-        val chapterItems = spineIds.mapNotNull(manifest::get).ifEmpty {
-            manifest.values.filter { it.isHtml && "nav" !in it.properties }
-        }
+        val spineIds = parsedPackage.spineIds
+        val chapterItems = spineIds.mapNotNull(manifest::get)
 
         fun dataUri(path: String): String? {
             val safe = safeEpubPathOrNull(path) ?: return null
@@ -159,59 +197,63 @@ object SharedEpubPackageLoader {
             return content.toEpubDataUri(resourceMimeType(safe))
         }
 
-        val parsedToc = parseEpubTableOfContents(
-            archiveText = ::text,
-            packageRoot = packageRoot,
-            manifest = manifest
-        )
+        val navigation = if (shouldUseToc) {
+            parseEpubNavigation(
+                archiveText = ::text,
+                spineNode = spineNode,
+                manifest = manifest
+            )
+        } else {
+            ParsedEpubNavigation()
+        }
+        val parsedToc = navigation.tableOfContents
         val tocByPath = parsedToc
             .filter { !it.fragmentId.isNullOrBlank() }
-            .groupBy { it.href.lowercase() }
+            .groupBy(SharedEpubTocEntry::href)
+        val navigationMetadata = navigation.chapterMetadata
 
         val parsedChapters = chapterItems.flatMapIndexed { index, item ->
             if (!item.isHtml) {
                 if (!item.isImage) return@flatMapIndexed emptyList()
-                val uri = dataUri(item.path) ?: return@flatMapIndexed emptyList()
-                val label = item.id
-                    .replace(Regex("[_-]+"), " ")
-                    .trim()
-                    .replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
-                    .ifBlank { "Image ${index + 1}" }
+                val uri = dataUri(item.absPath) ?: return@flatMapIndexed emptyList()
+                val navigation = resolveMobileEpubChapterNavigation(item.absPath, "Image", navigationMetadata)
                 return@flatMapIndexed listOf(SharedEpubChapter(
                     id = item.id.ifBlank { "chapter_$index" },
-                    title = label,
+                    title = navigation.title ?: "Image",
                     plainText = "[Image]",
-                    htmlContent = "<figure class=\"reader-epub-image-page\"><img src=\"${uri.escapeEpubAttribute()}\" alt=\"${label.escapeEpubAttribute()}\"></figure>",
-                    baseHref = item.path
+                    htmlContent = "<figure class=\"reader-epub-image-page\"><img src=\"${uri.escapeEpubAttribute()}\" alt=\"${(navigation.title ?: "Image").escapeEpubAttribute()}\"></figure>",
+                    baseHref = item.absPath,
+                    depth = navigation.depth,
+                    isInToc = navigation.isInToc
                 ))
             }
-            val raw = text(item.path) ?: return@flatMapIndexed emptyList()
+            val raw = text(item.absPath) ?: return@flatMapIndexed emptyList()
             raw.extractEpubStyleBlocks().takeIf(String::isNotBlank)?.let { embeddedCss ->
-                processedCss["${item.path}#embedded-style"] = embeddedCss.sanitizeEpubCss().rewriteEpubCssUrls(item.path) { resourcePath ->
+                processedCss["${item.absPath}#embedded-style"] = embeddedCss.sanitizeEpubCss().rewriteEpubCssUrls(item.absPath) { resourcePath ->
                     resourceBytes(resourcePath)?.toEpubDataUri(resourceMimeType(resourcePath))
                 }
             }
             val body = raw
                 .sanitizeEpubReaderHtml()
                 .extractEpubBodyOrSelf()
-                .rewriteEpubHtmlResources(item.path, ::dataUri)
-            val plainText = body.epubHtmlToText()
-            if (plainText.isBlank() && !body.hasEpubVisualContent()) return@flatMapIndexed emptyList()
-            val fallbackTitle = raw.firstEpubHeading()
-                ?: raw.epubTagText("title")
-                ?: "Chapter ${index + 1}"
+                .rewriteEpubHtmlResources(item.absPath, ::dataUri)
+            val plainText = raw.epubHtmlToText()
+            val fallbackTitle = resolveMobileEpubSpineChapterTitle(raw.firstEpubHeading(), index)
+            val navigation = resolveMobileEpubChapterNavigation(item.absPath, fallbackTitle, navigationMetadata)
             val sections = materializeEpubTocSections(
                 body = body,
-                entries = tocByPath[item.path.lowercase()].orEmpty()
+                entries = tocByPath[item.absPath].orEmpty()
             )
             if (sections.isEmpty()) {
                 listOf(
                     SharedEpubChapter(
                         id = item.id.ifBlank { "chapter_$index" },
-                        title = fallbackTitle,
-                        plainText = plainText.ifBlank { "Chapter ${index + 1}" },
+                        title = navigation.title ?: fallbackTitle,
+                        plainText = plainText,
                         htmlContent = body,
-                        baseHref = item.path
+                        baseHref = item.absPath,
+                        depth = navigation.depth,
+                        isInToc = navigation.isInToc
                     )
                 )
             } else {
@@ -221,31 +263,18 @@ object SharedEpubPackageLoader {
                         title = section.entry.label.ifBlank { fallbackTitle },
                         plainText = section.html.epubHtmlToText().ifBlank { fallbackTitle },
                         htmlContent = section.html,
-                        baseHref = item.path,
-                        fragmentId = section.fragmentId
+                        baseHref = item.absPath,
+                        fragmentId = section.fragmentId,
+                        depth = section.entry.depth,
+                        isInToc = true
                     )
                 }
             }
         }
-        if (parsedChapters.isEmpty()) {
-            error(
-                "EPUB contains no readable spine documents " +
-                    "(manifest=${manifest.size}, spine=${spineIds.size}, candidates=${chapterItems.size}, entries=${normalizedEntries.size})"
-            )
-        }
-
-        val resolvedToc = parsedToc.ifEmpty {
-            parsedChapters.mapIndexed { index, chapter ->
-                SharedEpubTocEntry(
-                    label = chapter.title,
-                    href = chapter.baseHref.orEmpty(),
-                    depth = 0
-                )
-            }
-        }
+        val resolvedToc = parsedToc
         val chapters = parsedChapters.map { chapter ->
             val tocTitle = resolvedToc.firstOrNull {
-                it.href.equals(chapter.baseHref, ignoreCase = true) &&
+                it.href == chapter.baseHref &&
                     (chapter.fragmentId == null || it.fragmentId == chapter.fragmentId) &&
                     it.label.isNotBlank()
             }?.label
@@ -254,33 +283,28 @@ object SharedEpubPackageLoader {
 
         return SharedEpubBook(
             id = sourceId,
-            fileName = fileName,
-            title = title,
-            author = author,
+            fileName = resolvedMetadata.fileName,
+            title = resolvedMetadata.title,
+            author = resolvedMetadata.author,
             chapters = chapters,
             css = processedCss.toMap(),
-            tableOfContents = resolvedToc
+            tableOfContents = resolvedToc,
+            pageList = navigation.pageList,
+            images = images,
+            coverImagePath = coverImagePath,
+            language = resolvedMetadata.language,
+            seriesName = resolvedMetadata.seriesName,
+            seriesIndex = resolvedMetadata.seriesIndex,
+            description = resolvedMetadata.description
         )
     }
 }
 
-private data class SharedEpubManifestItem(
-    val id: String,
-    val path: String,
-    val mediaType: String,
-    val properties: Set<String>
-) {
-    val isHtml: Boolean
-        get() = mediaType == "application/xhtml+xml" ||
-            mediaType == "text/html" ||
-            path.endsWith(".xhtml", ignoreCase = true) ||
-            path.endsWith(".html", ignoreCase = true) ||
-            path.endsWith(".htm", ignoreCase = true)
+private val MobileEpubManifestItem.isHtml: Boolean
+    get() = mobileEpubSpineResourceKind(this) == MobileEpubSpineResourceKind.HTML
 
-    val isImage: Boolean
-        get() = mediaType.startsWith("image/") ||
-            path.substringAfterLast('.', "").lowercase() in setOf("jpg", "jpeg", "png", "gif", "svg", "webp", "avif")
-}
+private val MobileEpubManifestItem.isImage: Boolean
+    get() = mobileEpubSpineResourceKind(this) == MobileEpubSpineResourceKind.IMAGE
 
 /**
  * Mirrors Android's logical-section behavior for EPUBs whose navigation points
@@ -293,7 +317,8 @@ private fun materializeEpubTocSections(
     entries: List<SharedEpubTocEntry>
 ): List<SharedEpubLogicalSection> {
     if (entries.size < 2) return emptyList()
-    val requestedFragments = entries.mapNotNull { it.fragmentId }.toSet()
+    val distinctEntries = entries.distinctBy(SharedEpubTocEntry::fragmentId)
+    val requestedFragments = distinctEntries.mapNotNull { it.fragmentId }.toSet()
     if (requestedFragments.size < 2) return emptyList()
     val tokens = sharedEpubXmlTokens(body).toList()
     val rootStart = tokens.firstOrNull { token ->
@@ -301,7 +326,8 @@ private fun materializeEpubTocSections(
             token.value.drop(1).trimStart().startsWith("div", ignoreCase = true)
     } ?: return emptyList()
     val childRanges = mutableListOf<IntRange>()
-    val fragmentChildIndex = mutableMapOf<String, Int>()
+    val fragmentIdChildIndex = mutableMapOf<String, Int>()
+    val fragmentNameChildIndex = mutableMapOf<String, Int>()
     var depth = 0
     var currentChildStart = -1
     var currentChildIndex = -1
@@ -328,11 +354,11 @@ private fun materializeEpubTocSections(
             val attrs = EpubXmlAttributeRegex.findAll(value).associate { match ->
                 match.groupValues[1].substringAfter(':').lowercase() to match.groupValues[3].decodeEpubEntities()
             }
-            val fragment = (attrs["id"] ?: attrs["name"])?.takeIf { it in requestedFragments }
-            if (fragment != null && currentChildIndex >= 0) {
-                if (fragment !in fragmentChildIndex) {
-                    fragmentChildIndex[fragment] = currentChildIndex
-                }
+            val id = attrs["id"]?.takeIf { it in requestedFragments }
+            val name = attrs["name"]?.takeIf { it in requestedFragments }
+            if (currentChildIndex >= 0) {
+                if (id != null && id !in fragmentIdChildIndex) fragmentIdChildIndex[id] = currentChildIndex
+                if (name != null && name !in fragmentNameChildIndex) fragmentNameChildIndex[name] = currentChildIndex
             }
             if (!selfClosing) depth++
             if (selfClosing && depth == 1 && currentChildStart >= 0) {
@@ -350,19 +376,20 @@ private fun materializeEpubTocSections(
         }
     }
 
-    val starts = entries.mapNotNull { entry ->
-        val fragment = entry.fragmentId ?: return@mapNotNull null
-        fragmentChildIndex[fragment]?.let { entry to it }
-    }.distinctBy { it.second }.sortedBy { it.second }
-    if (starts.size < 2 || childRanges.size < 2) return emptyList()
-    return starts.mapIndexedNotNull { index, (entry, childIndex) ->
-        val endChildIndex = starts.getOrNull(index + 1)?.second ?: childRanges.lastIndex + 1
-        if (childIndex >= endChildIndex || childIndex !in childRanges.indices) return@mapIndexedNotNull null
-        val startOffset = childRanges[childIndex].first
-        val endOffset = childRanges[(endChildIndex - 1).coerceIn(childIndex, childRanges.lastIndex)].last + 1
+    val ranges = mobileEpubLogicalSectionRanges(
+        entries = distinctEntries,
+        bodyChildCount = childRanges.size,
+        fragmentId = SharedEpubTocEntry::fragmentId,
+        idChildIndex = fragmentIdChildIndex::get,
+        nameChildIndex = fragmentNameChildIndex::get
+    )
+    return ranges.mapNotNull { range ->
+        val entry = range.entry
+        val startOffset = childRanges[range.startChildIndex].first
+        val endOffset = childRanges[range.endChildIndexExclusive - 1].last + 1
         SharedEpubLogicalSection(
             entry = entry,
-            fragmentId = entry.fragmentId ?: return@mapIndexedNotNull null,
+            fragmentId = entry.fragmentId ?: return@mapNotNull null,
             html = body.substring(startOffset, endOffset)
         )
     }
@@ -397,8 +424,10 @@ private fun parseFontObfuscation(
         ?.map { it.toInt(16).toByte() }
         ?.toByteArray()
     return root.descendants("encrypteddata").mapNotNull { encrypted ->
-        val algorithm = encrypted.firstDescendant("encryptionmethod")?.attribute("algorithm").orEmpty()
-        val uri = encrypted.firstDescendant("cipherreference")?.attribute("uri").orEmpty()
+        val algorithm = encrypted.firstDescendant("encryptionmethod")
+            ?.attributeLocalIgnoreCase("algorithm").orEmpty()
+        val uri = encrypted.firstDescendant("cipherreference")
+            ?.attributeLocalIgnoreCase("uri").orEmpty()
         // OCF CipherReference URIs are relative to the container root, not the OPF document.
         val path = safeEpubPathOrNull(uri.substringBefore('#').substringBefore('?').percentDecodeEpubPath())
             ?.lowercase()
@@ -422,83 +451,63 @@ private fun ByteArray.deobfuscated(rule: SharedEpubFontObfuscation): ByteArray {
     }
 }
 
-private fun parseEpubTableOfContents(
+private data class ParsedEpubNavigation(
+    val tableOfContents: List<SharedEpubTocEntry> = emptyList(),
+    val pageList: List<MobileEpubPageTarget> = emptyList(),
+    val chapterMetadata: Map<String, MobileEpubNcxChapterMetadata> = emptyMap()
+)
+
+private fun parseEpubNavigation(
     archiveText: (String) -> String?,
-    packageRoot: SharedEpubXmlNode,
-    manifest: Map<String, SharedEpubManifestItem>
-): List<SharedEpubTocEntry> {
-    val navItem = manifest.values.firstOrNull { "nav" in it.properties }
-    if (navItem != null) {
-        val navRoot = archiveText(navItem.path)?.let(::parseSharedEpubXml)
-        val nav = navRoot?.descendants("nav")?.firstOrNull { node ->
-            node.attributes.any { (name, value) -> name.substringAfter(':').equals("type", true) && value.split(' ').any { it.equals("toc", true) } }
-        } ?: navRoot?.descendants("nav")?.firstOrNull()
-        val orderedList = nav?.children?.firstOrNull { it.localName == "ol" } ?: nav?.firstDescendant("ol")
-        if (orderedList != null) {
-            val entries = mutableListOf<SharedEpubTocEntry>()
-            fun visit(list: SharedEpubXmlNode, depth: Int) {
-                list.children.filter { it.localName == "li" }.forEach { item ->
-                    val anchor = item.children.firstOrNull { it.localName == "a" }
-                        ?: item.firstDescendant("a")
-                    val href = anchor?.attribute("href").orEmpty()
-                    if (href.isNotBlank()) {
-                        entries += tocEntry(
-                            label = anchor?.textContent().orEmpty(),
-                            rawHref = href,
-                            ownerPath = navItem.path,
-                            depth = depth,
-                            fallbackIndex = entries.size
-                        )
-                    }
-                    val nestedLists = item.children.filter { it.localName == "ol" }.ifEmpty {
-                        item.children.flatMap { child -> child.descendants("ol").take(1).toList() }
-                    }
-                    nestedLists.forEach { visit(it, depth + 1) }
+    spineNode: SharedEpubXmlNode,
+    manifest: Map<String, MobileEpubManifestItem>
+): ParsedEpubNavigation {
+    val ncxId = resolveMobileEpubNcxManifestId(
+        spineTocId = spineNode.attribute("toc"),
+        manifest = manifest.values.toList()
+    )
+    val ncxPath = ncxId?.let(manifest::get)?.absPath
+        ?: return ParsedEpubNavigation()
+    val ncxText = archiveText(ncxPath) ?: return ParsedEpubNavigation()
+    val ncx = parseSharedEpubXml(ncxText) ?: error("EPUB NCX document is malformed: $ncxPath")
+
+    fun nodes(parent: SharedEpubXmlNode): List<MobileEpubNcxNavigationNode> =
+        parent.children.filter { it.name == "navPoint" }.map { point ->
+            val href = point.firstChildNamed("content")?.attribute("src")
+            MobileEpubNcxNavigationNode(
+                label = point.firstChildNamed("navLabel")?.firstChildNamed("text")
+                    ?.textContent()?.decodeEpubEntities()?.trim(),
+                absolutePath = href?.let { resolveMobileEpubPackagePath(ncxPath, it) },
+                fragmentId = href?.substringAfter('#', missingDelimiterValue = "")
+                    ?.substringBefore('?')?.let(::decodeMobileEpubUrl)?.takeIf(String::isNotBlank),
+                children = nodes(point)
+            )
+        }
+
+    val navigationNodes = ncx.descendantsNamed("navMap").firstOrNull()?.let(::nodes).orEmpty()
+    val tableOfContents = flattenMobileEpubNcxNavigation(navigationNodes).map { entry ->
+        SharedEpubTocEntry(entry.label, entry.absolutePath, entry.fragmentId, entry.depth)
+    }
+
+    val pageNodes = ncx.descendantsNamed("pageList").firstOrNull()?.children.orEmpty()
+        .filter { it.name == "pageTarget" }
+        .map { target ->
+            val rawSrc = target.firstChildNamed("content")?.attribute("src")
+            MobileEpubNcxPageNode(
+                id = target.attribute("id"),
+                value = target.attribute("value"),
+                label = target.firstChildNamed("navLabel")?.firstChildNamed("text")
+                    ?.textContent()?.decodeEpubEntities(),
+                resolvedContentSrc = rawSrc?.takeIf(String::isNotBlank)?.let {
+                    val suffix = it.drop(it.indexOfAny(charArrayOf('#', '?')).takeIf { index -> index >= 0 } ?: it.length)
+                    resolveMobileEpubPackagePath(ncxPath, it) + decodeMobileEpubUrl(suffix)
                 }
-            }
-            visit(orderedList, 0)
-            if (entries.isNotEmpty()) return entries
+            )
         }
-    }
-
-    val tocId = packageRoot.firstDescendant("spine")?.attribute("toc")
-    val ncxPath = tocId?.let(manifest::get)?.path
-        ?: manifest.values.firstOrNull { it.mediaType == "application/x-dtbncx+xml" || it.path.endsWith(".ncx", true) }?.path
-        ?: return emptyList()
-    val ncx = archiveText(ncxPath)?.let(::parseSharedEpubXml) ?: return emptyList()
-    val navMap = ncx.firstDescendant("navmap") ?: return emptyList()
-    val entries = mutableListOf<SharedEpubTocEntry>()
-    fun visit(parent: SharedEpubXmlNode, depth: Int) {
-        parent.children.filter { it.localName == "navpoint" }.forEach { point ->
-            val label = point.firstDescendant("navlabel")?.firstDescendant("text")?.textContent().orEmpty()
-            val href = point.firstDescendant("content")?.attribute("src").orEmpty()
-            if (href.isNotBlank()) {
-                entries += tocEntry(label, href, ncxPath, depth, entries.size)
-            }
-            visit(point, depth + 1)
-        }
-    }
-    visit(navMap, 0)
-    return entries
-}
-
-private fun tocEntry(
-    label: String,
-    rawHref: String,
-    ownerPath: String,
-    depth: Int,
-    fallbackIndex: Int
-): SharedEpubTocEntry {
-    val hrefWithoutFragment = rawHref.substringBefore('#').substringBefore('?')
-    val fragment = rawHref.substringAfter('#', missingDelimiterValue = "")
-        .substringBefore('?')
-        .percentDecodeEpubPath()
-        .takeIf(String::isNotBlank)
-    return SharedEpubTocEntry(
-        label = label.decodeEpubEntities().normalizeEpubWhitespace().ifBlank { "Section ${fallbackIndex + 1}" },
-        href = resolveEpubPath(ownerPath, hrefWithoutFragment),
-        fragmentId = fragment,
-        depth = depth.coerceAtLeast(0)
+    return ParsedEpubNavigation(
+        tableOfContents = tableOfContents,
+        pageList = mobileEpubPageTargets(pageNodes),
+        chapterMetadata = mobileEpubNcxChapterMetadata(navigationNodes)
     )
 }
 
@@ -510,7 +519,9 @@ private data class SharedEpubXmlNode(
 ) {
     val localName: String get() = name.substringAfter(':').lowercase()
 
-    fun attribute(name: String): String? = attributes.entries
+    fun attribute(name: String): String? = attributes[name]
+
+    fun attributeLocalIgnoreCase(name: String): String? = attributes.entries
         .firstOrNull { it.key.substringAfter(':').equals(name, ignoreCase = true) }
         ?.value
 
@@ -522,6 +533,16 @@ private data class SharedEpubXmlNode(
     }
 
     fun firstDescendant(localName: String): SharedEpubXmlNode? = descendants(localName).firstOrNull()
+
+    fun descendantsNamed(name: String): Sequence<SharedEpubXmlNode> = descendants().filter { it.name == name }
+
+    fun firstDescendantNamed(primaryName: String, fallbackName: String): SharedEpubXmlNode? =
+        descendantsNamed(primaryName).firstOrNull() ?: descendantsNamed(fallbackName).firstOrNull()
+
+    fun firstChildNamed(name: String): SharedEpubXmlNode? = children.firstOrNull { it.name == name }
+
+    fun androidMetadataChildren(primaryName: String, fallbackName: String): List<SharedEpubXmlNode> =
+        children.filter { it.name == primaryName }.ifEmpty { children.filter { it.name == fallbackName } }
 
     fun appendText(value: String) {
         if (value.isEmpty()) return
@@ -545,42 +566,95 @@ private sealed interface SharedEpubXmlContent {
 }
 
 private fun parseSharedEpubXml(raw: String): SharedEpubXmlNode? {
+    val tokens = sharedEpubXmlTokens(raw).toList()
+    if (tokens.any { it.value.startsWith("<!DOCTYPE", ignoreCase = true) }) {
+        return null
+    }
     val root = SharedEpubXmlNode("#document")
     val stack = ArrayDeque<SharedEpubXmlNode>().apply { addLast(root) }
     var cursor = 0
-    sharedEpubXmlTokens(raw).forEach { match ->
-        if (match.start > cursor) stack.last().appendText(raw.substring(cursor, match.start))
+    tokens.forEach { match ->
+        if (match.start > cursor) {
+            val text = raw.substring(cursor, match.start)
+            if (stack.size == 1 && text.isNotBlank()) return null
+            if (!text.hasOnlyValidEpubXmlEntities()) return null
+            stack.last().appendText(text)
+        }
         val token = match.value
         when {
             token.startsWith("<!--") || token.startsWith("<?") || token.startsWith("<!DOCTYPE", true) -> Unit
-            token.startsWith("<![CDATA[") -> stack.last().appendText(token.removePrefix("<![CDATA[").removeSuffix("]]>") )
+            token.startsWith("<![CDATA[") -> {
+                if (stack.size == 1) return null
+                stack.last().appendText(token.removePrefix("<![CDATA[").removeSuffix("]]>") )
+            }
             token.startsWith("</") -> {
-                val closingName = token.removePrefix("</").substringBefore('>').trim().substringAfter(':')
-                val matchingIndex = stack.indexOfLast { it.localName.equals(closingName, true) }
-                if (matchingIndex > 0) {
-                    repeat(stack.size - matchingIndex) { stack.removeLast() }
-                }
+                val closingName = token.removePrefix("</").substringBefore('>').trim()
+                if (stack.size == 1 || stack.last().name != closingName) return null
+                stack.removeLast()
             }
             token.startsWith("<") -> {
                 val selfClosing = token.trimEnd().endsWith("/>")
                 val inside = token.removePrefix("<").removeSuffix(">").removeSuffix("/").trim()
                 val name = inside.takeWhile { !it.isWhitespace() }
-                if (name.isNotBlank()) {
-                    val attributes = EpubXmlAttributeRegex.findAll(inside.substring(name.length)).associate { attr ->
-                        attr.groupValues[1] to attr.groupValues[3].decodeEpubEntities()
-                    }
-                    val node = SharedEpubXmlNode(name, attributes)
-                    stack.last().children += node
-                    stack.last().content += SharedEpubXmlContent.Child(node)
-                    if (!selfClosing) stack.addLast(node)
-                }
+                if (!name.matches(EpubXmlNameRegex)) return null
+                val attributes = parseSharedEpubXmlAttributes(inside.substring(name.length)) ?: return null
+                val node = SharedEpubXmlNode(name, attributes)
+                stack.last().children += node
+                stack.last().content += SharedEpubXmlContent.Child(node)
+                if (!selfClosing) stack.addLast(node)
             }
         }
         cursor = match.endExclusive
     }
-    if (cursor < raw.length) stack.last().appendText(raw.substring(cursor))
-    return root.children.firstOrNull()
+    if (cursor < raw.length) {
+        val trailing = raw.substring(cursor)
+        if (stack.size == 1 && trailing.isNotBlank()) return null
+        if (!trailing.hasOnlyValidEpubXmlEntities()) return null
+        stack.last().appendText(trailing)
+    }
+    return root.children.singleOrNull().takeIf { stack.size == 1 }
 }
+
+private fun parseSharedEpubXmlAttributes(raw: String): Map<String, String>? {
+    val attributes = linkedMapOf<String, String>()
+    var cursor = 0
+    while (cursor < raw.length) {
+        while (cursor < raw.length && raw[cursor].isWhitespace()) cursor++
+        if (cursor == raw.length) break
+        val match = EpubXmlAttributeRegex.find(raw, cursor)?.takeIf { it.range.first == cursor } ?: return null
+        val name = match.groupValues[1]
+        if (!name.matches(EpubXmlNameRegex) || attributes.containsKey(name)) return null
+        val value = match.groupValues[3]
+        if ('<' in value || !value.hasOnlyValidEpubXmlEntities()) return null
+        attributes[name] = value.decodeEpubEntities()
+        cursor = match.range.last + 1
+    }
+    return attributes
+}
+
+private fun String.hasOnlyValidEpubXmlEntities(): Boolean {
+    var cursor = 0
+    while (true) {
+        val ampersand = indexOf('&', cursor)
+        if (ampersand < 0) return true
+        val semicolon = indexOf(';', ampersand + 1)
+        if (semicolon < 0) return false
+        val body = substring(ampersand + 1, semicolon)
+        val valid = when {
+            body in EpubXmlNamedEntities -> true
+            body.startsWith("#x") || body.startsWith("#X") ->
+                body.drop(2).takeIf(String::isNotEmpty)?.toIntOrNull(16)?.isValidEpubXmlCodePoint() == true
+            body.startsWith('#') ->
+                body.drop(1).takeIf(String::isNotEmpty)?.toIntOrNull()?.isValidEpubXmlCodePoint() == true
+            else -> false
+        }
+        if (!valid) return false
+        cursor = semicolon + 1
+    }
+}
+
+private fun Int?.isValidEpubXmlCodePoint(): Boolean =
+    this != null && (this == 0x9 || this == 0xA || this == 0xD || this in 0x20..0xD7FF || this in 0xE000..0xFFFD || this in 0x10000..0x10FFFF)
 
 private data class SharedEpubXmlToken(
     val start: Int,
@@ -626,7 +700,9 @@ private fun String.sharedEpubTagEnd(start: Int, trackDoctypeSubset: Boolean): In
     return null
 }
 
-private val EpubXmlAttributeRegex = Regex("""(?is)([:\w.-]+)\s*=\s*([\"'])(.*?)\2""")
+private val EpubXmlAttributeRegex = Regex("""(?is)([:_\p{L}][:_\p{L}\p{N}.\-\p{M}]*)\s*=\s*([\"'])(.*?)\2""")
+private val EpubXmlNameRegex = Regex("""[:_\p{L}][:_\p{L}\p{N}.\-\p{M}]*""")
+private val EpubXmlNamedEntities = setOf("amp", "lt", "gt", "quot", "apos")
 private val EpubCssImportRegex = Regex(
     """@import\s+(?:url\(\s*)?(?:\"([^\"]+)\"|'([^']+)'|([^\)\s;]+))\s*\)?\s*([^;]*);""",
     RegexOption.IGNORE_CASE
@@ -654,6 +730,15 @@ private fun String.rewriteEpubHtmlResources(ownerPath: String, dataUri: (String)
     var output = replace(Regex("""(?is)\b(src|poster|href|xlink:href)\s*=\s*([\"'])(.*?)\2""")) { match ->
         val attribute = match.groupValues[1]
         val raw = match.groupValues[3].trim().decodeEpubEntities()
+        val path = epubResourcePath(raw, ownerPath) ?: return@replace match.value
+        if (attribute.equals("href", true) && !path.isEpubEmbeddableResource()) return@replace match.value
+        val fragment = raw.substringAfter('#', missingDelimiterValue = "").takeIf(String::isNotBlank)
+        val uri = (dataUri(path) ?: return@replace match.value) + fragment?.let { "#$it" }.orEmpty()
+        "$attribute=\"$uri\""
+    }
+    output = output.replace(Regex("""(?is)\b(src|poster|href|xlink:href)\s*=\s*([^\s\"'=<>`]+)""")) { match ->
+        val attribute = match.groupValues[1]
+        val raw = match.groupValues[2].trim().decodeEpubEntities()
         val path = epubResourcePath(raw, ownerPath) ?: return@replace match.value
         if (attribute.equals("href", true) && !path.isEpubEmbeddableResource()) return@replace match.value
         val fragment = raw.substringAfter('#', missingDelimiterValue = "").takeIf(String::isNotBlank)
@@ -775,7 +860,12 @@ private fun String.epubHtmlToText(): String {
 }
 
 private fun String.firstEpubHeading(): String? {
-    return (1..6).firstNotNullOfOrNull { level -> epubTagText("h$level") }
+    return Regex("(?is)<(?:[^:>]+:)?h[1-6]\\b[^>]*>(.*?)</(?:[^:>]+:)?h[1-6]>")
+        .find(this)
+        ?.groupValues
+        ?.get(1)
+        ?.epubHtmlToText()
+        ?.takeIf(String::isNotBlank)
 }
 
 private fun String.epubTagText(tag: String): String? {
@@ -786,10 +876,6 @@ private fun String.epubTagText(tag: String): String? {
         ?.epubHtmlToText()
         ?.takeIf(String::isNotBlank)
 }
-
-private fun String.hasEpubVisualContent(): Boolean = contains(
-    Regex("""<\s*(img|svg|math|video|audio|picture|canvas)\b""", RegexOption.IGNORE_CASE)
-)
 
 private fun String.isEpubEmbeddableResource(): Boolean {
     return substringAfterLast('.', "").lowercase() in setOf(
@@ -812,7 +898,11 @@ private fun resolveEpubPath(ownerPath: String, reference: String): String {
         ?: error("Unsafe EPUB resource path: $reference")
 }
 
+private fun resolveMobileEpubPackagePath(ownerPath: String, reference: String): String =
+    resolveMobileEpubReference(ownerPath, decodeMobileEpubUrl(reference).substringBefore('#').substringBefore('?'))
+
 private fun safeEpubPathOrNull(path: String): String? {
+    if (path.startsWith('/')) return null
     val parts = ArrayDeque<String>()
     path.replace('\\', '/').split('/').forEach { part ->
         when (part) {
@@ -965,3 +1055,71 @@ private fun Int.toBigEndianBytes(): ByteArray = byteArrayOf(
     (this ushr 8).toByte(),
     toByte()
 )
+
+/**
+ * A plain-text-only spine document produced by [loadSharedEpubTtsChapters].
+ */
+data class SharedEpubTtsChapter(
+    val id: String,
+    val title: String,
+    val plainText: String,
+)
+
+/**
+ * Lightweight text-only EPUB extraction for text-to-speech. Mirrors the chapter
+ * granularity of [load] (spine order, TOC section splitting, heading-based titles)
+ * but skips all presentation work: CSS processing, image/font embedding, sanitizing,
+ * and resource rewriting. Each spine document is read and its text is extracted as-is.
+ */
+fun loadSharedEpubTtsChapters(
+    archive: SharedEpubArchive,
+    fileName: String,
+): List<SharedEpubTtsChapter> {
+    val parsedPackage = parseMobileEpubPackage(archive)
+    fun text(path: String): String? = parsedPackage.text(path)
+    val manifest = parsedPackage.manifest
+    val spineNode = parsedPackage.spineNode
+    val spineIds = parsedPackage.spineIds
+    val chapterItems = spineIds.mapNotNull(manifest::get)
+
+    val tocByPath = parseEpubNavigation(
+        archiveText = ::text,
+        spineNode = spineNode,
+        manifest = manifest
+    ).tableOfContents
+        .filter { !it.fragmentId.isNullOrBlank() }
+        .groupBy(SharedEpubTocEntry::href)
+
+    val chapters = chapterItems.flatMapIndexed { index, item ->
+        if (!item.isHtml) return@flatMapIndexed emptyList()
+        val raw = text(item.absPath) ?: return@flatMapIndexed emptyList()
+        val body = raw.extractEpubBodyOrSelf()
+        val fallbackTitle = resolveMobileEpubSpineChapterTitle(raw.firstEpubHeading(), index)
+        val sections = materializeEpubTocSections(
+            body = body,
+            entries = tocByPath[item.absPath].orEmpty()
+        )
+        if (sections.isEmpty()) {
+            val plainText = sharedHtmlToPlainText(raw)
+            if (plainText.isBlank()) return@flatMapIndexed emptyList()
+            listOf(
+                SharedEpubTtsChapter(
+                    id = item.id.ifBlank { "chapter_$index" },
+                    title = fallbackTitle,
+                    plainText = plainText,
+                )
+            )
+        } else {
+            sections.mapIndexedNotNull { sectionIndex, section ->
+                val plainText = sharedHtmlToPlainText(section.html)
+                if (plainText.isBlank()) return@mapIndexedNotNull null
+                SharedEpubTtsChapter(
+                    id = "${item.id.ifBlank { "chapter_$index" }}#${section.fragmentId}",
+                    title = section.entry.label.ifBlank { fallbackTitle },
+                    plainText = plainText,
+                )
+            }
+        }
+    }
+    return chapters
+}

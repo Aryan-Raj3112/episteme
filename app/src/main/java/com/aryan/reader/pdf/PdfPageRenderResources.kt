@@ -12,6 +12,10 @@ import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
+import com.aryan.reader.shared.pdf.PdfInkTool
+import com.aryan.reader.shared.pdf.PdfPagePoint
+import com.aryan.reader.shared.pdf.canPoolPdfBitmap
+import com.aryan.reader.shared.pdf.shouldReplaceLastPdfInkPoint
 import androidx.core.graphics.createBitmap
 import androidx.core.graphics.set
 import com.aryan.reader.pdf.data.PdfAnnotation
@@ -112,7 +116,13 @@ object PdfInkGeometry {
 internal object PdfBitmapPool {
     private val pool = ConcurrentLinkedQueue<Bitmap>()
     private const val MAX_POOL_SIZE = 4
+    private val maxHeapBytes = Runtime.getRuntime().maxMemory()
 
+    private fun pooledBytes(): Long = pool.sumOf { bitmap ->
+        if (bitmap.isRecycled) 0L else bitmap.allocationByteCount.toLong()
+    }
+
+    @Synchronized
     fun get(width: Int, height: Int): Bitmap {
         val iterator = pool.iterator()
         while (iterator.hasNext()) {
@@ -123,18 +133,30 @@ internal object PdfBitmapPool {
                 return bitmap
             }
         }
-        return createBitmap(width, height)
+        return try {
+            createBitmap(width, height)
+        } catch (error: OutOfMemoryError) {
+            // Mismatched buffers are useless for this request. Drop our references and retry once;
+            // never call Bitmap.recycle because HWUI may still hold a recently drawn bitmap.
+            pool.clear()
+            createBitmap(width, height)
+        }
     }
 
     fun get(size: Int): Bitmap = get(size, size)
 
+    @Synchronized
     fun recycle(bitmap: Bitmap) {
         // Overflow bitmaps are left for GC; HWUI may still reference recently drawn bitmaps.
-        if (!bitmap.isRecycled && pool.size < MAX_POOL_SIZE) {
+        if (!bitmap.isRecycled &&
+            pool.size < MAX_POOL_SIZE &&
+            canPoolPdfBitmap(pooledBytes(), bitmap.allocationByteCount.toLong(), maxHeapBytes)
+        ) {
             pool.offer(bitmap)
         }
     }
 
+    @Synchronized
     fun clear() {
         while (!pool.isEmpty()) {
             pool.poll()
@@ -394,7 +416,16 @@ class PdfDrawingState {
     }
 
     fun onDraw(point: PdfPoint) {
-        currentPoints.add(point)
+        val annotation = currentAnnotation ?: return
+        val sharedTool = annotation.inkType.toSharedInkTool()
+        val sharedPoints = currentPoints.takeLast(2).map { PdfPagePoint(it.x, it.y, it.timestamp) }
+        val replaceEndpoint = shouldReplaceLastPdfInkPoint(
+            points = sharedPoints,
+            next = PdfPagePoint(point.x, point.y, point.timestamp),
+            inkTool = sharedTool,
+            strokeWidth = annotation.strokeWidth,
+        )
+        if (replaceEndpoint) currentPoints[currentPoints.lastIndex] = point else currentPoints.add(point)
         currentAnnotation = currentAnnotation?.copy(points = currentPoints.toList())
     }
 
@@ -408,6 +439,16 @@ class PdfDrawingState {
         currentAnnotation = null
         currentPoints.clear()
         return finalAnnot
+    }
+
+    private fun InkType.toSharedInkTool(): PdfInkTool = when (this) {
+        InkType.PEN -> PdfInkTool.PEN
+        InkType.HIGHLIGHTER -> PdfInkTool.HIGHLIGHTER
+        InkType.HIGHLIGHTER_ROUND -> PdfInkTool.HIGHLIGHTER_ROUND
+        InkType.ERASER -> PdfInkTool.ERASER
+        InkType.FOUNTAIN_PEN -> PdfInkTool.FOUNTAIN_PEN
+        InkType.PENCIL -> PdfInkTool.PENCIL
+        InkType.TEXT -> PdfInkTool.TEXT
     }
 
     fun updateDrag(point: PdfPoint) {

@@ -42,102 +42,18 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
-import kotlin.math.max
 import kotlin.math.roundToInt
-
-internal data class MagnifierContentSource(
-    val sourceWidth: Int,
-    val sourceHeight: Int,
-    val contentLeft: Float,
-    val contentTop: Float,
-    val contentWidth: Float,
-    val contentHeight: Float
-) {
-    val scaleX: Float
-        get() = if (contentWidth > 0f) sourceWidth.toFloat() / contentWidth else 1f
-
-    val scaleY: Float
-        get() = if (contentHeight > 0f) sourceHeight.toFloat() / contentHeight else 1f
-
-    fun sourceX(contentX: Float): Float = (contentX - contentLeft) * scaleX
-
-    fun sourceY(contentY: Float): Float = (contentY - contentTop) * scaleY
-}
-
-internal data class MagnifierSampleGeometry(
-    val srcLeft: Int,
-    val srcTop: Int,
-    val srcWidth: Int,
-    val srcHeight: Int,
-    val outputScaleX: Float,
-    val outputScaleY: Float
-)
-
-internal fun calculateMagnifierSampleGeometry(
-    centerContentX: Float,
-    centerContentY: Float,
-    contentSource: MagnifierContentSource,
-    magnifierWidthPx: Float,
-    magnifierHeightPx: Float,
-    zoomFactor: Float
-): MagnifierSampleGeometry? {
-    if (
-        contentSource.sourceWidth <= 0 ||
-        contentSource.sourceHeight <= 0 ||
-        contentSource.contentWidth <= 0f ||
-        contentSource.contentHeight <= 0f ||
-        magnifierWidthPx <= 0f ||
-        magnifierHeightPx <= 0f ||
-        zoomFactor <= 0f
-    ) {
-        return null
-    }
-
-    val sourceCenterX = contentSource.sourceX(centerContentX)
-    val sourceCenterY = contentSource.sourceY(centerContentY)
-    val sourceRectWidth = (magnifierWidthPx / zoomFactor * contentSource.scaleX).coerceAtLeast(1f)
-    val sourceRectHeight = (magnifierHeightPx / zoomFactor * contentSource.scaleY).coerceAtLeast(1f)
-
-    val maxSrcLeft = max(0f, contentSource.sourceWidth.toFloat() - sourceRectWidth)
-    val maxSrcTop = max(0f, contentSource.sourceHeight.toFloat() - sourceRectHeight)
-    val srcLeft = (sourceCenterX - sourceRectWidth / 2f).coerceIn(0f, maxSrcLeft)
-    val srcTop = (sourceCenterY - sourceRectHeight / 2f).coerceIn(0f, maxSrcTop)
-
-    val srcLeftInt = srcLeft.roundToInt().coerceIn(0, contentSource.sourceWidth - 1)
-    val srcTopInt = srcTop.roundToInt().coerceIn(0, contentSource.sourceHeight - 1)
-    val srcWidthInt = (contentSource.sourceWidth - srcLeftInt)
-        .coerceAtMost(sourceRectWidth.roundToInt().coerceAtLeast(1))
-        .coerceAtLeast(1)
-    val srcHeightInt = (contentSource.sourceHeight - srcTopInt)
-        .coerceAtMost(sourceRectHeight.roundToInt().coerceAtLeast(1))
-        .coerceAtLeast(1)
-
-    return MagnifierSampleGeometry(
-        srcLeft = srcLeftInt,
-        srcTop = srcTopInt,
-        srcWidth = srcWidthInt,
-        srcHeight = srcHeightInt,
-        outputScaleX = magnifierWidthPx / srcWidthInt,
-        outputScaleY = magnifierHeightPx / srcHeightInt
-    )
-}
 
 internal fun mapContentRectToMagnifier(
     contentRect: Rect,
     contentSource: MagnifierContentSource,
     sample: MagnifierSampleGeometry
 ): RectF {
-    val sourceLeft = contentSource.sourceX(contentRect.left.toFloat())
-    val sourceTop = contentSource.sourceY(contentRect.top.toFloat())
-    val sourceRight = contentSource.sourceX(contentRect.right.toFloat())
-    val sourceBottom = contentSource.sourceY(contentRect.bottom.toFloat())
-
-    return RectF(
-        (sourceLeft - sample.srcLeft) * sample.outputScaleX,
-        (sourceTop - sample.srcTop) * sample.outputScaleY,
-        (sourceRight - sample.srcLeft) * sample.outputScaleX,
-        (sourceBottom - sample.srcTop) * sample.outputScaleY
+    val mapped = mapContentBoundsToMagnifier(
+        contentRect.left.toFloat(), contentRect.top.toFloat(),
+        contentRect.right.toFloat(), contentRect.bottom.toFloat(), contentSource, sample,
     )
+    return RectF(mapped.left, mapped.top, mapped.right, mapped.bottom)
 }
 
 @Composable

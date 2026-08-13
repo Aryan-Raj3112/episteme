@@ -789,7 +789,7 @@ private class DesktopWindowsWebView2Controller(
             "controller_init panel=$instanceId backend=${backend.logName} canvas=${canvas.width}x${canvas.height} " +
                 "canvasBounds=${canvas.bounds.formatAwtBounds()} screen=${canvas.safeScreenLocationLog()}"
         )
-        DesktopSwtWebView2EventLoop.asyncExec(reportError) { display ->
+        DesktopSwtBrowserEventLoop.asyncExec(reportError) { display ->
             if (!disposed) createBrowser(display)
         }
     }
@@ -806,7 +806,7 @@ private class DesktopWindowsWebView2Controller(
             "controller_load_enqueue panel=$instanceId htmlChars=${html.length} browser=${browser != null} " +
                 "canvas=${canvas.width}x${canvas.height} browserBounds=$lastBrowserBoundsLog"
         )
-        DesktopSwtWebView2EventLoop.asyncExec(reportError) {
+        DesktopSwtBrowserEventLoop.asyncExec(reportError) {
             if (disposed) return@asyncExec
             updateLoadState(false, -1f)
             pendingHtml = html
@@ -824,7 +824,7 @@ private class DesktopWindowsWebView2Controller(
     }
 
     fun executeJavaScript(script: String) {
-        DesktopSwtWebView2EventLoop.asyncExec(reportError) {
+        DesktopSwtBrowserEventLoop.asyncExec(reportError) {
             if (disposed) return@asyncExec
             val webView = browser
             if (webView == null || webView.isDisposed) {
@@ -842,7 +842,7 @@ private class DesktopWindowsWebView2Controller(
     }
 
     fun resize(width: Int, height: Int, reason: String = "resize") {
-        DesktopSwtWebView2EventLoop.asyncExec(reportError) {
+        DesktopSwtBrowserEventLoop.asyncExec(reportError) {
             if (disposed) return@asyncExec
             applyCanvasSizeToBrowser(width, height, reason = reason)
         }
@@ -854,11 +854,11 @@ private class DesktopWindowsWebView2Controller(
         logDesktopWebView2("controller_dispose panel=$instanceId waitForCompletion=$waitForCompletion")
         logReaderModeSwitch("webview2_controller_dispose panel=$instanceId waitForCompletion=$waitForCompletion")
         if (waitForCompletion) {
-            DesktopSwtWebView2EventLoop.syncExec({}) {
+            DesktopSwtBrowserEventLoop.syncExec({}) {
                 disposeSwtWidgets()
             }
         } else {
-            DesktopSwtWebView2EventLoop.asyncExec({}) {
+            DesktopSwtBrowserEventLoop.asyncExec({}) {
                 disposeSwtWidgets()
             }
         }
@@ -1099,8 +1099,9 @@ private class DesktopWindowsWebView2Controller(
     }
 }
 
-private object DesktopSwtWebView2EventLoop {
+internal object DesktopSwtBrowserEventLoop {
     private val ready = CountDownLatch(1)
+    private val isMacOs = currentDesktopPlatform().os == DesktopOperatingSystem.MACOS
 
     @Volatile
     private var display: Display? = null
@@ -1109,43 +1110,58 @@ private object DesktopSwtWebView2EventLoop {
     private var startupError: Throwable? = null
 
     init {
-        Thread(
-            {
-                runCatching {
-                    logDesktopWebView2("swt_event_loop_start")
-                    runCatching { Display.setAppName(EpistemeDesktopWindowTitle) }
-                    if (desktopEpubWebViewUsesWebView2() &&
-                        System.getProperty(DesktopWebView2EdgeDataDirProperty).isNullOrBlank()
-                    ) {
-                        System.setProperty(
-                            DesktopWebView2EdgeDataDirProperty,
-                            File(desktopUserCacheRoot(), "webview2").absolutePath
-                        )
-                    }
-                    if (desktopEpubWebViewUsesWebView2()) {
-                        logDesktopWebView2(
-                            "swt_event_loop_user_data_dir path=\"${System.getProperty(DesktopWebView2EdgeDataDirProperty).orEmpty().logPreview(200)}\""
-                        )
-                    }
-                    val swtDisplay = Display()
-                    display = swtDisplay
-                    ready.countDown()
-                    logDesktopWebView2("swt_event_loop_ready")
-                    while (!swtDisplay.isDisposed) {
-                        if (!swtDisplay.readAndDispatch()) {
-                            swtDisplay.sleep()
-                        }
-                    }
-                }.onFailure { error ->
-                    startupError = error
-                    ready.countDown()
-                    logDesktopWebView2("swt_event_loop_failed error=\"${error.message.orEmpty().logPreview(300)}\"")
+        if (!isMacOs) {
+            Thread(::runEventLoop, "Episteme SWT Browser").apply {
+                isDaemon = true
+                start()
+            }
+        }
+    }
+
+    /**
+     * Cocoa requires SWT to own the process's first thread. Compose/AWT starts
+     * only after the SWT display exists and runs on its own UI thread.
+     */
+    fun runMacOsEventLoop(onReady: () -> Unit) {
+        check(isMacOs) { "The main-thread SWT event loop is only used on macOS." }
+        check(Thread.currentThread().name == "main") {
+            "The macOS SWT event loop must start on the process main thread."
+        }
+        runEventLoop(onReady)
+        startupError?.let { throw it }
+    }
+
+    private fun runEventLoop(onReady: (() -> Unit)? = null) {
+        runCatching {
+            logDesktopWebView2("swt_event_loop_start")
+            runCatching { Display.setAppName(EpistemeDesktopWindowTitle) }
+            if (desktopEpubWebViewUsesWebView2() &&
+                System.getProperty(DesktopWebView2EdgeDataDirProperty).isNullOrBlank()
+            ) {
+                System.setProperty(
+                    DesktopWebView2EdgeDataDirProperty,
+                    File(desktopUserCacheRoot(), "webview2").absolutePath
+                )
+            }
+            if (desktopEpubWebViewUsesWebView2()) {
+                logDesktopWebView2(
+                    "swt_event_loop_user_data_dir path=\"${System.getProperty(DesktopWebView2EdgeDataDirProperty).orEmpty().logPreview(200)}\""
+                )
+            }
+            val swtDisplay = Display()
+            display = swtDisplay
+            ready.countDown()
+            logDesktopWebView2("swt_event_loop_ready")
+            onReady?.invoke()
+            while (!swtDisplay.isDisposed) {
+                if (!swtDisplay.readAndDispatch()) {
+                    swtDisplay.sleep()
                 }
-            },
-            "Episteme SWT Browser"
-        ).apply {
-            isDaemon = true
-            start()
+            }
+        }.onFailure { error ->
+            startupError = error
+            ready.countDown()
+            logDesktopWebView2("swt_event_loop_failed error=\"${error.message.orEmpty().logPreview(300)}\"")
         }
     }
 
@@ -1378,11 +1394,14 @@ private fun String.withDesktopWebView2Bootstrap(networkAccessEnabled: Boolean): 
 
 internal fun desktopNativeWebViewUnavailableMessage(
     backend: DesktopEpubWebViewBackend,
+    platform: DesktopPlatform = currentDesktopPlatform(),
     detail: String? = null
 ): String {
     val base = when (backend) {
         DesktopEpubWebViewBackend.WINDOWS_WEBVIEW2 ->
             "Microsoft Edge WebView2 runtime is unavailable. Install or repair the WebView2 Runtime."
+        DesktopEpubWebViewBackend.WEBKIT if platform.os == DesktopOperatingSystem.MACOS ->
+            "The macOS system WebKit view is unavailable."
         DesktopEpubWebViewBackend.WEBKIT ->
             "WebKitGTK is unavailable. Install WebKitGTK from your Linux distribution packages."
         DesktopEpubWebViewBackend.UNSUPPORTED ->

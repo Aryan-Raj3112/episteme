@@ -14,8 +14,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -45,6 +48,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -66,6 +70,7 @@ import com.aryan.reader.shared.Shelf
 import com.aryan.reader.shared.Tag
 import com.aryan.reader.shared.cardAuthor
 import com.aryan.reader.shared.cardTitle
+import com.aryan.reader.shared.canEditEmbeddedFileMetadata
 import com.aryan.reader.shared.formatFileSize
 import com.aryan.reader.shared.parseTagList
 
@@ -323,12 +328,28 @@ fun SharedBookInfoDialog(
     book: BookItem,
     knownTags: List<Tag> = emptyList(),
     initiallyEditing: Boolean = false,
-    canEditEmbeddedMetadata: Boolean = book.type == FileType.EPUB,
-    canRenameDisplayName: Boolean = true,
+    canEditEmbeddedMetadata: Boolean = book.canEditEmbeddedFileMetadata(),
+    canRenameDisplayName: Boolean = !canEditEmbeddedMetadata,
     canRestoreEmbeddedMetadata: Boolean = canEditEmbeddedMetadata,
     onChooseCover: (() -> String?)? = null,
+    onRequestCover: (() -> Unit)? = null,
+    externallySelectedCoverPath: String? = null,
+    formattedAddedDate: String? = null,
+    formattedModifiedDate: String? = null,
+    displayLocation: String? = null,
+    displayTitle: String = book.cardTitle(),
+    initialDisplayName: String = book.displayName,
+    originalFileName: String = book.displayName,
+    displayNameChanged: Boolean = false,
+    editLibraryTags: Boolean = true,
+    onOpenTags: (() -> Unit)? = null,
+    tagChipsContent: (@Composable () -> Unit)? = null,
+    coverEditorContent: (@Composable () -> Unit)? = null,
+    embeddedEditLabel: String? = null,
     onDismiss: () -> Unit,
     onSave: (BookItem) -> Unit,
+    onSaveEmbeddedMetadata: ((BookItem) -> Unit)? = null,
+    onSaveDisplayName: ((String?) -> Unit)? = null,
     onRestore: (BookItem) -> Unit
 ) {
     val clipboard = LocalClipboardManager.current
@@ -340,13 +361,19 @@ fun SharedBookInfoDialog(
         mutableStateOf(book.seriesIndex?.formatMetadataNumber().orEmpty())
     }
     var descriptionInput by remember(book.id, book.description) { mutableStateOf(book.description.orEmpty()) }
-    var displayNameInput by remember(book.id, book.displayName) { mutableStateOf(book.displayName) }
+    var displayNameInput by remember(book.id, initialDisplayName) { mutableStateOf(initialDisplayName) }
     var tagInput by remember(book.id, book.tags) { mutableStateOf(book.tags.joinToString(", ") { it.name }) }
     var selectedCoverPath by remember(book.id) { mutableStateOf<String?>(null) }
+    LaunchedEffect(externallySelectedCoverPath) {
+        if (!externallySelectedCoverPath.isNullOrBlank()) {
+            selectedCoverPath = externallySelectedCoverPath
+        }
+    }
     var showRestoreConfirmation by remember(book.id) { mutableStateOf(false) }
 
     val hasOriginalMetadata = book.hasOriginalMetadata()
     val hasMetadataChanges = book.hasMetadataChanges()
+    val effectiveMetadataChanges = hasMetadataChanges || displayNameChanged
 
     Dialog(
         onDismissRequest = {
@@ -362,7 +389,13 @@ fun SharedBookInfoDialog(
             color = MaterialTheme.colorScheme.surface,
             modifier = Modifier.fillMaxSize()
         ) {
-            Column(Modifier.fillMaxSize()) {
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    .statusBarsPadding()
+                    .navigationBarsPadding()
+                    .imePadding(),
+            ) {
                 SharedBookInfoTopBar(
                     title = if (isEditing) {
                         if (canEditEmbeddedMetadata) {
@@ -373,7 +406,7 @@ fun SharedBookInfoDialog(
                     } else {
                         readerString("file_information", "Book information")
                     },
-                    subtitle = book.cardTitle(),
+                    subtitle = displayTitle,
                     onClose = {
                         if (isEditing) {
                             isEditing = false
@@ -409,12 +442,16 @@ fun SharedBookInfoDialog(
                                 onTagChange = { tagInput = it },
                                 knownTags = knownTags,
                                 selectedCoverPath = selectedCoverPath,
-                                onChooseCover = onChooseCover?.let { choose ->
-                                    {
-                                        selectedCoverPath = choose()
+                                onChooseCover = when {
+                                    onRequestCover != null -> onRequestCover
+                                    onChooseCover != null -> {
+                                        { selectedCoverPath = onChooseCover() }
                                     }
+                                    else -> null
                                 },
-                                onClearCover = { selectedCoverPath = null }
+                                onClearCover = { selectedCoverPath = null },
+                                editLibraryTags = editLibraryTags,
+                                coverEditorContent = coverEditorContent,
                             )
                         } else if (canRenameDisplayName) {
                             SharedBookDisplayNameEditContent(
@@ -422,15 +459,26 @@ fun SharedBookInfoDialog(
                                 onDisplayNameChange = { displayNameInput = it },
                                 tagInput = tagInput,
                                 onTagChange = { tagInput = it },
-                                knownTags = knownTags
+                                knownTags = knownTags,
+                                originalFileName = originalFileName,
+                                editLibraryTags = editLibraryTags,
                             )
                         }
                     } else {
                         SharedBookMetadataInfoContent(
                             book = book,
-                            hasMetadataChanges = hasMetadataChanges,
+                            hasMetadataChanges = effectiveMetadataChanges,
+                            formattedAddedDate = formattedAddedDate,
+                            formattedModifiedDate = formattedModifiedDate,
+                            displayLocation = displayLocation,
+                            displayTitle = displayTitle,
+                            displayNameChanged = displayNameChanged,
+                            onOpenTags = onOpenTags,
+                            tagChipsContent = tagChipsContent,
                             onCopyPath = {
-                                book.path?.takeIf { it.isNotBlank() }?.let { clipboard.setText(AnnotatedString(it)) }
+                                (displayLocation ?: book.path)
+                                    ?.takeIf { it.isNotBlank() }
+                                    ?.let { clipboard.setText(AnnotatedString(it)) }
                             }
                         )
                     }
@@ -441,8 +489,12 @@ fun SharedBookInfoDialog(
                 SharedBookInfoBottomBar(
                     isEditing = isEditing,
                     canEdit = canEditEmbeddedMetadata || canRenameDisplayName,
-                    canRestore = canRestoreEmbeddedMetadata && hasOriginalMetadata && (hasMetadataChanges || isEditing),
-                    editLabel = if (canEditEmbeddedMetadata) readerString("action_edit", "Edit") else readerString("action_rename", "Rename"),
+                    canRestore = canRestoreEmbeddedMetadata && hasOriginalMetadata && (effectiveMetadataChanges || isEditing),
+                    editLabel = if (canEditEmbeddedMetadata) {
+                        embeddedEditLabel ?: readerString("action_edit", "Edit")
+                    } else {
+                        readerString("action_rename", "Rename")
+                    },
                     onCancel = {
                         if (isEditing) {
                             isEditing = false
@@ -466,15 +518,19 @@ fun SharedBookInfoDialog(
                                 originalSeriesIndex = book.originalSeriesIndex ?: book.seriesIndex,
                                 originalDescription = book.originalDescription ?: book.description,
                                 coverImagePath = selectedCoverPath ?: book.coverImagePath,
-                                tags = parseTagList(tagInput, knownTags)
+                                tags = if (editLibraryTags) parseTagList(tagInput, knownTags) else book.tags,
                             )
                         } else {
                             book.copy(
                                 displayName = displayNameInput.toMetadataValue() ?: book.displayName,
-                                tags = parseTagList(tagInput, knownTags)
+                                tags = if (editLibraryTags) parseTagList(tagInput, knownTags) else book.tags,
                             )
                         }
-                        onSave(updated)
+                        if (canEditEmbeddedMetadata) {
+                            onSaveEmbeddedMetadata?.invoke(updated) ?: onSave(updated)
+                        } else {
+                            onSaveDisplayName?.invoke(displayNameInput.toMetadataValue()) ?: onSave(updated)
+                        }
                         onDismiss()
                     },
                     onEdit = { isEditing = true }
@@ -552,11 +608,18 @@ private fun SharedBookInfoTopBar(
 private fun SharedBookMetadataInfoContent(
     book: BookItem,
     hasMetadataChanges: Boolean,
+    formattedAddedDate: String?,
+    formattedModifiedDate: String?,
+    displayLocation: String?,
+    displayTitle: String,
+    displayNameChanged: Boolean,
+    onOpenTags: (() -> Unit)?,
+    tagChipsContent: (@Composable () -> Unit)?,
     onCopyPath: () -> Unit
 ) {
     SharedInfoCard {
         Text(
-            book.cardTitle(),
+            displayTitle,
             style = MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.Bold,
             maxLines = 3,
@@ -576,7 +639,7 @@ private fun SharedBookMetadataInfoContent(
         val provenance = when {
             book.type == FileType.EPUB && hasMetadataChanges -> readerString("metadata_provenance_epub_edited", "EPUB metadata edited")
             book.type == FileType.EPUB -> readerString("metadata_provenance_from_epub", "Metadata from EPUB file")
-            hasMetadataChanges -> readerString("metadata_provenance_display_name_changed", "Display name changed in app")
+            displayNameChanged || hasMetadataChanges -> readerString("metadata_provenance_display_name_changed", "Display name changed in app")
             else -> readerString("metadata_provenance_from_file", "Metadata from file")
         }
         Text(
@@ -601,8 +664,19 @@ private fun SharedBookMetadataInfoContent(
 
     SharedInfoSection(title = readerString("section_file", "File")) {
         SharedInfoRowDetailed(readerString("label_file_name_simple", "File name"), book.displayName, maxLines = 2)
-        SharedInfoRowDetailed(readerString("location", "Location"), book.path.orEmpty().ifBlank { readerString("not_available_locally", "Not available") }, maxLines = 4, onCopy = onCopyPath)
-        book.sourceFolder?.takeIf { it.isNotBlank() }?.let {
+        formattedAddedDate?.let {
+            SharedInfoRowDetailed(readerString("added", "Added"), it)
+        }
+        formattedModifiedDate?.let {
+            SharedInfoRowDetailed(readerString("label_modified", "Modified"), it)
+        }
+        SharedInfoRowDetailed(
+            readerString("location", "Location"),
+            displayLocation ?: book.path.orEmpty().ifBlank { readerString("not_available_locally", "Not available") },
+            maxLines = 4,
+            onCopy = onCopyPath,
+        )
+        if (displayLocation == null) book.sourceFolder?.takeIf { it.isNotBlank() }?.let {
             SharedInfoRowDetailed(readerString("filter_source_folder", "Source folder"), it, maxLines = 3)
         }
     }
@@ -614,7 +688,25 @@ private fun SharedBookMetadataInfoContent(
     }
 
     SharedInfoSection(title = readerString("section_tags", "Tags")) {
-        if (book.tags.isEmpty()) {
+        if (onOpenTags != null) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    readerString("label_library_tags", "Library tags"),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                TextButton(onClick = onOpenTags) {
+                    Text(readerString("action_add_edit", "Add / Edit"))
+                }
+            }
+        }
+        if (tagChipsContent != null) {
+            tagChipsContent()
+        } else if (book.tags.isEmpty()) {
             Text(
                 readerString("msg_no_tags_assigned", "No tags assigned."),
                 style = MaterialTheme.typography.bodySmall,
@@ -650,7 +742,9 @@ private fun SharedBookMetadataEditContent(
     knownTags: List<Tag>,
     selectedCoverPath: String?,
     onChooseCover: (() -> Unit)?,
-    onClearCover: () -> Unit
+    onClearCover: () -> Unit,
+    editLibraryTags: Boolean,
+    coverEditorContent: (@Composable () -> Unit)?,
 ) {
     SharedInfoSection(title = readerString("label_editable_metadata", "Editable metadata")) {
         SharedStableOutlinedTextField(
@@ -699,9 +793,10 @@ private fun SharedBookMetadataEditContent(
             maxLines = 10,
             selectionKey = "description"
         )
+        coverEditorContent?.invoke()
     }
 
-    if (onChooseCover != null) {
+    if (coverEditorContent == null && onChooseCover != null) {
         SharedInfoSection(title = readerString("label_cover", "Cover")) {
             Text(
                 selectedCoverPath?.substringAfterLast('/')?.substringAfterLast('\\')
@@ -724,7 +819,7 @@ private fun SharedBookMetadataEditContent(
         }
     }
 
-    SharedInfoSection(title = readerString("label_library_tags", "Library tags")) {
+    if (editLibraryTags) SharedInfoSection(title = readerString("label_library_tags", "Library tags")) {
         SharedStableOutlinedTextField(
             value = tagInput,
             onValueChange = onTagChange,
@@ -751,7 +846,9 @@ private fun SharedBookDisplayNameEditContent(
     onDisplayNameChange: (String) -> Unit,
     tagInput: String,
     onTagChange: (String) -> Unit,
-    knownTags: List<Tag>
+    knownTags: List<Tag>,
+    originalFileName: String,
+    editLibraryTags: Boolean,
 ) {
     SharedInfoSection(title = readerString("label_display_name", "Display name")) {
         SharedStableOutlinedTextField(
@@ -762,9 +859,16 @@ private fun SharedBookDisplayNameEditContent(
             maxLines = 3,
             selectionKey = "displayName"
         )
+        Text(
+            readerString("original_file_format", "Original file: %1\$s", originalFileName),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 
-    SharedInfoSection(title = readerString("label_library_tags", "Library tags")) {
+    if (editLibraryTags) SharedInfoSection(title = readerString("label_library_tags", "Library tags")) {
         SharedStableOutlinedTextField(
             value = tagInput,
             onValueChange = onTagChange,

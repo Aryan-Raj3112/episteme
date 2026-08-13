@@ -1,9 +1,11 @@
 package com.aryan.reader.shared
 
+import androidx.compose.ui.text.AnnotatedString
+
 data class SearchResult(
     val locationInSource: Int,
     val locationTitle: String,
-    val snippet: String,
+    val snippet: AnnotatedString,
     val query: String,
     val occurrenceIndexInLocation: Int,
     val chunkIndex: Int

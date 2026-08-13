@@ -77,6 +77,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.aryan.reader.shared.AppContrastOption
 import com.aryan.reader.shared.AppThemeMode
 import com.aryan.reader.shared.CustomAppTheme
@@ -842,6 +844,173 @@ fun SharedHsvColorPickerDialog(
     }
 }
 
+data class SharedReaderThemeColorPickerLabels(
+    val livePreview: String,
+    val previewText: String,
+    val hex: String,
+    val red: String,
+    val green: String,
+    val blue: String,
+    val save: String,
+)
+
+@Composable
+fun SharedReaderThemeColorPickerDialog(
+    initialColor: Color,
+    title: String,
+    backgroundColor: Color,
+    textColor: Color,
+    editingBackground: Boolean,
+    maxDialogHeight: androidx.compose.ui.unit.Dp,
+    labels: SharedReaderThemeColorPickerLabels,
+    onDismiss: () -> Unit,
+    onColorChanged: (Color) -> Unit,
+) {
+    var hsv by remember(initialColor) { mutableStateOf(initialColor.toSharedHsvColor()) }
+    val currentColor = hsv.toComposeColor()
+
+    LaunchedEffect(currentColor) {
+        onColorChanged(currentColor)
+    }
+
+    fun updateFromColor(color: Color) {
+        hsv = color.toSharedHsvColor()
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Surface(
+            shape = RoundedCornerShape(24.dp),
+            color = Color(0xFF2C2C2C),
+            modifier = Modifier
+                .fillMaxWidth(0.9f)
+                .padding(16.dp)
+                .heightIn(max = maxDialogHeight),
+        ) {
+            Column(
+                modifier = Modifier.padding(20.dp).verticalScroll(rememberScrollState()),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .background(Color(0xFF3E3E3E), RoundedCornerShape(16.dp))
+                        .padding(horizontal = 24.dp, vertical = 8.dp),
+                ) {
+                    Text(
+                        title,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color.White,
+                    )
+                }
+                Spacer(Modifier.height(16.dp))
+                val liveBackground = if (editingBackground) currentColor else backgroundColor
+                val liveText = if (editingBackground) textColor else currentColor
+                Surface(
+                    modifier = Modifier.fillMaxWidth().height(64.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    color = liveBackground,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                ) {
+                    Column(
+                        Modifier.fillMaxSize(),
+                        verticalArrangement = Arrangement.Center,
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Text(labels.livePreview, color = liveText, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                        Text(labels.previewText, color = liveText, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                Spacer(Modifier.height(20.dp))
+                SharedHsvSpectrumBox(
+                    hue = hsv.hue,
+                    saturation = hsv.saturation,
+                    currentColor = currentColor,
+                    onHueSatChanged = { hue, saturation -> hsv = hsv.copy(hue = hue, saturation = saturation) },
+                    modifier = Modifier.fillMaxWidth().height(220.dp),
+                )
+                Spacer(Modifier.height(20.dp))
+                SharedBrightnessSlider(
+                    hue = hsv.hue,
+                    saturation = hsv.saturation,
+                    value = hsv.value,
+                    onValueChanged = { hsv = hsv.copy(value = it) },
+                    modifier = Modifier.fillMaxWidth().height(24.dp).clip(RoundedCornerShape(12.dp)),
+                    gestureKey = initialColor,
+                )
+                Spacer(Modifier.height(24.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.Bottom,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    SharedColorComparePill(initialColor, currentColor, Modifier.width(64.dp).height(36.dp))
+                    Column(Modifier.weight(1.6f), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(labels.hex, color = Color.Gray, fontSize = 12.sp, maxLines = 1)
+                        Spacer(Modifier.height(4.dp))
+                        SharedHexInput(currentColor, ::updateFromColor)
+                    }
+                    Row(Modifier.weight(2.4f), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        SharedRgbInputColumn(labels.red, currentColor.red, { updateFromColor(currentColor.copy(red = it)) }, Modifier.weight(1f))
+                        SharedRgbInputColumn(labels.green, currentColor.green, { updateFromColor(currentColor.copy(green = it)) }, Modifier.weight(1f))
+                        SharedRgbInputColumn(labels.blue, currentColor.blue, { updateFromColor(currentColor.copy(blue = it)) }, Modifier.weight(1f))
+                    }
+                }
+                Spacer(Modifier.height(24.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+                    Button(onClick = onDismiss, colors = ButtonDefaults.buttonColors(containerColor = Color.White)) {
+                        Text(labels.save, color = Color.Black, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun SharedHsvSpectrumBox(
+    hue: Float,
+    saturation: Float,
+    currentColor: Color,
+    onHueSatChanged: (Float, Float) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val touchPadding = 12.dp
+    val rainbowColors = listOf(Color.Red, Color.Yellow, Color.Green, Color.Cyan, Color.Blue, Color.Magenta, Color.Red)
+    Box(
+        modifier = modifier.pointerInput(Unit) {
+            val paddingPx = touchPadding.toPx()
+            awaitSharedColorPickerDrag { offset ->
+                val activeWidth = size.width.toFloat() - (paddingPx * 2f)
+                val activeHeight = size.height.toFloat() - (paddingPx * 2f)
+                val selectedHue = ((offset.x - paddingPx) / activeWidth).coerceIn(0f, 1f) * 360f
+                val selectedSaturation = ((offset.y - paddingPx) / activeHeight).coerceIn(0f, 1f)
+                onHueSatChanged(selectedHue, selectedSaturation)
+            }
+        },
+    ) {
+        Canvas(Modifier.fillMaxSize().padding(touchPadding).clip(RoundedCornerShape(12.dp))) {
+            drawRect(brush = Brush.horizontalGradient(rainbowColors))
+            drawRect(brush = Brush.verticalGradient(listOf(Color.White, Color.White.copy(alpha = 0f))))
+        }
+        Canvas(Modifier.fillMaxSize()) {
+            val paddingPx = touchPadding.toPx()
+            val activeWidth = size.width - (paddingPx * 2f)
+            val activeHeight = size.height - (paddingPx * 2f)
+            val pointer = Offset(
+                paddingPx + (hue / 360f) * activeWidth,
+                paddingPx + saturation * activeHeight,
+            )
+            val pointerRadius = 10.dp.toPx()
+            drawCircle(Color.Black.copy(alpha = 0.25f), pointerRadius + 1.dp.toPx(), Offset(pointer.x, pointer.y + 1.dp.toPx()))
+            drawCircle(currentColor.copy(alpha = 1f), pointerRadius, pointer)
+            drawCircle(Color.White, pointerRadius, pointer, style = Stroke(width = 2.dp.toPx()))
+        }
+    }
+}
+
 @Composable
 fun SharedHsvWheel(
     hue: Float,
@@ -1266,7 +1435,7 @@ private fun AppContrastOption.localizedLabel(): String {
     }
 }
 
-internal data class SharedHsvColor(
+data class SharedHsvColor(
     val hue: Float,
     val saturation: Float,
     val value: Float
@@ -1301,7 +1470,7 @@ internal fun sharedHsvWheelSelection(
     )
 }
 
-internal fun Color.toSharedHsvColor(): SharedHsvColor {
+fun Color.toSharedHsvColor(): SharedHsvColor {
     val maximum = maxOf(red, green, blue)
     val minimum = minOf(red, green, blue)
     val delta = maximum - minimum

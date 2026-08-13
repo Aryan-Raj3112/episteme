@@ -33,7 +33,7 @@ import androidx.paging.Pager
 import androidx.paging.PagingConfig
 import androidx.paging.PagingData
 import androidx.paging.flatMap
-import com.aryan.reader.SearchResult
+import com.aryan.reader.shared.SearchResult
 import com.aryan.reader.pdf.PdfiumEngineProvider
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle

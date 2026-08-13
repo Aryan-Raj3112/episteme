@@ -4,18 +4,19 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import com.aryan.reader.shared.MobileExternalOpenAction
+import com.aryan.reader.shared.mobileExternalOpenAction
 
 const val EXTRA_TEMPORARY_EXTERNAL_OPEN = "com.aryan.reader.extra.TEMPORARY_EXTERNAL_OPEN"
 
 object ExternalFileOpenRouteDecider {
-    const val BEHAVIOR_TEMPORARY = "TEMPORARY"
     private const val URI_GRANT_FLAGS = Intent.FLAG_GRANT_READ_URI_PERMISSION or
         Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
         Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or
         Intent.FLAG_GRANT_PREFIX_URI_PERMISSION
 
     fun shouldOpenTemporary(externalFileBehavior: String?): Boolean {
-        return externalFileBehavior == BEHAVIOR_TEMPORARY
+        return mobileExternalOpenAction(externalFileBehavior) == MobileExternalOpenAction.OPEN_TEMPORARY
     }
 
     fun targetActivityClass(externalFileBehavior: String?): Class<out Activity> {

@@ -37,6 +37,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 import com.aryan.reader.paginatedreader.AndroidEpubKeyCommand
 import com.aryan.reader.paginatedreader.androidEpubKeyCommandOrNull
 import com.aryan.reader.RenderMode
+import com.aryan.reader.shared.reader.mobileEpubSystemBarsVisibility
 
 @Composable
 fun EpubReaderSystemUiController(
@@ -84,23 +85,11 @@ fun EpubReaderSystemUiController(
     LaunchedEffect(showBars, systemUiMode, window, view) {
         if (window != null) {
             val insetsController = WindowCompat.getInsetsController(window, view)
-            when (systemUiMode) {
-                SystemUiMode.DEFAULT -> {
-                    insetsController.show(WindowInsetsCompat.Type.statusBars())
-                    if (showBars) insetsController.show(WindowInsetsCompat.Type.navigationBars())
-                    else insetsController.hide(WindowInsetsCompat.Type.navigationBars())
-                }
-                SystemUiMode.SYNC -> {
-                    if (showBars) {
-                        insetsController.show(WindowInsetsCompat.Type.statusBars() or WindowInsetsCompat.Type.navigationBars())
-                    } else {
-                        insetsController.hide(WindowInsetsCompat.Type.statusBars() or WindowInsetsCompat.Type.navigationBars())
-                    }
-                }
-                SystemUiMode.HIDDEN -> {
-                    insetsController.hide(WindowInsetsCompat.Type.statusBars() or WindowInsetsCompat.Type.navigationBars())
-                }
-            }
+            val visibility = mobileEpubSystemBarsVisibility(systemUiMode, showBars)
+            if (visibility.statusBarsVisible) insetsController.show(WindowInsetsCompat.Type.statusBars())
+            else insetsController.hide(WindowInsetsCompat.Type.statusBars())
+            if (visibility.navigationBarsVisible) insetsController.show(WindowInsetsCompat.Type.navigationBars())
+            else insetsController.hide(WindowInsetsCompat.Type.navigationBars())
         }
     }
 }

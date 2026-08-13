@@ -8,6 +8,8 @@ import com.aryan.reader.paginatedreader.SemanticTable
 import com.aryan.reader.paginatedreader.SemanticTextBlock
 import com.aryan.reader.paginatedreader.SemanticWrappingBlock
 import com.aryan.reader.shared.ReaderLocator
+import kotlin.io.encoding.Base64
+import kotlin.io.encoding.ExperimentalEncodingApi
 
 data class ReaderImageReference(
     val id: String,
@@ -54,12 +56,24 @@ data class ReaderImageReference(
         val safeExtension = extension?.takeIf { it.isNotBlank() } ?: "png"
         return "$safeBase.$safeExtension"
     }
+
+    @OptIn(ExperimentalEncodingApi::class)
+    fun downloadBytes(): ByteArray? {
+        if (!source.startsWith("data:", ignoreCase = true)) return null
+        val comma = source.indexOf(',')
+        if (comma <= 5) return null
+        val metadata = source.substring(5, comma)
+        val payload = source.substring(comma + 1)
+        if (!metadata.contains(";base64", ignoreCase = true)) return null
+        return runCatching { Base64.Default.decode(payload) }.getOrNull()
+    }
 }
 
 fun SharedEpubBook.readerImageReferences(pages: List<ReaderPage> = emptyList()): List<ReaderImageReference> {
     val references = mutableListOf<ReaderImageReference>()
     chapters.forEachIndexed { chapterIndex, chapter ->
         val markers = chapter.semanticBlocks.readerImageMarkers()
+        val semanticImages = markers.filterIsInstance<ReaderImageMarker.Image>()
         markers.forEachIndexed { markerIndex, marker ->
             if (marker !is ReaderImageMarker.Image) return@forEachIndexed
             val image = marker.image
@@ -98,8 +112,59 @@ fun SharedEpubBook.readerImageReferences(pages: List<ReaderPage> = emptyList()):
                 locator = locator
             )
         }
+        if (semanticImages.isEmpty()) {
+            chapter.htmlContent.htmlReaderImageTags().forEachIndexed { imageIndex, image ->
+                val index = references.size
+                val locator = ReaderLocator(
+                    chapterIndex = chapterIndex,
+                    chapterId = chapter.id,
+                    href = chapter.baseHref,
+                    pageIndex = pages.firstOrNull { it.chapterIndex == chapterIndex }?.pageIndex,
+                    textQuote = image.altText?.takeIf { it.isNotBlank() }
+                )
+                references += ReaderImageReference(
+                    id = "html-image:$chapterIndex:${image.source.hashCode()}:$imageIndex",
+                    index = index,
+                    source = image.source,
+                    altText = image.altText,
+                    chapterIndex = chapterIndex,
+                    chapterTitle = chapter.title,
+                    blockIndex = imageIndex,
+                    cfi = null,
+                    intrinsicWidth = image.width,
+                    intrinsicHeight = image.height,
+                    locator = locator
+                )
+            }
+        }
     }
     return references
+}
+
+private data class HtmlReaderImage(
+    val source: String,
+    val altText: String?,
+    val width: Float?,
+    val height: Float?
+)
+
+private fun String.htmlReaderImageTags(): List<HtmlReaderImage> {
+    val imageTag = Regex("""<img\b[^>]*>""", RegexOption.IGNORE_CASE)
+    val sourceAttribute = Regex("""\bsrc\s*=\s*(['"])(.*?)\1""", RegexOption.IGNORE_CASE)
+    val altAttribute = Regex("""\balt\s*=\s*(['"])(.*?)\1""", RegexOption.IGNORE_CASE)
+    val widthAttribute = Regex("""\bwidth\s*=\s*(['"]?)([\d.]+)\1""", RegexOption.IGNORE_CASE)
+    val heightAttribute = Regex("""\bheight\s*=\s*(['"]?)([\d.]+)\1""", RegexOption.IGNORE_CASE)
+    return imageTag.findAll(this).mapNotNull { match ->
+        val tag = match.value
+        val source = sourceAttribute.find(tag)?.groupValues?.getOrNull(2)?.trim()?.takeIf { it.isNotBlank() }
+            ?: return@mapNotNull null
+        HtmlReaderImage(
+            source = source,
+            altText = altAttribute.find(tag)?.groupValues?.getOrNull(2)?.trim()?.takeIf { it.isNotBlank() },
+            width = widthAttribute.find(tag)?.groupValues?.getOrNull(2)?.toFloatOrNull(),
+            height = heightAttribute.find(tag)?.groupValues?.getOrNull(2)?.toFloatOrNull()
+        )
+    }.toList()
 }
 
 private sealed interface ReaderImageMarker {

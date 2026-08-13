@@ -4,6 +4,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.TextFieldColors
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -36,6 +37,7 @@ fun SharedStableOutlinedTextField(
     minLines: Int = 1,
     maxLines: Int = if (singleLine) 1 else Int.MAX_VALUE,
     shape: Shape = OutlinedTextFieldDefaults.shape,
+    colors: TextFieldColors = OutlinedTextFieldDefaults.colors(),
     selectionKey: Any? = Unit
 ) {
     var fieldValue by remember(selectionKey) {
@@ -71,7 +73,8 @@ fun SharedStableOutlinedTextField(
         singleLine = singleLine,
         minLines = minLines,
         maxLines = if (singleLine) 1 else maxLines.coerceAtLeast(minLines),
-        shape = shape
+        shape = shape,
+        colors = colors,
     )
 }
 

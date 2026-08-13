@@ -1,0 +1,3 @@
+headers = archive.h archive_entry.h
+headerFilter = archive.h archive_entry.h
+package = com.aryan.reader.shared.libarchive

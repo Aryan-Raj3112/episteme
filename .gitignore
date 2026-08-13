@@ -21,7 +21,7 @@ google-services.json
 .idea/
 .gradle/
 .kotlin/metadata/
-third_party/pdfium/
+third_party/
 *.xcuserstate
 xcuserdata/
 *.tgz
@@ -31,3 +31,9 @@ output/
 policies/
 episteme-bin/
 episteme-oss-bin/
+opencode.json
+AGENTS.md
+iosApp/Reader/GoogleService-Info.plist
+DerivedData/
+.swiftpm/
+*.xcresult

@@ -2,8 +2,8 @@ package com.aryan.reader.epubreader
 
 import androidx.compose.ui.text.buildAnnotatedString
 import com.aryan.reader.RenderMode
-import com.aryan.reader.SearchResult
-import com.aryan.reader.SearchState
+import com.aryan.reader.shared.SearchResult
+import com.aryan.reader.shared.ReaderSearchState as SearchState
 import com.aryan.reader.epub.EpubBook
 import com.aryan.reader.epub.EpubChapter
 import com.aryan.reader.paginatedreader.IPaginator

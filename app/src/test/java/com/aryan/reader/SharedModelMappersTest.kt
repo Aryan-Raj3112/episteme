@@ -6,8 +6,8 @@ import com.aryan.reader.data.TagEntity
 import com.aryan.reader.data.toBookMetadata
 import com.aryan.reader.data.toRecentFileItem
 import com.aryan.reader.shared.ReaderFeatureSurface
-import com.aryan.reader.shared.FileType as SharedFileType
-import com.aryan.reader.shared.SharedReaderScreenState
+import com.aryan.reader.shared.AppTabState
+import com.aryan.reader.shared.LibraryFeatureState
 import com.aryan.reader.shared.Shelf as SharedShelf
 import com.aryan.reader.shared.ShelfType as SharedShelfType
 import org.junit.Assert.assertEquals
@@ -102,21 +102,20 @@ class SharedModelMappersTest {
             books = listOf(sharedBook),
             directBooks = listOf(sharedBook)
         )
-        val projected = SharedReaderScreenState(
+        val projected = LibraryFeatureState(
             recentBooks = listOf(sharedBook),
             libraryBooks = listOf(sharedBook),
-            rawLibraryBooks = listOf(sharedBook),
+            rawBooks = listOf(sharedBook),
             selectedBookIds = setOf("book", "missing"),
             selectedShelfIds = setOf("manual"),
             shelves = listOf(sharedShelf),
             openTabs = listOf(sharedBook),
-            openTabIds = listOf("book"),
-            activeTabBookId = "book",
+            tabs = AppTabState(openBookIds = listOf("book"), activeBookId = "book"),
             booksAvailableForAdding = listOf(sharedBook),
-            allTags = listOf(tag.toSharedTag())
+            tags = listOf(tag.toSharedTag())
         )
 
-        val android = projected.toAndroidReaderScreenState(
+        val android = projected.applyToAndroidLibraryState(
             base = ReaderScreenState(contextualActionItems = setOf(recentFile("missing"))),
             androidBooksById = mapOf(book.bookId to book),
             tagEntitiesById = mapOf(tag.id to tag)
@@ -147,16 +146,16 @@ class SharedModelMappersTest {
             books = listOf(sharedBook),
             directBooks = listOf(sharedBook)
         )
-        val projected = SharedReaderScreenState(
+        val projected = LibraryFeatureState(
             recentBooks = listOf(sharedBook),
             libraryBooks = listOf(sharedBook),
-            rawLibraryBooks = listOf(sharedBook),
+            rawBooks = listOf(sharedBook),
             shelves = listOf(sharedShelf),
             openTabs = listOf(sharedBook),
             booksAvailableForAdding = listOf(sharedBook)
         )
 
-        val android = projected.toAndroidReaderScreenState(
+        val android = projected.applyToAndroidLibraryState(
             base = ReaderScreenState(),
             androidBooksById = mapOf(book.bookId to book)
         )
@@ -187,27 +186,7 @@ class SharedModelMappersTest {
     }
 
     @Test
-    fun `enum filter and folder mappers round trip between android and shared`() {
-        val filters = LibraryFilters(
-            fileTypes = setOf(FileType.PDF, FileType.EPUB),
-            sourceFolders = setOf("IN_APP_STORAGE", "content://folder"),
-            readStatus = ReadStatusFilter.IN_PROGRESS,
-            tagIds = setOf("tag")
-        )
-        val folder = SyncedFolder(
-            uriString = "content://folder",
-            name = "Folder",
-            lastScanTime = 42L,
-            allowedFileTypes = setOf(FileType.PDF, FileType.CBZ)
-        )
-
-        assertEquals(FileType.PDF, SharedFileType.PDF.toAndroidFileType())
-        assertEquals(SharedFileType.CBZ, FileType.CBZ.toSharedFileType())
-        assertSame(FileType.UNKNOWN, SharedFileType.UNKNOWN.toAndroidFileType())
-        assertSame(filters, filters.toSharedLibraryFilters())
-        assertSame(folder, folder.toSharedSyncedFolder())
-        assertEquals(filters, filters.toSharedLibraryFilters().toAndroidLibraryFilters())
-        assertEquals(folder, folder.toSharedSyncedFolder().toAndroidSyncedFolder())
+    fun `file capability sets expose only supported Android reader surfaces`() {
         assertTrue(FileType.PPTX in PDF_VIEWER_FILE_TYPES)
         assertTrue(FileType.CBT in PDF_VIEWER_FILE_TYPES)
         assertEquals(ReaderFeatureSurface.PDF_VIEWER, FileType.PPTX.readerSurfaceOnAndroid())

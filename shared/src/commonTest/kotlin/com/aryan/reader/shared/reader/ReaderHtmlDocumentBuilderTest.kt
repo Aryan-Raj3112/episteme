@@ -29,6 +29,17 @@ import kotlin.test.assertTrue
 class ReaderHtmlDocumentBuilderTest {
 
     @Test
+    fun `vertical position reports are throttled during scrolling instead of deferred until scroll stops`() {
+        val html = ReaderHtmlDocumentBuilder.verticalDocument(
+            book = repeatedWordBook("alpha beta"),
+            settings = ReaderSettings(),
+        )
+
+        assertTrue(html.contains("if (reportTimer !== null) return;"))
+        assertTrue(html.contains("}, 80);"))
+    }
+
+    @Test
     fun `page document writes right alignment reader css variable`() {
         val html = ReaderHtmlDocumentBuilder.pageDocument(
             book = repeatedWordBook("alpha beta"),
@@ -241,7 +252,7 @@ class ReaderHtmlDocumentBuilderTest {
         )
 
         assertTrue(html.contains("function rangeMatchesStoredOffsets(content, range, startOffset, endOffset)"))
-        assertTrue(html.contains("rangeMatchesStoredOffsets(content, textRange, startOffset, endOffset)"))
+        assertTrue(html.contains("rangeMatchesStoredOffsets(content, textRange, segmentStart, segmentEnd)"))
         assertTrue(html.contains("highlight_expected_mismatch id="))
     }
 
@@ -470,7 +481,7 @@ class ReaderHtmlDocumentBuilderTest {
         assertTrue(html.contains("var position = pendingRestoreVisiblePosition() || currentVisiblePosition();"))
         assertTrue(html.contains("return fallback || { offset: contentStart, textNode: null };"))
         assertTrue(html.contains("EpistemeDesktopTtsStartTrace"))
-        assertTrue(html.contains("readerTtsStartTraceLog('event=web_position_report_send"))
+        assertTrue(Regex("readerTtsStartTraceLog\\(\\s*'event=web_position_report_send").containsMatchIn(html))
     }
 
     @Test
@@ -517,7 +528,17 @@ class ReaderHtmlDocumentBuilderTest {
         assertTrue(html.contains("--reader-scrollbar-track: color-mix(in srgb, var(--reader-bg)"))
         assertTrue(html.contains("--reader-scrollbar-thumb: color-mix(in srgb, var(--reader-fg)"))
         assertTrue(html.contains("""<html class="reader-vertical-root">"""))
-        assertTrue(Regex("html\\.reader-vertical-root \\{\\s*width: 100%;\\s*min-width: 0;\\s*overflow-y: scroll;\\s*scrollbar-width: thin;").containsMatchIn(html))
+        assertTrue(
+            Regex(
+                "html\\.reader-vertical-root \\{\\s*" +
+                    "width: 100%;\\s*" +
+                    "max-width: 100%;\\s*" +
+                    "min-width: 0;\\s*" +
+                    "overflow-x: hidden;\\s*" +
+                    "overflow-y: scroll;\\s*" +
+                    "scrollbar-width: thin;",
+            ).containsMatchIn(html),
+        )
         assertTrue(html.contains("html.reader-vertical-root::-webkit-scrollbar"))
         assertFalse(html.contains("html.reader-vertical-root::-webkit-scrollbar,\n                body.reader-vertical::-webkit-scrollbar {\n                  width: 0;"))
         assertTrue(html.contains("scrollbar-gutter: stable;"))
@@ -664,6 +685,8 @@ class ReaderHtmlDocumentBuilderTest {
         val script = ReaderHtmlDocumentBuilder.appearanceUpdateScript(
             settings = ReaderSettings(
                 fontSize = 24,
+                fontWeight = 800,
+                letterSpacing = 0.12f,
                 lineSpacing = 1.8f,
                 margin = 60,
                 horizontalMargin = 72,
@@ -677,6 +700,8 @@ class ReaderHtmlDocumentBuilderTest {
         )
 
         assertTrue(script.contains("root.style.setProperty('--reader-font-size', \"24px\");"))
+        assertTrue(script.contains("root.style.setProperty('--reader-font-weight', \"800\");"))
+        assertTrue(script.contains("root.style.setProperty('--reader-letter-spacing', \"0.12em\");"))
         assertTrue(script.contains("root.style.setProperty('--reader-line-height', \"1.8\");"))
         assertTrue(script.contains("root.style.setProperty('--reader-page-width', \"940px\");"))
         assertTrue(script.contains("root.style.setProperty('--reader-margin-x', \"72px\");"))
@@ -700,7 +725,7 @@ class ReaderHtmlDocumentBuilderTest {
     }
 
     @Test
-    fun `selection menu omits ai and tts actions when disabled`() {
+    fun `selection menu keeps external lookup actions when ai and tts are disabled`() {
         val html = ReaderHtmlDocumentBuilder.pageDocument(
             book = repeatedWordBook("alpha beta"),
             page = ReaderPage(
@@ -722,8 +747,12 @@ class ReaderHtmlDocumentBuilderTest {
         assertTrue(html.contains("""data-action="palette""""))
         assertTrue(html.contains("""aria-label="Search""""))
         assertTrue(html.contains("""<svg viewBox="0 0 960 960""""))
-        assertFalse(html.contains("""data-action="dictionary""""))
-        assertFalse(html.contains("""data-action="translate""""))
+        assertTrue(html.contains("""data-action="dictionary""""))
+        assertTrue(html.contains("""data-action="translate""""))
+        assertTrue(html.contains("sendSelectionAction('dictionary', text)"))
+        assertTrue(html.contains("sendSelectionAction('translate', text)"))
+        assertTrue(html.contains("""data-action="note""""))
+        assertTrue(html.contains("sendSelectionAction('note', text)"))
         assertFalse(html.contains("""data-action="find""""))
     }
 
@@ -917,7 +946,7 @@ class ReaderHtmlDocumentBuilderTest {
         assertTrue(html.contains("requestSelectionHandleUpdate(event)"))
         assertTrue(html.contains("document.addEventListener('selectstart'"))
         assertTrue(html.contains("EPUB_SELECTION_DEBUG"))
-        assertTrue(html.contains("readerSelectionDebugLog('drag_line"))
+        assertTrue(Regex("readerSelectionDebugLog\\(\\s*'drag_line").containsMatchIn(html))
         assertTrue(html.contains("rangeTouchesSelectionChrome"))
         assertTrue(html.contains("element.closest('#reader-selection-menu, .reader-selection-handle')"))
         assertFalse(html.contains("next.toString().trim().length"))
@@ -1279,6 +1308,35 @@ class ReaderHtmlDocumentBuilderTest {
     }
 
     @Test
+    fun `vertical document restores persisted highlights and selection bridge`() {
+        val html = ReaderHtmlDocumentBuilder.verticalDocument(
+            book = repeatedWordBook("Alpha target omega"),
+            settings = ReaderSettings(readingMode = ReaderReadingMode.VERTICAL),
+            highlights = listOf(
+                UserHighlight(
+                    id = "vertical-highlight",
+                    cfi = "desktop:0:6:12",
+                    text = "target",
+                    color = HighlightColor.YELLOW,
+                    chapterIndex = 0,
+                    locator = ReaderLocator(
+                        chapterIndex = 0,
+                        startOffset = 6,
+                        endOffset = 12,
+                        textQuote = "target",
+                        cfi = "desktop:0:6:12"
+                    )
+                )
+            ),
+            highlightActionsEnabled = true
+        )
+
+        assertTrue(html.contains("data-reader-highlight-id=\"vertical-highlight\""))
+        assertTrue(html.contains("readerHighlightCreated"))
+        assertTrue(html.contains("reader-selection-menu"))
+    }
+
+    @Test
     fun `vertical chapter chunks preserve top level nodes in android sized groups`() {
         val body = (0 until 45).joinToString("") { index -> "<p id=\"p$index\">Paragraph $index</p>" }
         val book = SharedEpubBook(
@@ -1323,6 +1381,44 @@ class ReaderHtmlDocumentBuilderTest {
         assertFalse(html.contains("id=\"p160\""))
         assertTrue(html.contains("readerChunkRequested"))
         assertTrue(html.contains("rootMargin: '2500px 0px'"))
+        assertTrue(
+            html.indexOf("window.readerVirtualization") < html.indexOf("<section class=\"chapter\""),
+            "Reader bootstrap must precede potentially malformed publication markup",
+        )
+    }
+
+    @Test
+    fun `web document constrains legacy publication content to reader width`() {
+        val book = SharedEpubBook(
+            id = "legacy-width",
+            fileName = "legacy.mobi",
+            title = "Legacy",
+            chapters = listOf(
+                SharedEpubChapter(
+                    id = "chapter",
+                    title = "Chapter",
+                    plainText = "Long text",
+                    htmlContent = """<nobr>averylongtoken</nobr><pre>fixed text</pre><table width="1200"><tr><td>cell</td></tr></table>""",
+                ),
+            ),
+        )
+
+        val html = ReaderHtmlDocumentBuilder.verticalDocument(
+            book = book,
+            settings = ReaderSettings(readingMode = ReaderReadingMode.VERTICAL),
+        )
+
+        assertTrue(html.contains(".reader-content nobr"))
+        assertTrue(html.contains("white-space: normal !important"))
+        assertTrue(html.contains("white-space: pre-wrap !important"))
+        assertTrue(html.contains(".reader-content table"))
+        assertTrue(html.contains("overflow-x: auto"))
+        assertTrue(html.contains("max-width: 100% !important"))
+        assertTrue(html.contains("html.reader-vertical-root"))
+        assertTrue(html.contains("overflow-x: hidden"))
+        assertTrue(html.contains(".reader-virtual-chunk"))
+        assertTrue(html.contains("contain: inline-size"))
+        assertTrue(html.contains(".reader-content :where(*)"))
     }
 
     private fun repeatedWordBook(text: String): SharedEpubBook {

@@ -31,14 +31,13 @@ class PdfSpreadLayoutTest {
     }
 
     @Test
-    fun `right to left pagination reverses only the displayed pdf spread order`() {
+    fun `right to left pagination keeps android spread order and logical boundaries`() {
         val settings = ReaderSettings(
             pageSpreadMode = ReaderPageSpreadMode.TWO_PAGE,
             rightToLeftPagination = true
         )
 
         assertEquals(listOf(2, 3), PdfSpreadLayout.visiblePageIndices(3, pageCount = 10, settings = settings))
-        assertEquals(listOf(3, 2), PdfSpreadLayout.visiblePageIndicesForDisplay(3, pageCount = 10, settings = settings))
         assertEquals(4, PdfSpreadLayout.nextPageIndex(2, pageCount = 10, settings = settings))
         assertEquals(0, PdfSpreadLayout.previousPageIndex(2, pageCount = 10, settings = settings))
     }

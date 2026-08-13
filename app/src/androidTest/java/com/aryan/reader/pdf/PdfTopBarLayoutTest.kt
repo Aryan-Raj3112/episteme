@@ -17,7 +17,7 @@ import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.aryan.reader.FileType
 import com.aryan.reader.R
-import com.aryan.reader.SearchState
+import com.aryan.reader.shared.ReaderSearchState as SearchState
 import com.aryan.reader.epubreader.SystemUiMode
 import com.google.common.truth.Truth.assertThat
 import org.junit.Rule

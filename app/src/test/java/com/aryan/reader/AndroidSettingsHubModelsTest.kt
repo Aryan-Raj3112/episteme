@@ -122,7 +122,7 @@ class AndroidSettingsHubModelsTest {
         val model = sharedSettingsHubModel(
             androidSettingsHubInput(
                 uiState = ReaderScreenState(
-                    isTabsEnabled = true,
+                    tabState = AppTabState(isEnabled = true),
                     useStrictFileFilter = true,
                     usePdfFileNameAsDisplayName = true,
                     isScreenCaptureProtectionEnabled = true

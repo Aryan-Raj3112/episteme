@@ -99,6 +99,7 @@ import com.aryan.reader.shared.ui.SharedSelectionMenuRect
 import com.aryan.reader.shared.ui.SharedSelectionMenuSize
 import com.aryan.reader.shared.ui.SharedSelectionMenuViewport
 import com.aryan.reader.shared.ui.sharedSelectionMenuPlacement
+import com.aryan.reader.paginatedreader.resolveEpubNoteHtml
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import org.json.JSONObject
@@ -106,6 +107,7 @@ import timber.log.Timber
 import java.io.BufferedReader
 import java.io.File
 import java.io.InputStreamReader
+import java.net.URI
 
 private const val TAG_LINK_NAV = "LINK_NAV"
 private const val TAG_VERTICAL_JITTER = "EpubVerticalJitter"
@@ -521,13 +523,36 @@ class AiJsBridge(
 
 @Suppress("unused")
 class FootnoteJsBridge(
+    private val resolveFootnoteLinkCallback: (String) -> String? = { null },
     private val onFootnoteRequestCallback: (String) -> Unit
 ) {
+    @JavascriptInterface
+    fun resolveFootnoteLink(href: String): String? = resolveFootnoteLinkCallback(href)
+
     @JavascriptInterface
     fun onFootnoteRequested(htmlContent: String) {
         Timber.tag("FootnoteDiag").d("Kotlin Bridge received footnote content. Length: ${htmlContent.length}")
         onFootnoteRequestCallback(htmlContent)
     }
+}
+
+internal fun resolveWebViewFootnoteLink(baseUrl: String, href: String): String? {
+    return runCatching {
+        val resolved = URI(baseUrl).resolve(href)
+        if (!resolved.scheme.equals("file", ignoreCase = true)) return null
+        val anchor = resolved.fragment?.takeIf(String::isNotBlank) ?: return null
+        val targetUri = URI(resolved.scheme, resolved.authority, resolved.path, resolved.query, null)
+        val targetFile = File(targetUri)
+        if (!targetFile.isFile) return null
+        resolveEpubNoteHtml(
+            sourceHtml = "",
+            targetHtml = targetFile.readText(),
+            href = href,
+            anchor = anchor,
+            sourceIsNoteref = true,
+            targetBaseUri = targetFile.toURI().toString()
+        )
+    }.getOrNull()
 }
 
 @Suppress("unused")
@@ -569,6 +594,8 @@ fun ChapterWebView(
     currentImageSize: Float,
     currentHorizontalMargin: Float,
     currentVerticalMargin: Float,
+    currentFontWeight: Int,
+    currentLetterSpacing: Float,
     onChapterInitiallyScrolled: () -> Unit,
     modifier: Modifier = Modifier,
     onTap: () -> Unit,
@@ -699,6 +726,8 @@ fun ChapterWebView(
             currentImageSize,
             currentHorizontalMargin,
             currentVerticalMargin,
+            currentFontWeight,
+            currentLetterSpacing,
             currentFontFamily,
             currentTextAlign
         ) {
@@ -900,9 +929,14 @@ fun ChapterWebView(
                     )
 
                     addJavascriptInterface(
-                        FootnoteJsBridge { html ->
-                            this.post { onFootnoteRequested(html) }
-                        }, "FootnoteBridge"
+                        FootnoteJsBridge(
+                            resolveFootnoteLinkCallback = { href ->
+                                resolveWebViewFootnoteLink(baseUrl, href)
+                            },
+                            onFootnoteRequestCallback = { html ->
+                                this.post { onFootnoteRequested(html) }
+                            }
+                        ), "FootnoteBridge"
                     )
 
                     addJavascriptInterface(
@@ -1053,13 +1087,15 @@ fun ChapterWebView(
                                 currentParagraphGap,
                                 currentImageSize,
                                 currentHorizontalMargin,
-                                currentVerticalMargin
+                                currentVerticalMargin,
+                                currentFontWeight,
+                                currentLetterSpacing
                             ).joinToString(separator = "|")
                             runtimeApplierState.tocFragmentsJson = fragmentsJson
                             runtimeApplierState.highlightsJson = highlightsJson
 
                             view?.evaluateJavascript(
-                                "javascript:window.updateReaderStyles($currentFontSize, $currentLineHeight, '$fontNameForJs', '${currentTextAlign.cssValue}', $currentParagraphGap, $currentImageSize, $currentHorizontalMargin, $currentVerticalMargin);",
+                                "javascript:window.updateReaderStyles($currentFontSize, $currentLineHeight, '$fontNameForJs', '${currentTextAlign.cssValue}', $currentParagraphGap, $currentImageSize, $currentHorizontalMargin, $currentVerticalMargin, $currentFontWeight, $currentLetterSpacing);",
                                 null
                             )
 
@@ -1274,7 +1310,9 @@ fun ChapterWebView(
                         currentParagraphGap,
                         currentImageSize,
                         currentHorizontalMargin,
-                        currentVerticalMargin
+                        currentVerticalMargin,
+                        currentFontWeight,
+                        currentLetterSpacing
                     ).joinToString(separator = "|")
                     val fontCssChanged = runtimeApplierState.fontCss != combinedCss
                     val styleChanged = runtimeApplierState.styleSignature != styleSignature
@@ -1313,7 +1351,7 @@ fun ChapterWebView(
                     if (styleChanged) {
                         runtimeApplierState.styleSignature = styleSignature
                         webView.evaluateJavascript(
-                            "javascript:window.updateReaderStyles($currentFontSize, $currentLineHeight, '$fontNameForJs', '${currentTextAlign.cssValue}', $currentParagraphGap, $currentImageSize, $currentHorizontalMargin, $currentVerticalMargin);",
+                            "javascript:window.updateReaderStyles($currentFontSize, $currentLineHeight, '$fontNameForJs', '${currentTextAlign.cssValue}', $currentParagraphGap, $currentImageSize, $currentHorizontalMargin, $currentVerticalMargin, $currentFontWeight, $currentLetterSpacing);",
                             null
                         )
                     }

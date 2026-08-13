@@ -12,7 +12,14 @@ data class SharedEpubBook(
     val author: String? = null,
     val chapters: List<SharedEpubChapter>,
     val css: Map<String, String> = emptyMap(),
-    val tableOfContents: List<SharedEpubTocEntry> = emptyList()
+    val tableOfContents: List<SharedEpubTocEntry> = emptyList(),
+    val pageList: List<MobileEpubPageTarget> = emptyList(),
+    val images: List<MobileEpubImage> = emptyList(),
+    val coverImagePath: String? = null,
+    val language: String = "en",
+    val seriesName: String? = null,
+    val seriesIndex: Double? = null,
+    val description: String? = null
 )
 
 data class SharedEpubTocEntry(
@@ -30,7 +37,9 @@ data class SharedEpubChapter(
     val htmlContent: String = "",
     val baseHref: String? = null,
     /** Fragment that identifies this logical section within [baseHref]. */
-    val fragmentId: String? = null
+    val fragmentId: String? = null,
+    val depth: Int = 0,
+    val isInToc: Boolean = true
 )
 
 typealias ReaderLocator = com.aryan.reader.shared.ReaderLocator
@@ -38,6 +47,12 @@ typealias ReaderLocator = com.aryan.reader.shared.ReaderLocator
 enum class ReaderReadingMode {
     PAGINATED,
     VERTICAL
+}
+
+enum class ReaderScreenOrientationMode(val title: String) {
+    FOLLOW_SYSTEM("Follow system"),
+    PORTRAIT("Portrait"),
+    LANDSCAPE("Landscape")
 }
 
 enum class ReaderPageSpreadMode {
@@ -57,6 +72,7 @@ enum class ReaderSettingsUpdateMode {
 
 enum class SharedReaderTextAlign {
     START,
+    LEFT,
     RIGHT,
     JUSTIFY,
     CENTER
@@ -64,6 +80,8 @@ enum class SharedReaderTextAlign {
 
 data class ReaderSettings(
     val fontSize: Int = 18,
+    val fontWeight: Int = 0,
+    val letterSpacing: Float = 0f,
     val lineSpacing: Float = 1.45f,
     val margin: Int = 48,
     val darkMode: Boolean = false,
@@ -86,6 +104,8 @@ data class ReaderSettings(
     val pageInfoPosition: PageInfoPosition = PageInfoPosition.BOTTOM,
     val pageSpreadMode: ReaderPageSpreadMode = ReaderPageSpreadMode.SINGLE,
     val rightToLeftPagination: Boolean = false,
+    val tapToNavigateEnabled: Boolean = true,
+    val pageTurnAnimationEnabled: Boolean = false,
     val pdfVerticalPageGapVisible: Boolean = true,
     val pdfPageNumberOverlayVisible: Boolean = true,
     val pdfFirstPageStandaloneInSpread: Boolean = false,
@@ -98,6 +118,8 @@ data class ReaderSettings(
 
 data class ReaderLayoutSignature(
     val fontSize: Int,
+    val fontWeight: Int,
+    val letterSpacing: Float,
     val lineSpacing: Float,
     val horizontalMargin: Int,
     val verticalMargin: Int,
@@ -123,6 +145,8 @@ data class ReaderAppearanceSignature(
 fun ReaderSettings.layoutSignature(): ReaderLayoutSignature {
     return ReaderLayoutSignature(
         fontSize = fontSize,
+        fontWeight = fontWeight,
+        letterSpacing = letterSpacing,
         lineSpacing = lineSpacing,
         horizontalMargin = resolvedHorizontalMargin,
         verticalMargin = resolvedVerticalMargin,
@@ -164,6 +188,69 @@ data class ReaderPage(
     val endOffset: Int,
     val semanticBlocks: List<SemanticBlock> = emptyList()
 )
+
+data class ReaderPageInfo(
+    val currentPageInChapter: Int,
+    val totalPagesInChapter: Int,
+    val progressPercent: Double
+)
+
+/**
+ * Builds the same page label and character-based progress used by Android's EPUB reader.
+ *
+ * Page-count progress is noticeably inaccurate when chapters have very different amounts of
+ * text, so progress is based on completed chapter text plus the current page's start offset.
+ */
+fun sharedReaderPageInfo(
+    book: SharedEpubBook,
+    pages: List<ReaderPage>,
+    currentPageIndex: Int,
+    locator: ReaderLocator? = null
+): ReaderPageInfo? {
+    if (pages.isEmpty()) return null
+    val locatorChapterIndex = locator?.chapterIndex
+    val locatorOffset = locator?.startOffset
+    val locatorPage = if (locatorChapterIndex != null && locatorOffset != null) {
+        pages.lastOrNull { candidate ->
+            candidate.chapterIndex == locatorChapterIndex &&
+                candidate.startOffset <= locatorOffset
+        }?.takeIf { candidate ->
+            candidate.chapterIndex == locatorChapterIndex &&
+                (locatorOffset < candidate.endOffset || candidate == pages.lastOrNull { it.chapterIndex == locatorChapterIndex })
+        }
+    } else {
+        null
+    }
+    val page = locatorPage ?: pages[currentPageIndex.coerceIn(0, pages.lastIndex)]
+    val safePageIndex = pages.indexOf(page).coerceAtLeast(0)
+    val chapterPages = pages.filter { it.chapterIndex == page.chapterIndex }
+    val pageInChapterIndex = chapterPages.indexOfFirst { it.pageIndex == page.pageIndex }
+        .takeIf { it >= 0 }
+        ?: 0
+    val totalCharacters = book.chapters.sumOf { it.plainText.length.toLong() }
+    val completedCharacters = book.chapters
+        .take(page.chapterIndex.coerceIn(0, book.chapters.size))
+        .sumOf { it.plainText.length.toLong() }
+    val currentChapterOffset = locatorOffset
+        ?.takeIf { locatorChapterIndex == page.chapterIndex }
+        ?: page.startOffset
+    val calculatedProgress = if (totalCharacters > 0L) {
+        ((completedCharacters + currentChapterOffset.coerceAtLeast(0)).toDouble() /
+            totalCharacters.toDouble()) * 100.0
+    } else {
+        ((safePageIndex + 1).toDouble() / pages.size.toDouble()) * 100.0
+    }
+    val displayProgress = if (safePageIndex == pages.lastIndex) {
+        100.0
+    } else {
+        kotlin.math.floor(calculatedProgress.coerceIn(0.0, 100.0) * 10.0) / 10.0
+    }
+    return ReaderPageInfo(
+        currentPageInChapter = pageInChapterIndex + 1,
+        totalPagesInChapter = chapterPages.size.coerceAtLeast(1),
+        progressPercent = displayProgress
+    )
+}
 
 data class PaginatedReaderState(
     val book: SharedEpubBook,

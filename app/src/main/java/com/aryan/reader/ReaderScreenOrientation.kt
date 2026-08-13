@@ -39,28 +39,33 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.edit
+import com.aryan.reader.shared.ui.SharedReaderOrientationLabels
+import com.aryan.reader.shared.ui.SharedReaderScreenOrientationSheet
 
 private const val READER_SCREEN_ORIENTATION_PREFS_NAME = "epub_reader_settings"
 private const val READER_SCREEN_ORIENTATION_KEY = "reader_screen_orientation_mode"
 
-enum class ReaderScreenOrientationMode(
-    val id: Int,
-    val title: String
-) {
-    FOLLOW_SYSTEM(0, "Follow system"),
-    PORTRAIT(1, "Portrait"),
-    LANDSCAPE(2, "Landscape")
-}
+typealias ReaderScreenOrientationMode = com.aryan.reader.shared.reader.ReaderScreenOrientationMode
+
+private val ReaderScreenOrientationMode.persistedId: Int
+    get() = when (this) {
+        ReaderScreenOrientationMode.FOLLOW_SYSTEM -> 0
+        ReaderScreenOrientationMode.PORTRAIT -> 1
+        ReaderScreenOrientationMode.LANDSCAPE -> 2
+    }
 
 fun saveReaderScreenOrientationMode(context: Context, mode: ReaderScreenOrientationMode) {
     val prefs = context.getSharedPreferences(READER_SCREEN_ORIENTATION_PREFS_NAME, Context.MODE_PRIVATE)
-    prefs.edit { putInt(READER_SCREEN_ORIENTATION_KEY, mode.id) }
+    prefs.edit { putInt(READER_SCREEN_ORIENTATION_KEY, mode.persistedId) }
 }
 
 fun loadReaderScreenOrientationMode(context: Context): ReaderScreenOrientationMode {
     val prefs = context.getSharedPreferences(READER_SCREEN_ORIENTATION_PREFS_NAME, Context.MODE_PRIVATE)
-    val id = prefs.getInt(READER_SCREEN_ORIENTATION_KEY, ReaderScreenOrientationMode.FOLLOW_SYSTEM.id)
-    return ReaderScreenOrientationMode.entries.find { it.id == id } ?: ReaderScreenOrientationMode.FOLLOW_SYSTEM
+    return when (prefs.getInt(READER_SCREEN_ORIENTATION_KEY, 0)) {
+        1 -> ReaderScreenOrientationMode.PORTRAIT
+        2 -> ReaderScreenOrientationMode.LANDSCAPE
+        else -> ReaderScreenOrientationMode.FOLLOW_SYSTEM
+    }
 }
 
 fun ReaderScreenOrientationMode.toRequestedOrientation(): Int {
@@ -96,33 +101,12 @@ fun ReaderScreenOrientationPicker(
     onModeSelected: (ReaderScreenOrientationMode) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Row(
+    com.aryan.reader.shared.ui.SharedReaderScreenOrientationPicker(
+        selectedMode = selectedMode,
+        onModeSelected = onModeSelected,
+        labels = ReaderScreenOrientationMode.entries.associateWith { it.title },
         modifier = modifier
-            .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
-            .padding(4.dp),
-        horizontalArrangement = Arrangement.spacedBy(4.dp)
-    ) {
-        ReaderScreenOrientationMode.entries.forEach { mode ->
-            val selected = mode == selectedMode
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(if (selected) MaterialTheme.colorScheme.primary else Color.Transparent)
-                    .clickable { onModeSelected(mode) }
-                    .padding(vertical = 10.dp, horizontal = 4.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = mode.title,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center
-                )
-            }
-        }
-    }
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -132,46 +116,17 @@ fun ReaderScreenOrientationSheet(
     onModeSelected: (ReaderScreenOrientationMode) -> Unit,
     onDismiss: () -> Unit
 ) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        containerColor = MaterialTheme.colorScheme.surface,
-        contentWindowInsets = { WindowInsets.navigationBars }
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 24.dp, vertical = 8.dp)
-                .padding(bottom = 32.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = stringResource(R.string.visual_options_screen_orientation),
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold
-                )
-                IconButton(onClick = onDismiss) {
-                    Icon(Icons.Default.Close, contentDescription = stringResource(R.string.action_close))
-                }
-            }
-            Spacer(modifier = Modifier.height(16.dp))
-            Text(
-                text = stringResource(R.string.visual_options_screen_orientation_desc),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(modifier = Modifier.height(12.dp))
-            ReaderScreenOrientationPicker(
-                selectedMode = selectedMode,
-                onModeSelected = onModeSelected
-            )
-        }
-    }
+    SharedReaderScreenOrientationSheet(
+        selectedMode = selectedMode,
+        onModeSelected = onModeSelected,
+        labels = SharedReaderOrientationLabels(
+            title = stringResource(R.string.visual_options_screen_orientation),
+            close = stringResource(R.string.action_close),
+            description = stringResource(R.string.visual_options_screen_orientation_desc),
+            options = ReaderScreenOrientationMode.entries.associateWith { it.title }
+        ),
+        onDismiss = onDismiss
+    )
 }
 
 private tailrec fun Context.findReaderOrientationActivity(): Activity? {

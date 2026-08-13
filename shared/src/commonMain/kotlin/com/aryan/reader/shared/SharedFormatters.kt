@@ -19,7 +19,8 @@ fun progressFraction(progressPercentage: Float?): Float {
     return progressPercentValue(progressPercentage) / 100f
 }
 
-fun BookItem.cardTitle(): String {
+fun BookItem.cardTitle(usePdfFileNameAsDisplayName: Boolean = false): String {
+    if (usePdfFileNameAsDisplayName && type == FileType.PDF) return displayName
     return title?.takeIf { it.isNotBlank() } ?: displayName
 }
 
@@ -31,6 +32,19 @@ fun BookItem.cardAuthor(fallback: String = "No author listed"): String {
 
 fun BookItem.isOpdsStream(): Boolean {
     return path?.startsWith("opds-pse://") == true
+}
+
+/**
+ * Mirrors Android's original-file action gate. Save/share require a concrete
+ * local source and are not meaningful for streamed OPDS entries.
+ */
+fun BookItem.canExportOriginalFile(): Boolean {
+    return path != null && !isOpdsStream()
+}
+
+/** Mirrors Android's embedded-metadata editor gate. Only a local EPUB can be rewritten. */
+fun BookItem.canEditEmbeddedFileMetadata(): Boolean {
+    return type == FileType.EPUB && path != null && !isOpdsStream()
 }
 
 fun BookItem.matchesSourceFolders(sourceFolders: Set<String>): Boolean {

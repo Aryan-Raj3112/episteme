@@ -28,12 +28,15 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.core.graphics.drawable.IconCompat
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.ForwardingPlayer
+import androidx.media3.common.FlagSet
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
@@ -47,6 +50,7 @@ import com.aryan.reader.GEMINI_CLOUD_TTS_MODEL
 import com.aryan.reader.isByokCloudTtsAvailable
 import com.aryan.reader.loadAiByokSettings
 import com.aryan.reader.tts.TtsPlaybackManager.TtsMode
+import com.aryan.reader.audiobook.BookTtsSessionCoordinator
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -68,6 +72,8 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import com.google.common.collect.ImmutableList
+import java.util.concurrent.CopyOnWriteArraySet
+import kotlin.time.Duration.Companion.milliseconds
 
 data class WordTimingInfo(val word: String, val startTime: Double)
 
@@ -251,6 +257,16 @@ private const val TTS_FOREGROUND_NOTIFICATION_ID = 1001
 private const val TTS_FOREGROUND_IDLE_GRACE_MS = 15_000L
 private const val ACTION_TTS_NOTIFICATION_PREVIOUS_CHUNK = "com.aryan.reader.tts.NOTIFICATION_PREVIOUS_CHUNK"
 private const val ACTION_TTS_NOTIFICATION_NEXT_CHUNK = "com.aryan.reader.tts.NOTIFICATION_NEXT_CHUNK"
+const val ACTION_START_BOOK_TTS = "com.aryan.reader.tts.START_BOOK_AUDIOBOOK"
+const val ACTION_BOOK_TTS_PREVIOUS_CHAPTER = "com.aryan.reader.tts.BOOK_AUDIOBOOK_PREVIOUS_CHAPTER"
+const val ACTION_BOOK_TTS_NEXT_CHAPTER = "com.aryan.reader.tts.BOOK_AUDIOBOOK_NEXT_CHAPTER"
+const val ACTION_BOOK_TTS_SELECT_CHAPTER = "com.aryan.reader.tts.BOOK_AUDIOBOOK_SELECT_CHAPTER"
+const val ACTION_BOOK_TTS_SLEEP_TIMER = "com.aryan.reader.tts.BOOK_AUDIOBOOK_SLEEP_TIMER"
+const val ACTION_BOOK_TTS_CANCEL_SLEEP_TIMER = "com.aryan.reader.tts.BOOK_AUDIOBOOK_CANCEL_SLEEP_TIMER"
+const val EXTRA_BOOK_TTS_BOOK_ID = "book_tts_book_id"
+const val EXTRA_BOOK_TTS_START_POLICY = "book_tts_start_policy"
+const val EXTRA_BOOK_TTS_CHAPTER_INDEX = "book_tts_chapter_index"
+const val EXTRA_BOOK_TTS_SLEEP_MINUTES = "book_tts_sleep_minutes"
 private const val TTS_NOTIFICATION_PREVIOUS_REQUEST_CODE = 4208
 private const val TTS_NOTIFICATION_NEXT_REQUEST_CODE = 4209
 
@@ -327,7 +343,7 @@ private class TtsNotificationActionFactory(
         return delegate.createCustomActionFromCustomCommandButton(mediaSession, customCommandButton)
     }
 
-    override fun createMediaActionPendingIntent(mediaSession: MediaSession, command: Long): PendingIntent {
+    override fun createMediaActionPendingIntent(mediaSession: MediaSession, command: Int): PendingIntent {
         return delegate.createMediaActionPendingIntent(mediaSession, command)
     }
 
@@ -369,30 +385,145 @@ private class TtsSessionPlayer(
     private val skipToPreviousChunk: () -> Unit,
     private val skipToNextChunk: () -> Unit,
     private val isCurrentChunkStreaming: () -> Boolean,
-    private val currentChunkDurationForNotification: (Long) -> Long
+    private val currentChunkDurationForNotification: (Long) -> Long,
+    private val isDirectLocalPlayback: () -> Boolean,
+    private val localIsPlaying: () -> Boolean,
+    private val localPlayWhenReady: () -> Boolean,
+    private val localPlaybackState: () -> Int,
+    private val playDirectLocal: () -> Unit,
+    private val pauseDirectLocal: () -> Unit,
+    private val stopDirectLocal: () -> Unit
 ) : ForwardingPlayer(player) {
+    private data class LocalPlayerSnapshot(
+        val playbackState: Int,
+        val playWhenReady: Boolean,
+        val isPlaying: Boolean,
+        val canSkipPrevious: Boolean,
+        val canSkipNext: Boolean
+    )
+
+    private val applicationHandler = Handler(player.applicationLooper)
+    private val registeredListeners = CopyOnWriteArraySet<Player.Listener>()
+    private var lastLocalSnapshot: LocalPlayerSnapshot? = null
+
+    override fun addListener(listener: Player.Listener) {
+        registeredListeners += listener
+        super.addListener(listener)
+    }
+
+    override fun removeListener(listener: Player.Listener) {
+        registeredListeners -= listener
+        super.removeListener(listener)
+    }
+
+    fun invalidateDirectLocalState() {
+        if (Looper.myLooper() != applicationHandler.looper) {
+            applicationHandler.post(::invalidateDirectLocalState)
+            return
+        }
+        if (!isDirectLocalPlayback()) {
+            lastLocalSnapshot = null
+            return
+        }
+        val snapshot = LocalPlayerSnapshot(
+            playbackState = localPlaybackState(),
+            playWhenReady = localPlayWhenReady(),
+            isPlaying = localIsPlaying(),
+            canSkipPrevious = canSkipToPreviousChunk(),
+            canSkipNext = canSkipToNextChunk()
+        )
+        val previous = lastLocalSnapshot
+        if (snapshot == previous) return
+        lastLocalSnapshot = snapshot
+
+        val eventBuilder = FlagSet.Builder()
+        if (previous?.playbackState != snapshot.playbackState) {
+            eventBuilder.add(EVENT_PLAYBACK_STATE_CHANGED)
+            registeredListeners.forEach { it.onPlaybackStateChanged(snapshot.playbackState) }
+        }
+        if (previous?.playWhenReady != snapshot.playWhenReady) {
+            eventBuilder.add(EVENT_PLAY_WHEN_READY_CHANGED)
+            registeredListeners.forEach {
+                it.onPlayWhenReadyChanged(
+                    snapshot.playWhenReady,
+                    PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST
+                )
+            }
+        }
+        if (previous?.isPlaying != snapshot.isPlaying) {
+            eventBuilder.add(EVENT_IS_PLAYING_CHANGED)
+            registeredListeners.forEach { it.onIsPlayingChanged(snapshot.isPlaying) }
+        }
+        if (previous?.canSkipPrevious != snapshot.canSkipPrevious ||
+            previous.canSkipNext != snapshot.canSkipNext
+        ) {
+            eventBuilder.add(EVENT_AVAILABLE_COMMANDS_CHANGED)
+            val commands = availableCommands
+            registeredListeners.forEach { it.onAvailableCommandsChanged(commands) }
+        }
+        val events = Player.Events(eventBuilder.build())
+        if (events.size() > 0) {
+            registeredListeners.forEach { it.onEvents(this, events) }
+        }
+        Timber.tag(TTS_NOTIFICATION_DIAG_TAG).i(
+            "Direct local player invalidated. state=${snapshot.playbackState}, playWhenReady=${snapshot.playWhenReady}, isPlaying=${snapshot.isPlaying}, previous=${snapshot.canSkipPrevious}, next=${snapshot.canSkipNext}"
+        )
+    }
+
     override fun getAvailableCommands(): Player.Commands {
         val builder = super.getAvailableCommands().buildUpon()
         if (canSkipToPreviousChunk()) {
             builder
-                .add(Player.COMMAND_SEEK_TO_PREVIOUS)
-                .add(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
+                .add(COMMAND_SEEK_TO_PREVIOUS)
+                .add(COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
         } else {
             builder
-                .remove(Player.COMMAND_SEEK_TO_PREVIOUS)
-                .remove(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
+                .remove(COMMAND_SEEK_TO_PREVIOUS)
+                .remove(COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
         }
         if (canSkipToNextChunk()) {
             builder
-                .add(Player.COMMAND_SEEK_TO_NEXT)
-                .add(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
+                .add(COMMAND_SEEK_TO_NEXT)
+                .add(COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
         } else {
             builder
-                .remove(Player.COMMAND_SEEK_TO_NEXT)
-                .remove(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
+                .remove(COMMAND_SEEK_TO_NEXT)
+                .remove(COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
+        }
+        if (isDirectLocalPlayback()) {
+            builder
+                .remove(COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM)
+                .remove(COMMAND_SEEK_TO_DEFAULT_POSITION)
+                .remove(COMMAND_SEEK_TO_MEDIA_ITEM)
+                .remove(COMMAND_SEEK_BACK)
+                .remove(COMMAND_SEEK_FORWARD)
         }
         return builder.build()
     }
+
+    override fun play() {
+        if (isDirectLocalPlayback()) playDirectLocal() else super.play()
+    }
+
+    override fun pause() {
+        if (isDirectLocalPlayback()) pauseDirectLocal() else super.pause()
+    }
+
+    override fun stop() {
+        if (isDirectLocalPlayback()) stopDirectLocal() else super.stop()
+    }
+
+    override fun getPlayWhenReady(): Boolean =
+        if (isDirectLocalPlayback()) localPlayWhenReady() else super.getPlayWhenReady()
+
+    override fun isPlaying(): Boolean =
+        if (isDirectLocalPlayback()) localIsPlaying() else super.isPlaying()
+
+    override fun getPlaybackState(): Int =
+        if (isDirectLocalPlayback()) localPlaybackState() else super.getPlaybackState()
+
+    override fun isCurrentMediaItemSeekable(): Boolean =
+        if (isDirectLocalPlayback()) false else super.isCurrentMediaItemSeekable()
 
     override fun isCommandAvailable(command: Int): Boolean {
         return getAvailableCommands().contains(command)
@@ -423,15 +554,20 @@ private class TtsSessionPlayer(
     }
 
     override fun getDuration(): Long {
+        if (isDirectLocalPlayback()) return C.TIME_UNSET
         return notificationDurationMs().takeIf { it != C.TIME_UNSET } ?: super.getDuration()
+    }
+
+    override fun getCurrentPosition(): Long =
+        if (isDirectLocalPlayback()) 0L else super.getCurrentPosition()
+
+    override fun getBufferedPosition(): Long {
+        if (isDirectLocalPlayback()) return 0L
+        return adjustedStreamingBufferedPosition(super.getBufferedPosition())
     }
 
     override fun getContentDuration(): Long {
         return getDuration()
-    }
-
-    override fun getBufferedPosition(): Long {
-        return adjustedStreamingBufferedPosition(super.getBufferedPosition())
     }
 
     override fun getContentBufferedPosition(): Long {
@@ -477,16 +613,90 @@ class TtsService : MediaSessionService() {
     private var mediaSession: MediaSession? = null
     private lateinit var player: ExoPlayer
     private lateinit var playbackManager: TtsPlaybackManager
-    private lateinit var baseTtsSynthesizer: BaseTtsSynthesizer
     private lateinit var cacheManager: TtsCacheManager
+    private lateinit var bookTtsCoordinator: BookTtsSessionCoordinator
     private var foregroundNotificationShown = false
     private var foregroundPlaybackExpected = false
     private var foregroundIdleJob: Job? = null
     private var foregroundBookTitle: String? = null
     private var foregroundChapterTitle: String? = null
+    private var bookSleepTimerJob: Job? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
+            ACTION_START_BOOK_TTS -> {
+                val bookId = intent.getStringExtra(EXTRA_BOOK_TTS_BOOK_ID)
+                if (!bookId.isNullOrBlank() && ::bookTtsCoordinator.isInitialized) {
+                    showPreparingForegroundNotification("book-audiobook-start")
+                    bookTtsCoordinator.start(
+                        bookId = bookId,
+                        startPolicy = intent.getStringExtra(EXTRA_BOOK_TTS_START_POLICY)
+                            ?: BookTtsSessionCoordinator.START_RESUME,
+                        selectedChapterIndex = intent.getIntExtra(EXTRA_BOOK_TTS_CHAPTER_INDEX, -1).takeIf { it >= 0 }
+                    )
+                }
+                return START_STICKY
+            }
+            ACTION_BOOK_TTS_PREVIOUS_CHAPTER -> {
+                if (::bookTtsCoordinator.isInitialized) bookTtsCoordinator.skipChapter(-1)
+                return START_STICKY
+            }
+            ACTION_BOOK_TTS_NEXT_CHAPTER -> {
+                if (::bookTtsCoordinator.isInitialized) bookTtsCoordinator.skipChapter(1)
+                return START_STICKY
+            }
+            ACTION_BOOK_TTS_SELECT_CHAPTER -> {
+                val chapter = intent.getIntExtra(EXTRA_BOOK_TTS_CHAPTER_INDEX, -1)
+                if (chapter >= 0 && ::bookTtsCoordinator.isInitialized) bookTtsCoordinator.selectChapter(chapter)
+                return START_STICKY
+            }
+            ACTION_BOOK_TTS_SLEEP_TIMER -> {
+                bookSleepTimerJob?.cancel()
+                bookSleepTimerJob = null
+
+                val minutes = intent.getIntExtra(
+                    EXTRA_BOOK_TTS_SLEEP_MINUTES,
+                    0
+                )
+
+                if (minutes > 0) {
+                    bookSleepTimerJob = scope.launch {
+                        var remainingSeconds = minutes * 60
+                        while (remainingSeconds > 0) {
+                            delay(1_000.milliseconds)
+                            remainingSeconds = com.aryan.reader.shared.advanceSharedSleepTimer(
+                                remainingSeconds,
+                                ::player.isInitialized && player.isPlaying,
+                            )
+                        }
+
+                        bookSleepTimerJob = null
+
+                        Timber.tag(TTS_NOTIFICATION_DIAG_TAG).i(
+                            "Book TTS sleep timer expired after $minutes minute(s)."
+                        )
+
+                        if (::bookTtsCoordinator.isInitialized) {
+                            bookTtsCoordinator.stopForSleepTimer()
+                        } else {
+                            stopSelf()
+                        }
+                    }
+                }
+
+                return START_STICKY
+            }
+
+            ACTION_BOOK_TTS_CANCEL_SLEEP_TIMER -> {
+                bookSleepTimerJob?.cancel()
+                bookSleepTimerJob = null
+
+                Timber.tag(TTS_NOTIFICATION_DIAG_TAG).i(
+                    "Book TTS sleep timer cancelled."
+                )
+
+                return START_STICKY
+            }
             ACTION_TTS_NOTIFICATION_PREVIOUS_CHUNK -> {
                 Timber.tag(TTS_NOTIFICATION_DIAG_TAG).i("Notification previous chunk action received.")
                 Timber.tag(TTS_CHUNK_NAV_DIAG_TAG).i(
@@ -604,7 +814,6 @@ class TtsService : MediaSessionService() {
     }
 
     private fun ensureTtsNotificationChannel() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val notificationManager = getSystemService(NotificationManager::class.java)
         val channel = NotificationChannel(
             TTS_FOREGROUND_CHANNEL_ID,
@@ -623,8 +832,9 @@ class TtsService : MediaSessionService() {
 
     private fun scheduleForegroundIdleStop(startId: Int) {
         foregroundIdleJob?.cancel()
+        bookSleepTimerJob?.cancel()
         foregroundIdleJob = scope.launch {
-            delay(TTS_FOREGROUND_IDLE_GRACE_MS)
+            delay(TTS_FOREGROUND_IDLE_GRACE_MS.milliseconds)
             val playbackInactive = !::player.isInitialized ||
                 (!player.isPlaying && !player.playWhenReady && player.mediaItemCount == 0)
             if (!foregroundPlaybackExpected && playbackInactive) {
@@ -654,7 +864,7 @@ class TtsService : MediaSessionService() {
     private fun stopTtsForeground() {
         if (!foregroundNotificationShown) return
         try {
-            stopForeground(android.app.Service.STOP_FOREGROUND_REMOVE)
+            stopForeground(STOP_FOREGROUND_REMOVE)
         } catch (e: Exception) {
             Timber.tag(TTS_NOTIFICATION_DIAG_TAG).w(e, "Failed to stop fallback foreground notification.")
         } finally {
@@ -835,7 +1045,7 @@ class TtsService : MediaSessionService() {
             if (!isConnected) throw IllegalStateException(connectionError ?: "Failed to connect to proxy WebSocket")
 
             val isSetup = try {
-                kotlinx.coroutines.withTimeout(10000L) { setupDeferred.await() }
+                kotlinx.coroutines.withTimeout(10000L.milliseconds) { setupDeferred.await() }
             } catch (_: Exception) { false }
 
             if (!isSetup) {
@@ -891,7 +1101,7 @@ class TtsService : MediaSessionService() {
                         }
 
                         var receivedAudioBytes = 0
-                        kotlinx.coroutines.withTimeout(30000L) {
+                        kotlinx.coroutines.withTimeout(30000L.milliseconds) {
                             for (event in audioChannel) {
                                 when (event) {
                                     is GeminiWsEvent.Audio -> {
@@ -956,20 +1166,6 @@ class TtsService : MediaSessionService() {
         }
     }
 
-    private val synthesizeBaseTtsChunk: suspend (String) -> TtsAudioData =
-        { chunkToSpeak ->
-            val startedAtMs = System.currentTimeMillis()
-            Timber.tag(TTS_LOCAL_DIAG_TAG).i(
-                "service-local-synthesize-start textChars=${chunkToSpeak.length}"
-            )
-            val (file, text) = baseTtsSynthesizer.synthesizeToFile(chunkToSpeak)
-            Timber.tag(TTS_LOCAL_DIAG_TAG).i(
-                "service-local-synthesize-finish elapsedMs=${System.currentTimeMillis() - startedAtMs} " +
-                    "success=${file != null && text != null} file=${file?.name} fileBytes=${file?.length() ?: -1} textChars=${text?.length ?: -1}"
-            )
-            TtsAudioData(file, text, null)
-        }
-
     val audioGenerator: suspend (bookTitle: String, chapterTitle: String?, chunkIndex: Int, totalChunks: Int, text: String, speaker: String, mode: TtsMode, authToken: String?) -> TtsAudioData =
         { bookTitle, chapterTitle, chunkIndex, totalChunks, text, speaker, mode, authToken ->
             cacheManager.saveTotalChunks(bookTitle, chapterTitle, totalChunks)
@@ -1000,10 +1196,12 @@ class TtsService : MediaSessionService() {
                     }
                 }
                 TtsMode.BASE -> {
-                    Timber.tag(TTS_LOCAL_DIAG_TAG).i(
-                        "audio-generator-local chunk=$chunkIndex totalChunks=$totalChunks textChars=${text.length} speaker=$speaker"
+                    TtsAudioData(
+                        audioFile = null,
+                        serverText = null,
+                        wordTimings = null,
+                        error = "Direct local TTS must not use the audio generator"
                     )
-                    synthesizeBaseTtsChunk(text)
                 }
             }
         }
@@ -1012,6 +1210,10 @@ class TtsService : MediaSessionService() {
         super.onCreate()
         Timber.d("TtsService created.")
         setMediaNotificationProvider(TtsMediaNotificationProvider(this))
+        // ExoPlayer, the media session and the playback manager can be slow to initialize on
+        // low-end devices. Promote immediately so a startForegroundService request cannot time
+        // out while onCreate is still building those objects.
+        showPreparingForegroundNotification("onCreate")
         val hasNotificationPermission = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
         Timber.tag(TTS_NOTIFICATION_DIAG_TAG).i(
@@ -1019,18 +1221,6 @@ class TtsService : MediaSessionService() {
         )
 
         cacheManager = TtsCacheManager(this)
-
-        baseTtsSynthesizer = BaseTtsSynthesizer(this)
-        scope.launch {
-            try {
-                Timber.tag(TTS_LOCAL_DIAG_TAG).i("service-local-engine-warmup-start")
-                baseTtsSynthesizer.initialize()
-                Timber.tag(TTS_LOCAL_DIAG_TAG).i("service-local-engine-warmup-success")
-            } catch (e: Exception) {
-                Timber.e(e, "Base TTS synthesizer failed to initialize")
-                Timber.tag(TTS_LOCAL_DIAG_TAG).e(e, "service-local-engine-warmup-failed")
-            }
-        }
 
         val audioAttributes = AudioAttributes.Builder()
             .setContentType(C.AUDIO_CONTENT_TYPE_SPEECH)
@@ -1085,9 +1275,10 @@ class TtsService : MediaSessionService() {
             onPlaybackSessionPreparing = ::onPlaybackSessionPreparing,
             onPlaybackSessionStopped = ::onPlaybackSessionStopped,
             onExplicitStopRequested = {
-                // Do not use this for natural chapter handoffs: #346 relies on
-                // the service staying alive while ordered chunks are generated.
-                // It is only invoked for the user's explicit Stop action.
+                // Manual stop and sleep-timer stop both terminate the complete session.
+                // Natural chapter handoffs never invoke this callback.
+                bookSleepTimerJob?.cancel()
+                bookSleepTimerJob = null
                 stopSelf()
             }
         )
@@ -1099,14 +1290,27 @@ class TtsService : MediaSessionService() {
             skipToPreviousChunk = playbackManager::skipToPreviousChunkFromTransport,
             skipToNextChunk = playbackManager::skipToNextChunkFromTransport,
             isCurrentChunkStreaming = playbackManager::isCurrentChunkStreaming,
-            currentChunkDurationForNotification = playbackManager::currentChunkDurationForNotification
+            currentChunkDurationForNotification = playbackManager::currentChunkDurationForNotification,
+            isDirectLocalPlayback = playbackManager::isDirectLocalPlayback,
+            localIsPlaying = playbackManager::localIsPlaying,
+            localPlayWhenReady = {
+                playbackManager.localIsPlaying() ||
+                    playbackManager.localPlaybackState() == Player.STATE_BUFFERING
+            },
+            localPlaybackState = playbackManager::localPlaybackState,
+            playDirectLocal = playbackManager::playFromTransport,
+            pauseDirectLocal = playbackManager::pauseFromTransport,
+            stopDirectLocal = playbackManager::stopFromTransport
         )
 
         mediaSession = MediaSession.Builder(this, sessionPlayer)
+            .setId("reader-tts-playback")
             .setCallback(playbackManager)
             .build()
 
         mediaSession?.let { playbackManager.setMediaSession(it) }
+        playbackManager.setDirectLocalPlayerStateInvalidator(sessionPlayer::invalidateDirectLocalState)
+        bookTtsCoordinator = BookTtsSessionCoordinator(this, scope, playbackManager)
         Timber.tag(TTS_NOTIFICATION_DIAG_TAG).i("MediaSession created and attached to playback manager. sessionAvailable=${mediaSession != null}")
     }
 
@@ -1114,11 +1318,13 @@ class TtsService : MediaSessionService() {
         Timber.tag(TTS_NOTIFICATION_DIAG_TAG).i(
             "onTaskRemoved. playWhenReady=${if (::player.isInitialized) player.playWhenReady else null}, isPlaying=${if (::player.isInitialized) player.isPlaying else null}"
         )
-        if (!::player.isInitialized || !player.playWhenReady) {
-            Timber.tag(TTS_NOTIFICATION_DIAG_TAG).w("Task removed while player is not playWhenReady. Calling stopSelf().")
-            stopSelf()
+        // Home/background keeps media playback alive. Removing Episteme from
+        // Recents is an explicit task dismissal and must end the TTS session.
+        if (::playbackManager.isInitialized) {
+            playbackManager.stopForAppTaskRemoval()
         }
-        Timber.d("onTaskRemoved called, stopping service.")
+        stopSelf()
+        Timber.tag(TTS_NOTIFICATION_DIAG_TAG).w("Task removed; TTS playback and service stopped.")
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? {
@@ -1132,10 +1338,14 @@ class TtsService : MediaSessionService() {
         Timber.d("TtsService is being destroyed.")
         Timber.tag(TTS_NOTIFICATION_DIAG_TAG).w("TtsService onDestroy.")
         foregroundIdleJob?.cancel()
-        stopTtsForeground()
-        if (::baseTtsSynthesizer.isInitialized) {
-            baseTtsSynthesizer.shutdown()
+        bookSleepTimerJob?.cancel()
+        bookSleepTimerJob = null
+
+        if (::bookTtsCoordinator.isInitialized) {
+            bookTtsCoordinator.release()
         }
+        scope.cancel()
+        stopTtsForeground()
         if (::playbackManager.isInitialized) {
             playbackManager.release()
         }
@@ -1153,4 +1363,5 @@ class TtsService : MediaSessionService() {
         }
         super.onDestroy()
     }
+
 }

@@ -3,4 +3,7 @@ package com.aryan.reader.paginatedreader
 internal fun resolvePaginatedReconfigurationAnchor(
     currentPageLocator: Locator?,
     fallbackLocator: Locator?
-): Locator? = currentPageLocator ?: fallbackLocator
+): Locator? = com.aryan.reader.shared.reader.resolveSharedPaginatedReconfigurationAnchor(
+    currentPageAnchor = currentPageLocator,
+    fallbackAnchor = fallbackLocator,
+)

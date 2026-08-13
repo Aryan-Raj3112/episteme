@@ -2,9 +2,11 @@ package com.aryan.reader.shared.ui
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -15,6 +17,8 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -35,24 +39,31 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.FolderSpecial
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -60,10 +71,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.opds.OpdsAcquisition
 import com.aryan.reader.shared.opds.OpdsCatalog
@@ -72,6 +89,8 @@ import com.aryan.reader.shared.opds.SharedOpdsLocalBookMatcher
 import com.aryan.reader.shared.opds.SharedOpdsDownloadState
 import com.aryan.reader.shared.opds.SharedOpdsScreenState
 import com.aryan.reader.shared.opds.SharedOpdsText
+import com.aryan.reader.shared.opds.opdsStreamBooksForCatalog
+import kotlinx.coroutines.delay
 
 @Composable
 fun SharedOpdsScreen(
@@ -85,6 +104,7 @@ fun SharedOpdsScreen(
     onAddCatalog: (String, String, String?, String?) -> Unit,
     onUpdateCatalog: (String, String, String, String?, String?) -> Unit,
     onRemoveCatalog: (OpdsCatalog) -> Unit,
+    onDeleteCatalogStreams: (String) -> Unit,
     onDownloadBook: (OpdsEntry, OpdsAcquisition) -> Unit,
     onReadBook: (BookItem) -> Unit,
     onStreamBook: (OpdsEntry, OpdsCatalog?) -> Unit,
@@ -134,25 +154,40 @@ fun SharedOpdsScreen(
         }
 
         state.errorMessage?.let { error ->
+            if (mobileLayout) {
+                LaunchedEffect(error) {
+                    delay(4_000)
+                    onClearError()
+                }
+            }
             Surface(
                 color = MaterialTheme.colorScheme.errorContainer,
                 shape = RoundedCornerShape(8.dp),
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .padding(16.dp)
+                    .then(if (mobileLayout) Modifier.padding(bottom = 70.dp) else Modifier)
             ) {
-                Row(
-                    modifier = Modifier.padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
+                if (mobileLayout) {
                     Text(
                         text = error,
                         color = MaterialTheme.colorScheme.onErrorContainer,
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.padding(16.dp),
                     )
-                    TextButton(onClick = onClearError) {
-                        Text(readerString("action_dismiss", "Dismiss"))
+                } else {
+                    Row(
+                        modifier = Modifier.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text(
+                            text = error,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(onClick = onClearError) {
+                            Text(readerString("action_dismiss", "Dismiss"))
+                        }
                     }
                 }
             }
@@ -180,16 +215,42 @@ fun SharedOpdsScreen(
     }
 
     catalogToDelete?.let { catalog ->
+        val streamedBooksCount = localLibraryBooks.opdsStreamBooksForCatalog(catalog.id).size
         AlertDialog(
             onDismissRequest = { catalogToDelete = null },
             title = { Text(readerString("delete_catalog", "Delete catalog")) },
-            text = { Text(readerString("desktop_opds_delete_catalog_desc", "Delete \"%1\$s\"? Streamed books from this catalog may stop opening if credentials change later.", catalog.title)) },
+            text = {
+                Column {
+                    Text(
+                        readerString(
+                            "delete_catalog_desc",
+                            "Are you sure you want to delete '%1\$s'?",
+                            catalog.title,
+                        )
+                    )
+                    if (streamedBooksCount > 0) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            readerString(
+                                "delete_catalog_warning",
+                                "Deleting this catalog will also permanently remove %1\$d streaming books associated with it from your library.",
+                                streamedBooksCount,
+                            ),
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                }
+            },
             confirmButton = {
                 TextButton(
                     onClick = {
                         onRemoveCatalog(catalog)
+                        if (streamedBooksCount > 0) onDeleteCatalogStreams(catalog.id)
                         catalogToDelete = null
-                    }
+                    },
+                    colors = androidx.compose.material3.ButtonDefaults.textButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error,
+                    ),
                 ) {
                     Text(readerString("action_delete", "Delete"))
                 }
@@ -222,7 +283,8 @@ fun SharedOpdsScreen(
                 onSearch(query)
                 selectedEntry = null
             },
-            coverContent = coverContent
+            coverContent = coverContent,
+            mobileLayout = mobileLayout,
         )
     }
 }
@@ -238,26 +300,23 @@ private fun SharedOpdsCatalogList(
 ) {
     if (mobileLayout) {
         Box(Modifier.fillMaxSize()) {
-            if (catalogs.isEmpty()) {
-                SharedOpdsEmptyState(onAddCatalog = onAddCatalog, modifier = Modifier.fillMaxSize())
-            } else {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 96.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    items(catalogs, key = { it.id }) { catalog ->
-                        SharedOpdsCatalogCard(
-                            catalog = catalog,
-                            onOpenCatalog = { onOpenCatalog(catalog) },
-                            onEditCatalog = { onEditCatalog(catalog) },
-                            onDeleteCatalog = { onDeleteCatalog(catalog) }
-                        )
-                    }
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 88.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                items(catalogs, key = { it.id }) { catalog ->
+                    SharedOpdsCatalogCard(
+                        catalog = catalog,
+                        onOpenCatalog = { onOpenCatalog(catalog) },
+                        onEditCatalog = { onEditCatalog(catalog) },
+                        onDeleteCatalog = { onDeleteCatalog(catalog) },
+                        mobileLayout = true,
+                    )
                 }
             }
             ExtendedFloatingActionButton(
-                text = { Text(readerString("desktop_opds_catalog", "Catalog")) },
+                text = { Text(readerString("fab_add_catalog", "Add catalog")) },
                 icon = { Icon(Icons.Default.Add, contentDescription = null) },
                 onClick = onAddCatalog,
                 modifier = Modifier
@@ -295,7 +354,8 @@ private fun SharedOpdsCatalogList(
                             catalog = catalog,
                             onOpenCatalog = { onOpenCatalog(catalog) },
                             onEditCatalog = { onEditCatalog(catalog) },
-                            onDeleteCatalog = { onDeleteCatalog(catalog) }
+                            onDeleteCatalog = { onDeleteCatalog(catalog) },
+                            mobileLayout = false,
                         )
                     }
                 }
@@ -321,6 +381,13 @@ private fun SharedOpdsFeedView(
 ) {
     var showSearch by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
+    val searchFocusRequester = remember { FocusRequester() }
+    LaunchedEffect(showSearch, mobileLayout) {
+        if (mobileLayout && showSearch) {
+            delay(100)
+            searchFocusRequester.requestFocus()
+        }
+    }
     Column(Modifier.fillMaxSize()) {
         Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 2.dp) {
             Column(Modifier.fillMaxWidth()) {
@@ -328,7 +395,7 @@ private fun SharedOpdsFeedView(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(64.dp)
-                        .padding(horizontal = 8.dp),
+                        .padding(horizontal = if (mobileLayout) 4.dp else 8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     IconButton(onClick = {
@@ -347,7 +414,28 @@ private fun SharedOpdsFeedView(
                             onValueChange = { query = it },
                             placeholder = { Text(readerString("search_catalog_placeholder", "Search catalog")) },
                             singleLine = true,
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier
+                                .weight(1f)
+                                .then(if (mobileLayout) Modifier.padding(vertical = 4.dp).focusRequester(searchFocusRequester) else Modifier),
+                            colors = if (mobileLayout) {
+                                TextFieldDefaults.colors(
+                                    focusedContainerColor = Color.Transparent,
+                                    unfocusedContainerColor = Color.Transparent,
+                                    disabledContainerColor = Color.Transparent,
+                                    focusedIndicatorColor = Color.Transparent,
+                                    unfocusedIndicatorColor = Color.Transparent,
+                                )
+                            } else {
+                                TextFieldDefaults.colors()
+                            },
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                            keyboardActions = KeyboardActions(onSearch = {
+                                if (query.isNotBlank()) {
+                                    onSearch(query)
+                                    query = ""
+                                    showSearch = false
+                                }
+                            }),
                             trailingIcon = {
                                 IconButton(onClick = {
                                     if (query.isNotBlank()) {
@@ -361,22 +449,33 @@ private fun SharedOpdsFeedView(
                             }
                         )
                     } else {
-                        Column(Modifier.weight(1f)) {
+                        if (mobileLayout) {
                             Text(
                                 text = state.currentFeed?.title ?: readerString("status_loading", "Loading"),
                                 style = MaterialTheme.typography.titleLarge,
                                 fontWeight = FontWeight.SemiBold,
                                 maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
                             )
-                            state.currentCatalog?.title?.let { catalogTitle ->
+                        } else {
+                            Column(Modifier.weight(1f)) {
                                 Text(
-                                    catalogTitle,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    text = state.currentFeed?.title ?: readerString("status_loading", "Loading"),
+                                    style = MaterialTheme.typography.titleLarge,
+                                    fontWeight = FontWeight.SemiBold,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
+                                state.currentCatalog?.title?.let { catalogTitle ->
+                                    Text(
+                                        catalogTitle,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
                             }
                         }
                         if (state.searchUrlTemplate != null) {
@@ -461,8 +560,67 @@ private fun SharedOpdsCatalogCard(
     catalog: OpdsCatalog,
     onOpenCatalog: () -> Unit,
     onEditCatalog: () -> Unit,
-    onDeleteCatalog: () -> Unit
+    onDeleteCatalog: () -> Unit,
+    mobileLayout: Boolean,
 ) {
+    if (mobileLayout) {
+        Surface(
+            onClick = onOpenCatalog,
+            shape = MaterialTheme.shapes.medium,
+            color = MaterialTheme.colorScheme.surfaceContainer,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(16.dp),
+            ) {
+                Icon(
+                    Icons.Default.FolderSpecial,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+                Spacer(Modifier.width(16.dp))
+                Column(Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            catalog.title,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        if (catalog.isDefault) {
+                            Spacer(Modifier.width(8.dp))
+                            Surface(
+                                color = MaterialTheme.colorScheme.secondaryContainer,
+                                shape = MaterialTheme.shapes.small,
+                            ) {
+                                Text(
+                                    readerString("preset_label", "Preset"),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                )
+                            }
+                        }
+                    }
+                    Text(
+                        catalog.url,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (!catalog.isDefault) {
+                    IconButton(onClick = onEditCatalog) {
+                        Icon(Icons.Default.Edit, contentDescription = readerString("label_edit", "Edit"))
+                    }
+                    IconButton(onClick = onDeleteCatalog) {
+                        Icon(Icons.Default.Delete, contentDescription = readerString("action_remove", "Remove"))
+                    }
+                }
+            }
+        }
+        return
+    }
+
     Surface(
         onClick = onOpenCatalog,
         shape = RoundedCornerShape(8.dp),
@@ -603,7 +761,7 @@ private fun SharedOpdsNavigationCard(entry: OpdsEntry, onOpenFeedUrl: (String) -
             Icon(Icons.Default.Folder, contentDescription = null, tint = MaterialTheme.colorScheme.secondary)
             Spacer(Modifier.width(16.dp))
             Column(Modifier.weight(1f)) {
-                Text(entry.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text(entry.title, style = MaterialTheme.typography.titleMedium)
                 val summary = SharedOpdsText.cleanSummary(entry.summary)
                 if (summary.isNotBlank()) {
                     Text(
@@ -658,7 +816,7 @@ private fun SharedOpdsBookCard(
                     localLibraryBook != null -> {
                         OutlinedButton(onClick = { onReadBook(localLibraryBook) }, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)) {
                             Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(6.dp))
+                            Spacer(Modifier.width(4.dp))
                             Text(readerString("action_read", "Read"))
                         }
                     }
@@ -666,8 +824,8 @@ private fun SharedOpdsBookCard(
                     else -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                         if (entry.isStreamable) {
                             FilledTonalButton(onClick = onStreamBook, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)) {
-                                Icon(Icons.Default.Cloud, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(Modifier.width(6.dp))
+                                Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(4.dp))
                                 Text(readerString("action_stream", "Stream"))
                             }
                         }
@@ -684,11 +842,11 @@ private fun SharedOpdsBookCard(
                                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
                             ) {
                                 Icon(
-                                    if (uniqueAcquisitions.isEmpty()) Icons.Default.Info else Icons.Default.Download,
+                                    if (uniqueAcquisitions.isEmpty()) Icons.Default.Info else Icons.Default.Add,
                                     contentDescription = null,
                                     modifier = Modifier.size(16.dp)
                                 )
-                                Spacer(Modifier.width(6.dp))
+                                Spacer(Modifier.width(4.dp))
                                 Text(
                                     if (uniqueAcquisitions.isEmpty()) {
                                         readerString("action_unavailable", "Unavailable")
@@ -747,10 +905,27 @@ private fun SharedOpdsEntryDetailsDialog(
     onStreamBook: () -> Unit,
     onOpenFeedUrl: (String) -> Unit,
     onSearch: (String) -> Unit,
-    coverContent: @Composable (OpdsEntry, Modifier) -> Unit
+    coverContent: @Composable (OpdsEntry, Modifier) -> Unit,
+    mobileLayout: Boolean,
 ) {
     val uniqueAcquisitions = remember(entry.acquisitions) {
         entry.acquisitions.distinctBy { it.formatName }.sortedByDescending { it.priority }
+    }
+    if (mobileLayout) {
+        SharedAndroidOpdsEntryDetailsSheet(
+            entry = entry,
+            localLibraryBook = localLibraryBook,
+            downloadState = downloadState,
+            uniqueAcquisitions = uniqueAcquisitions,
+            onDismiss = onDismiss,
+            onDownloadBook = onDownloadBook,
+            onReadBook = onReadBook,
+            onStreamBook = onStreamBook,
+            onOpenFeedUrl = onOpenFeedUrl,
+            onSearch = onSearch,
+            coverContent = coverContent,
+        )
+        return
     }
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -858,6 +1033,165 @@ private fun SharedOpdsEntryDetailsDialog(
     )
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SharedAndroidOpdsEntryDetailsSheet(
+    entry: OpdsEntry,
+    localLibraryBook: BookItem?,
+    downloadState: SharedOpdsDownloadState?,
+    uniqueAcquisitions: List<OpdsAcquisition>,
+    onDismiss: () -> Unit,
+    onDownloadBook: (OpdsAcquisition) -> Unit,
+    onReadBook: (BookItem) -> Unit,
+    onStreamBook: () -> Unit,
+    onOpenFeedUrl: (String) -> Unit,
+    onSearch: (String) -> Unit,
+    coverContent: @Composable (OpdsEntry, Modifier) -> Unit,
+) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp, vertical = 8.dp)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                coverContent(entry, Modifier.size(width = 110.dp, height = 160.dp).clip(MaterialTheme.shapes.medium))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        entry.title,
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        lineHeight = 28.sp,
+                    )
+                    if (entry.authors.isNotEmpty()) {
+                        Spacer(Modifier.height(4.dp))
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            entry.authors.forEach { author ->
+                                Text(
+                                    author.name,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.clickable {
+                                        if (author.url != null) onOpenFeedUrl(author.url) else onSearch(author.name)
+                                    },
+                                )
+                            }
+                        }
+                    }
+                    entry.series?.takeIf(String::isNotBlank)?.let { series ->
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            if (entry.seriesIndex.isNullOrBlank()) series else "$series #${entry.seriesIndex}",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.clickable { onSearch(series) },
+                        )
+                    }
+                }
+            }
+
+            localLibraryBook?.let { book ->
+                Button(
+                    onClick = { onDismiss(); onReadBook(book) },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.medium,
+                ) {
+                    Icon(Icons.Default.Check, contentDescription = readerString("action_read", "Read"))
+                    Spacer(Modifier.width(8.dp))
+                    Text(readerString("action_read", "Read"), fontWeight = FontWeight.Bold)
+                }
+            }
+
+            if (downloadState?.isDownloading == true) {
+                val progress = downloadState.progress
+                Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(readerString("status_downloading", "Downloading"), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.weight(1f))
+                        progress?.let { Text("${(it * 100).toInt()}%", style = MaterialTheme.typography.titleMedium) }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    if (progress == null) LinearProgressIndicator(Modifier.fillMaxWidth().height(8.dp))
+                    else LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth().height(8.dp))
+                }
+            } else if (uniqueAcquisitions.isNotEmpty() || entry.isStreamable) {
+                if (entry.isStreamable) {
+                    Button(
+                        onClick = { onStreamBook(); onDismiss() },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = MaterialTheme.shapes.medium,
+                    ) {
+                        Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(readerString("action_stream_now", "Stream now"), fontWeight = FontWeight.Bold)
+                    }
+                    Spacer(Modifier.height(16.dp))
+                }
+                if (uniqueAcquisitions.isNotEmpty()) {
+                    Text(readerString("download_format", "Download format"), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        uniqueAcquisitions.forEach { acquisition ->
+                            FilledTonalButton(onClick = { onDownloadBook(acquisition) }) {
+                                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text(acquisition.formatName, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
+            } else {
+                Text(readerString("no_supported_formats", "No supported formats"), color = MaterialTheme.colorScheme.error)
+            }
+
+            if (entry.categories.isNotEmpty()) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    entry.categories.distinct().forEach { category ->
+                        Surface(
+                            shape = MaterialTheme.shapes.small,
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            onClick = { onSearch(category) },
+                        ) {
+                            Text(category, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp))
+                        }
+                    }
+                }
+            }
+
+            if (!entry.publisher.isNullOrBlank() || !entry.published.isNullOrBlank() || !entry.language.isNullOrBlank()) {
+                Surface(shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.surfaceContainer, modifier = Modifier.fillMaxWidth()) {
+                    Row(Modifier.padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                        entry.publisher?.takeIf(String::isNotBlank)?.let { SharedOpdsMetadataColumn(readerString("publisher", "Publisher"), it, Modifier.weight(1f)) }
+                        entry.published?.takeIf(String::isNotBlank)?.let { SharedOpdsMetadataColumn(readerString("published", "Published"), it.substringBefore("T"), Modifier.weight(1f)) }
+                        entry.language?.takeIf(String::isNotBlank)?.let { SharedOpdsMetadataColumn(readerString("language", "Language"), it.uppercase(), Modifier.weight(1f)) }
+                    }
+                }
+            }
+
+            val summary = SharedOpdsText.cleanSummary(entry.summary)
+            if (summary.isNotBlank()) {
+                Text(readerString("synopsis", "Synopsis"), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text(summary, style = MaterialTheme.typography.bodyLarge, lineHeight = 24.sp, modifier = Modifier.padding(bottom = 48.dp))
+            } else {
+                Spacer(Modifier.height(48.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun SharedOpdsMetadataColumn(label: String, value: String, modifier: Modifier) {
+    Column(modifier) {
+        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+    }
+}
+
 @Composable
 private fun SharedOpdsCatalogDialog(
     catalog: OpdsCatalog?,
@@ -876,7 +1210,14 @@ private fun SharedOpdsCatalogDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 SharedStableOutlinedTextField(value = title, onValueChange = { title = it }, label = { Text(readerString("catalog_name", "Catalog name")) }, singleLine = true, selectionKey = catalog?.id ?: "new:title")
-                SharedStableOutlinedTextField(value = url, onValueChange = { url = it }, label = { Text(readerString("url", "URL")) }, singleLine = true, selectionKey = catalog?.id ?: "new:url")
+                SharedStableOutlinedTextField(
+                    value = url,
+                    onValueChange = { url = it },
+                    label = { Text(readerString("url", "URL")) },
+                    placeholder = { Text(readerString("url_placeholder", "https://example.com/opds")) },
+                    singleLine = true,
+                    selectionKey = catalog?.id ?: "new:url",
+                )
                 Text(readerString("auth_optional", "Authentication optional"), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                 SharedStableOutlinedTextField(value = username, onValueChange = { username = it }, label = { Text(readerString("username", "Username")) }, singleLine = true, selectionKey = catalog?.id ?: "new:username")
                 SharedStableOutlinedTextField(
@@ -885,6 +1226,7 @@ private fun SharedOpdsCatalogDialog(
                     label = { Text(readerString("password", "Password")) },
                     singleLine = true,
                     visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                     selectionKey = catalog?.id ?: "new:password"
                 )
             }

@@ -1,11 +1,29 @@
 package com.aryan.reader.shared.pdf
 
+import androidx.compose.ui.input.pointer.PointerType
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class SharedPdfInkRenderingTest {
+
+    @Test
+    fun `stylus only mode rejects touch ink downs`() {
+        assertFalse(sharedPdfIsInkDownAllowed(isStylusOnlyMode = true, type = PointerType.Touch))
+        assertTrue(sharedPdfIsInkDownAllowed(isStylusOnlyMode = true, type = PointerType.Stylus))
+        assertTrue(sharedPdfIsInkDownAllowed(isStylusOnlyMode = true, type = PointerType.Eraser))
+        assertTrue(sharedPdfIsInkDownAllowed(isStylusOnlyMode = false, type = PointerType.Touch))
+    }
+
+    @Test
+    fun `eraser override applies to eraser pointers and stylus barrel presses`() {
+        assertTrue(sharedPdfIsEraserOverride(pointerType = PointerType.Eraser, stylusButtonPressed = false))
+        assertTrue(sharedPdfIsEraserOverride(pointerType = PointerType.Stylus, stylusButtonPressed = true))
+        assertFalse(sharedPdfIsEraserOverride(pointerType = PointerType.Touch, stylusButtonPressed = true))
+        assertFalse(sharedPdfIsEraserOverride(pointerType = PointerType.Stylus, stylusButtonPressed = false))
+        assertFalse(sharedPdfIsEraserOverride(pointerType = PointerType.Mouse, stylusButtonPressed = false))
+    }
 
     @Test
     fun `normalized Android stroke widths scale from page width`() {

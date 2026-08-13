@@ -94,6 +94,8 @@
     <string name="unified_library_no_shelves">No shelves yet</string>
     <string name="unified_library_no_folders">No synced folders yet</string>
     <string name="unified_library_search_books">Search your books</string>
+    <string name="unified_library_grid_view">Grid view</string>
+    <string name="unified_library_list_view">List view</string>
     <string name="unified_library_sort_filter">Sort and filter</string>
     <string name="unified_library_account">Account</string>
     <string name="unified_library_signed_out">You are not signed in</string>
@@ -104,6 +106,53 @@
     <string name="unified_library_recent_searches">Recent searches</string>
     <string name="unified_library_clear_recent_searches">Clear recent searches</string>
     <string name="unified_library_reading_now">%1$d books in progress</string>
+    <string name="audiobooks_your_timers">Your timers</string>
+    <string name="audiobooks_quick_timers">Quick timers</string>
+    <string name="audiobooks_custom_timer">Custom timer</string>
+    <string name="audiobooks_add_custom_timer">Add custom timer</string>
+    <string name="audiobooks_custom_timer_limit">Up to 3 custom timers</string>
+    <string name="audiobooks_remove_custom_timer">Remove custom timer</string>
+    <string name="audiobooks_timer_hours">Hours</string>
+    <string name="audiobooks_timer_minutes">Minutes</string>
+    <string name="audiobooks_hours_minutes">%1$d hr %2$d min</string>
+    <string name="audiobooks_hours">%1$d hours</string>
+    <string name="audiobooks_title">Audiobooks</string>
+    <string name="audiobooks_listen_anywhere">Your listening library</string>
+    <string name="audiobooks_listen_anywhere_desc">Recorded audiobooks and text-to-speech, together in one place.</string>
+    <string name="audiobooks_your_audiobooks">Your audiobooks</string>
+    <string name="audiobooks_sample_preview">A preview of how imported audio will appear</string>
+    <string name="audiobooks_imported_files_desc">Imported audio files</string>
+    <string name="audiobooks_continue_listening">Continue listening</string>
+    <string name="audiobooks_in_progress">In progress</string>
+    <string name="audiobooks_not_started">Not started</string>
+    <string name="audiobooks_completed">Completed</string>
+    <string name="audiobooks_listen_to_ebooks">Listen to your ebooks</string>
+    <string name="audiobooks_tts_desc">Play a book with text-to-speech without opening the reader.</string>
+    <string name="audiobooks_listen_with_tts">Listen with TTS</string>
+    <string name="audiobooks_unknown_author">Unknown author</string>
+    <string name="audiobooks_empty">No audiobooks in this view</string>
+    <string name="audiobooks_no_ebooks">Add a book to listen with TTS</string>
+    <string name="audiobooks_no_ebooks_desc">Supported ebooks will appear here automatically.</string>
+    <string name="audiobooks_add">Add audiobook</string>
+    <string name="audiobooks_add_preview_desc">Choose an audiobook file. Multi-file books and folders will be added next.</string>
+    <string name="audiobooks_coming_later">Multi-file grouping is coming in the next step.</string>
+    <string name="audiobooks_imported">Imported %1$s</string>
+    <string name="audiobooks_import_failed">Could not import this audiobook.</string>
+    <string name="audiobook_notification_channel_name">Audiobook playback</string>
+    <string name="audiobooks_add_file">Choose one audio file</string>
+    <string name="audiobooks_add_file_desc">For an M4B, MP3, or M4A stored as one file.</string>
+    <string name="audiobooks_add_multiple">Choose multiple chapter files</string>
+    <string name="audiobooks_add_multiple_desc">Group selected tracks into one audiobook.</string>
+    <string name="audiobooks_add_folder">Choose an audiobook folder</string>
+    <string name="audiobooks_add_folder_desc">Keep a multi-file audiobook together and in order.</string>
+    <string name="audiobooks_now_playing">Now playing</string>
+    <string name="audiobooks_tts_mode">Listening with TTS</string>
+    <string name="audiobooks_bookmark">Add bookmark</string>
+    <string name="audiobooks_rewind">Rewind 30 seconds</string>
+    <string name="audiobooks_forward">Forward 30 seconds</string>
+    <string name="audiobooks_sleep">Sleep</string>
+    <string name="audiobooks_chapters">Chapters</string>
+    <string name="audiobooks_tts_generated_note">Audio will be generated progressively using your current TTS voice and settings.</string>
     <string name="unified_library_recently_finished">Recently finished</string>
     <string name="unified_library_filters_selected">%1$d filters</string>
     <string name="recent_files">Recent Files</string>
@@ -1201,6 +1250,9 @@
     <!-- Color picker tab/slider label — "Spectrum" = full color spectrum picker. -->
     <string name="label_spectrum">Spectrum</string>
     <string name="action_done">Done</string>
+    <string name="section_typography">TYPOGRAPHY</string>
+    <string name="label_font_weight">Font weight</string>
+    <string name="label_letter_spacing">Letter spacing</string>
     <string name="color_red">Red</string>
     <string name="color_green">Green</string>
     <string name="color_blue">Blue</string>
@@ -2122,4 +2174,52 @@
     <string name="tts_replacements_replace_only_spoken_desc">Reader text, highlights, and locations stay unchanged.</string>
     <!-- TTS replacement summary. %1$s = replacement source; %2$s = spoken replacement. Example: "Dr. -> Doctor". -->
     <string name="tts_replacements_summary_format">%1$s -&gt; %2$s</string>
+
+    <string name="audiobooks_collapse_player">Collapse player</string>
+    <string name="audiobooks_stop_playback">Stop playback</string>
+    <string name="audiobooks_rewind_30_seconds">Rewind 30 seconds</string>
+    <string name="audiobooks_forward_30_seconds">Forward 30 seconds</string>
+    <string name="audiobooks_listening_with_tts">Listening with TTS</string>
+    <string name="audiobooks_previous_chapter">Previous chapter</string>
+    <string name="audiobooks_next_chapter">Next chapter</string>
+    <string name="audiobooks_previous_passage">Previous spoken passage</string>
+    <string name="audiobooks_next_passage">Next spoken passage</string>
+    <string name="audiobooks_playback_speed">Playback speed</string>
+    <string name="audiobooks_speed_selected">Selected</string>
+    <string name="audiobooks_sleep_timer">Sleep timer</string>
+    <string name="audiobooks_minutes">%1$d minutes</string>
+    <string name="audiobooks_one_hour">1 hour</string>
+    <string name="audiobooks_one_minute">1 minute</string>
+    <string name="audiobooks_hide_chapters">Hide chapters</string>
+    <string name="audiobooks_transcript">Transcript</string>
+    <string name="audiobooks_hide_transcript">Hide transcript</string>
+    <string name="listen_title">Listen</string>
+    <string name="listen_add">Add to Listen</string>
+    <string name="listen_source_tts">TTS</string>
+
+    <string name="listen_search">Search audiobooks and TTS books</string>
+    <string name="listen_search_library_books">Search your library</string>
+
+    <string name="listen_sort_recently_listened">Recently listened</string>
+    <string name="listen_sort_recently_added">Recently added</string>
+    <string name="listen_sort_title">Title</string>
+    <string name="listen_sort_author">Author</string>
+    <string name="listen_sort_progress">Progress</string>
+
+    <string name="listen_see_all">See all</string>
+
+    <string name="listen_choose_tts_book">Choose a book for TTS</string>
+    <string name="listen_choose_tts_book_desc">Pick a supported book from your library and start listening</string>
+    <string name="listen_no_tts_books">No supported books found</string>
+
+    <string name="listen_empty">Nothing to listen to yet</string>
+    <string name="listen_empty_desc">Import an audiobook or choose a library book to listen with text-to-speech.</string>
+    <string name="listen_no_matches">No listening items match “%1$s”</string>
+
+    <string name="listen_badge_audiobook">AUDIOBOOK</string>
+    <string name="listen_badge_tts">TTS</string>
+
+    <string name="listen_timer">Timer</string>
+    <string name="listen_chapter_number">Chapter %1$d</string>
+    <string name="document_picker_unavailable">No document picker is available on this device.</string>
 </resources>

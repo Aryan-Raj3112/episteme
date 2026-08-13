@@ -366,11 +366,25 @@ class TtsController(context: Context) : Player.Listener {
             val currentMediaBookTitle = currentMediaItem?.mediaMetadata?.title?.toString()
             val currentTextFromMediaItem = mediaItemExtras?.getString("ttsText")
                 ?: currentMediaItem?.mediaMetadata?.subtitle?.toString()
-            val isPlaybackActive = controller.isPlaying || controller.playbackState == Player.STATE_READY || controller.playbackState == Player.STATE_BUFFERING
             val serviceSpeaker = customState.getString("speakerId", _ttsState.value.speakerId)
             val sessionEndedByStop = customState.getBoolean("sessionEndedByStop", false)
             val isLoading = customState.getBoolean("isLoading", false)
             val sessionFinished = customState.getBoolean("sessionFinished", false)
+            val serviceMode = customState.getString("ttsMode", _ttsState.value.ttsMode)
+            val isDirectLocalPlayback = serviceMode == TtsPlaybackManager.TtsMode.BASE.name
+            val effectivePlaybackState = if (isDirectLocalPlayback) {
+                customState.getInt("playbackState", controller.playbackState)
+            } else {
+                controller.playbackState
+            }
+            val effectiveIsPlaying = if (isDirectLocalPlayback) {
+                customState.getBoolean("isPlaying", false)
+            } else {
+                controller.isPlaying
+            }
+            val isPlaybackActive = effectiveIsPlaying ||
+                effectivePlaybackState == Player.STATE_READY ||
+                effectivePlaybackState == Player.STATE_BUFFERING
             val playbackSource = customState.getString("playbackSource")
             val serviceBookTitle = customState.getString("bookTitle")
             val serviceChapterTitle = customState.getString("chapterTitle")
@@ -383,17 +397,17 @@ class TtsController(context: Context) : Player.Listener {
             val serviceCurrentChunkIndex = customState.getInt("currentChunkIndex", -1)
             val serviceTotalChunks = customState.getInt("totalChunks", 0)
             val serviceBookProgressPercent = customState.getInt("bookProgressPercent", -1).takeIf { it >= 0 }
+            val transcriptStartIndex = customState.getInt("transcriptStartIndex", 0)
+            val transcriptChunks = customState.getStringArrayList("transcriptChunks").orEmpty()
 
             val sourceCfi = mediaItemExtras?.getString("sourceCfi") ?: customState.getString("sourceCfi")
             val startOffset = mediaItemExtras?.getInt("startOffset", -1)
                 ?: customState.getInt("startOffset", -1)
             val currentWordSourceCfi = customState.getString("currentWordSourceCfi")
             val currentWordStartOffset = customState.getInt("currentWordStartOffset", -1)
-            val serviceMode = customState.getString("ttsMode", _ttsState.value.ttsMode)
-
             val currentState = _ttsState.value
             _ttsState.value = currentState.copy(
-                isPlaying = controller.isPlaying,
+                isPlaying = effectiveIsPlaying,
                 isLoading = isLoading,
                 currentText = if (isPlaybackActive) {
                     currentTextFromMediaItem
@@ -445,14 +459,24 @@ class TtsController(context: Context) : Player.Listener {
                 } else {
                     if (isLoading) currentState.startOffsetInSource else -1
                 },
-                playbackState = controller.playbackState,
+                playbackState = effectivePlaybackState,
                 sessionEndedByStop = sessionEndedByStop,
                 currentWordSourceCfi = if (isPlaybackActive) currentWordSourceCfi else null,
                 currentWordStartOffset = if (isPlaybackActive) currentWordStartOffset else -1,
                 sessionFinished = sessionFinished,
                 playbackSource = playbackSource,
-                ttsMode = serviceMode
+                ttsMode = serviceMode,
+                transcriptStartIndex = transcriptStartIndex,
+                transcriptChunks = transcriptChunks
             )
+            if (sessionEndedByStop) {
+                // Every observer releases its binding after an explicit stop so stopSelf()
+                // can reach onDestroy and tear down the local engine and media resources.
+                scope.launch {
+                    delay(1)
+                    if (_ttsState.value.sessionEndedByStop) disconnect()
+                }
+            }
         }
     }
 

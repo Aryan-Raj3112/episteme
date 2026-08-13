@@ -5,7 +5,7 @@ import com.aryan.reader.data.BookTagCrossRef
 import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.data.ShelfEntity
 import com.aryan.reader.data.TagEntity
-import com.aryan.reader.shared.SharedReaderScreenState
+import com.aryan.reader.shared.LibraryFeatureState
 import com.aryan.reader.shared.applyLibraryFilters as sharedApplyLibraryFilters
 import com.aryan.reader.shared.filterBySearch as sharedFilterBySearch
 import com.aryan.reader.shared.sortBooks as sharedSortBooks
@@ -35,14 +35,14 @@ class LibraryStateProjector(
     fun project(input: LibraryProjectionInput): ReaderScreenState {
         val start = ReaderPerfLog.nowNanos()
         val internalState = input.state
-        val bridgeContext = AndroidSharedStateBridge.prepareLibraryProjection(input, folderPathResolver)
+        val projectionContext = AndroidLibraryProjectionAdapter.prepare(input, folderPathResolver)
         val cacheKey = ProjectionCacheKey(
             recentFilesFromDb = input.recentFilesFromDb,
             dbShelves = input.dbShelves,
             shelfRefs = input.shelfRefs,
             dbTags = input.dbTags,
             tagRefs = input.tagRefs,
-            folderKeys = bridgeContext.folderKeys,
+            folderKeys = projectionContext.folderKeys,
             sortOrder = internalState.sortOrder,
             searchQuery = internalState.searchQuery,
             libraryFilters = internalState.libraryFilters,
@@ -70,19 +70,19 @@ class LibraryStateProjector(
             return result
         }
 
-        val projected = AndroidSharedStateBridge.projectLibrary(bridgeContext)
+        val projected = AndroidLibraryProjectionAdapter.project(projectionContext)
         val cache = CachedProjection(
             key = cacheKey,
             projected = projected,
-            androidBooksById = bridgeContext.androidBooksById,
-            tagEntitiesById = bridgeContext.tagEntitiesById
+            androidBooksById = projectionContext.androidBooksById,
+            tagEntitiesById = projectionContext.tagEntitiesById
         )
         cachedProjection = cache
 
         val elapsed = ReaderPerfLog.elapsedMs(start)
-        if (elapsed >= 16L || bridgeContext.androidBooksById.size >= 500) {
+        if (elapsed >= 16L || projectionContext.androidBooksById.size >= 500) {
             ReaderPerfLog.d(
-                "LibraryProject shared recompute took ${elapsed}ms books=${bridgeContext.androidBooksById.size} " +
+                "LibraryProject shared recompute took ${elapsed}ms books=${projectionContext.androidBooksById.size} " +
                     "visible=${projected.libraryBooks.size} shelves=${projected.shelves.size} " +
                     "tags=${input.dbTags.size} shelfRefs=${input.shelfRefs.size} tagRefs=${input.tagRefs.size}"
             )
@@ -95,7 +95,7 @@ class LibraryStateProjector(
         internalState: ReaderScreenState,
         cache: CachedProjection
     ): ReaderScreenState {
-        return AndroidSharedStateBridge.toAndroidState(
+        return AndroidLibraryProjectionAdapter.restoreAndroidState(
             base = internalState,
             sharedState = cache.projected,
             androidBooksById = cache.androidBooksById,
@@ -109,7 +109,7 @@ class LibraryStateProjector(
         val shelfRefs: List<BookShelfCrossRef>,
         val dbTags: List<TagEntity>,
         val tagRefs: List<BookTagCrossRef>,
-        val folderKeys: List<AndroidSharedFolderProjectionKey>,
+        val folderKeys: List<AndroidFolderProjectionKey>,
         val sortOrder: SortOrder,
         val searchQuery: String,
         val libraryFilters: LibraryFilters,
@@ -128,7 +128,7 @@ class LibraryStateProjector(
 
     private data class CachedProjection(
         val key: ProjectionCacheKey,
-        val projected: SharedReaderScreenState,
+        val projected: LibraryFeatureState,
         val androidBooksById: Map<String, RecentFileItem>,
         val tagEntitiesById: Map<String, TagEntity>
     )

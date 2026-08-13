@@ -2,7 +2,7 @@ package com.aryan.reader.paginatedreader
 
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.buildAnnotatedString
-import com.aryan.reader.SearchResult
+import com.aryan.reader.shared.SearchResult
 import org.junit.Assert.assertEquals
 import org.junit.Test
 

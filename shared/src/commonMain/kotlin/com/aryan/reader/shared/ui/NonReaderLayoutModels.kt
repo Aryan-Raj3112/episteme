@@ -8,9 +8,15 @@ import com.aryan.reader.shared.ReaderPlatform
 import com.aryan.reader.shared.SharedFeaturePolicy
 import com.aryan.reader.shared.SharedFileCapabilities
 import com.aryan.reader.shared.SharedReaderScreenState
+import com.aryan.reader.shared.Shelf
 import com.aryan.reader.shared.ShelfType
+import com.aryan.reader.shared.SortOrder
+import com.aryan.reader.shared.SyncedFolder
 import com.aryan.reader.shared.isOpdsStream
+import com.aryan.reader.shared.applyLibraryFilters
+import com.aryan.reader.shared.filterBySearch
 import com.aryan.reader.shared.progressPercentValue
+import com.aryan.reader.shared.sortBooks
 import com.aryan.reader.shared.toHomeScreenModel
 
 enum class SharedAppToolAction {
@@ -28,6 +34,154 @@ enum class SharedAppToolAction {
     ABOUT,
     TABS_TOGGLE
 }
+
+internal enum class SharedMobileBookTapIntent {
+    OPEN,
+    TOGGLE_SELECTION,
+}
+
+internal fun mobileBookTapIntent(selectedBookIds: Set<String>): SharedMobileBookTapIntent =
+    if (selectedBookIds.isEmpty()) SharedMobileBookTapIntent.OPEN else SharedMobileBookTapIntent.TOGGLE_SELECTION
+
+/**
+ * Android long-press only enters/adds to book selection. Repeating a
+ * long-press on an already selected book is intentionally a no-op.
+ */
+internal fun shouldSelectBookOnLongPress(
+    bookId: String,
+    selectedBookIds: Set<String>,
+): Boolean = bookId !in selectedBookIds
+
+internal enum class SharedMobileBookStatusBadge {
+    PINNED,
+    FOLDER,
+    CATALOG,
+}
+
+/** Matches the status indicators Android places on book cards. */
+internal fun mobileBookStatusBadges(
+    book: BookItem,
+    pinned: Boolean,
+): List<SharedMobileBookStatusBadge> = buildList {
+    if (book.sourceFolder != null) add(SharedMobileBookStatusBadge.FOLDER)
+    if (book.isOpdsStream()) add(SharedMobileBookStatusBadge.CATALOG)
+    if (pinned) add(SharedMobileBookStatusBadge.PINNED)
+}
+
+internal enum class SharedMobileLibraryBooksState {
+    CONTENT,
+    SEARCH_NO_RESULTS,
+    EMPTY_LIBRARY,
+}
+
+/** Android reserves its import empty state for a blank search query. */
+internal fun mobileLibraryBooksState(
+    visibleBookCount: Int,
+    searchQuery: String,
+): SharedMobileLibraryBooksState = when {
+    visibleBookCount > 0 -> SharedMobileLibraryBooksState.CONTENT
+    searchQuery.isNotBlank() -> SharedMobileLibraryBooksState.SEARCH_NO_RESULTS
+    else -> SharedMobileLibraryBooksState.EMPTY_LIBRARY
+}
+
+/**
+ * Native iOS folder scans identify books by bookmark name, while the folder
+ * configuration retains a stable URI-like identifier. Accept legacy URI
+ * selections and normalize them to the identity stored on iOS books.
+ */
+internal fun LibraryFilters.withIosFolderFilterIdentities(
+    folders: List<SyncedFolder>,
+): LibraryFilters {
+    if (sourceFolders.isEmpty()) return this
+    val namesByUri = folders.associate { it.uriString to it.name }
+    return copy(sourceFolders = sourceFolders.mapTo(linkedSetOf()) { namesByUri[it] ?: it })
+}
+
+internal fun LibraryFilters.toggleIosFolderFilter(
+    folder: SyncedFolder,
+): LibraryFilters {
+    val aliases = setOf(folder.uriString, folder.name)
+    val selected = sourceFolders.any { it in aliases }
+    return copy(
+        sourceFolders = if (selected) {
+            sourceFolders - aliases
+        } else {
+            (sourceFolders - aliases) + folder.name
+        }
+    )
+}
+
+/** Clears either persisted representation of an iOS folder filter when that folder is removed. */
+internal fun LibraryFilters.withoutIosFolderFilter(folder: SyncedFolder): LibraryFilters {
+    val aliases = setOf(folder.uriString, folder.name)
+    return copy(sourceFolders = sourceFolders - aliases)
+}
+
+/** Android-style source presentation without exposing an iOS app-container path. */
+internal fun mobileBookInfoDisplayLocation(
+    book: BookItem,
+    opdsLabel: String,
+    inAppLabel: String,
+): String = when {
+    book.isOpdsStream() -> opdsLabel
+    book.sourceFolder.isNullOrBlank() -> inAppLabel
+    else -> "${book.sourceFolder.orEmpty().trimEnd('/', '\\')}/${book.displayName}"
+}
+
+/** Rebuilds iOS Library results from raw books using Android's projection order. */
+internal fun SharedReaderScreenState.visibleIosLibraryBooks(): List<BookItem> {
+    val effectiveFilters = libraryFilters.withIosFolderFilterIdentities(syncedFolders)
+    val sorted = sortBooks(
+        applyLibraryFilters(
+            filterBySearch(rawLibraryBooks, searchQuery),
+            effectiveFilters,
+        ),
+        sortOrder,
+    )
+    if (pinnedLibraryBookIds.isEmpty()) return sorted
+    return sorted.withIndex()
+        .sortedWith(
+            compareByDescending<IndexedValue<BookItem>> { it.value.id in pinnedLibraryBookIds }
+                .thenBy { it.index }
+        )
+        .map { it.value }
+}
+
+/** Android's shelves landing page contains manual shelves and root folders only. */
+internal fun topLevelMobileShelves(shelves: List<Shelf>): List<Shelf> = shelves.filter { shelf ->
+    shelf.type != ShelfType.TAG && shelf.parentShelfId == null
+}
+
+internal enum class SharedMobileShelfTapIntent {
+    OPEN,
+    TOGGLE_SELECTION,
+}
+
+/**
+ * Android keeps shelf taps inside contextual mode once any shelf is selected.
+ * This also prevents non-selectable shelves from unexpectedly opening while a
+ * manual-shelf selection is active.
+ */
+internal fun mobileShelfTapIntent(selectedShelfIds: Set<String>): SharedMobileShelfTapIntent =
+    if (selectedShelfIds.isEmpty()) SharedMobileShelfTapIntent.OPEN else SharedMobileShelfTapIntent.TOGGLE_SELECTION
+
+/**
+ * Android long-press only enters/adds to shelf selection. Repeating a
+ * long-press on an already selected shelf is intentionally a no-op.
+ */
+internal fun shouldSelectShelfOnLongPress(
+    shelfId: String,
+    selectedShelfIds: Set<String>,
+): Boolean = shelfId !in selectedShelfIds
+
+/**
+ * Android treats the source chips as alternate views of one pending add
+ * operation. Selections therefore remain pending when the user switches
+ * between Unshelved and All books.
+ */
+internal fun mobileAddBooksSelectionAfterSourceChange(
+    selectedBookIds: Set<String>,
+): Set<String> = selectedBookIds
 
 enum class SharedAppMoreGroup {
     LIBRARY,
@@ -159,6 +313,14 @@ data class NonReaderHomeLayoutModel(
     val isEmpty: Boolean,
     val isLibraryEmpty: Boolean
 )
+
+internal fun SharedReaderScreenState.mobileRecentBooks(): List<BookItem> {
+    val sorted = sortBooks(rawLibraryBooks.filter { it.isRecent }, SortOrder.RECENT)
+    val pinned = sorted.filter { it.id in pinnedHomeBookIds }
+    val unpinned = sorted.filterNot { it.id in pinnedHomeBookIds }
+    return (pinned + unpinned)
+        .take(if (recentFilesLimit > 0) recentFilesLimit else Int.MAX_VALUE)
+}
 
 fun SharedReaderScreenState.toNonReaderHomeLayoutModel(): NonReaderHomeLayoutModel {
     val model = toHomeScreenModel()
@@ -384,3 +546,50 @@ private fun LibraryFilters.activeFilterCount(): Int {
         tagIds.size +
         if (readStatus == ReadStatusFilter.ALL) 0 else 1
 }
+enum class MobileUnifiedLibraryFilter {
+    ALL,
+    READING,
+    FINISHED,
+    UNREAD,
+}
+
+enum class MobileUnifiedLibrarySection(val persistedValue: Int) {
+    HOME(0),
+    SHELVES(1),
+    FOLDERS(2),
+    CATALOGS(3),
+    AUDIOBOOKS(4);
+
+    companion object {
+        fun fromPersisted(value: Int): MobileUnifiedLibrarySection =
+            entries.firstOrNull { it.persistedValue == value } ?: HOME
+    }
+}
+
+internal fun mobileUnifiedLibraryBooks(
+    books: List<BookItem>,
+    filter: MobileUnifiedLibraryFilter,
+    query: String,
+): List<BookItem> {
+    val normalizedQuery = query.trim()
+    return books.filter { book ->
+        val progress = book.progressPercentage ?: 0f
+        val matchesFilter = when (filter) {
+            MobileUnifiedLibraryFilter.ALL -> true
+            MobileUnifiedLibraryFilter.READING -> progress in 0.01f..<100f
+            MobileUnifiedLibraryFilter.FINISHED -> progress >= 100f
+            MobileUnifiedLibraryFilter.UNREAD -> progress <= 0f
+        }
+        matchesFilter && (
+            normalizedQuery.isBlank() ||
+                listOf(book.displayName, book.title, book.author).any {
+                    it?.contains(normalizedQuery, ignoreCase = true) == true
+                }
+            )
+    }
+}
+
+internal fun mobileUnifiedContinueReadingBook(books: List<BookItem>): BookItem? =
+    books.filter { (it.progressPercentage ?: 0f) in 0.01f..<100f }
+        .maxByOrNull { maxOf(it.readingPositionModifiedTimestamp, it.timestamp) }
+        ?: books.maxByOrNull { it.timestamp }

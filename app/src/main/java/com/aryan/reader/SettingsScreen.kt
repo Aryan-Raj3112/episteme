@@ -54,6 +54,10 @@ import com.aryan.reader.pdf.loadPdfPageNumberOverlayVisible
 import com.aryan.reader.shared.BuiltInPdfReaderThemes
 import com.aryan.reader.shared.CustomFontItem
 import com.aryan.reader.shared.SharedSettingsAction
+import com.aryan.reader.shared.MobileSettingsMutation
+import com.aryan.reader.shared.MobileSettingsMutationState
+import com.aryan.reader.shared.MobileStrictFileFilterEffect
+import com.aryan.reader.shared.planMobileSettingsMutation
 import com.aryan.reader.shared.SharedSettingsDestination
 import com.aryan.reader.shared.parentDestination
 import com.aryan.reader.shared.toReaderSettingsFontFamily
@@ -187,22 +191,38 @@ fun SettingsScreen(
             contentPadding = padding,
             modifier = Modifier.fillMaxSize(),
             onAction = { action ->
+                val portableMutation = planMobileSettingsMutation(
+                    action = action,
+                    state = MobileSettingsMutationState(
+                        tabsEnabled = uiState.isTabsEnabled,
+                        strictFileFilterEnabled = uiState.useStrictFileFilter,
+                        pdfFileNameAsDisplayName = uiState.usePdfFileNameAsDisplayName,
+                        folderSyncEnabled = uiState.isFolderSyncEnabled,
+                        hideReaderAi = hideReaderAi,
+                    ),
+                )
+                when (portableMutation) {
+                    is MobileSettingsMutation.SetTabsEnabled ->
+                        viewModel.setTabsEnabled(portableMutation.enabled)
+                    is MobileSettingsMutation.ChangeStrictFileFilter -> when (portableMutation.effect) {
+                        MobileStrictFileFilterEffect.DISABLE -> viewModel.setStrictFileFilter(false)
+                        MobileStrictFileFilterEffect.CONFIRM_ENABLE -> showStrictFilterDialog = true
+                    }
+                    is MobileSettingsMutation.SetPdfFileNameAsDisplayName ->
+                        viewModel.setUsePdfFileNameAsDisplayName(portableMutation.enabled)
+                    is MobileSettingsMutation.SetFolderSyncEnabled ->
+                        viewModel.setFolderSyncEnabled(portableMutation.enabled)
+                    is MobileSettingsMutation.SetHideReaderAi -> {
+                        saveHideReaderAiFeatures(context, portableMutation.hidden)
+                        hideReaderAi = portableMutation.hidden
+                    }
+                    null -> Unit
+                }
                 when (action) {
                     SharedSettingsAction.APP_THEME -> showAppThemePanel = true
                     SharedSettingsAction.LANGUAGE -> showLanguageDialog = true
-                    SharedSettingsAction.TABS_TOGGLE -> viewModel.setTabsEnabled(!uiState.isTabsEnabled)
                     SharedSettingsAction.RECENT_LIMIT -> showRecentLimitDialog = true
-                    SharedSettingsAction.STRICT_FILE_FILTER -> {
-                        if (uiState.useStrictFileFilter) {
-                            viewModel.setStrictFileFilter(false)
-                        } else {
-                            showStrictFilterDialog = true
-                        }
-                    }
                     SharedSettingsAction.EXTERNAL_FILE_BEHAVIOR -> showBehaviorDialog = true
-                    SharedSettingsAction.PDF_FILENAME_DISPLAY_NAME -> {
-                        viewModel.setUsePdfFileNameAsDisplayName(!uiState.usePdfFileNameAsDisplayName)
-                    }
                     SharedSettingsAction.SCREEN_CAPTURE_PROTECTION -> {
                         val next = !uiState.isScreenCaptureProtectionEnabled
                         viewModel.setScreenCaptureProtectionEnabled(next)
@@ -213,7 +233,7 @@ fun SettingsScreen(
                         }
                         viewModel.showBanner(context.getString(messageRes))
                     }
-                    SharedSettingsAction.CUSTOM_FONTS -> navController.navigateIfReady(AppDestinations.FONTS_SCREEN_ROUTE)
+                    SharedSettingsAction.CUSTOM_FONTS -> navController.navigateIfReady(com.aryan.reader.shared.ui.SharedMobileAppDestination.FONTS)
                     SharedSettingsAction.SIGN_IN -> {
                         scope.launch {
                             context.findActivity()?.let { activity -> viewModel.signIn(activity) }
@@ -227,14 +247,9 @@ fun SettingsScreen(
                             showUpgradeDialog = true
                         }
                     }
-                    SharedSettingsAction.FOLDER_SYNC -> viewModel.setFolderSyncEnabled(!uiState.isFolderSyncEnabled)
                     SharedSettingsAction.DEVICE_MANAGEMENT -> viewModel.showDeviceManagementForDebug()
-                    SharedSettingsAction.AI_SETTINGS -> navController.navigateIfReady(AppDestinations.AI_SETTINGS_SCREEN_ROUTE)
-                    SharedSettingsAction.HIDE_READER_AI -> {
-                        val nextHidden = !hideReaderAi
-                        saveHideReaderAiFeatures(context, nextHidden)
-                        hideReaderAi = nextHidden
-                    }
+                    SharedSettingsAction.AI_SETTINGS -> navController.navigateIfReady(com.aryan.reader.shared.ui.SharedMobileAppDestination.AI_SETTINGS)
+                    SharedSettingsAction.HIDE_READER_AI -> Unit
                     SharedSettingsAction.TTS_SETTINGS -> showTtsSettingsSheet = true
                     SharedSettingsAction.CLEAR_BOOK_CACHE -> showClearBookCacheDialog = true
                     SharedSettingsAction.CLEAR_REFLOW_CACHE -> showClearReflowCacheDialog = true
@@ -243,14 +258,18 @@ fun SettingsScreen(
                     SharedSettingsAction.TEST_SPEECH_BUBBLE_DETECTION -> viewModel.testSpeechBubbleDetection(context)
                     SharedSettingsAction.EXPORT_LOGS -> viewModel.exportLogsToFile(context)
                     SharedSettingsAction.DEBUG_ACTIONS -> viewModel.showBanner(context.getString(R.string.debug_actions_existing_menus))
-                    SharedSettingsAction.HELP_FEEDBACK -> navController.navigateIfReady(AppDestinations.FEEDBACK_SCREEN_ROUTE)
-                    SharedSettingsAction.SUPPORT -> navController.navigateIfReady(AppDestinations.SUPPORT_PROJECT_SCREEN_ROUTE)
+                    SharedSettingsAction.HELP_FEEDBACK -> navController.navigateIfReady(com.aryan.reader.shared.ui.SharedMobileAppDestination.FEEDBACK)
+                    SharedSettingsAction.SUPPORT -> navController.navigateIfReady(com.aryan.reader.shared.ui.SharedMobileAppDestination.SUPPORT_PROJECT)
                     SharedSettingsAction.ABOUT -> showAboutDialog = true
                     SharedSettingsAction.PDF_READER_DEFAULTS -> viewModel.showBanner(context.getString(R.string.pdf_specific_settings_existing_reader))
                     SharedSettingsAction.TEXT_READER_DEFAULTS,
                     SharedSettingsAction.READER_TOOLBAR,
                     SharedSettingsAction.TTS_REPLACEMENTS,
-                    SharedSettingsAction.LOCAL_OVERRIDE_NOTE -> Unit
+                    SharedSettingsAction.LOCAL_OVERRIDE_NOTE,
+                    SharedSettingsAction.TABS_TOGGLE,
+                    SharedSettingsAction.STRICT_FILE_FILTER,
+                    SharedSettingsAction.PDF_FILENAME_DISPLAY_NAME,
+                    SharedSettingsAction.FOLDER_SYNC -> Unit
                 }
             }
         )
@@ -355,7 +374,7 @@ fun SettingsScreen(
         UpgradeDialog(
             onConfirm = {
                 showUpgradeDialog = false
-                navController.navigateIfReady(AppDestinations.PRO_SCREEN_ROUTE)
+                navController.navigateIfReady(com.aryan.reader.shared.ui.SharedMobileAppDestination.PRO)
             },
             onDismiss = { showUpgradeDialog = false }
         )
@@ -425,6 +444,8 @@ private fun loadAndroidEpubReaderDefaultSettings(
     val verticalMargin = (48f * format.verticalMargin).roundToInt().coerceIn(0, 160)
     val base = ReaderSettings(
         fontSize = (18f * format.fontSize).roundToInt().coerceIn(12, 42),
+        fontWeight = format.fontWeight,
+        letterSpacing = format.letterSpacing,
         lineSpacing = (1.45f * format.lineHeight).coerceIn(1.0f, 2.8f),
         margin = max(horizontalMargin, verticalMargin),
         readingMode = renderMode.toSharedReaderReadingMode(),
@@ -473,7 +494,9 @@ private fun saveAndroidEpubReaderDefaultSettings(
         verticalMargin = (settings.resolvedVerticalMargin / 48f).coerceIn(0f, 3.4f),
         fontFamily = settings.toAndroidReaderFont(),
         customFontPath = settings.customFontPath,
-        textAlign = settings.textAlign.toAndroidTextAlign()
+        textAlign = settings.textAlign.toAndroidTextAlign(),
+        fontWeight = settings.fontWeight,
+        letterSpacing = settings.letterSpacing
     )
     saveSystemUiMode(context, settings.systemUiMode)
     savePageInfoMode(context, settings.pageInfoMode)
@@ -529,8 +552,9 @@ private fun SharedReaderTextAlign.toAndroidTextAlign(): AndroidReaderTextAlign {
     return when (this) {
         SharedReaderTextAlign.JUSTIFY -> AndroidReaderTextAlign.JUSTIFY
         SharedReaderTextAlign.RIGHT -> AndroidReaderTextAlign.RIGHT
-        SharedReaderTextAlign.CENTER,
-        SharedReaderTextAlign.START -> AndroidReaderTextAlign.LEFT
+        SharedReaderTextAlign.LEFT -> AndroidReaderTextAlign.LEFT
+        SharedReaderTextAlign.START -> AndroidReaderTextAlign.DEFAULT
+        SharedReaderTextAlign.CENTER -> AndroidReaderTextAlign.LEFT
     }
 }
 

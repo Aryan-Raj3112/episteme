@@ -36,7 +36,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
-import com.aryan.reader.SearchResult
+import com.aryan.reader.shared.SearchResult
 import com.aryan.reader.applyBookReplacementsToHtmlDocument
 import com.aryan.reader.epub.EpubChapter
 import com.aryan.reader.epub.contentFilePath
@@ -60,6 +60,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -82,6 +83,8 @@ import java.net.URI
 import java.net.URLDecoder
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.PriorityBlockingQueue
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.zip.CRC32
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.coroutineContext
 
@@ -142,6 +145,7 @@ private data class PageNavigationEntry(
 
 private const val TxtFormatTraceTag = "TxtFormatTrace"
 private const val NATIVE_VERTICAL_LOAD_LOG_TAG = "NativeVerticalLoad"
+private val DurablePaginationCacheWriteScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
 private fun String.txtFormatTracePreview(maxLength: Int = 220): String {
     return replace("\\", "\\\\")
@@ -219,6 +223,7 @@ class BookPaginator(
     private var pageCountsAreAccurate by mutableStateOf(false)
     private val finalizedChapterCounts = ConcurrentHashMap.newKeySet<Int>()
     private var currentConfigHash: Int = 0
+    private val enqueueDeferredBookProcessing = AtomicBoolean(false)
     @Volatile
     private var chapterStartSnapshot: IntArray = IntArray(0)
 
@@ -285,33 +290,21 @@ class BookPaginator(
                 currentConfigHash = generateConfigurationHash()
                 coroutineContext.ensureActive()
 
-                // 2. Book processing check (Keep existing logic)
+                // 2. Validate the book-level processing generation. Target page-cache lookup is
+                // intentionally performed before deciding whether semantic background work is
+                // needed, so a ready rendered cache wins the startup race.
                 val bookRecord = bookCacheDao.getProcessedBook(bookId)
-                var shouldEnqueueBookProcessing = false
+                var bookProcessingGenerationWasReset = false
                 if (bookRecord == null || bookRecord.processingVersion < LATEST_PROCESSING_VERSION) {
                     Timber.i("Book cache is new or stale. Creating initial record.")
                     bookCacheDao.deleteEntireBookCache(bookId)
                     val initialBook = ProcessedBook(bookId, LATEST_PROCESSING_VERSION, 0) // Temp 0
                     bookCacheDao.insertProcessedBook(initialBook)
-                    shouldEnqueueBookProcessing = true
-                } else if (bookCacheDao.getProcessedChapter(
-                        bookId,
-                        initialChapterToPaginate.coerceIn(0, chapters.lastIndex),
-                        currentConfigHash
-                    ) == null
-                ) {
-                    Timber.i("Semantic chapter cache is missing for current style config. Enqueuing config-aware processing.")
-                    shouldEnqueueBookProcessing = true
+                    bookProcessingGenerationWasReset = true
                 }
 
                 coroutineContext.ensureActive()
                 if (isDisposed()) return@launch
-
-                if (shouldEnqueueBookProcessing) {
-                    enqueueBookProcessingWork()
-                } else {
-                    BookProcessingWorker.cancelForBook(context, bookId)
-                }
 
                 // 3. Seed counts with fast estimates, then overlay measured cached counts.
                 coroutineContext.ensureActive()
@@ -321,21 +314,24 @@ class BookPaginator(
                 coroutineContext.ensureActive()
                 if (isDisposed()) return@launch
                 applyCachedMeasuredPageCounts()
-                // 4. Start Worker
+                val startChapter = initialChapterToPaginate.coerceIn(0, chapters.lastIndex)
+                val cachedStartPages = loadCachedPagesForChapter(chapters[startChapter], startChapter)
+                val hasTargetSemanticCache = if (cachedStartPages == null) {
+                    bookCacheDao.getProcessedChapter(bookId, startChapter, currentConfigHash) != null
+                } else {
+                    true
+                }
+                val shouldEnqueueBookProcessing = bookProcessingGenerationWasReset || !hasTargetSemanticCache
+                enqueueDeferredBookProcessing.set(shouldEnqueueBookProcessing)
+                if (!shouldEnqueueBookProcessing) {
+                    BookProcessingWorker.cancelForBook(context, bookId)
+                }
+
+                // 4. Start the on-demand paginator after the target cache has already been applied.
                 paginationWorker = startPaginationWorker()
 
-                // 5. Prioritize CURRENT chapter only
-                // We no longer blindly queue neighbors immediately to keep startup fast.
-                // We only queue the requested chapter.
-                val startChapter = initialChapterToPaginate.coerceIn(0, chapters.lastIndex)
-
-                // Trigger actual pagination for the current chapter to replace the estimate with reality
-                triggerPagination(startChapter, PRIORITY_HIGHEST)
-
-                // Queue neighbors with lower priority
-                for (offset in 1..2) {
-                    if (startChapter + offset < chapters.size) triggerPagination(startChapter + offset, PRIORITY_LOW)
-                    if (startChapter - offset >= 0) triggerPagination(startChapter - offset, PRIORITY_LOW)
+                if (cachedStartPages == null) {
+                    triggerPagination(startChapter, PRIORITY_HIGHEST)
                 }
 
                 isLoading = false
@@ -373,28 +369,33 @@ class BookPaginator(
     }
 
     private fun generateConfigurationHash(): Int {
-        val configString = buildString {
-            append("w:${constraints.maxWidth}")
-            append("-h:${constraints.maxHeight}")
-            append("-fs:${textStyle.fontSize.value}")
-            append("-lh:${textStyle.lineHeight.value}")
-            append("-ff:${textStyle.fontFamily}")
-            append("-style:${textStyle.hashCode()}")
-            append("-density:${density.density}")
-            append("-fontScale:${density.fontScale}")
-            append("-ta:$userTextAlign")
-            append("-pg:$paragraphGapMultiplier")
-            append("-img:$imageSizeMultiplier")
-            append("-vm:$verticalMarginMultiplier")
-            append("-book-replacements:${bookReplacementPreferences.signatureForFile(bookReplacementFileId)}")
-            append("-proc:$LATEST_PROCESSING_VERSION")
-            append("-pageCache:$LATEST_PAGE_CACHE_VERSION")
-            append("-ua:${userAgentStylesheet.hashCode()}")
-            append("-css:${bookCss.hashCode()}")
-            append("-fonts:${expandedAllFontFaces.hashCode()}")
-        }
-        val hash = configString.hashCode()
-        return hash
+        return sharedPaginationLayoutConfigHash(
+            listOf(
+                "width" to constraints.maxWidth,
+                "height" to constraints.maxHeight,
+                "fontSize" to textStyle.fontSize.value,
+                "lineHeight" to textStyle.lineHeight.value,
+                "fontFamily" to textStyle.fontFamily,
+                "fontWeight" to (textStyle.fontWeight?.weight ?: 400),
+                "fontStyle" to textStyle.fontStyle,
+                "letterSpacing" to textStyle.letterSpacing.value,
+                "density" to density.density,
+                "fontScale" to density.fontScale,
+                "textAlign" to userTextAlign,
+                "paragraphGap" to paragraphGapMultiplier,
+                "imageScale" to imageSizeMultiplier,
+                "verticalMargin" to verticalMarginMultiplier,
+                "bookReplacements" to bookReplacementPreferences.signatureForFile(bookReplacementFileId),
+                "processingVersion" to LATEST_PROCESSING_VERSION,
+                "pageCacheVersion" to LATEST_PAGE_CACHE_VERSION,
+                "userAgentCss" to userAgentStylesheet.hashCode(),
+                "bookCss" to bookCss.hashCode(),
+                "fonts" to sharedPaginationFontSignature(expandedAllFontFaces) { source ->
+                    val file = java.io.File(source).let { if (it.isAbsolute) it else java.io.File(extractionBasePath, source) }
+                    if (file.isFile) "${file.length()}:${file.crc32OrZero()}" else "missing"
+                },
+            )
+        )
     }
 
     private suspend fun applyCachedMeasuredPageCounts() {
@@ -488,25 +489,32 @@ class BookPaginator(
 
     private fun chapterContentVersion(chapter: EpubChapter): Int {
         val backingFile = java.io.File(extractionBasePath, chapter.contentFilePath())
-        return buildString {
-            append(chapter.absPath)
-            append('|')
-            append(chapter.htmlFilePath)
-            append('|')
-            append(chapter.htmlContent.length)
-            append('|')
-            append(chapter.htmlContent.hashCode())
-            append('|')
-            append(chapter.plainTextCharacterCount())
-            append('|')
-            append(chapter.plainTextContent.hashCode())
-            append('|')
-            if (backingFile.exists()) {
-                append(backingFile.length())
-                append('|')
-                append(backingFile.lastModified())
+        val backingContentCrc = backingFile.crc32OrZero()
+        return sharedPaginationChapterContentVersion(
+            chapterPath = chapter.absPath,
+            htmlFilePath = chapter.htmlFilePath,
+            htmlContent = chapter.htmlContent,
+            plainTextCharacterCount = chapter.plainTextCharacterCount(),
+            plainTextHash = chapter.plainTextContent.hashCode(),
+            backingFileLength = backingFile.takeIf { it.isFile }?.length() ?: 0L,
+            backingFileCrc32 = backingContentCrc,
+        )
+    }
+
+    private fun java.io.File.crc32OrZero(): Long {
+        if (!isFile) return 0L
+        return runCatching {
+            val crc = CRC32()
+            inputStream().buffered().use { input ->
+                val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read < 0) break
+                    crc.update(buffer, 0, read)
+                }
             }
-        }.hashCode()
+            crc.value
+        }.getOrDefault(0L)
     }
 
     private suspend fun loadCachedPagesForChapter(chapter: EpubChapter, chapterIndex: Int): List<Page>? {
@@ -554,10 +562,10 @@ class BookPaginator(
         }
     }
 
-    private fun savePageCacheAsync(chapter: EpubChapter, chapterIndex: Int, pages: List<Page>) {
-        if (isDisposed()) return
-        paginatorScope.launch(Dispatchers.IO) {
-            if (isDisposed()) return@launch
+    private suspend fun savePageCache(chapter: EpubChapter, chapterIndex: Int, pages: List<Page>) {
+        // Once accurate pages exist, finish their atomic persistence even if the reader closes.
+        // Otherwise screen-scope cancellation makes a warm cache depend on close timing.
+        withContext(NonCancellable + Dispatchers.IO) {
             try {
                 Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
                     "page_cache_save chapter=$chapterIndex configHash=$currentConfigHash " +
@@ -687,7 +695,7 @@ class BookPaginator(
             if (chapterPageCounts[chapterIndex] != actualPageCount) {
                 updatePageCounts(chapterIndex, actualPageCount)
             } else if (finalizedChapterCounts.add(chapterIndex)) {
-                paginatorScope.launch(Dispatchers.IO) { updateAndSaveConfigurationCache() }
+                DurablePaginationCacheWriteScope.launch { updateAndSaveConfigurationCache() }
             }
             generation++
         }
@@ -750,10 +758,7 @@ class BookPaginator(
         return resolveStableChapterStartPage(
             chapterIndex = chapterIndex,
             chapterCount = chapters.size,
-            pageCountsAreAccurate = pageCountsAreAccurate,
-            chapterStartPage = { chapterStartPageIndices[it] },
-            isChapterFinalized = { it in finalizedChapterCounts },
-            ensureChapterPaginated = { ensureChapterPaginated(it) != null }
+            chapterStartPage = { chapterStartPageIndices[it] }
         )
     }
 
@@ -1097,7 +1102,7 @@ class BookPaginator(
                 "preview=${firstTxtSemantic?.text.orEmpty().txtFormatTracePreview()}"
         )
 
-        if (!isDisposed()) paginatorScope.launch(Dispatchers.IO) {
+        withContext(NonCancellable + Dispatchers.IO) {
             try {
                 val protoBytes = proto.encodeToByteArray(semanticBlocks)
                 val newCacheEntry = ProcessedChapter(bookId, chapterIndex, protoBytes, chapterPageCounts[chapterIndex] ?: 0, currentConfigHash)
@@ -1214,7 +1219,7 @@ class BookPaginator(
                 "page_count_noop chapter=$chapterIndex count=$actualPageCount currentUserChapter=${currentUserChapterIndex.value}"
             )
             if (!pageCountsAreAccurate && finalizedChapterCounts.add(chapterIndex)) {
-                paginatorScope.launch(Dispatchers.IO) { updateAndSaveConfigurationCache() }
+                DurablePaginationCacheWriteScope.launch { updateAndSaveConfigurationCache() }
             }
             return
         }
@@ -1246,7 +1251,7 @@ class BookPaginator(
 
         if (!pageCountsAreAccurate) {
             if (finalizedChapterCounts.add(chapterIndex)) {
-                paginatorScope.launch(Dispatchers.IO) {
+                DurablePaginationCacheWriteScope.launch {
                     updateAndSaveConfigurationCache()
                 }
             }
@@ -1422,10 +1427,13 @@ class BookPaginator(
         )
 
         applyPageRuntimeIndexes(chapterIndex, pages)
-        savePageCacheAsync(chapter, chapterIndex, pages)
+        savePageCache(chapter, chapterIndex, pages)
 
         updatePageCountsOnMain(chapterIndex, pages.size)
         pageCache.put(chapterIndex, pages)
+        if (enqueueDeferredBookProcessing.compareAndSet(true, false)) {
+            enqueueBookProcessingWork()
+        }
         Timber.d("paginateChapter: Chapter $chapterIndex pages stored in L1 pageCache.")
         return pages
     }

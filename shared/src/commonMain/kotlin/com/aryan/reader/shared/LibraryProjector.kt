@@ -1,5 +1,7 @@
 package com.aryan.reader.shared
 
+import androidx.compose.ui.input.pointer.PointerEvent
+
 class LibraryProjector {
     fun home(state: LibraryState): HomeScreenModel {
         val recentBooks = sortBooks(state.books.filter { it.isRecent }, SortOrder.RECENT)
@@ -60,8 +62,8 @@ class LibraryProjector {
     fun sortBooks(books: List<BookItem>, sortOrder: SortOrder): List<BookItem> {
         return when (sortOrder) {
             SortOrder.RECENT -> books.sortedByDescending { it.timestamp }
-            SortOrder.DATE_ADDED_NEWEST -> books.sortedByDescending { it.timestamp }
-            SortOrder.DATE_ADDED_OLDEST -> books.sortedBy { it.timestamp }
+            SortOrder.DATE_ADDED_NEWEST -> books.sortedByDescending { it.dateAddedTimestamp }
+            SortOrder.DATE_ADDED_OLDEST -> books.sortedBy { it.dateAddedTimestamp }
             SortOrder.TITLE_ASC -> books.sortedBy { it.title?.lowercase() ?: it.displayName.lowercase() }
             SortOrder.AUTHOR_ASC -> books.sortedWith(compareBy(nullsLast()) { it.author?.lowercase() })
             SortOrder.PERCENT_ASC -> books.sortedBy { it.progressPercentage ?: 0f }
@@ -163,6 +165,8 @@ private fun ImportedFile.toImportedBookFile(): ImportedBookFile {
 }
 
 expect fun currentTimestamp(): Long
+
+expect fun sharedPdfStylusBarrelPressed(event: PointerEvent): Boolean
 
 fun String.toFileType(): FileType {
     return SharedFileCapabilities.fileTypeForName(this)

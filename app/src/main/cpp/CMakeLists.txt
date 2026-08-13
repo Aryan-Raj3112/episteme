@@ -6,9 +6,9 @@ cmake_minimum_required(VERSION 3.22.1)
 project("reader-native")
 
 add_compile_options(
-    "-ffile-prefix-map=${CMAKE_SOURCE_DIR}=."
-    "-ffile-prefix-map=${CMAKE_BINARY_DIR}=."
-    -fno-ident
+        "-ffile-prefix-map=${CMAKE_SOURCE_DIR}=."
+        "-ffile-prefix-map=${CMAKE_BINARY_DIR}=."
+        -fno-ident
 )
 
 if(DEFINED CMAKE_ANDROID_NDK)
@@ -19,9 +19,9 @@ if(DEFINED CMAKE_SYSROOT)
 endif()
 
 add_compile_options(
-    -Wno-builtin-macro-redefined
-    -D__DATE__="\"1970-01-01\""
-    -D__TIME__="\"00:00:00\""
+        -Wno-builtin-macro-redefined
+        -D__DATE__="\"1970-01-01\""
+        -D__TIME__="\"00:00:00\""
 )
 
 set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,-z,max-page-size=16384")
@@ -36,22 +36,22 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 function(strip_reproducibility_metadata target_name)
     add_custom_command(TARGET ${target_name} POST_BUILD
-        COMMAND ${CMAKE_OBJCOPY}
+            COMMAND ${CMAKE_OBJCOPY}
             --remove-section=.comment
             --remove-section=.note.gnu.build-id
             $<TARGET_FILE:${target_name}>
-        VERBATIM
+            VERBATIM
     )
 endfunction()
 
 function(add_reproducibility_metadata_strip_target strip_target_name target_name)
     add_custom_target(${strip_target_name} ALL
-        COMMAND ${CMAKE_OBJCOPY}
+            COMMAND ${CMAKE_OBJCOPY}
             --remove-section=.comment
             --remove-section=.note.gnu.build-id
             $<TARGET_FILE:${target_name}>
-        DEPENDS ${target_name}
-        VERBATIM
+            DEPENDS ${target_name}
+            VERBATIM
     )
 endfunction()
 

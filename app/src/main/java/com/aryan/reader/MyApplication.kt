@@ -25,11 +25,20 @@ import coil.ImageLoader
 import coil.ImageLoaderFactory
 import coil.decode.SvgDecoder
 import com.aryan.reader.paginatedreader.SvgStringFetcher
+import com.aryan.reader.shared.ui.SharedAndroidMobileEpubTtsFactory
+import com.aryan.reader.shared.ui.installSharedAndroidMobileEpubTtsFactory
+import com.aryan.reader.shared.ui.installSharedAndroidPdfOcrAdapter
+import com.aryan.reader.tts.SharedMobileEpubTtsAdapter
+import com.aryan.reader.pdf.SharedMobilePdfOcrAdapter
 import timber.log.Timber // Add this
 
 class MyApplication : Application(), ImageLoaderFactory {
     override fun onCreate() {
         super.onCreate()
+        installSharedAndroidMobileEpubTtsFactory(
+            SharedAndroidMobileEpubTtsFactory(::SharedMobileEpubTtsAdapter)
+        )
+        installSharedAndroidPdfOcrAdapter(SharedMobilePdfOcrAdapter)
         if (BuildConfig.DEBUG) {
             Timber.plant(Timber.DebugTree())
             WebView.setWebContentsDebuggingEnabled(true)

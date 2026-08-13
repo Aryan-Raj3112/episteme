@@ -3,6 +3,7 @@ package com.aryan.reader.shared.ui
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.FileType
 import com.aryan.reader.shared.LibraryFilters
+import com.aryan.reader.shared.IN_APP_STORAGE_SOURCE
 import com.aryan.reader.shared.ReadStatusFilter
 import com.aryan.reader.shared.ReaderPlatform
 import com.aryan.reader.shared.SharedFeaturePolicy
@@ -10,14 +11,212 @@ import com.aryan.reader.shared.SharedFileCapabilities
 import com.aryan.reader.shared.SharedReaderScreenState
 import com.aryan.reader.shared.Shelf
 import com.aryan.reader.shared.ShelfType
+import com.aryan.reader.shared.SortOrder
 import com.aryan.reader.shared.SyncedFolder
 import com.aryan.reader.shared.Tag
+import com.aryan.reader.shared.matchesSourceFolders
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class NonReaderLayoutModelsTest {
+
+    @Test
+    fun `unified library filtering matches Android progress and text rules`() {
+        val unread = book(id = "unread", displayName = "Alpha.epub", progress = 0f)
+        val reading = book(id = "reading", displayName = "Beta.pdf", progress = 42f, author = "Ada")
+        val finished = book(id = "finished", displayName = "Gamma.epub", progress = 100f)
+        val books = listOf(unread, reading, finished)
+
+        assertEquals(listOf(reading), mobileUnifiedLibraryBooks(books, MobileUnifiedLibraryFilter.READING, ""))
+        assertEquals(listOf(finished), mobileUnifiedLibraryBooks(books, MobileUnifiedLibraryFilter.FINISHED, ""))
+        assertEquals(listOf(unread), mobileUnifiedLibraryBooks(books, MobileUnifiedLibraryFilter.UNREAD, ""))
+        assertEquals(listOf(reading), mobileUnifiedLibraryBooks(books, MobileUnifiedLibraryFilter.ALL, "ada"))
+    }
+
+    @Test
+    fun `unified continue reading prefers most recently positioned active book`() {
+        val older = book(id = "older", displayName = "Older.epub", progress = 20f, positionModified = 20L)
+        val newer = book(id = "newer", displayName = "Newer.epub", progress = 80f, positionModified = 40L)
+        val finished = book(id = "finished", displayName = "Finished.epub", progress = 100f, positionModified = 80L)
+
+        assertEquals(newer, mobileUnifiedContinueReadingBook(listOf(older, newer, finished)))
+    }
+
+    @Test
+    fun `book taps toggle selection instead of opening while contextual mode is active`() {
+        assertEquals(SharedMobileBookTapIntent.OPEN, mobileBookTapIntent(emptySet()))
+        assertEquals(
+            SharedMobileBookTapIntent.TOGGLE_SELECTION,
+            mobileBookTapIntent(setOf("selected-book")),
+        )
+    }
+
+    @Test
+    fun `book long press adds selection but never removes an existing selection`() {
+        assertTrue(shouldSelectBookOnLongPress("book", emptySet()))
+        assertFalse(shouldSelectBookOnLongPress("book", setOf("book")))
+        assertTrue(shouldSelectBookOnLongPress("other", setOf("book")))
+    }
+
+    @Test
+    fun `mobile book status badges follow Android order and sources`() {
+        assertEquals(
+            listOf(
+                SharedMobileBookStatusBadge.FOLDER,
+                SharedMobileBookStatusBadge.CATALOG,
+                SharedMobileBookStatusBadge.PINNED,
+            ),
+            mobileBookStatusBadges(
+                book("catalog", sourceFolder = "Downloads", path = "opds-pse://catalog/book"),
+                pinned = true,
+            ),
+        )
+        assertTrue(mobileBookStatusBadges(book("plain"), pinned = false).isEmpty())
+    }
+
+    @Test
+    fun `mobile library distinguishes empty search results from an empty library`() {
+        assertEquals(
+            SharedMobileLibraryBooksState.CONTENT,
+            mobileLibraryBooksState(visibleBookCount = 1, searchQuery = "missing"),
+        )
+        assertEquals(
+            SharedMobileLibraryBooksState.SEARCH_NO_RESULTS,
+            mobileLibraryBooksState(visibleBookCount = 0, searchQuery = "  missing  "),
+        )
+        assertEquals(
+            SharedMobileLibraryBooksState.EMPTY_LIBRARY,
+            mobileLibraryBooksState(visibleBookCount = 0, searchQuery = "  "),
+        )
+    }
+
+    @Test
+    fun `ios folder filters normalize legacy uri selections to scanned book identities`() {
+        val folder = SyncedFolder("ios-local-folder://downloads", "Downloads", lastScanTime = 0L)
+
+        assertEquals(
+            setOf("Downloads", IN_APP_STORAGE_SOURCE),
+            LibraryFilters(sourceFolders = setOf(folder.uriString, IN_APP_STORAGE_SOURCE))
+                .withIosFolderFilterIdentities(listOf(folder))
+                .sourceFolders,
+        )
+        val selected = LibraryFilters().toggleIosFolderFilter(folder)
+        assertEquals(setOf("Downloads"), selected.sourceFolders)
+        assertTrue(book("folder-book", sourceFolder = "Downloads").matchesSourceFolders(selected.sourceFolders))
+        assertTrue(selected.toggleIosFolderFilter(folder).sourceFolders.isEmpty())
+    }
+
+    @Test
+    fun `removing an ios folder clears both uri and name filter identities`() {
+        val folder = SyncedFolder("ios-local-folder://downloads", "Downloads", lastScanTime = 0L)
+
+        assertEquals(
+            setOf(IN_APP_STORAGE_SOURCE, "Other"),
+            LibraryFilters(
+                sourceFolders = setOf(
+                    folder.uriString,
+                    folder.name,
+                    IN_APP_STORAGE_SOURCE,
+                    "Other",
+                )
+            ).withoutIosFolderFilter(folder).sourceFolders,
+        )
+    }
+
+    @Test
+    fun `mobile book info presents sources without exposing container paths`() {
+        assertEquals(
+            "Source: OPDS Stream",
+            mobileBookInfoDisplayLocation(
+                book("stream", path = "opds-pse://catalog/book"),
+                opdsLabel = "Source: OPDS Stream",
+                inAppLabel = "In-App Storage",
+            ),
+        )
+        assertEquals(
+            "In-App Storage",
+            mobileBookInfoDisplayLocation(
+                book("import", path = "/private/container/Application Support/Imports/book.epub"),
+                opdsLabel = "Source: OPDS Stream",
+                inAppLabel = "In-App Storage",
+            ),
+        )
+        assertEquals(
+            "Downloads/folder-book.epub",
+            mobileBookInfoDisplayLocation(
+                book("folder-book", sourceFolder = "Downloads", path = "/private/container/book.epub"),
+                opdsLabel = "Source: OPDS Stream",
+                inAppLabel = "In-App Storage",
+            ),
+        )
+    }
+
+    @Test
+    fun `ios library projection filters raw folder books and keeps pinned books first like Android`() {
+        val folder = SyncedFolder("ios-local-folder://downloads", "Downloads", lastScanTime = 0L)
+        val alpha = book("alpha", title = "Alpha", sourceFolder = "Downloads")
+        val beta = book("beta", title = "Beta", sourceFolder = "Downloads")
+        val unrelated = book("other", title = "Other")
+        val state = SharedReaderScreenState(
+            rawLibraryBooks = listOf(beta, unrelated, alpha),
+            libraryFilters = LibraryFilters(sourceFolders = setOf(folder.uriString)),
+            syncedFolders = listOf(folder),
+            sortOrder = SortOrder.TITLE_ASC,
+            pinnedLibraryBookIds = setOf("beta"),
+        )
+
+        assertEquals(listOf("beta", "alpha"), state.visibleIosLibraryBooks().map { it.id })
+        assertTrue(
+            state.copy(searchQuery = "Downloads").visibleIosLibraryBooks().isEmpty(),
+            "Android searches book metadata and tags, not the source-folder label",
+        )
+    }
+
+    @Test
+    fun `mobile shelves landing matches Android root shelf projection`() {
+        val manual = shelf("manual", ShelfType.MANUAL)
+        val rootFolder = shelf("root", ShelfType.FOLDER)
+        val nestedFolder = shelf("nested", ShelfType.FOLDER, parentShelfId = rootFolder.id)
+        val tag = shelf("tag", ShelfType.TAG)
+
+        assertEquals(
+            listOf("manual", "root"),
+            topLevelMobileShelves(listOf(manual, rootFolder, nestedFolder, tag)).map { it.id },
+        )
+    }
+
+    @Test
+    fun `shelf taps toggle selection instead of opening while contextual mode is active`() {
+        assertEquals(SharedMobileShelfTapIntent.OPEN, mobileShelfTapIntent(emptySet()))
+        assertEquals(
+            SharedMobileShelfTapIntent.TOGGLE_SELECTION,
+            mobileShelfTapIntent(setOf("selected-shelf")),
+        )
+    }
+
+    private fun shelf(id: String, type: ShelfType, parentShelfId: String? = null) = Shelf(
+        id = id,
+        name = id,
+        type = type,
+        books = emptyList(),
+        parentShelfId = parentShelfId,
+    )
+
+    @Test
+    fun `shelf long press adds selection but never removes an existing selection`() {
+        assertTrue(shouldSelectShelfOnLongPress("shelf", emptySet()))
+        assertFalse(shouldSelectShelfOnLongPress("shelf", setOf("shelf")))
+        assertTrue(shouldSelectShelfOnLongPress("other", setOf("shelf")))
+    }
+
+    @Test
+    fun `add books source changes preserve the pending selection`() {
+        val selection = linkedSetOf("unshelved-book", "all-books-result")
+
+        assertEquals(selection, mobileAddBooksSelectionAfterSourceChange(selection))
+    }
 
     @Test
     fun `android library keeps the simple top level organization tabs`() {
@@ -162,10 +361,10 @@ class NonReaderLayoutModelsTest {
 
     @Test
     fun `home layout separates active tab pinned and recent books`() {
-        val activeTab = book("tab", title = "Open Tab", progress = 12f)
-        val inProgress = book("continue", title = "Continue", progress = 40f)
-        val pinned = book("pinned", title = "Pinned")
-        val recent = book("recent", title = "Recent")
+        val activeTab = book("tab", title = "Open Tab", progress = 12f).copy(timestamp = 40L)
+        val inProgress = book("continue", title = "Continue", progress = 40f).copy(timestamp = 30L)
+        val pinned = book("pinned", title = "Pinned").copy(timestamp = 20L)
+        val recent = book("recent", title = "Recent").copy(timestamp = 10L)
 
         val layout = SharedReaderScreenState(
             rawLibraryBooks = listOf(activeTab, inProgress, pinned, recent),
@@ -182,6 +381,22 @@ class NonReaderLayoutModelsTest {
         assertEquals(listOf(activeTab.id), layout.activeTabs.map { it.id })
         assertEquals(listOf(pinned.id), layout.pinnedBooks.map { it.id })
         assertEquals(listOf(inProgress.id, recent.id), layout.recentBooks.map { it.id })
+        assertEquals(
+            listOf(pinned.id, inProgress.id, recent.id),
+            SharedReaderScreenState(
+                rawLibraryBooks = listOf(activeTab.copy(isRecent = false), inProgress, pinned, recent),
+                pinnedHomeBookIds = setOf(pinned.id),
+            ).mobileRecentBooks().map { it.id },
+        )
+        assertEquals(
+            listOf(pinned.id, inProgress.id),
+            SharedReaderScreenState(
+                rawLibraryBooks = listOf(activeTab.copy(isRecent = false), inProgress, pinned, recent),
+                recentBooks = listOf(inProgress, pinned, recent),
+                pinnedHomeBookIds = setOf(pinned.id),
+                recentFilesLimit = 2,
+            ).mobileRecentBooks().map { it.id },
+        )
         assertEquals(listOf(recent.id), layout.selectedBooks.map { it.id })
         assertTrue(layout.isContextualModeActive)
         assertFalse(layout.isEmpty)
@@ -546,8 +761,11 @@ class NonReaderLayoutModelsTest {
     private fun book(
         id: String,
         title: String = id,
+        displayName: String = "$id.epub",
+        author: String? = null,
         type: FileType = FileType.EPUB,
         progress: Float? = null,
+        positionModified: Long = 0L,
         tags: List<Tag> = emptyList(),
         sourceFolder: String? = null,
         path: String? = "/books/$id.epub",
@@ -556,11 +774,13 @@ class NonReaderLayoutModelsTest {
         id = id,
         path = path,
         type = type,
-        displayName = "$id.epub",
+        displayName = displayName,
         timestamp = 1L,
         coverImagePath = coverImagePath,
         title = title,
+        author = author,
         progressPercentage = progress,
+        readingPositionModifiedTimestamp = positionModified,
         tags = tags,
         sourceFolder = sourceFolder
     )

@@ -1,5 +1,6 @@
 import com.android.build.api.dsl.KotlinMultiplatformAndroidLibraryTarget
 import org.gradle.api.plugins.ExtensionAware
+import org.gradle.api.tasks.Exec
 
 plugins {
     alias(libs.plugins.kotlin.multiplatform)
@@ -64,6 +65,46 @@ kotlin {
             "ios-device-arm64"
         }
         val pdfiumRoot = rootProject.layout.projectDirectory.dir("third_party/pdfium/$pdfiumVariant")
+        val mobiSdk = if (name.contains("Simulator", ignoreCase = true)) "iphonesimulator" else "iphoneos"
+        val mobiRoot = layout.buildDirectory.dir("native/libmobi/$name")
+        val libarchiveRoot = layout.buildDirectory.dir("native/libarchive/$name")
+        val buildMobiTask = tasks.register<Exec>("buildMobi${name.replaceFirstChar(Char::uppercaseChar)}") {
+            val outputDirectory = mobiRoot.get().asFile
+            inputs.files(
+                rootProject.fileTree("app/src/main/cpp/libmobi/src") {
+                    include("*.c", "*.h")
+                },
+                project.file("src/nativeInterop/cinterop/mobi_reader_bridge.c"),
+                project.file("src/nativeInterop/cinterop/mobi_reader_bridge.h")
+            )
+            inputs.file(rootProject.file("scripts/build_ios_libmobi.sh"))
+            outputs.file(outputDirectory.resolve("libmobi.dylib"))
+            commandLine(
+                "sh",
+                rootProject.file("scripts/build_ios_libmobi.sh").absolutePath,
+                mobiSdk,
+                "arm64",
+                outputDirectory.absolutePath
+            )
+            environment("DEVELOPER_DIR", "/Applications/Xcode.app/Contents/Developer")
+        }
+        val buildLibarchiveTask = tasks.register<Exec>("buildLibarchive${name.replaceFirstChar(Char::uppercaseChar)}") {
+            val outputDirectory = libarchiveRoot.get().asFile
+            inputs.files(
+                rootProject.fileTree("third_party/libarchive"),
+                rootProject.fileTree("third_party/xz")
+            )
+            inputs.file(rootProject.file("scripts/build_ios_libarchive.sh"))
+            outputs.file(outputDirectory.resolve("libreaderarchive.a"))
+            commandLine(
+                "sh",
+                rootProject.file("scripts/build_ios_libarchive.sh").absolutePath,
+                mobiSdk,
+                "arm64",
+                outputDirectory.absolutePath
+            )
+            environment("DEVELOPER_DIR", "/Applications/Xcode.app/Contents/Developer")
+        }
 
         compilations.getByName("main") {
             cinterops {
@@ -71,13 +112,39 @@ kotlin {
                     defFile(project.file("src/nativeInterop/cinterop/pdfium.def"))
                     compilerOpts("-I${pdfiumRoot.dir("include").asFile.absolutePath}")
                 }
+                val mobi by creating {
+                    defFile(project.file("src/nativeInterop/cinterop/mobi.def"))
+                    compilerOpts(
+                        "-I${rootProject.file("app/src/main/cpp/libmobi/src").absolutePath}",
+                        "-I${project.file("src/nativeInterop/cinterop").absolutePath}"
+                    )
+                    tasks.named(interopProcessingTaskName).configure {
+                        dependsOn(buildMobiTask)
+                    }
+                }
+                val libarchive by creating {
+                    defFile(project.file("src/nativeInterop/cinterop/libarchive.def"))
+                    compilerOpts("-I${rootProject.file("third_party/libarchive/libarchive").absolutePath}")
+                    extraOpts(
+                        "-libraryPath", libarchiveRoot.get().asFile.absolutePath,
+                        "-staticLibrary", "libreaderarchive.a"
+                    )
+                    tasks.named(interopProcessingTaskName).configure {
+                        dependsOn(buildLibarchiveTask)
+                    }
+                }
             }
         }
 
         binaries.framework {
             baseName = "ReaderShared"
             binaryOption("bundleId", "com.aryan.reader.shared")
-            linkerOpts("-L${pdfiumRoot.dir("lib").asFile.absolutePath}", "-lpdfium")
+            linkerOpts(
+                "-L${pdfiumRoot.dir("lib").asFile.absolutePath}",
+                "-lpdfium",
+                "-L${mobiRoot.get().asFile.absolutePath}",
+                "-lmobi"
+            )
             isStatic = true
         }
     }
@@ -85,10 +152,15 @@ kotlin {
     sourceSets {
         val commonMain by getting
         val desktopMain by getting
-        // The phone-first Compose layer is introduced to iOS first. Android
-        // remains the reference app until feature parity is established.
+        // Shared phone/tablet UI. Android remains the behavioral and visual
+        // reference while ownership moves here incrementally.
         val mobileMain by creating {
             dependsOn(commonMain)
+            dependencies {
+                implementation(compose.ui)
+                implementation(compose.foundation)
+                implementation(compose.material3)
+            }
         }
         val readerJvmMain by creating {
             dependsOn(commonMain)
@@ -97,7 +169,15 @@ kotlin {
             }
         }
         if (!desktopOnlyBuild) {
-            val androidMain by getting
+            val androidMain by getting {
+                dependencies {
+                    implementation(libs.androidx.core.ktx)
+                    implementation("io.coil-kt:coil:2.7.0")
+                    implementation("io.coil-kt:coil-svg:2.6.0")
+                    implementation("io.legere:pdfiumandroid:2.0.0")
+                }
+            }
+            androidMain.dependsOn(mobileMain)
             androidMain.dependsOn(readerJvmMain)
             val iosMain by creating {
                 dependsOn(mobileMain)
@@ -123,6 +203,36 @@ kotlin {
         }
         commonTest.dependencies {
             implementation(kotlin("test"))
+            implementation(libs.kotlinx.coroutines.test)
+        }
+        val desktopTest by getting {
+            dependencies {
+                runtimeOnly(compose.desktop.currentOs)
+            }
         }
     }
+}
+
+val verifyPortableSharedSources by tasks.registering {
+    group = "verification"
+    description = "Rejects platform APIs from portable shared source sets."
+    val portableSources = files(
+        fileTree("src/commonMain/kotlin") { include("**/*.kt") },
+        fileTree("src/mobileMain/kotlin") { include("**/*.kt") },
+    )
+    inputs.files(portableSources)
+    doLast {
+        val forbiddenImport = Regex("(?m)^import\\s+(android|java|javax)\\.")
+        val violations = inputs.files.files
+            .filter { forbiddenImport.containsMatchIn(it.readText()) }
+            .map { it.path }
+            .sorted()
+        check(violations.isEmpty()) {
+            "Portable shared sources must use expect/actual or platform ports; forbidden imports: ${violations.joinToString()}"
+        }
+    }
+}
+
+tasks.matching { it.name == "check" }.configureEach {
+    dependsOn(verifyPortableSharedSources)
 }

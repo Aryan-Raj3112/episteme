@@ -6,6 +6,12 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		A11CE1012FFE500000000001 /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = A11CE1052FFE500000000001 /* FirebaseAuth */; };
+		A11CE1022FFE500000000001 /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = A11CE1062FFE500000000001 /* GoogleSignIn */; };
+		A11CE1072FFE500000000001 /* FirebaseFirestore in Frameworks */ = {isa = PBXBuildFile; productRef = A11CE1082FFE500000000001 /* FirebaseFirestore */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
 		9284F59D2FFE342F0088D5CA /* Reader.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Reader.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -23,6 +29,9 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A11CE1012FFE500000000001 /* FirebaseAuth in Frameworks */,
+				A11CE1022FFE500000000001 /* GoogleSignIn in Frameworks */,
+				A11CE1072FFE500000000001 /* FirebaseFirestore in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -57,6 +66,7 @@
 				9284F59A2FFE342F0088D5CA /* Frameworks */,
 				9284F59B2FFE342F0088D5CA /* Resources */,
 				A11CE0022FFE500000000002 /* Embed PDFium */,
+				A11CE0032FFE500000000003 /* Embed libmobi */,
 			);
 			buildRules = (
 			);
@@ -67,6 +77,9 @@
 			);
 			name = Reader;
 			packageProductDependencies = (
+				A11CE1052FFE500000000001 /* FirebaseAuth */,
+				A11CE1062FFE500000000001 /* GoogleSignIn */,
+				A11CE1082FFE500000000001 /* FirebaseFirestore */,
 			);
 			productName = Reader;
 			productReference = 9284F59D2FFE342F0088D5CA /* Reader.app */;
@@ -96,6 +109,10 @@
 			);
 			mainGroup = 9284F5942FFE342F0088D5CA;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				A11CE1032FFE500000000001 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
+				A11CE1042FFE500000000001 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 9284F59E2FFE342F0088D5CA /* Products */;
 			projectDirPath = "";
@@ -154,6 +171,25 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "set -eu\nPDFIUM_VARIANT=\"ios-device-arm64\"\nif [ \"${PLATFORM_NAME:-}\" = \"iphonesimulator\" ]; then\n  PDFIUM_VARIANT=\"ios-simulator-arm64\"\nfi\nPDFIUM_SOURCE=\"$SRCROOT/../third_party/pdfium/$PDFIUM_VARIANT/lib/libpdfium.dylib\"\nPDFIUM_DEST_DIR=\"$TARGET_BUILD_DIR/$FRAMEWORKS_FOLDER_PATH\"\nPDFIUM_DEST=\"$PDFIUM_DEST_DIR/libpdfium.dylib\"\nmkdir -p \"$PDFIUM_DEST_DIR\"\ncp \"$PDFIUM_SOURCE\" \"$PDFIUM_DEST\"\nchmod 755 \"$PDFIUM_DEST\"\ninstall_name_tool -id \"@rpath/libpdfium.dylib\" \"$PDFIUM_DEST\"\nif [ \"${CODE_SIGNING_ALLOWED:-NO}\" != \"NO\" ]; then\n  codesign --force --sign \"${EXPANDED_CODE_SIGN_IDENTITY:--}\" --timestamp=none \"$PDFIUM_DEST\"\nfi\n";
+		};
+		A11CE0032FFE500000000003 /* Embed libmobi */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Embed libmobi";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -eu\nMOBI_TARGET=\"iosArm64\"\nif [ \"${PLATFORM_NAME:-}\" = \"iphonesimulator\" ]; then\n  MOBI_TARGET=\"iosSimulatorArm64\"\nfi\nMOBI_SOURCE=\"$SRCROOT/../shared/build/native/libmobi/$MOBI_TARGET/libmobi.dylib\"\nMOBI_DEST_DIR=\"$TARGET_BUILD_DIR/$FRAMEWORKS_FOLDER_PATH\"\nMOBI_DEST=\"$MOBI_DEST_DIR/libmobi.dylib\"\nmkdir -p \"$MOBI_DEST_DIR\"\ncp \"$MOBI_SOURCE\" \"$MOBI_DEST\"\nchmod 755 \"$MOBI_DEST\"\nif [ \"${CODE_SIGNING_ALLOWED:-NO}\" != \"NO\" ]; then\n  codesign --force --sign \"${EXPANDED_CODE_SIGN_IDENTITY:--}\" --timestamp=none \"$MOBI_DEST\"\nfi\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -305,14 +341,22 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				"LIBRARY_SEARCH_PATHS[sdk=iphoneos*]" = "$(SRCROOT)/../third_party/pdfium/ios-device-arm64/lib";
-				"LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]" = "$(SRCROOT)/../third_party/pdfium/ios-simulator-arm64/lib";
+				"LIBRARY_SEARCH_PATHS[sdk=iphoneos*]" = (
+					"$(SRCROOT)/../third_party/pdfium/ios-device-arm64/lib",
+					"$(SRCROOT)/../shared/build/native/libmobi/iosArm64",
+				);
+				"LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]" = (
+					"$(SRCROOT)/../third_party/pdfium/ios-simulator-arm64/lib",
+					"$(SRCROOT)/../shared/build/native/libmobi/iosSimulatorArm64",
+				);
 				MARKETING_VERSION = 1.0;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-framework",
 					ReaderShared,
 					"-lpdfium",
+					"-lmobi",
+					"-lz",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.aryan.Reader;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -344,14 +388,22 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				"LIBRARY_SEARCH_PATHS[sdk=iphoneos*]" = "$(SRCROOT)/../third_party/pdfium/ios-device-arm64/lib";
-				"LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]" = "$(SRCROOT)/../third_party/pdfium/ios-simulator-arm64/lib";
+				"LIBRARY_SEARCH_PATHS[sdk=iphoneos*]" = (
+					"$(SRCROOT)/../third_party/pdfium/ios-device-arm64/lib",
+					"$(SRCROOT)/../shared/build/native/libmobi/iosArm64",
+				);
+				"LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]" = (
+					"$(SRCROOT)/../third_party/pdfium/ios-simulator-arm64/lib",
+					"$(SRCROOT)/../shared/build/native/libmobi/iosSimulatorArm64",
+				);
 				MARKETING_VERSION = 1.0;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-framework",
 					ReaderShared,
 					"-lpdfium",
+					"-lmobi",
+					"-lz",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.aryan.Reader;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -387,6 +439,43 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		A11CE1032FFE500000000001 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/firebase/firebase-ios-sdk";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 12.14.0;
+			};
+		};
+		A11CE1042FFE500000000001 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/google/GoogleSignIn-iOS";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 9.0.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		A11CE1052FFE500000000001 /* FirebaseAuth */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A11CE1032FFE500000000001 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAuth;
+		};
+		A11CE1062FFE500000000001 /* GoogleSignIn */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A11CE1042FFE500000000001 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */;
+			productName = GoogleSignIn;
+		};
+		A11CE1082FFE500000000001 /* FirebaseFirestore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A11CE1032FFE500000000001 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseFirestore;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 9284F5952FFE342F0088D5CA /* Project object */;
 }

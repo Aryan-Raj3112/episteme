@@ -20,7 +20,7 @@
 package com.aryan.reader.paginatedreader
 
 import androidx.compose.runtime.Stable
-import com.aryan.reader.SearchResult
+import com.aryan.reader.shared.SearchResult
 import kotlinx.coroutines.flow.Flow
 
 @Stable

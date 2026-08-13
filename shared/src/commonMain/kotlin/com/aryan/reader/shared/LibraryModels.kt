@@ -5,7 +5,7 @@ import com.aryan.reader.shared.reader.ReaderBookmark
 import com.aryan.reader.shared.reader.ReaderSettings
 
 enum class FileType {
-    PDF, EPUB, MOBI, MD, TXT, HTML, FB2, CBZ, CBR, CB7, CBT, DOCX, ODT, FODT, PPTX, UNKNOWN
+    PDF, EPUB, MOBI, MD, TXT, HTML, FB2, CBZ, CBR, CB7, CBT, DOCX, ODT, FODT, PPTX, AUDIOBOOK, UNKNOWN
 }
 
 val PDF_VIEWER_FILE_TYPES: Set<FileType>
@@ -50,6 +50,11 @@ enum class ReadStatusFilter {
 }
 
 const val IN_APP_STORAGE_SOURCE = "IN_APP_STORAGE"
+const val MAX_SYNCED_FOLDER_COUNT = 10
+
+fun canAddSyncedFolder(folders: Collection<SyncedFolder>): Boolean =
+    folders.mapTo(mutableSetOf()) { it.uriString.trim() }
+        .count { it.isNotBlank() } < MAX_SYNCED_FOLDER_COUNT
 
 enum class ShelfType {
     MANUAL,
@@ -79,6 +84,7 @@ data class BookItem(
     val type: FileType,
     val displayName: String,
     val timestamp: Long,
+    val dateAddedTimestamp: Long = timestamp,
     val coverImagePath: String? = null,
     val title: String? = null,
     val author: String? = null,
@@ -90,8 +96,11 @@ data class BookItem(
     val originalDescription: String? = null,
     val progressPercentage: Float? = null,
     val isRecent: Boolean = true,
+    val isAvailable: Boolean = true,
     val fileSize: Long = 0L,
     val fileContentModifiedTimestamp: Long = 0L,
+    /** Metadata/annotation modification clock, distinct from recency and reading position. */
+    val metadataModifiedTimestamp: Long = 0L,
     val sourceFolder: String? = null,
     val folderTextMetadataParsed: Boolean = false,
     val seriesName: String? = null,
@@ -100,6 +109,16 @@ data class BookItem(
     val lastPageIndex: Int? = null,
     val readerPosition: ReaderLocator? = null,
     val readerSettings: ReaderSettings? = null,
+    val readerFormatIsLocal: Boolean = false,
+    val readerLocalFormatSettings: ReaderSettings? = null,
+    val readerAutoScrollIsLocal: Boolean = false,
+    val readerAutoScrollLocalSpeed: Float? = null,
+    val readerAutoScrollLocalMinSpeed: Float? = null,
+    val readerAutoScrollLocalMaxSpeed: Float? = null,
+    val pdfAutoScrollIsLocal: Boolean = false,
+    val pdfAutoScrollLocalSpeed: Float? = null,
+    val pdfAutoScrollLocalMinSpeed: Float? = null,
+    val pdfAutoScrollLocalMaxSpeed: Float? = null,
     val readerBookmarks: List<ReaderBookmark> = emptyList(),
     val readerHighlights: List<UserHighlight> = emptyList(),
     val pdfReaderViewport: SharedPdfReaderViewport? = null,
@@ -117,7 +136,9 @@ data class Shelf(
     val parentShelfId: String? = null,
     val childShelfIds: List<String> = emptyList(),
     val depth: Int = 0,
-    val sortKey: String = name.lowercase()
+    val sortKey: String = name.lowercase(),
+    val smartRulesJson: String? = null,
+    val directBookAddedAt: Map<String, Long> = emptyMap(),
 ) {
     val bookCount: Int get() = books.size
     val topBook: BookItem? get() = books.maxByOrNull { it.timestamp }
@@ -144,6 +165,8 @@ data class LibraryState(
     val sortOrder: SortOrder = SortOrder.RECENT,
     val filters: LibraryFilters = LibraryFilters(),
     val selectedBookIds: Set<String> = emptySet(),
+    val selectedShelfIds: Set<String> = emptySet(),
+    val libraryPage: Int = 0,
     val recentLimit: Int = 12,
     val message: String? = null,
     val messageText: SharedText? = null

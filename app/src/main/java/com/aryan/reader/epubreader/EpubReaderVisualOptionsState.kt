@@ -1,27 +1,16 @@
 package com.aryan.reader.epubreader
 
 import com.aryan.reader.shared.PageInfoMode
+import com.aryan.reader.shared.shouldShowEpubPageInfoBar as shouldShowSharedEpubPageInfoBar
+import com.aryan.reader.shared.shouldReserveEpubPageInfoBarSpace as shouldReserveSharedEpubPageInfoBarSpace
 
 internal fun shouldShowEpubPageInfoBar(
     pageInfoMode: PageInfoMode,
     showReaderChrome: Boolean
-): Boolean {
-    return when (pageInfoMode) {
-        PageInfoMode.DEFAULT -> true
-        PageInfoMode.SYNC -> showReaderChrome
-        PageInfoMode.HIDDEN -> false
-    }
-}
+): Boolean = shouldShowSharedEpubPageInfoBar(pageInfoMode, showReaderChrome)
 
 internal fun shouldReserveEpubPageInfoBarSpace(
     pageInfoMode: PageInfoMode,
     showReaderChrome: Boolean,
     isNativeVerticalMode: Boolean
-): Boolean {
-    if (isNativeVerticalMode) return false
-    if (pageInfoMode == PageInfoMode.SYNC) return false
-    return shouldShowEpubPageInfoBar(
-        pageInfoMode = pageInfoMode,
-        showReaderChrome = showReaderChrome
-    )
-}
+): Boolean = shouldReserveSharedEpubPageInfoBarSpace(pageInfoMode, showReaderChrome, isNativeVerticalMode)

@@ -26,9 +26,6 @@ import androidx.annotation.OptIn
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Icon
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.windowsizeclass.WindowSizeClass
 import androidx.compose.runtime.Composable
@@ -44,18 +41,8 @@ import androidx.navigation.NavHostController
 import com.aryan.reader.shared.SharedLibraryEditor
 import com.aryan.reader.shared.Shelf as SharedShelf
 import com.aryan.reader.shared.ui.SharedAddToShelfDialog
-
-sealed class BottomBarScreen(val route: String, val stringResId: Int, val iconResId: Int) {
-    object Home : BottomBarScreen("home", R.string.nav_home, R.drawable.home)
-    object Library : BottomBarScreen("library", R.string.nav_library, R.drawable.library_books)
-    object UnifiedLibrary : BottomBarScreen("unified_library", R.string.nav_unified_library, R.drawable.library_books)
-}
-
-private val bottomBarItems = listOf(
-    BottomBarScreen.Home,
-    BottomBarScreen.Library,
-    BottomBarScreen.UnifiedLibrary,
-)
+import com.aryan.reader.shared.ui.SharedMobileMainDestination
+import com.aryan.reader.shared.ui.SharedMobileMainScaffold
 
 @OptIn(UnstableApi::class)
 @Composable
@@ -78,48 +65,41 @@ fun MainScreen(
         if (viewingShelfName != null) {
             ShelfScreen(viewModel = viewModel)
         } else {
-            val selectedPage = uiState.mainScreenStartPage.coerceIn(0, bottomBarItems.lastIndex)
+            val selectedDestination = SharedMobileMainDestination.fromPageIndex(uiState.mainScreenStartPage)
 
-            Scaffold(
-                contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0, 0, 0, 0),
-                bottomBar = {
-                    NavigationBar {
-                        bottomBarItems.forEachIndexed { index, screen ->
-                            NavigationBarItem(
-                                icon = { Icon(painterResource(id = screen.iconResId), contentDescription = stringResource(screen.stringResId)) },
-                                label = { Text(stringResource(screen.stringResId)) },
-                                selected = selectedPage == index,
-                                onClick = {
-                                    ReaderPerfLog.d("MainPager click page=$index route=${screen.route}")
-                                    if (selectedPage != index) {
-                                        val animStart = ReaderPerfLog.nowNanos()
-                                        viewModel.setMainScreenPage(index)
-                                        ReaderPerfLog.d(
-                                            "MainPager settled page=$index elapsed=${ReaderPerfLog.elapsedMs(animStart)}ms"
-                                        )
-                                    }
-                                }
-                            )
-                        }
+            SharedMobileMainScaffold(
+                selectedDestination = selectedDestination,
+                onDestinationSelected = { destination ->
+                    val index = destination.ordinal
+                    ReaderPerfLog.d("MainPager click page=$index route=${destination.androidRoute}")
+                    if (selectedDestination != destination) {
+                        val animStart = ReaderPerfLog.nowNanos()
+                        viewModel.setMainScreenPage(index)
+                        ReaderPerfLog.d("MainPager settled page=$index elapsed=${ReaderPerfLog.elapsedMs(animStart)}ms")
                     }
-                }
+                },
+                destinationIcon = { destination ->
+                    val label = stringResource(destination.androidLabelRes)
+                    Icon(painterResource(destination.androidIconRes), contentDescription = label)
+                },
+                destinationLabel = { destination -> Text(stringResource(destination.androidLabelRes)) }
             ) { innerPadding ->
                 androidx.compose.foundation.layout.Box(
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(innerPadding)
                 ) {
-                    when (selectedPage) {
-                        0 -> HomeScreen(
+                    when (selectedDestination) {
+                        SharedMobileMainDestination.HOME -> HomeScreen(
                             viewModel = viewModel,
                             windowSizeClass = windowSizeClass,
                             navController = navController
                         )
-                        1 -> LibraryScreen(
+                        SharedMobileMainDestination.LIBRARY -> LibraryScreen(
                             viewModel = viewModel,
                             navController = navController
                         )
-                        2 -> UnifiedLibraryScreen(
+                        SharedMobileMainDestination.UNIFIED_LIBRARY -> UnifiedLibraryScreen(
                             viewModel = viewModel,
                             navController = navController
                         )
@@ -162,6 +142,27 @@ fun MainScreen(
         }
     }
 }
+
+private val SharedMobileMainDestination.androidRoute: String
+    get() = when (this) {
+        SharedMobileMainDestination.HOME -> "home"
+        SharedMobileMainDestination.LIBRARY -> "library"
+        SharedMobileMainDestination.UNIFIED_LIBRARY -> "unified_library"
+    }
+
+private val SharedMobileMainDestination.androidLabelRes: Int
+    get() = when (this) {
+        SharedMobileMainDestination.HOME -> R.string.nav_home
+        SharedMobileMainDestination.LIBRARY -> R.string.nav_library
+        SharedMobileMainDestination.UNIFIED_LIBRARY -> R.string.nav_unified_library
+    }
+
+private val SharedMobileMainDestination.androidIconRes: Int
+    get() = when (this) {
+        SharedMobileMainDestination.HOME -> R.drawable.home
+        SharedMobileMainDestination.LIBRARY,
+        SharedMobileMainDestination.UNIFIED_LIBRARY -> R.drawable.library_books
+    }
 
 private fun Shelf.toSharedShelfForAddDialog(): SharedShelf {
     return SharedShelf(

@@ -4,13 +4,9 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import com.aryan.reader.ReaderFontDiagnosticsTag
 import com.aryan.reader.readerFontDiagnosticSummary
-import com.aryan.reader.shared.detectFontVariant
-import com.aryan.reader.shared.familyFilenameSignature
 import com.aryan.reader.shared.fontWeightCssDescriptor
 import timber.log.Timber
 import java.io.File
-
-private val supportedEpubFontExtensions = setOf("ttf", "otf", "woff", "woff2")
 
 fun expandFontFacesWithSiblings(
     fontFaces: List<FontFaceInfo>,
@@ -22,15 +18,11 @@ fun expandFontFacesWithSiblings(
         "epub.siblings.start inputCount=${fontFaces.size} extractionPath='$extractionPath'"
     )
 
-    val result = fontFaces.toMutableList()
-    val existingKeys = result.mapTo(mutableSetOf()) { it.variantKey() }
     val extractionRoot = File(extractionPath)
-
-    fontFaces.forEach { fontFace ->
-        val sourceFile = fontFace.resolvedFile(extractionRoot).takeIf { it.isFile } ?: return@forEach
-        val sourceSignature = sourceFile.familyFilenameSignature()
-        if (sourceSignature.isBlank()) return@forEach
-        val parent = sourceFile.parentFile ?: return@forEach
+    val result = inferEpubFontFaceSiblings(fontFaces) candidates@{ fontFace ->
+        val sourceFile = fontFace.resolvedFile(extractionRoot).takeIf { it.isFile }
+            ?: return@candidates emptyList()
+        val parent = sourceFile.parentFile ?: return@candidates emptyList()
 
         Timber.tag(ReaderFontDiagnosticsTag).i(
             "epub.siblings.source family='${fontFace.fontFamily}' src='${fontFace.src}' " +
@@ -39,38 +31,9 @@ fun expandFontFacesWithSiblings(
         )
 
         parent.listFiles()
-            ?.asSequence()
-            ?.filter { candidate ->
-                candidate.isFile &&
-                    candidate.extension.lowercase() in supportedEpubFontExtensions &&
-                    candidate.nameWithoutExtension.familyFilenameSignature() == sourceSignature
-            }
-            ?.forEach { candidate ->
-                val variant = candidate.nameWithoutExtension.detectFontVariant()
-                if (variant == null) {
-                    Timber.tag(ReaderFontDiagnosticsTag).w(
-                        "epub.siblings.skipNoVariant file='${candidate.name}' " +
-                            readerFontDiagnosticSummary(candidate.nameWithoutExtension)
-                    )
-                    return@forEach
-                }
-                val src = candidate.toFontFaceSrc(extractionRoot)
-                val inferred = fontFace.copy(
-                    src = src,
-                    fontWeight = variant.weight,
-                    fontStyle = variant.style
-                )
-                if (existingKeys.add(inferred.variantKey())) {
-                    Timber.tag(ReaderFontDiagnosticsTag).i(
-                        "epub.siblings.add family='${fontFace.fontFamily}' src='$src' variant=$variant"
-                    )
-                    result += inferred
-                } else {
-                    Timber.tag(ReaderFontDiagnosticsTag).i(
-                        "epub.siblings.skipDuplicate family='${fontFace.fontFamily}' src='$src' variant=$variant"
-                    )
-                }
-            }
+            ?.filter(File::isFile)
+            ?.map { candidate -> EpubFontSiblingCandidate(candidate.name, candidate.toFontFaceSrc(extractionRoot)) }
+            .orEmpty()
     }
 
     Timber.tag(ReaderFontDiagnosticsTag).i("epub.siblings.done outputCount=${result.size}")
@@ -83,7 +46,7 @@ fun buildEpubFontFaceCss(
 ): String {
     val extractionRoot = File(extractionPath)
     return expandFontFacesWithSiblings(fontFaces, extractionPath)
-        .distinctBy { it.variantKey() }
+        .distinctBy { it.epubVariantKey() }
         .mapNotNull { fontFace ->
             val file = fontFace.resolvedFile(extractionRoot).takeIf { it.isFile } ?: return@mapNotNull null
             val family = fontFace.fontFamily.cssString()
@@ -104,15 +67,6 @@ private fun FontFaceInfo.resolvedFile(extractionRoot: File): File {
     return if (source.isAbsolute) source else File(extractionRoot, src)
 }
 
-private fun FontFaceInfo.variantKey(): String {
-    return listOf(
-        fontFamily.trim().lowercase(),
-        src.replace('\\', '/').lowercase(),
-        fontWeight?.weight ?: FontWeight.Normal.weight,
-        fontStyle ?: FontStyle.Normal
-    ).joinToString(separator = "|")
-}
-
 private fun File.toFontFaceSrc(extractionRoot: File): String {
     val relative = runCatching {
         extractionRoot.toPath().relativize(toPath()).toString()
@@ -121,10 +75,6 @@ private fun File.toFontFaceSrc(extractionRoot: File): String {
         ?.takeIf { !it.startsWith("..") && it.isNotBlank() }
         ?.replace(File.separatorChar, '/')
         ?: absolutePath
-}
-
-private fun File.familyFilenameSignature(): String {
-    return nameWithoutExtension.familyFilenameSignature()
 }
 
 private fun String.cssString(): String = replace("\\", "\\\\").replace("'", "\\'")

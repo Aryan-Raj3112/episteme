@@ -102,7 +102,8 @@ data class SemanticListItem(
     @ProtoNumber(5) override val cfi: String?,
     @ProtoNumber(6) override val startCharOffsetInSource: Int = 0,
     @ProtoNumber(7) val itemMarkerImage: String?,
-    @ProtoNumber(8) override val blockIndex: Int = 0
+    @ProtoNumber(8) override val blockIndex: Int = 0,
+    @ProtoNumber(9) val markerText: String? = null
 ) : SemanticTextBlock
 
 @Serializable

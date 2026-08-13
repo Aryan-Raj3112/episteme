@@ -1,6 +1,7 @@
 package com.aryan.reader.shared
 
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import kotlinx.serialization.SerialName
 
 data class EpubBookmark(
@@ -50,6 +51,37 @@ enum class HighlightStyle(val id: String) {
             return entries.firstOrNull { it.id == id || it.name.equals(id, ignoreCase = true) } ?: BACKGROUND
         }
     }
+}
+
+val DefaultEpubHighlightPaletteArgb: List<Int>
+    get() = listOf(
+        HighlightColor.YELLOW.color.toArgb(),
+        HighlightColor.GREEN.color.toArgb(),
+        HighlightColor.BLUE.color.toArgb(),
+        HighlightColor.RED.color.toArgb()
+    )
+
+fun sanitizeEpubHighlightPalette(palette: List<Int>): List<Int> =
+    palette.takeIf { it.size == 4 } ?: DefaultEpubHighlightPaletteArgb
+
+fun legacyEpubHighlightColorForArgb(argb: Int): HighlightColor =
+    HighlightColor.entries.firstOrNull { it.color.toArgb() == argb } ?: HighlightColor.YELLOW
+
+fun legacyEpubHighlightColorOrNull(argb: Int): HighlightColor? =
+    HighlightColor.entries.firstOrNull { it.color.toArgb() == argb }
+
+fun epubHighlightColorTag(argb: Int): String =
+    legacyEpubHighlightColorOrNull(argb)?.id ?: "custom_${argb.toUInt().toString(16)}"
+
+fun epubHighlightColorFromToken(token: String): Pair<HighlightColor, Int?> {
+    val trimmed = token.trim()
+    val hex = trimmed.removePrefix("#")
+    val parsedArgb = trimmed.toIntOrNull()
+        ?: hex.takeIf { it.length == 6 || it.length == 8 }?.toLongOrNull(16)?.let { value ->
+            if (hex.length == 6) (0xFF000000 or value).toInt() else value.toInt()
+        }
+    if (parsedArgb != null) return legacyEpubHighlightColorForArgb(parsedArgb) to parsedArgb
+    return (HighlightColor.entries.firstOrNull { it.id == trimmed } ?: HighlightColor.YELLOW) to null
 }
 data class ReaderLocator(
     val chapterIndex: Int? = null,

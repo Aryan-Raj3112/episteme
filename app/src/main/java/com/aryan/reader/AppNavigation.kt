@@ -64,22 +64,11 @@ import com.aryan.reader.feedback.FeedbackScreen
 import com.aryan.reader.feedback.SupportProjectScreen
 import com.aryan.reader.pdf.PdfViewerScreen
 import com.aryan.reader.shared.ReaderFeatureSurface
+import com.aryan.reader.shared.ui.SharedMobileAppDestination
 import com.aryan.reader.tts.ReaderTtsMiniBar
 import com.aryan.reader.tts.readerTtsMiniBarBottomPaddingDp
 import com.aryan.reader.tts.shouldShowReaderTtsMiniBar
 import kotlinx.coroutines.delay
-
-object AppDestinations {
-    const val MAIN_ROUTE = "main"
-    const val PDF_VIEWER_ROUTE = "pdf_viewer"
-    const val EPUB_READER_ROUTE = "epub_reader"
-    const val PRO_SCREEN_ROUTE = "pro_screen"
-    const val FEEDBACK_SCREEN_ROUTE = "feedback_screen_route"
-    const val SUPPORT_PROJECT_SCREEN_ROUTE = "support_project_screen_route"
-    const val FONTS_SCREEN_ROUTE = "fonts_screen_route"
-    const val AI_SETTINGS_SCREEN_ROUTE = "ai_settings_screen_route"
-    const val SETTINGS_SCREEN_ROUTE = "settings_screen_route"
-}
 
 fun shouldInterceptAppNavBack(
     currentRoute: String?,
@@ -87,16 +76,15 @@ fun shouldInterceptAppNavBack(
     isCurrentEntryResumed: Boolean
 ): Boolean {
     if (!hasPreviousBackStackEntry) return false
-    val isNonMainBackStackRoute = currentRoute != null && currentRoute != AppDestinations.MAIN_ROUTE
+    val isNonMainBackStackRoute = currentRoute != null &&
+        SharedMobileAppDestination.fromRoute(currentRoute) != SharedMobileAppDestination.MAIN
     if (!isCurrentEntryResumed) return isNonMainBackStackRoute
     return isNonMainBackStackRoute
 }
 
 fun shouldSyncSelectedFileRoute(currentRoute: String?): Boolean {
     return currentRoute == null ||
-        currentRoute == AppDestinations.MAIN_ROUTE ||
-        currentRoute == AppDestinations.PDF_VIEWER_ROUTE ||
-        currentRoute == AppDestinations.EPUB_READER_ROUTE
+        SharedMobileAppDestination.fromRoute(currentRoute)?.participatesInSelectedFileSync == true
 }
 
 private fun NavHostController.isReadyForBackStackChange(): Boolean {
@@ -109,14 +97,14 @@ private suspend fun NavHostController.awaitReadyForBackStackChange() {
     }
 }
 
-private fun NavHostController.navigateSingleTopTo(route: String, popUpToStart: Boolean = false) {
+private fun NavHostController.navigateSingleTopTo(destination: SharedMobileAppDestination, popUpToStart: Boolean = false) {
     if (!isReadyForBackStackChange()) {
-        Timber.d("Skipping navigation to $route because the current entry is not resumed yet.")
+        Timber.d("Skipping navigation to ${destination.route} because the current entry is not resumed yet.")
         return
     }
 
     try {
-        navigate(route) {
+        navigate(destination.route) {
             launchSingleTop = true
             if (popUpToStart) {
                 popUpTo(graph.startDestinationId) {
@@ -125,17 +113,17 @@ private fun NavHostController.navigateSingleTopTo(route: String, popUpToStart: B
             }
         }
     } catch (e: IllegalStateException) {
-        Timber.w(e, "Navigation to $route ignored because the back stack is mid-transition.")
+        Timber.w(e, "Navigation to ${destination.route} ignored because the back stack is mid-transition.")
     }
 }
 
 private fun NavHostController.navigateToMain() {
-    navigateSingleTopTo(AppDestinations.MAIN_ROUTE, popUpToStart = true)
+    navigateSingleTopTo(SharedMobileAppDestination.MAIN, popUpToStart = true)
 }
 
-internal fun NavHostController.navigateIfReady(route: String, popUpToStart: Boolean = false) {
-    if (currentDestination?.route == route) return
-    navigateSingleTopTo(route, popUpToStart = popUpToStart)
+internal fun NavHostController.navigateIfReady(destination: SharedMobileAppDestination, popUpToStart: Boolean = false) {
+    if (currentDestination?.route == destination.route) return
+    navigateSingleTopTo(destination, popUpToStart = popUpToStart)
 }
 
 private fun NavHostController.popBackStackIfReady(): Boolean {
@@ -152,13 +140,13 @@ private fun NavHostController.popBackStackIfReady(): Boolean {
     }
 }
 
-private suspend fun NavHostController.syncRouteTo(route: String) {
+private suspend fun NavHostController.syncRouteTo(destination: SharedMobileAppDestination) {
     awaitReadyForBackStackChange()
-    if (currentDestination?.route != route) {
-        if (route == AppDestinations.MAIN_ROUTE) {
+    if (currentDestination?.route != destination.route) {
+        if (destination == SharedMobileAppDestination.MAIN) {
             navigateToMain()
         } else {
-            navigateSingleTopTo(route)
+            navigateSingleTopTo(destination)
         }
     }
 }
@@ -178,14 +166,14 @@ fun AppNavigation(
     val currentRoute = currentBackStackEntry?.destination?.route
     val ttsController = viewModel.ttsController
     val ttsState by ttsController.ttsState.collectAsStateWithLifecycle()
-    val isOnReaderRoute = currentRoute == AppDestinations.PDF_VIEWER_ROUTE ||
-        currentRoute == AppDestinations.EPUB_READER_ROUTE
+    val currentDestination = SharedMobileAppDestination.fromRoute(currentRoute)
+    val isOnReaderRoute = currentDestination?.isReader == true
     val showTtsMiniBar = shouldShowReaderTtsMiniBar(
         ttsState = ttsState,
         isOnReaderRoute = isOnReaderRoute
     )
     val miniBarBottomPadding = readerTtsMiniBarBottomPaddingDp(
-        isOnMainRoute = currentRoute == AppDestinations.MAIN_ROUTE
+        isOnMainRoute = currentDestination == SharedMobileAppDestination.MAIN
     ).dp
     val shouldInterceptBack = shouldInterceptAppNavBack(
         currentRoute = currentRoute,
@@ -198,22 +186,22 @@ fun AppNavigation(
             when (uiState.selectedFileType?.readerSurfaceOnAndroid()) {
                 ReaderFeatureSurface.PDF_VIEWER -> {
                     if (uiState.selectedPdfUri != null) {
-                        if (currentRoute != AppDestinations.PDF_VIEWER_ROUTE) {
-                            navController.syncRouteTo(AppDestinations.PDF_VIEWER_ROUTE)
+                        if (currentDestination != SharedMobileAppDestination.PDF_VIEWER) {
+                            navController.syncRouteTo(SharedMobileAppDestination.PDF_VIEWER)
                         }
                     }
                 }
                 ReaderFeatureSurface.EPUB_READER,
                 ReaderFeatureSurface.TEXT_READER -> {
                     if (uiState.selectedEpubBook != null) {
-                        if (currentRoute != AppDestinations.EPUB_READER_ROUTE) {
-                            navController.syncRouteTo(AppDestinations.EPUB_READER_ROUTE)
+                        if (currentDestination != SharedMobileAppDestination.EPUB_READER) {
+                            navController.syncRouteTo(SharedMobileAppDestination.EPUB_READER)
                         }
                     }
                 }
                 null -> {
-                    if (currentRoute == AppDestinations.PDF_VIEWER_ROUTE || currentRoute == AppDestinations.EPUB_READER_ROUTE) {
-                        navController.syncRouteTo(AppDestinations.MAIN_ROUTE)
+                    if (currentDestination?.isReader == true) {
+                        navController.syncRouteTo(SharedMobileAppDestination.MAIN)
                     }
                 }
             }
@@ -222,16 +210,16 @@ fun AppNavigation(
 
     Box(modifier = Modifier.fillMaxSize()) {
         BackHandler(enabled = shouldInterceptBack) {
-            when (currentRoute) {
-                AppDestinations.PDF_VIEWER_ROUTE,
-                AppDestinations.EPUB_READER_ROUTE -> viewModel.clearSelectedFile()
+            when (currentDestination) {
+                SharedMobileAppDestination.PDF_VIEWER,
+                SharedMobileAppDestination.EPUB_READER -> viewModel.clearSelectedFile()
                 else -> navController.popBackStackIfReady()
             }
         }
 
-        NavHost(navController = navController, startDestination = AppDestinations.MAIN_ROUTE) {
-        composable(AppDestinations.MAIN_ROUTE) {
-            Timber.d("Navigating to Main Screen (${AppDestinations.MAIN_ROUTE}).")
+        NavHost(navController = navController, startDestination = SharedMobileAppDestination.MAIN.route) {
+        composable(SharedMobileAppDestination.MAIN.route) {
+            Timber.d("Navigating to Main Screen (${SharedMobileAppDestination.MAIN.route}).")
             if (uiState.isTemporaryExternalOpen) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator()
@@ -246,8 +234,8 @@ fun AppNavigation(
         }
 
         // PDF Viewer Screen Composable
-        composable(route = AppDestinations.PDF_VIEWER_ROUTE) {
-            Timber.d("Navigating to PDF Viewer Screen (${AppDestinations.PDF_VIEWER_ROUTE}).")
+        composable(route = SharedMobileAppDestination.PDF_VIEWER.route) {
+            Timber.d("Navigating to PDF Viewer Screen (${SharedMobileAppDestination.PDF_VIEWER.route}).")
             val pdfUri = uiState.selectedPdfUri
             val initialPage = uiState.initialPageInBook
             val initialBookmarksJson = uiState.initialBookmarksJson
@@ -289,7 +277,7 @@ fun AppNavigation(
                             }
                         },
                         onNavigateToPro = {
-                            navController.navigateIfReady(AppDestinations.PRO_SCREEN_ROUTE, popUpToStart = true)
+                            navController.navigateIfReady(SharedMobileAppDestination.PRO, popUpToStart = true)
                         },
                         viewModel = viewModel
                     )
@@ -318,8 +306,8 @@ fun AppNavigation(
         }
 
         // EPUB Reader Screen Composable
-        composable(route = AppDestinations.EPUB_READER_ROUTE) {
-            Timber.d("Navigating to EPUB Reader Screen (${AppDestinations.EPUB_READER_ROUTE}).")
+        composable(route = SharedMobileAppDestination.EPUB_READER.route) {
+            Timber.d("Navigating to EPUB Reader Screen (${SharedMobileAppDestination.EPUB_READER.route}).")
             val epubBook = uiState.selectedEpubBook
             val isLoading = uiState.isLoading
             val errorMessage = uiState.errorMessage
@@ -364,7 +352,7 @@ fun AppNavigation(
                                 }
                             },
                             onNavigateToPro = {
-                                navController.navigateIfReady(AppDestinations.PRO_SCREEN_ROUTE, popUpToStart = true)
+                                navController.navigateIfReady(SharedMobileAppDestination.PRO, popUpToStart = true)
                             },
                             onRenderModeChange = viewModel::setRenderMode,
                             customFonts = customFonts,
@@ -413,39 +401,39 @@ fun AppNavigation(
                 }
             }
         }
-        composable(route = AppDestinations.PRO_SCREEN_ROUTE) {
+        composable(route = SharedMobileAppDestination.PRO.route) {
             ProScreen(
                 viewModel = viewModel,
                 onNavigateBack = { navController.popBackStackIfReady() }
             )
         }
 
-        composable(route = AppDestinations.FEEDBACK_SCREEN_ROUTE) {
+        composable(route = SharedMobileAppDestination.FEEDBACK.route) {
             FeedbackScreen(
                 onNavigateBack = { navController.popBackStackIfReady() }
             )
         }
 
-        composable(route = AppDestinations.SUPPORT_PROJECT_SCREEN_ROUTE) {
+        composable(route = SharedMobileAppDestination.SUPPORT_PROJECT.route) {
             SupportProjectScreen(
                 onNavigateBack = { navController.popBackStackIfReady() }
             )
         }
 
-        composable(route = AppDestinations.FONTS_SCREEN_ROUTE) {
+        composable(route = SharedMobileAppDestination.FONTS.route) {
             FontsScreen(
                 viewModel = viewModel,
                 onBackClick = { navController.popBackStackIfReady() }
             )
         }
 
-        composable(route = AppDestinations.AI_SETTINGS_SCREEN_ROUTE) {
+        composable(route = SharedMobileAppDestination.AI_SETTINGS.route) {
             AiSettingsScreen(
                 onBackClick = { navController.popBackStackIfReady() }
             )
         }
 
-        composable(route = AppDestinations.SETTINGS_SCREEN_ROUTE) {
+        composable(route = SharedMobileAppDestination.SETTINGS.route) {
             SettingsScreen(
                 viewModel = viewModel,
                 navController = navController,

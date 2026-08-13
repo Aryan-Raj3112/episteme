@@ -15,6 +15,62 @@ import kotlin.test.assertTrue
 class SharedLibrarySnapshotJsonTest {
 
     @Test
+    fun `missing settings use android recent and external-file defaults`() {
+        val decoded = SharedLibrarySnapshotJson.decodeOrEmpty("""{"schemaVersion":26}""")
+
+        assertEquals(0, decoded.recentFilesLimit)
+        assertEquals("ASK", decoded.externalFileBehavior)
+        assertFalse(decoded.isFolderSyncEnabled)
+        assertEquals(SortOrder.RECENT, decoded.sortOrder)
+        assertEquals(LibraryFilters(), decoded.libraryFilters)
+        assertEquals(0, decoded.mainScreenStartPage)
+        assertEquals(0, decoded.libraryScreenStartPage)
+        assertFalse(decoded.hideReaderAi)
+    }
+
+    @Test
+    fun `legacy ios copy behavior migrates to android keep behavior`() {
+        val decoded = SharedLibrarySnapshotJson.decodeOrEmpty(
+            """{"schemaVersion":26,"externalFileBehavior":"COPY"}"""
+        )
+
+        assertEquals("KEEP", decoded.externalFileBehavior)
+    }
+
+    @Test
+    fun `legacy ios recent limits migrate to nearest android option`() {
+        assertEquals(
+            10,
+            SharedLibrarySnapshotJson.decodeOrEmpty(
+                """{"schemaVersion":26,"recentFilesLimit":12}"""
+            ).recentFilesLimit
+        )
+        assertEquals(
+            20,
+            SharedLibrarySnapshotJson.decodeOrEmpty(
+                """{"schemaVersion":26,"recentFilesLimit":24}"""
+            ).recentFilesLimit
+        )
+    }
+    @Test
+    fun `cloud book tombstones survive snapshot round trip`() {
+        val tombstone = CloudBookTombstone(
+            bookId = "deleted-book",
+            type = FileType.PDF.name,
+            deletedAt = 1234L,
+        )
+
+        val decoded = SharedLibrarySnapshotJson.decodeOrEmpty(
+            SharedLibrarySnapshotJson.encode(
+                SharedLibrarySnapshot(bookTombstones = listOf(tombstone))
+            )
+        )
+
+        assertEquals(listOf(tombstone), decoded.bookTombstones)
+    }
+
+
+    @Test
     fun `snapshot json round trips library records used by desktop persistence`() {
         val tag = Tag(id = "favorite", name = "Favorite", color = 7)
         val snapshot = SharedLibrarySnapshot(
@@ -37,6 +93,8 @@ class SharedLibrarySnapshotJsonTest {
                     progressPercentage = 42f,
                     fileSize = 99L,
                     fileContentModifiedTimestamp = 123_456L,
+                    metadataModifiedTimestamp = 8_500L,
+                    isAvailable = false,
                     sourceFolder = "C:/Books",
                     folderTextMetadataParsed = true,
                     seriesName = "Series",
@@ -75,18 +133,35 @@ class SharedLibrarySnapshotJsonTest {
                         pageInfoPosition = PageInfoPosition.TOP,
                         pageSpreadMode = ReaderPageSpreadMode.TWO_PAGE,
                         rightToLeftPagination = true,
+                        pageTurnAnimationEnabled = true,
                         pdfVerticalPageGapVisible = false,
                         pdfPageNumberOverlayVisible = false,
                         pdfFirstPageStandaloneInSpread = true,
                         seamlessChapterNavigation = false,
                         chapterTurnDragMultiplier = 1.6f
                     ),
+                    readerFormatIsLocal = true,
+            readerLocalFormatSettings = ReaderSettings(
+                        fontSize = 27,
+                        lineSpacing = 1.9f,
+                        textAlign = SharedReaderTextAlign.LEFT,
+                fontFamily = "Lora"
+            ),
+            readerAutoScrollIsLocal = true,
+            readerAutoScrollLocalSpeed = 72f,
+            readerAutoScrollLocalMinSpeed = 0.5f,
+            readerAutoScrollLocalMaxSpeed = 4f,
+            pdfAutoScrollIsLocal = true,
+            pdfAutoScrollLocalSpeed = 2.5f,
+            pdfAutoScrollLocalMinSpeed = 0.5f,
+            pdfAutoScrollLocalMaxSpeed = 8f,
                     readerBookmarks = listOf(
                         ReaderBookmark(
                             id = "book_4",
                             pageIndex = 4,
                             chapterTitle = "Chapter",
                             preview = "A useful paragraph",
+                            label = "Important passage",
                             locator = ReaderLocator(
                                 chapterIndex = 0,
                                 pageIndex = 4,
@@ -208,6 +283,11 @@ class SharedLibrarySnapshotJsonTest {
                 bookSettings = mapOf(
                     "book" to ReaderTtsReplacementBookSettings(disabledGlobalRuleIds = setOf("dr"))
                 )
+            ),
+            readerBookReplacementPreferences = ReaderBookReplacementPreferences(
+                fileRules = mapOf(
+                    "book" to listOf(ReaderWordReplacementRule("visible", "Alice", "Mina"))
+                )
             )
         )
 
@@ -274,6 +354,7 @@ class SharedLibrarySnapshotJsonTest {
         assertTrue(settings.pdfVerticalPageGapVisible)
         assertTrue(settings.pdfPageNumberOverlayVisible)
         assertFalse(settings.rightToLeftPagination)
+        assertFalse(settings.pageTurnAnimationEnabled)
     }
 
     @Test

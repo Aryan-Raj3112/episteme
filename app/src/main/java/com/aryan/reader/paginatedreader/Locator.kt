@@ -38,15 +38,10 @@ import kotlinx.serialization.decodeFromByteArray
 import kotlinx.serialization.encodeToByteArray
 import kotlinx.serialization.protobuf.ProtoBuf
 import java.io.File
+import com.aryan.reader.shared.reader.MOBILE_EPUB_MAX_LOCATOR_ON_DEMAND_HTML_BYTES
+import com.aryan.reader.shared.reader.MOBILE_EPUB_MAX_LOCATOR_ON_DEMAND_HTML_CHARS
 
-private const val MAX_LOCATOR_ON_DEMAND_HTML_BYTES = 2L * 1024L * 1024L
-private const val MAX_LOCATOR_ON_DEMAND_HTML_CHARS = 2 * 1024 * 1024
-
-data class Locator(
-    val chapterIndex: Int,
-    val blockIndex: Int,
-    val charOffset: Int
-)
+typealias Locator = ReaderNavigationTarget
 
 /**
  * Converts between view-specific locators (like CFI) and the abstract Locator model.
@@ -173,7 +168,7 @@ class LocatorConverter(
         chapterIndex: Int
     ): String? {
         chapter.htmlContent.takeIf { it.isNotBlank() }?.let { inlineHtml ->
-            if (inlineHtml.length > MAX_LOCATOR_ON_DEMAND_HTML_CHARS) {
+            if (inlineHtml.length > MOBILE_EPUB_MAX_LOCATOR_ON_DEMAND_HTML_CHARS) {
                 Timber.w(
                     "Skipping on-demand locator processing for chapter $chapterIndex: " +
                         "inline HTML is ${inlineHtml.length} chars"
@@ -186,7 +181,7 @@ class LocatorConverter(
         return try {
             val file = File(book.extractionBasePath, chapter.contentFilePath())
             if (!file.isFile) return null
-            if (file.length() > MAX_LOCATOR_ON_DEMAND_HTML_BYTES) {
+            if (file.length() > MOBILE_EPUB_MAX_LOCATOR_ON_DEMAND_HTML_BYTES) {
                 Timber.w(
                     "Skipping on-demand locator processing for chapter $chapterIndex: " +
                         "HTML file is ${file.length()} bytes"
@@ -239,28 +234,16 @@ class LocatorConverter(
             return@withContext null
         }
 
-        val firstCfiPoint = cfi.substringBefore('|')
-        val cfiOffsetSeparator = firstCfiPoint.lastIndexOf(':')
-        val baseCfiPath = if (cfiOffsetSeparator > 0) {
-            firstCfiPoint.substring(0, cfiOffsetSeparator)
-        } else {
-            firstCfiPoint
-        }
-        val charOffset = if (cfiOffsetSeparator > 0 && cfiOffsetSeparator < firstCfiPoint.lastIndex) {
-            firstCfiPoint.substring(cfiOffsetSeparator + 1).toIntOrNull() ?: 0
-        } else {
-            0
-        }
-
-        val bestMatch = findBestMatchingBlock(allBlocks, baseCfiPath)
+        val parsedCfi = parseSemanticCfi(cfi)
+        val bestMatch = findBestMatchingSemanticBlock(allBlocks, parsedCfi.basePath)
 
         if (bestMatch != null) {
             val absoluteCharOffset = when (bestMatch) {
                 is SemanticTextBlock -> {
-                    val localOffset = charOffset.coerceIn(0, bestMatch.text.length)
+                    val localOffset = parsedCfi.charOffset.coerceIn(0, bestMatch.text.length)
                     bestMatch.startCharOffsetInSource + localOffset
                 }
-                else -> charOffset.coerceAtLeast(0)
+                else -> parsedCfi.charOffset.coerceAtLeast(0)
             }
             val locator = Locator(
                 chapterIndex = chapterIndex,
@@ -270,52 +253,9 @@ class LocatorConverter(
             Timber.tag("POS_DIAG").d("getLocatorFromCfi: Successfully resolved to $locator")
             locator
         } else {
-            Timber.tag("POS_DIAG").e("getLocatorFromCfi: Failed to find semantic block match for CFI path $baseCfiPath")
+            Timber.tag("POS_DIAG").e("getLocatorFromCfi: Failed to find semantic block match for CFI path ${parsedCfi.basePath}")
             null
         }
-    }
-
-    private fun findBestMatchingBlock(blocks: List<SemanticBlock>, inputCfi: String): SemanticBlock? {
-        val flattenedBlocks = mutableListOf<SemanticBlock>()
-        fun flatten(blockList: List<SemanticBlock>) {
-            for (block in blockList) {
-                flattenedBlocks.add(block)
-                when (block) {
-                    is SemanticFlexContainer -> flatten(block.children)
-                    is SemanticTable -> block.rows.forEach { row -> row.forEach { cell -> flatten(cell.content) } }
-                    is SemanticList -> flatten(block.items)
-                    else -> Unit
-                }
-            }
-        }
-        flatten(blocks)
-
-        if (flattenedBlocks.isEmpty()) return null
-
-        flattenedBlocks.mapNotNull { it.cfi }
-        val bestMatch = flattenedBlocks
-            .filter { it.cfi != null }
-            .map { block ->
-                val blockCfi = block.cfi!!
-
-                val isPrefix = inputCfi == blockCfi || inputCfi.startsWith("$blockCfi/")
-                val prefixScore = if (isPrefix) blockCfi.length else 0
-
-                var i = inputCfi.length - 1
-                var j = blockCfi.length - 1
-                var suffixScore = 0
-                while (i >= 0 && j >= 0 && inputCfi[i] == blockCfi[j]) {
-                    suffixScore++
-                    i--
-                    j--
-                }
-
-                Pair(block, maxOf(prefixScore, suffixScore))
-            }
-            .maxByOrNull { it.second }
-            ?.first
-
-        return bestMatch
     }
 
     suspend fun getTtsChunksForChapter(book: EpubBook, chapterIndex: Int, bookId: String? = null): List<TtsChunk>? = withContext(Dispatchers.IO) {
@@ -382,67 +322,10 @@ class LocatorConverter(
             return@withContext null
         }
 
-        val foundBlock = findBlockByBlockIndex(blocks, locator.blockIndex)
-        val resultCfi = foundBlock?.cfi?.let { cfi ->
-            val localOffset = when (foundBlock) {
-                is SemanticTextBlock -> {
-                    val start = foundBlock.startCharOffsetInSource
-                    val end = start + foundBlock.text.length
-                    if (locator.charOffset in start..end) {
-                        locator.charOffset - start
-                    } else {
-                        locator.charOffset
-                    }.coerceIn(0, foundBlock.text.length)
-                }
-                else -> locator.charOffset.coerceAtLeast(0)
-            }
-            if (localOffset > 0) {
-                "$cfi:$localOffset"
-            } else {
-                cfi
-            }
-        }
+        val foundBlock = findSemanticBlockByIndex(blocks, locator.blockIndex)
+        val resultCfi = foundBlock?.let { semanticCfiForBlock(it, locator.charOffset) }
         Timber.tag("POS_DIAG").d("getCfiFromLocator: Resulting CFI='$resultCfi'")
         resultCfi
-    }
-
-    private fun findBlockByBlockIndex(blocks: List<SemanticBlock>, targetBlockIndex: Int): SemanticBlock? {
-        val queue = ArrayDeque(blocks)
-        while (queue.isNotEmpty()) {
-            val block = queue.removeAt(0)
-            if (block.blockIndex == targetBlockIndex) {
-                Timber.v("findBlockByBlockIndex: Found match for block index $targetBlockIndex.")
-                return block
-            }
-
-            // Recurse into nested blocks
-            when (block) {
-                is SemanticFlexContainer -> queue.addAll(block.children)
-                is SemanticTable -> block.rows.forEach { row -> row.forEach { cell -> queue.addAll(cell.content) } }
-                is SemanticList -> queue.addAll(block.items)
-                else -> Unit
-            }
-        }
-        Timber.w("findBlockByBlockIndex: No block found for target index $targetBlockIndex.")
-        return null
-    }
-
-    private fun estimateSemanticPageCount(blocks: List<SemanticBlock>): Int {
-        var charCount = 0
-
-        fun walk(block: SemanticBlock) {
-            when (block) {
-                is SemanticTextBlock -> charCount += block.text.length
-                is SemanticFlexContainer -> block.children.forEach(::walk)
-                is SemanticTable -> block.rows.forEach { row -> row.forEach { cell -> cell.content.forEach(::walk) } }
-                is SemanticList -> block.items.forEach(::walk)
-                is SemanticWrappingBlock -> block.paragraphsToWrap.forEach(::walk)
-                else -> Unit
-            }
-        }
-
-        blocks.forEach(::walk)
-        return ((charCount + 2_499) / 2_500).coerceAtLeast(1)
     }
 
     suspend fun getTextOffset(book: EpubBook, locator: Locator, bookId: String? = null): Int? = withContext(Dispatchers.IO) {
@@ -456,50 +339,6 @@ class LocatorConverter(
 
         if (allBlocks.isNullOrEmpty()) return@withContext null
 
-        var offset = 0
-        val separatorLength = 1
-
-        fun traverse(blocks: List<SemanticBlock>): Boolean {
-            for (block in blocks) {
-                if (block.blockIndex == locator.blockIndex) {
-                    val absoluteOffset = when (block) {
-                        is SemanticTextBlock -> {
-                            val start = block.startCharOffsetInSource
-                            val end = start + block.text.length
-                            locator.charOffset.takeIf { (start > 0 || offset == 0) && it in start..end }
-                        }
-                        else -> null
-                    }
-                    if (absoluteOffset != null) {
-                        offset = absoluteOffset
-                    } else {
-                        offset += locator.charOffset
-                    }
-                    return true
-                }
-
-                if (block is SemanticTextBlock) {
-                    offset += block.text.length + separatorLength
-                }
-
-                val children = when (block) {
-                    is SemanticFlexContainer -> block.children
-                    is SemanticTable -> block.rows.flatten().flatMap { it.content }
-                    is SemanticList -> block.items
-                    is SemanticWrappingBlock -> block.paragraphsToWrap
-                    else -> emptyList()
-                }
-
-                if (children.isNotEmpty()) {
-                    if (traverse(children)) return true
-                }
-            }
-            return false
-        }
-
-        if (traverse(allBlocks)) {
-            return@withContext offset
-        }
-        return@withContext null
+        return@withContext semanticTextOffset(allBlocks, locator.blockIndex, locator.charOffset)
     }
 }

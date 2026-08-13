@@ -155,6 +155,13 @@ import com.aryan.reader.opds.OpdsEntry
 import com.aryan.reader.opds.OpdsRepository
 import com.aryan.reader.opds.OpdsViewModel
 import com.aryan.reader.shared.LOCAL_FOLDER_SYNC_DATA_DIR
+import com.aryan.reader.shared.ui.SharedMobileLibraryFilterChips
+import com.aryan.reader.shared.ui.SharedMobileLibraryBookListCardFrame
+import com.aryan.reader.shared.ui.SharedMobileLibraryFilterDialog
+import com.aryan.reader.shared.ui.SharedMobileLibraryFilterLabels
+import com.aryan.reader.shared.ui.SharedMobileLibrarySearchTopBar
+import com.aryan.reader.shared.ui.SharedMobileLibrarySortControl
+import com.aryan.reader.shared.ui.SharedMobileShelfListCardFrame
 import com.aryan.reader.shared.opds.SharedOpdsLocalBookMatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
@@ -428,7 +435,7 @@ fun LibraryScreen(
                 )
             },
             onDeleteCatalogStreams = viewModel::deleteStreamedBooksForCatalog,
-            onSettingsClick = { navController.navigateIfReady(AppDestinations.SETTINGS_SCREEN_ROUTE) },
+            onSettingsClick = { navController.navigateIfReady(com.aryan.reader.shared.ui.SharedMobileAppDestination.SETTINGS) },
             usePdfFileNameAsDisplayName = uiState.usePdfFileNameAsDisplayName
         )
 
@@ -736,330 +743,135 @@ fun LibraryScreenContent(
     onSettingsClick: () -> Unit,
     usePdfFileNameAsDisplayName: Boolean,
 ) {
-    val isBookContextualModeActive = selectedItems.isNotEmpty()
-    val isShelfContextualModeActive = selectedShelves.isNotEmpty()
-    var showSortMenu by remember { mutableStateOf(false) }
-    val searchFocusRequester = remember { FocusRequester() }
     val selectedBookIds = remember(selectedItems) { selectedItems.mapTo(mutableSetOf()) { it.bookId } }
-
-    // Keep cursor/composition state local while Gboard is editing. Replacing the
-    // field value from the filtered library state can move the cursor behind a
-    // newly entered character or interrupt a held Backspace gesture.
-    var textFieldValue by remember(isSearchActive) {
-        mutableStateOf(TextFieldValue(searchQuery, TextRange(searchQuery.length)))
-    }
-
-    LaunchedEffect(isSearchActive) {
-        if (isSearchActive) {
-            searchFocusRequester.requestFocus()
-        }
-    }
-
-    Scaffold(
-        contentWindowInsets = WindowInsets(0, 0, 0, 0),
-        topBar = {
-            Column {
-                if (isBookContextualModeActive) {
-                    ContextualTopAppBar(
-                        selectedItemCount = selectedItems.size,
-                        onNavIconClick = onClearSelection,
-                        onTagClick = onTagClick,
-                        onAddToShelfClick = onAddToShelfClick,
-                        onPinClick = onPinClick,
-                        onInfoClick = onInfoClick,
-                        onSaveClick = onSaveClick,
-                        onShareClick = onShareClick,
-                        onExportAnnotationsClick = onExportAnnotationsClick,
-                        onDeleteClick = onDeleteClick,
-                        onSelectAllClick = onSelectAllClick,
-                        compactSelectionActions = true,
-                        onClearSelectionClick = onClearSelection
-                    )
-                } else if (isShelfContextualModeActive && pagerState.currentPage == 1) {
-                    ContextualTopAppBar(
-                        selectedItemCount = selectedShelves.size,
-                        onNavIconClick = onClearShelfSelection,
-                        onDeleteClick = onDeleteShelves
-                    )
-                } else if (isSearchActive) {
-                    Surface(
-                        shadowElevation = 4.dp,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .statusBarsPadding()
-                                .height(64.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            IconButton(onClick = { onSearchActiveChange(false) }) {
-                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.content_desc_close_search))
-                            }
-                            OutlinedTextField(
-                                value = textFieldValue,
-                                onValueChange = {
-                                    textFieldValue = it
-                                    onSearchQueryChange(it.text)
-                                },
-                                placeholder = { Text(stringResource(R.string.search_placeholder)) },
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .padding(vertical = 4.dp)
-                                    .focusRequester(searchFocusRequester)
-                                    .testTag("LibrarySearchTextField"),
-                                singleLine = true,
-                                colors = TextFieldDefaults.colors(
-                                    focusedContainerColor = Color.Transparent,
-                                    unfocusedContainerColor = Color.Transparent,
-                                    disabledContainerColor = Color.Transparent,
-                                    focusedIndicatorColor = Color.Transparent,
-                                    unfocusedIndicatorColor = Color.Transparent,
-                                ),
-                                trailingIcon = {
-                                    if (searchQuery.isNotEmpty()) {
-                                        IconButton(
-                                            onClick = {
-                                                textFieldValue = TextFieldValue("", TextRange.Zero)
-                                                onSearchQueryChange("")
-                                            }
-                                        ) {
-                                            Icon(Icons.Default.Close, contentDescription = stringResource(R.string.content_desc_clear_query))
-                                        }
-                                    }
-                                }
-                            )
-                        }
-                    }
-                } else {
-                    CustomTopAppBar(title = { Text(stringResource(R.string.library_title)) },
-                        actions = {
-                            if (pagerState.currentPage == 0) {
-                                IconButton(onClick = onFilterClick) {
-                                    Icon(Icons.Default.FilterList, contentDescription = stringResource(R.string.content_desc_filter))
-                                }
-                                Box {
-                                    TextButton(
-                                        onClick = { showSortMenu = true },
-                                        modifier = Modifier.testTag("LibrarySortButton")
-                                    ) {
-                                        Icon(
-                                            painter = painterResource(id = R.drawable.sort),
-                                            contentDescription = stringResource(R.string.content_desc_sort),
-                                            modifier = Modifier.size(20.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        Text(stringResource(sortOrder.labelRes))
-                                    }
-                                    DropdownMenu(
-                                        expanded = showSortMenu,
-                                        onDismissRequest = { showSortMenu = false }
-                                    ) {
-                                        SortOrder.entries.forEach { order ->
-                                            DropdownMenuItem(
-                                                text = { Text(stringResource(order.labelRes)) },
-                                                onClick = {
-                                                    onSortOrderChange(order)
-                                                    showSortMenu = false
-                                                },
-                                                trailingIcon = {
-                                                    if (order == sortOrder) {
-                                                        Icon(
-                                                            Icons.Default.Check,
-                                                            contentDescription = stringResource(R.string.content_desc_selected)
-                                                        )
-                                                    }
-                                                }
-                                            )
-                                        }
-                                    }
-                                }
-                                IconButton(onClick = { onSearchActiveChange(true) }) {
-                                    Icon(Icons.Default.Search, contentDescription = stringResource(R.string.action_search))
-                                }
-                            }
-                            IconButton(onClick = onSettingsClick) {
-                                Icon(Icons.Default.Settings, contentDescription = stringResource(R.string.settings))
-                            }
-                        }
-                    )
-                    TabRow(selectedTabIndex = pagerState.currentPage) {
-                        tabTitles.forEachIndexed { index, title ->
-                            Tab(
-                                selected = pagerState.currentPage == index,
-                                onClick = {
-                                    ReaderPerfLog.d("LibraryPager click page=$index title=$title")
-                                    if (pagerState.currentPage != index) {
-                                        scope.launch {
-                                            val start = ReaderPerfLog.nowNanos()
-                                            pagerState.animateScrollToPage(index)
-                                            ReaderPerfLog.d(
-                                                "LibraryPager settled page=$index elapsed=${ReaderPerfLog.elapsedMs(start)}ms"
-                                            )
-                                        }
-                                    }
-                                },
-                                text = { Text(title) }
-                            )
-                        }
-                    }
-                    androidx.compose.animation.AnimatedVisibility(
-                        visible = libraryFilters.isActive && pagerState.currentPage == 0
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                                .padding(horizontal = 16.dp, vertical = 8.dp)
-                                .horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            if (libraryFilters.fileTypes.isNotEmpty()) {
-                                AssistChip(
-                                    onClick = { onRemoveFilter(libraryFilters.copy(fileTypes = emptySet())) },
-                                    label = { Text(stringResource(R.string.filter_types, libraryFilters.fileTypes.joinToString { it.name })) },
-                                    trailingIcon = { Icon(Icons.Default.Close, contentDescription = stringResource(R.string.action_clear), modifier = Modifier.size(16.dp)) }
-                                )
-                            }
-                            if (libraryFilters.sourceFolders.isNotEmpty()) {
-                                AssistChip(
-                                    onClick = { onRemoveFilter(libraryFilters.copy(sourceFolders = emptySet())) },
-                                    label = { Text(stringResource(R.string.filter_folders, libraryFilters.sourceFolders.size)) },
-                                    trailingIcon = { Icon(Icons.Default.Close, contentDescription = stringResource(R.string.action_clear), modifier = Modifier.size(16.dp)) }
-                                )
-                            }
-                            if (libraryFilters.readStatus != ReadStatusFilter.ALL) {
-                                AssistChip(
-                                    onClick = { onRemoveFilter(libraryFilters.copy(readStatus = ReadStatusFilter.ALL)) },
-                                    label = { Text(stringResource(R.string.filter_status, stringResource(libraryFilters.readStatus.labelRes))) },
-                                    trailingIcon = { Icon(Icons.Default.Close, contentDescription = stringResource(R.string.action_clear), modifier = Modifier.size(16.dp)) }
-                                )
-                            }
-                            if (libraryFilters.tagIds.isNotEmpty()) {
-                                val selectedTags = allTags.filter { it.id in libraryFilters.tagIds }
-                                val tagLabel = when {
-                                    selectedTags.isEmpty() -> pluralStringResource(R.plurals.tag_count, libraryFilters.tagIds.size, libraryFilters.tagIds.size)
-                                    selectedTags.size <= 2 -> selectedTags.joinToString { it.name }
-                                    else -> pluralStringResource(R.plurals.tag_count, selectedTags.size, selectedTags.size)
-                                }
-                                AssistChip(
-                                    onClick = { onRemoveFilter(libraryFilters.copy(tagIds = emptySet())) },
-                                    label = { Text(stringResource(R.string.filter_tags, tagLabel)) },
-                                    trailingIcon = { Icon(Icons.Default.Close, contentDescription = stringResource(R.string.action_clear), modifier = Modifier.size(16.dp)) }
-                                )
-                            }
-                        }
-                    }
+    com.aryan.reader.shared.ui.SharedAndroidLibraryScaffold(
+        pagerState = pagerState,
+        scope = scope,
+        tabTitles = tabTitles,
+        hasBookSelection = selectedItems.isNotEmpty(),
+        hasShelfSelection = selectedShelves.isNotEmpty(),
+        isSearchActive = isSearchActive,
+        searchQuery = searchQuery,
+        showAddFileFab = recentFiles.isNotEmpty(),
+        strings = com.aryan.reader.shared.ui.SharedAndroidLibraryScaffoldStrings(
+            title = stringResource(R.string.library_title),
+            searchPlaceholder = stringResource(R.string.search_placeholder),
+            closeSearchDescription = stringResource(R.string.content_desc_close_search),
+            clearQueryDescription = stringResource(R.string.content_desc_clear_query),
+            addFile = stringResource(R.string.fab_add_file),
+            newShelf = stringResource(R.string.fab_new_shelf),
+        ),
+        onSearchQueryChange = onSearchQueryChange,
+        onSearchActiveChange = onSearchActiveChange,
+        onSelectFile = onSelectFileClick,
+        onNewShelf = onNewShelfClick,
+        onTabAnimationStarted = { index, title -> ReaderPerfLog.d("LibraryPager click page=$index title=$title") },
+        onTabAnimationFinished = { index, start -> ReaderPerfLog.d("LibraryPager settled page=$index elapsed=${ReaderPerfLog.elapsedMs(start)}ms") },
+        nowNanos = ReaderPerfLog::nowNanos,
+        bookContextualTopBar = {
+            ContextualTopAppBar(
+                selectedItemCount = selectedItems.size,
+                onNavIconClick = onClearSelection,
+                onTagClick = onTagClick,
+                onAddToShelfClick = onAddToShelfClick,
+                onPinClick = onPinClick,
+                onInfoClick = onInfoClick,
+                onSaveClick = onSaveClick,
+                onShareClick = onShareClick,
+                onExportAnnotationsClick = onExportAnnotationsClick,
+                onDeleteClick = onDeleteClick,
+                onSelectAllClick = onSelectAllClick,
+                compactSelectionActions = true,
+                onClearSelectionClick = onClearSelection,
+            )
+        },
+        shelfContextualTopBar = {
+            ContextualTopAppBar(
+                selectedItemCount = selectedShelves.size,
+                onNavIconClick = onClearShelfSelection,
+                onDeleteClick = onDeleteShelves,
+            )
+        },
+        normalTopBarActions = {
+            if (pagerState.currentPage == 0) {
+                IconButton(onClick = onFilterClick) { Icon(Icons.Default.FilterList, stringResource(R.string.content_desc_filter)) }
+                SharedMobileLibrarySortControl(
+                    sortOrder = sortOrder,
+                    labels = SortOrder.entries.associateWith { stringResource(it.labelRes) },
+                    selectedContentDescription = stringResource(R.string.content_desc_selected),
+                    onSortOrderChange = onSortOrderChange,
+                    modifier = Modifier.testTag("LibrarySortButton"),
+                    icon = { Icon(painterResource(R.drawable.sort), stringResource(R.string.content_desc_sort), Modifier.size(20.dp)) },
+                )
+                IconButton(onClick = { onSearchActiveChange(true) }) { Icon(Icons.Default.Search, stringResource(R.string.action_search)) }
+            }
+            IconButton(onClick = onSettingsClick) { Icon(Icons.Default.Settings, stringResource(R.string.settings)) }
+        },
+        filterChips = {
+            androidx.compose.animation.AnimatedVisibility(visible = libraryFilters.isActive && pagerState.currentPage == 0) {
+                val selectedTags = allTags.filter { it.id in libraryFilters.tagIds }
+                val tagLabel = when {
+                    selectedTags.isEmpty() -> pluralStringResource(R.plurals.tag_count, libraryFilters.tagIds.size, libraryFilters.tagIds.size)
+                    selectedTags.size <= 2 -> selectedTags.joinToString { it.name }
+                    else -> pluralStringResource(R.plurals.tag_count, selectedTags.size, selectedTags.size)
                 }
+                SharedMobileLibraryFilterChips(
+                    filters = libraryFilters,
+                    fileTypesLabel = stringResource(R.string.filter_types, libraryFilters.fileTypes.joinToString { it.name }),
+                    foldersLabel = stringResource(R.string.filter_folders, libraryFilters.sourceFolders.size),
+                    statusLabel = stringResource(R.string.filter_status, stringResource(libraryFilters.readStatus.labelRes)),
+                    tagsLabel = stringResource(R.string.filter_tags, tagLabel),
+                    clearContentDescription = stringResource(R.string.action_clear),
+                    onRemoveFilters = onRemoveFilter,
+                )
             }
         },
-        floatingActionButton = {
-            if (!isBookContextualModeActive && !isShelfContextualModeActive) {
-                when (pagerState.currentPage) {
-                    0 -> {
-                        if (recentFiles.isNotEmpty()) {
-                            ExtendedFloatingActionButton(
-                                text = { Text(stringResource(R.string.fab_add_file)) },
-                                icon = { Icon(Icons.Default.Add, contentDescription = stringResource(R.string.fab_add_file)) },
-                                onClick = onSelectFileClick,
-                                modifier = Modifier.padding(16.dp)
+        pageContent = { page ->
+            when (page) {
+                0 -> when {
+                    recentFiles.isEmpty() && searchQuery.isNotEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text(stringResource(R.string.no_results_found, searchQuery))
+                    }
+                    recentFiles.isEmpty() -> EmptyState(
+                        title = stringResource(R.string.your_library_empty),
+                        message = stringResource(R.string.library_empty_desc),
+                        onSelectFileClick = onSelectFileClick,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                    else -> LazyColumn(
+                        Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 88.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        items(recentFiles, key = { it.bookId }) { item ->
+                            LibraryListItem(
+                                item = item,
+                                isSelected = item.bookId in selectedBookIds,
+                                isPinned = item.bookId in pinnedLibraryBookIds,
+                                onItemClick = { onItemClick(item) },
+                                onItemLongClick = { onItemLongClick(item) },
+                                isDownloading = item.bookId in downloadingBookIds,
+                                usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName,
                             )
                         }
                     }
-                    1 -> {
-                        ExtendedFloatingActionButton(
-                            text = { Text(stringResource(R.string.fab_new_shelf)) },
-                            icon = { Icon(Icons.Default.Add, contentDescription = stringResource(R.string.fab_new_shelf)) },
-                            onClick = onNewShelfClick,
-                            modifier = Modifier
-                                .padding(16.dp)
-                                .testTag("LibraryNewShelfFab")
-                        )
-                    }
                 }
+                1 -> ShelvesScreen(shelves, onShelfClick, onShelfLongClick, selectedShelves)
+                2 -> FolderSyncScreen(
+                    syncedFolders, rawLibraryFiles, onSelectSyncFolderClick, onRemoveFolderClick,
+                    onFolderLocalSyncChange, onEditFolderFiltersClick, onScanNowClick, onSyncMetadataClick,
+                    isLoading || isRefreshing,
+                )
+                3 -> if (!BuildConfig.IS_OFFLINE) OpdsTab(
+                    localLibraryFiles = rawLibraryFiles,
+                    onBookDownloaded = onOpdsBookDownloaded,
+                    onReadBook = onItemClick,
+                    onStreamBook = onStreamOpdsBook,
+                    onDeleteCatalogStreams = onDeleteCatalogStreams,
+                )
             }
-        }
-    ) { paddingValues ->
-        HorizontalPager(
-            state = pagerState,
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues),
-            flingBehavior = PagerDefaults.flingBehavior(
-                state = pagerState,
-                snapPositionalThreshold = 0.25f
-            ),
-            beyondViewportPageCount = 0,
-            key = { it }
-        ) { page ->
-            when (page) {
-                0 -> {
-                    if (recentFiles.isEmpty() && searchQuery.isNotEmpty()) {
-                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Text(stringResource(R.string.no_results_found, searchQuery))
-                        }
-                    } else if (recentFiles.isEmpty()) {
-                        EmptyState(
-                            title = stringResource(R.string.your_library_empty),
-                            message = stringResource(R.string.library_empty_desc),
-                            onSelectFileClick = onSelectFileClick,
-                            modifier = Modifier.fillMaxSize()
-                        )
-                    } else {
-                        LazyColumn(
-                            modifier = Modifier.fillMaxSize(),
-                            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 88.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            items(recentFiles, key = { it.bookId }) { item ->
-                                LibraryListItem(
-                                    item = item,
-                                    isSelected = item.bookId in selectedBookIds,
-                                    isPinned = item.bookId in pinnedLibraryBookIds,
-                                    onItemClick = { onItemClick(item) },
-                                    onItemLongClick = { onItemLongClick(item) },
-                                    isDownloading = item.bookId in downloadingBookIds,
-                                    usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName
-                                )
-                            }
-                        }
-                    }
-                }
-                1 -> {
-                    ShelvesScreen(
-                        shelves = shelves,
-                        onShelfClick = onShelfClick,
-                        onShelfLongClick = onShelfLongClick,
-                        selectedShelves = selectedShelves
-                    )
-                }
-                2 -> {
-                    FolderSyncScreen(
-                        syncedFolders = syncedFolders,
-                        allRecentFiles = rawLibraryFiles,
-                        onAddFolderClick = onSelectSyncFolderClick,
-                        onRemoveFolderClick = onRemoveFolderClick,
-                        onFolderLocalSyncChange = onFolderLocalSyncChange,
-                        onEditFolderFiltersClick = onEditFolderFiltersClick,
-                        onScanNowClick = onScanNowClick,
-                        onSyncMetadataClick = onSyncMetadataClick,
-                        isLoading = isLoading || isRefreshing
-                    )
-                }
-                3 -> {
-                    if (!BuildConfig.IS_OFFLINE) {
-                        OpdsTab(
-                            localLibraryFiles = rawLibraryFiles,
-                            onBookDownloaded = onOpdsBookDownloaded,
-                            onReadBook = onItemClick,
-                            onStreamBook = onStreamOpdsBook,
-                            onDeleteCatalogStreams = onDeleteCatalogStreams
-                        )
-                    }
-                }
-            }
-        }
-    }
+        },
+    )
 }
 
 @Composable
@@ -1069,131 +881,37 @@ private fun ShelvesScreen(
     onShelfLongClick: (Shelf) -> Unit,
     selectedShelves: Set<String>,
 ) {
-    val tagShelves = remember(shelves) { shelves.filter { it.type == ShelfType.TAG && it.bookCount > 0 } }
-    val visibleShelves = remember(shelves) {
-        shelves.filter { shelf ->
-            when {
-                shelf.type == ShelfType.TAG -> false
-                shelf.type == ShelfType.FOLDER -> shelf.parentShelfId == null
-                else -> true
-            }
-        }
-    }
-
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize(),
-        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 88.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        if (tagShelves.isNotEmpty() && selectedShelves.isEmpty()) {
-            item {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(
-                        text = stringResource(R.string.section_browse_by_tag),
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        tagShelves.forEach { shelf ->
-                            FilterChip(
-                                selected = false,
-                                onClick = { onShelfClick(shelf) },
-                                label = { Text(shelf.name) },
-                                leadingIcon = {
-                                    Icon(
-                                        painter = painterResource(id = R.drawable.tag),
-                                        contentDescription = null,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                }
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        items(visibleShelves, key = { it.id }) { shelf ->
+    com.aryan.reader.shared.ui.SharedAndroidLibraryShelves(
+        shelves = shelves,
+        selectedShelfIds = selectedShelves,
+        shelfId = { it.id },
+        shelfName = { it.name },
+        isVisibleTagShelf = { it.type == ShelfType.TAG && it.bookCount > 0 },
+        isVisibleRootShelf = { it.type != ShelfType.TAG && (it.type != ShelfType.FOLDER || it.parentShelfId == null) },
+        browseByTagTitle = stringResource(R.string.section_browse_by_tag),
+        tagIcon = painterResource(R.drawable.tag),
+        onShelfClick = onShelfClick,
+        shelfRow = { shelf, selected ->
             ShelfListItem(
                 shelf = shelf,
-                isSelected = shelf.id in selectedShelves,
+                isSelected = selected,
                 onItemClick = { onShelfClick(shelf) },
-                onItemLongClick = { onShelfLongClick(shelf) }
+                onItemLongClick = { onShelfLongClick(shelf) },
             )
-        }
-    }
+        },
+    )
 }
 
 @Composable
 private fun CreateShelfDialog(onConfirm: (String) -> Unit, onDismiss: () -> Unit) {
-    var text by remember { mutableStateOf("") }
-    val focusRequester = remember { FocusRequester() }
-    val outlineColor = MaterialTheme.colorScheme.outline
-    val shape = RoundedCornerShape(4.dp)
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.create_new_shelf)) },
-        text = {
-            BasicTextField(
-                value = text,
-                onValueChange = { text = it },
-                singleLine = true,
-                textStyle = MaterialTheme.typography.bodyLarge.copy(
-                    color = MaterialTheme.colorScheme.onSurface
-                ),
-                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(56.dp)
-                    .focusRequester(focusRequester)
-                    .border(1.dp, outlineColor, shape)
-                    .padding(horizontal = 16.dp),
-                decorationBox = { innerTextField ->
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.CenterStart
-                    ) {
-                        if (text.isEmpty()) {
-                            Text(
-                                text = stringResource(R.string.shelf_name_hint),
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                style = MaterialTheme.typography.bodyLarge,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                        innerTextField()
-                    }
-                }
-            )
-        },
-        confirmButton = {
-            TextButton(
-                onClick = { onConfirm(text) },
-                enabled = text.isNotBlank()
-            ) {
-                Text(stringResource(R.string.action_create))
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text(stringResource(R.string.action_cancel))
-            }
-        }
+    com.aryan.reader.shared.ui.SharedCreateShelfDialog(
+        title = stringResource(R.string.create_new_shelf),
+        namePlaceholder = stringResource(R.string.shelf_name_hint),
+        createLabel = stringResource(R.string.action_create),
+        cancelLabel = stringResource(R.string.action_cancel),
+        onConfirm = onConfirm,
+        onDismiss = onDismiss,
     )
-
-    LaunchedEffect(Unit) {
-        delay(100)
-        focusRequester.requestFocus()
-    }
 }
 
 @Composable
@@ -1219,317 +937,97 @@ private fun ShelfDetailScreen(
     downloadingBookIds: Set<String>,
     usePdfFileNameAsDisplayName: Boolean,
 ) {
-    val isContextualModeActive = selectedItems.isNotEmpty()
     val isFolderShelf = shelf.type == ShelfType.FOLDER
-    var showSortMenu by remember { mutableStateOf(false) }
-    var showMoreMenu by remember { mutableStateOf(false) }
-    var isSearchActive by remember(shelf.id) { mutableStateOf(false) }
-    var searchQuery by remember(shelf.id) { mutableStateOf("") }
-    val searchFocusRequester = remember { FocusRequester() }
-    var searchFieldValue by remember(isSearchActive, shelf.id) {
-        mutableStateOf(TextFieldValue(searchQuery, TextRange(searchQuery.length)))
-    }
-    val normalizedQuery = searchQuery.trim()
-    val filteredChildShelves = remember(childShelves, normalizedQuery) {
-        if (normalizedQuery.isBlank()) {
-            childShelves
-        } else {
-            childShelves.filter { childShelf ->
-                childShelf.name.contains(normalizedQuery, ignoreCase = true) ||
-                    childShelf.books.any { item ->
-                        item.displayName.contains(normalizedQuery, ignoreCase = true) ||
-                            item.title?.contains(normalizedQuery, ignoreCase = true) == true ||
-                            item.author?.contains(normalizedQuery, ignoreCase = true) == true
-                    }
-            }
-        }
-    }
-    val filteredDirectBooks = remember(shelf.directBooks, normalizedQuery) {
-        if (normalizedQuery.isBlank()) {
-            shelf.directBooks
-        } else {
-            shelf.directBooks.filter { item ->
-                item.displayName.contains(normalizedQuery, ignoreCase = true) ||
-                    item.title?.contains(normalizedQuery, ignoreCase = true) == true ||
-                    item.author?.contains(normalizedQuery, ignoreCase = true) == true ||
-                    item.tags.any { tag -> tag.name.contains(normalizedQuery, ignoreCase = true) }
-            }
-        }
-    }
-
-    LaunchedEffect(searchQuery) {
-        if (searchFieldValue.text != searchQuery) {
-            searchFieldValue = searchFieldValue.copy(
-                text = searchQuery,
-                selection = TextRange(searchQuery.length)
+    val strings = sharedAndroidShelfScreenStrings()
+    com.aryan.reader.shared.ui.SharedAndroidShelfDetailScreen(
+        shelfId = shelf.id,
+        shelfName = shelf.name,
+        shelfSubtitle = when {
+            isFolderShelf && shelf.childShelfCount > 0 && shelf.directBookCount > 0 -> stringResource(
+                R.string.folder_subtitle_folder_book_counts,
+                pluralStringResource(R.plurals.folder_count, shelf.childShelfCount, shelf.childShelfCount),
+                getBookCountString(shelf.directBookCount),
             )
-        }
-    }
-
-    LaunchedEffect(isSearchActive) {
-        if (isSearchActive) {
-            searchFocusRequester.requestFocus()
-        }
-    }
-
-    fun clearShelfSearchQuery() {
-        searchQuery = ""
-        searchFieldValue = TextFieldValue("", TextRange.Zero)
-    }
-
-    fun closeShelfSearch() {
-        isSearchActive = false
-        clearShelfSearchQuery()
-    }
-
-    BackHandler(enabled = isSearchActive) {
-        closeShelfSearch()
-    }
-
-    Scaffold(
-        modifier = Modifier,
-        topBar = {
-            if (isContextualModeActive) {
-                ContextualTopAppBar(
-                    selectedItemCount = selectedItems.size,
-                    onNavIconClick = onClearSelection,
-                    onTagClick = onTagClick,
-                    onInfoClick = onInfoClick,
-                    onSaveClick = onSaveClick,
-                    onShareClick = onShareClick,
-                    onDeleteClick = onDeleteClick
-                )
-            } else if (isSearchActive) {
-                Surface(
-                    shadowElevation = 4.dp,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .statusBarsPadding()
-                            .height(64.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        IconButton(onClick = { closeShelfSearch() }) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.content_desc_close_search))
-                        }
-                        OutlinedTextField(
-                            value = searchFieldValue,
-                            onValueChange = {
-                                searchFieldValue = it
-                                searchQuery = it.text
-                            },
-                            placeholder = { Text(stringResource(R.string.search_placeholder)) },
-                            modifier = Modifier
-                                .weight(1f)
-                                .padding(vertical = 4.dp)
-                                .focusRequester(searchFocusRequester)
-                                .testTag("ShelfSearchTextField"),
-                            singleLine = true,
-                            colors = TextFieldDefaults.colors(
-                                focusedContainerColor = Color.Transparent,
-                                unfocusedContainerColor = Color.Transparent,
-                                disabledContainerColor = Color.Transparent,
-                                focusedIndicatorColor = Color.Transparent,
-                                unfocusedIndicatorColor = Color.Transparent,
-                            ),
-                            trailingIcon = {
-                                if (searchQuery.isNotEmpty()) {
-                                    IconButton(onClick = { clearShelfSearchQuery() }) {
-                                        Icon(Icons.Default.Close, contentDescription = stringResource(R.string.content_desc_clear_query))
-                                    }
-                                }
-                            }
-                        )
-                    }
-                }
-            } else {
-                CustomTopAppBar(
-                    title = {
-                        Column {
-                            Text(
-                                text = shelf.name,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Text(
-                                text = when {
-                                    isFolderShelf && shelf.childShelfCount > 0 && shelf.directBookCount > 0 ->
-                                        stringResource(
-                                            R.string.folder_subtitle_folder_book_counts,
-                                            pluralStringResource(R.plurals.folder_count, shelf.childShelfCount, shelf.childShelfCount),
-                                            getBookCountString(shelf.directBookCount)
-                                        )
-                                    isFolderShelf && shelf.childShelfCount > 0 ->
-                                        pluralStringResource(R.plurals.folder_count, shelf.childShelfCount, shelf.childShelfCount)
-                                    isFolderShelf -> getBookCountString(shelf.directBookCount)
-                                    else -> getBookCountString(shelf.bookCount)
-                                },
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    },
-                    navigationIcon = {
-                        IconButton(onClick = onBack) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
-                        }
-                    },
-                    actions = {
-                        Box {
-                            TextButton(
-                                onClick = { showSortMenu = true },
-                                modifier = Modifier.testTag("ShelfSortButton")
-                            ) {
-                                Icon(
-                                    painter = painterResource(id = R.drawable.sort),
-                                    contentDescription = stringResource(R.string.content_desc_sort),
-                                    modifier = Modifier.size(20.dp)
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(stringResource(sortOrder.labelRes))
-                            }
-                            DropdownMenu(
-                                expanded = showSortMenu,
-                                onDismissRequest = { showSortMenu = false }
-                            ) {
-                                SortOrder.entries.forEach { order ->
-                                    DropdownMenuItem(
-                                        text = { Text(stringResource(order.labelRes)) },
-                                        onClick = {
-                                            onSortOrderChange(order)
-                                            showSortMenu = false
-                                        },
-                                        trailingIcon = {
-                                            if (order == sortOrder) {
-                                                Icon(
-                                                    Icons.Default.Check,
-                                                    contentDescription = stringResource(R.string.content_desc_selected)
-                                                )
-                                            }
-                                        }
-                                    )
-                                }
-                            }
-                        }
-
-                        IconButton(onClick = { isSearchActive = true }) {
-                            Icon(
-                                imageVector = Icons.Default.Search,
-                                contentDescription = stringResource(R.string.content_desc_search_shelf)
-                            )
-                        }
-
-                        if (shelf.type == ShelfType.MANUAL && shelf.id != "unshelved") {
-                            Box {
-                                IconButton(onClick = { showMoreMenu = true }) {
-                                    Icon(
-                                        imageVector = Icons.Default.MoreVert,
-                                        contentDescription = stringResource(R.string.content_desc_more_options)
-                                    )
-                                }
-                                DropdownMenu(
-                                    expanded = showMoreMenu,
-                                    onDismissRequest = { showMoreMenu = false }
-                                ) {
-                                    DropdownMenuItem(
-                                        text = { Text(stringResource(R.string.menu_rename_shelf)) },
-                                        onClick = {
-                                            onRenameShelf()
-                                            showMoreMenu = false
-                                        }
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text(stringResource(R.string.menu_delete_shelf)) },
-                                        onClick = {
-                                            onDeleteShelf()
-                                            showMoreMenu = false
-                                        }
-                                    )
-                                }
-                            }
-                        }
-                    }
-                )
-            }
+            isFolderShelf && shelf.childShelfCount > 0 -> pluralStringResource(R.plurals.folder_count, shelf.childShelfCount, shelf.childShelfCount)
+            isFolderShelf -> getBookCountString(shelf.directBookCount)
+            else -> getBookCountString(shelf.bookCount)
         },
-        floatingActionButton = {
-            if (shelf.type == ShelfType.MANUAL && shelf.id != "unshelved" && !isContextualModeActive) {
-                ExtendedFloatingActionButton(
-                    onClick = onAddBooksClick,
-                    icon = { Icon(Icons.Default.Add, contentDescription = null) },
-                    text = { Text(stringResource(R.string.fab_add_books)) }
-                )
-            }
+        isFolderShelf = isFolderShelf,
+        canMutateShelf = shelf.type == ShelfType.MANUAL && shelf.id != "unshelved",
+        childShelves = childShelves,
+        directBooks = shelf.directBooks,
+        selectedCount = selectedItems.size,
+        sortOrder = sortOrder,
+        strings = strings,
+        childKey = { it.id },
+        bookKey = { it.bookId },
+        childMatchesQuery = { child, query ->
+            child.name.contains(query, ignoreCase = true) || child.books.any { item -> item.matchesShelfQuery(query, includeTags = false) }
         },
-        content = { paddingValues ->
-            if (filteredChildShelves.isEmpty() && filteredDirectBooks.isEmpty()) {
-                Box(
-                    modifier = Modifier.fillMaxSize().padding(paddingValues),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = if (normalizedQuery.isBlank()) stringResource(R.string.shelf_empty) else stringResource(
-                            R.string.no_results_found,
-                            normalizedQuery
-                        ),
-                        style = MaterialTheme.typography.bodyLarge
-                    )
-                }
-            } else {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize().padding(paddingValues),
-                    contentPadding = PaddingValues(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    if (filteredChildShelves.isNotEmpty()) {
-                        if (isFolderShelf) {
-                            item {
-                                Text(
-                                    text = stringResource(R.string.section_folders),
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                        items(filteredChildShelves, key = { it.id }) { childShelf ->
-                            ShelfListItem(
-                                shelf = childShelf,
-                                isSelected = false,
-                                onItemClick = { onChildShelfClick(childShelf) },
-                                onItemLongClick = {},
-                                showHierarchyIndent = false
-                            )
-                        }
-                    }
-                    if (filteredDirectBooks.isNotEmpty() && isFolderShelf && filteredChildShelves.isNotEmpty()) {
-                        item {
-                            Spacer(modifier = Modifier.height(4.dp))
-                        }
-                        item {
-                            Text(
-                                text = stringResource(R.string.section_files),
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                    items(filteredDirectBooks, key = { it.bookId }) { item ->
-                        LibraryListItem(
-                            item = item,
-                            isSelected = selectedItems.any { it.bookId == item.bookId },
-                            onItemClick = { onBookClick(item) },
-                            onItemLongClick = { onBookLongClick(item) },
-                            isDownloading = item.bookId in downloadingBookIds,
-                            usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName
-                        )
-                    }
-                }
-            }
-        }
+        bookMatchesQuery = { item, query -> item.matchesShelfQuery(query, includeTags = true) },
+        onSortOrderChange = onSortOrderChange,
+        onBack = onBack,
+        onAddBooks = onAddBooksClick,
+        onRenameShelf = onRenameShelf,
+        onDeleteShelf = onDeleteShelf,
+        contextualTopBar = {
+            ContextualTopAppBar(
+                selectedItemCount = selectedItems.size,
+                onNavIconClick = onClearSelection,
+                onTagClick = onTagClick,
+                onInfoClick = onInfoClick,
+                onSaveClick = onSaveClick,
+                onShareClick = onShareClick,
+                onDeleteClick = onDeleteClick,
+            )
+        },
+        childRow = { child -> ShelfListItem(child, false, { onChildShelfClick(child) }, {}, showHierarchyIndent = false) },
+        bookRow = { item ->
+            LibraryListItem(
+                item = item,
+                isSelected = selectedItems.any { it.bookId == item.bookId },
+                onItemClick = { onBookClick(item) },
+                onItemLongClick = { onBookLongClick(item) },
+                isDownloading = item.bookId in downloadingBookIds,
+                usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName,
+            )
+        },
+        sortIcon = { Icon(painterResource(R.drawable.sort), strings.sortDescription, Modifier.size(20.dp)) },
+        platformBackHandler = { enabled, onBackHandler -> BackHandler(enabled = enabled, onBack = onBackHandler) },
+    )
+}
+
+private fun RecentFileItem.matchesShelfQuery(query: String, includeTags: Boolean): Boolean =
+    displayName.contains(query, ignoreCase = true) ||
+        title?.contains(query, ignoreCase = true) == true ||
+        author?.contains(query, ignoreCase = true) == true ||
+        (includeTags && tags.any { it.name.contains(query, ignoreCase = true) })
+
+@Composable
+private fun sharedAndroidShelfScreenStrings(): com.aryan.reader.shared.ui.SharedAndroidShelfScreenStrings {
+    val context = LocalContext.current
+    return com.aryan.reader.shared.ui.SharedAndroidShelfScreenStrings(
+        back = stringResource(R.string.action_back),
+        closeSearch = stringResource(R.string.content_desc_close_search),
+        clearQuery = stringResource(R.string.content_desc_clear_query),
+        searchPlaceholder = stringResource(R.string.search_placeholder),
+        sortDescription = stringResource(R.string.content_desc_sort),
+        selectedDescription = stringResource(R.string.content_desc_selected),
+        searchShelfDescription = stringResource(R.string.content_desc_search_shelf),
+        moreOptionsDescription = stringResource(R.string.content_desc_more_options),
+        renameShelf = stringResource(R.string.menu_rename_shelf),
+        deleteShelf = stringResource(R.string.menu_delete_shelf),
+        addBooks = stringResource(R.string.fab_add_books),
+        emptyShelf = stringResource(R.string.shelf_empty),
+        noResults = { context.getString(R.string.no_results_found, it) },
+        foldersSection = stringResource(R.string.section_folders),
+        filesSection = stringResource(R.string.section_files),
+        addToShelfTitle = { context.getString(R.string.add_to_shelf, it) },
+        addCount = { context.getString(R.string.fab_add_count, it) },
+        noUnshelvedBooks = stringResource(R.string.no_unshelved_books),
+        allBooksInShelf = stringResource(R.string.all_books_in_shelf),
+        sortLabels = SortOrder.entries.associateWith { stringResource(it.labelRes) },
+        sourceLabels = AddBooksSource.entries.associateWith { stringResource(it.labelRes) },
     )
 }
 
@@ -1548,116 +1046,30 @@ private fun AddBooksModeScreen(
     downloadingBookIds: Set<String>,
     usePdfFileNameAsDisplayName: Boolean,
 ) {
-    var showSortMenu by remember { mutableStateOf(false) }
-
-    Scaffold(
-        modifier = Modifier,
-        topBar = {
-            Column {
-                CustomTopAppBar(
-                    title = { Text(stringResource(R.string.add_to_shelf, shelfName)) },
-                    navigationIcon = {
-                        IconButton(onClick = onBack) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
-                        }
-                    },
-                    actions = {
-                        Box {
-                            TextButton(
-                                onClick = { showSortMenu = true },
-                                modifier = Modifier.testTag("AddBooksSortButton")
-                            ) {
-                                Icon(
-                                    painter = painterResource(id = R.drawable.sort),
-                                    contentDescription = stringResource(R.string.content_desc_sort),
-                                    modifier = Modifier.size(20.dp)
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(stringResource(sortOrder.labelRes))
-                            }
-                            DropdownMenu(
-                                expanded = showSortMenu,
-                                onDismissRequest = { showSortMenu = false }
-                            ) {
-                                SortOrder.entries.forEach { order ->
-                                    DropdownMenuItem(
-                                        text = { Text(stringResource(order.labelRes)) },
-                                        onClick = {
-                                            onSortOrderChange(order)
-                                            showSortMenu = false
-                                        },
-                                        trailingIcon = {
-                                            if (order == sortOrder) {
-                                                Icon(Icons.Default.Check, contentDescription = stringResource(R.string.content_desc_selected))
-                                            }
-                                        }
-                                    )
-                                }
-                            }
-                        }
-                    }
-                )
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 12.dp)
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    AddBooksSource.entries.forEach { source ->
-                        FilterChip(
-                            selected = source == currentSource,
-                            onClick = { onSourceChange(source) },
-                            label = { Text(stringResource(source.labelRes)) }
-                        )
-                    }
-                }
-            }
+    val strings = sharedAndroidShelfScreenStrings()
+    com.aryan.reader.shared.ui.SharedAndroidAddBooksModeScreen(
+        shelfName = shelfName,
+        books = availableBooks,
+        selectedCount = selectedBookUris.size,
+        source = currentSource,
+        sortOrder = sortOrder,
+        strings = strings,
+        bookKey = { it.bookId },
+        onSortOrderChange = onSortOrderChange,
+        onSourceChange = onSourceChange,
+        onBack = onBack,
+        onAddSelectedBooks = onAddSelectedBooks,
+        bookRow = { item ->
+            LibraryListItem(
+                item = item,
+                isSelected = item.bookId in selectedBookUris,
+                onItemClick = { onBookClick(item) },
+                onItemLongClick = { onBookClick(item) },
+                isDownloading = item.bookId in downloadingBookIds,
+                usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName,
+            )
         },
-        floatingActionButton = {
-            if (selectedBookUris.isNotEmpty()) {
-                ExtendedFloatingActionButton(
-                    text = { Text(stringResource(R.string.fab_add_count, selectedBookUris.size)) },
-                    icon = { Icon(Icons.Default.Check, contentDescription = stringResource(R.string.fab_add_books)) },
-                    onClick = onAddSelectedBooks
-                )
-            }
-        },
-        content = { paddingValues ->
-            if (availableBooks.isEmpty()) {
-                Box(
-                    modifier = Modifier.fillMaxSize().padding(paddingValues),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = if (currentSource == AddBooksSource.UNSHELVED) {
-                            stringResource(R.string.no_unshelved_books)
-                        } else {
-                            stringResource(R.string.all_books_in_shelf)
-                        },
-                        style = MaterialTheme.typography.bodyLarge
-                    )
-                }
-            } else {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize().padding(paddingValues),
-                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 88.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    items(availableBooks, key = { it.bookId }) { item ->
-                        val isSelected = item.bookId in selectedBookUris
-                        LibraryListItem(
-                            item = item,
-                            isSelected = isSelected,
-                            onItemClick = { onBookClick(item) },
-                            onItemLongClick = { onBookClick(item) },
-                            isDownloading = item.bookId in downloadingBookIds,
-                            usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName
-                        )
-                    }
-                }
-            }
-        }
+        sortIcon = { Icon(painterResource(R.drawable.sort), strings.sortDescription, Modifier.size(20.dp)) },
     )
 }
 
@@ -1751,7 +1163,6 @@ private fun EmptyShelfCover(
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ShelfListItem(
     shelf: Shelf,
@@ -1760,79 +1171,59 @@ private fun ShelfListItem(
     onItemLongClick: () -> Unit,
     showHierarchyIndent: Boolean = true,
 ) {
-    val folderIndent = if (showHierarchyIndent && shelf.type == ShelfType.FOLDER) (shelf.depth * 14).dp else 0.dp
-
-    androidx.compose.material3.ElevatedCard(
-        shape = MaterialTheme.shapes.large,
-        colors = androidx.compose.material3.CardDefaults.elevatedCardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
-        ),
-        elevation = androidx.compose.material3.CardDefaults.elevatedCardElevation(
-            defaultElevation = if (isSelected) 8.dp else 2.dp
-        ),
-        modifier = Modifier
-            .fillMaxWidth()
-            .testTag("ShelfItem_${shelf.id}")
-            .then(
-                if (isSelected) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, MaterialTheme.shapes.large)
-                else Modifier
-            )
-            .clip(MaterialTheme.shapes.large)
-            .combinedClickable(
-                onClick = onItemClick,
-                onLongClick = {
-                    if (shelf.name != "Unshelved") {
-                        onItemLongClick()
-                    }
-                }
-            )
+    val folderIndent = if (showHierarchyIndent && shelf.type == ShelfType.FOLDER) {
+        (shelf.depth * 14).dp
+    } else {
+        0.dp
+    }
+    SharedMobileShelfListCardFrame(
+        isSelected = isSelected,
+        contentStartIndent = folderIndent,
+        onClick = onItemClick,
+        onLongClick = {
+            if (shelf.name != "Unshelved") {
+                onItemLongClick()
+            }
+        },
+        modifier = Modifier.testTag("ShelfItem_${shelf.id}"),
     ) {
-        Row(
-            modifier = Modifier.padding(start = 12.dp + folderIndent, end = 12.dp, top = 8.dp, bottom = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            ShelfCover(shelf = shelf)
-
-            Spacer(modifier = Modifier.width(16.dp))
-
-            Column(modifier = Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    val icon = when (shelf.type) {
-                        ShelfType.SMART -> Icons.Default.Star
-                        ShelfType.TAG -> Icons.AutoMirrored.Filled.LibraryBooks
-                        ShelfType.FOLDER -> Icons.Default.Folder
-                        ShelfType.SERIES -> Icons.AutoMirrored.Filled.LibraryBooks
-                        ShelfType.MANUAL -> Icons.AutoMirrored.Filled.List
-                    }
-                    Icon(
-                        imageVector = icon,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp),
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = shelf.name,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
+        ShelfCover(shelf = shelf)
+        Spacer(Modifier.width(16.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                val icon = when (shelf.type) {
+                    ShelfType.SMART -> Icons.Default.Star
+                    ShelfType.TAG -> Icons.AutoMirrored.Filled.LibraryBooks
+                    ShelfType.FOLDER -> Icons.Default.Folder
+                    ShelfType.SERIES -> Icons.AutoMirrored.Filled.LibraryBooks
+                    ShelfType.MANUAL -> Icons.AutoMirrored.Filled.List
                 }
-                Spacer(modifier = Modifier.height(4.dp))
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+                Spacer(Modifier.width(6.dp))
                 Text(
-                    text = getBookCountString(shelf.bookCount),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    text = shelf.name,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = getBookCountString(shelf.bookCount),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
-
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun LibraryListItem(
+internal fun LibraryListItem(
     item: RecentFileItem,
     isSelected: Boolean,
     isPinned: Boolean = false,
@@ -1841,220 +1232,138 @@ private fun LibraryListItem(
     isDownloading: Boolean,
     usePdfFileNameAsDisplayName: Boolean = false,
 ) {
-    androidx.compose.material3.ElevatedCard(
-        shape = MaterialTheme.shapes.large,
-        colors = androidx.compose.material3.CardDefaults.elevatedCardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
-        ),
-        elevation = androidx.compose.material3.CardDefaults.elevatedCardElevation(
-            defaultElevation = if (isSelected) 6.dp else 2.dp
-        ),
-        modifier = Modifier
-            .fillMaxWidth()
-            .testTag("LibraryBookItem_${item.bookId}")
-            .graphicsLayer { alpha = if (item.isAvailable) 1.0f else 0.8f }
-            .then(
-                if (isSelected) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, MaterialTheme.shapes.large)
-                else Modifier
+    SharedMobileLibraryBookListCardFrame(
+        isAvailable = item.isAvailable,
+        isSelected = isSelected,
+        onClick = onItemClick,
+        onLongClick = onItemLongClick,
+        modifier = Modifier.testTag("LibraryBookItem_${item.bookId}"),
+        cover = {
+            ThemedBookCover(
+                item = item,
+                contentDescription = item.displayName,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
             )
-            .clip(MaterialTheme.shapes.large)
-            .combinedClickable(
-                onClick = onItemClick,
-                onLongClick = onItemLongClick
-            )
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 12.dp)
-                .height(132.dp),
-            verticalAlignment = Alignment.Top,
-            horizontalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .aspectRatio(0.7f)
-                    .clip(MaterialTheme.shapes.medium)
-                    .border(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f), MaterialTheme.shapes.medium)
-            ) {
-                ThemedBookCover(
-                    item = item,
-                    contentDescription = item.displayName,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize()
-                )
-                if (isSelected) {
-                    Box(
-                        modifier = Modifier.matchParentSize().background(MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(Icons.Default.Check, contentDescription = stringResource(R.string.content_desc_selected), modifier = Modifier.size(36.dp).background(MaterialTheme.colorScheme.primary, CircleShape).padding(6.dp), tint = MaterialTheme.colorScheme.onPrimary)
-                    }
+            if (isSelected) {
+                Box(
+                    modifier = Modifier.matchParentSize().background(
+                        MaterialTheme.colorScheme.primary.copy(alpha = 0.2f),
+                    ),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        Icons.Default.Check,
+                        contentDescription = stringResource(R.string.content_desc_selected),
+                        modifier = Modifier.size(36.dp)
+                            .background(MaterialTheme.colorScheme.primary, CircleShape)
+                            .padding(6.dp),
+                        tint = MaterialTheme.colorScheme.onPrimary,
+                    )
                 }
             }
-
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight()
-            ) {
-                Row(
-                    verticalAlignment = Alignment.Top,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = item.cardTitle(usePdfFileNameAsDisplayName),
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 2,
-                            minLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                            lineHeight = 20.sp
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = item.cardAuthor(),
-                            style = MaterialTheme.typography.bodySmall,
-                            maxLines = 1,
-                            minLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-
-                    if (item.sourceFolderUri != null || item.isOpdsStream() || isPinned) {
-                        FileStatusBadges(
-                            item = item,
-                            isPinned = isPinned
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    FileTypeBadge(type = item.type, overlay = false)
-
-                    if (item.tags.isNotEmpty()) {
-                        BookTagChipsRow(
-                            tags = item.tags,
-                            compact = true,
-                            modifier = Modifier.weight(1f, fill = false)
-                        )
-                    } else {
-                        Spacer(modifier = Modifier.weight(1f))
-                    }
-
-                    if (!item.isAvailable) {
-                        Surface(
-                            shape = RoundedCornerShape(50),
-                            color = if (isDownloading) {
-                                MaterialTheme.colorScheme.primaryContainer
-                            } else {
-                                MaterialTheme.colorScheme.errorContainer
-                            },
-                            contentColor = if (isDownloading) {
-                                MaterialTheme.colorScheme.onPrimaryContainer
-                            } else {
-                                MaterialTheme.colorScheme.onErrorContainer
-                            }
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                if (isDownloading) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(14.dp),
-                                        strokeWidth = 2.dp
-                                    )
-                                } else {
-                                    Icon(
-                                        Icons.Filled.Info,
-                                        contentDescription = stringResource(R.string.not_available_locally),
-                                        modifier = Modifier.size(14.dp)
-                                    )
-                                }
-                                Text(
-                                    text = if (isDownloading) {
-                                        stringResource(R.string.status_downloading)
-                                    } else {
-                                        stringResource(R.string.not_available_locally)
-                                    },
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.Medium
-                                )
-                            }
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.weight(1f))
-
-                ReadingProgressSection(
-                    progressPercentage = item.progressPercentage,
+        },
+        header = {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = item.cardTitle(usePdfFileNameAsDisplayName),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 2,
+                    minLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    lineHeight = 20.sp,
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = item.cardAuthor(),
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 1,
+                    minLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (item.sourceFolderUri != null || item.isOpdsStream() || isPinned) {
+                FileStatusBadges(item = item, isPinned = isPinned)
+            }
+        },
+        metadata = {
+            FileTypeBadge(type = item.type, overlay = false)
+            if (item.tags.isNotEmpty()) {
+                BookTagChipsRow(
+                    tags = item.tags,
                     compact = true,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.weight(1f, fill = false),
                 )
+            } else {
+                Spacer(Modifier.weight(1f))
             }
-        }
-    }
+            if (!item.isAvailable) {
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = if (isDownloading) {
+                        MaterialTheme.colorScheme.primaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.errorContainer
+                    },
+                    contentColor = if (isDownloading) {
+                        MaterialTheme.colorScheme.onPrimaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.onErrorContainer
+                    },
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        if (isDownloading) {
+                            CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                        } else {
+                            Icon(
+                                Icons.Filled.Info,
+                                contentDescription = stringResource(R.string.not_available_locally),
+                                modifier = Modifier.size(14.dp),
+                            )
+                        }
+                        Text(
+                            text = if (isDownloading) {
+                                stringResource(R.string.status_downloading)
+                            } else {
+                                stringResource(R.string.not_available_locally)
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Medium,
+                        )
+                    }
+                }
+            }
+        },
+        progress = {
+            ReadingProgressSection(
+                progressPercentage = item.progressPercentage,
+                compact = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        },
+    )
 }
-
 @Composable
 private fun RenameShelfDialog(
     initialName: String,
     onConfirm: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
-    var textFieldValue by remember {
-        mutableStateOf(
-            TextFieldValue(
-                text = initialName,
-                selection = TextRange(initialName.length)
-            )
-        )
-    }
-    val focusRequester = remember { FocusRequester() }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.menu_rename_shelf)) },
-        text = {
-            OutlinedTextField(
-                value = textFieldValue,
-                onValueChange = { textFieldValue = it },
-                placeholder = { Text(stringResource(R.string.shelf_name_hint)) },
-                singleLine = true,
-                modifier = Modifier.focusRequester(focusRequester)
-            )
-        },
-        confirmButton = {
-            TextButton(
-                onClick = { onConfirm(textFieldValue.text) },
-                enabled = textFieldValue.text.isNotBlank() && textFieldValue.text != initialName
-            ) {
-                Text(stringResource(R.string.action_rename))
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text(stringResource(R.string.action_cancel))
-            }
-        }
+    com.aryan.reader.shared.ui.SharedRenameShelfDialog(
+        initialName = initialName,
+        title = stringResource(R.string.menu_rename_shelf),
+        namePlaceholder = stringResource(R.string.shelf_name_hint),
+        confirmLabel = stringResource(R.string.action_rename),
+        cancelLabel = stringResource(R.string.action_cancel),
+        onConfirm = onConfirm,
+        onDismiss = onDismiss,
     )
-
-    LaunchedEffect(Unit) {
-        delay(100)
-        focusRequester.requestFocus()
-    }
 }
 
 @Composable
@@ -2063,16 +1372,13 @@ private fun DeleteShelfConfirmationDialog(
     onConfirm: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.dialog_delete_shelf)) },
-        text = { Text(stringResource(R.string.dialog_delete_shelf_desc, shelfName)) },
-        confirmButton = {
-            TextButton(onClick = onConfirm) { Text(stringResource(R.string.action_delete)) }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
-        }
+    com.aryan.reader.shared.ui.SharedShelfConfirmationDialog(
+        title = stringResource(R.string.dialog_delete_shelf),
+        body = stringResource(R.string.dialog_delete_shelf_desc, shelfName),
+        confirmLabel = stringResource(R.string.action_delete),
+        cancelLabel = stringResource(R.string.action_cancel),
+        onConfirm = onConfirm,
+        onDismiss = onDismiss,
     )
 }
 
@@ -2083,16 +1389,13 @@ private fun RemoveFromShelfConfirmationDialog(
     onConfirm: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.dialog_remove_from_shelf)) },
-        text = { Text(pluralStringResource(R.plurals.dialog_remove_from_shelf_desc, count, count, shelfName)) },
-        confirmButton = {
-            TextButton(onClick = onConfirm) { Text(stringResource(R.string.action_remove)) }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
-        }
+    com.aryan.reader.shared.ui.SharedShelfConfirmationDialog(
+        title = stringResource(R.string.dialog_remove_from_shelf),
+        body = pluralStringResource(R.plurals.dialog_remove_from_shelf_desc, count, count, shelfName),
+        confirmLabel = stringResource(R.string.action_remove),
+        cancelLabel = stringResource(R.string.action_cancel),
+        onConfirm = onConfirm,
+        onDismiss = onDismiss,
     )
 }
 
@@ -2128,379 +1431,60 @@ internal fun FolderSyncScreen(
     onSyncMetadataClick: () -> Unit,
     isLoading: Boolean
 ) {
-    var editingFolder by remember { mutableStateOf<SyncedFolder?>(null) }
-    var disablingFolder by remember { mutableStateOf<SyncedFolder?>(null) }
-    val hasEnabledSyncFolders = syncedFolders.any { it.localSyncEnabled }
+    val context = LocalContext.current
+    val dateFormat = remember { SimpleDateFormat("MMM d, h:mm a", Locale.getDefault()) }
     val folderStatsByUri = remember(allRecentFiles) {
-        allRecentFiles
-            .asSequence()
+        allRecentFiles.asSequence()
             .filter { it.sourceFolderUri != null }
             .groupBy { it.sourceFolderUri!! }
             .mapValues { (_, files) ->
-                FolderFileStats(
+                com.aryan.reader.shared.ui.SharedAndroidFolderStats(
                     totalBooks = files.size,
-                    countsByType = files.groupingBy { it.type }.eachCount()
+                    countsByType = files.groupingBy { it.type }.eachCount(),
                 )
             }
     }
-
-    Scaffold(
-        floatingActionButton = {
-            if (syncedFolders.size < 10) {
-                ExtendedFloatingActionButton(
-                    text = { Text(stringResource(R.string.fab_add_folder)) },
-                    icon = { Icon(Icons.Default.Add, "Add") },
-                    onClick = onAddFolderClick
-                )
-            }
-        }
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            if (syncedFolders.isNotEmpty()) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    FilledTonalButton(
-                        onClick = onScanNowClick,
-                        enabled = !isLoading && hasEnabledSyncFolders,
-                        modifier = Modifier.weight(1f),
-                        shape = MaterialTheme.shapes.small
-                    ) {
-                        if (isLoading) {
-                            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                        } else {
-                            Icon(Icons.Default.Search, null, modifier = Modifier.size(18.dp))
-                        }
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(if (isLoading) stringResource(R.string.scanning) else stringResource(R.string.scan_all))
-                    }
-
-                    androidx.compose.material3.OutlinedButton(
-                        onClick = onSyncMetadataClick,
-                        enabled = !isLoading && hasEnabledSyncFolders,
-                        modifier = Modifier.weight(1f),
-                        shape = MaterialTheme.shapes.small
-                    ) {
-                        Icon(painterResource(id = R.drawable.sync), null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(stringResource(R.string.sync_meta))
-                    }
-                }
-            } else {
-                EmptyState(
-                    title = stringResource(R.string.sync_local_folders),
-                    message = stringResource(R.string.sync_folders_desc),
-                    onSelectFileClick = onAddFolderClick,
-                    primaryButtonText = stringResource(R.string.action_select_folder),
-                    modifier = Modifier.fillMaxSize()
-                )
-            }
-
-            LazyColumn(
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-                contentPadding = PaddingValues(bottom = 80.dp)
-            ) {
-                items(syncedFolders, key = { it.uriString }) { folder ->
-                    FolderCard(
-                        folder = folder,
-                        stats = folderStatsByUri[folder.uriString] ?: FolderFileStats.Empty,
-                        onRemoveClick = onRemoveFolderClick,
-                        onLocalSyncToggleClick = { selectedFolder ->
-                            if (selectedFolder.localSyncEnabled) {
-                                disablingFolder = selectedFolder
-                            } else {
-                                onFolderLocalSyncChange(selectedFolder, true, false)
-                            }
-                        },
-                        onEditFiltersClick = { editingFolder = folder }
-                    )
-                }
-            }
-        }
-    }
-
-    editingFolder?.let { folder ->
-        EditFolderFiltersDialog(
-            folder = folder,
-            onConfirm = { newFilters ->
-                onEditFolderFiltersClick(folder, newFilters)
-                editingFolder = null
-            },
-            onDismiss = { editingFolder = null }
-        )
-    }
-
-    disablingFolder?.let { folder ->
-        AlertDialog(
-            onDismissRequest = { disablingFolder = null },
-            title = { Text(stringResource(R.string.dialog_disable_folder_local_sync_title)) },
-            text = {
-                Text(
-                    stringResource(
-                        R.string.dialog_disable_folder_local_sync_desc,
-                        LOCAL_FOLDER_SYNC_DATA_DIR
-                    )
-                )
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        onFolderLocalSyncChange(folder, false, true)
-                        disablingFolder = null
-                    }
-                ) {
-                    Text(stringResource(R.string.action_disable_remove_sync_data))
-                }
-            },
-            dismissButton = {
-                Row {
-                    TextButton(onClick = { disablingFolder = null }) {
-                        Text(stringResource(R.string.action_cancel))
-                    }
-                    TextButton(
-                        onClick = {
-                            onFolderLocalSyncChange(folder, false, false)
-                            disablingFolder = null
-                        }
-                    ) {
-                        Text(stringResource(R.string.action_disable_keep_sync_data))
-                    }
-                }
-            }
-        )
-    }
-}
-
-private data class FolderFileStats(
-    val totalBooks: Int,
-    val countsByType: Map<FileType, Int>
-) {
-    companion object {
-        val Empty = FolderFileStats(totalBooks = 0, countsByType = emptyMap())
-    }
-}
-
-@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
-@Composable
-private fun FolderCard(
-    folder: SyncedFolder,
-    stats: FolderFileStats,
-    onRemoveClick: (SyncedFolder) -> Unit,
-    onLocalSyncToggleClick: (SyncedFolder) -> Unit,
-    onEditFiltersClick: (SyncedFolder) -> Unit
-) {
-    var showMenu by remember { mutableStateOf(false) }
-    val dateFormat = remember { SimpleDateFormat("MMM d, h:mm a", Locale.getDefault()) }
-    val lastScanText = if (folder.lastScanTime == 0L) stringResource(R.string.never) else dateFormat.format(Date(folder.lastScanTime))
-
-    androidx.compose.material3.ElevatedCard(
-        modifier = Modifier.fillMaxWidth(),
-        colors = androidx.compose.material3.CardDefaults.elevatedCardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
-        )
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                    Icon(
-                        imageVector = Icons.Default.FolderSpecial,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = folder.name,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        if (!folder.localSyncEnabled) {
-                            Text(
-                                text = stringResource(R.string.folder_local_sync_disabled),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.error
-                            )
-                        }
-                    }
-                }
-
-                Box {
-                    IconButton(onClick = { showMenu = true }) {
-                        Icon(Icons.Default.MoreVert, "Options")
-                    }
-                    DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
-                        DropdownMenuItem(
-                            text = { Text(stringResource(R.string.menu_edit_filters)) },
-                            onClick = {
-                                showMenu = false
-                                onEditFiltersClick(folder)
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = {
-                                Text(
-                                    if (folder.localSyncEnabled) {
-                                        stringResource(R.string.menu_disable_folder_local_sync)
-                                    } else {
-                                        stringResource(R.string.menu_enable_folder_local_sync)
-                                    }
-                                )
-                            },
-                            onClick = {
-                                showMenu = false
-                                onLocalSyncToggleClick(folder)
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text(stringResource(R.string.menu_remove_folder)) },
-                            onClick = {
-                                showMenu = false
-                                onRemoveClick(folder)
-                            },
-                            colors = androidx.compose.material3.MenuDefaults.itemColors(
-                                textColor = MaterialTheme.colorScheme.error
-                            )
-                        )
-                    }
-                }
-            }
-
-            HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
-
-            Row(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = stringResource(R.string.last_sync),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(text = lastScanText, style = MaterialTheme.typography.bodySmall)
-                }
-
-                Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.End) {
-                    Text(
-                        text = stringResource(R.string.books_count),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(text = stats.totalBooks.toString(), style = MaterialTheme.typography.bodyMedium)
-                }
-            }
-
-            if (stats.countsByType.isNotEmpty()) {
-                Spacer(modifier = Modifier.height(12.dp))
-                androidx.compose.foundation.layout.FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    stats.countsByType.forEach { (type, count) ->
-                        AssistChip(
-                            onClick = { },
-                            label = { Text(stringResource(R.string.folder_filter_count, type.name, count)) }
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
-@Composable
-private fun EditFolderFiltersDialog(
-    folder: SyncedFolder,
-    onConfirm: (Set<FileType>) -> Unit,
-    onDismiss: () -> Unit
-) {
-    var selectedTypes by remember { mutableStateOf(folder.allowedFileTypes) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Column {
-                Text(
-                    text = stringResource(R.string.filter_file_types),
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold
-                )
-                Text(
-                    text = stringResource(R.string.filter_file_types_desc),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        },
-        text = {
-            Column(modifier = Modifier.fillMaxWidth()) {
-                HorizontalDivider(modifier = Modifier.padding(bottom = 16.dp))
-
-                androidx.compose.foundation.layout.FlowRow(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    ANDROID_SYNCABLE_FILE_TYPES.forEach { type ->
-                        val isSelected = type in selectedTypes
-                        FilterChip(
-                            selected = isSelected,
-                            onClick = {
-                                selectedTypes = if (isSelected) {
-                                    selectedTypes - type
-                                } else {
-                                    selectedTypes + type
-                                }
-                            },
-                            label = {
-                                Text(
-                                    text = type.name,
-                                    style = MaterialTheme.typography.labelLarge
-                                )
-                            },
-                            leadingIcon = if (isSelected) {
-                                {
-                                    Icon(
-                                        imageVector = Icons.Default.Check,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                }
-                            } else null,
-                            shape = MaterialTheme.shapes.medium
-                        )
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            androidx.compose.material3.Button(
-                onClick = { onConfirm(selectedTypes) },
-                enabled = selectedTypes.isNotEmpty(),
-                shape = MaterialTheme.shapes.medium
-            ) {
-                Text(stringResource(R.string.action_save))
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text(stringResource(R.string.action_cancel))
-            }
-        }
+    com.aryan.reader.shared.ui.SharedAndroidFolderSyncScreen(
+        folders = syncedFolders,
+        statsByFolderUri = folderStatsByUri,
+        syncableFileTypes = ANDROID_SYNCABLE_FILE_TYPES.toList(),
+        isLoading = isLoading,
+        strings = com.aryan.reader.shared.ui.SharedAndroidFolderSyncStrings(
+            addFolder = stringResource(R.string.fab_add_folder),
+            addDescription = "Add",
+            scanning = stringResource(R.string.scanning),
+            scanAll = stringResource(R.string.scan_all),
+            syncMetadata = stringResource(R.string.sync_meta),
+            emptyTitle = stringResource(R.string.sync_local_folders),
+            emptyMessage = stringResource(R.string.sync_folders_desc),
+            selectFolder = stringResource(R.string.action_select_folder),
+            localSyncDisabled = stringResource(R.string.folder_local_sync_disabled),
+            optionsDescription = "Options",
+            editFilters = stringResource(R.string.menu_edit_filters),
+            disableLocalSync = stringResource(R.string.menu_disable_folder_local_sync),
+            enableLocalSync = stringResource(R.string.menu_enable_folder_local_sync),
+            removeFolder = stringResource(R.string.menu_remove_folder),
+            lastSync = stringResource(R.string.last_sync),
+            never = stringResource(R.string.never),
+            booksCount = stringResource(R.string.books_count),
+            filterCount = { type, count -> context.getString(R.string.folder_filter_count, type.name, count) },
+            filterFileTypes = stringResource(R.string.filter_file_types),
+            filterFileTypesDescription = stringResource(R.string.filter_file_types_desc),
+            save = stringResource(R.string.action_save),
+            cancel = stringResource(R.string.action_cancel),
+            disableDialogTitle = stringResource(R.string.dialog_disable_folder_local_sync_title),
+            disableDialogDescription = stringResource(R.string.dialog_disable_folder_local_sync_desc, LOCAL_FOLDER_SYNC_DATA_DIR),
+            disableRemoveData = stringResource(R.string.action_disable_remove_sync_data),
+            disableKeepData = stringResource(R.string.action_disable_keep_sync_data),
+        ),
+        onAddFolder = onAddFolderClick,
+        onRemoveFolder = onRemoveFolderClick,
+        onLocalSyncChange = onFolderLocalSyncChange,
+        onFileTypesChange = onEditFolderFiltersClick,
+        onScanAll = onScanNowClick,
+        onSyncMetadata = onSyncMetadataClick,
+        formatLastScan = { dateFormat.format(Date(it)) },
+        syncIcon = { Icon(painterResource(R.drawable.sync), null, Modifier.size(18.dp)) },
     )
 }
 
@@ -2513,124 +1497,26 @@ fun LibraryFilterSheet(
     onApply: (LibraryFilters) -> Unit,
     onDismiss: () -> Unit
 ) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    var currentFilters by remember { mutableStateOf(filters) }
-
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            Text(stringResource(R.string.filter_library), style = MaterialTheme.typography.titleLarge)
-
-            Text(stringResource(R.string.filter_file_type), style = MaterialTheme.typography.titleMedium)
-            Row(
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                ANDROID_READABLE_FILE_TYPES.forEach { type ->
-                    FilterChip(
-                        selected = type in currentFilters.fileTypes,
-                        onClick = {
-                            val newSet = if (type in currentFilters.fileTypes) currentFilters.fileTypes - type else currentFilters.fileTypes + type
-                            currentFilters = currentFilters.copy(fileTypes = newSet)
-                        },
-                        label = { Text(type.name) }
-                    )
-                }
-            }
-
-            Text(stringResource(R.string.filter_source_folder), style = MaterialTheme.typography.titleMedium)
-            Row(
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                FilterChip(
-                    selected = "IN_APP_STORAGE" in currentFilters.sourceFolders,
-                    onClick = {
-                        val newSet = if ("IN_APP_STORAGE" in currentFilters.sourceFolders) currentFilters.sourceFolders - "IN_APP_STORAGE" else currentFilters.sourceFolders + "IN_APP_STORAGE"
-                        currentFilters = currentFilters.copy(sourceFolders = newSet)
-                              },
-                    label = { Text(stringResource(R.string.filter_in_app_storage)) }
-                )
-                syncedFolders.forEach { folder ->
-                    FilterChip(
-                        selected = folder.uriString in currentFilters.sourceFolders,
-                        onClick = {
-                            val newSet = if (folder.uriString in currentFilters.sourceFolders) currentFilters.sourceFolders - folder.uriString else currentFilters.sourceFolders + folder.uriString
-                            currentFilters = currentFilters.copy(sourceFolders = newSet)
-                                  },
-                        label = { Text(folder.name) }
-                    )
-                }
-            }
-
-            Text(stringResource(R.string.filter_read_status), style = MaterialTheme.typography.titleMedium)
-            Row(
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                ReadStatusFilter.entries.forEach { status ->
-                    FilterChip(
-                        selected = currentFilters.readStatus == status,
-                        onClick = { currentFilters = currentFilters.copy(readStatus = status) },
-                        label = { Text(stringResource(status.labelRes)) }
-                    )
-                }
-            }
-
-            if (allTags.isNotEmpty()) {
-                Text(stringResource(R.string.section_tags), style = MaterialTheme.typography.titleMedium)
-                FlowRow(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    allTags.forEach { tag ->
-                        val selected = tag.id in currentFilters.tagIds
-                        FilterChip(
-                            selected = selected,
-                            onClick = {
-                                val newSet = if (selected) {
-                                    currentFilters.tagIds - tag.id
-                                } else {
-                                    currentFilters.tagIds + tag.id
-                                }
-                                currentFilters = currentFilters.copy(tagIds = newSet)
-                            },
-                            label = { Text(tag.name) },
-                            leadingIcon = {
-                                Box(
-                                    modifier = Modifier
-                                        .size(10.dp)
-                                        .background(
-                                            Color(tag.color ?: 0xFF64B5F6.toInt()),
-                                            CircleShape
-                                        )
-                                )
-                            }
-                        )
-                    }
-                }
-            }
-
-            Row(modifier = Modifier.fillMaxWidth().padding(top = 16.dp), horizontalArrangement = Arrangement.End) {
-                TextButton(onClick = { currentFilters = LibraryFilters() }) {
-                    Text(stringResource(R.string.clear_all))
-                }
-                Spacer(modifier = Modifier.width(8.dp))
-                androidx.compose.material3.Button(onClick = { onApply(currentFilters); onDismiss() }) {
-                    Text(stringResource(R.string.action_apply))
-                }
-            }
-            Spacer(modifier = Modifier.height(32.dp))
-        }
-    }
+    SharedMobileLibraryFilterDialog(
+        filters = filters,
+        allTags = allTags.map { com.aryan.reader.shared.Tag(it.id, it.name, it.color) },
+        syncedFolders = syncedFolders,
+        readableFileTypes = ANDROID_READABLE_FILE_TYPES,
+        fileTypeLabels = ANDROID_READABLE_FILE_TYPES.associateWith { it.name },
+        readStatusLabels = ReadStatusFilter.entries.associateWith { stringResource(it.labelRes) },
+        labels = SharedMobileLibraryFilterLabels(
+            title = stringResource(R.string.filter_library),
+            fileType = stringResource(R.string.filter_file_type),
+            sourceFolder = stringResource(R.string.filter_source_folder),
+            inAppStorage = stringResource(R.string.filter_in_app_storage),
+            readStatus = stringResource(R.string.filter_read_status),
+            tags = stringResource(R.string.section_tags),
+            clearAll = stringResource(R.string.clear_all),
+            apply = stringResource(R.string.action_apply),
+        ),
+        onApply = onApply,
+        onDismiss = onDismiss,
+    )
 }
 
 @Composable
@@ -2643,408 +1529,51 @@ fun OpdsTab(
     opdsViewModel: OpdsViewModel = viewModel()
 ) {
     val uiState by opdsViewModel.uiState.collectAsStateWithLifecycle()
-    val downloadingState = uiState.downloadingState
     val context = LocalContext.current
     val coverImageLoader = rememberOpdsCoverImageLoader(uiState.currentCatalog)
-    var selectedEntry by remember { mutableStateOf<OpdsEntry?>(null) }
-    var showCatalogDialog by remember { mutableStateOf(false) }
-    var editingCatalog by remember { mutableStateOf<OpdsCatalog?>(null) }
-    var catalogToDelete by remember { mutableStateOf<OpdsCatalog?>(null) }
+    val sharedLibraryBooks = remember(localLibraryFiles) {
+        localLibraryFiles.map(RecentFileItem::toSharedBookItem)
+    }
 
     BackHandler(enabled = uiState.isViewingCatalog) {
         opdsViewModel.navigateBack()
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        if (!uiState.isViewingCatalog) {
-            Box(modifier = Modifier.fillMaxSize()) {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(
-                        start = 16.dp,
-                        end = 16.dp,
-                        top = 16.dp,
-                        bottom = 88.dp
-                    ),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    items(uiState.catalogs, key = { it.id }) { catalog ->
-                        OpdsCatalogCard(
-                            catalog = catalog,
-                            onClick = { opdsViewModel.openCatalog(catalog) },
-                            onEdit = if (catalog.isDefault) null else {
-                                {
-                                    editingCatalog = catalog
-                                    showCatalogDialog = true
-                                }
-                            },
-                            onDelete = if (catalog.isDefault) null else {
-                                { catalogToDelete = catalog }
-                            })
-                    }
-                }
-
-                ExtendedFloatingActionButton(
-                    text = { Text(stringResource(R.string.fab_add_catalog)) },
-                    icon = { Icon(Icons.Default.Add, "Add") },
-                    onClick = {
-                        editingCatalog = null
-                        showCatalogDialog = true
-                    },
-                    modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp)
-                )
+    com.aryan.reader.shared.ui.SharedOpdsScreen(
+        state = uiState,
+        localLibraryBooks = sharedLibraryBooks,
+        onOpenCatalog = opdsViewModel::openCatalog,
+        onOpenFeedUrl = opdsViewModel::openFeedUrl,
+        onNavigateBack = opdsViewModel::navigateBack,
+        onSearch = opdsViewModel::search,
+        onLoadNextPage = opdsViewModel::loadNextPage,
+        onAddCatalog = opdsViewModel::addCatalog,
+        onUpdateCatalog = opdsViewModel::updateCatalog,
+        onRemoveCatalog = { opdsViewModel.removeCatalog(it.id) },
+        onDeleteCatalogStreams = onDeleteCatalogStreams,
+        onDownloadBook = { entry, acquisition ->
+            opdsViewModel.downloadBook(entry, acquisition, context) { downloadedUri ->
+                onBookDownloaded(downloadedUri, entry.title)
             }
-        } else {
-            // Screen 2: Viewing a specific feed/catalog
-            Box(modifier = Modifier.fillMaxSize()) {
-                Column(modifier = Modifier.fillMaxSize()) {
-                    Surface(
-                        color = MaterialTheme.colorScheme.surface,
-                        tonalElevation = 2.dp,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        var showSearch by remember { mutableStateOf(false) }
-                        var query by remember { mutableStateOf("") }
-
-                        val searchFocusRequester = remember { FocusRequester() }
-
-                        LaunchedEffect(showSearch) {
-                            if (showSearch) {
-                                delay(100)
-                                searchFocusRequester.requestFocus()
-                            }
-                        }
-
-                        Box(modifier = Modifier.fillMaxWidth()) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.fillMaxWidth().height(64.dp)
-                                    .padding(horizontal = 4.dp)
-                            ) {
-                                IconButton(onClick = {
-                                    if (showSearch) {
-                                        showSearch = false
-                                        query = ""
-                                    } else {
-                                        opdsViewModel.navigateBack()
-                                    }
-                                }) {
-                                    Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
-                                }
-
-                                if (showSearch) {
-                                    OutlinedTextField(
-                                        value = query,
-                                        onValueChange = { query = it },
-                                        placeholder = { Text(stringResource(R.string.search_catalog_placeholder)) },
-                                        modifier = Modifier.weight(1f).padding(vertical = 4.dp)
-                                            .focusRequester(searchFocusRequester),
-                                        singleLine = true,
-                                        colors = TextFieldDefaults.colors(
-                                            focusedContainerColor = Color.Transparent,
-                                            unfocusedContainerColor = Color.Transparent,
-                                            disabledContainerColor = Color.Transparent,
-                                            focusedIndicatorColor = Color.Transparent,
-                                            unfocusedIndicatorColor = Color.Transparent,
-                                        ),
-                                        trailingIcon = {
-                                            IconButton(onClick = {
-                                                if (query.isNotBlank()) {
-                                                    opdsViewModel.search(query)
-                                                    showSearch = false
-                                                    query = ""
-                                                }
-                                            }) {
-                                                Icon(Icons.Default.Search, "Search")
-                                            }
-                                        },
-                                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                                            imeAction = androidx.compose.ui.text.input.ImeAction.Search
-                                        ),
-                                        keyboardActions = androidx.compose.foundation.text.KeyboardActions(
-                                            onSearch = {
-                                                if (query.isNotBlank()) {
-                                                    opdsViewModel.search(query)
-                                                    showSearch = false
-                                                    query = ""
-                                                }
-                                            })
-                                    )
-                                } else {
-                                    Text(
-                                        text = uiState.currentFeed?.title ?: stringResource(R.string.status_loading),
-                                        style = MaterialTheme.typography.titleLarge,
-                                        fontWeight = FontWeight.SemiBold,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
-                                    )
-                                    if (uiState.searchUrlTemplate != null) {
-                                        IconButton(onClick = { showSearch = true }) {
-                                            Icon(Icons.Default.Search, "Search")
-                                        }
-                                    }
-                                }
-                            }
-
-                            if (uiState.isLoading) {
-                                androidx.compose.material3.LinearProgressIndicator(
-                                    modifier = Modifier.fillMaxWidth().align(Alignment.BottomCenter)
-                                )
-                            }
-                        }
-                    }
-
-                    if (uiState.currentFeed?.entries?.isEmpty() == true && !uiState.isLoading) {
-                        Box(
-                            modifier = Modifier.fillMaxSize(),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(stringResource(R.string.feed_empty))
-                        }
-                    } else {
-                        val facets = uiState.currentFeed?.facets ?: emptyList()
-                        if (facets.isNotEmpty()) {
-                            val groups = facets.groupBy { it.group }
-                            LazyRow(
-                                modifier = Modifier.fillMaxWidth()
-                                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                groups.forEach { (groupName, groupFacets) ->
-                                    item(key = groupName) {
-                                        var expanded by remember { mutableStateOf(false) }
-                                        val activeFacet = groupFacets.find { it.isActive }
-                                            ?: groupFacets.firstOrNull()
-
-                                        Box {
-                                            FilterChip(
-                                                selected = activeFacet?.isActive == true,
-                                                onClick = { expanded = true },
-                                                label = { Text(stringResource(R.string.filter_facet, groupName, activeFacet?.title ?: stringResource(R.string.action_select))) },
-                                                trailingIcon = {
-                                                    Icon(
-                                                        Icons.Default.ArrowDropDown,
-                                                        null
-                                                    )
-                                                })
-                                            DropdownMenu(
-                                                expanded = expanded,
-                                                onDismissRequest = { expanded = false }) {
-                                                groupFacets.forEach { facet ->
-                                                    DropdownMenuItem(
-                                                        text = { Text(facet.title) },
-                                                        onClick = {
-                                                            expanded = false
-                                                            opdsViewModel.openFeedUrl(facet.url)
-                                                        },
-                                                        trailingIcon = if (facet.isActive) {
-                                                            { Icon(Icons.Default.Check, null) }
-                                                        } else null)
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        LazyColumn(
-                            modifier = Modifier.fillMaxSize(),
-                            contentPadding = PaddingValues(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            val entries = uiState.currentFeed?.entries ?: emptyList()
-                            itemsIndexed(
-                                entries,
-                                key = { index, item -> "${item.id}_$index" }) { index, entry ->
-
-                                if (index == entries.lastIndex) {
-                                    LaunchedEffect(index) { opdsViewModel.loadNextPage() }
-                                }
-
-                                if (entry.isNavigation) {
-                                    OpdsNavigationCard(entry) { opdsViewModel.openFeedUrl(it) }
-                                } else {
-                                    OpdsBookCard(
-                                        entry = entry,
-                                        localLibraryFiles = localLibraryFiles,
-                                        downloadState = downloadingState[entry.id],
-                                        coverImageLoader = coverImageLoader,
-                                        onDownloadClick = { acquisition ->
-                                            opdsViewModel.downloadBook(
-                                                entry, acquisition, context
-                                            ) { downloadedUri ->
-                                                onBookDownloaded(downloadedUri, entry.title)
-                                            }
-                                        },
-                                        onReadClick = onReadBook,
-                                        onStreamClick = {
-                                            onStreamBook(
-                                                entry,
-                                                uiState.currentCatalog
-                                            )
-                                        },
-                                        onClick = { selectedEntry = entry })
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Error Banner overlay
-        uiState.errorMessage?.let { error ->
-            LaunchedEffect(error) {
-                delay(4000)
-                opdsViewModel.clearError()
-            }
-            Surface(
-                color = MaterialTheme.colorScheme.errorContainer,
-                shape = MaterialTheme.shapes.medium,
-                modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp)
-                    .padding(bottom = 70.dp)
-            ) {
-                Text(
-                    text = error,
-                    color = MaterialTheme.colorScheme.onErrorContainer,
-                    modifier = Modifier.padding(16.dp)
-                )
-            }
-        }
-
-        if (selectedEntry != null) {
-            OpdsBookDetailsSheet(
-                entry = selectedEntry!!,
-                localLibraryFiles = localLibraryFiles,
-                downloadState = downloadingState[selectedEntry!!.id],
-                coverImageLoader = coverImageLoader,
-                onDownloadFormat = { acquisition ->
-                    opdsViewModel.downloadBook(selectedEntry!!, acquisition, context) { downloadedUri ->
-                        onBookDownloaded(downloadedUri, selectedEntry!!.title)
-                    }
-                },
-                onReadClick = onReadBook,
-                onStreamClick = { selectedEntry?.let { onStreamBook(it, uiState.currentCatalog) } },
-                onAuthorOrCategoryClick = { url, fallbackName ->
-                    if (url != null) opdsViewModel.openFeedUrl(url)
-                    else opdsViewModel.search(fallbackName)
-                    selectedEntry = null
-                },
-                onDismiss = { selectedEntry = null }
+        },
+        onReadBook = { sharedBook ->
+            localLibraryFiles.firstOrNull { it.bookId == sharedBook.id }?.let(onReadBook)
+        },
+        onStreamBook = onStreamBook,
+        onClearError = opdsViewModel::clearError,
+        coverContent = { entry, modifier ->
+            AsyncImage(
+                model = entry.coverUrl,
+                contentDescription = null,
+                imageLoader = coverImageLoader,
+                contentScale = ContentScale.Crop,
+                modifier = modifier
+                    .clip(MaterialTheme.shapes.small)
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
             )
-        }
-    }
-
-    // Dynamic Add/Edit Dialog
-    if (showCatalogDialog) {
-        var newTitle by remember(editingCatalog) { mutableStateOf(editingCatalog?.title ?: "") }
-        var newUrl by remember(editingCatalog) { mutableStateOf(editingCatalog?.url ?: "") }
-        var newUsername by remember(editingCatalog) { mutableStateOf(editingCatalog?.username ?: "") }
-        var newPassword by remember(editingCatalog) { mutableStateOf(editingCatalog?.password ?: "") }
-
-        val isEditMode = editingCatalog != null
-
-        AlertDialog(
-            onDismissRequest = {
-                showCatalogDialog = false
-                editingCatalog = null
-            },
-            title = { Text(if (isEditMode) stringResource(R.string.edit_catalog) else stringResource(R.string.add_opds_catalog)) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        value = newTitle,
-                        onValueChange = { newTitle = it },
-                        label = { Text(stringResource(R.string.catalog_name)) },
-                        singleLine = true
-                    )
-                    OutlinedTextField(
-                        value = newUrl,
-                        onValueChange = { newUrl = it },
-                        label = { Text(stringResource(R.string.url)) },
-                        placeholder = { Text(stringResource(R.string.url_placeholder)) },
-                        singleLine = true
-                    )
-                    Text(stringResource(R.string.auth_optional),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.padding(top = 8.dp)
-                    )
-                    OutlinedTextField(
-                        value = newUsername,
-                        onValueChange = { newUsername = it },
-                        label = { Text(stringResource(R.string.username)) },
-                        singleLine = true
-                    )
-                    OutlinedTextField(
-                        value = newPassword,
-                        onValueChange = { newPassword = it },
-                        label = { Text(stringResource(R.string.password)) },
-                        singleLine = true,
-                        visualTransformation = PasswordVisualTransformation(),
-                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Password)
-                    )
-                }
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        if (isEditMode) {
-                            opdsViewModel.updateCatalog(editingCatalog!!.id, newTitle, newUrl, newUsername, newPassword)
-                        } else {
-                            opdsViewModel.addCatalog(newTitle, newUrl, newUsername, newPassword)
-                        }
-                        showCatalogDialog = false
-                        editingCatalog = null
-                    },
-                    enabled = newTitle.isNotBlank() && newUrl.isNotBlank()
-                ) { Text(stringResource(R.string.action_save)) }
-            },
-            dismissButton = {
-                TextButton(onClick = {
-                    showCatalogDialog = false
-                    editingCatalog = null
-                }) { Text(stringResource(R.string.action_cancel)) }
-            }
-        )
-    }
-
-    if (catalogToDelete != null) {
-        val streamedBooksCount = localLibraryFiles.count { it.uriString?.contains("catalogId=${catalogToDelete!!.id}") == true }
-        AlertDialog(
-            onDismissRequest = { catalogToDelete = null },
-            title = { Text(stringResource(R.string.delete_catalog)) },
-            text = {
-                Column {
-                    Text(stringResource(R.string.delete_catalog_desc, catalogToDelete!!.title))
-                    if (streamedBooksCount > 0) {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            stringResource(R.string.delete_catalog_warning, streamedBooksCount),
-                            color = MaterialTheme.colorScheme.error
-                        )
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        opdsViewModel.removeCatalog(catalogToDelete!!.id)
-                        if (streamedBooksCount > 0) {
-                            onDeleteCatalogStreams(catalogToDelete!!.id)
-                        }
-                        catalogToDelete = null
-                    },
-                    colors = androidx.compose.material3.ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
-                ) { Text(stringResource(R.string.action_delete)) }
-            },
-            dismissButton = {
-                TextButton(onClick = { catalogToDelete = null }) { Text(stringResource(R.string.action_cancel)) }
-            }
-        )
-    }
+        },
+        mobileLayout = true,
+    )
 }
 
 @Composable
@@ -3068,454 +1597,4 @@ private fun rememberOpdsCoverImageLoader(catalog: OpdsCatalog?): ImageLoader {
         onDispose { imageLoader.shutdown() }
     }
     return imageLoader
-}
-
-@Composable
-fun OpdsCatalogCard(catalog: OpdsCatalog, onClick: () -> Unit, onEdit: (() -> Unit)?, onDelete: (() -> Unit)?) {
-    Surface(
-        onClick = onClick,
-        shape = MaterialTheme.shapes.medium,
-        color = MaterialTheme.colorScheme.surfaceContainer,
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(16.dp)
-        ) {
-            Icon(Icons.Default.FolderSpecial, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-            Spacer(modifier = Modifier.width(16.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(catalog.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    if (catalog.isDefault) {
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Surface(
-                            color = MaterialTheme.colorScheme.secondaryContainer,
-                            shape = MaterialTheme.shapes.small
-                        ) {
-                            Text(stringResource(R.string.preset_label),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSecondaryContainer,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                            )
-                        }
-                    }
-                }
-                Text(catalog.url, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            if (onEdit != null) {
-                IconButton(onClick = onEdit) {
-                    Icon(Icons.Default.Edit, contentDescription = stringResource(R.string.label_edit))
-                }
-            }
-            if (onDelete != null) {
-                IconButton(onClick = onDelete) {
-                    Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.action_remove))
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun OpdsNavigationCard(entry: OpdsEntry, onClick: (String) -> Unit) {
-    Surface(
-        onClick = { entry.navigationUrl?.let { onClick(it) } },
-        shape = MaterialTheme.shapes.medium,
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(16.dp)
-        ) {
-            Icon(Icons.Default.Folder, contentDescription = null, tint = MaterialTheme.colorScheme.secondary)
-            Spacer(modifier = Modifier.width(16.dp))
-            Column {
-                Text(entry.title, style = MaterialTheme.typography.titleMedium)
-                entry.summary?.let {
-                    val cleanSummary = remember(it) { Jsoup.parse(it).text() }
-                    Text(cleanSummary, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun OpdsBookCard(
-    entry: OpdsEntry,
-    localLibraryFiles: List<RecentFileItem>,
-    downloadState: OpdsDownloadState?,
-    coverImageLoader: ImageLoader,
-    onDownloadClick: (OpdsAcquisition) -> Unit,
-    onReadClick: (RecentFileItem) -> Unit,
-    onStreamClick: () -> Unit,
-    onClick: () -> Unit
-) {
-    val libraryItem = remember(entry, localLibraryFiles) {
-        SharedOpdsLocalBookMatcher.find(
-            entry = entry,
-            books = localLibraryFiles,
-            title = { it.title },
-            displayName = { it.displayName },
-            path = { it.uriString }
-        )
-    }
-    val isDownloading = downloadState?.isDownloading == true
-    val progress = downloadState?.progress
-    val uniqueAcquisitions = remember(entry.acquisitions) {
-        entry.acquisitions.distinctBy { it.formatName }.sortedByDescending { it.priority }
-    }
-    var showFormatMenu by remember { mutableStateOf(false) }
-
-    Surface(
-        onClick = onClick,
-        shape = MaterialTheme.shapes.medium,
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Row(modifier = Modifier.padding(12.dp)) {
-            AsyncImage(
-                model = entry.coverUrl,
-                contentDescription = null,
-                imageLoader = coverImageLoader,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier
-                    .size(width = 70.dp, height = 100.dp)
-                    .clip(MaterialTheme.shapes.small)
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
-            )
-            Spacer(modifier = Modifier.width(16.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(entry.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                entry.author?.let {
-                    Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
-                }
-                entry.summary?.let {
-                    val cleanSummary = remember(it) { Jsoup.parse(it).text() }
-                    Text(cleanSummary, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
-                }
-                Spacer(modifier = Modifier.height(8.dp))
-
-                if (libraryItem != null) {
-                    androidx.compose.material3.OutlinedButton(
-                        onClick = { onReadClick(libraryItem) },
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
-                    ) {
-                        Icon(Icons.Default.Check, null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(stringResource(R.string.action_read))
-                    }
-                } else if (isDownloading) {
-                    Column(modifier = Modifier.fillMaxWidth()) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(stringResource(R.string.status_downloading), style = MaterialTheme.typography.labelMedium)
-                            Spacer(modifier = Modifier.weight(1f))
-                            if (progress != null) {
-                                Text("${(progress * 100).toInt()}%", style = MaterialTheme.typography.labelMedium)
-                            }
-                        }
-                        Spacer(modifier = Modifier.height(4.dp))
-                        if (progress != null) {
-                            androidx.compose.material3.LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
-                        } else {
-                            androidx.compose.material3.LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                        }
-                    }
-                } else {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        if (entry.isStreamable) {
-                            FilledTonalButton(
-                                onClick = onStreamClick,
-                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
-                            ) {
-                                Icon(painterResource(id = R.drawable.play), null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(stringResource(R.string.action_stream))
-                            }
-                        }
-
-                        Box {
-                            FilledTonalButton(
-                                onClick = {
-                                    if (uniqueAcquisitions.size == 1) {
-                                        onDownloadClick(uniqueAcquisitions.first())
-                                    } else if (uniqueAcquisitions.size > 1) {
-                                        showFormatMenu = true
-                                    }
-                                },
-                                enabled = uniqueAcquisitions.isNotEmpty(),
-                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
-                            ) {
-                                if (uniqueAcquisitions.isEmpty()) {
-                                    Icon(Icons.Default.Info, null, modifier = Modifier.size(16.dp))
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text(stringResource(R.string.action_unavailable))
-                                } else {
-                                    Icon(Icons.Default.Add, null, modifier = Modifier.size(16.dp))
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text(stringResource(R.string.action_download))
-                                }
-                            }
-                        }
-                        DropdownMenu(
-                            expanded = showFormatMenu,
-                            onDismissRequest = { showFormatMenu = false }
-                        ) {
-                            uniqueAcquisitions.forEach { acq ->
-                                DropdownMenuItem(
-                                    text = { Text(acq.formatName) },
-                                    onClick = {
-                                        showFormatMenu = false
-                                        onDownloadClick(acq)
-                                    }
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun OpdsBookDetailsSheet(
-    entry: OpdsEntry,
-    localLibraryFiles: List<RecentFileItem>,
-    downloadState: OpdsDownloadState?,
-    coverImageLoader: ImageLoader,
-    onDownloadFormat: (OpdsAcquisition) -> Unit,
-    onReadClick: (RecentFileItem) -> Unit,
-    onStreamClick: () -> Unit,
-    onAuthorOrCategoryClick: (String?, String) -> Unit,
-    onDismiss: () -> Unit
-) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val libraryItem = remember(entry, localLibraryFiles) {
-        SharedOpdsLocalBookMatcher.find(
-            entry = entry,
-            books = localLibraryFiles,
-            title = { it.title },
-            displayName = { it.displayName },
-            path = { it.uriString }
-        )
-    }
-    val isDownloading = downloadState?.isDownloading == true
-    val progress = downloadState?.progress
-    val uniqueAcquisitions = remember(entry.acquisitions) {
-        entry.acquisitions.distinctBy { it.formatName }.sortedByDescending { it.priority }
-    }
-
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 24.dp, vertical = 8.dp)
-                .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                AsyncImage(
-                    model = entry.coverUrl,
-                    contentDescription = null,
-                    imageLoader = coverImageLoader,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier
-                        .size(width = 110.dp, height = 160.dp)
-                        .clip(MaterialTheme.shapes.medium)
-                        .background(MaterialTheme.colorScheme.surfaceVariant)
-                )
-
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = entry.title,
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                        lineHeight = 28.sp
-                    )
-
-                    if (entry.authors.isNotEmpty()) {
-                        Spacer(modifier = Modifier.height(4.dp))
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            entry.authors.forEach { author ->
-                                Text(
-                                    text = author.name,
-                                    style = MaterialTheme.typography.titleMedium,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.clickable {
-                                        onAuthorOrCategoryClick(author.url, author.name)
-                                    }
-                                )
-                            }
-                        }
-                    }
-
-                    entry.series?.takeIf { it.isNotBlank() }?.let { series ->
-                        Spacer(modifier = Modifier.height(8.dp))
-                        val seriesText = if (!entry.seriesIndex.isNullOrBlank()) "$series #${entry.seriesIndex}" else series
-                        Text(
-                            text = seriesText,
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.clickable {
-                                onAuthorOrCategoryClick(null, series)
-                            }
-                        )
-                    }
-                }
-            }
-
-            if (libraryItem != null) {
-                androidx.compose.material3.Button(
-                    onClick = {
-                        onDismiss()
-                        onReadClick(libraryItem)
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = MaterialTheme.shapes.medium
-                ) {
-                    Icon(Icons.Default.Check, contentDescription = stringResource(R.string.action_read))
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(stringResource(R.string.action_read), fontWeight = FontWeight.Bold)
-                }
-            }
-
-            if (isDownloading) {
-                Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(stringResource(R.string.status_downloading), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                        Spacer(modifier = Modifier.weight(1f))
-                        if (progress != null) {
-                            Text("${(progress * 100).toInt()}%", style = MaterialTheme.typography.titleMedium)
-                        }
-                    }
-                    Spacer(modifier = Modifier.height(8.dp))
-                    if (progress != null) {
-                        androidx.compose.material3.LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth().height(8.dp))
-                    } else {
-                        androidx.compose.material3.LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(8.dp))
-                    }
-                }
-            } else if (uniqueAcquisitions.isNotEmpty() || entry.isStreamable) {
-                if (entry.isStreamable) {
-                    androidx.compose.material3.Button(
-                        onClick = {
-                            onStreamClick()
-                            onDismiss()
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = MaterialTheme.shapes.medium
-                    ) {
-                        Icon(painterResource(id = R.drawable.play), null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(stringResource(R.string.action_stream_now), fontWeight = FontWeight.Bold)
-                    }
-                    Spacer(modifier = Modifier.height(16.dp))
-                }
-
-                if (uniqueAcquisitions.isNotEmpty()) {
-                    Text(stringResource(R.string.download_format),
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        uniqueAcquisitions.forEach { acq ->
-                            FilledTonalButton(onClick = { onDownloadFormat(acq) }) {
-                                Icon(Icons.Default.Add, null, modifier = Modifier.size(18.dp))
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(acq.formatName, fontWeight = FontWeight.Bold)
-                            }
-                        }
-                    }
-                }
-            } else {
-                Text(stringResource(R.string.no_supported_formats), color = MaterialTheme.colorScheme.error)
-            }
-
-            if (entry.categories.isNotEmpty()) {
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    entry.categories.distinct().forEach { category ->
-                        Surface(
-                            shape = MaterialTheme.shapes.small,
-                            color = MaterialTheme.colorScheme.surfaceVariant,
-                            onClick = { onAuthorOrCategoryClick(null, category) }
-                        ) {
-                            Text(
-                                text = category,
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-                            )
-                        }
-                    }
-                }
-            }
-
-            val hasSecondaryMeta = !entry.publisher.isNullOrBlank() || !entry.published.isNullOrBlank() || !entry.language.isNullOrBlank()
-            if (hasSecondaryMeta) {
-                Surface(
-                    shape = MaterialTheme.shapes.medium,
-                    color = MaterialTheme.colorScheme.surfaceContainer,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier.padding(16.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        entry.publisher?.takeIf { it.isNotBlank() }?.let {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(stringResource(R.string.publisher), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                Text(it, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                            }
-                        }
-                        entry.published?.takeIf { it.isNotBlank() }?.let {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(stringResource(R.string.published), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                val cleanDate = it.substringBefore("T")
-                                Text(cleanDate, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                            }
-                        }
-                        entry.language?.takeIf { it.isNotBlank() }?.let {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(stringResource(R.string.language), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                Text(it.uppercase(), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                            }
-                        }
-                    }
-                }
-            }
-
-            val summary = entry.summary
-            if (!summary.isNullOrBlank()) {
-                Text(stringResource(R.string.synopsis), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-
-                val cleanSummary = remember(summary) {
-                    val preProcessed = summary
-                        .replace("<br>", "\n")
-                        .replace("</p>", "\n\n")
-                    Jsoup.parse(preProcessed).text().trim()
-                }
-
-                Text(
-                    text = cleanSummary,
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    lineHeight = 24.sp,
-                    modifier = Modifier.padding(bottom = 48.dp)
-                )
-            } else {
-                Spacer(modifier = Modifier.height(48.dp))
-            }
-        }
-    }
 }

@@ -18,7 +18,7 @@ class ExternalFileOpenRouteDeciderTest {
 
     @Test
     fun `existing behaviors route to main activity`() {
-        listOf(null, "ASK", "KEEP", "DELETE").forEach { behavior ->
+        listOf(null, "ASK", "KEEP", "COPY", "DELETE", "temporary", "unknown").forEach { behavior ->
             assertFalse(ExternalFileOpenRouteDecider.shouldOpenTemporary(behavior))
             assertEquals(
                 MainActivity::class.java,

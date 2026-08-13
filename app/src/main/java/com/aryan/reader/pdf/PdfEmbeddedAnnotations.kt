@@ -1,7 +1,9 @@
 package com.aryan.reader.pdf
 
 import android.graphics.RectF
-import timber.log.Timber
+import com.aryan.reader.shared.pdf.PdfEmbeddedAnnotationThreadItem
+import com.aryan.reader.shared.pdf.PdfPageBounds
+import com.aryan.reader.shared.pdf.buildPdfEmbeddedAnnotationThreadPlan
 
 data class EmbeddedAnnotation(
     val index: Int,
@@ -19,46 +21,26 @@ internal fun groupEmbeddedAnnotationsForDisplay(
 ): List<EmbeddedAnnotation> {
     if (annotations.isEmpty()) return emptyList()
 
-    val annotMap = annotations
-        .filter { !it.name.isNullOrBlank() }
-        .associateBy { it.name }
-    val orphans = mutableListOf<EmbeddedAnnotation>()
-
-    annotations.forEach { annot ->
-        if (!annot.inReplyTo.isNullOrBlank() && annotMap.containsKey(annot.inReplyTo)) {
-            Timber.tag("PdfCommentDebug").i("Linking: ${annot.name} is a reply to ${annot.inReplyTo}")
-            annotMap[annot.inReplyTo]?.replies?.add(annot)
-        } else {
-            orphans.add(annot)
-        }
-    }
-
-    Timber.tag("PdfCommentDebug").d("After ID linking: Orphans count = ${orphans.size}")
-
-    val groupedRoots = mutableListOf<MutableList<EmbeddedAnnotation>>()
-    orphans.forEach { annot ->
-        val match = groupedRoots.find { group ->
-            val root = group.first()
-            val inflatedRoot = RectF(root.rect).apply { inset(-10f, -10f) }
-            RectF.intersects(inflatedRoot, annot.rect)
-        }
-        if (match != null) {
-            Timber.tag("PdfCommentDebug").w(
-                "Geometric grouping triggered for ${annot.name} with ${match.first().name}. This might flatten nested replies!"
+    val plan = buildPdfEmbeddedAnnotationThreadPlan(
+        annotations = annotations.map { annotation ->
+            PdfEmbeddedAnnotationThreadItem(
+                name = annotation.name,
+                inReplyTo = annotation.inReplyTo,
+                bounds = annotation.rect.toSharedBounds(),
+                hasVisibleText = !annotation.contents.isNullOrBlank(),
+                hasVisibleReply = annotation.replies.any { !it.contents.isNullOrBlank() },
             )
-            match.add(annot)
-        } else {
-            groupedRoots.add(mutableListOf(annot))
-        }
+        },
+        geometryTolerance = 10f,
+    )
+    plan.replyEdges.forEach { edge ->
+        annotations[edge.parentIndex].replies += annotations[edge.replyIndex]
     }
-
-    return groupedRoots.map { group ->
-        val root = group.first()
-        if (group.size > 1) {
-            root.replies.addAll(group.drop(1))
+    return plan.displayGroups.map { group ->
+        annotations[group.rootIndex].also { root ->
+            root.replies += group.geometricReplyIndices.map(annotations::get)
         }
-        root
-    }.filter {
-        !it.contents.isNullOrBlank() || it.replies.any { reply -> !reply.contents.isNullOrBlank() }
     }
 }
+
+private fun RectF.toSharedBounds(): PdfPageBounds = PdfPageBounds(left, top, right, bottom)

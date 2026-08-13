@@ -506,6 +506,7 @@ class BaseTtsSynthesizer(private val context: Context) {
         requests.clear()
         tts?.stop()
         tts?.shutdown()
+        tts = null
         isInitialized = false
         Timber.d("TextToSpeech engine shut down.")
     }

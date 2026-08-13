@@ -21,35 +21,30 @@ package com.aryan.reader.pdf
 
 import android.content.Context
 import androidx.compose.runtime.Stable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.SoftwareKeyboardController
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextMeasurer
-import androidx.compose.ui.text.TextRange
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.font.FontStyle
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
-import androidx.compose.ui.text.style.TextDecoration
-import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
-import androidx.compose.ui.unit.sp
 import com.aryan.reader.pdf.data.VirtualPage
+import com.aryan.reader.shared.pdf.SHARED_PDF_PAGE_BREAK_CHAR
+import com.aryan.reader.shared.pdf.SharedPdfRichPageLayout
+import com.aryan.reader.shared.pdf.SharedPdfRichDocument
+import com.aryan.reader.shared.pdf.SharedPdfRichSpan
+import com.aryan.reader.shared.pdf.SharedPdfRichTextPaginationEngine
+import com.aryan.reader.shared.pdf.SharedPdfRichTextMapper
+import com.aryan.reader.shared.pdf.SharedPdfRichTextController
+import com.aryan.reader.shared.pdf.SharedPdfRichTextSerializer
+import com.aryan.reader.shared.pdf.hasRenderableSharedPdfRichText
+import com.aryan.reader.shared.pdf.remapSharedPdfRichTextForLayoutChange
+import com.aryan.reader.shared.pdf.sharedPdfRichTextBlankInsertBreakCount
+import com.aryan.reader.shared.pdf.sharedPdfRichTextInsertionIndexForPage
+import com.aryan.reader.shared.pdf.sharedPdfRichTextSelectionBounds
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
@@ -57,26 +52,20 @@ import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.json.JSONArray
-import org.json.JSONObject
 import timber.log.Timber
 import java.io.File
 
-const val PAGE_BREAK_CHAR = '\u000C'
-private const val ZWSP = "\u200B"
+const val PAGE_BREAK_CHAR = SHARED_PDF_PAGE_BREAK_CHAR
 
 internal fun String.hasRenderableRichText(): Boolean =
-    any { it != PAGE_BREAK_CHAR && !it.isWhitespace() }
+    hasRenderableSharedPdfRichText()
 
 internal fun androidPdfRichTextSelectionBounds(
     selectionStart: Int,
     selectionEnd: Int,
     textLength: Int
 ): Pair<Int, Int>? {
-    val safeLength = textLength.coerceAtLeast(0)
-    val localStart = minOf(selectionStart, selectionEnd).coerceIn(0, safeLength)
-    val localEnd = maxOf(selectionStart, selectionEnd).coerceIn(0, safeLength)
-    return if (localStart < localEnd) localStart to localEnd else null
+    return sharedPdfRichTextSelectionBounds(selectionStart, selectionEnd, textLength)
 }
 
 object PdfFontCache {
@@ -120,28 +109,10 @@ object PdfFontCache {
     }
 }
 
-data class GlobalRichSpan(
-    val start: Int,
-    val end: Int,
-    val color: Int,
-    val backgroundColor: Int,
-    val fontSizeNorm: Float,
-    val isBold: Boolean,
-    val isItalic: Boolean,
-    val isUnderline: Boolean,
-    val isStrikethrough: Boolean,
-    val fontPath: String? = null
-)
-
-data class GlobalRichDocument(val text: String, val spans: List<GlobalRichSpan>)
-
-data class PageTextLayout(
-    val pageIndex: Int,
-    val visibleText: AnnotatedString,
-    val globalStartIndex: Int,
-    val globalEndIndex: Int,
-    val pageHeightPx: Float
-)
+typealias GlobalRichSpan = SharedPdfRichSpan
+typealias GlobalRichDocument = SharedPdfRichDocument
+typealias PageTextLayout = SharedPdfRichPageLayout
+typealias TextPaginationEngine = SharedPdfRichTextPaginationEngine
 
 object RichTextMapper {
     fun toAnnotatedString(
@@ -150,327 +121,22 @@ object RichTextMapper {
         rangeStart: Int = 0,
         rangeEnd: Int = document.text.length
     ): AnnotatedString {
-        val safeGlobalStart = rangeStart.coerceIn(0, document.text.length)
-        val safeGlobalEnd = rangeEnd.coerceIn(safeGlobalStart, document.text.length)
-
-        if (safeGlobalStart == safeGlobalEnd) return AnnotatedString("")
-        val textSubstring = document.text.substring(safeGlobalStart, safeGlobalEnd)
-
-        return buildAnnotatedString {
-            append(textSubstring)
-            var count = 0
-            for (span in document.spans) {
-                if (span.start >= safeGlobalEnd) break
-                if (span.end <= safeGlobalStart) continue
-
-                val intersectionStart = maxOf(span.start, safeGlobalStart)
-                val intersectionEnd = minOf(span.end, safeGlobalEnd)
-
-                val fontFamily = PdfFontCache.getFontFamily(span.fontPath)
-                if (span.fontPath != null) {
-                    Timber.tag("PdfFontDebug").v("toAnnotatedString: Applying font path ${span.fontPath} to span [${span.start}..${span.end}]")
-                }
-
-                if (intersectionStart < intersectionEnd) {
-                    val fontSizePx = if (pageHeightPx > 0) span.fontSizeNorm * pageHeightPx else 16f
-                    val decorations = mutableListOf<TextDecoration>()
-                    if (span.isUnderline) decorations.add(TextDecoration.Underline)
-                    if (span.isStrikethrough) decorations.add(TextDecoration.LineThrough)
-
-                    addStyle(
-                        style = SpanStyle(
-                            color = Color(span.color),
-                            background = Color(span.backgroundColor),
-                            fontSize = fontSizePx.sp,
-                            fontWeight = if (span.isBold) FontWeight.Bold else FontWeight.Normal,
-                            fontStyle = if (span.isItalic) FontStyle.Italic else FontStyle.Normal,
-                            textDecoration = if (decorations.isNotEmpty()) TextDecoration.combine(decorations) else TextDecoration.None,
-                            fontFamily = PdfFontCache.getFontFamily(span.fontPath)
-                        ),
-                        start = intersectionStart - safeGlobalStart,
-                        end = intersectionEnd - safeGlobalStart
-                    )
-                    count++
-                }
-            }
-            Timber.tag("TextAnnotStyle").v("toAnnotatedString: Final local spans: $count")
-        }
+        return SharedPdfRichTextMapper.toAnnotatedString(
+            document = document,
+            pageHeightPx = pageHeightPx,
+            rangeStart = rangeStart,
+            rangeEnd = rangeEnd,
+            fontFamilyResolver = PdfFontCache::getFontFamily,
+        )
     }
 
     fun fromAnnotatedString(text: AnnotatedString, pageHeightPx: Float): GlobalRichDocument {
-        val pageBreakCount = text.text.count { it == PAGE_BREAK_CHAR }
-        Timber.tag("RichTextFlow").v("fromAnnotatedString: Mapping text. Len=${text.length}, PageBreaks=$pageBreakCount")
-        if (text.isEmpty()) return GlobalRichDocument("", emptyList())
-
-        val spans = mutableListOf<GlobalRichSpan>()
-        val changePoints = sortedSetOf(0, text.length)
-        text.spanStyles.forEach {
-            changePoints.add(it.start)
-            changePoints.add(it.end)
-        }
-        val sortedPoints = changePoints.toList()
-
-        for (i in 0 until sortedPoints.size - 1) {
-            val start = sortedPoints[i]
-            val end = sortedPoints[i + 1]
-            if (start >= end) continue
-
-            val activeStyles = text.spanStyles.filter { it.start <= start && it.end >= end }
-            var effective = SpanStyle(color = Color.Black, fontSize = 16.sp)
-            activeStyles.forEach { effective = effective.merge(it.item) }
-
-            val fsNorm = if (effective.fontSize.isSp) {
-                if (pageHeightPx > 0) (effective.fontSize.value / pageHeightPx) else 0.015f
-            } else 0.015f
-
-            val currentDec = effective.textDecoration ?: TextDecoration.None
-            val isUnd = currentDec.contains(TextDecoration.Underline)
-            val isStr = currentDec.contains(TextDecoration.LineThrough)
-
-            val newSpan = GlobalRichSpan(
-                start = start,
-                end = end,
-                color = effective.color.toArgb(),
-                backgroundColor = effective.background.toArgb(),
-                fontSizeNorm = fsNorm,
-                isBold = effective.fontWeight == FontWeight.Bold,
-                isItalic = effective.fontStyle == FontStyle.Italic,
-                isUnderline = isUnd,
-                isStrikethrough = isStr,
-                fontPath = PdfFontCache.getPath(effective.fontFamily)
-            )
-
-            if (spans.isNotEmpty()) {
-                val last = spans.last()
-                if (last.end == start &&
-                    last.color == newSpan.color &&
-                    last.backgroundColor == newSpan.backgroundColor &&
-                    last.fontSizeNorm == newSpan.fontSizeNorm &&
-                    last.isBold == newSpan.isBold &&
-                    last.isItalic == newSpan.isItalic &&
-                    last.isUnderline == newSpan.isUnderline &&
-                    last.isStrikethrough == newSpan.isStrikethrough &&
-                    last.fontPath == newSpan.fontPath
-                ) {
-                    spans[spans.lastIndex] = last.copy(end = end)
-                } else {
-                    spans.add(newSpan)
-                }
-            } else {
-                spans.add(newSpan)
-            }
-        }
-        val result = GlobalRichDocument(text.text, spans)
-        Timber.tag("TextAnnotStyle").d("fromAnnotatedString: Created GlobalRichDocument with ${spans.size} merged spans")
-        return result
-    }
-}
-
-class TextPaginationEngine {
-    fun paginate(
-        globalText: AnnotatedString,
-        pageWidthPx: Float,
-        pageHeightPx: Float,
-        textMeasurer: TextMeasurer,
-        density: Density,
-        marginX: Float,
-        marginY: Float,
-        previousLayouts: List<PageTextLayout> = emptyList(),
-        dirtyGlobalIndex: Int = 0
-    ): List<PageTextLayout> {
-        val totalLen = globalText.length
-        Timber.d(
-            "android.paginate start textLen=$totalLen page=${pageWidthPx.richAndroidLogFloat()}x${pageHeightPx.richAndroidLogFloat()} " +
-                "margin=${marginX.richAndroidLogFloat()},${marginY.richAndroidLogFloat()} prev=${previousLayouts.size} dirty=$dirtyGlobalIndex"
+        return SharedPdfRichTextMapper.fromAnnotatedString(
+            text = text,
+            pageHeightPx = pageHeightPx,
+            fontPathResolver = PdfFontCache::getPath,
         )
-        if (totalLen == 0) {
-            Timber.d("android.paginate empty -> p0:0-0")
-            return listOf(
-                PageTextLayout(0, AnnotatedString(""), 0, 0, pageHeightPx)
-            )
-        }
-        if (pageWidthPx <= 0 || pageHeightPx <= 0) {
-            Timber.d("android.paginate aborted invalid page size")
-            return emptyList()
-        }
-
-        val editorWidth = (pageWidthPx - (marginX * 2)).coerceAtLeast(10f)
-        val editorHeight = (pageHeightPx - (marginY * 2)).coerceAtLeast(10f)
-
-        val newPages = mutableListOf<PageTextLayout>()
-        var currentPageIndex = 0
-        var segmentStart = 0
-        val rawText = globalText.text
-
-        while (segmentStart < totalLen) {
-            val breakIndex = rawText.indexOf(PAGE_BREAK_CHAR, startIndex = segmentStart)
-            val hasExplicitBreak = breakIndex != -1
-            val contentEnd = if (hasExplicitBreak) breakIndex else totalLen
-            val segmentEnd = if (hasExplicitBreak) breakIndex + 1 else totalLen
-
-            currentPageIndex = newPages.appendMeasuredAndroidRichTextSegment(
-                globalText = globalText,
-                segmentStart = segmentStart,
-                contentEnd = contentEnd,
-                explicitBreakEnd = if (hasExplicitBreak) segmentEnd else null,
-                pageIndex = currentPageIndex,
-                pageHeightPx = pageHeightPx,
-                editorWidth = editorWidth,
-                editorHeight = editorHeight,
-                textMeasurer = textMeasurer,
-                density = density
-            )
-            segmentStart = segmentEnd
-        }
-
-        val resultLayouts = newPages.withTrailingAndroidBlankRichTextPageIfNeeded(
-            globalText = globalText,
-            pageHeightPx = pageHeightPx
-        )
-
-        val mapLog = resultLayouts.joinToString("\n") {
-            "  Page ${it.pageIndex}: Global[${it.globalStartIndex}..${it.globalEndIndex}]"
-        }
-        Timber.tag("RichTextMigration").i("Pagination Map Generated:\n$mapLog")
-        Timber.d("android.paginate done -> ${resultLayouts.richAndroidLayoutSummary()}")
-
-        return resultLayouts
     }
-}
-
-private fun MutableList<PageTextLayout>.appendMeasuredAndroidRichTextSegment(
-    globalText: AnnotatedString,
-    segmentStart: Int,
-    contentEnd: Int,
-    explicitBreakEnd: Int?,
-    pageIndex: Int,
-    pageHeightPx: Float,
-    editorWidth: Float,
-    editorHeight: Float,
-    textMeasurer: TextMeasurer,
-    density: Density
-): Int {
-    var nextPageIndex = pageIndex
-    if (segmentStart >= contentEnd) {
-        val breakEnd = explicitBreakEnd ?: return nextPageIndex
-        add(
-            PageTextLayout(
-                pageIndex = nextPageIndex,
-                visibleText = globalText.subSequence(segmentStart, breakEnd),
-                globalStartIndex = segmentStart,
-                globalEndIndex = breakEnd,
-                pageHeightPx = pageHeightPx
-            )
-        )
-        Timber.d(
-            "android.paginate pageBreakOnly page=$nextPageIndex global=$segmentStart..$breakEnd"
-        )
-        return nextPageIndex + 1
-    }
-
-    val contentLength = contentEnd - segmentStart
-    var relativeStart = 0
-    while (relativeStart < contentLength) {
-        val globalStart = segmentStart + relativeStart
-        val remainingText = globalText.subSequence(globalStart, contentEnd)
-        val measureResult = textMeasurer.measure(
-            text = remainingText,
-            style = TextStyle(fontSize = 16.sp, color = Color.Black),
-            constraints = Constraints(maxWidth = editorWidth.toInt(), maxHeight = Constraints.Infinity),
-            density = density
-        )
-        val fitsOnPage = measureResult.size.height.toFloat() <= editorHeight || measureResult.lineCount <= 1
-        var overflowLineIndex: Int? = null
-        val relativeEnd = if (fitsOnPage) {
-            contentLength
-        } else {
-            val lineIndex = measureResult.richAndroidLastFittingLineIndex(editorHeight)
-            overflowLineIndex = lineIndex
-            val localEnd = measureResult.getLineEnd(lineIndex)
-                .coerceIn(0, remainingText.length)
-                .coerceAtLeast(1)
-            (relativeStart + localEnd)
-                .coerceAtLeast(relativeStart + 1)
-                .coerceAtMost(contentLength)
-        }
-        val isLastContentPage = relativeEnd >= contentLength
-        val globalEnd = if (isLastContentPage && explicitBreakEnd != null) {
-            explicitBreakEnd
-        } else {
-            segmentStart + relativeEnd
-        }
-
-        add(
-            PageTextLayout(
-                pageIndex = nextPageIndex,
-                visibleText = globalText.subSequence(globalStart, globalEnd),
-                globalStartIndex = globalStart,
-                globalEndIndex = globalEnd,
-                pageHeightPx = pageHeightPx
-            )
-        )
-        if (isLastContentPage && explicitBreakEnd != null) {
-            Timber.d(
-                "android.paginate pageBreak page=$nextPageIndex global=$globalStart..$globalEnd"
-            )
-        } else if (!fitsOnPage) {
-            Timber.d(
-                "android.paginate overflow page=$nextPageIndex global=$globalStart..$globalEnd line=$overflowLineIndex"
-            )
-        }
-        nextPageIndex++
-        relativeStart = relativeEnd
-    }
-
-    return nextPageIndex
-}
-
-private fun TextLayoutResult.richAndroidLastFittingLineIndex(editorHeight: Float): Int {
-    var lastFitting = 0
-    for (lineIndex in 0 until lineCount) {
-        if (lineIndex == 0 || getLineBottom(lineIndex) <= editorHeight) {
-            lastFitting = lineIndex
-        } else {
-            break
-        }
-    }
-    return lastFitting.coerceIn(0, (lineCount - 1).coerceAtLeast(0))
-}
-
-private fun List<PageTextLayout>.withTrailingAndroidBlankRichTextPageIfNeeded(
-    globalText: AnnotatedString,
-    pageHeightPx: Float
-): List<PageTextLayout> {
-    if (globalText.text.lastOrNull() != PAGE_BREAK_CHAR) return this
-    val lastLayout = lastOrNull()
-    val trailingStart = globalText.length
-    if (lastLayout != null &&
-        lastLayout.globalStartIndex == trailingStart &&
-        lastLayout.globalEndIndex == trailingStart
-    ) {
-        return this
-    }
-    return this + PageTextLayout(
-        pageIndex = (lastLayout?.pageIndex ?: -1) + 1,
-        visibleText = AnnotatedString(""),
-        globalStartIndex = trailingStart,
-        globalEndIndex = trailingStart,
-        pageHeightPx = pageHeightPx
-    )
-}
-
-private fun AnnotatedString.withoutTrailingAndroidPageBreak(): AnnotatedString {
-    return if (text.lastOrNull() == PAGE_BREAK_CHAR) {
-        subSequence(0, length - 1)
-    } else {
-        this
-    }
-}
-
-private fun AnnotatedString.withRestoredTrailingAndroidPageBreak(shouldRestore: Boolean): AnnotatedString {
-    if (!shouldRestore) return this
-    if (text.lastOrNull() == PAGE_BREAK_CHAR) return this
-    return this + AnnotatedString(PAGE_BREAK_CHAR.toString())
 }
 
 internal fun androidRichTextInsertionIndexForPage(
@@ -478,21 +144,15 @@ internal fun androidRichTextInsertionIndexForPage(
     pageLayouts: List<PageTextLayout>,
     textLength: Int
 ): Int {
-    val rawIndex = if (insertPageIndex <= 0) {
-        0
-    } else {
-        pageLayouts.find { it.pageIndex == insertPageIndex - 1 }?.globalEndIndex ?: textLength
-    }
-    return rawIndex.coerceIn(0, textLength)
+    return sharedPdfRichTextInsertionIndexForPage(
+        insertPageIndex = insertPageIndex,
+        pageLayouts = pageLayouts,
+        textLength = textLength,
+    )
 }
 
 internal fun androidRichTextBlankInsertBreakCount(text: String, insertionCharIndex: Int): Int {
-    val safeIndex = insertionCharIndex.coerceIn(0, text.length)
-    if (safeIndex == 0 || safeIndex == text.length) return 1
-
-    val hasBoundaryBreakBefore = text.getOrNull(safeIndex - 1) == PAGE_BREAK_CHAR
-    val hasBoundaryBreakAfter = text.getOrNull(safeIndex) == PAGE_BREAK_CHAR
-    return if (hasBoundaryBreakBefore || hasBoundaryBreakAfter) 1 else 2
+    return sharedPdfRichTextBlankInsertBreakCount(text, insertionCharIndex)
 }
 
 internal fun remapAndroidRichTextForLayoutChange(
@@ -500,36 +160,16 @@ internal fun remapAndroidRichTextForLayoutChange(
     updatedLayout: List<VirtualPage>,
     pageLayouts: List<PageTextLayout>
 ): AnnotatedString {
-    if (pageLayouts.isEmpty()) return AnnotatedString("")
-
-    val mapping = buildPdfPageIndexMapping(
-        currentLayout = currentLayout,
-        updatedLayout = updatedLayout,
-        sourcePageIndices = pageLayouts.map { it.pageIndex }
+    return remapSharedPdfRichTextForLayoutChange(
+        currentLayout = currentLayout.map(VirtualPage::toSharedRichTextPageIdentity),
+        updatedLayout = updatedLayout.map(VirtualPage::toSharedRichTextPageIdentity),
+        pageLayouts = pageLayouts,
     )
-    if (mapping.isEmpty()) return AnnotatedString("")
+}
 
-    val contentByTargetPage = linkedMapOf<Int, AnnotatedString>()
-    pageLayouts.sortedBy { it.pageIndex }.forEach { layout ->
-        val targetPageIndex = mapping[layout.pageIndex] ?: return@forEach
-        val pageContent = layout.visibleText.withoutTrailingAndroidPageBreak()
-        contentByTargetPage[targetPageIndex] = pageContent
-    }
-
-    val lastPageWithContent = contentByTargetPage
-        .filterValues { it.text.isNotEmpty() }
-        .keys
-        .maxOrNull()
-        ?: return AnnotatedString("")
-
-    val builder = AnnotatedString.Builder()
-    for (pageIndex in 0..lastPageWithContent) {
-        contentByTargetPage[pageIndex]?.let { builder.append(it) }
-        if (pageIndex < lastPageWithContent) {
-            builder.append(PAGE_BREAK_CHAR.toString())
-        }
-    }
-    return builder.toAnnotatedString()
+private fun VirtualPage.toSharedRichTextPageIdentity(): PdfPageIdentity = when (this) {
+    is VirtualPage.PdfPage -> PdfPageIdentity.Pdf(pdfIndex)
+    is VirtualPage.BlankPage -> PdfPageIdentity.Blank(id)
 }
 
 class PdfRichTextRepository(private val context: Context) {
@@ -556,31 +196,11 @@ class PdfRichTextRepository(private val context: Context) {
             }
             try {
                 val jsonString = file.readText()
-                val json = JSONObject(jsonString)
-                val text = json.getString("text")
-                val spansArray = json.getJSONArray("spans")
-                val spans = mutableListOf<GlobalRichSpan>()
-
-                for (i in 0 until spansArray.length()) {
-                    val sObj = spansArray.getJSONObject(i)
-                    spans.add(
-                        GlobalRichSpan(
-                            start = sObj.getInt("s"),
-                            end = sObj.getInt("e"),
-                            color = sObj.getInt("c"),
-                            backgroundColor = sObj.optInt("bg", android.graphics.Color.TRANSPARENT),
-                            fontSizeNorm = sObj.getDouble("sz").toFloat(),
-                            isBold = sObj.optBoolean("b"),
-                            isItalic = sObj.optBoolean("i"),
-                            isUnderline = sObj.optBoolean("u"),
-                            isStrikethrough = sObj.optBoolean("st"),
-                            fontPath = sObj.optString("fp"),
-                        )
-                    )
-                }
-                _document.value = GlobalRichDocument(text, spans)
+                val document = SharedPdfRichTextSerializer.decode(jsonString)
+                _document.value = document
                 Timber.d(
-                    "android.repository.load decoded book=$bookId rawLen=${jsonString.length} textLen=${text.length} spans=${spans.size}"
+                    "android.repository.load decoded book=$bookId rawLen=${jsonString.length} " +
+                        "textLen=${document.text.length} spans=${document.spans.size}"
                 )
             } catch (e: Exception) {
                 Timber.e(e, "android.repository.load failed book=$bookId")
@@ -597,28 +217,8 @@ class PdfRichTextRepository(private val context: Context) {
                 Timber.d(
                     "android.repository.save start book=$bookId textLen=${document.text.length} spans=${document.spans.size}"
                 )
-                val obj = JSONObject().apply {
-                    put("text", document.text)
-                    val spansArray = JSONArray()
-                    document.spans.forEach { span ->
-                        spansArray.put(
-                            JSONObject().apply {
-                                put("s", span.start)
-                                put("e", span.end)
-                                put("c", span.color)
-                                put("bg", span.backgroundColor)
-                                put("sz", span.fontSizeNorm.toDouble())
-                                put("b", span.isBold)
-                                put("i", span.isItalic)
-                                put("u", span.isUnderline)
-                                put("st", span.isStrikethrough)
-                                put("fp", span.fontPath)
-                            })
-                    }
-                    put("spans", spansArray)
-                }
                 val file = getFile(bookId)
-                file.writeText(obj.toString())
+                file.writeText(SharedPdfRichTextSerializer.encode(document))
                 Timber.d(
                     "android.repository.save done book=$bookId bytes=${file.length()} path=${file.absolutePath}"
                 )
@@ -630,1070 +230,99 @@ class PdfRichTextRepository(private val context: Context) {
     }
 }
 
-private fun Float.richAndroidLogFloat(): String {
-    return if (isFinite()) {
-        val rounded = kotlin.math.round(this * 10f) / 10f
-        rounded.toString()
-    } else {
-        toString()
-    }
-}
-
-private fun List<PageTextLayout>.richAndroidLayoutSummary(): String {
-    if (isEmpty()) return "[]"
-    return joinToString(prefix = "[", postfix = "]", limit = 8, truncated = "...") { layout ->
-        "p${layout.pageIndex}:${layout.globalStartIndex}-${layout.globalEndIndex}/len${layout.visibleText.length}"
-    }
-}
-
 @Stable
 class RichTextController(
     private val repository: PdfRichTextRepository,
     private val scope: CoroutineScope,
     private val bookId: String
 ) {
-    var globalTextFieldValue by mutableStateOf(TextFieldValue(""))
-        private set
-
-    var localTextFieldValue by mutableStateOf(TextFieldValue(""))
-        private set
-
-    val editingValue: TextFieldValue
-        get() = if (activePageIndex != -1) localTextFieldValue else globalTextFieldValue
-
-    var activePageIndex by mutableIntStateOf(-1)
-        private set
-
-    var pageLayouts by mutableStateOf(emptyList<PageTextLayout>())
-        private set
-
-    val hasRenderableText: Boolean
-        get() = globalTextFieldValue.text.hasRenderableRichText()
-
-    var currentStyle: SpanStyle by mutableStateOf(SpanStyle(color = Color.Black, fontSize = 16.sp))
-        private set
-
-    var currentFontPath: String? by mutableStateOf(null)
-        private set
-
-    var currentFontName: String? by mutableStateOf(null)
-        private set
-
-    var cursorPageIndex by mutableIntStateOf(-1)
-        private set
-    var cursorRectInPage by mutableStateOf<Rect?>(null)
-        private set
-
-    var isCursorVisible by mutableStateOf(false)
-        private set
-    var showCursorOverride by mutableStateOf(true)
-
-    private var lastPageWidth: Float = 1000f
-    private var lastPageHeight: Float = 1414f
-    private var lastDensity: Density? = null
-    private var lastTextMeasurer: TextMeasurer? = null
-
-    private val engine = TextPaginationEngine()
-    private var saveJob: Job? = null
-    private var syncJob: Job? = null
-    private var isSaving = false
-
-    var focusRequester = androidx.compose.ui.focus.FocusRequester()
     private var keyboardController: SoftwareKeyboardController? = null
+
+    internal val sharedDelegate = SharedPdfRichTextController(
+        scope = scope,
+        onDocumentChange = { document -> repository.save(bookId, document) },
+        documentToAnnotatedString = { document, pageHeight ->
+            RichTextMapper.toAnnotatedString(document, pageHeight)
+        },
+        annotatedStringToDocument = { text, pageHeight ->
+            RichTextMapper.fromAnnotatedString(text, pageHeight)
+        },
+        styleForFontPath = { style, fontPath ->
+            style.copy(fontFamily = PdfFontCache.getFontFamily(fontPath))
+        },
+        onEditingFocusRequested = { keyboardController?.show() },
+    )
 
     init {
         scope.launch {
-            repository.document.collect { doc ->
-                if (doc != null && globalTextFieldValue.text.isEmpty()) {
-                    val annotated = withContext(Dispatchers.Default) {
-                        RichTextMapper.toAnnotatedString(doc, lastPageHeight)
-                    }
-                    globalTextFieldValue = TextFieldValue(annotated)
-                    repaginate(dirtyStartIndex = 0, caller = "ControllerInit")
-                }
+            repository.document.collect { document ->
+                document?.let(sharedDelegate::loadDocumentIfEmpty)
             }
         }
     }
+
+    private val delegate get() = sharedDelegate
+
+    val globalTextFieldValue: TextFieldValue get() = delegate.globalTextFieldValue
+    val localTextFieldValue: TextFieldValue get() = delegate.localTextFieldValue
+    val editingValue: TextFieldValue get() = delegate.editingValue
+    val activePageIndex: Int get() = delegate.activePageIndex
+    val pageLayouts: List<PageTextLayout> get() = delegate.pageLayouts
+    val hasRenderableText: Boolean get() = delegate.hasRenderableText
+    val currentStyle: SpanStyle get() = delegate.currentStyle
+    val currentFontPath: String? get() = delegate.currentFontPath
+    val currentFontName: String? get() = delegate.currentFontName
+    val cursorPageIndex: Int get() = delegate.cursorPageIndex
+    val cursorRectInPage: Rect? get() = delegate.cursorRectInPage
+    val isCursorVisible: Boolean get() = delegate.isCursorVisible
+    val focusRequester get() = delegate.focusRequester
+
+    var showCursorOverride: Boolean
+        get() = delegate.showCursorOverride
+        set(value) {
+            delegate.showCursorOverride = value
+        }
 
     fun setKeyboardController(controller: SoftwareKeyboardController?) {
-        this.keyboardController = controller
+        keyboardController = controller
     }
 
-    private fun requestFocusAndShowKeyboard() {
-        try {
-            focusRequester.requestFocus()
-            keyboardController?.show()
-        } catch (e: Exception) {
-            Timber.e(e, "Failed to request focus/keyboard")
-        }
-    }
+    fun clearSelection() = delegate.clearSelection()
 
-    fun clearSelection() {
-        isCursorVisible = false
-        val pageToSync = activePageIndex
-        if (pageToSync != -1) {
-            scope.launch {
-                performSync(pageToSync)
-                if (activePageIndex == pageToSync) activePageIndex = -1
-            }
-        }
+    fun updateLayoutConfig(width: Float, height: Float, density: Density, measurer: TextMeasurer) =
+        delegate.updateLayoutConfig(width, height, density, measurer)
 
-        if (globalTextFieldValue.text.isNotEmpty()) {
-            globalTextFieldValue = globalTextFieldValue.copy(
-                selection = TextRange(globalTextFieldValue.text.length)
-            )
-        }
-        cursorPageIndex = -1
-        cursorRectInPage = null
-    }
+    fun onValueChanged(newValue: TextFieldValue) = delegate.onValueChanged(newValue)
 
-    fun updateLayoutConfig(width: Float, height: Float, density: Density, measurer: TextMeasurer) {
-        if (lastPageWidth != width || lastPageHeight != height || lastDensity != density) {
-            lastPageWidth = width
-            lastPageHeight = height
-            lastDensity = density
-            lastTextMeasurer = measurer
-            repaginate(dirtyStartIndex = 0, caller = "LayoutConfigChange")
-        }
-    }
+    fun updateCurrentStyle(
+        style: SpanStyle,
+        fontPath: String? = currentFontPath,
+        fontName: String? = currentFontName,
+    ) = delegate.updateCurrentStyle(style, fontPath, fontName)
 
-    private data class MutableSpan(var start: Int, var end: Int, val item: SpanStyle)
+    fun requestEditingFocus() = delegate.requestEditingFocus()
 
-    private fun compactSpans(spans: List<MutableSpan>): List<MutableSpan> {
-        if (spans.isEmpty()) return emptyList()
+    fun handleTapOnPage(pageIndex: Int, localTapOffset: Offset) =
+        delegate.handleTapOnPage(pageIndex, localTapOffset)
 
-        val result = mutableListOf<MutableSpan>()
-        val groupedByStyle = spans.groupBy { it.item }
+    fun insertPageBreakAt(insertPageIndex: Int, count: Int = 1) =
+        delegate.insertPageBreakAt(insertPageIndex, count)
 
-        for ((_, styleSpans) in groupedByStyle) {
-            val sorted = styleSpans.sortedBy { it.start }
+    fun insertBlankPageAt(insertPageIndex: Int) = delegate.insertBlankPageAt(insertPageIndex)
 
-            if (sorted.isEmpty()) continue
+    fun deleteTextOnPage(pageIndex: Int) = delegate.deleteTextOnPage(pageIndex)
 
-            var current = sorted[0]
-
-            for (i in 1 until sorted.size) {
-                val next = sorted[i]
-
-                if (next.start <= current.end) {
-                    current.end = maxOf(current.end, next.end)
-                } else {
-                    result.add(current)
-                    current = next
-                }
-            }
-            result.add(current)
-        }
-
-        return result
-    }
-
-    fun onValueChanged(newValue: TextFieldValue) {
-        if (isSaving) return
-
-        if (activePageIndex != -1 && !newValue.text.startsWith(ZWSP)) {
-            val handled = handleBackspaceAtStart()
-            if (!handled) {
-                localTextFieldValue = localTextFieldValue.copy(selection = TextRange(1))
-            }
-            return
-        }
-
-        val oldValue = if (activePageIndex != -1) localTextFieldValue else globalTextFieldValue
-        val newText = newValue.text
-        val oldText = oldValue.text
-
-        if (newText == oldText) {
-            if (activePageIndex != -1) {
-                if (localTextFieldValue.selection != newValue.selection ||
-                    localTextFieldValue.composition != newValue.composition) {
-
-                    localTextFieldValue = newValue.copy(annotatedString = localTextFieldValue.annotatedString)
-                    isCursorVisible = true
-                    updateLocalCursor()
-
-                    if (kotlin.math.abs(newValue.selection.start - oldValue.selection.start) > 1) {
-                        Timber.tag("CursorNavTrace").d("Local cursor moved significantly.")
-                    }
-                }
-            } else {
-                if (globalTextFieldValue.selection != newValue.selection ||
-                    globalTextFieldValue.composition != newValue.composition) {
-                    globalTextFieldValue = newValue.copy(annotatedString = globalTextFieldValue.annotatedString)
-                    updateGlobalCursor()
-                }
-            }
-            return
-        }
-
-        val oldAnnotated = oldValue.annotatedString
-        val mutableSpans = mutableListOf<MutableSpan>()
-
-        val diff = newText.length - oldText.length
-        val cursor = newValue.selection.end
-
-        val changeStart = if (diff > 0) cursor - diff else cursor
-        val changeEndOld = if (diff > 0) changeStart else changeStart - diff
-
-        oldAnnotated.spanStyles.forEach { span ->
-            val s = span.start
-            val e = span.end
-            val item = span.item
-
-            if (diff > 0) {
-                if (e <= changeStart) {
-                    mutableSpans.add(MutableSpan(s, e, item))
-                } else if (s >= changeStart) {
-                    mutableSpans.add(MutableSpan(s + diff, e + diff, item))
-                } else {
-                    mutableSpans.add(MutableSpan(s, e + diff, item))
-                }
-            } else {
-                if (e <= changeStart) {
-                    mutableSpans.add(MutableSpan(s, e, item))
-                } else if (s >= changeEndOld) {
-                    mutableSpans.add(MutableSpan(s + diff, e + diff, item))
-                } else {
-                    val newS = if (s < changeStart) s else changeStart
-                    val newE = (e + diff).coerceAtLeast(changeStart)
-
-                    if (newS < newE) {
-                        mutableSpans.add(MutableSpan(newS, newE, item))
-                    }
-                }
-            }
-        }
-
-        if (diff > 0) {
-            val start = (cursor - diff).coerceAtLeast(0)
-            mutableSpans.add(MutableSpan(start, cursor, currentStyle))
-        }
-
-        val mergedSpans = compactSpans(mutableSpans)
-
-        val builder = AnnotatedString.Builder(newText)
-        mergedSpans.forEach { span ->
-            builder.addStyle(span.item, span.start, span.end)
-        }
-
-        val finalAnnotated = builder.toAnnotatedString()
-        val finalValue = newValue.copy(annotatedString = finalAnnotated)
-
-        if (activePageIndex != -1) {
-            localTextFieldValue = finalValue
-            isCursorVisible = true
-            updateLocalCursor()
-
-            syncJob?.cancel()
-            syncJob = scope.launch {
-                delay(300)
-                performSync(activePageIndex, checkCursorMove = true)
-            }
-        } else {
-            globalTextFieldValue = finalValue
-            debouncedSave(globalTextFieldValue)
-            repaginate(dirtyStartIndex = 0, caller = "GlobalValueChanged")
-        }
-    }
-
-    private suspend fun syncLocalToGlobal() {
-        if (activePageIndex == -1) return
-        val layout = pageLayouts.find { it.pageIndex == activePageIndex } ?: return
-
-        val globalStart = layout.globalStartIndex
-        val globalEnd = layout.globalEndIndex
-        val currentGlobal = globalTextFieldValue.annotatedString
-
-        // FIX: Strip ZWSP (index 0) from local text
-        val localEditableText = if (localTextFieldValue.annotatedString.isNotEmpty()) {
-            localTextFieldValue.annotatedString.subSequence(1, localTextFieldValue.annotatedString.length)
-        } else AnnotatedString("")
-        val shouldPreservePageBreak = layout.visibleText.text.lastOrNull() == PAGE_BREAK_CHAR
-        val localText = localEditableText.withRestoredTrailingAndroidPageBreak(shouldPreservePageBreak)
-
-        Timber.tag("RichTextFlow").d("Sync: Page $activePageIndex, GlobalRange [$globalStart..$globalEnd], LocalLen ${localText.length}")
-
-        val builder = AnnotatedString.Builder()
-        builder.append(currentGlobal.subSequence(0, globalStart))
-        builder.append(localText)
-        if (globalEnd < currentGlobal.length) {
-            builder.append(currentGlobal.subSequence(globalEnd, currentGlobal.length))
-        }
-
-        val newGlobalAnnotated = builder.toAnnotatedString()
-        // FIX: Adjust selection -1 because local selection included ZWSP
-        val localSelectionStart = (localTextFieldValue.selection.start - 1).coerceAtLeast(0)
-        val newGlobalCursorPos = globalStart + localSelectionStart
-
-        val totalBreaks = newGlobalAnnotated.text.count { it == PAGE_BREAK_CHAR }
-        Timber.tag("RichTextFlow").d("Sync Complete: TotalLen ${newGlobalAnnotated.length}, TotalBreaks $totalBreaks")
-
-        val newGlobalValue = TextFieldValue(newGlobalAnnotated, TextRange(newGlobalCursorPos))
-        globalTextFieldValue = newGlobalValue
-
-        Timber.tag("RichTextFlow").d("Syncing Global: Total Len ${newGlobalAnnotated.length}")
-        debouncedSave(newGlobalValue)
-
-        val measurer = lastTextMeasurer ?: return
-        val density = lastDensity ?: return
-        val marginX = lastPageWidth * 0.1f
-        val marginY = lastPageHeight * 0.08f
-
-        val newLayouts = withContext(Dispatchers.Default) {
-            engine.paginate(
-                globalText = newGlobalAnnotated,
-                pageWidthPx = lastPageWidth,
-                pageHeightPx = lastPageHeight,
-                textMeasurer = measurer,
-                density = density,
-                marginX = marginX,
-                marginY = marginY,
-                previousLayouts = pageLayouts,
-                dirtyGlobalIndex = globalStart
-            )
-        }
-
-        pageLayouts = newLayouts
-
-        val newActiveLayout = newLayouts.find {
-            newGlobalCursorPos >= it.globalStartIndex && newGlobalCursorPos <= it.globalEndIndex
-        }
-
-        if (newActiveLayout != null) {
-            activePageIndex = newActiveLayout.pageIndex
-            val reExtractedText = newGlobalAnnotated.subSequence(
-                newActiveLayout.globalStartIndex, newActiveLayout.globalEndIndex
-            ).withoutTrailingAndroidPageBreak()
-            val textWithZwsp = AnnotatedString(ZWSP) + reExtractedText
-            val newLocalCursor = (newGlobalCursorPos - newActiveLayout.globalStartIndex + 1)
-                .coerceIn(0, textWithZwsp.length)
-
-            localTextFieldValue = TextFieldValue(textWithZwsp, TextRange(newLocalCursor))
-            updateLocalCursor()
-        }
-    }
-
-    fun updateCurrentStyle(style: SpanStyle, fontPath: String? = currentFontPath, fontName: String? = currentFontName) {
-        Timber.tag("PdfFontDebug").d("Controller: updateCurrentStyle called. Name: $fontName, Path: $fontPath")
-
-        val effectiveFontFamily = PdfFontCache.getFontFamily(fontPath)
-        val styleWithFont = style.copy(fontFamily = effectiveFontFamily)
-
-        currentStyle = styleWithFont
-        currentFontPath = fontPath
-        currentFontName = fontName
-        isCursorVisible = true
-
-        if (activePageIndex != -1) {
-            if (!localTextFieldValue.selection.collapsed) {
-                val builder = AnnotatedString.Builder(localTextFieldValue.annotatedString)
-                builder.addStyle(styleWithFont, localTextFieldValue.selection.start, localTextFieldValue.selection.end)
-                localTextFieldValue = localTextFieldValue.copy(annotatedString = builder.toAnnotatedString())
-
-                Timber.tag("TextAnnotStyle").d("Controller: Applied style to Local Selection (${localTextFieldValue.selection})")
-
-                syncJob?.cancel()
-                syncJob = scope.launch {
-                    delay(500)
-                    syncLocalToGlobal()
-                }
-            }
-        } else {
-            if (!globalTextFieldValue.selection.collapsed) {
-                val builder = AnnotatedString.Builder(globalTextFieldValue.annotatedString)
-                builder.addStyle(styleWithFont, globalTextFieldValue.selection.start, globalTextFieldValue.selection.end)
-                globalTextFieldValue = globalTextFieldValue.copy(annotatedString = builder.toAnnotatedString())
-
-                debouncedSave(globalTextFieldValue)
-                repaginate(dirtyStartIndex = globalTextFieldValue.selection.min, caller = "GlobalValueChanged")
-            }
-        }
-        requestFocusAndShowKeyboard()
-    }
-
-    fun handleTapOnPage(pageIndex: Int, localTapOffset: Offset) {
-        if (globalTextFieldValue.text.length > 500_000 && activePageIndex == -1) {
-            Timber.tag("RichTextFlow").w("Document too large for instant interactive tap.")
-        }
-
-        Timber.tag("RichTextFlow").i("Tap on Page $pageIndex at $localTapOffset. Current Active: $activePageIndex")
-
-        if (activePageIndex != -1 && activePageIndex != pageIndex) {
-            scope.launch { performSync(activePageIndex) }
-        }
-
-        val measurer = lastTextMeasurer ?: return
-        val density = lastDensity ?: return
-
-        var layout = pageLayouts.find { it.pageIndex == pageIndex }
-
-        if (layout == null) {
-            val lastLayout = pageLayouts.lastOrNull()
-            val currentLastPage = lastLayout?.pageIndex ?: 0
-            Timber.tag("RichTextFlow").w("Tapped page $pageIndex beyond current text stream (Last page: $currentLastPage). Bridging gap.")
-
-            if (pageIndex > currentLastPage) {
-                val breaksNeeded = pageIndex - currentLastPage
-                val builder = AnnotatedString.Builder(globalTextFieldValue.annotatedString)
-                repeat(breaksNeeded) {
-                    builder.append(PAGE_BREAK_CHAR.toString())
-                }
-                globalTextFieldValue = TextFieldValue(builder.toAnnotatedString())
-
-                repaginateSync(0)
-                layout = pageLayouts.find { it.pageIndex == pageIndex }
-            }
-        }
-
-        val currentLayout = layout ?: return
-
-        activePageIndex = pageIndex
-        val margin = lastPageWidth * 0.1f
-        val editorWidth = (lastPageWidth - (margin * 2)).coerceAtLeast(10f)
-
-        val vText = currentLayout.visibleText
-        val editableText = vText.withoutTrailingAndroidPageBreak()
-        // FIX: Prepend ZWSP to the visible text
-        val textWithZwsp = AnnotatedString(ZWSP) + editableText
-        val safeLen = editableText.length
-
-        // FIX: Adjust initial selection by +1 because of ZWSP
-        localTextFieldValue = TextFieldValue(textWithZwsp, TextRange(safeLen + 1))
-
-        val measureResult = measurer.measure(
-            text = editableText, // We measure editable text, not the hidden page-break sentinel
-            style = TextStyle(fontSize = 16.sp, color = Color.Black),
-            constraints = Constraints(maxWidth = editorWidth.toInt()),
-            density = density
-        )
-
-        val textHeight = if (editableText.isEmpty()) 0f else measureResult.size.height.toFloat()
-
-        if (editableText.isNotEmpty() && localTapOffset.y <= textHeight) {
-            var localIndex = measureResult.getOffsetForPosition(localTapOffset)
-            localIndex = localIndex.coerceIn(0, editableText.length)
-            localTextFieldValue = localTextFieldValue.copy(selection = TextRange(localIndex + 1))
-        } else {
-            val gap = localTapOffset.y - textHeight
-            injectNewlinesLocal(gap)
-        }
-
-        isCursorVisible = true
-        updateLocalCursor()
-        requestFocusAndShowKeyboard()
-    }
-
-    private fun injectNewlinesLocal(gapPixels: Float) {
-        val fontSizeSp = currentStyle.fontSize.value
-        val densityVal = lastDensity?.density ?: 1f
-        val lineHeightPx = (if (fontSizeSp.isNaN()) 16f else fontSizeSp) * densityVal * 1.3f
-        val linesNeeded = (gapPixels / lineHeightPx).toInt().coerceAtLeast(1)
-        val sb = StringBuilder()
-        repeat(linesNeeded) { sb.append('\n') }
-
-        val original = localTextFieldValue.annotatedString
-        val text = original.text
-
-        val builder = AnnotatedString.Builder()
-
-        val endsWithBreak = text.isNotEmpty() && text.last() == PAGE_BREAK_CHAR
-
-        if (endsWithBreak) {
-            builder.append(original.subSequence(0, text.length - 1))
-            builder.pushStyle(currentStyle)
-            builder.append(sb.toString())
-            builder.pop()
-            builder.append(PAGE_BREAK_CHAR.toString())
-        } else {
-            builder.append(original)
-            builder.pushStyle(currentStyle)
-            builder.append(sb.toString())
-            builder.pop()
-        }
-
-        val newVal = builder.toAnnotatedString()
-        val newCursor = if (endsWithBreak) newVal.length - 1 else newVal.length
-
-        localTextFieldValue = TextFieldValue(newVal, TextRange(newCursor))
-        onValueChanged(localTextFieldValue)
-    }
-
-    private fun repaginateSync(@Suppress("SameParameterValue") dirtyStartIndex: Int) {
-        val measurer = lastTextMeasurer ?: return
-        val density = lastDensity ?: return
-        val marginX = lastPageWidth * 0.1f
-        val marginY = lastPageHeight * 0.08f
-
-        pageLayouts = engine.paginate(
-            globalText = globalTextFieldValue.annotatedString,
-            pageWidthPx = lastPageWidth,
-            pageHeightPx = lastPageHeight,
-            textMeasurer = measurer,
-            density = density,
-            marginX = marginX,
-            marginY = marginY,
-            previousLayouts = pageLayouts,
-            dirtyGlobalIndex = dirtyStartIndex
-        )
-    }
-
-    private fun repaginate(dirtyStartIndex: Int, caller: String) {
-        val measurer = lastTextMeasurer ?: return
-        val density = lastDensity ?: return
-        val marginX = lastPageWidth * 0.1f
-        val marginY = lastPageHeight * 0.08f
-
-        val currentText = globalTextFieldValue.annotatedString
-        val currentLayouts = pageLayouts
-
-        scope.launch {
-            Timber.tag("RichTextMigration").v("repaginate triggered by [$caller] from dirty index $dirtyStartIndex. Global text len: ${currentText.length}")
-            val newLayouts = withContext(Dispatchers.Default) {
-                engine.paginate(
-                    globalText = currentText,
-                    pageWidthPx = lastPageWidth,
-                    pageHeightPx = lastPageHeight,
-                    textMeasurer = measurer,
-                    density = density,
-                    marginX = marginX,
-                    marginY = marginY,
-                    previousLayouts = currentLayouts,
-                    dirtyGlobalIndex = dirtyStartIndex
-                )
-            }
-            pageLayouts = newLayouts
-            Timber.tag("RichTextMigration").d("repaginate [$caller] completed. Pages: ${newLayouts.size}")
-        }
-    }
-
-    private fun updateLocalCursor() {
-        if (lastTextMeasurer == null || lastDensity == null) return
-
-        val selection = localTextFieldValue.selection
-        if (selection.collapsed) {
-            val margin = lastPageWidth * 0.1f
-            val editorWidth = (lastPageWidth - (margin * 2)).coerceAtLeast(10f)
-
-            val measureResult = lastTextMeasurer!!.measure(
-                text = localTextFieldValue.annotatedString,
-                style = TextStyle(fontSize = 16.sp),
-                constraints = Constraints(maxWidth = editorWidth.toInt()),
-                density = lastDensity!!
-            )
-
-            val safeOffset = selection.start.coerceIn(0, localTextFieldValue.text.length)
-            val rect = measureResult.getCursorRect(safeOffset)
-            val marginY = lastPageHeight * 0.08f
-
-            cursorPageIndex = activePageIndex
-            cursorRectInPage = rect.translate(margin, marginY)
-        }
-    }
-
-    private fun updateGlobalCursor() {
-        val selection = globalTextFieldValue.selection
-        if (isCursorVisible && showCursorOverride && selection.collapsed) {
-            val cursorIndex = selection.start
-            val layout = pageLayouts.find {
-                cursorIndex >= it.globalStartIndex && cursorIndex <= it.globalEndIndex
-            }
-            if (layout != null && lastTextMeasurer != null && lastDensity != null) {
-                cursorPageIndex = layout.pageIndex
-                val margin = lastPageWidth * 0.1f
-                val editorWidth = (lastPageWidth - (margin * 2)).coerceAtLeast(10f)
-                val measureResult = lastTextMeasurer!!.measure(
-                    text = layout.visibleText,
-                    style = TextStyle(fontSize = 16.sp),
-                    constraints = Constraints(maxWidth = editorWidth.toInt()),
-                    density = lastDensity!!
-                )
-                val localIndex = (cursorIndex - layout.globalStartIndex).coerceIn(0, layout.visibleText.length)
-                val rect = measureResult.getCursorRect(localIndex)
-                val marginY = lastPageHeight * 0.08f
-                cursorRectInPage = rect.translate(margin, marginY)
-            }
-        } else {
-            cursorPageIndex = -1
-            cursorRectInPage = null
-        }
-    }
-
-    // --- Misc Operations ---
-
-    private suspend fun forceSyncAndClear() {
-        if (activePageIndex != -1) {
-            Timber.tag("RichTextFlow").i("ForceSync: Committing local edits before structural change.")
-            performSync(activePageIndex)
-            activePageIndex = -1
-            cursorPageIndex = -1
-            cursorRectInPage = null
-            localTextFieldValue = TextFieldValue("")
-        }
-    }
-
-    fun insertPageBreakAt(insertPageIndex: Int, count: Int = 1) {
-        scope.launch {
-            forceSyncAndClear()
-
-            val original = globalTextFieldValue.annotatedString
-            Timber.tag("RichTextMigration").d("insertPageBreakAt: Target Page Index: $insertPageIndex, Count: $count")
-
-            val safeIndex = androidRichTextInsertionIndexForPage(
-                insertPageIndex = insertPageIndex,
-                pageLayouts = pageLayouts,
-                textLength = original.length
-            )
-            Timber.tag("RichTextMigration").v("insertPageBreakAt: insertion index $safeIndex")
-
-            insertPageBreaksIntoGlobalText(
-                original = original,
-                safeIndex = safeIndex,
-                count = count,
-                caller = "InsertPageBreakAt"
-            )
-        }
-    }
-
-    fun insertBlankPageAt(insertPageIndex: Int) {
-        scope.launch {
-            forceSyncAndClear()
-
-            val original = globalTextFieldValue.annotatedString
-            val safeIndex = androidRichTextInsertionIndexForPage(
-                insertPageIndex = insertPageIndex,
-                pageLayouts = pageLayouts,
-                textLength = original.length
-            )
-            val requiredBreaks = androidRichTextBlankInsertBreakCount(
-                text = original.text,
-                insertionCharIndex = safeIndex
-            )
-
-            Timber.tag("RichTextMigration").i(
-                "insertBlankPageAt: page=$insertPageIndex index=$safeIndex breaks=$requiredBreaks"
-            )
-
-            insertPageBreaksIntoGlobalText(
-                original = original,
-                safeIndex = safeIndex,
-                count = requiredBreaks,
-                caller = "InsertBlankPageAt"
-            )
-        }
-    }
+    fun handleBackspaceAtStart(): Boolean = delegate.handleBackspaceAtStart()
 
     suspend fun remapPagesForLayoutChange(
         currentLayout: List<VirtualPage>,
-        updatedLayout: List<VirtualPage>
-    ) = withContext(NonCancellable) {
-        Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
-            "rich.remap.start current=${currentLayout.pdfLayoutDebugSummary()} " +
-                "updated=${updatedLayout.pdfLayoutDebugSummary()} pageLayouts=${pageLayouts.size} " +
-                "textLen=${globalTextFieldValue.annotatedString.length}"
-        )
-        forceSyncAndClear()
-
-        val original = globalTextFieldValue.annotatedString
-        if (pageLayouts.isEmpty() && original.text.isNotEmpty()) {
-            Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).w(
-                "rich.remap.skipNoLayouts current=${currentLayout.pdfLayoutDebugSummary()} " +
-                    "updated=${updatedLayout.pdfLayoutDebugSummary()} textLen=${original.length}"
-            )
-            Timber.tag("RichTextMigration").w(
-                "remapPagesForLayoutChange skipped: no rich text page layouts for non-empty text"
-            )
-            return@withContext
-        }
-        val remapped = remapAndroidRichTextForLayoutChange(
-            currentLayout = currentLayout,
-            updatedLayout = updatedLayout,
-            pageLayouts = pageLayouts
-        )
-
-        if (remapped == original) {
-            Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
-                "rich.remap.noChange current=${currentLayout.pdfLayoutDebugSummary()} " +
-                    "updated=${updatedLayout.pdfLayoutDebugSummary()} textLen=${original.length}"
-            )
-            return@withContext
-        }
-
-        Timber.tag("RichTextMigration").i(
-            "remapPagesForLayoutChange: textLen ${original.length} -> ${remapped.length}, " +
-                "pages ${currentLayout.size} -> ${updatedLayout.size}"
-        )
-        Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
-            "rich.remap.apply textLen=${original.length}->${remapped.length} " +
-                "current=${currentLayout.pdfLayoutDebugSummary()} updated=${updatedLayout.pdfLayoutDebugSummary()}"
-        )
-
-        globalTextFieldValue = TextFieldValue(
-            remapped,
-            selection = TextRange(remapped.length)
-        )
-        repaginateSync(0)
-        saveCurrentGlobalTextImmediately()
-        Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
-            "rich.remap.done textLen=${globalTextFieldValue.annotatedString.length} pageLayouts=${pageLayouts.size}"
-        )
-    }
-
-    private fun insertPageBreaksIntoGlobalText(
-        original: AnnotatedString,
-        safeIndex: Int,
-        count: Int,
-        caller: String
+        updatedLayout: List<VirtualPage>,
     ) {
-        val safeCount = count.coerceAtLeast(0)
-        if (safeCount == 0) return
-
-        Timber.tag("RichTextMigration").i("$caller: Inserting $safeCount PAGE_BREAK_CHARs at global index $safeIndex")
-
-        val builder = AnnotatedString.Builder()
-        builder.append(original.subSequence(0, safeIndex))
-
-        repeat(safeCount) {
-            builder.append(PAGE_BREAK_CHAR.toString())
-        }
-
-        builder.append(original.subSequence(safeIndex, original.length))
-
-        val newCursorPos = safeIndex + safeCount
-
-        globalTextFieldValue = TextFieldValue(builder.toAnnotatedString(), TextRange(newCursorPos))
-        debouncedSave(globalTextFieldValue)
-        repaginate(dirtyStartIndex = safeIndex, caller = caller)
+        delegate.remapPagesForLayoutChange(
+            currentLayout = currentLayout.map(VirtualPage::toSharedRichTextPageIdentity),
+            updatedLayout = updatedLayout.map(VirtualPage::toSharedRichTextPageIdentity),
+        )
     }
 
-    private suspend fun saveCurrentGlobalTextImmediately() {
-        saveJob?.cancel()
-        val finalAnnotated = globalTextFieldValue.annotatedString
-        withContext(Dispatchers.Default) {
-            val doc = RichTextMapper.fromAnnotatedString(finalAnnotated, lastPageHeight)
-            repository.save(bookId, doc)
-        }
-    }
-
-    fun deleteTextOnPage(pageIndex: Int) {
-        scope.launch {
-            forceSyncAndClear()
-
-            val layout = pageLayouts.find { it.pageIndex == pageIndex } ?: return@launch
-            val start = layout.globalStartIndex
-            val end = layout.globalEndIndex
-
-            if (start >= end && start >= globalTextFieldValue.text.length) return@launch
-
-            Timber.tag("RichTextFlow").i("Deleting text on Page $pageIndex (Global: $start..$end)")
-
-            val original = globalTextFieldValue.annotatedString
-            val builder = AnnotatedString.Builder()
-            builder.append(original.subSequence(0, start))
-            if (end < original.length) {
-                builder.append(original.subSequence(end, original.length))
-            }
-
-            globalTextFieldValue = TextFieldValue(builder.toAnnotatedString(), TextRange(start))
-            debouncedSave(globalTextFieldValue)
-            repaginate(dirtyStartIndex = start, caller = "DeleteTextOnPage")
-        }
-    }
-
-    private fun debouncedSave(tfv: TextFieldValue) {
-        saveJob?.cancel()
-        saveJob = scope.launch(Dispatchers.Default) {
-            delay(1000)
-            val baseDoc = RichTextMapper.fromAnnotatedString(tfv.annotatedString, lastPageHeight)
-            repository.save(bookId, baseDoc)
-        }
-    }
-
-    private suspend fun performSync(pageIdx: Int, checkCursorMove: Boolean = false) {
-        if (pageIdx == -1) {
-            Timber.tag("RichTextMigration").w("performSync aborted: pageIdx is -1")
-            return
-        }
-        val layout = pageLayouts.find { it.pageIndex == pageIdx } ?: run {
-            Timber.tag("RichTextMigration").e("performSync failed: No layout found for pageIdx $pageIdx. Current layout count: ${pageLayouts.size}")
-            return
-        }
-
-        val globalStart = layout.globalStartIndex
-        val globalEnd = layout.globalEndIndex
-
-        Timber.tag("RichTextMigration").i("performSync EXECUTE: Page=$pageIdx, GlobalRange=[$globalStart..$globalEnd], LocalTextLen=${localTextFieldValue.text.length}")
-
-        val currentGlobal = globalTextFieldValue.annotatedString
-
-        val localAnnotatedRaw = localTextFieldValue.annotatedString
-        val localEditableAnnotated = if (localAnnotatedRaw.isNotEmpty()) localAnnotatedRaw.subSequence(1, localAnnotatedRaw.length) else AnnotatedString("")
-        val shouldPreservePageBreak = layout.visibleText.text.lastOrNull() == PAGE_BREAK_CHAR
-        val localAnnotated = localEditableAnnotated.withRestoredTrailingAndroidPageBreak(shouldPreservePageBreak)
-
-        val charBeforeSync = if (globalStart > 0) currentGlobal.text[globalStart - 1] else "START"
-        val charAfterSync = if (globalEnd < currentGlobal.length) currentGlobal.text[globalEnd] else "END"
-
-        Timber.tag("RichTextFlow").v("Sync START Page $pageIdx. Boundary: [$charBeforeSync]...[G:$globalStart..$globalEnd]...[$charAfterSync]")
-
-        val builder = AnnotatedString.Builder()
-        builder.append(currentGlobal.subSequence(0, globalStart))
-        builder.append(localAnnotated)
-        if (globalEnd < currentGlobal.length) {
-            builder.append(currentGlobal.subSequence(globalEnd, currentGlobal.length))
-        }
-
-        val newGlobalAnnotated = builder.toAnnotatedString()
-        Timber.tag("RichTextMigration").d("performSync: Merged text. Global length: ${currentGlobal.length} -> ${newGlobalAnnotated.length}")
-        val localSelectionStart = (localTextFieldValue.selection.start - 1).coerceAtLeast(0)
-        val newGlobalCursorPos = (globalStart + localSelectionStart).coerceIn(0, newGlobalAnnotated.length)
-
-        if (checkCursorMove) {
-            Timber.tag("CursorNavTrace").d("performSync: Checking move. GlobalStart: $globalStart, LocalSelStart: $localSelectionStart, TargetGlobalPos: $newGlobalCursorPos")
-        }
-
-        globalTextFieldValue = TextFieldValue(newGlobalAnnotated, TextRange(newGlobalCursorPos))
-        debouncedSave(globalTextFieldValue)
-
-        val measurer = lastTextMeasurer ?: return
-        val density = lastDensity ?: return
-        val marginX = lastPageWidth * 0.1f
-        val marginY = lastPageHeight * 0.08f
-
-        // Repaginate from the start of the current page
-        val newLayouts = withContext(Dispatchers.Default) {
-            engine.paginate(
-                globalText = newGlobalAnnotated,
-                pageWidthPx = lastPageWidth,
-                pageHeightPx = lastPageHeight,
-                textMeasurer = measurer,
-                density = density,
-                marginX = marginX,
-                marginY = marginY,
-                previousLayouts = pageLayouts,
-                dirtyGlobalIndex = globalStart
-            )
-        }
-
-        val oldPage1Start = pageLayouts.find { it.pageIndex == pageIdx + 1 }?.globalStartIndex
-        val newPage1Start = newLayouts.find { it.pageIndex == pageIdx + 1 }?.globalStartIndex
-        Timber.tag("RichTextFlow").d("Sync Repaginated. Page ${pageIdx+1} start shifted: $oldPage1Start -> $newPage1Start")
-
-        pageLayouts = newLayouts
-
-        if (checkCursorMove) {
-            val newActiveLayout = newLayouts.find {
-                newGlobalCursorPos >= it.globalStartIndex && newGlobalCursorPos < it.globalEndIndex
-            } ?: newLayouts.find { newGlobalCursorPos == it.globalEndIndex }
-
-            if (newActiveLayout != null) {
-                if (newActiveLayout.pageIndex != activePageIndex) {
-                    Timber.tag("CursorNavTrace").i("performSync: MIGRATING from Page $activePageIndex to ${newActiveLayout.pageIndex}")
-                    activePageIndex = newActiveLayout.pageIndex
-                }
-
-                val reExtracted = newGlobalAnnotated.subSequence(
-                    newActiveLayout.globalStartIndex, newActiveLayout.globalEndIndex
-                ).withoutTrailingAndroidPageBreak()
-                val textWithZwsp = AnnotatedString(ZWSP) + reExtracted
-                val newLocalCursor = (newGlobalCursorPos - newActiveLayout.globalStartIndex + 1).coerceIn(0, textWithZwsp.length)
-
-                Timber.tag("CursorNavTrace").d("performSync: Final local cursor set to $newLocalCursor on Page ${newActiveLayout.pageIndex}")
-                localTextFieldValue = TextFieldValue(textWithZwsp, TextRange(newLocalCursor))
-                updateLocalCursor()
-                if (newActiveLayout.pageIndex != pageIdx) {
-                    requestFocusAndShowKeyboard()
-                }
-            } else {
-                Timber.tag("CursorNavTrace").w("performSync: No layout found for GlobalPos $newGlobalCursorPos")
-            }
-        }
-    }
-
-    fun handleBackspaceAtStart(): Boolean {
-        if (localTextFieldValue.selection.start != 0 && localTextFieldValue.selection.start != 1) return false
-        val originalActivePage = activePageIndex
-        if (originalActivePage <= 0) return false
-
-        Timber.tag("CursorNavTrace").i("handleBackspaceAtStart: Triggered at top of Page $originalActivePage")
-
-        scope.launch {
-            syncJob?.cancel()
-
-            performSync(originalActivePage)
-
-            val currentLayout = pageLayouts.find { it.pageIndex == originalActivePage } ?: return@launch
-            val globalText = globalTextFieldValue.annotatedString
-            val currentGlobalStart = currentLayout.globalStartIndex
-
-            if (currentGlobalStart > 0) {
-                val charBefore = globalText.text[currentGlobalStart - 1]
-
-                if (charBefore == PAGE_BREAK_CHAR) {
-                    Timber.tag("CursorNavTrace").i("handleBackspaceAtStart: Found PAGE_BREAK at index ${currentGlobalStart - 1}. Removing it.")
-
-                    val targetPageIdx = originalActivePage - 1
-                    val builder = AnnotatedString.Builder()
-                    builder.append(globalText.subSequence(0, currentGlobalStart - 1))
-                    val contentAfterBreak = globalText.subSequence(currentGlobalStart, globalText.length)
-                    builder.append(contentAfterBreak)
-
-                    var intermediateGlobal = builder.toAnnotatedString()
-                    var newCursorPos = (currentGlobalStart - 1).coerceAtLeast(0)
-
-                    val measurer = lastTextMeasurer ?: return@launch
-                    val density = lastDensity ?: return@launch
-                    val marginX = lastPageWidth * 0.1f
-                    val marginY = lastPageHeight * 0.08f
-                    val editorHeight = (lastPageHeight - (marginY * 2)).coerceAtLeast(10f)
-                    val editorWidth = (lastPageWidth - (marginX * 2)).coerceAtLeast(10f)
-
-                    val targetLayout = pageLayouts.find { it.pageIndex == targetPageIdx }
-                    val targetStart = targetLayout?.globalStartIndex ?: 0
-                    val safeTargetStart = targetStart.coerceIn(0, newCursorPos)
-                    val pageTextToMeasure = intermediateGlobal.subSequence(safeTargetStart, newCursorPos)
-
-                    val measureResult = measurer.measure(
-                        text = pageTextToMeasure,
-                        style = TextStyle(fontSize = 16.sp),
-                        constraints = Constraints(maxWidth = editorWidth.toInt()),
-                        density = density
-                    )
-
-                    val currentTextHeight = measureResult.size.height.toFloat()
-                    val gap = editorHeight - currentTextHeight
-
-                    if (gap > 0) {
-                        val fontSizeSp = currentStyle.fontSize.value
-                        val densityVal = density.density
-                        val lineHeightPx = (if (fontSizeSp.isNaN() || fontSizeSp <= 0) 16f else fontSizeSp) * densityVal * 1.3f
-                        val linesNeeded = (gap / lineHeightPx).toInt().coerceAtLeast(0)
-
-                        if (linesNeeded > 0) {
-                            val padding = "\n".repeat(linesNeeded)
-                            val paddedBuilder = AnnotatedString.Builder()
-                            paddedBuilder.append(intermediateGlobal.subSequence(0, newCursorPos))
-                            paddedBuilder.pushStyle(currentStyle)
-                            paddedBuilder.append(padding)
-                            paddedBuilder.pop()
-                            paddedBuilder.append(intermediateGlobal.subSequence(newCursorPos, intermediateGlobal.length))
-
-                            intermediateGlobal = paddedBuilder.toAnnotatedString()
-                            newCursorPos += padding.length
-                        }
-                    }
-
-                    globalTextFieldValue = TextFieldValue(intermediateGlobal, TextRange(newCursorPos))
-                    debouncedSave(globalTextFieldValue)
-
-                    val finalLayouts = withContext(Dispatchers.Default) {
-                        engine.paginate(intermediateGlobal, lastPageWidth, lastPageHeight, measurer, density, marginX, marginY)
-                    }
-                    pageLayouts = finalLayouts
-
-                    val finalActiveLayout = finalLayouts.find { it.pageIndex == targetPageIdx }
-                        ?: finalLayouts.findLast { newCursorPos >= it.globalStartIndex && newCursorPos <= it.globalEndIndex }
-
-                    if (finalActiveLayout != null) {
-                        activePageIndex = finalActiveLayout.pageIndex
-                        val reExtracted = intermediateGlobal.subSequence(
-                            finalActiveLayout.globalStartIndex, finalActiveLayout.globalEndIndex
-                        ).withoutTrailingAndroidPageBreak()
-                        val textWithZwsp = AnnotatedString(ZWSP) + reExtracted
-                        val localCursor = (newCursorPos - finalActiveLayout.globalStartIndex + 1).coerceIn(0, textWithZwsp.length)
-
-                        localTextFieldValue = TextFieldValue(textWithZwsp, TextRange(localCursor))
-                        updateLocalCursor()
-                        requestFocusAndShowKeyboard()
-                    }
-
-                } else {
-                    Timber.tag("CursorNavTrace").i("handleBackspaceAtStart: Contiguous text (Overflow). Deleting char at ${currentGlobalStart - 1}")
-
-                    val builder = AnnotatedString.Builder()
-                    builder.append(globalText.subSequence(0, currentGlobalStart - 1))
-                    builder.append(globalText.subSequence(currentGlobalStart, globalText.length))
-
-                    val newGlobalText = builder.toAnnotatedString()
-                    val newCursorPos = (currentGlobalStart - 1).coerceAtLeast(0)
-
-                    globalTextFieldValue = TextFieldValue(newGlobalText, TextRange(newCursorPos))
-                    debouncedSave(globalTextFieldValue)
-
-                    val measurer = lastTextMeasurer ?: return@launch
-                    val density = lastDensity ?: return@launch
-                    val marginX = lastPageWidth * 0.1f
-                    val marginY = lastPageHeight * 0.08f
-
-                    val finalLayouts = withContext(Dispatchers.Default) {
-                        engine.paginate(
-                            newGlobalText,
-                            lastPageWidth,
-                            lastPageHeight,
-                            measurer,
-                            density,
-                            marginX,
-                            marginY
-                        )
-                    }
-                    pageLayouts = finalLayouts
-
-                    val finalActiveLayout = finalLayouts.find {
-                        newCursorPos >= it.globalStartIndex && newCursorPos < it.globalEndIndex
-                    } ?: finalLayouts.find { newCursorPos == it.globalEndIndex }
-
-                    if (finalActiveLayout != null) {
-                        @Suppress("UnusedVariable", "Unused") val previousPage = activePageIndex
-                        activePageIndex = finalActiveLayout.pageIndex
-
-                        val reExtracted = newGlobalText.subSequence(
-                            finalActiveLayout.globalStartIndex, finalActiveLayout.globalEndIndex
-                        ).withoutTrailingAndroidPageBreak()
-                        val textWithZwsp = AnnotatedString(ZWSP) + reExtracted
-                        val localCursor = (newCursorPos - finalActiveLayout.globalStartIndex + 1).coerceIn(0, textWithZwsp.length)
-
-                        localTextFieldValue = TextFieldValue(textWithZwsp, TextRange(localCursor))
-                        updateLocalCursor()
-                        requestFocusAndShowKeyboard()
-
-                        Timber.tag("CursorNavTrace").i("handleBackspaceAtStart: Overflow backspace moved cursor to Page ${finalActiveLayout.pageIndex}, Index $localCursor")
-                    } else {
-                        Timber.tag("CursorNavTrace").e("handleBackspaceAtStart: Could not find layout for Overflow Backspace pos $newCursorPos")
-                    }
-                }
-            } else {
-                Timber.tag("CursorNavTrace").w("handleBackspaceAtStart: Start index is 0, cannot backspace.")
-            }
-        }
-        return true
-    }
-
-    suspend fun saveImmediate() {
-        if (isSaving) return
-        isSaving = true
-        try {
-            Timber.tag("RichTextMigration").i("saveImmediate: Starting. Current activePageIndex: $activePageIndex")
-            saveJob?.cancel()
-            syncJob?.cancel()
-
-            val pageToSync = activePageIndex
-            if (pageToSync != -1) {
-                performSync(pageToSync)
-
-                delay(50)
-                activePageIndex = -1
-                cursorPageIndex = -1
-                cursorRectInPage = null
-                Timber.tag("RichTextMigration").d("saveImmediate: Sync finished and state cleared for page $pageToSync")
-            }
-
-            val finalAnnotated = globalTextFieldValue.annotatedString
-            withContext(Dispatchers.Default) {
-                val doc = RichTextMapper.fromAnnotatedString(finalAnnotated, lastPageHeight)
-                repository.save(bookId, doc)
-            }
-        } finally {
-            delay(100)
-            isSaving = false
-        }
-    }
+    suspend fun saveImmediate() = delegate.saveImmediate()
 }

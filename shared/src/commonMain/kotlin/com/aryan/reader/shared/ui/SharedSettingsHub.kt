@@ -194,9 +194,9 @@ private fun SharedSettingsHeader(
             }
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(page.title, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+            Text(readerLiteral(page.title), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
             Text(
-                page.summary,
+                readerLiteral(page.summary),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 2,
@@ -249,9 +249,9 @@ private fun SharedSettingsCategoryRow(
                 tint = MaterialTheme.colorScheme.primary
             )
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Text(category.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text(readerLiteral(category.title), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 Text(
-                    category.summary,
+                    readerLiteral(category.summary),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 2,
@@ -356,6 +356,10 @@ private fun SharedSettingsSearchResultRow(
     onNavigate: (SharedSettingsDestination) -> Unit,
     onAction: (SharedSettingsAction) -> Unit
 ) {
+    val stringResolver = LocalSharedStringResolver.current
+    val localizedBreadcrumb = result.breadcrumb
+        .split(" / ")
+        .joinToString(" / ") { stringResolver.literal(it) }
     val contentColor = if (result.enabled) {
         MaterialTheme.colorScheme.onSurface
     } else {
@@ -382,14 +386,14 @@ private fun SharedSettingsSearchResultRow(
                 tint = if (result.kind == SharedSettingsItemKind.DESTRUCTIVE) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
             )
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(result.title, fontWeight = FontWeight.SemiBold, color = contentColor)
+                Text(readerLiteral(result.title), fontWeight = FontWeight.SemiBold, color = contentColor)
                 Text(
-                    result.breadcrumb,
+                    localizedBreadcrumb,
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.primary
                 )
                 Text(
-                    result.summary,
+                    readerLiteral(result.summary),
                     style = MaterialTheme.typography.bodySmall,
                     color = if (result.enabled) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.48f),
                     maxLines = 2,
@@ -456,9 +460,9 @@ private fun SharedSettingsRow(
                 tint = if (item.kind == SharedSettingsItemKind.DESTRUCTIVE) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
             )
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(item.title, fontWeight = FontWeight.SemiBold, color = contentColor)
+                Text(readerLiteral(item.title), fontWeight = FontWeight.SemiBold, color = contentColor)
                 Text(
-                    item.summary,
+                    readerLiteral(item.summary),
                     style = MaterialTheme.typography.bodySmall,
                     color = if (item.enabled) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.48f),
                     maxLines = 2,
@@ -620,7 +624,7 @@ private fun SharedSettingsDetailPage(
                         allowBookScope = false
                     )
                 }
-                else -> Text(page.summary, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                else -> Text(readerLiteral(page.summary), color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
@@ -657,8 +661,8 @@ private fun SharedSettingsLocalOverrideNote(note: SharedSettingsItemModel) {
         ) {
             Icon(Icons.Default.Info, contentDescription = null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
             Column(Modifier.weight(1f)) {
-                Text(note.title, fontWeight = FontWeight.SemiBold)
-                Text(note.summary, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(readerLiteral(note.title), fontWeight = FontWeight.SemiBold)
+                Text(readerLiteral(note.summary), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }

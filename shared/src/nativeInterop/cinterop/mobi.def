@@ -1,0 +1,3 @@
+headers = mobi.h mobi_reader_bridge.h
+headerFilter = mobi.h mobi_reader_bridge.h
+package = com.aryan.reader.shared.mobi

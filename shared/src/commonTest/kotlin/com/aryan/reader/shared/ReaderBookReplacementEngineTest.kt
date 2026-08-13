@@ -6,6 +6,24 @@ import kotlin.test.assertTrue
 
 class ReaderBookReplacementEngineTest {
     @Test
+    fun `html replacements change visible text without touching markup or scripts`() {
+        val preferences = ReaderBookReplacementPreferences(
+            fileRules = mapOf("book" to listOf(rule(from = "Alice", to = "Mina"))),
+        )
+
+        val result = ReaderBookReplacementEngine.applyToHtml(
+            "<p title=\"Alice\">Alice <strong>met Alice</strong></p><script>const name = 'Alice';</script><style>.Alice {}</style>",
+            preferences,
+            "book",
+        )
+
+        assertEquals(
+            "<p title=\"Alice\">Mina <strong>met Mina</strong></p><script>const name = 'Alice';</script><style>.Alice {}</style>",
+            result,
+        )
+    }
+
+    @Test
     fun `book replacements apply only to matching file id`() {
         val preferences = ReaderBookReplacementPreferences(
             fileRules = mapOf(
@@ -79,6 +97,19 @@ class ReaderBookReplacementEngineTest {
         assertTrue("old" in signature)
         assertTrue("draft" !in signature)
         assertEquals("", preferences.signatureForFile("missing"))
+    }
+
+    @Test
+    fun `book replacement reducer stores shared preferences`() {
+        val preferences = ReaderBookReplacementPreferences(
+            fileRules = mapOf("book" to listOf(rule(from = "old", to = "new"))),
+        )
+
+        val state = SharedReaderScreenState().reduce(
+            AppAction.ReaderBookReplacementPreferencesChanged(preferences),
+        )
+
+        assertEquals(preferences, state.readerBookReplacementPreferences)
     }
 
     private fun rule(
