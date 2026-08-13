@@ -515,18 +515,40 @@ internal fun SharedSemanticBlockView(
                 Column(modifier = contentModifier, verticalArrangement = Arrangement.Top) {
                     var previous: SemanticBlock? = null
                     block.items.forEachIndexed { index, item ->
+                        val itemBlockStyle = item.style.blockStyle.sharedNativeThemeBlockStyle(
+                            isDarkTheme = settings.darkMode,
+                            background = background,
+                            foreground = foreground
+                        )
+                        val markerImage = item.itemMarkerImage
+                            ?: block.style.blockStyle.listStyleImage?.takeIf { it.isNotBlank() }
+                        val markerText = item.markerText ?: sharedNativeListMarker(
+                            index = index,
+                            isOrdered = block.isOrdered,
+                            listStyleType = block.style.blockStyle.listStyleType
+                        )
+                        val hasMarker = markerImage != null || markerText.isNotEmpty()
                         Row(
-                            modifier = Modifier.padding(
-                                top = item.collapsedTopMarginDp(previous, settings),
-                                bottom = if (index == block.items.lastIndex) item.effectiveBottomMarginDp(settings) else 0.dp
-                            ),
+                            modifier = Modifier
+                                .padding(
+                                    start = itemBlockStyle.margin.left.safeDp(),
+                                    top = item.collapsedTopMarginDp(previous, settings),
+                                    end = itemBlockStyle.margin.right.safeDp(),
+                                    bottom = if (index == block.items.lastIndex) item.effectiveBottomMarginDp(settings) else 0.dp
+                                )
+                                .sharedNativeCssBox(itemBlockStyle)
+                                .padding(
+                                    start = itemBlockStyle.padding.left.safeDp(),
+                                    top = itemBlockStyle.padding.top.safeDp(),
+                                    end = itemBlockStyle.padding.right.safeDp(),
+                                    bottom = itemBlockStyle.padding.bottom.safeDp()
+                                )
+                                .sharedNativeVisibility(itemBlockStyle),
                             verticalAlignment = Alignment.Top
                         ) {
                             val markerModifier = Modifier
                                 .width(SharedNativeListItemMarkerAreaWidthDp.dp)
                                 .padding(end = SharedNativeListItemMarkerEndPaddingDp.dp)
-                            val markerImage = item.itemMarkerImage
-                                ?: block.style.blockStyle.listStyleImage?.takeIf { it.isNotBlank() }
                             if (markerImage != null && imageContent != null) {
                                 val markerSize = with(LocalDensity.current) { (settings.fontSize * 0.85f).sp.toDp() }
                                 Box(
@@ -547,13 +569,9 @@ internal fun SharedSemanticBlockView(
                                         Modifier.size(markerSize)
                                     )
                                 }
-                            } else {
+                            } else if (hasMarker) {
                                 Text(
-                                    text = sharedNativeListMarker(
-                                        index = index,
-                                        isOrdered = block.isOrdered,
-                                        listStyleType = block.style.blockStyle.listStyleType
-                                    ),
+                                    text = markerText,
                                     color = foreground,
                                     modifier = markerModifier,
                                     textAlign = TextAlign.End,

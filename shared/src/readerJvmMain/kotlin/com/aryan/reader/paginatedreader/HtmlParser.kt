@@ -832,18 +832,32 @@ private class SemanticHtmlParser(
     private fun buildSemanticTextAndSpans(
         rootElement: Element,
         rootStyle: CssStyle,
-        inheritedLinkHref: String? = null
+        inheritedLinkHref: String? = null,
+        excludedNodes: Set<Node> = emptySet()
     ): Pair<String, List<SemanticSpan>> {
-        return buildSemanticTextAndSpansFromNodes(rootElement.childNodes(), rootStyle, rootElement, inheritedLinkHref)
+        return buildSemanticTextAndSpansFromNodes(
+            rootElement.childNodes(),
+            rootStyle,
+            rootElement,
+            inheritedLinkHref,
+            excludedNodes
+        )
     }
 
     private fun buildSemanticTextAndSpansFromNodes(
         nodes: List<Node>,
         rootStyle: CssStyle,
         rootElement: Element? = null,
-        inheritedLinkHref: String? = null
+        inheritedLinkHref: String? = null,
+        excludedNodes: Set<Node> = emptySet()
     ): Pair<String, List<SemanticSpan>> {
-        val chunks = buildSemanticTextAndSpanChunksFromNodes(nodes, rootStyle, rootElement, inheritedLinkHref)
+        val chunks = buildSemanticTextAndSpanChunksFromNodes(
+            nodes,
+            rootStyle,
+            rootElement,
+            inheritedLinkHref,
+            excludedNodes
+        )
         val firstChunk = chunks.firstOrNull() ?: return "" to emptyList()
         return firstChunk.text to firstChunk.spans
     }
@@ -852,7 +866,8 @@ private class SemanticHtmlParser(
         nodes: List<Node>,
         rootStyle: CssStyle,
         rootElement: Element? = null,
-        inheritedLinkHref: String? = null
+        inheritedLinkHref: String? = null,
+        excludedNodes: Set<Node> = emptySet()
     ): List<SemanticTextChunk> {
         val textBuilder = StringBuilder()
         val spans = mutableListOf<SemanticSpan>()
@@ -1029,6 +1044,7 @@ private class SemanticHtmlParser(
         }
 
         fun processNode(node: Node, inheritedStyle: CssStyle) {
+            if (node in excludedNodes) return
             when (node) {
                 is TextNode -> {
                     appendTransformedText(node.wholeText, inheritedStyle)
@@ -1203,16 +1219,54 @@ private class SemanticHtmlParser(
         inheritedLinkHref: String?
     ): List<SemanticBlock> {
         val isOrdered = listElement.tagName().lowercase() == "ol"
-        val items = listElement.children().mapNotNull { child ->
-            if (child.tagName().lowercase() != "li") return@mapNotNull null
-            val itemStyle = listStyle
-                .merge(getElementStyle(child, listStyle.customProperties))
-                .withResolvedFontFamily()
-                .withResolvedBlockResources()
-            val (text, spans) = buildSemanticTextAndSpans(child, itemStyle, inheritedLinkHref)
-            val imageSrc = itemStyle.blockStyle.listStyleImage?.let { resolveImagePath(it) }
-            SemanticListItem(text, spans, itemStyle, child.id().ifBlank { null }, child.getCfiPath(), 0, imageSrc, blockIndex = nextBlockIndex++)
+        fun parseItems(element: Element, inheritedStyle: CssStyle): List<SemanticListItem> {
+            val ordered = element.tagName().equals("ol", ignoreCase = true)
+            val listType = inheritedStyle.blockStyle.listStyleType
+            var ordinal = element.attr("start").toIntOrNull() ?: 1
+            return element.children().flatMap { child ->
+                if (!child.tagName().equals("li", ignoreCase = true)) return@flatMap emptyList()
+                val itemStyle = inheritedStyle
+                    .merge(getElementStyle(child, inheritedStyle.customProperties))
+                    .withResolvedFontFamily()
+                    .withResolvedBlockResources()
+                val nestedLists = child.children().filter { nested ->
+                    nested.tagName().equals("ol", true) || nested.tagName().equals("ul", true)
+                }
+                val (text, spans) = buildSemanticTextAndSpans(
+                    rootElement = child,
+                    rootStyle = itemStyle,
+                    inheritedLinkHref = inheritedLinkHref,
+                    excludedNodes = nestedLists.toSet()
+                )
+                val marker = when {
+                    listType.equals("none", ignoreCase = true) -> ""
+                    ordered -> "${child.attr("value").toIntOrNull() ?: ordinal}."
+                    else -> "•"
+                }
+                ordinal = (child.attr("value").toIntOrNull() ?: ordinal) + 1
+                val ownItem = SemanticListItem(
+                    text = text,
+                    spans = spans,
+                    style = itemStyle,
+                    elementId = child.id().ifBlank { null },
+                    cfi = child.getCfiPath(),
+                    itemMarkerImage = itemStyle.blockStyle.listStyleImage?.let { resolveImagePath(it) },
+                    blockIndex = nextBlockIndex++,
+                    markerText = marker
+                )
+                val nestedItems = nestedLists.flatMap { nested ->
+                    if (nested.tagName().equals("ol", true) || nested.tagName().equals("ul", true)) {
+                        val nestedStyle = itemStyle
+                            .merge(getElementStyle(nested, itemStyle.customProperties))
+                            .withResolvedFontFamily()
+                            .withResolvedBlockResources()
+                        parseItems(nested, nestedStyle)
+                    } else emptyList()
+                }
+                listOf(ownItem) + nestedItems
+            }
         }
+        val items = parseItems(listElement, listStyle)
         return listOf(SemanticList(items, isOrdered, listStyle, listElement.id().ifBlank { null }, listElement.getCfiPath(), blockIndex = nextBlockIndex++))
     }
 
