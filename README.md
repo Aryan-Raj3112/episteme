@@ -118,7 +118,7 @@ Thank you to the people helping keep Episteme Reader moving:
 
 | Supporter | Platform |
 |---|---|
-| <img src="https://github.com/Myshadowslullaby.png?size=48" width="24" height="24" valign="middle" alt="Myshadowslullaby avatar"> [Myshadowslullaby](https://github.com/Myshadowslullaby) | GitHub Sponsors |
+| <img src="https://github.com/Myshadowslullaby.png?size=48" width="24" height="24" valign="middle" alt="Myshadowslullaby avatar"> [ProgrammerWhoPrograms](https://github.com/ProgrammerWhoPrograms) | GitHub Sponsors |
 
 ## Support the Project
 
