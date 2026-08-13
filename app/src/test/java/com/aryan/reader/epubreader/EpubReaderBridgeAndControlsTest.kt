@@ -22,6 +22,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import java.io.File
+import kotlin.io.path.createTempDirectory
 
 @RunWith(RobolectricTestRunner::class)
 class EpubReaderBridgeAndControlsTest {
@@ -155,6 +157,28 @@ class EpubReaderBridgeAndControlsTest {
         assertEquals(3, lastChunk)
         assertEquals("<p>Note</p>", footnote)
         assertEquals("Chapter text", aiContent.await())
+    }
+
+    @Test
+    fun `footnote bridge resolves a cross chapter label anchor`() {
+        val root = createTempDirectory("webview-note-").toFile()
+        try {
+            val chapters = File(root, "chapters").apply { mkdirs() }
+            File(chapters, "notes.xhtml").writeText(
+                """<ol><li><a id="fn1">1</a> Cross chapter note.</li></ol>"""
+            )
+            val baseUrl = chapters.toURI().toString()
+            val bridge = FootnoteJsBridge(
+                resolveFootnoteLinkCallback = { href -> resolveWebViewFootnoteLink(baseUrl, href) },
+                onFootnoteRequestCallback = {}
+            )
+
+            val result = bridge.resolveFootnoteLink("notes.xhtml#fn1")
+
+            assertTrue(result.orEmpty().contains("Cross chapter note."))
+        } finally {
+            root.deleteRecursively()
+        }
     }
 
     @Test

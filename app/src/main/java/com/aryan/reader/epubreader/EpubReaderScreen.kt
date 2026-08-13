@@ -7131,6 +7131,53 @@ fun EpubReaderHost(
                         htmlContent = activeFootnoteHtml!!,
                         effectiveBg = effectiveBg,
                         effectiveText = effectiveText,
+                        onInternalLinkClick = { href ->
+                            scope.launch {
+                                val bookPaginator = paginator as? BookPaginator
+                                val currentChapterPath = chapters.getOrNull(currentChapterIndex)?.absPath.orEmpty()
+                                val extractionBaseUrl = "file://${epubBook.extractionBasePath.trimEnd('/')}/"
+                                val decodedHref = runCatching {
+                                    java.net.URLDecoder.decode(href, "UTF-8")
+                                }.getOrDefault(href)
+                                val bookRelativeHref = decodedHref.removePrefix(extractionBaseUrl).trimStart('/')
+                                val hrefPath = bookRelativeHref.substringBefore('#')
+                                val hasBookRootPath = chapters.any { chapter ->
+                                    chapter.absPath.trimStart('/') == hrefPath
+                                }
+                                val hrefForNavigation = if (hasBookRootPath) bookRelativeHref else href
+                                val resolutionBase = if (hasBookRootPath) "" else currentChapterPath
+                                val (targetLocator, targetPage) = withContext(Dispatchers.IO) {
+                                    val locator = bookPaginator?.findStableLocatorForHref(resolutionBase, hrefForNavigation)
+                                    locator to (locator?.let { bookPaginator.findStablePageForLocator(it) }
+                                        ?: bookPaginator?.findStablePageForHref(resolutionBase, hrefForNavigation))
+                                }
+                                if (targetLocator == null && targetPage == null) return@launch
+
+                                val destination = targetLocator
+                                    ?: targetPage?.let { bookPaginator?.getLocatorForPage(it) }
+                                destination?.let {
+                                    lastKnownLocator = it
+                                    recordEpubJump(it.toEpubJumpLocator(targetPage))
+                                }
+                                when {
+                                    isNativeVerticalMode -> requestNativeVerticalLocatorScroll(
+                                        locator = destination,
+                                        fallbackPage = targetPage,
+                                        fallbackChapterIndex = destination?.chapterIndex
+                                    )
+                                    currentRenderMode == RenderMode.VERTICAL_SCROLL -> {
+                                        val targetChapter = destination?.chapterIndex
+                                            ?: targetPage?.let { bookPaginator?.findChapterIndexForPage(it) }
+                                        if (targetChapter != null) {
+                                            fragmentToLoad = hrefForNavigation.substringAfter('#', "").takeIf(String::isNotBlank)
+                                            initialScrollTargetForChapter = null
+                                            currentChapterIndex = targetChapter
+                                        }
+                                    }
+                                    targetPage != null -> paginatedPagerState.scrollToPage(targetPage)
+                                }
+                            }
+                        },
                         onDismiss = { activeFootnoteHtml = null }
                     )
                 }

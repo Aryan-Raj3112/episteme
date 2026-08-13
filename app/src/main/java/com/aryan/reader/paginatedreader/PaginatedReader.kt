@@ -709,6 +709,7 @@ fun PaginatedReaderScreen(
                     try {
                         var isFootnote = false
                         var footnoteHtml: String? = null
+                        var sourceHtmlForLink = ""
 
                         val sourceChapter =
                             book.chaptersForPagination.find { it.absPath == currentChapterPath }
@@ -728,6 +729,7 @@ fun PaginatedReaderScreen(
                                 }
                             }
                             if (sourceHtml.isNotEmpty()) {
+                                sourceHtmlForLink = sourceHtml
                                 val doc = Jsoup.parse(sourceHtml)
                                 val safeHref = href.replace("\"", "\\\"")
                                 val aTag = doc.select("a[href=\"$safeHref\"]").first()
@@ -787,16 +789,14 @@ fun PaginatedReaderScreen(
                                             val doc = Jsoup.parse(targetHtml)
                                             val noteEl = doc.getElementById(anchor)
                                             if (noteEl != null) {
-                                                val targetType = noteEl.attr("epub:type")
-                                                val targetRole = noteEl.attr("role")
-                                                val targetClass = noteEl.className()
-                                                val targetLooksLikeFootnote =
-                                                    targetType.contains("footnote", ignoreCase = true) ||
-                                                        targetRole.contains("doc-footnote", ignoreCase = true) ||
-                                                        targetClass.contains("footnote", ignoreCase = true)
-                                                if (isFootnote || targetLooksLikeFootnote) {
-                                                    footnoteHtml = noteEl.html()
-                                                }
+                                                footnoteHtml = resolveEpubNoteHtml(
+                                                    sourceHtml = sourceHtmlForLink,
+                                                    targetHtml = targetHtml,
+                                                    href = href,
+                                                    anchor = anchor,
+                                                    sourceIsNoteref = isFootnote,
+                                                    targetBaseUri = targetChapter.absPath
+                                                )
                                             }
                                         }
                                     }

@@ -20,7 +20,15 @@
 package com.aryan.reader.epubreader
 
 import android.content.Context
+import android.content.ActivityNotFoundException
+import android.content.Intent
+import android.text.Spannable
+import android.text.method.LinkMovementMethod
+import android.text.style.ClickableSpan
+import android.text.style.URLSpan
+import android.view.View
 import android.widget.TextView
+import android.widget.Toast
 import timber.log.Timber
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -74,12 +82,14 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.edit
 import androidx.core.text.HtmlCompat
+import androidx.core.net.toUri
 import com.aryan.reader.BrightnessSlider
 import com.aryan.reader.ColorComparePill
 import com.aryan.reader.HexInput
 import com.aryan.reader.R
 import com.aryan.reader.RgbInputColumn
 import com.aryan.reader.SpectrumBox
+import com.aryan.reader.copyPlainTextToClipboard
 import com.aryan.reader.readerModalMaxHeightDp
 import com.aryan.reader.epub.EpubChapter
 import com.aryan.reader.shared.EpubAnnotationSerializer
@@ -90,6 +100,8 @@ import com.aryan.reader.shared.legacyEpubHighlightColorForArgb
 import com.aryan.reader.shared.legacyEpubHighlightColorOrNull
 import com.aryan.reader.shared.epubHighlightColorTag
 import com.aryan.reader.shared.epubHighlightColorFromToken
+import com.aryan.reader.paginatedreader.isReaderExternalHref
+import com.aryan.reader.paginatedreader.readerExternalHrefForDisplay
 
 private const val BOOKMARK_PREFS_NAME = "epub_reader_bookmarks"
 
@@ -953,12 +965,54 @@ fun FootnoteBottomSheet(
     htmlContent: String,
     effectiveBg: Color,
     effectiveText: Color,
+    onInternalLinkClick: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val context = LocalContext.current
+    var externalHref by remember { mutableStateOf<String?>(null) }
+    val plainText = remember(htmlContent) {
+        HtmlCompat.fromHtml(htmlContent, HtmlCompat.FROM_HTML_MODE_COMPACT).toString().trim()
+    }
 
     val configuration = androidx.compose.ui.platform.LocalConfiguration.current
     val maxSheetHeight = configuration.screenHeightDp.dp * 0.5f
+
+    externalHref?.let { urlToShow ->
+        AlertDialog(
+            onDismissRequest = { externalHref = null },
+            title = { Text(stringResource(R.string.dialog_external_link_title)) },
+            text = { Text(stringResource(R.string.dialog_external_link_desc, urlToShow)) },
+            confirmButton = {
+                Row(horizontalArrangement = Arrangement.End) {
+                    TextButton(onClick = {
+                        val copied = copyPlainTextToClipboard(
+                            context,
+                            context.getString(R.string.clip_label_copied_link),
+                            urlToShow
+                        )
+                        if (!copied) {
+                            Toast.makeText(context, R.string.error_copy_to_clipboard, Toast.LENGTH_SHORT).show()
+                        }
+                        externalHref = null
+                    }) { Text(stringResource(R.string.action_copy)) }
+                    TextButton(onClick = {
+                        try {
+                            context.startActivity(Intent(Intent.ACTION_VIEW, urlToShow.toUri()))
+                        } catch (_: ActivityNotFoundException) {
+                            Toast.makeText(context, R.string.error_no_browser, Toast.LENGTH_LONG).show()
+                        }
+                        externalHref = null
+                    }) { Text(stringResource(R.string.action_open)) }
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { externalHref = null }) {
+                    Text(stringResource(R.string.action_cancel))
+                }
+            }
+        )
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -991,6 +1045,19 @@ fun FootnoteBottomSheet(
                     color = MaterialTheme.colorScheme.primary,
                     fontWeight = FontWeight.Bold
                 )
+                Spacer(Modifier.weight(1f))
+                TextButton(onClick = {
+                    val copied = copyPlainTextToClipboard(
+                        context,
+                        context.getString(R.string.label_note),
+                        plainText
+                    )
+                    if (!copied) {
+                        Toast.makeText(context, R.string.error_copy_to_clipboard, Toast.LENGTH_SHORT).show()
+                    }
+                }) {
+                    Text(stringResource(R.string.action_copy))
+                }
             }
 
             Surface(
@@ -1014,14 +1081,35 @@ fun FootnoteBottomSheet(
                                 setLineSpacing(0f, 1.4f)
 
                                 isVerticalScrollBarEnabled = false
-                                movementMethod = null
+                                movementMethod = LinkMovementMethod.getInstance()
+                                linksClickable = true
                             }
                         },
                         update = { textView ->
-                            textView.text = HtmlCompat.fromHtml(
+                            val formatted = HtmlCompat.fromHtml(
                                 htmlContent,
                                 HtmlCompat.FROM_HTML_MODE_COMPACT
-                            ).trimEnd()
+                            )
+                            if (formatted is Spannable) {
+                                formatted.getSpans(0, formatted.length, URLSpan::class.java).forEach { span ->
+                                    val start = formatted.getSpanStart(span)
+                                    val end = formatted.getSpanEnd(span)
+                                    val flags = formatted.getSpanFlags(span)
+                                    formatted.removeSpan(span)
+                                    formatted.setSpan(object : ClickableSpan() {
+                                        override fun onClick(widget: View) {
+                                            val href = span.url.orEmpty()
+                                            if (href.isReaderExternalHref()) {
+                                                externalHref = href.readerExternalHrefForDisplay()
+                                            } else {
+                                                onDismiss()
+                                                onInternalLinkClick(href)
+                                            }
+                                        }
+                                    }, start, end, flags)
+                                }
+                            }
+                            textView.text = formatted
                         }
                     )
                 }

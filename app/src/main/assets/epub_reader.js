@@ -746,15 +746,50 @@
         return false;
     }
 
-    function getFootnoteContent(targetId) {
+    function hasSemanticToken(value, expected) {
+        var tokens = String(value || '').trim().split(/\s+/);
+        return tokens.some(function (token) {
+            return expected.indexOf(token.toLowerCase()) !== -1;
+        });
+    }
+
+    function isSemanticNoteElement(element) {
+        if (!element) return false;
+        if (hasSemanticToken(element.getAttribute('epub:type'), ['footnote', 'endnote'])) return true;
+        if (hasSemanticToken(element.getAttribute('role'), ['doc-footnote', 'doc-endnote'])) return true;
+        return Array.prototype.some.call(element.classList || [], function (name) {
+            var normalized = String(name).toLowerCase();
+            return normalized === 'footnote' || normalized === 'endnote';
+        });
+    }
+
+    function noteContainerForTarget(element) {
+        if (!element) return null;
+        var current = element;
+        while (current) {
+            if (isSemanticNoteElement(current)) return current;
+            current = current.parentElement;
+        }
+        current = element.parentElement;
+        while (current) {
+            if (/^(ASIDE|LI|P|DIV|SECTION)$/.test(current.tagName)) return current;
+            current = current.parentElement;
+        }
+        return element;
+    }
+
+    function getFootnoteContent(targetId, rootDocument) {
         console.log("FootnoteDiag: Searching for footnote content with id: '" + targetId + "'");
 
-        var el = document.getElementById(targetId);
+        var searchDocument = rootDocument || document;
+        var el = searchDocument.getElementById(targetId);
         if (el) {
             console.log("FootnoteDiag: Found element directly in DOM.");
-            return el.innerHTML;
+            var container = noteContainerForTarget(el);
+            return container ? container.innerHTML : null;
         }
 
+        if (searchDocument !== document) return null;
         console.log("FootnoteDiag: Element not in DOM, checking virtualized chunks.");
         if (window.virtualization && window.virtualization.chunksData) {
             for (var i = 0; i < window.virtualization.chunksData.length; i++) {
@@ -766,13 +801,47 @@
                     var found = tempDiv.querySelector('#' + targetId);
                     if (found) {
                         console.log("FootnoteDiag: Successfully extracted note from chunk " + i + ".");
-                        return found.innerHTML;
+                        var container = noteContainerForTarget(found);
+                        return container ? container.innerHTML : null;
                     }
                 }
             }
         }
         console.log("FootnoteDiag: Footnote content not found anywhere.");
         return null;
+    }
+
+    function openFootnoteReference(anchor, href) {
+        var resolved = new URL(href, document.baseURI);
+        var targetId = decodeURIComponent((resolved.hash || '').replace(/^#/, ''));
+        if (!targetId) return Promise.resolve(false);
+
+        if (window.FootnoteBridge && window.FootnoteBridge.resolveFootnoteLink) {
+            var bridgedContent = window.FootnoteBridge.resolveFootnoteLink(resolved.href);
+            if (bridgedContent) return Promise.resolve(bridgedContent);
+        }
+
+        var currentDocumentUrl = new URL(document.location.href);
+        currentDocumentUrl.hash = '';
+        var targetDocumentUrl = new URL(resolved.href);
+        targetDocumentUrl.hash = '';
+        if (currentDocumentUrl.href === targetDocumentUrl.href) {
+            return Promise.resolve(getFootnoteContent(targetId, document));
+        }
+
+        return fetch(targetDocumentUrl.href)
+            .then(function (response) {
+                if (!response.ok) throw new Error('HTTP ' + response.status);
+                return response.text();
+            })
+            .then(function (html) {
+                var targetDocument = new DOMParser().parseFromString(html, 'text/html');
+                return getFootnoteContent(targetId, targetDocument);
+            })
+            .catch(function (error) {
+                console.log('FootnoteDiag: Cross-document note lookup failed: ' + error);
+                return null;
+            });
     }
 
     // 1. Handle Taps (Click)
@@ -789,32 +858,29 @@
 
             console.log("LINK_NAV: [JS-CLICK] href='" + href + "', epub:type='" + epubType + "', label='" + linkText + "'");
 
-            if (window.LinkNavBridge && window.LinkNavBridge.onLinkClicked) {
-                window.LinkNavBridge.onLinkClicked(href || '', epubType || '', linkText);
-            }
-
             console.log("FootnoteDiag: Link clicked. href: '" + href + "', epub:type: '" + epubType + "'");
 
-           if ((href && href.startsWith('#')) || epubType === 'noteref') {
-               console.log("LINK_NAV: [JS-CLASSIFY] type=FRAGMENT_OR_FOOTNOTE, href='" + href + "'");
-                var targetId = href ? href.substring(1) : null;
-                console.log("FootnoteDiag: Extracted targetId: '" + targetId + "'");
-
-                if (targetId) {
-                    var content = getFootnoteContent(targetId);
-                    if (content && window.FootnoteBridge) {
+            var isNoteref = hasSemanticToken(epubType, ['noteref']) ||
+                hasSemanticToken(anchor.getAttribute('role'), ['doc-noteref']);
+            if (isNoteref && href) {
+                console.log("LINK_NAV: [JS-CLASSIFY] type=NOTEREF, href='" + href + "'");
+                e.preventDefault();
+                e.stopPropagation();
+                e.stopImmediatePropagation();
+                openFootnoteReference(anchor, href).then(function (content) {
+                    if (content && window.FootnoteBridge && window.FootnoteBridge.onFootnoteRequested) {
                         console.log("FootnoteDiag: Content extracted, sending to Kotlin Bridge.");
-                        e.preventDefault();
-                        e.stopPropagation();
-                        e.stopImmediatePropagation();
                         window.FootnoteBridge.onFootnoteRequested(content);
-                        return;
-                    } else if (!content) {
-                        console.log("FootnoteDiag: Failed to get content. Link might just be a regular anchor.");
-                    } else if (!window.FootnoteBridge) {
-                        console.log("FootnoteDiag: window.FootnoteBridge is undefined!");
+                    } else if (window.LinkNavBridge && window.LinkNavBridge.onLinkClicked) {
+                        console.log("FootnoteDiag: Note lookup failed; falling back to navigation.");
+                        window.LinkNavBridge.onLinkClicked(anchor.href || href, epubType || '', linkText);
                     }
-                }
+                });
+                return;
+            }
+
+            if (window.LinkNavBridge && window.LinkNavBridge.onLinkClicked) {
+                window.LinkNavBridge.onLinkClicked(href || '', epubType || '', linkText);
             }
         } else {
             console.log("LINK_NAV: [JS-NO-ANCHOR] No <a> tag found in click target hierarchy");

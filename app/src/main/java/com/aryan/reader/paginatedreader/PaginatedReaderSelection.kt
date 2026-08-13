@@ -1042,10 +1042,6 @@ internal fun resolveReaderFootnoteHtml(
     currentChapterPath: String,
     href: String
 ): String? {
-    var isFootnote = href.contains("footnote", ignoreCase = true) ||
-        href.contains("fn", ignoreCase = true)
-    var footnoteHtml: String? = null
-
     val decodedHref = try {
         URLDecoder.decode(href, "UTF-8")
     } catch (_: Exception) {
@@ -1074,6 +1070,17 @@ internal fun resolveReaderFootnoteHtml(
             }
 
             if (targetChapter != null) {
+                val sourceChapter = book.chaptersForPagination.find {
+                    runCatching { URI(it.absPath).normalize().path == URI(currentChapterPath).normalize().path }
+                        .getOrDefault(false)
+                }
+                val sourceHtml = sourceChapter?.htmlContent?.ifEmpty {
+                    try {
+                        File(book.extractionBasePath, sourceChapter.htmlFilePath).readText()
+                    } catch (_: Exception) {
+                        ""
+                    }
+                }.orEmpty()
                 val targetHtml = targetChapter.htmlContent.ifEmpty {
                     try {
                         File(book.extractionBasePath, targetChapter.htmlFilePath).readText()
@@ -1082,27 +1089,65 @@ internal fun resolveReaderFootnoteHtml(
                     }
                 }
                 if (targetHtml.isNotEmpty()) {
-                    val doc = Jsoup.parse(targetHtml)
-                    val noteEl = doc.getElementById(anchor)
-                    if (noteEl != null) {
-                        val targetType = noteEl.attr("epub:type")
-                        val targetRole = noteEl.attr("role")
-                        val targetClass = noteEl.className()
-                        val targetLooksLikeFootnote =
-                            targetType.contains("footnote", ignoreCase = true) ||
-                                targetRole.contains("doc-footnote", ignoreCase = true) ||
-                                targetClass.contains("footnote", ignoreCase = true)
-                        if (isFootnote || targetLooksLikeFootnote) {
-                            isFootnote = true
-                            footnoteHtml = noteEl.html()
-                        }
-                    }
+                    return resolveEpubNoteHtml(
+                        sourceHtml = sourceHtml,
+                        targetHtml = targetHtml,
+                        href = href,
+                        anchor = anchor,
+                        targetBaseUri = targetChapter.absPath
+                    )
                 }
             }
         }
     }
 
-    return footnoteHtml.takeIf { isFootnote && !it.isNullOrBlank() }
+    return null
+}
+
+internal fun resolveEpubNoteHtml(
+    sourceHtml: String,
+    targetHtml: String,
+    href: String,
+    anchor: String,
+    sourceIsNoteref: Boolean = false,
+    targetBaseUri: String? = null
+): String? {
+    val sourceNoteref = sourceIsNoteref || Jsoup.parse(sourceHtml)
+        .select("a[href]")
+        .firstOrNull { link -> link.attr("href") == href }
+        ?.let { link ->
+            link.attr("epub:type").hasSemanticToken("noteref") ||
+                link.attr("role").hasSemanticToken("doc-noteref")
+        } == true
+    val target = Jsoup.parse(targetHtml).getElementById(anchor) ?: return null
+    val semanticContainer = generateSequence(target) { element -> element.parent() }
+        .firstOrNull { element -> element.isSemanticNoteContainer() }
+    if (!sourceNoteref && semanticContainer == null) return null
+
+    val contentContainer = semanticContainer ?: generateSequence(target.parent()) { element -> element.parent() }
+        .firstOrNull { element -> element.tagName() in EPUB_NOTE_FALLBACK_CONTAINER_TAGS }
+        ?: target
+    if (!targetBaseUri.isNullOrBlank()) {
+        contentContainer.select("a[href]").forEach { link ->
+            val rawHref = link.attr("href")
+            val resolvedHref = runCatching { URI(targetBaseUri).resolve(rawHref).toString() }.getOrNull()
+            if (!resolvedHref.isNullOrBlank()) link.attr("href", resolvedHref)
+        }
+    }
+    return contentContainer.html().takeIf { it.isNotBlank() }
+}
+
+private val EPUB_NOTE_FALLBACK_CONTAINER_TAGS = setOf("aside", "li", "p", "div", "section")
+
+private fun org.jsoup.nodes.Element.isSemanticNoteContainer(): Boolean {
+    return attr("epub:type").hasSemanticToken("footnote", "endnote") ||
+        attr("role").hasSemanticToken("doc-footnote", "doc-endnote") ||
+        classNames().any { it.equals("footnote", true) || it.equals("endnote", true) }
+}
+
+private fun String.hasSemanticToken(vararg expected: String): Boolean {
+    val tokens = split(Regex("\\s+")).filter(String::isNotBlank)
+    return tokens.any { token -> expected.any { it.equals(token, ignoreCase = true) } }
 }
 
 data class PendingCrossPageSelection(val fromPageIndex: Int)
