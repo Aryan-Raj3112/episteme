@@ -37,4 +37,3 @@ iosApp/Reader/GoogleService-Info.plist
 DerivedData/
 .swiftpm/
 *.xcresult
-/docs
