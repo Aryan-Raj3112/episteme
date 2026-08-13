@@ -750,10 +750,7 @@ class BookPaginator(
         return resolveStableChapterStartPage(
             chapterIndex = chapterIndex,
             chapterCount = chapters.size,
-            pageCountsAreAccurate = pageCountsAreAccurate,
-            chapterStartPage = { chapterStartPageIndices[it] },
-            isChapterFinalized = { it in finalizedChapterCounts },
-            ensureChapterPaginated = { ensureChapterPaginated(it) != null }
+            chapterStartPage = { chapterStartPageIndices[it] }
         )
     }
 

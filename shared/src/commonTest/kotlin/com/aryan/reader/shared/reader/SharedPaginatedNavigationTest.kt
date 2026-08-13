@@ -1,6 +1,5 @@
 package com.aryan.reader.shared.reader
 
-import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -49,38 +48,24 @@ class SharedPaginatedNavigationTest {
     }
 
     @Test
-    fun `chapter start finalizes inaccurate prefix chapters in order`() = runTest {
-        val finalized = mutableSetOf(0)
-        val requested = mutableListOf<Int>()
-
+    fun `chapter start immediately uses the current estimated prefix`() {
         val result = resolveSharedStableChapterStartPage(
             chapterIndex = 3,
             chapterCount = 5,
-            pageCountsAreAccurate = false,
             chapterStartPage = { if (it == 3) 21 else null },
-            isChapterFinalized = finalized::contains,
-            ensureChapterPaginated = {
-                requested += it
-                finalized += it
-                true
-            },
         )
 
         assertEquals(21, result)
-        assertEquals(listOf(1, 2), requested)
     }
 
     @Test
-    fun `chapter start stops when a prefix cannot be finalized`() = runTest {
+    fun `chapter start does not require preceding chapter pagination`() {
         val result = resolveSharedStableChapterStartPage(
-            chapterIndex = 2,
-            chapterCount = 3,
-            pageCountsAreAccurate = false,
-            chapterStartPage = { 12 },
-            isChapterFinalized = { false },
-            ensureChapterPaginated = { false },
+            chapterIndex = 1_000,
+            chapterCount = 1_500,
+            chapterStartPage = { if (it == 1_000) 8_400 else null },
         )
 
-        assertEquals(null, result)
+        assertEquals(8_400, result)
     }
 }

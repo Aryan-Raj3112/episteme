@@ -22,26 +22,19 @@ fun <T> resolveSharedPaginatedReconfigurationAnchor(
 ): T? = currentPageAnchor ?: fallbackAnchor
 
 /**
- * Resolves Android's stable chapter start without trusting estimated prefix page counts.
- * Prefix chapters are finalized in order before their accumulated page offset is consumed.
+ * Resolves the current global index for a chapter without blocking on exact page counts for
+ * preceding chapters. The returned index may be based on estimates, but the chapter-local
+ * content is exact. Callers must keep the visible locator anchored while later page-count
+ * corrections rebase the global index.
+ *
+ * Exact global numbering is less important than immediate, visually stable navigation for books
+ * with very large spine lists.
  */
-suspend fun resolveSharedStableChapterStartPage(
+fun resolveSharedStableChapterStartPage(
     chapterIndex: Int,
     chapterCount: Int,
-    pageCountsAreAccurate: Boolean,
     chapterStartPage: (Int) -> Int?,
-    isChapterFinalized: (Int) -> Boolean,
-    ensureChapterPaginated: suspend (Int) -> Boolean,
 ): Int? {
     if (chapterIndex !in 0 until chapterCount) return null
-
-    if (!pageCountsAreAccurate) {
-        for (prefixChapter in 0 until chapterIndex) {
-            if (!isChapterFinalized(prefixChapter) && !ensureChapterPaginated(prefixChapter)) {
-                return null
-            }
-        }
-    }
-
     return chapterStartPage(chapterIndex) ?: if (chapterIndex == 0) 0 else null
 }
