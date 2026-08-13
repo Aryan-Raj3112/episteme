@@ -11,6 +11,32 @@ import java.util.concurrent.ConcurrentHashMap
 
 class TtsChunkNavigationTest {
     @Test
+    fun `notification context mirrors overlay chunk information`() {
+        assertEquals(
+            "Chapter 3 of 12: The Journey - 18% - Chunk 7/40",
+            buildTtsNotificationContextLabel(
+                chapterTitle = "The Journey",
+                chapterIndex = 2,
+                totalChapters = 12,
+                bookProgressPercent = 18,
+                currentChunkIndex = 6,
+                totalChunks = 40
+            )
+        )
+        assertEquals(
+            "Chunk 1/3",
+            buildTtsNotificationContextLabel(
+                chapterTitle = null,
+                chapterIndex = null,
+                totalChapters = null,
+                bookProgressPercent = null,
+                currentChunkIndex = 0,
+                totalChunks = 3
+            )
+        )
+    }
+
+    @Test
     fun `chunk skip target moves one chunk at a time`() {
         assertEquals(1, resolveTtsChunkSkipTarget(currentChunkIndex = 2, totalChunks = 5, direction = -1))
         assertEquals(3, resolveTtsChunkSkipTarget(currentChunkIndex = 2, totalChunks = 5, direction = 1))
@@ -37,6 +63,14 @@ class TtsChunkNavigationTest {
         assertEquals(0, resolveTtsStartChunkIndex(requestedChunkIndex = -1, totalChunks = 5))
         assertEquals(4, resolveTtsStartChunkIndex(requestedChunkIndex = 7, totalChunks = 5))
         assertEquals(0, resolveTtsStartChunkIndex(requestedChunkIndex = 2, totalChunks = 0))
+    }
+
+    @Test
+    fun `transcript window follows current chunk and clamps at chapter edges`() {
+        assertEquals(0 to (0..3), resolveTtsTranscriptWindow(currentIndex = 0, chunkCount = 10))
+        assertEquals(3 to (3..8), resolveTtsTranscriptWindow(currentIndex = 5, chunkCount = 10))
+        assertEquals(7 to (7..9), resolveTtsTranscriptWindow(currentIndex = 9, chunkCount = 10))
+        assertEquals(0 to IntRange.EMPTY, resolveTtsTranscriptWindow(currentIndex = 0, chunkCount = 0))
     }
 
     @Test

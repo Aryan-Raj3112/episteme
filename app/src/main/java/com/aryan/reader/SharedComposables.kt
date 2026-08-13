@@ -159,6 +159,12 @@ import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.shared.SharedText
 import com.aryan.reader.shared.sharedLegalLinksForProfile
 import com.aryan.reader.shared.ui.SharedMarkdownText
+import com.aryan.reader.shared.ui.SharedBookInfoDialog
+import com.aryan.reader.shared.ui.SharedMobileEmptyLibrary
+import com.aryan.reader.shared.ui.SharedMobileTopBanner
+import com.aryan.reader.shared.ui.SharedMobileTopAppBar
+import com.aryan.reader.shared.ui.SharedMobileContextualActionBar
+import com.aryan.reader.shared.ui.SharedMobileContextualActionLabels
 import timber.log.Timber
 import java.io.File
 import java.text.SimpleDateFormat
@@ -295,182 +301,45 @@ fun ContextualTopAppBar(
     onDeleteClick: () -> Unit,
     compactSelectionActions: Boolean = false,
     overflowDeleteLabelRes: Int = R.string.action_delete,
-    onClearSelectionClick: (() -> Unit)? = null
+    onClearSelectionClick: (() -> Unit)? = null,
 ) {
-    CustomTopAppBar(
-        title = {
-            Text(
-                text = stringResource(R.string.items_selected_count, selectedItemCount),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+    SharedMobileContextualActionBar(
+        selectedItemCount = selectedItemCount,
+        labels = SharedMobileContextualActionLabels(
+            selectedCount = stringResource(R.string.items_selected_count, selectedItemCount),
+            clearSelection = stringResource(R.string.clear_selection),
+            info = stringResource(R.string.info),
+            pin = stringResource(R.string.pin_unpin),
+            selectAll = stringResource(R.string.select_all),
+            delete = stringResource(overflowDeleteLabelRes),
+            moreOptions = stringResource(R.string.content_desc_more_options),
+            tag = stringResource(R.string.content_desc_tag),
+            addToShelf = stringResource(R.string.desktop_add_to_shelf),
+            save = stringResource(R.string.action_save_copy_to_device),
+            share = stringResource(R.string.action_share),
+            exportAnnotations = stringResource(R.string.action_export_annotations),
+            clear = stringResource(R.string.action_clear),
+        ),
+        onNavigateBack = onNavIconClick,
+        onDelete = onDeleteClick,
+        compact = compactSelectionActions,
+        onInfo = onInfoClick,
+        onSave = onSaveClick,
+        onShare = onShareClick,
+        onExportAnnotations = onExportAnnotationsClick,
+        onTag = onTagClick,
+        onAddToShelf = onAddToShelfClick,
+        onSelectAll = onSelectAllClick,
+        onPin = onPinClick,
+        onClear = onClearSelectionClick,
+        tagIcon = { contentDescription ->
+            Icon(
+                painterResource(R.drawable.tag),
+                contentDescription = contentDescription,
             )
         },
-        navigationIcon = {
-            IconButton(onClick = onNavIconClick) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.clear_selection))
-            }
-        },
-        actions = {
-            if (compactSelectionActions) {
-                CompactSelectionActions(
-                    selectedItemCount = selectedItemCount,
-                    onInfoClick = onInfoClick,
-                    onPinClick = onPinClick,
-                    onSelectAllClick = onSelectAllClick,
-                    onTagClick = onTagClick,
-                    onAddToShelfClick = onAddToShelfClick,
-                    onSaveClick = onSaveClick,
-                    onShareClick = onShareClick,
-                    onExportAnnotationsClick = onExportAnnotationsClick,
-                    onClearSelectionClick = onClearSelectionClick ?: onNavIconClick,
-                    onDeleteClick = onDeleteClick,
-                    deleteLabelRes = overflowDeleteLabelRes
-                )
-            } else {
-                if (onTagClick != null) {
-                    IconButton(onClick = onTagClick) {
-                        Icon(painterResource(id = R.drawable.tag), contentDescription = stringResource(R.string.content_desc_tag))
-                    }
-                }
-                if (onPinClick != null) {
-                    IconButton(onClick = onPinClick) {
-                        Icon(Icons.Filled.PushPin, contentDescription = stringResource(R.string.pin_unpin))
-                    }
-                }
-                if (selectedItemCount == 1 && onInfoClick != null) {
-                    IconButton(onClick = onInfoClick) {
-                        Icon(Icons.Filled.Info, contentDescription = stringResource(R.string.info))
-                    }
-                }
-                if (selectedItemCount == 1 && onSaveClick != null) {
-                    IconButton(onClick = onSaveClick) {
-                        Icon(Icons.Filled.Save, contentDescription = stringResource(R.string.action_save_copy_to_device))
-                    }
-                }
-                if (selectedItemCount == 1 && onShareClick != null) {
-                    IconButton(onClick = onShareClick) {
-                        Icon(Icons.Filled.Share, contentDescription = stringResource(R.string.action_share))
-                    }
-                }
-                if (onSelectAllClick != null) {
-                    IconButton(onClick = onSelectAllClick) {
-                        Icon(Icons.Filled.SelectAll, contentDescription = stringResource(R.string.select_all))
-                    }
-                }
-                IconButton(onClick = onDeleteClick) {
-                    Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.action_delete))
-                }
-            }
-        }
     )
 }
-
-@Composable
-private fun CompactSelectionActions(
-    selectedItemCount: Int,
-    onInfoClick: (() -> Unit)?,
-    onPinClick: (() -> Unit)?,
-    onSelectAllClick: (() -> Unit)?,
-    onTagClick: (() -> Unit)?,
-    onAddToShelfClick: (() -> Unit)?,
-    onSaveClick: (() -> Unit)?,
-    onShareClick: (() -> Unit)?,
-    onExportAnnotationsClick: (() -> Unit)?,
-    onClearSelectionClick: () -> Unit,
-    onDeleteClick: () -> Unit,
-    deleteLabelRes: Int
-) {
-    var showMoreMenu by remember { mutableStateOf(false) }
-
-    if (selectedItemCount == 1 && onInfoClick != null) {
-        IconButton(onClick = onInfoClick) {
-            Icon(Icons.Filled.Info, contentDescription = stringResource(R.string.info))
-        }
-    }
-    if (onPinClick != null) {
-        IconButton(onClick = onPinClick) {
-            Icon(Icons.Filled.PushPin, contentDescription = stringResource(R.string.pin_unpin))
-        }
-    }
-    if (onSelectAllClick != null) {
-        IconButton(onClick = onSelectAllClick) {
-            Icon(Icons.Filled.SelectAll, contentDescription = stringResource(R.string.select_all))
-        }
-    }
-    IconButton(onClick = onDeleteClick) {
-        Icon(Icons.Filled.Delete, contentDescription = stringResource(deleteLabelRes))
-    }
-
-    Box {
-        IconButton(onClick = { showMoreMenu = true }) {
-            Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.content_desc_more_options))
-        }
-        DropdownMenu(
-            expanded = showMoreMenu,
-            onDismissRequest = { showMoreMenu = false }
-        ) {
-            onTagClick?.let { tag ->
-                DropdownMenuItem(
-                    text = { Text(stringResource(R.string.content_desc_tag)) },
-                    leadingIcon = { Icon(painterResource(id = R.drawable.tag), contentDescription = null) },
-                    onClick = {
-                        showMoreMenu = false
-                        tag()
-                    }
-                )
-            }
-            onAddToShelfClick?.let { addToShelf ->
-                DropdownMenuItem(
-                    text = { Text(stringResource(R.string.desktop_add_to_shelf)) },
-                    leadingIcon = { Icon(Icons.Filled.Folder, contentDescription = null) },
-                    onClick = {
-                        showMoreMenu = false
-                        addToShelf()
-                    }
-                )
-            }
-            if (selectedItemCount == 1 && onSaveClick != null) {
-                DropdownMenuItem(
-                    text = { Text(stringResource(R.string.action_save_copy_to_device)) },
-                    leadingIcon = { Icon(Icons.Filled.Save, contentDescription = null) },
-                    onClick = {
-                        showMoreMenu = false
-                        onSaveClick()
-                    }
-                )
-            }
-            if (selectedItemCount == 1 && onShareClick != null) {
-                DropdownMenuItem(
-                    text = { Text(stringResource(R.string.action_share)) },
-                    leadingIcon = { Icon(Icons.Filled.Share, contentDescription = null) },
-                    onClick = {
-                        showMoreMenu = false
-                        onShareClick()
-                    }
-                )
-            }
-            if (selectedItemCount == 1 && onExportAnnotationsClick != null) {
-                DropdownMenuItem(
-                    text = { Text(stringResource(R.string.action_export_annotations)) },
-                    leadingIcon = { Icon(Icons.Filled.Save, contentDescription = null) },
-                    onClick = {
-                        showMoreMenu = false
-                        onExportAnnotationsClick()
-                    }
-                )
-            }
-            DropdownMenuItem(
-                text = { Text(stringResource(R.string.action_clear)) },
-                leadingIcon = { Icon(Icons.Filled.Close, contentDescription = null) },
-                onClick = {
-                    showMoreMenu = false
-                    onClearSelectionClick()
-                }
-            )
-        }
-    }
-}
-
 @Composable
 fun CustomTopAppBar(
     modifier: Modifier = Modifier,
@@ -478,39 +347,12 @@ fun CustomTopAppBar(
     navigationIcon: @Composable () -> Unit = {},
     actions: @Composable RowScope.() -> Unit = {}
 ) {
-    Surface(
-        modifier = modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surfaceVariant,
-        shadowElevation = 2.dp
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .statusBarsPadding()
-                .height(56.dp)
-                .padding(horizontal = 4.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            navigationIcon()
-
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(start = 12.dp),
-                contentAlignment = Alignment.CenterStart
-            ) {
-                ProvideTextStyle(value = MaterialTheme.typography.titleLarge) {
-                    title()
-                }
-            }
-            Row(
-                horizontalArrangement = Arrangement.End,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                actions()
-            }
-        }
-    }
+    SharedMobileTopAppBar(
+        modifier = modifier,
+        title = title,
+        navigationIcon = navigationIcon,
+        actions = actions,
+    )
 }
 
 @Composable
@@ -568,20 +410,7 @@ fun FileInfoDialog(
     onRestoreMetadata: () -> Unit,
     onOpenTags: () -> Unit
 ) {
-    @Suppress("DEPRECATION") val clipboardManager = LocalClipboardManager.current
     val context = LocalContext.current
-    var isEditing by remember(item.bookId) { mutableStateOf(false) }
-    var titleInput by remember(item.bookId, item.title) { mutableStateOf(item.title.orEmpty()) }
-    var authorInput by remember(item.bookId, item.author) { mutableStateOf(item.author.orEmpty()) }
-    var seriesInput by remember(item.bookId, item.seriesName) { mutableStateOf(item.seriesName.orEmpty()) }
-    var seriesIndexInput by remember(item.bookId, item.seriesIndex) {
-        mutableStateOf(item.seriesIndex?.formatMetadataNumber().orEmpty())
-    }
-    var descriptionInput by remember(item.bookId, item.description) { mutableStateOf(item.description.orEmpty()) }
-    var displayNameInput by remember(item.bookId, item.customName, item.title, item.displayName, usePdfFileNameAsDisplayName) {
-        mutableStateOf(item.customName ?: item.cardTitle(usePdfFileNameAsDisplayName))
-    }
-    var showRestoreConfirmation by remember(item.bookId) { mutableStateOf(false) }
     var selectedCoverUri by remember(item.bookId) { mutableStateOf<Uri?>(null) }
     var selectedCoverName by remember(item.bookId) { mutableStateOf<String?>(null) }
     val coverPickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -593,7 +422,6 @@ fun FileInfoDialog(
             selectedCoverName = DocumentFile.fromSingleUri(context, uri)?.name ?: uri.lastPathSegment
         }
     }
-
     val formattedDate = remember(item.timestamp) {
         SimpleDateFormat("MMM dd, yyyy HH:mm", Locale.getDefault()).format(Date(item.timestamp))
     }
@@ -603,395 +431,74 @@ fun FileInfoDialog(
             ?.let { SimpleDateFormat("MMM dd, yyyy HH:mm", Locale.getDefault()).format(Date(it)) }
     }
     val isOpdsStream = item.uriString?.startsWith("opds-pse://") == true
-    val pathText = remember(item.sourceFolderUri, item.uriString, item.displayName, context) {
+    val resolvedPath = remember(item.sourceFolderUri, item.uriString, item.displayName, context) {
         item.resolveDisplayPath(context, isOpdsStream)
     }
-    val pathTextFinal = if (isOpdsStream) {
-        stringResource(R.string.source_opds)
-    } else if (pathText == "In-App Storage") {
-        stringResource(R.string.source_in_app)
-    } else {
-        pathText.replace("Internal storage", stringResource(R.string.internal_storage))
+    val displayPath = when {
+        isOpdsStream -> stringResource(R.string.source_opds)
+        resolvedPath == "In-App Storage" -> stringResource(R.string.source_in_app)
+        else -> resolvedPath.replace("Internal storage", stringResource(R.string.internal_storage))
     }
-    val hasOriginalMetadata = item.hasOriginalMetadata()
-    val hasMetadataChanges = item.hasMetadataChanges()
     val canEditEmbeddedMetadata = item.type == FileType.EPUB && !isOpdsStream && item.uriString != null
-    val canRenameDisplayName = !canEditEmbeddedMetadata
+    val sharedBook = remember(item) {
+        item.toSharedBookItem().copy(displayName = item.displayName)
+    }
 
-    Dialog(
-        onDismissRequest = {
-            if (isEditing) {
-                isEditing = false
-            } else {
-                onDismiss()
-            }
+    SharedBookInfoDialog(
+        book = sharedBook,
+        canEditEmbeddedMetadata = canEditEmbeddedMetadata,
+        canRenameDisplayName = !canEditEmbeddedMetadata,
+        canRestoreEmbeddedMetadata = canEditEmbeddedMetadata,
+        externallySelectedCoverPath = selectedCoverUri?.toString(),
+        formattedAddedDate = formattedDate,
+        formattedModifiedDate = lastModifiedDate,
+        displayLocation = displayPath,
+        displayTitle = item.cardTitle(usePdfFileNameAsDisplayName),
+        initialDisplayName = item.customName ?: item.cardTitle(usePdfFileNameAsDisplayName),
+        originalFileName = item.displayName,
+        displayNameChanged = !item.customName.isNullOrBlank(),
+        editLibraryTags = false,
+        onOpenTags = onOpenTags,
+        tagChipsContent = item.tags.takeIf { it.isNotEmpty() }?.let { tags ->
+            { BookTagChipsRow(tags = tags, compact = false) }
         },
-        properties = DialogProperties(usePlatformDefaultWidth = false)
-    ) {
-        Surface(
-            color = MaterialTheme.colorScheme.surface,
-            modifier = Modifier.fillMaxSize()
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .statusBarsPadding()
-                    .navigationBarsPadding()
-                    .imePadding()
-            ) {
-                FileInfoTopBar(
-                    title = if (isEditing) {
-                        if (canEditEmbeddedMetadata) "Edit EPUB metadata" else "Rename in app"
-                    } else {
-                        stringResource(R.string.file_information)
+        embeddedEditLabel = "Edit metadata",
+        coverEditorContent = if (canEditEmbeddedMetadata) {
+            {
+                MetadataCoverPreview(
+                    item = item,
+                    currentCoverPath = item.coverImagePath,
+                    selectedCoverUri = selectedCoverUri,
+                    selectedCoverName = selectedCoverName,
+                    onChooseCover = {
+                        coverPickerLauncher.launch(arrayOf("image/jpeg", "image/png", "image/gif", "image/webp", "image/bmp"))
                     },
-                    subtitle = item.cardTitle(usePdfFileNameAsDisplayName),
-                    onClose = {
-                        if (isEditing) {
-                            isEditing = false
-                        } else {
-                            onDismiss()
-                        }
-                    }
-                )
-
-                HorizontalDivider()
-
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .verticalScroll(rememberScrollState())
-                        .padding(horizontal = 20.dp, vertical = 18.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                    if (isEditing) {
-                        if (canEditEmbeddedMetadata) {
-                            BookMetadataEditContent(
-                                item = item,
-                                titleInput = titleInput,
-                                onTitleChange = { titleInput = it },
-                                authorInput = authorInput,
-                                onAuthorChange = { authorInput = it },
-                                seriesInput = seriesInput,
-                                onSeriesChange = { seriesInput = it },
-                                seriesIndexInput = seriesIndexInput,
-                                onSeriesIndexChange = { seriesIndexInput = it },
-                                descriptionInput = descriptionInput,
-                                onDescriptionChange = { descriptionInput = it },
-                                currentCoverPath = item.coverImagePath,
-                                selectedCoverUri = selectedCoverUri,
-                                selectedCoverName = selectedCoverName,
-                                onChooseCover = { coverPickerLauncher.launch(arrayOf("image/jpeg", "image/png", "image/gif", "image/webp", "image/bmp")) },
-                                onClearCover = {
-                                    selectedCoverUri = null
-                                    selectedCoverName = null
-                                }
-                            )
-                        } else if (canRenameDisplayName) {
-                            BookDisplayNameEditContent(
-                                displayNameInput = displayNameInput,
-                                onDisplayNameChange = { displayNameInput = it },
-                                originalFileName = item.displayName
-                            )
-                        }
-                    } else {
-                        BookMetadataInfoContent(
-                            item = item,
-                            usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName,
-                            formattedDate = formattedDate,
-                            lastModifiedDate = lastModifiedDate,
-                            pathText = pathTextFinal,
-                            hasMetadataChanges = hasMetadataChanges,
-                            onCopy = { value -> clipboardManager.setText(AnnotatedString(value)) },
-                            onOpenTags = onOpenTags
-                        )
-                    }
-                }
-
-                HorizontalDivider()
-
-                FileInfoBottomBar(
-                    isEditing = isEditing,
-                    canRestore = canEditEmbeddedMetadata && hasOriginalMetadata && (hasMetadataChanges || isEditing),
-                    editLabel = if (canEditEmbeddedMetadata) "Edit metadata" else "Rename",
-                    onCancel = {
-                        if (isEditing) {
-                            isEditing = false
-                        } else {
-                            onDismiss()
-                        }
+                    onClearCover = {
+                        selectedCoverUri = null
+                        selectedCoverName = null
                     },
-                    onRestore = {
-                        showRestoreConfirmation = true
-                    },
-                    onSave = {
-                        if (canEditEmbeddedMetadata) {
-                            onSaveMetadata(
-                                BookMetadataEdit(
-                                    title = titleInput.toMetadataValue() ?: item.displayName.substringBeforeLast('.', item.displayName),
-                                    author = authorInput.toMetadataValue(),
-                                    seriesName = seriesInput.toMetadataValue(),
-                                    seriesIndex = seriesIndexInput.toSeriesIndexOrNull(),
-                                    description = descriptionInput.toMetadataValue(),
-                                    coverImageUri = selectedCoverUri?.toString()
-                                )
-                            )
-                        } else if (canRenameDisplayName) {
-                            onSaveDisplayName(displayNameInput.toMetadataValue())
-                        }
-                        onDismiss()
-                    },
-                    onEdit = { isEditing = true }
                 )
             }
-        }
-    }
-
-    if (showRestoreConfirmation) {
-        AlertDialog(
-            onDismissRequest = { showRestoreConfirmation = false },
-            icon = { Icon(Icons.Default.Restore, contentDescription = null) },
-            title = { Text(stringResource(R.string.dialog_restore_original_metadata)) },
-            text = {
-                Text(
-                    stringResource(R.string.dialog_restore_original_metadata_desc)
-                )
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        showRestoreConfirmation = false
-                        onRestoreMetadata()
-                        onDismiss()
-                    }
-                ) {
-                    Text(stringResource(R.string.action_restore))
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showRestoreConfirmation = false }) {
-                    Text(stringResource(R.string.action_cancel))
-                }
-            }
-        )
-    }
-}
-
-@Composable
-private fun FileInfoTopBar(
-    title: String,
-    subtitle: String,
-    onClose: () -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        IconButton(onClick = onClose) {
-            Icon(Icons.Default.Close, contentDescription = stringResource(R.string.action_close))
-        }
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .padding(horizontal = 8.dp)
-        ) {
-            Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            Text(
-                subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
-    }
-}
-
-@Composable
-private fun BookMetadataInfoContent(
-    item: RecentFileItem,
-    usePdfFileNameAsDisplayName: Boolean,
-    formattedDate: String,
-    lastModifiedDate: String?,
-    pathText: String,
-    hasMetadataChanges: Boolean,
-    onCopy: (String) -> Unit,
-    onOpenTags: () -> Unit
-) {
-    OutlinedCard(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            Text(
-                item.cardTitle(usePdfFileNameAsDisplayName),
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold,
-                maxLines = 3,
-                overflow = TextOverflow.Ellipsis
-            )
-            item.author
-                ?.takeIf { it.isNotBlank() && !it.equals("Unknown", ignoreCase = true) }
-                ?.let {
-                    Text(
-                        it,
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-            val provenance = when {
-                item.type == FileType.EPUB && hasMetadataChanges -> stringResource(R.string.metadata_provenance_epub_edited)
-                item.type == FileType.EPUB -> stringResource(R.string.metadata_provenance_from_epub)
-                !item.customName.isNullOrBlank() -> stringResource(R.string.metadata_provenance_display_name_changed)
-                else -> stringResource(R.string.metadata_provenance_from_file)
-            }
-            Text(
-                provenance,
-                style = MaterialTheme.typography.labelMedium,
-                color = if (hasMetadataChanges) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-    }
-
-    FileInfoSection(title = stringResource(R.string.section_metadata)) {
-        InfoRowDetailed(stringResource(R.string.label_title), item.title?.takeIf { it.isNotBlank() } ?: item.displayName, maxLines = 3)
-        item.author?.takeIf { it.isNotBlank() && !it.equals("Unknown", ignoreCase = true) }?.let {
-            InfoRowDetailed(stringResource(R.string.author), it, maxLines = 2)
-        }
-        item.seriesLabel()?.let {
-            InfoRowDetailed(stringResource(R.string.label_series), it, maxLines = 2)
-        }
-        InfoRowDetailed(stringResource(R.string.format), item.type.name)
-        InfoRowDetailed(stringResource(R.string.size), formatFileSize(item.fileSize))
-        InfoRowDetailed(stringResource(R.string.label_reading), item.readingProgressText(), maxLines = 2)
-    }
-
-    FileInfoSection(title = stringResource(R.string.section_file)) {
-        InfoRowDetailed(stringResource(R.string.label_file_name_simple), item.displayName, maxLines = 2)
-        InfoRowDetailed(stringResource(R.string.added), formattedDate)
-        lastModifiedDate?.let { InfoRowDetailed(stringResource(R.string.label_modified), it) }
-        InfoRowDetailed(
-            label = stringResource(R.string.location),
-            value = pathText,
-            maxLines = 4,
-            onCopy = { onCopy(pathText) }
-        )
-    }
-
-    item.description?.takeIf { it.isNotBlank() }?.let { summary ->
-        OutlinedCard(modifier = Modifier.fillMaxWidth()) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Text(stringResource(R.string.label_summary), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                ExpandableSummaryText(summary, collapsedMaxLines = 4)
-            }
-        }
-    }
-
-    FileInfoSection(title = stringResource(R.string.section_tags)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(stringResource(R.string.label_library_tags), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            TextButton(onClick = onOpenTags) { Text(stringResource(R.string.action_add_edit)) }
-        }
-
-        if (item.tags.isNotEmpty()) {
-            BookTagChipsRow(tags = item.tags, compact = false)
         } else {
-            Text(
-                stringResource(R.string.msg_no_tags_assigned),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+            null
+        },
+        onDismiss = onDismiss,
+        onSave = {},
+        onSaveEmbeddedMetadata = { updated ->
+            onSaveMetadata(
+                BookMetadataEdit(
+                    title = updated.title,
+                    author = updated.author,
+                    seriesName = updated.seriesName,
+                    seriesIndex = updated.seriesIndex,
+                    description = updated.description,
+                    coverImageUri = selectedCoverUri?.toString(),
+                ),
             )
-        }
-    }
-}
-
-@Composable
-private fun BookMetadataEditContent(
-    item: RecentFileItem,
-    titleInput: String,
-    onTitleChange: (String) -> Unit,
-    authorInput: String,
-    onAuthorChange: (String) -> Unit,
-    seriesInput: String,
-    onSeriesChange: (String) -> Unit,
-    seriesIndexInput: String,
-    onSeriesIndexChange: (String) -> Unit,
-    descriptionInput: String,
-    onDescriptionChange: (String) -> Unit,
-    currentCoverPath: String?,
-    selectedCoverUri: Uri?,
-    selectedCoverName: String?,
-    onChooseCover: () -> Unit,
-    onClearCover: () -> Unit
-) {
-    OutlinedCard(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Text(stringResource(R.string.label_editable_metadata), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            OutlinedTextField(
-                value = titleInput,
-                onValueChange = onTitleChange,
-                label = { Text(stringResource(R.string.label_title)) },
-                modifier = Modifier.fillMaxWidth(),
-                maxLines = 3
-            )
-            OutlinedTextField(
-                value = authorInput,
-                onValueChange = onAuthorChange,
-                label = { Text(stringResource(R.string.author)) },
-                modifier = Modifier.fillMaxWidth(),
-                maxLines = 2
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedTextField(
-                    value = seriesInput,
-                    onValueChange = onSeriesChange,
-                    label = { Text(stringResource(R.string.label_series)) },
-                    modifier = Modifier.weight(1f),
-                    maxLines = 2
-                )
-                OutlinedTextField(
-                    value = seriesIndexInput,
-                    onValueChange = onSeriesIndexChange,
-                    label = { Text("#") },
-                    modifier = Modifier.width(96.dp),
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
-                )
-            }
-            OutlinedTextField(
-                value = descriptionInput,
-                onValueChange = onDescriptionChange,
-                label = { Text(stringResource(R.string.label_summary)) },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 128.dp),
-                minLines = 4,
-                maxLines = 10
-            )
-            MetadataCoverPreview(
-                item = item,
-                currentCoverPath = currentCoverPath,
-                selectedCoverUri = selectedCoverUri,
-                selectedCoverName = selectedCoverName,
-                onChooseCover = onChooseCover,
-                onClearCover = onClearCover
-            )
-        }
-    }
+        },
+        onSaveDisplayName = onSaveDisplayName,
+        onRestore = { onRestoreMetadata() },
+    )
 }
 
 @Composable
@@ -1077,250 +584,6 @@ private fun MetadataCoverPreview(
     }
 }
 
-@Composable
-private fun BookDisplayNameEditContent(
-    displayNameInput: String,
-    onDisplayNameChange: (String) -> Unit,
-    originalFileName: String
-) {
-    OutlinedCard(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Text(stringResource(R.string.label_display_name), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            OutlinedTextField(
-                value = displayNameInput,
-                onValueChange = onDisplayNameChange,
-                label = { Text(stringResource(R.string.label_name_shown_in_reader)) },
-                modifier = Modifier.fillMaxWidth(),
-                maxLines = 3
-            )
-            Text(
-                stringResource(R.string.original_file_format, originalFileName),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
-    }
-}
-
-@Composable
-private fun FileInfoBottomBar(
-    isEditing: Boolean,
-    canRestore: Boolean,
-    editLabel: String,
-    onCancel: () -> Unit,
-    onRestore: () -> Unit,
-    onSave: () -> Unit,
-    onEdit: () -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .horizontalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 10.dp),
-        horizontalArrangement = Arrangement.End,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        if (canRestore) {
-            OutlinedButton(
-                onClick = onRestore,
-                modifier = Modifier.padding(end = 8.dp)
-            ) {
-                Icon(Icons.Default.Restore, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(stringResource(R.string.action_restore))
-            }
-        }
-        TextButton(onClick = onCancel) {
-            Text(if (isEditing) stringResource(R.string.action_cancel) else stringResource(R.string.action_close))
-        }
-        Spacer(modifier = Modifier.width(8.dp))
-        if (isEditing) {
-            Button(onClick = onSave) {
-                Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(stringResource(R.string.action_save))
-            }
-        } else {
-            Button(onClick = onEdit) {
-                Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(editLabel)
-            }
-        }
-    }
-}
-
-@Composable
-private fun FileInfoSection(
-    title: String,
-    content: @Composable () -> Unit
-) {
-    OutlinedCard(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            content()
-        }
-    }
-}
-
-@Composable
-private fun InfoRowDetailed(
-    label: String,
-    value: String,
-    maxLines: Int = 1,
-    onCopy: (() -> Unit)? = null
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.Top
-    ) {
-        Text(
-            text = label,
-            fontWeight = FontWeight.SemiBold,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier
-                .width(104.dp)
-                .padding(top = 2.dp)
-        )
-        Column(modifier = Modifier.weight(1f)) {
-            ExpandableValueText(value, collapsedMaxLines = maxLines)
-        }
-        if (onCopy != null) {
-            IconButton(
-                onClick = onCopy,
-                modifier = Modifier
-                    .size(28.dp)
-                    .padding(start = 4.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.ContentCopy,
-                    contentDescription = stringResource(R.string.content_desc_copy_value, label),
-                    modifier = Modifier.size(16.dp),
-                    tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.8f)
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun ExpandableValueText(
-    value: String,
-    collapsedMaxLines: Int
-) {
-    var expanded by remember(value) { mutableStateOf(false) }
-    val canExpand = collapsedMaxLines < Int.MAX_VALUE && (value.length > 120 || value.contains('\n'))
-    Text(
-        text = value,
-        style = MaterialTheme.typography.bodyMedium,
-        color = MaterialTheme.colorScheme.onSurface,
-        maxLines = if (expanded) Int.MAX_VALUE else collapsedMaxLines,
-        overflow = if (expanded) TextOverflow.Clip else TextOverflow.Ellipsis,
-        modifier = Modifier.padding(top = 2.dp)
-    )
-    if (canExpand) {
-        TextButton(
-            onClick = { expanded = !expanded },
-            contentPadding = PaddingValues(0.dp),
-            modifier = Modifier.height(32.dp)
-        ) {
-            Text(if (expanded) "Less" else "...more")
-            Spacer(modifier = Modifier.width(2.dp))
-            Icon(
-                imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                contentDescription = null,
-                modifier = Modifier.size(18.dp)
-            )
-        }
-    }
-}
-
-@Composable
-private fun ExpandableSummaryText(
-    value: String,
-    collapsedMaxLines: Int
-) {
-    var expanded by remember(value) { mutableStateOf(false) }
-    val canExpand = value.length > 220 || value.count { it == '\n' } >= collapsedMaxLines || value.looksLikeHtml()
-    val contentModifier = if (expanded) {
-        Modifier.fillMaxWidth()
-    } else {
-        Modifier
-            .fillMaxWidth()
-            .heightIn(max = (collapsedMaxLines * 26).dp)
-            .clipToBounds()
-    }
-
-    if (value.looksLikeHtml()) {
-        HtmlSummaryText(
-            html = value,
-            expanded = expanded,
-            collapsedMaxLines = collapsedMaxLines,
-            modifier = Modifier.fillMaxWidth()
-        )
-    } else {
-        Box(modifier = contentModifier) {
-            SharedMarkdownText(
-                markdown = value,
-                modifier = Modifier.fillMaxWidth(),
-                style = MaterialTheme.typography.bodyMedium
-            )
-        }
-    }
-
-    if (canExpand) {
-        TextButton(
-            onClick = { expanded = !expanded },
-            contentPadding = PaddingValues(0.dp),
-            modifier = Modifier.height(32.dp)
-        ) {
-            Text(if (expanded) "Less" else "...more")
-            Spacer(modifier = Modifier.width(2.dp))
-            Icon(
-                imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                contentDescription = null,
-                modifier = Modifier.size(18.dp)
-            )
-        }
-    }
-}
-
-@Composable
-private fun HtmlSummaryText(
-    html: String,
-    expanded: Boolean,
-    collapsedMaxLines: Int,
-    modifier: Modifier = Modifier
-) {
-    val textColor = MaterialTheme.colorScheme.onSurface.toArgb()
-    val linkColor = MaterialTheme.colorScheme.primary.toArgb()
-    AndroidView(
-        modifier = modifier,
-        factory = { context ->
-            TextView(context).apply {
-                includeFontPadding = false
-                movementMethod = LinkMovementMethod.getInstance()
-            }
-        },
-        update = { textView ->
-            textView.text = HtmlCompat.fromHtml(html, HtmlCompat.FROM_HTML_MODE_COMPACT)
-            textView.setTextColor(textColor)
-            textView.setLinkTextColor(linkColor)
-            textView.maxLines = if (expanded) Int.MAX_VALUE else collapsedMaxLines
-            textView.ellipsize = if (expanded) null else TextUtils.TruncateAt.END
-        }
-    )
-}
-
 private fun RecentFileItem.resolveDisplayPath(context: Context, isOpdsStream: Boolean): String {
     return if (isOpdsStream) {
         "Source: OPDS Stream"
@@ -1358,96 +621,15 @@ private fun RecentFileItem.resolveDisplayPath(context: Context, isOpdsStream: Bo
     }
 }
 
-private fun String.looksLikeHtml(): Boolean {
-    return contains(Regex("<\\s*/?\\s*(p|br|div|span|strong|em|ul|ol|li|h[1-6]|blockquote|a|b|i)\\b", RegexOption.IGNORE_CASE)) ||
-        contains(Regex("&(#\\d+|#x[0-9a-fA-F]+|[a-zA-Z]+);"))
-}
-
-private fun RecentFileItem.hasOriginalMetadata(): Boolean {
-    return listOf(originalTitle, originalAuthor, originalSeriesName, originalDescription).any { !it.isNullOrBlank() } ||
-        originalSeriesIndex != null
-}
-
-private fun RecentFileItem.hasMetadataChanges(): Boolean {
-    return metadataValueChanged(title, originalTitle) ||
-        metadataValueChanged(author, originalAuthor) ||
-        metadataValueChanged(seriesName, originalSeriesName) ||
-        seriesIndex != originalSeriesIndex ||
-        metadataValueChanged(description, originalDescription) ||
-        !customName.isNullOrBlank()
-}
-
-private fun metadataValueChanged(current: String?, original: String?): Boolean {
-    return current.orEmpty().trim() != original.orEmpty().trim()
-}
-
-private fun RecentFileItem.seriesLabel(): String? {
-    val series = seriesName?.trim()?.takeIf { it.isNotBlank() } ?: return null
-    return seriesIndex?.takeIf { it > 0.0 }?.let { "$series #${it.formatMetadataNumber()}" } ?: series
-}
-
-private fun RecentFileItem.readingProgressText(): String {
-    val progress = progressPercentage?.coerceIn(0f, 100f)
-    val progressText = progress?.let { String.format(Locale.US, "%.1f%%", it) } ?: "Not started"
-    val locatorText = when {
-        lastPage != null -> "Last page ${lastPage + 1}"
-        lastChapterIndex != null -> "Chapter ${lastChapterIndex + 1}"
-        else -> null
-    }
-    return listOfNotNull(progressText, locatorText).joinToString(" - ")
-}
-
-private fun String.toMetadataValue(): String? {
-    return trim().takeIf { it.isNotEmpty() }
-}
-
-private fun String.toSeriesIndexOrNull(): Double? {
-    return trim()
-        .replace(',', '.')
-        .takeIf { it.isNotEmpty() }
-        ?.toDoubleOrNull()
-        ?.takeIf { it > 0.0 }
-}
-
-private fun Double.formatMetadataNumber(): String {
-    return if (this % 1.0 == 0.0) {
-        toInt().toString()
-    } else {
-        String.format(Locale.US, "%.2f", this).trimEnd('0').trimEnd('.')
-    }
-}
-
 @Composable
 fun CustomTopBanner(bannerMessage: BannerMessage?) {
     val context = LocalContext.current
     val bannerText = bannerMessage?.localizedMessage(context).orEmpty()
-    AnimatedVisibility(
+    SharedMobileTopBanner(
+        text = bannerText,
         visible = bannerMessage != null,
-        enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
-        exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut(),
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .statusBarsPadding(),
-            contentAlignment = Alignment.TopCenter
-        ) {
-            Surface(
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                color = if (bannerMessage?.isError == true) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer,
-                shape = MaterialTheme.shapes.medium,
-                shadowElevation = 8.dp
-            ) {
-                Text(
-                    text = bannerText,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                    color = if (bannerMessage?.isError == true) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer,
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
-            }
-        }
-    }
+        isError = bannerMessage?.isError == true,
+    )
 }
 
 private fun BannerMessage.localizedMessage(context: Context): String {
@@ -1474,170 +656,37 @@ private fun SharedText.resolveAndroidText(context: Context): String {
 fun AboutDialog(onDismiss: () -> Unit) {
     val uriHandler = LocalUriHandler.current
     val isOss = BuildConfig.FLAVOR == "oss"
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        shape = RoundedCornerShape(24.dp),
-        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-        title = {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(
-                    text = stringResource(R.string.about_app_name),
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold
-                )
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = if (isOss) stringResource(R.string.about_oss_version) else stringResource(R.string.about_play_version),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary
-                )
-            }
-        },
-        text = {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState()),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Text(
-                    text = stringResource(R.string.about_version_name, BuildConfig.VERSION_NAME),
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Text(
-                    text = stringResource(R.string.about_build_code, BuildConfig.VERSION_CODE.toString()),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-
-                Spacer(modifier = Modifier.height(20.dp))
-
-                if (isOss) {
-                    AboutInfoRow(
-                        icon = {
-                            Icon(
-                                painter = painterResource(id = R.drawable.github),
-                                contentDescription = stringResource(R.string.about_github),
-                                modifier = Modifier.size(22.dp),
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                        },
-                        text = stringResource(R.string.about_github),
-                        subtitle = stringResource(R.string.about_github_desc),
-                        onClick = { uriHandler.openUri("https://github.com/Aryan-Raj3112/episteme") }
-                    )
-
-                    Spacer(modifier = Modifier.height(10.dp))
-                }
-
-                AboutInfoRow(
-                    icon = {
-                        Icon(
-                            imageVector = Icons.Outlined.Policy,
-                            contentDescription = null,
-                            modifier = Modifier.size(22.dp),
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                    },
-                    text = stringResource(R.string.legal_privacy_policy),
-                    subtitle = stringResource(R.string.about_privacy_desc),
-                    onClick = { uriHandler.openUri(PRIVACY_POLICY_URL) }
-                )
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                AboutInfoRow(
-                    icon = {
-                        Icon(
-                            imageVector = Icons.Outlined.Gavel,
-                            contentDescription = null,
-                            modifier = Modifier.size(22.dp),
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                    },
-                    text = stringResource(R.string.legal_terms_of_service),
-                    subtitle = stringResource(R.string.about_terms_desc),
-                    onClick = { uriHandler.openUri(TERMS_URL) }
-                )
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                AboutInfoRow(
-                    icon = {
-                        Icon(
-                            imageVector = Icons.Outlined.FileOpen,
-                            contentDescription = null,
-                            modifier = Modifier.size(22.dp),
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                    },
-                    text = stringResource(R.string.legal_licenses),
-                    subtitle = stringResource(R.string.about_licenses_desc),
-                    onClick = { uriHandler.openUri(LICENSES_URL) }
-                )
-            }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = onDismiss,
-                shape = RoundedCornerShape(50),
-                modifier = Modifier.padding(horizontal = 8.dp)
-            ) {
-                Text(stringResource(R.string.action_close), fontWeight = FontWeight.Medium)
-            }
-        }
-    )
-}
-
-@Composable
-private fun AboutInfoRow(
-    icon: @Composable () -> Unit,
-    text: String,
-    subtitle: String? = null,
-    onClick: () -> Unit
-) {
-    OutlinedCard(
-        onClick = onClick,
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            icon()
-            Spacer(modifier = Modifier.width(14.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = text,
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = FontWeight.Bold
-                )
-                if (subtitle != null) {
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = subtitle,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-            Spacer(modifier = Modifier.width(4.dp))
+    com.aryan.reader.shared.ui.SharedAndroidAboutDialog(
+        strings = com.aryan.reader.shared.ui.SharedAndroidAboutStrings(
+            appName = stringResource(R.string.about_app_name),
+            flavorLabel = if (isOss) stringResource(R.string.about_oss_version) else stringResource(R.string.about_play_version),
+            versionLabel = stringResource(R.string.about_version_name, BuildConfig.VERSION_NAME),
+            buildLabel = stringResource(R.string.about_build_code, BuildConfig.VERSION_CODE.toString()),
+            githubTitle = stringResource(R.string.about_github),
+            githubDescription = stringResource(R.string.about_github_desc),
+            privacyTitle = stringResource(R.string.legal_privacy_policy),
+            privacyDescription = stringResource(R.string.about_privacy_desc),
+            termsTitle = stringResource(R.string.legal_terms_of_service),
+            termsDescription = stringResource(R.string.about_terms_desc),
+            licensesTitle = stringResource(R.string.legal_licenses),
+            licensesDescription = stringResource(R.string.about_licenses_desc),
+            closeAction = stringResource(R.string.action_close),
+        ),
+        showGitHub = isOss,
+        onDismiss = onDismiss,
+        onGitHubClick = { uriHandler.openUri("https://github.com/Aryan-Raj3112/episteme") },
+        onPrivacyClick = { uriHandler.openUri(PRIVACY_POLICY_URL) },
+        onTermsClick = { uriHandler.openUri(TERMS_URL) },
+        onLicensesClick = { uriHandler.openUri(LICENSES_URL) },
+        githubIcon = {
             Icon(
-                imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                contentDescription = null,
-                modifier = Modifier.size(18.dp),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                painterResource(R.drawable.github),
+                contentDescription = stringResource(R.string.about_github),
+                modifier = Modifier.size(22.dp),
+                tint = MaterialTheme.colorScheme.primary,
             )
-        }
-    }
+        },
+    )
 }
 
 @Composable
@@ -1650,56 +699,15 @@ fun EmptyState(
     secondaryButtonText: String? = null,
     onSecondaryClick: (() -> Unit)? = null
 ) {
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(horizontal = 32.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Icon(
-            imageVector = Icons.Outlined.FileOpen,
-            contentDescription = stringResource(R.string.content_desc_no_files_icon),
-            modifier = Modifier.size(80.dp),
-            tint = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Spacer(modifier = Modifier.height(24.dp))
-        Text(
-            text = title,
-            style = MaterialTheme.typography.headlineSmall,
-            color = MaterialTheme.colorScheme.onSurface,
-            textAlign = TextAlign.Center
-        )
-        Spacer(modifier = Modifier.height(8.dp))
-        Text(
-            text = message,
-            style = MaterialTheme.typography.bodyMedium,
-            textAlign = TextAlign.Center,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Spacer(modifier = Modifier.height(32.dp))
-
-        SelectFileButton(onClick = onSelectFileClick, text = primaryButtonText)
-
-        if (secondaryButtonText != null && onSecondaryClick != null) {
-            Spacer(modifier = Modifier.height(16.dp))
-            OutlinedButton(onClick = onSecondaryClick) {
-                Text(secondaryButtonText)
-            }
-        }
-    }
-}
-
-@Composable
-fun SelectFileButton(onClick: () -> Unit, text: String) {
-    FilledTonalButton(
-        onClick = onClick,
-        shape = MaterialTheme.shapes.medium
-    ) {
-        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
-        Spacer(Modifier.size(ButtonDefaults.IconSpacing))
-        Text(text)
-    }
+    SharedMobileEmptyLibrary(
+        title = title,
+        message = message,
+        actionLabel = primaryButtonText,
+        onAction = onSelectFileClick,
+        secondaryActionLabel = secondaryButtonText.takeIf { onSecondaryClick != null },
+        onSecondaryAction = { onSecondaryClick?.invoke() },
+        modifier = modifier,
+    )
 }
 
 @Composable

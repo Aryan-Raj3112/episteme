@@ -843,9 +843,17 @@ class SharedMeasuredEpubPaginator(
     }
 
     private fun SemanticBlock.measuredTextContentWidthPx(geometry: MeasuredPageGeometry): Int {
-        val markerWidth = if (this is SemanticListItem) listItemMarkerAreaWidthPx() else 0
+        val markerWidth = if (this is SemanticListItem && usesListMarkerArea()) {
+            listItemMarkerAreaWidthPx()
+        } else {
+            0
+        }
         return (geometry.pageWidthPx - style.blockStyle.horizontalOuterPx() - markerWidth)
             .coerceAtLeast(64)
+    }
+
+    private fun SemanticListItem.usesListMarkerArea(): Boolean {
+        return itemMarkerImage != null || markerText?.isNotEmpty() != false
     }
 
     private fun listItemMarkerAreaWidthPx(): Int {
@@ -902,6 +910,7 @@ class SharedMeasuredEpubPaginator(
     private fun SharedReaderTextAlign.toComposeTextAlign(): TextAlign {
         return when (this) {
             SharedReaderTextAlign.START -> TextAlign.Start
+            SharedReaderTextAlign.LEFT -> TextAlign.Left
             SharedReaderTextAlign.RIGHT -> TextAlign.Right
             SharedReaderTextAlign.JUSTIFY -> TextAlign.Justify
             SharedReaderTextAlign.CENTER -> TextAlign.Center

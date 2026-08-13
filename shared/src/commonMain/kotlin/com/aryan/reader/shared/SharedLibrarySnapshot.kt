@@ -26,18 +26,29 @@ import com.aryan.reader.shared.reader.SharedReaderTextAlign
 
 data class SharedLibrarySnapshot(
     val books: List<BookItem> = emptyList(),
+    val audiobooks: List<SharedAudiobook> = emptyList(),
+    val bookTombstones: List<CloudBookTombstone> = emptyList(),
     val shelfRecords: List<ShelfRecord> = emptyList(),
     val shelfRefs: List<BookShelfRef> = emptyList(),
     val tags: List<Tag> = emptyList(),
     val customFonts: List<CustomFontItem> = emptyList(),
     val syncedFolders: List<SyncedFolder> = emptyList(),
-    val recentFilesLimit: Int = 12,
+    val recentFilesLimit: Int = 0,
     val isTabsEnabled: Boolean = true,
+    val isFolderSyncEnabled: Boolean = false,
+    val sortOrder: SortOrder = SortOrder.RECENT,
+    val libraryFilters: LibraryFilters = LibraryFilters(),
+    val mainScreenStartPage: Int = 0,
+    val libraryScreenStartPage: Int = 0,
     val openTabIds: List<String> = emptyList(),
     val activeTabBookId: String? = null,
     val pinnedHomeBookIds: Set<String> = emptySet(),
     val pinnedLibraryBookIds: Set<String> = emptySet(),
     val useStrictFileFilter: Boolean = false,
+    val externalFileBehavior: String = "ASK",
+    val usePdfFileNameAsDisplayName: Boolean = false,
+    val hideReaderAi: Boolean = false,
+    val appLanguageTag: String? = null,
     val appThemeMode: AppThemeMode = AppThemeMode.SYSTEM,
     val appContrastOption: AppContrastOption = AppContrastOption.STANDARD,
     val appTextDimFactorLight: Float = 1.0f,
@@ -52,11 +63,12 @@ data class SharedLibrarySnapshot(
     val readerToolbarPreferences: ReaderToolbarPreferences = ReaderToolbarPreferences(),
     val readerHighlightPalette: ReaderHighlightPalette = ReaderHighlightPalette(),
     val pdfHighlighterPalette: SharedPdfHighlighterPalette = SharedPdfHighlighterPalette(),
-    val readerTtsReplacementPreferences: ReaderTtsReplacementPreferences = ReaderTtsReplacementPreferences()
+    val readerTtsReplacementPreferences: ReaderTtsReplacementPreferences = ReaderTtsReplacementPreferences(),
+    val readerBookReplacementPreferences: ReaderBookReplacementPreferences = ReaderBookReplacementPreferences()
 )
 
 object SharedLibrarySnapshotJson {
-    private const val SCHEMA_VERSION = 22
+    private const val SCHEMA_VERSION = 30
 
     private val json = Json {
         prettyPrint = true
@@ -78,18 +90,40 @@ object SharedLibrarySnapshotJson {
             books = root.array("books")
                 .mapNotNull { it.asBookItemOrNull() }
                 .migrateLegacyRecentState(schemaVersion, openTabIds),
+            audiobooks = root.array("audiobooks").mapNotNull { it.asSharedAudiobookOrNull() },
+            bookTombstones = root.array("bookTombstones").mapNotNull { it.asCloudBookTombstoneOrNull() },
             shelfRecords = root.array("shelves").mapNotNull { it.asShelfRecordOrNull() },
             shelfRefs = root.array("bookShelfRefs").mapNotNull { it.asBookShelfRefOrNull() },
             tags = root.array("tags").mapNotNull { it.asTagOrNull() },
             customFonts = root.array("customFonts").mapNotNull { it.asCustomFontItemOrNull() },
             syncedFolders = root.array("syncedFolders").mapNotNull { it.asSyncedFolderOrNull() },
-            recentFilesLimit = root.int("recentFilesLimit", 12),
+            recentFilesLimit = normalizedRecentFilesLimit(root.int("recentFilesLimit", 0)),
             isTabsEnabled = root.boolean("isTabsEnabled", true),
+            isFolderSyncEnabled = root.boolean("isFolderSyncEnabled", false),
+            sortOrder = root.string("sortOrder")
+                ?.let { runCatching { SortOrder.valueOf(it) }.getOrNull() }
+                ?: SortOrder.RECENT,
+            libraryFilters = LibraryFilters(
+                fileTypes = root.stringArray("libraryFilterFileTypes")
+                    .mapNotNull { runCatching { FileType.valueOf(it) }.getOrNull() }
+                    .toSet(),
+                sourceFolders = root.stringArray("libraryFilterSourceFolders").toSet(),
+                readStatus = root.string("libraryFilterReadStatus")
+                    ?.let { runCatching { ReadStatusFilter.valueOf(it) }.getOrNull() }
+                    ?: ReadStatusFilter.ALL,
+                tagIds = root.stringArray("libraryFilterTagIds").toSet(),
+            ),
+            mainScreenStartPage = root.int("mainScreenStartPage", 0).coerceIn(0, 1),
+            libraryScreenStartPage = root.int("libraryScreenStartPage", 0).coerceIn(0, 3),
             openTabIds = openTabIds,
             activeTabBookId = root.string("activeTabBookId"),
             pinnedHomeBookIds = root.stringArray("pinnedHomeBookIds").toSet(),
             pinnedLibraryBookIds = root.stringArray("pinnedLibraryBookIds").toSet(),
             useStrictFileFilter = root.boolean("useStrictFileFilter", false),
+            externalFileBehavior = normalizedExternalFileBehavior(root.string("externalFileBehavior")),
+            usePdfFileNameAsDisplayName = root.boolean("usePdfFileNameAsDisplayName", false),
+            hideReaderAi = root.boolean("hideReaderAi", false),
+            appLanguageTag = root.string("appLanguageTag"),
             appThemeMode = root.string("appThemeMode")
                 ?.let { runCatching { AppThemeMode.valueOf(it) }.getOrNull() }
                 ?: AppThemeMode.SYSTEM,
@@ -132,7 +166,11 @@ object SharedLibrarySnapshotJson {
             readerTtsReplacementPreferences = root["readerTtsReplacementPreferences"]
                 ?.takeUnless { it is JsonNull }
                 ?.let { ReaderTtsReplacementPreferencesJson.fromJsonElement(it) }
-                ?: ReaderTtsReplacementPreferences()
+                ?: ReaderTtsReplacementPreferences(),
+            readerBookReplacementPreferences = root["readerBookReplacementPreferences"]
+                ?.takeUnless { it is JsonNull }
+                ?.let { ReaderBookReplacementPreferencesJson.decodeOrEmpty(it.toString()) }
+                ?: ReaderBookReplacementPreferences()
         )
     }
 
@@ -141,6 +179,8 @@ object SharedLibrarySnapshotJson {
             mapOf(
                 "schemaVersion" to JsonPrimitive(SCHEMA_VERSION),
                 "books" to JsonArray(snapshot.books.map { it.toJsonObject() }),
+                "audiobooks" to JsonArray(snapshot.audiobooks.map { it.toJsonObject() }),
+                "bookTombstones" to JsonArray(snapshot.bookTombstones.map { it.toJsonObject() }),
                 "shelves" to JsonArray(snapshot.shelfRecords.map { it.toJsonObject() }),
                 "bookShelfRefs" to JsonArray(snapshot.shelfRefs.map { it.toJsonObject() }),
                 "tags" to JsonArray(snapshot.tags.map { it.toJsonObject() }),
@@ -148,11 +188,23 @@ object SharedLibrarySnapshotJson {
                 "syncedFolders" to JsonArray(snapshot.syncedFolders.map { it.toJsonObject() }),
                 "recentFilesLimit" to JsonPrimitive(snapshot.recentFilesLimit),
                 "isTabsEnabled" to JsonPrimitive(snapshot.isTabsEnabled),
+                "isFolderSyncEnabled" to JsonPrimitive(snapshot.isFolderSyncEnabled),
+                "sortOrder" to JsonPrimitive(snapshot.sortOrder.name),
+                "libraryFilterFileTypes" to snapshot.libraryFilters.fileTypes.map { it.name }.asJsonArray(),
+                "libraryFilterSourceFolders" to snapshot.libraryFilters.sourceFolders.toList().asJsonArray(),
+                "libraryFilterReadStatus" to JsonPrimitive(snapshot.libraryFilters.readStatus.name),
+                "libraryFilterTagIds" to snapshot.libraryFilters.tagIds.toList().asJsonArray(),
+                "mainScreenStartPage" to JsonPrimitive(snapshot.mainScreenStartPage.coerceIn(0, 1)),
+                "libraryScreenStartPage" to JsonPrimitive(snapshot.libraryScreenStartPage.coerceIn(0, 3)),
                 "openTabIds" to snapshot.openTabIds.asJsonArray(),
                 "activeTabBookId" to snapshot.activeTabBookId.asJson(),
                 "pinnedHomeBookIds" to snapshot.pinnedHomeBookIds.toList().asJsonArray(),
                 "pinnedLibraryBookIds" to snapshot.pinnedLibraryBookIds.toList().asJsonArray(),
                 "useStrictFileFilter" to JsonPrimitive(snapshot.useStrictFileFilter),
+                "externalFileBehavior" to JsonPrimitive(snapshot.externalFileBehavior),
+                "usePdfFileNameAsDisplayName" to JsonPrimitive(snapshot.usePdfFileNameAsDisplayName),
+                "hideReaderAi" to JsonPrimitive(snapshot.hideReaderAi),
+                "appLanguageTag" to snapshot.appLanguageTag.asJson(),
                 "appThemeMode" to JsonPrimitive(snapshot.appThemeMode.name),
                 "appContrastOption" to JsonPrimitive(snapshot.appContrastOption.name),
                 "appTextDimFactorLight" to JsonPrimitive(snapshot.appTextDimFactorLight),
@@ -171,6 +223,9 @@ object SharedLibrarySnapshotJson {
                 "pdfHighlighterPalette" to snapshot.pdfHighlighterPalette.sanitized().toJsonObject(),
                 "readerTtsReplacementPreferences" to ReaderTtsReplacementPreferencesJson.toJsonElement(
                     snapshot.readerTtsReplacementPreferences,
+                ),
+                "readerBookReplacementPreferences" to json.parseToJsonElement(
+                    ReaderBookReplacementPreferencesJson.encode(snapshot.readerBookReplacementPreferences)
                 )
             )
         )
@@ -266,6 +321,8 @@ private fun JsonElement.asBookItemOrNull(): BookItem? {
         type = type,
         displayName = displayName,
         timestamp = obj.long("timestamp"),
+        dateAddedTimestamp = obj.long("dateAddedTimestamp").takeIf { it > 0L }
+            ?: obj.long("timestamp"),
         coverImagePath = obj.string("coverImagePath"),
         title = obj.string("title"),
         author = obj.string("author"),
@@ -277,8 +334,10 @@ private fun JsonElement.asBookItemOrNull(): BookItem? {
         originalDescription = obj.string("originalDescription"),
         progressPercentage = obj.float("progressPercentage"),
         isRecent = obj.boolean("isRecent", true),
+        isAvailable = obj.boolean("isAvailable", true),
         fileSize = obj.long("fileSize"),
         fileContentModifiedTimestamp = obj.long("fileContentModifiedTimestamp"),
+        metadataModifiedTimestamp = obj.long("metadataModifiedTimestamp"),
         sourceFolder = obj.string("sourceFolder"),
         folderTextMetadataParsed = obj.boolean("folderTextMetadataParsed", false),
         seriesName = obj.string("seriesName"),
@@ -287,6 +346,16 @@ private fun JsonElement.asBookItemOrNull(): BookItem? {
         lastPageIndex = obj.int("lastPageIndex"),
         readerPosition = obj["readerPosition"]?.takeUnless { it is JsonNull }?.asReaderLocatorOrNull(),
         readerSettings = obj["readerSettings"]?.takeUnless { it is JsonNull }?.asReaderSettingsOrNull(),
+        readerFormatIsLocal = obj.boolean("readerFormatIsLocal", false),
+        readerLocalFormatSettings = obj["readerLocalFormatSettings"]?.takeUnless { it is JsonNull }?.asReaderSettingsOrNull(),
+        readerAutoScrollIsLocal = obj.boolean("readerAutoScrollIsLocal", false),
+        readerAutoScrollLocalSpeed = obj.float("readerAutoScrollLocalSpeed"),
+        readerAutoScrollLocalMinSpeed = obj.float("readerAutoScrollLocalMinSpeed"),
+        readerAutoScrollLocalMaxSpeed = obj.float("readerAutoScrollLocalMaxSpeed"),
+        pdfAutoScrollIsLocal = obj.boolean("pdfAutoScrollIsLocal", false),
+        pdfAutoScrollLocalSpeed = obj.float("pdfAutoScrollLocalSpeed"),
+        pdfAutoScrollLocalMinSpeed = obj.float("pdfAutoScrollLocalMinSpeed"),
+        pdfAutoScrollLocalMaxSpeed = obj.float("pdfAutoScrollLocalMaxSpeed"),
         readerBookmarks = obj.array("readerBookmarks").mapNotNull { it.asReaderBookmarkOrNull() },
         readerHighlights = obj.array("readerHighlights").mapNotNull { it.asReaderHighlightOrNull() },
         pdfReaderViewport = obj["pdfReaderViewport"]?.takeUnless { it is JsonNull }?.asSharedPdfReaderViewportOrNull(),
@@ -301,6 +370,35 @@ private fun JsonElement.asShelfRecordOrNull(): ShelfRecord? {
         name = obj.string("name") ?: return null,
         isSmart = obj.boolean("isSmart", false),
         smartRulesJson = obj.string("smartRulesJson")
+    )
+}
+
+private fun JsonElement.asCloudBookTombstoneOrNull(): CloudBookTombstone? {
+    val obj = runCatching { jsonObject }.getOrNull() ?: return null
+    return CloudBookTombstone(
+        bookId = obj.string("bookId") ?: return null,
+        type = obj.string("type"),
+        deletedAt = obj.long("deletedAt"),
+    )
+}
+
+private fun JsonElement.asSharedAudiobookOrNull(): SharedAudiobook? {
+    val obj = runCatching { jsonObject }.getOrNull() ?: return null
+    val bookId = obj.string("bookId") ?: return null
+    return SharedAudiobook(
+        bookId = bookId,
+        filePath = obj.string("filePath") ?: return null,
+        format = obj.string("format") ?: return null,
+        title = obj.string("title") ?: return null,
+        author = obj.string("author"),
+        album = obj.string("album"),
+        narrator = obj.string("narrator"),
+        durationMs = obj.long("durationMs"),
+        positionMs = obj.long("positionMs"),
+        playbackSpeed = obj.float("playbackSpeed") ?: 1f,
+        coverPath = obj.string("coverPath"),
+        addedAt = obj.long("addedAt"),
+        lastListenedAt = obj.long("lastListenedAt")
     )
 }
 
@@ -393,6 +491,7 @@ private fun BookItem.toJsonObject(): JsonObject {
             "type" to JsonPrimitive(type.name),
             "displayName" to JsonPrimitive(displayName),
             "timestamp" to JsonPrimitive(timestamp),
+            "dateAddedTimestamp" to JsonPrimitive(dateAddedTimestamp),
             "coverImagePath" to coverImagePath.asJson(),
             "title" to title.asJson(),
             "author" to author.asJson(),
@@ -404,8 +503,10 @@ private fun BookItem.toJsonObject(): JsonObject {
             "originalDescription" to originalDescription.asJson(),
             "progressPercentage" to progressPercentage.asJson(),
             "isRecent" to JsonPrimitive(isRecent),
+            "isAvailable" to JsonPrimitive(isAvailable),
             "fileSize" to JsonPrimitive(fileSize),
             "fileContentModifiedTimestamp" to JsonPrimitive(fileContentModifiedTimestamp),
+            "metadataModifiedTimestamp" to JsonPrimitive(metadataModifiedTimestamp),
             "sourceFolder" to sourceFolder.asJson(),
             "folderTextMetadataParsed" to JsonPrimitive(folderTextMetadataParsed),
             "seriesName" to seriesName.asJson(),
@@ -414,6 +515,16 @@ private fun BookItem.toJsonObject(): JsonObject {
             "lastPageIndex" to lastPageIndex.asJson(),
             "readerPosition" to readerPosition.asJson(),
             "readerSettings" to readerSettings.asJson(),
+            "readerFormatIsLocal" to JsonPrimitive(readerFormatIsLocal),
+            "readerLocalFormatSettings" to readerLocalFormatSettings.asJson(),
+            "readerAutoScrollIsLocal" to JsonPrimitive(readerAutoScrollIsLocal),
+            "readerAutoScrollLocalSpeed" to readerAutoScrollLocalSpeed.asJson(),
+            "readerAutoScrollLocalMinSpeed" to readerAutoScrollLocalMinSpeed.asJson(),
+            "readerAutoScrollLocalMaxSpeed" to readerAutoScrollLocalMaxSpeed.asJson(),
+            "pdfAutoScrollIsLocal" to JsonPrimitive(pdfAutoScrollIsLocal),
+            "pdfAutoScrollLocalSpeed" to pdfAutoScrollLocalSpeed.asJson(),
+            "pdfAutoScrollLocalMinSpeed" to pdfAutoScrollLocalMinSpeed.asJson(),
+            "pdfAutoScrollLocalMaxSpeed" to pdfAutoScrollLocalMaxSpeed.asJson(),
             "readerBookmarks" to JsonArray(readerBookmarks.map { it.toJsonObject() }),
             "readerHighlights" to JsonArray(readerHighlights.map { it.toJsonObject() }),
             "pdfReaderViewport" to pdfReaderViewport.asJson(),
@@ -429,6 +540,36 @@ private fun ShelfRecord.toJsonObject(): JsonObject {
             "name" to JsonPrimitive(name),
             "isSmart" to JsonPrimitive(isSmart),
             "smartRulesJson" to smartRulesJson.asJson()
+        )
+    )
+}
+
+private fun CloudBookTombstone.toJsonObject(): JsonObject {
+    return JsonObject(
+        mapOf(
+            "bookId" to JsonPrimitive(bookId),
+            "type" to type.asJson(),
+            "deletedAt" to JsonPrimitive(deletedAt),
+        )
+    )
+}
+
+private fun SharedAudiobook.toJsonObject(): JsonObject {
+    return JsonObject(
+        mapOf(
+            "bookId" to JsonPrimitive(bookId),
+            "filePath" to JsonPrimitive(filePath),
+            "format" to JsonPrimitive(format),
+            "title" to JsonPrimitive(title),
+            "author" to author.asJson(),
+            "album" to album.asJson(),
+            "narrator" to narrator.asJson(),
+            "durationMs" to JsonPrimitive(durationMs),
+            "positionMs" to JsonPrimitive(positionMs),
+            "playbackSpeed" to JsonPrimitive(playbackSpeed),
+            "coverPath" to coverPath.asJson(),
+            "addedAt" to JsonPrimitive(addedAt),
+            "lastListenedAt" to JsonPrimitive(lastListenedAt)
         )
     )
 }
@@ -535,6 +676,8 @@ private fun JsonElement.asReaderSettingsOrNull(): ReaderSettings? {
     val defaults = ReaderSettings()
     return ReaderSettings(
         fontSize = obj.int("fontSize") ?: defaults.fontSize,
+        fontWeight = obj.int("fontWeight") ?: defaults.fontWeight,
+        letterSpacing = obj.float("letterSpacing") ?: defaults.letterSpacing,
         lineSpacing = obj.float("lineSpacing") ?: defaults.lineSpacing,
         margin = obj.int("margin") ?: defaults.margin,
         darkMode = obj.boolean("darkMode", defaults.darkMode),
@@ -569,6 +712,8 @@ private fun JsonElement.asReaderSettingsOrNull(): ReaderSettings? {
             ?.let { runCatching { ReaderPageSpreadMode.valueOf(it) }.getOrNull() }
             ?: defaults.pageSpreadMode,
         rightToLeftPagination = obj.boolean("rightToLeftPagination", defaults.rightToLeftPagination),
+        tapToNavigateEnabled = obj.boolean("tapToNavigateEnabled", defaults.tapToNavigateEnabled),
+        pageTurnAnimationEnabled = obj.boolean("pageTurnAnimationEnabled", defaults.pageTurnAnimationEnabled),
         pdfVerticalPageGapVisible = obj.boolean(
             "pdfVerticalPageGapVisible",
             defaults.pdfVerticalPageGapVisible
@@ -639,6 +784,7 @@ private fun JsonElement.asReaderBookmarkOrNull(): ReaderBookmark? {
         pageIndex = pageIndex,
         chapterTitle = obj.string("chapterTitle") ?: "",
         preview = obj.string("preview") ?: "",
+        label = obj.string("label"),
         locator = obj["locator"]
             ?.takeUnless { it is JsonNull }
             ?.asReaderLocatorOrNull()
@@ -703,6 +849,8 @@ private fun ReaderSettings?.asJson(): JsonElement {
     return JsonObject(
         mapOf(
             "fontSize" to JsonPrimitive(settings.fontSize),
+            "fontWeight" to JsonPrimitive(settings.fontWeight),
+            "letterSpacing" to JsonPrimitive(settings.letterSpacing),
             "lineSpacing" to JsonPrimitive(settings.lineSpacing),
             "margin" to JsonPrimitive(settings.margin),
             "darkMode" to JsonPrimitive(settings.darkMode),
@@ -725,6 +873,8 @@ private fun ReaderSettings?.asJson(): JsonElement {
             "pageInfoPosition" to JsonPrimitive(settings.pageInfoPosition.name),
             "pageSpreadMode" to JsonPrimitive(settings.pageSpreadMode.name),
             "rightToLeftPagination" to JsonPrimitive(settings.rightToLeftPagination),
+            "tapToNavigateEnabled" to JsonPrimitive(settings.tapToNavigateEnabled),
+            "pageTurnAnimationEnabled" to JsonPrimitive(settings.pageTurnAnimationEnabled),
             "pdfVerticalPageGapVisible" to JsonPrimitive(settings.pdfVerticalPageGapVisible),
             "pdfPageNumberOverlayVisible" to JsonPrimitive(settings.pdfPageNumberOverlayVisible),
             "pdfFirstPageStandaloneInSpread" to JsonPrimitive(settings.pdfFirstPageStandaloneInSpread),
@@ -783,6 +933,7 @@ private fun ReaderBookmark.toJsonObject(): JsonObject {
             "pageIndex" to JsonPrimitive(pageIndex),
             "chapterTitle" to JsonPrimitive(chapterTitle),
             "preview" to JsonPrimitive(preview),
+            "label" to label.asJson(),
             "locator" to locator.toJsonObject()
         )
     )

@@ -137,6 +137,7 @@ object SharedFileCapabilities {
             displayName = "HTML",
             extensions = setOf("html", "htm", "xhtml"),
             androidSurface = ReaderFeatureSurface.EPUB_READER,
+            iosSurface = ReaderFeatureSurface.EPUB_READER,
             desktopSurface = ReaderFeatureSurface.TEXT_READER
         ),
         FileTypeCapability(

@@ -95,7 +95,37 @@ class SharedOpdsCatalogsTest {
     }
 
     @Test
+    fun `catalog stream cleanup matches the decoded catalog id exactly`() {
+        fun stream(id: String, catalogId: String) = BookItem(
+            id = id,
+            path = SharedOpdsStreamUri.build(
+                OpdsStreamReference(
+                    id = id,
+                    count = 12,
+                    urlTemplate = "https://example.org/$id/{pageNumber}",
+                    catalogId = catalogId,
+                )
+            ),
+            type = FileType.CBZ,
+            displayName = id,
+            timestamp = 0L,
+        )
+        val wanted = stream("wanted", "catalog 1")
+        val similar = stream("similar", "catalog 10")
+        val local = BookItem("local", "/books/local.cbz", FileType.CBZ, "Local", 0L)
+
+        assertEquals(
+            listOf("wanted"),
+            listOf(wanted, similar, local).opdsStreamBooksForCatalog("catalog 1").map { it.id },
+        )
+    }
+
+    @Test
     fun `download namer prefers content disposition and falls back to acquisition format`() {
+        assertEquals(
+            "통계학의_개념_및_제문제.epub",
+            SharedOpdsDownloadNamer.cleanFileName("통계학의 개념 및 제문제", ".epub"),
+        )
         assertEquals(
             ".azw3",
             SharedOpdsDownloadNamer.resolveExtension(
@@ -168,5 +198,65 @@ class SharedOpdsCatalogsTest {
             acquisitionNamedBook,
             SharedOpdsLocalBookMatcher.findBook(entry, listOf(acquisitionNamedBook))
         )
+    }
+
+    @Test
+    fun `local matcher ignores title-only and generic download endpoint collisions`() {
+        val entry = OpdsEntry(
+            id = "catalog-entry",
+            title = "A Catalog Book",
+            summary = null,
+            coverUrl = null,
+            acquisitions = listOf(
+                OpdsAcquisition("https://example.org/api/books/42/download", "application/epub+zip")
+            ),
+            navigationUrl = null,
+        )
+        val sameMetadataTitle = BookItem(
+            id = "unrelated-title",
+            path = "file:///library/different-file.epub",
+            type = FileType.EPUB,
+            displayName = "different-file.epub",
+            timestamp = 1L,
+            title = "A Catalog Book",
+        )
+        val genericEndpointName = sameMetadataTitle.copy(
+            id = "generic-download",
+            path = "file:///library/download.epub",
+            displayName = "download.epub",
+            title = "Something Else",
+        )
+
+        assertNull(SharedOpdsLocalBookMatcher.findBook(entry, listOf(sameMetadataTitle)))
+        assertNull(SharedOpdsLocalBookMatcher.findBook(entry, listOf(genericEndpointName)))
+    }
+
+    @Test
+    fun `local matcher distinguishes unicode catalog filenames`() {
+        fun entry(title: String) = OpdsEntry(
+            id = title,
+            title = title,
+            summary = null,
+            coverUrl = null,
+            acquisitions = emptyList(),
+            navigationUrl = null,
+        )
+        val local = BookItem(
+            id = "korean-book",
+            path = "file:///library/통계학의_개념_및_제문제.epub",
+            type = FileType.EPUB,
+            displayName = "통계학의_개념_및_제문제.epub",
+            timestamp = 1L,
+        )
+
+        assertEquals(local, SharedOpdsLocalBookMatcher.findBook(entry("통계학의 개념 및 제문제"), listOf(local)))
+        assertNull(SharedOpdsLocalBookMatcher.findBook(entry("폭풍의 언덕"), listOf(local)))
+
+        val ambiguousLegacyDownload = local.copy(
+            id = "ambiguous-legacy",
+            path = "file:///library/opds_dl_opds_book.epub",
+            displayName = "opds_dl_opds_book.epub",
+        )
+        assertNull(SharedOpdsLocalBookMatcher.findBook(entry("폭풍의 언덕"), listOf(ambiguousLegacyDownload)))
     }
 }

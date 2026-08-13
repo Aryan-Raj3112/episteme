@@ -1554,6 +1554,10 @@ val prepareBundledDesktopResources by tasks.registering(Sync::class) {
     into(generatedDesktopResourcesDir)
 }
 
+tasks.matching { it.name == "run" }.configureEach {
+    dependsOn(checkBundledPdfiumRuntime)
+}
+
 val prepareDesktopStringResources by tasks.registering(Sync::class) {
     // Reuse Android string resources as the localization source for desktop.
     from(rootProject.layout.projectDirectory.dir("app/src/main/res")) {
@@ -1773,6 +1777,13 @@ compose.desktop {
         jvmArgs("-Depisteme.desktop.diagnostics=${desktopDiagnostics.get()}")
         jvmArgs("-Depisteme.desktop.diagnostics.tags=${desktopDiagnosticTags.get()}")
         jvmArgs("-Depisteme.desktop.version=${desktopResolvedVersionName.get()}")
+        if (desktopOsId(desktopOsName) == "macos") {
+            jvmArgs("-XstartOnFirstThread")
+            jvmArgs("--add-exports", "java.desktop/com.apple.eawt.event=ALL-UNNAMED")
+            jvmArgs("--add-exports", "java.desktop/sun.lwawt=ALL-UNNAMED")
+            jvmArgs("--add-exports", "java.desktop/sun.lwawt.macosx=ALL-UNNAMED")
+            jvmArgs("--add-opens", "java.desktop/sun.awt=ALL-UNNAMED")
+        }
 
         buildTypes.release.proguard {
             // ProGuard still rewrites and shrinks release jars even when optimization and
@@ -1831,6 +1842,11 @@ tasks.withType<JavaExec>().configureEach {
     jvmArgs("-Depisteme.desktop.diagnostics.tags=${desktopDiagnosticTags.get()}")
     jvmArgs("-Depisteme.desktop.version=${desktopResolvedVersionName.get()}")
     if (System.getProperty("os.name").contains("Mac")) {
+        jvmArgs("-XstartOnFirstThread")
+        jvmArgs("--add-exports", "java.desktop/com.apple.eawt.event=ALL-UNNAMED")
+        jvmArgs("--add-exports", "java.desktop/sun.lwawt=ALL-UNNAMED")
+        jvmArgs("--add-exports", "java.desktop/sun.lwawt.macosx=ALL-UNNAMED")
+        jvmArgs("--add-opens", "java.desktop/sun.awt=ALL-UNNAMED")
         jvmArgs("--add-opens", "java.desktop/sun.lwawt=ALL-UNNAMED")
         jvmArgs("--add-opens", "java.desktop/sun.lwawt.macosx=ALL-UNNAMED")
     }
@@ -1889,8 +1905,6 @@ tasks.matching {
     it.name in setOf(
         "createDistributable",
         "createReleaseDistributable",
-        "prepareAppResources",
-        "prepareReleaseAppResources",
         "packageDistributionForCurrentOS",
         "packageReleaseDistributionForCurrentOS",
         "packageExe",
@@ -1904,6 +1918,10 @@ tasks.matching {
         "packageReleaseDeb",
         "packageRpm",
         "packageReleaseRpm",
+        "packageDmg",
+        "packageReleaseDmg",
+        "packagePkg",
+        "packageReleasePkg",
         "packageLinuxTar",
         "prepareAurPackage",
         "packageAur",

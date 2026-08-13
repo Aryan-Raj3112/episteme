@@ -203,4 +203,9 @@
         <item quantity="one">(%1$d chunk)</item>
         <item quantity="other">(%1$d chunks)</item>
     </plurals>
+
+    <plurals name="listen_item_count">
+        <item quantity="one">%1$d item</item>
+        <item quantity="other">%1$d items</item>
+    </plurals>
 </resources>

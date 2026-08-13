@@ -42,7 +42,7 @@ import androidx.paging.LoadState
 import androidx.paging.compose.LazyPagingItems
 import androidx.paging.compose.itemContentType
 import com.aryan.reader.R
-import com.aryan.reader.SearchResult
+import com.aryan.reader.shared.SearchResult
 
 @Composable
 internal fun SearchNavigationPill(
@@ -138,56 +138,15 @@ fun PdfSearchResultsPanel(
     onResultClick: (SearchResult) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Surface(modifier = modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-        if (lazyResults.itemCount == 0 && lazyResults.loadState.refresh !is LoadState.Loading) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(stringResource(R.string.search_no_results_simple), style = MaterialTheme.typography.bodyLarge)
-            }
-        } else {
-            Column {
-                Text(
-                    text = stringResource(R.string.msg_results_found_pages, totalPageCount),
-                    style = MaterialTheme.typography.titleSmall,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
-                )
-                HorizontalDivider()
-
-                LazyColumn(modifier = Modifier.testTag("SearchResultsList")) {
-                    items(
-                        count = lazyResults.itemCount,
-                        contentType = lazyResults.itemContentType { "SearchResult" }
-                    ) { index ->
-                        val result = lazyResults[index]
-                        if (result != null) {
-                            ListItem(
-                                headlineContent = {
-                                    Text(
-                                        result.locationTitle,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }, supportingContent = {
-                                    Text(
-                                        result.snippet, style = MaterialTheme.typography.bodyMedium
-                                    )
-                                }, modifier = Modifier
-                                    .testTag(
-                                        "SearchResultItem_${result.locationInSource}"
-                                    )
-                                    .clickable { onResultClick(result) })
-                            HorizontalDivider()
-                        }
-                    }
-                }
-            }
-        }
-
-        if (lazyResults.loadState.refresh is LoadState.Loading) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator()
-            }
-        }
-    }
+    com.aryan.reader.shared.ui.SharedReaderLazySearchResultsPanel(
+        itemCount = lazyResults.itemCount,
+        isRefreshing = lazyResults.loadState.refresh is LoadState.Loading,
+        noResultsText = stringResource(R.string.search_no_results_simple),
+        resultsCountText = stringResource(R.string.msg_results_found_pages, totalPageCount),
+        itemAt = { index -> lazyResults[index] },
+        onResultClick = onResultClick,
+        modifier = modifier,
+    )
 }
 
 @Composable
@@ -197,46 +156,14 @@ fun PdfSearchResultsList(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    Surface(modifier = modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-        if (results.isEmpty()) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(stringResource(R.string.search_no_results_simple), style = MaterialTheme.typography.bodyLarge)
-            }
-        } else {
-            Column {
-                Text(
-                    text = context.resources.getQuantityString(
-                        R.plurals.search_matches_count,
-                        results.size,
-                        results.size
-                    ),
-                    style = MaterialTheme.typography.titleSmall,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
-                )
-                HorizontalDivider()
-
-                LazyColumn(modifier = Modifier.testTag("SearchResultsList")) {
-                    itemsIndexed(results) { _, result ->
-                        ListItem(
-                            headlineContent = {
-                                Text(
-                                    result.locationTitle,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }, supportingContent = {
-                                Text(
-                                    result.snippet, style = MaterialTheme.typography.bodyMedium
-                                )
-                            }, modifier = Modifier
-                                .testTag(
-                                    "SearchResultItem_${result.locationInSource}"
-                                )
-                                .clickable { onResultClick(result) })
-                        HorizontalDivider()
-                    }
-                }
-            }
-        }
-    }
+    com.aryan.reader.shared.ui.SharedReaderSearchResultsPanel(
+        results = results,
+        isSearching = false,
+        noResultsText = stringResource(R.string.search_no_results_simple),
+        resultsCountText = { count ->
+            context.resources.getQuantityString(R.plurals.search_matches_count, count, count)
+        },
+        onResultClick = onResultClick,
+        modifier = modifier,
+    )
 }

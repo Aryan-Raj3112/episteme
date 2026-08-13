@@ -60,8 +60,12 @@ class OpdsViewModel(application: Application) : AndroidViewModel(application) {
                             ?: throw IllegalStateException(context.getString(R.string.opds_error_empty_response))
                         val contentLength = body.contentLength()
                         val ext = resolveOpdsDownloadExtension(acquisition, response)
-                        val safeTitle = SharedOpdsDownloadNamer.safeFileStem(entry.title).take(50)
-                        val tempFile = File(context.cacheDir, "opds_dl_${safeTitle}$ext")
+                        val downloadDirectory = File(
+                            context.cacheDir,
+                            "opds_downloads/${entry.id.hashCode().toUInt().toString(16)}",
+                        ).apply { mkdirs() }
+                        val cleanFileName = SharedOpdsDownloadNamer.cleanFileName(entry.title, ext)
+                        val tempFile = File(downloadDirectory, cleanFileName)
 
                         body.byteStream().use { input ->
                             tempFile.outputStream().use { output ->

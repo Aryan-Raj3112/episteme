@@ -12,8 +12,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.ColorFilter
-import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -58,9 +56,9 @@ fun DesktopEpubNativeImage(
                 ?.takeIf { it.isNotBlank() }
                 ?: if (isDecorative) null else "Image from EPUB",
             modifier = modifier,
-            contentScale = image.readerImageContentScale(),
+            contentScale = image.sharedNativeImageContentScale(),
             alignment = desktopEpubImageContentAlignment(image.style.blockStyle.objectPosition),
-            colorFilter = image.readerImageColorFilter()
+            colorFilter = image.sharedNativeImageColorFilter()
         )
     } else if (isDecorative) {
         Spacer(modifier = modifier)
@@ -223,29 +221,6 @@ private sealed class DesktopEpubImageSource(
 
 private const val DefaultSvgViewportPx = 512f
 private const val MaxSvgRasterDimensionPx = 4096
-
-private fun SemanticImage.readerImageColorFilter(): ColorFilter? {
-    if (style.blockStyle.filter != "invert(100%)") return null
-    return ColorFilter.colorMatrix(
-        ColorMatrix(
-            floatArrayOf(
-                -1f, 0f, 0f, 0f, 255f,
-                0f, -1f, 0f, 0f, 255f,
-                0f, 0f, -1f, 0f, 255f,
-                0f, 0f, 0f, 1f, 0f
-            )
-        )
-    )
-}
-
-private fun SemanticImage.readerImageContentScale(): ContentScale {
-    return when (style.blockStyle.objectFit) {
-        "cover" -> ContentScale.Crop
-        "fill" -> ContentScale.FillBounds
-        "contain", "scale-down" -> ContentScale.Fit
-        else -> ContentScale.Fit
-    }
-}
 
 internal fun desktopEpubImageContentAlignment(objectPosition: String?): Alignment {
     val tokens = objectPosition

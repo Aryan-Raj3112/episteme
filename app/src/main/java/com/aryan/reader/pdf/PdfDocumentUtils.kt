@@ -208,9 +208,11 @@ internal fun hasExportablePdfAnnotations(
     textBoxes: List<PdfTextBox>,
     highlights: List<PdfUserHighlight>
 ): Boolean {
-    return annotations.any { (_, pageAnnotations) -> pageAnnotations.isNotEmpty() } ||
-        textBoxes.isNotEmpty() ||
-        highlights.isNotEmpty()
+    return hasExportablePdfAnnotationContent(
+        inkAnnotationCounts = annotations.values.map { it.size },
+        textBoxCount = textBoxes.size,
+        highlightCount = highlights.size,
+    )
 }
 
 internal fun shouldShowPdfAnnotationExportChoice(
@@ -219,7 +221,12 @@ internal fun shouldShowPdfAnnotationExportChoice(
     textBoxes: List<PdfTextBox>,
     highlights: List<PdfUserHighlight>
 ): Boolean {
-    return !sidecarsReady || hasExportablePdfAnnotations(annotations, textBoxes, highlights)
+    return shouldShowPdfAnnotationExportChoice(
+        sidecarsReady = sidecarsReady,
+        inkAnnotationCounts = annotations.values.map { it.size },
+        textBoxCount = textBoxes.size,
+        highlightCount = highlights.size,
+    )
 }
 
 internal fun getFastFileId(context: Context, uri: Uri): String {

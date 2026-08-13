@@ -70,6 +70,31 @@ class PdfReaderSerializerTest {
     }
 
     @Test
+    fun `AnnotationSerializer preserves legacy compact JSON byte shape`() {
+        val json = AnnotationSerializer.toJson(
+            mapOf(
+                1 to listOf(
+                    PdfAnnotation(
+                        id = "shape",
+                        type = AnnotationType.INK,
+                        inkType = InkType.PENCIL,
+                        pageIndex = 1,
+                        points = listOf(PdfPoint(0.123456f, 0.5f, 9L)),
+                        color = Color(0xFF112233),
+                        strokeWidth = 0.25f,
+                        note = "Note",
+                    )
+                )
+            )
+        )
+
+        assertEquals(
+            "[{\"id\":\"shape\",\"pageIndex\":1,\"annotationType\":\"INK\",\"inkType\":\"PENCIL\",\"color\":-15654349,\"strokeWidth\":0.25,\"note\":\"Note\",\"points\":[{\"x\":0.12346,\"y\":0.5,\"t\":9}]}]",
+            json,
+        )
+    }
+
+    @Test
     fun `AnnotationSerializer supports legacy type field and malformed input fallback`() {
         val legacyJson = """
             [
@@ -154,6 +179,28 @@ class PdfReaderSerializerTest {
         assertTrue(decoded.isStrikeThrough)
         assertEquals("/fonts/test.ttf", decoded.fontPath)
         assertEquals("Test Font", decoded.fontName)
+    }
+
+    @Test
+    fun `TextBoxSerializer preserves legacy compact JSON byte shape`() {
+        val json = TextBoxSerializer.toJson(
+            listOf(
+                PdfTextBox(
+                    id = "shape",
+                    pageIndex = 1,
+                    relativeBounds = Rect(0f, 0.25f, 1f, 0.5f),
+                    text = "Text",
+                    color = Color.Black,
+                    backgroundColor = Color.Transparent,
+                    fontSize = 16f,
+                )
+            )
+        )
+
+        assertEquals(
+            "[{\"id\":\"shape\",\"pageIndex\":1,\"text\":\"Text\",\"color\":-16777216,\"backgroundColor\":0,\"fontSize\":16.0,\"isBold\":false,\"isItalic\":false,\"isUnderline\":false,\"isStrikeThrough\":false,\"bounds\":{\"left\":0.0,\"top\":0.25,\"right\":1.0,\"bottom\":0.5}}]",
+            json,
+        )
     }
 
     @Test
@@ -266,6 +313,27 @@ class PdfReaderSerializerTest {
         assertEquals("", decodedLegacy.text)
         assertEquals(0 to 0, decodedLegacy.range)
         assertEquals(HighlightStyle.BACKGROUND, decodedLegacy.style)
+    }
+
+    @Test
+    fun `HighlightSerializer preserves legacy compact JSON byte shape`() {
+        val json = HighlightSerializer.toJson(
+            listOf(
+                PdfUserHighlight(
+                    id = "shape",
+                    pageIndex = 1,
+                    bounds = listOf(RectF(0f, 0f, 1f, 1f)),
+                    color = PdfHighlightColor.RED,
+                    text = "Text",
+                    range = 2 to 4,
+                )
+            )
+        )
+
+        assertEquals(
+            """[{"id":"shape","pageIndex":1,"color":"RED","text":"Text","rangeStart":2,"rangeEnd":4,"style":"background","bounds":[{"left":0.0,"top":0.0,"right":1.0,"bottom":1.0}]}]""",
+            json,
+        )
     }
 
     private fun assertRectFEquals(expected: RectF, actual: RectF) {

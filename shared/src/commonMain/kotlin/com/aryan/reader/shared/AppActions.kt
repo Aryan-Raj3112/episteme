@@ -78,6 +78,7 @@ sealed interface AppAction {
     data class CustomAppThemeAdded(val theme: CustomAppTheme) : AppAction
     data class CustomAppThemeDeleted(val themeId: String) : AppAction
     data class CustomReaderThemesChanged(val themes: List<ReaderTheme>) : AppAction
+    data class CustomFontsChanged(val fonts: List<CustomFontItem>) : AppAction
     data class SyncEnabledChanged(val enabled: Boolean) : AppAction
     data class FolderSyncEnabledChanged(val enabled: Boolean) : AppAction
     data class TabsEnabledChanged(val enabled: Boolean) : AppAction
@@ -96,5 +97,8 @@ sealed interface AppAction {
     data class PdfHighlighterPaletteChanged(val palette: SharedPdfHighlighterPalette) : AppAction
     data class ReaderTtsReplacementPreferencesChanged(
         val preferences: ReaderTtsReplacementPreferences,
+    ) : AppAction
+    data class ReaderBookReplacementPreferencesChanged(
+        val preferences: ReaderBookReplacementPreferences,
     ) : AppAction
 }

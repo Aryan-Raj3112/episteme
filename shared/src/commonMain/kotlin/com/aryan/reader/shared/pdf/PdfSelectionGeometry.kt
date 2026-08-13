@@ -89,6 +89,36 @@ object PdfSelectionGeometry {
         }
     }
 
+    fun nearestBoundsIndex(
+        bounds: List<PdfPageBounds?>,
+        pointX: Float,
+        pointY: Float
+    ): Int {
+        if (bounds.isEmpty()) return -1
+        val containmentX = pointX.toInt().toFloat()
+        val containmentY = pointY.toInt().toFloat()
+        val containingIndex = bounds.indexOfFirst { box ->
+            box != null && containmentX >= box.left && containmentX < box.right &&
+                containmentY >= box.top && containmentY < box.bottom
+        }
+        if (containingIndex != -1) return containingIndex
+
+        var closestIndex = -1
+        var minimumDistanceSquared = Float.MAX_VALUE
+        bounds.forEachIndexed { index, box ->
+            if (box != null) {
+                val deltaX = pointX - (box.left + box.right) / 2f
+                val deltaY = pointY - (box.top + box.bottom) / 2f
+                val distanceSquared = deltaX * deltaX + deltaY * deltaY
+                if (distanceSquared < minimumDistanceSquared) {
+                    minimumDistanceSquared = distanceSquared
+                    closestIndex = index
+                }
+            }
+        }
+        return closestIndex
+    }
+
     private fun List<PdfTextCharBounds>.groupByLine(lineTolerance: Float): List<List<PdfTextCharBounds>> {
         val lines = mutableListOf<MutableList<PdfTextCharBounds>>()
         filter { it.hasBounds }

@@ -11,6 +11,7 @@ import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.em
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -92,6 +93,46 @@ class ContentStylerTest {
 
         assertEquals(TextAlign.Left, block.textAlign)
         assertEquals(TextAlign.Left, block.content.paragraphStyles.first().item.textAlign)
+    }
+
+    @Test
+    fun `root and nested css font sizes remain distinct in native content`() {
+        val text = "Large small"
+        val semantic = SemanticParagraph(
+            text = text,
+            spans = listOf(
+                SemanticSpan(
+                    start = 6,
+                    end = text.length,
+                    style = CssStyle(fontSize = 0.5.em),
+                    tag = "span"
+                )
+            ),
+            style = CssStyle(fontSize = 2.em),
+            elementId = null,
+            cfi = "/4/2",
+            blockIndex = 30
+        )
+
+        val block = styler().style(listOf(semantic)).single() as ParagraphBlock
+
+        assertTrue(block.content.spanStyles.any { it.start == 0 && it.end == text.length && it.item.fontSize == 2.em })
+        assertTrue(block.content.spanStyles.any { it.start == 6 && it.end == text.length && it.item.fontSize == 0.5.em })
+    }
+
+    @Test
+    fun `saturated author text colors survive reader theme adaptation`() {
+        val red = Color(0xFFE00000)
+        assertEquals(
+            red,
+            CssParser.adaptColorForTheme(
+                color = red,
+                isDarkTheme = true,
+                isBackground = false,
+                themeBackground = Color.Black,
+                themeText = Color.White
+            )
+        )
     }
 
     @Test

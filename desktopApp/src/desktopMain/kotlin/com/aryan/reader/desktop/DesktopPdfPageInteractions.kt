@@ -2,6 +2,7 @@ package com.aryan.reader.desktop
 
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitLongPressOrCancellation
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.changedToUp
@@ -23,8 +24,6 @@ import com.aryan.reader.shared.pdf.SharedPdfTextDraft
 import com.aryan.reader.shared.pdf.reduce
 import com.aryan.reader.shared.ui.sharedPdfHitTest
 import com.aryan.reader.shared.ui.toSharedPdfPoint
-import kotlinx.coroutines.TimeoutCancellationException
-import kotlinx.coroutines.withTimeout
 
 internal val PdfInkTool.isDesktopHighlighter: Boolean
     get() = this == PdfInkTool.HIGHLIGHTER || this == PdfInkTool.HIGHLIGHTER_ROUND
@@ -75,6 +74,15 @@ internal fun List<PdfPagePoint>.withDesktopPdfDragPoint(
     return this + nextPoint
 }
 
+internal fun desktopPdfTextSelectionGestureEnabled(
+    isTextSelectionMode: Boolean,
+    selectedTool: PdfInkTool,
+    operatingSystem: DesktopOperatingSystem = currentDesktopPlatform().os
+): Boolean {
+    return isTextSelectionMode ||
+        (operatingSystem == DesktopOperatingSystem.MACOS && selectedTool == PdfInkTool.NONE)
+}
+
 internal suspend fun PointerInputScope.detectDesktopPdfTextSelectionLongPress(
     source: String,
     pageIndex: Int,
@@ -82,85 +90,14 @@ internal suspend fun PointerInputScope.detectDesktopPdfTextSelectionLongPress(
 ) {
     awaitEachGesture {
         val down = awaitFirstDown(requireUnconsumed = false)
-        val secondaryDown = currentEvent.buttons.isSecondaryPressed
-        logPdfChromeTap {
-            "long_press_down source=$source page=${pageIndex + 1} " +
-                "x=${down.position.x.formatLogFloat()} y=${down.position.y.formatLogFloat()} " +
-                "downConsumed=${down.isConsumed} secondary=$secondaryDown"
-        }
-        if (down.isConsumed || secondaryDown) {
-            logPdfChromeTap {
-                "long_press_skip source=$source page=${pageIndex + 1} " +
-                    "reason=${if (down.isConsumed) "down_consumed" else "secondary_button"}"
-            }
-            return@awaitEachGesture
-        }
-        val pointerId = down.id
-        val start = down.position
-        var latestPosition = start
-        var canceledBeforeLongPress = false
-        var longPressReached = false
-        var cancelReason = ""
-
-        try {
-            withTimeout(viewConfiguration.longPressTimeoutMillis) {
-                while (true) {
-                    val event = awaitPointerEvent()
-                    if (event.buttons.isSecondaryPressed) {
-                        canceledBeforeLongPress = true
-                        cancelReason = "secondary_button"
-                        return@withTimeout
-                    }
-                    val change = event.changes.firstOrNull { it.id == pointerId }
-                    if (change == null) {
-                        canceledBeforeLongPress = true
-                        cancelReason = "pointer_lost"
-                        return@withTimeout
-                    }
-                    latestPosition = change.position
-                    val distance = (latestPosition - start).getDistance()
-                    when {
-                        change.isConsumed -> {
-                            canceledBeforeLongPress = true
-                            cancelReason = "change_consumed"
-                            return@withTimeout
-                        }
-                        change.changedToUp() || !change.pressed -> {
-                            canceledBeforeLongPress = true
-                            cancelReason = "up_before_long_press"
-                            return@withTimeout
-                        }
-                        distance > viewConfiguration.touchSlop -> {
-                            canceledBeforeLongPress = true
-                            cancelReason = "moved distance=${distance.formatLogFloat()}"
-                            return@withTimeout
-                        }
-                    }
-                }
-            }
-        } catch (_: TimeoutCancellationException) {
-            longPressReached = !canceledBeforeLongPress
-        }
-
-        if (!longPressReached) {
-            logPdfChromeTap {
-                "long_press_cancel source=$source page=${pageIndex + 1} " +
-                    "reason=${cancelReason.ifBlank { "unknown" }} " +
-                    "x=${latestPosition.x.formatLogFloat()} y=${latestPosition.y.formatLogFloat()}"
-            }
-            return@awaitEachGesture
-        }
+        if (currentEvent.buttons.isSecondaryPressed) return@awaitEachGesture
+        val longPress = awaitLongPressOrCancellation(down.id) ?: return@awaitEachGesture
         logPdfChromeTap {
             "long_press_reached source=$source page=${pageIndex + 1} " +
-                "x=${latestPosition.x.formatLogFloat()} y=${latestPosition.y.formatLogFloat()}"
+                "x=${longPress.position.x.formatLogFloat()} y=${longPress.position.y.formatLogFloat()}"
         }
-        onLongPress(latestPosition)
-        while (true) {
-            val event = awaitPointerEvent()
-            val change = event.changes.firstOrNull { it.id == pointerId } ?: return@awaitEachGesture
-            change.consume()
-            if (change.changedToUp() || !change.pressed) return@awaitEachGesture
-        }
+        onLongPress(longPress.position)
+        longPress.consume()
     }
 }
 
@@ -244,7 +181,14 @@ internal fun DesktopPdfDocument.wordSelectionAt(
     if (hit.source == "fallback_line" && !isPointNearTextChar(pageIndex, hit.index, hit.normalized)) {
         return null
     }
-    val pageText = textPageData(pageIndex).text
+    val pageText = textPageData(pageIndex).text.ifEmpty {
+        DesktopPdfium.textForRange(
+            document = this,
+            pageIndex = pageIndex,
+            startIndex = 0,
+            endIndex = Int.MAX_VALUE
+        )
+    }
     if (pageText.isEmpty()) return null
     val hitIndex = hit.index.coerceIn(0, pageText.lastIndex)
     if (!pageText[hitIndex].isDesktopPdfWordPart()) return null
@@ -295,7 +239,7 @@ internal fun DesktopPdfDocument.selectionPreviewBetweenIndexes(
         startIndex = startIndex,
         endIndex = endIndex,
         canvasSize = canvasSize,
-        useNativeBounds = false,
+        useNativeBounds = true,
         includeText = false
     )
 }
@@ -309,22 +253,38 @@ internal fun DesktopPdfDocument.selectionBetweenIndexes(
     includeText: Boolean = true
 ): DesktopPdfTextSelection? {
     val chars = textPageData(pageIndex).chars
-    if (chars.isEmpty()) return null
     val firstIndex = minOf(startIndex, endIndex)
     val lastIndex = maxOf(startIndex, endIndex)
     val selectedChars = chars.filter { it.index in firstIndex..lastIndex }
-    if (selectedChars.isEmpty()) return null
+    val nativeText = if (includeText) {
+        DesktopPdfium.textForRange(
+            document = this,
+            pageIndex = pageIndex,
+            startIndex = firstIndex,
+            endIndex = lastIndex
+        )
+    } else {
+        ""
+    }
     val text = if (includeText) {
-        selectedChars.joinToString("") { it.char.toString() }
+        nativeText.ifEmpty {
+            selectedChars.joinToString("") { it.char.toString() }
+        }
             .replace(DesktopPdfSelectionInlineWhitespaceRegex, " ")
             .replace(DesktopPdfSelectionBlankLinesRegex, "\n\n")
             .trim()
     } else {
         ""
     }
-    if (includeText && text.isBlank()) return null
+    if (includeText && text.isBlank()) {
+        logPdfSelection(
+            "range_extract_rejected page=${pageIndex + 1} range=$firstIndex..$lastIndex " +
+                "reason=blank_text nativeText=${nativeText.length} cachedChars=${chars.size} " +
+                "selectedChars=${selectedChars.size}"
+        )
+        return null
+    }
     val fallbackBounds = PdfSelectionGeometry.lineBoundsForChars(selectedChars.visiblePdfTextBounds())
-    if (!includeText && fallbackBounds.isEmpty()) return null
     val nativeBounds = if (useNativeBounds) {
         DesktopPdfium.textRectsForRange(
             document = this,
@@ -333,12 +293,28 @@ internal fun DesktopPdfDocument.selectionBetweenIndexes(
             endIndex = lastIndex,
             viewportWidth = canvasSize.width,
             viewportHeight = canvasSize.height
-        ).map { it.toPdfPageBounds() }
+        ).ifEmpty {
+            DesktopPdfium.charRectsForRange(
+                document = this,
+                pageIndex = pageIndex,
+                startIndex = firstIndex,
+                endIndex = lastIndex,
+                viewportWidth = canvasSize.width,
+                viewportHeight = canvasSize.height
+            )
+        }.map { it.toPdfPageBounds() }
             .filter { it.right > it.left && it.bottom > it.top }
             .mergePdfBoundsByLine()
     } else {
         emptyList()
     }
+    logPdfSelection(
+        "range_extract page=${pageIndex + 1} range=$firstIndex..$lastIndex " +
+            "includeText=$includeText nativeText=${nativeText.length} cachedChars=${chars.size} " +
+            "selectedChars=${selectedChars.size} nativeBounds=${nativeBounds.size} " +
+            "fallbackBounds=${fallbackBounds.size}"
+    )
+    if (nativeBounds.isEmpty() && fallbackBounds.isEmpty()) return null
     return DesktopPdfTextSelection(
         text = text,
         lineBounds = nativeBounds.ifEmpty { fallbackBounds },

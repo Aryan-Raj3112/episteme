@@ -1,5 +1,6 @@
 package com.aryan.reader
 
+import android.content.ActivityNotFoundException
 import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -48,6 +49,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Search
@@ -84,6 +86,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -115,8 +118,22 @@ import androidx.navigation.NavHostController
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.aryan.reader.data.RecentFileItem
+import com.aryan.reader.data.AppDatabase
+import com.aryan.reader.data.AudiobookImporter
+import com.aryan.reader.audiobook.AudiobookController
 import com.aryan.reader.shared.AnnotationExportFormat
 import kotlinx.coroutines.launch
+
+internal typealias UnifiedLibrarySection = com.aryan.reader.shared.ui.MobileUnifiedLibrarySection
+internal typealias UnifiedLibraryFilter = com.aryan.reader.shared.ui.MobileUnifiedLibraryFilter
+
+@androidx.annotation.OptIn(UnstableApi::class)
+internal fun shouldAutoStartTtsAudiobook(
+    requestedBookId: String?,
+    playback: com.aryan.reader.tts.TtsPlaybackManager.TtsState
+): Boolean = requestedBookId == null ||
+    playback.playbackSource != "AUDIOBOOK_TTS" ||
+    playback.bookId != requestedBookId
 
 /** Android-only successor experiment for the separate Home and Library destinations. */
 @androidx.annotation.OptIn(UnstableApi::class)
@@ -133,10 +150,30 @@ fun UnifiedLibraryScreen(
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val accountDrawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
+    val audiobookImporter = remember(context) { AudiobookImporter(context.applicationContext) }
+    val importedAudiobooks by remember(context) { AppDatabase.getDatabase(context).audiobookDao().observeAll() }
+        .collectAsStateWithLifecycle(initialValue = emptyList())
+    val bookTtsProgress by remember(context) { AppDatabase.getDatabase(context).bookTtsListeningProgressDao().observeAll() }
+        .collectAsStateWithLifecycle(initialValue = emptyList())
+    val globalAudiobookController = remember(context) { AudiobookController(context) }
+    val importedPlayback by globalAudiobookController.state.collectAsStateWithLifecycle()
+    val ttsPlayback by viewModel.ttsController.ttsState.collectAsStateWithLifecycle()
+    LaunchedEffect(importedAudiobooks.isNotEmpty()) {
+        if (importedAudiobooks.isNotEmpty()) globalAudiobookController.connectSession()
+    }
+    DisposableEffect(globalAudiobookController) { onDispose(globalAudiobookController::release) }
+    val activeListeningItemId = when {
+        ttsPlayback.playbackSource == "AUDIOBOOK_TTS" ->
+            ttsPlayback.bookId?.let { "tts-$it" }
+
+        importedPlayback.bookId != null ->
+            importedPlayback.bookId
+
+        else -> null
+    }
     var selectedShelfId by rememberSaveable { mutableStateOf<String?>(null) }
     var filter by rememberSaveable { mutableStateOf(UnifiedLibraryFilter.ALL) }
     var query by rememberSaveable { mutableStateOf("") }
-    var isSearchVisible by rememberSaveable { mutableStateOf(false) }
     var showLibraryControls by rememberSaveable { mutableStateOf(false) }
     var showAdvancedFilters by rememberSaveable { mutableStateOf(false) }
     var showThemeSheet by rememberSaveable { mutableStateOf(false) }
@@ -148,10 +185,40 @@ fun UnifiedLibraryScreen(
     var pendingSaveOriginalItem by remember { mutableStateOf<RecentFileItem?>(null) }
     var pendingAnnotationExportText by remember { mutableStateOf<String?>(null) }
     var showAnnotationExportFormatDialogFor by remember { mutableStateOf<RecentFileItem?>(null) }
+    var showAudiobookAddSheet by rememberSaveable { mutableStateOf(false) }
+    var showTtsBookPicker by rememberSaveable {
+        mutableStateOf(false)
+    }
+    var audiobookPlayerItem by remember { mutableStateOf<AudiobookUiItem?>(null) }
 
     val filePicker = rememberFilePickerLauncher(viewModel::onFilesSelected)
     val folderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         uri?.let(viewModel::addSyncedFolder)
+    }
+    val audiobookPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let {
+            scope.launch {
+                audiobookImporter.import(it)
+                    .onSuccess { imported -> viewModel.showBanner(context.getString(R.string.audiobooks_imported, imported.book.title ?: imported.book.displayName)) }
+                    .onFailure { error -> viewModel.showBanner(error.message ?: context.getString(R.string.audiobooks_import_failed), isError = true) }
+            }
+        }
+    }
+    val audiobookMultiplePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isNotEmpty()) scope.launch {
+            val results = audiobookImporter.importAll(uris)
+            val imported = results.count { it.isSuccess }
+            val failed = results.size - imported
+            viewModel.showBanner("Imported $imported audiobook${if (imported == 1) "" else "s"}${if (failed > 0) "; $failed failed" else ""}", isError = imported == 0)
+        }
+    }
+    val audiobookFolderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        uri?.let { folderUri -> scope.launch {
+            val results = audiobookImporter.importFolder(folderUri)
+            val imported = results.count { it.isSuccess }
+            val failed = results.size - imported
+            viewModel.showBanner("Imported $imported audiobook${if (imported == 1) "" else "s"}${if (failed > 0) "; $failed failed" else ""}", isError = imported == 0)
+        } }
     }
     val saveOriginalLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/octet-stream")
@@ -177,12 +244,25 @@ fun UnifiedLibraryScreen(
         if (destination != null && contents != null) viewModel.saveAnnotationExport(contents, destination)
     }
 
+    fun launchDocumentPicker(onUnavailable: () -> Unit = {}, launch: () -> Unit) {
+        try {
+            launch()
+        } catch (_: ActivityNotFoundException) {
+            onUnavailable()
+            viewModel.showBanner(context.getString(R.string.document_picker_unavailable), isError = true)
+        }
+    }
+
     fun exportAnnotations(item: RecentFileItem, format: AnnotationExportFormat) {
         viewModel.prepareAnnotationExport(item, format) { prepared ->
             pendingAnnotationExportText = prepared.contents
             when (format) {
-                AnnotationExportFormat.MARKDOWN -> saveMarkdownAnnotationsLauncher.launch(prepared.fileName)
-                AnnotationExportFormat.TEXT -> saveTextAnnotationsLauncher.launch(prepared.fileName)
+                AnnotationExportFormat.MARKDOWN -> launchDocumentPicker(
+                    onUnavailable = { pendingAnnotationExportText = null }
+                ) { saveMarkdownAnnotationsLauncher.launch(prepared.fileName) }
+                AnnotationExportFormat.TEXT -> launchDocumentPicker(
+                    onUnavailable = { pendingAnnotationExportText = null }
+                ) { saveTextAnnotationsLauncher.launch(prepared.fileName) }
             }
         }
     }
@@ -243,23 +323,23 @@ fun UnifiedLibraryScreen(
                         onSyncToggle = viewModel::setSyncEnabled,
                         onUpgradeClick = {
                             scope.launch { accountDrawerState.close() }
-                            navController.navigateIfReady(AppDestinations.PRO_SCREEN_ROUTE)
+                            navController.navigateIfReady(com.aryan.reader.shared.ui.SharedMobileAppDestination.PRO)
                         },
                         onSyncUpsellClick = {
                             scope.launch { accountDrawerState.close() }
-                            navController.navigateIfReady(AppDestinations.PRO_SCREEN_ROUTE)
+                            navController.navigateIfReady(com.aryan.reader.shared.ui.SharedMobileAppDestination.PRO)
                         },
                         onFontsClick = {
                             scope.launch { accountDrawerState.close() }
-                            navController.navigateIfReady(AppDestinations.FONTS_SCREEN_ROUTE)
+                            navController.navigateIfReady(com.aryan.reader.shared.ui.SharedMobileAppDestination.FONTS)
                         },
                         onAiSettingsClick = {
                             scope.launch { accountDrawerState.close() }
-                            navController.navigateIfReady(AppDestinations.AI_SETTINGS_SCREEN_ROUTE)
+                            navController.navigateIfReady(com.aryan.reader.shared.ui.SharedMobileAppDestination.AI_SETTINGS)
                         },
                         onSettingsClick = {
                             scope.launch { accountDrawerState.close() }
-                            navController.navigateIfReady(AppDestinations.SETTINGS_SCREEN_ROUTE)
+                            navController.navigateIfReady(com.aryan.reader.shared.ui.SharedMobileAppDestination.SETTINGS)
                         },
                         navController = navController,
                         onFolderSyncToggle = viewModel::setFolderSyncEnabled,
@@ -293,21 +373,83 @@ fun UnifiedLibraryScreen(
                 },
                 onSettingsClick = {
                     scope.launch { drawerState.close() }
-                    navController.navigateIfReady(AppDestinations.SETTINGS_SCREEN_ROUTE)
+                    navController.navigateIfReady(com.aryan.reader.shared.ui.SharedMobileAppDestination.SETTINGS)
                 },
                 onFontsClick = {
                     scope.launch { drawerState.close() }
-                    navController.navigateIfReady(AppDestinations.FONTS_SCREEN_ROUTE)
+                    navController.navigateIfReady(com.aryan.reader.shared.ui.SharedMobileAppDestination.FONTS)
                 },
                 onAiSettingsClick = {
                     scope.launch { drawerState.close() }
-                    navController.navigateIfReady(AppDestinations.AI_SETTINGS_SCREEN_ROUTE)
+                    navController.navigateIfReady(com.aryan.reader.shared.ui.SharedMobileAppDestination.AI_SETTINGS)
                 }
             )
         }
     ) {
-        Scaffold(
-            contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0, 0, 0, 0),
+        com.aryan.reader.shared.ui.SharedAndroidUnifiedScaffold(
+            section = section,
+            showingShelf = selectedShelfId != null,
+            importDescription = stringResource(R.string.unified_library_import),
+            addAudiobookDescription = stringResource(R.string.listen_add),
+            newShelfLabel = stringResource(R.string.fab_new_shelf),
+            onImport = { filePicker.launch(if (uiState.useStrictFileFilter) MainViewModel.SUPPORTED_MIME_TYPES else arrayOf("*/*")) },
+            onAddAudiobook = { showAudiobookAddSheet = true },
+            onNewShelf = viewModel::showCreateShelfDialog,
+            bottomBar = {
+                val activeTtsBook = ttsPlayback.bookId
+                    ?.takeIf { ttsPlayback.playbackSource == "AUDIOBOOK_TTS" }
+                    ?.let { id -> uiState.rawLibraryFiles.firstOrNull { it.bookId == id } }
+                val activeImported = importedPlayback.bookId
+                    ?.let { id -> importedAudiobooks.firstOrNull { it.bookId == id } }
+                when {
+                    activeTtsBook != null -> {
+                        val item = activeTtsBook.toTtsAudiobookUiItem(bookTtsProgress.firstOrNull { it.bookId == activeTtsBook.bookId })
+                            .copy(chapter = ttsPlayback.chapterTitle ?: "Listening with TTS")
+                        AudiobookMiniPlayer(
+                            item = item,
+                            isPlaying = ttsPlayback.isPlaying,
+                            progress = item.progress,
+                            onTogglePlay = {
+                                if (
+                                    ttsPlayback.isPlaying ||
+                                    ttsPlayback.isLoading
+                                ) {
+                                    viewModel.ttsController.pause()
+                                } else {
+                                    viewModel.ttsController.resume()
+                                }
+                            },
+                            onExpand = {
+                                audiobookPlayerItem = item
+                            },
+                            onStop = viewModel.ttsController::stop
+                        )
+                    }
+                    activeImported != null -> {
+                        val item = activeImported.toUiItem()
+                        val liveProgress = if (importedPlayback.durationMs > 0L) {
+                            importedPlayback.positionMs.toFloat() /
+                                    importedPlayback.durationMs.toFloat()
+                        } else {
+                            item.progress
+                        }
+                        AudiobookMiniPlayer(
+                            item = item,
+                            isPlaying = importedPlayback.isPlaying,
+                            progress = liveProgress,
+                            onTogglePlay = {
+                                globalAudiobookController.togglePlay(
+                                    viewModel.ttsController::stop
+                                )
+                            },
+                            onExpand = {
+                                audiobookPlayerItem = item
+                            },
+                            onStop = globalAudiobookController::stop
+                        )
+                    }
+                }
+            },
             topBar = {
                 if (selectedItems.isNotEmpty()) {
                     ContextualTopAppBar(
@@ -328,7 +470,9 @@ fun UnifiedLibraryScreen(
                             ?.let { item ->
                                 {
                                     pendingSaveOriginalItem = item
-                                    saveOriginalLauncher.launch(item.suggestedOriginalFileName())
+                                    launchDocumentPicker(
+                                        onUnavailable = { pendingSaveOriginalItem = null }
+                                    ) { saveOriginalLauncher.launch(item.suggestedOriginalFileName()) }
                                 }
                             },
                         onShareClick = selectedItems.singleOrNull()
@@ -348,39 +492,13 @@ fun UnifiedLibraryScreen(
                         onMenuClick = { scope.launch { drawerState.open() } },
                         onBackFromShelf = { selectedShelfId = null },
                         uiState = uiState,
-                        onAccountClick = { scope.launch { accountDrawerState.open() } }
+                        onAccountClick = { scope.launch { accountDrawerState.open() } },
+                        searchQuery = if (section == UnifiedLibrarySection.HOME) query else null,
+                        onSearchQueryChange = { query = it },
                     )
                 }
             },
-            floatingActionButton = {
-                when (section) {
-                    UnifiedLibrarySection.HOME -> FloatingActionButton(
-                        onClick = { filePicker.launch(if (uiState.useStrictFileFilter) MainViewModel.SUPPORTED_MIME_TYPES else arrayOf("*/*")) },
-                        modifier = Modifier.testTag("UnifiedLibraryImport")
-                    ) {
-                        Icon(Icons.Default.Add, contentDescription = stringResource(R.string.unified_library_import))
-                    }
-                    UnifiedLibrarySection.SHELVES -> if (selectedShelfId == null) {
-                        ExtendedFloatingActionButton(
-                            onClick = viewModel::showCreateShelfDialog,
-                            icon = { Icon(Icons.Default.Add, contentDescription = null) },
-                            text = { Text(stringResource(R.string.fab_new_shelf)) }
-                        )
-                    }
-                    UnifiedLibrarySection.FOLDERS -> Unit
-                    UnifiedLibrarySection.CATALOGS -> Unit
-                }
-            }
-        ) { padding ->
-            AnimatedContent(
-                targetState = section,
-                transitionSpec = {
-                    val direction = if (targetState.persistedValue > initialState.persistedValue) 1 else -1
-                    (fadeIn() + slideInHorizontally { direction * it / 5 }) togetherWith
-                        (fadeOut() + slideOutHorizontally { -direction * it / 5 })
-                },
-                label = "UnifiedLibrarySharedAxis"
-            ) { displayedSection ->
+            sectionContent = { displayedSection, padding ->
             when (displayedSection) {
                 UnifiedLibrarySection.HOME -> UnifiedLibraryHome(
                     modifier = Modifier.padding(padding),
@@ -388,21 +506,65 @@ fun UnifiedLibraryScreen(
                     continueReading = continueReading,
                     filter = filter,
                     query = query,
-                    isSearchVisible = isSearchVisible,
                     sortOrder = uiState.sortOrder,
                     advancedFilterCount = advancedFilterCount,
+                    useListView = uiState.unifiedLibraryListView,
                     selectedBookIds = uiState.contextualActionItems.mapTo(mutableSetOf()) { it.bookId },
+                    pinnedBookIds = uiState.pinnedLibraryBookIds,
                     downloadingBookIds = uiState.downloadingBookIds,
                     usePdfFileNameAsDisplayName = uiState.usePdfFileNameAsDisplayName,
                     onFilterChange = { filter = it },
-                    onQueryChange = { query = it },
-                    onSearchToggle = {
-                        isSearchVisible = !isSearchVisible
-                        if (!isSearchVisible) query = ""
-                    },
                     onControlsClick = { showLibraryControls = true },
-                    onBookClick = viewModel::onRecentFileClicked,
+                    onAdvancedFiltersClick = { showAdvancedFilters = true },
+                    onListViewChange = viewModel::setUnifiedLibraryListView,
+                    onBookClick = { item ->
+                        if (item.type == FileType.AUDIOBOOK) {
+                            importedAudiobooks.firstOrNull { it.bookId == item.bookId }?.let { audiobookPlayerItem = it.toUiItem() }
+                        } else viewModel.onRecentFileClicked(item)
+                    },
                     onBookLongClick = viewModel::onRecentItemLongPress
+                )
+                UnifiedLibrarySection.AUDIOBOOKS -> AudiobooksLibrarySection(
+                    modifier = Modifier.padding(padding),
+                    audiobooks = importedAudiobooks,
+                    libraryBooks = uiState.rawLibraryFiles,
+                    ttsProgress = bookTtsProgress,
+                    playback = importedPlayback,
+                    ttsPlayback = com.aryan.reader.shared.SharedBookTtsListenState(
+                        connected = ttsPlayback.playbackSource == "AUDIOBOOK_TTS",
+                        bookId = ttsPlayback.bookId,
+                        isPlaying = ttsPlayback.isPlaying,
+                        isLoading = ttsPlayback.isLoading,
+                    ),
+                    activeItemId = activeListeningItemId,
+                    onAudiobookClick = { item ->
+                        val shouldStart = item.isTts &&
+                                shouldAutoStartTtsAudiobook(item.sourceBook?.bookId, ttsPlayback)
+
+                        if (shouldStart) {
+                            viewModel.ttsController.connect()
+                        }
+
+                        audiobookPlayerItem =
+                            if (item.isTts && !shouldStart) item.copy(autoStart = false)
+                            else item
+                    },
+                    onListenWithTtsClick = { book ->
+                        val shouldStart = shouldAutoStartTtsAudiobook(book.bookId, ttsPlayback)
+
+                        if (shouldStart) {
+                            viewModel.ttsController.connect()
+                        }
+
+                        audiobookPlayerItem = book
+                            .toTtsAudiobookUiItem(
+                                bookTtsProgress.firstOrNull { it.bookId == book.bookId }
+                            )
+                            .copy(autoStart = shouldStart)
+                    },
+                    onAddAudiobookClick = {
+                        showAudiobookAddSheet = true
+                    }
                 )
                 UnifiedLibrarySection.SHELVES -> UnifiedShelvesSection(
                     modifier = Modifier.padding(padding),
@@ -420,7 +582,7 @@ fun UnifiedLibraryScreen(
                     folders = uiState.syncedFolders,
                     allRecentFiles = uiState.rawLibraryFiles,
                     isLoading = uiState.isLoading,
-                    onAddFolder = { folderPicker.launch(null) },
+                    onAddFolder = { launchDocumentPicker { folderPicker.launch(null) } },
                     onScan = viewModel::scanSyncedFolder,
                     onSyncMetadata = viewModel::syncFolderMetadata,
                     onToggleLocalSync = viewModel::setFolderLocalSyncEnabled,
@@ -444,11 +606,11 @@ fun UnifiedLibraryScreen(
                     }
                 }
             }
+            },
+        )
             }
         }
     }
-            }
-        }
     }
 
     if (showLibraryControls) {
@@ -462,6 +624,89 @@ fun UnifiedLibraryScreen(
                 showAdvancedFilters = true
             },
             onDismiss = { showLibraryControls = false }
+        )
+    }
+    if (showAudiobookAddSheet) {
+        AudiobookAddSheet(
+            onChooseFile = {
+                showAudiobookAddSheet = false
+                launchDocumentPicker {
+                    audiobookPicker.launch(
+                        arrayOf(
+                            "audio/*",
+                            "application/octet-stream"
+                        )
+                    )
+                }
+            },
+            onChooseMultiple = {
+                showAudiobookAddSheet = false
+                launchDocumentPicker {
+                    audiobookMultiplePicker.launch(
+                        arrayOf(
+                            "audio/*",
+                            "application/octet-stream"
+                        )
+                    )
+                }
+            },
+            onChooseFolder = {
+                showAudiobookAddSheet = false
+                launchDocumentPicker { audiobookFolderPicker.launch(null) }
+            },
+            onChooseTtsBook = {
+                showAudiobookAddSheet = false
+                showTtsBookPicker = true
+            },
+            onDismiss = {
+                showAudiobookAddSheet = false
+            }
+        )
+    }
+    if (showTtsBookPicker) {
+        TtsBookPickerSheet(
+            books = uiState.rawLibraryFiles,
+            onBookSelected = { book ->
+                showTtsBookPicker = false
+
+                val shouldStart =
+                    shouldAutoStartTtsAudiobook(
+                        book.bookId,
+                        ttsPlayback
+                    )
+
+                if (shouldStart) {
+                    viewModel.ttsController.connect()
+                }
+
+                audiobookPlayerItem =
+                    book.toTtsAudiobookUiItem(
+                        bookTtsProgress.firstOrNull {
+                            it.bookId == book.bookId
+                        }
+                    ).copy(
+                        autoStart = shouldStart
+                    )
+            },
+            onDismiss = {
+                showTtsBookPicker = false
+            }
+        )
+    }
+    audiobookPlayerItem?.let { item ->
+        AudiobookPlayerSheet(
+            item = item,
+            onBeforePlay = {
+                when (
+                    com.aryan.reader.shared.sharedListeningHandoff(
+                        com.aryan.reader.shared.SharedListeningTarget.IMPORTED_AUDIOBOOK,
+                    )
+                ) {
+                    com.aryan.reader.shared.SharedListeningHandoff.STOP_TTS -> viewModel.ttsController.stop()
+                    com.aryan.reader.shared.SharedListeningHandoff.STOP_AUDIOBOOK -> Unit
+                }
+            },
+            onDismiss = { audiobookPlayerItem = null },
         )
     }
     if (showAdvancedFilters) {
@@ -550,18 +795,6 @@ fun UnifiedLibraryScreen(
     CustomTopBanner(bannerMessage = uiState.bannerMessage)
 }
 
-private enum class UnifiedLibrarySection(val persistedValue: Int) {
-    HOME(0),
-    SHELVES(1),
-    FOLDERS(2),
-    CATALOGS(3);
-
-    companion object {
-        fun fromPersisted(value: Int): UnifiedLibrarySection =
-            entries.firstOrNull { it.persistedValue == value } ?: HOME
-    }
-}
-
 @Composable
 private fun UnifiedLibraryDrawer(
     currentSection: UnifiedLibrarySection,
@@ -571,7 +804,7 @@ private fun UnifiedLibraryDrawer(
     onFontsClick: () -> Unit,
     onAiSettingsClick: () -> Unit,
 ) {
-    ModalDrawerSheet(modifier = Modifier.navigationBarsPadding()) {
+    ModalDrawerSheet(modifier = Modifier.fillMaxHeight()) {
         Column(modifier = Modifier.fillMaxHeight()) {
             Surface(
                 modifier = Modifier.fillMaxWidth(),
@@ -605,6 +838,7 @@ private fun UnifiedLibraryDrawer(
                 modifier = Modifier.padding(start = 28.dp, top = 20.dp, bottom = 8.dp)
             )
             UnifiedLibraryDestination(stringResource(R.string.unified_library_home), currentSection == UnifiedLibrarySection.HOME, { Icon(Icons.Default.Home, null) }) { onSectionSelected(UnifiedLibrarySection.HOME) }
+            UnifiedLibraryDestination(stringResource(R.string.listen_title), currentSection == UnifiedLibrarySection.AUDIOBOOKS, { Icon(Icons.AutoMirrored.Filled.VolumeUp, null) }) { onSectionSelected(UnifiedLibrarySection.AUDIOBOOKS) }
             UnifiedLibraryDestination(stringResource(R.string.tab_shelves), currentSection == UnifiedLibrarySection.SHELVES, { Icon(Icons.AutoMirrored.Filled.LibraryBooks, null) }) { onSectionSelected(UnifiedLibrarySection.SHELVES) }
             UnifiedLibraryDestination(stringResource(R.string.tab_folders), currentSection == UnifiedLibrarySection.FOLDERS, { Icon(Icons.Default.Folder, null) }) { onSectionSelected(UnifiedLibrarySection.FOLDERS) }
             if (!BuildConfig.IS_OFFLINE) {
@@ -649,37 +883,30 @@ private fun UnifiedLibraryTopBar(
     onBackFromShelf: () -> Unit,
     uiState: ReaderScreenState,
     onAccountClick: () -> Unit,
+    searchQuery: String?,
+    onSearchQueryChange: (String) -> Unit,
 ) {
-    Surface(shadowElevation = 1.dp, modifier = Modifier.fillMaxWidth()) {
-        Row(modifier = Modifier.fillMaxWidth().statusBarsPadding().height(64.dp).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (selectedShelf != null) {
-                IconButton(onClick = onBackFromShelf) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.unified_library_back_to_shelves)) }
-            } else {
-                IconButton(onClick = onMenuClick) { Icon(Icons.Default.Menu, stringResource(R.string.unified_library_drawer_title)) }
-            }
-            val title = selectedShelf?.name ?: when (section) {
-                    UnifiedLibrarySection.HOME -> null
-                    UnifiedLibrarySection.SHELVES -> stringResource(R.string.tab_shelves)
-                    UnifiedLibrarySection.FOLDERS -> stringResource(R.string.tab_folders)
-                    UnifiedLibrarySection.CATALOGS -> stringResource(R.string.tab_catalogs)
-                }
-            if (title != null) {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.weight(1f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            } else {
-                Spacer(modifier = Modifier.weight(1f))
-            }
-            IconButton(onClick = onAccountClick, modifier = Modifier.testTag("UnifiedLibraryProfile")) {
-                UnifiedProfileAvatar(uiState)
-            }
-        }
+    val title = selectedShelf?.name ?: when (section) {
+        UnifiedLibrarySection.HOME -> null
+        UnifiedLibrarySection.AUDIOBOOKS -> stringResource(R.string.listen_title)
+        UnifiedLibrarySection.SHELVES -> stringResource(R.string.tab_shelves)
+        UnifiedLibrarySection.FOLDERS -> stringResource(R.string.tab_folders)
+        UnifiedLibrarySection.CATALOGS -> stringResource(R.string.tab_catalogs)
     }
+    com.aryan.reader.shared.ui.SharedAndroidUnifiedTopBar(
+        title = title,
+        showingShelf = selectedShelf != null,
+        drawerDescription = stringResource(R.string.unified_library_drawer_title),
+        backToShelvesDescription = stringResource(R.string.unified_library_back_to_shelves),
+        onMenu = onMenuClick,
+        onBackFromShelf = onBackFromShelf,
+        onAccount = onAccountClick,
+        accountAvatar = { UnifiedProfileAvatar(uiState) },
+        searchQuery = searchQuery,
+        searchPlaceholder = stringResource(R.string.unified_library_search_books),
+        clearSearchDescription = stringResource(R.string.content_desc_clear_query),
+        onSearchQueryChange = onSearchQueryChange,
+    )
 }
 
 @Composable
@@ -703,90 +930,64 @@ private fun UnifiedLibraryHome(
     continueReading: RecentFileItem?,
     filter: UnifiedLibraryFilter,
     query: String,
-    isSearchVisible: Boolean,
     sortOrder: SortOrder,
     advancedFilterCount: Int,
+    useListView: Boolean,
     selectedBookIds: Set<String>,
+    pinnedBookIds: Set<String>,
     downloadingBookIds: Set<String>,
     usePdfFileNameAsDisplayName: Boolean,
     onFilterChange: (UnifiedLibraryFilter) -> Unit,
-    onQueryChange: (String) -> Unit,
-    onSearchToggle: () -> Unit,
     onControlsClick: () -> Unit,
+    onAdvancedFiltersClick: () -> Unit,
+    onListViewChange: (Boolean) -> Unit,
     onBookClick: (RecentFileItem) -> Unit,
     onBookLongClick: (RecentFileItem) -> Unit,
 ) {
-    if (isSearchVisible) {
-        UnifiedLibrarySearchResults(
-            modifier = modifier,
-            books = books,
-            query = query,
-            selectedBookIds = selectedBookIds,
-            downloadingBookIds = downloadingBookIds,
-            usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName,
-            onQueryChange = onQueryChange,
-            onClose = onSearchToggle,
-            onBookClick = onBookClick,
-            onBookLongClick = onBookLongClick
-        )
-        return
-    }
-    Column(modifier = modifier.fillMaxSize().padding(horizontal = 20.dp)) {
-        continueReading?.let { UnifiedContinueReadingCard(it, { onBookClick(it) }, Modifier.padding(top = 16.dp)) }
-        Row(modifier = Modifier.fillMaxWidth().padding(top = 20.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(stringResource(R.string.unified_library_your_books), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                Text("${books.size} ${if (books.size == 1) "book" else "books"}", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            IconButton(onClick = onSearchToggle) { Icon(Icons.Default.Search, stringResource(R.string.unified_library_search_books)) }
-            BadgedBox(
-                badge = {
-                    if (advancedFilterCount > 0) {
-                        Badge { Text(advancedFilterCount.toString()) }
-                    }
-                }
-            ) {
-                AssistChip(onClick = onControlsClick, label = { Text(stringResource(sortOrder.labelRes)) })
-            }
-        }
-        Surface(
-            modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
-            shape = RoundedCornerShape(20.dp),
-            color = MaterialTheme.colorScheme.surfaceContainerLow,
-            tonalElevation = 1.dp
-        ) {
-            FlowRow(
-                modifier = Modifier.padding(8.dp).animateContentSize(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                UnifiedLibraryFilter.entries.forEach { option ->
-                    FilterChip(
-                        selected = filter == option,
-                        onClick = { onFilterChange(option) },
-                        label = { Text(stringResource(option.labelRes)) }
-                    )
-                }
-            }
-        }
-        if (books.isEmpty()) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(stringResource(R.string.unified_library_no_books), color = MaterialTheme.colorScheme.onSurfaceVariant) }
-        } else {
-            // The header remains visible; only a large collection scrolls.
-            Surface(
-                modifier = Modifier.weight(1f).padding(top = 16.dp),
-                shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerLow,
-                tonalElevation = 1.dp
-            ) {
-                LazyVerticalGrid(columns = GridCells.Fixed(3), modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(12.dp, 16.dp, 12.dp, 96.dp), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                    items(books, key = { it.bookId }) { item ->
-                        RecentFileCard(item = item, isSelected = item.bookId in selectedBookIds, modifier = Modifier.fillMaxWidth(), onClick = { onBookClick(item) }, onLongClick = { onBookLongClick(item) }, isDownloading = item.bookId in downloadingBookIds, usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName)
-                    }
-                }
-            }
-        }
-    }
+    com.aryan.reader.shared.ui.SharedAndroidUnifiedLibraryHome(
+        books = books,
+        continueReading = continueReading.takeIf { filter == UnifiedLibraryFilter.ALL && query.isBlank() },
+        filter = filter,
+        sortLabel = stringResource(sortOrder.labelRes),
+        advancedFilterCount = advancedFilterCount,
+        useListView = useListView,
+        strings = com.aryan.reader.shared.ui.SharedAndroidUnifiedHomeStrings(
+            noBooks = stringResource(R.string.unified_library_no_books),
+            filterBooks = stringResource(R.string.content_desc_filter),
+            gridView = stringResource(R.string.unified_library_grid_view),
+            listView = stringResource(R.string.unified_library_list_view),
+            filterLabels = UnifiedLibraryFilter.entries.associateWith { stringResource(it.labelRes) },
+        ),
+        itemKey = { it.bookId },
+        onFilterChange = onFilterChange,
+        onControls = onControlsClick,
+        onAdvancedFilters = onAdvancedFiltersClick,
+        onListViewChange = onListViewChange,
+        continueCard = { item, cardModifier -> UnifiedContinueReadingCard(item, { onBookClick(item) }, cardModifier) },
+        bookCard = { item ->
+            RecentFileCard(
+                item = item,
+                isSelected = item.bookId in selectedBookIds,
+                modifier = Modifier.fillMaxWidth(),
+                onClick = { onBookClick(item) },
+                onLongClick = { onBookLongClick(item) },
+                isDownloading = item.bookId in downloadingBookIds,
+                usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName,
+            )
+        },
+        bookListItem = { item ->
+            LibraryListItem(
+                item = item,
+                isSelected = item.bookId in selectedBookIds,
+                isPinned = item.bookId in pinnedBookIds,
+                onItemClick = { onBookClick(item) },
+                onItemLongClick = { onBookLongClick(item) },
+                isDownloading = item.bookId in downloadingBookIds,
+                usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName,
+            )
+        },
+        modifier = modifier,
+    )
 }
 
 @Composable
@@ -802,61 +1003,30 @@ private fun UnifiedLibrarySearchResults(
     onBookClick: (RecentFileItem) -> Unit,
     onBookLongClick: (RecentFileItem) -> Unit,
 ) {
-    val focusRequester = remember { FocusRequester() }
-    LaunchedEffect(Unit) { focusRequester.requestFocus() }
-    Column(modifier = modifier.fillMaxSize().padding(horizontal = 20.dp)) {
-        Row(modifier = Modifier.fillMaxWidth().padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(
-                value = query,
-                onValueChange = onQueryChange,
-                modifier = Modifier.weight(1f).focusRequester(focusRequester).testTag("UnifiedLibrarySearch"),
-                placeholder = { Text(stringResource(R.string.unified_library_search_books)) },
-                leadingIcon = { Icon(Icons.Default.Search, null) },
-                trailingIcon = {
-                    if (query.isNotEmpty()) {
-                        IconButton(onClick = { onQueryChange("") }) {
-                            Icon(Icons.Default.Close, stringResource(R.string.action_clear))
-                        }
-                    }
-                },
-                singleLine = true
+    com.aryan.reader.shared.ui.SharedAndroidUnifiedLibrarySearch(
+        books = books,
+        query = query,
+        searchPlaceholder = stringResource(R.string.unified_library_search_books),
+        clearDescription = stringResource(R.string.action_clear),
+        closeDescription = stringResource(R.string.action_close),
+        resultLabel = if (query.isBlank()) stringResource(R.string.unified_library_your_books) else "${books.size} ${if (books.size == 1) "result" else "results"}",
+        noResultsLabel = stringResource(R.string.no_results_found, query),
+        itemKey = { it.bookId },
+        onQueryChange = onQueryChange,
+        onClose = onClose,
+        modifier = modifier,
+        bookCard = { item ->
+            RecentFileCard(
+                item = item,
+                isSelected = item.bookId in selectedBookIds,
+                modifier = Modifier.fillMaxWidth(),
+                onClick = { onBookClick(item) },
+                onLongClick = { onBookLongClick(item) },
+                isDownloading = item.bookId in downloadingBookIds,
+                usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName,
             )
-            IconButton(onClick = onClose) {
-                Icon(Icons.Default.Close, stringResource(R.string.action_close))
-            }
-        }
-        Text(
-            text = if (query.isBlank()) stringResource(R.string.unified_library_your_books) else "${books.size} ${if (books.size == 1) "result" else "results"}",
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(top = 12.dp, bottom = 8.dp)
-        )
-        if (books.isEmpty() && query.isNotBlank()) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(stringResource(R.string.no_results_found, query), color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        } else {
-            LazyVerticalGrid(
-                columns = GridCells.Fixed(3),
-                modifier = Modifier.weight(1f),
-                contentPadding = PaddingValues(bottom = 24.dp),
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                items(books, key = { it.bookId }) { item ->
-                    RecentFileCard(
-                        item = item,
-                        isSelected = item.bookId in selectedBookIds,
-                        modifier = Modifier.fillMaxWidth(),
-                        onClick = { onBookClick(item) },
-                        onLongClick = { onBookLongClick(item) },
-                        isDownloading = item.bookId in downloadingBookIds,
-                        usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName
-                    )
-                }
-            }
-        }
-    }
+        },
+    )
 }
 
 @Composable
@@ -872,27 +1042,30 @@ private fun UnifiedShelvesSection(
     onBookLongClick: (RecentFileItem) -> Unit,
 ) {
     val selectedShelf = shelves.find { it.id == selectedShelfId }
-    if (selectedShelf == null) {
-        val visibleShelves = remember(shelves) { shelves.filter { it.type != ShelfType.TAG && it.parentShelfId == null } }
-        if (visibleShelves.isEmpty()) {
-            Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(stringResource(R.string.unified_library_no_shelves), color = MaterialTheme.colorScheme.onSurfaceVariant) }
-        } else LazyColumn(modifier = modifier.fillMaxSize(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            items(visibleShelves, key = { it.id }) { shelf ->
-                ElevatedCard(modifier = Modifier.fillMaxWidth().clickable { onShelfSelected(shelf) }, colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
-                    Row(modifier = Modifier.fillMaxWidth().padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Folder, null, modifier = Modifier.size(28.dp), tint = MaterialTheme.colorScheme.primary)
-                        Spacer(Modifier.width(16.dp))
-                        Column(modifier = Modifier.weight(1f)) { Text(shelf.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold); Text("${shelf.bookCount} ${if (shelf.bookCount == 1) "book" else "books"}", color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                        Icon(Icons.AutoMirrored.Filled.ArrowForward, null)
-                    }
-                }
-            }
-        }
-    } else {
-        LazyVerticalGrid(columns = GridCells.Fixed(3), modifier = modifier.fillMaxSize().padding(horizontal = 20.dp), contentPadding = PaddingValues(top = 16.dp, bottom = 96.dp), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            items(selectedShelf.directBooks, key = { it.bookId }) { item -> RecentFileCard(item, item.bookId in selectedBookIds, Modifier.fillMaxWidth(), onClick = { onBookClick(item) }, onLongClick = { onBookLongClick(item) }, isDownloading = item.bookId in downloadingBookIds, usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName) }
-        }
-    }
+    val visibleShelves = remember(shelves) { shelves.filter { it.type != ShelfType.TAG && it.parentShelfId == null } }
+    com.aryan.reader.shared.ui.SharedAndroidUnifiedShelves(
+        visibleShelves = visibleShelves,
+        selectedShelf = selectedShelf,
+        selectedBooks = selectedShelf?.directBooks.orEmpty(),
+        noShelvesLabel = stringResource(R.string.unified_library_no_shelves),
+        shelfKey = { it.id },
+        shelfName = { it.name },
+        shelfBookCountLabel = { "${it.bookCount} ${if (it.bookCount == 1) "book" else "books"}" },
+        bookKey = { it.bookId },
+        onShelfSelected = onShelfSelected,
+        modifier = modifier,
+        bookCard = { item ->
+            RecentFileCard(
+                item = item,
+                isSelected = item.bookId in selectedBookIds,
+                modifier = Modifier.fillMaxWidth(),
+                onClick = { onBookClick(item) },
+                onLongClick = { onBookLongClick(item) },
+                isDownloading = item.bookId in downloadingBookIds,
+                usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName,
+            )
+        },
+    )
 }
 
 @Composable
@@ -926,96 +1099,72 @@ private fun UnifiedFoldersSection(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun UnifiedLibraryControlsSheet(currentFilter: UnifiedLibraryFilter, currentSortOrder: SortOrder, onFilterChanged: (UnifiedLibraryFilter) -> Unit, onSortChanged: (SortOrder) -> Unit, onAdvancedFiltersClick: () -> Unit, onDismiss: () -> Unit) {
-    ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(modifier = Modifier.fillMaxWidth().padding(24.dp).navigationBarsPadding()) {
-            Text(stringResource(R.string.unified_library_sort_filter), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            Text(stringResource(R.string.filter_read_status), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 20.dp, bottom = 8.dp))
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { UnifiedLibraryFilter.entries.forEach { option -> FilterChip(selected = currentFilter == option, onClick = { onFilterChanged(option) }, label = { Text(stringResource(option.labelRes)) }) } }
-            Text(stringResource(R.string.content_desc_sort), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 20.dp, bottom = 8.dp))
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { SortOrder.entries.forEach { order -> FilterChip(selected = currentSortOrder == order, onClick = { onSortChanged(order) }, label = { Text(stringResource(order.labelRes)) }) } }
-            OutlinedButton(onClick = onAdvancedFiltersClick, modifier = Modifier.fillMaxWidth().padding(top = 20.dp)) { Text(stringResource(R.string.filter_library)) }
-        }
-    }
+    com.aryan.reader.shared.ui.SharedAndroidUnifiedLibraryControlsSheet(
+        currentFilter = currentFilter,
+        currentSortOrder = currentSortOrder,
+        strings = com.aryan.reader.shared.ui.SharedAndroidUnifiedControlsStrings(
+            title = stringResource(R.string.unified_library_sort_filter),
+            readStatus = stringResource(R.string.filter_read_status),
+            sort = stringResource(R.string.content_desc_sort),
+            advancedFilters = stringResource(R.string.filter_library),
+            filterLabels = UnifiedLibraryFilter.entries.associateWith { stringResource(it.labelRes) },
+            sortLabels = SortOrder.entries.associateWith { stringResource(it.labelRes) },
+        ),
+        onFilterChanged = onFilterChanged,
+        onSortChanged = onSortChanged,
+        onAdvancedFilters = onAdvancedFiltersClick,
+        onDismiss = onDismiss,
+    )
 }
 
 @Composable
 private fun UnifiedCreateShelfDialog(onConfirm: (String) -> Unit, onDismiss: () -> Unit) {
-    var name by remember { mutableStateOf("") }
-    AlertDialog(onDismissRequest = onDismiss, title = { Text(stringResource(R.string.create_new_shelf)) }, text = { OutlinedTextField(name, { name = it }, label = { Text(stringResource(R.string.shelf_name_hint)) }, singleLine = true) }, confirmButton = { TextButton(onClick = { onConfirm(name) }, enabled = name.isNotBlank()) { Text(stringResource(R.string.action_create)) } }, dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) } })
+    com.aryan.reader.shared.ui.SharedAndroidUnifiedCreateShelfDialog(
+        title = stringResource(R.string.create_new_shelf),
+        nameLabel = stringResource(R.string.shelf_name_hint),
+        createLabel = stringResource(R.string.action_create),
+        cancelLabel = stringResource(R.string.action_cancel),
+        onConfirm = onConfirm,
+        onDismiss = onDismiss,
+    )
 }
 
 @Composable
 private fun UnifiedContinueReadingCard(item: RecentFileItem, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val progress = (item.progressPercentage ?: 0f).coerceIn(0f, 100f)
-    val coverTone = generatedBookCoverColor(item)
-    val shape = RoundedCornerShape(28.dp)
-    Surface(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(178.dp)
-            .clip(shape)
-            .testTag("UnifiedLibraryContinueReading")
-            .combinedClickable(onClick = onClick, onLongClick = {}),
-        color = MaterialTheme.colorScheme.inverseSurface,
-        contentColor = MaterialTheme.colorScheme.inverseOnSurface,
-        shadowElevation = 5.dp
-    ) {
-        Box(
-            modifier = Modifier.background(
-                Brush.horizontalGradient(
-                    0f to coverTone.copy(alpha = 0.74f),
-                    0.48f to coverTone.copy(alpha = 0.28f),
-                    1f to MaterialTheme.colorScheme.inverseSurface
-                )
-            )
-        ) {
-            Row(
-                modifier = Modifier.fillMaxSize().padding(start = 16.dp, end = 18.dp),
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box(modifier = Modifier.width(94.dp).fillMaxHeight()) {
+    com.aryan.reader.shared.ui.SharedAndroidUnifiedContinueCard(
+        sectionLabel = stringResource(R.string.unified_library_continue_reading),
+        title = item.cardTitle(),
+        author = item.cardAuthor(),
+        progressPercent = progress,
+        progressLabel = stringResource(R.string.progress_complete, progress.toInt()),
+        sourceLabel = if (item.sourceFolderUri != null) "· Local folder" else null,
+        coverTone = generatedBookCoverColor(item),
+        onClick = onClick,
+        modifier = modifier,
+        cover = { coverModifier ->
                     ThemedBookCover(
                         item = item,
-                        modifier = Modifier
+                modifier = coverModifier
                             .size(94.dp, 146.dp)
-                            .align(Alignment.CenterStart)
                             .shadow(10.dp, RoundedCornerShape(18.dp), clip = true),
                         contentDescription = item.displayName,
-                        contentScale = ContentScale.Crop
+                contentScale = ContentScale.Crop,
                     )
-                }
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(stringResource(R.string.unified_library_continue_reading).uppercase(), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
-                    Text(item.cardTitle(), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(item.cardAuthor(), style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.inverseOnSurface.copy(alpha = 0.72f))
-                    Row(
-                        modifier = Modifier.padding(top = 6.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
+        },
+        fileTypeBadge = {
                         FileTypeBadge(type = item.type, overlay = true, compact = true)
-                        if (item.sourceFolderUri != null) {
-                            Text(
-                                text = "· Local folder",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.inverseOnSurface.copy(alpha = 0.66f),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    }
-                    Spacer(Modifier.height(10.dp))
-                    Text(stringResource(R.string.progress_complete, progress.toInt()), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.inverseOnSurface.copy(alpha = 0.82f))
-                    Spacer(Modifier.height(6.dp))
-                    androidx.compose.material3.LinearProgressIndicator(progress = { progress / 100f }, modifier = Modifier.fillMaxWidth().height(6.dp), color = MaterialTheme.colorScheme.inverseOnSurface, trackColor = MaterialTheme.colorScheme.inverseOnSurface.copy(alpha = 0.25f))
-                }
-            }
-        }
-    }
+        },
+    )
 }
 
-internal enum class UnifiedLibraryFilter(val labelRes: Int) { ALL(R.string.unified_library_all), READING(R.string.unified_library_reading), FINISHED(R.string.unified_library_finished), UNREAD(R.string.unified_library_unread) }
+private val UnifiedLibraryFilter.labelRes: Int
+    get() = when (this) {
+        UnifiedLibraryFilter.ALL -> R.string.unified_library_all
+        UnifiedLibraryFilter.READING -> R.string.unified_library_reading
+        UnifiedLibraryFilter.FINISHED -> R.string.unified_library_finished
+        UnifiedLibraryFilter.UNREAD -> R.string.unified_library_unread
+    }
 
 private fun LibraryFilters.selectedFilterCount(): Int =
     fileTypes.size + sourceFolders.size + tagIds.size + if (readStatus == ReadStatusFilter.ALL) 0 else 1

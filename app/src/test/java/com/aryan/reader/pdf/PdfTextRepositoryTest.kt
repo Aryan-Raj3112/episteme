@@ -1,7 +1,7 @@
 package com.aryan.reader.pdf
 
 import android.content.Context
-import com.aryan.reader.SearchResult
+import com.aryan.reader.shared.SearchResult
 import com.aryan.reader.pdf.data.PdfMetaDao
 import com.aryan.reader.pdf.data.PdfMetadata
 import com.aryan.reader.pdf.data.PdfSearchIndex

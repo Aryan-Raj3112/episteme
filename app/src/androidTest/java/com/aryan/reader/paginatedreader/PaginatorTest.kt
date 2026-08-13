@@ -48,6 +48,8 @@ class FakeSplittableMeasurementProvider(
     override suspend fun split(block: TableBlock, availableHeight: Int): Pair<TableBlock, TableBlock>? = null
 
     override suspend fun split(block: FlexContainerBlock, availableHeight: Int): Pair<FlexContainerBlock, FlexContainerBlock>? = null
+
+    override suspend fun split(block: ChantScoreBlock, availableHeight: Int): Pair<ChantScoreBlock, ChantScoreBlock>? = null
 }
 
 @RunWith(AndroidJUnit4::class)
@@ -87,6 +89,7 @@ class PaginatorTest {
                 children = children.withoutMeasuredHeights(),
                 expectedHeight = 0
             )
+            is ChantScoreBlock -> copy(expectedHeight = 0)
         }
     }
 

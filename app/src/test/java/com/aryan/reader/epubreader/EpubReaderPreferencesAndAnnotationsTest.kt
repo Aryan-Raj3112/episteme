@@ -38,6 +38,8 @@ class EpubReaderPreferencesAndAnnotationsTest {
         assertEquals(DEFAULT_LINE_HEIGHT_VAL, format.lineHeight, 0.0001f)
         assertEquals(DEFAULT_PARAGRAPH_GAP_VAL, format.paragraphGap, 0.0001f)
         assertEquals(DEFAULT_IMAGE_SIZE_VAL, format.imageSize, 0.0001f)
+        assertEquals(DEFAULT_FONT_WEIGHT_VAL, format.fontWeight)
+        assertEquals(DEFAULT_LETTER_SPACING_VAL, format.letterSpacing, 0.0001f)
         assertEquals(ReaderFont.ORIGINAL, format.font)
         assertEquals(ReaderTextAlign.DEFAULT, format.textAlign)
         assertNull(format.customPath)
@@ -59,7 +61,9 @@ class EpubReaderPreferencesAndAnnotationsTest {
             verticalMargin = 0.4f,
             fontFamily = ReaderFont.LORA,
             customFontPath = null,
-            textAlign = ReaderTextAlign.RIGHT
+            textAlign = ReaderTextAlign.RIGHT,
+            fontWeight = 600,
+            letterSpacing = 0.04f
         )
         saveLocalReaderSettings(
             context = context,
@@ -72,7 +76,9 @@ class EpubReaderPreferencesAndAnnotationsTest {
             verticalMargin = 2.2f,
             fontFamily = ReaderFont.MERRIWEATHER,
             customFontPath = "/fonts/custom.ttf",
-            textAlign = ReaderTextAlign.LEFT
+            textAlign = ReaderTextAlign.LEFT,
+            fontWeight = 700,
+            letterSpacing = 0.08f
         )
 
         val global = loadFormatSettings(context, bookId = "book", isLocal = false)
@@ -81,6 +87,8 @@ class EpubReaderPreferencesAndAnnotationsTest {
         assertEquals(1.4f, global.fontSize, 0.0001f)
         assertEquals(ReaderFont.LORA, global.font)
         assertEquals(ReaderTextAlign.RIGHT, global.textAlign)
+        assertEquals(600, global.fontWeight)
+        assertEquals(0.04f, global.letterSpacing, 0.0001f)
         assertNull(global.customPath)
         assertEquals(0.9f, local.fontSize, 0.0001f)
         assertEquals(1.1f, local.lineHeight, 0.0001f)
@@ -91,6 +99,20 @@ class EpubReaderPreferencesAndAnnotationsTest {
         assertEquals(ReaderFont.ORIGINAL, local.font)
         assertEquals("/fonts/custom.ttf", local.customPath)
         assertEquals(ReaderTextAlign.LEFT, local.textAlign)
+        assertEquals(700, local.fontWeight)
+        assertEquals(0.08f, local.letterSpacing, 0.0001f)
+    }
+
+    @Test
+    fun `format steppers preserve supported values and original font weight`() {
+        assertEquals(500, nextFontWeight(DEFAULT_FONT_WEIGHT_VAL))
+        assertEquals(600, nextFontWeight(500))
+        assertEquals(0, previousFontWeight(100))
+        assertEquals(1000, nextFontWeight(1000))
+        assertEquals(0.50f, stepFormatValue(0.49f, 0.01f, -0.10f, 0.50f, 100f), 0.0001f)
+        assertEquals(-0.10f, stepFormatValue(-0.10f, -0.01f, -0.10f, 0.50f, 100f), 0.0001f)
+        assertEquals("Original", formatFontWeight(0))
+        assertEquals("+0.05em", formatLetterSpacing(0.05f))
     }
 
     @Test
@@ -249,9 +271,9 @@ class EpubReaderPreferencesAndAnnotationsTest {
         assertEquals(1, countWords("word"))
         assertEquals(3, countWords(" one\ttwo\nthree "))
 
-        val source = java.io.File("app/src/main/java/com/aryan/reader/Common.kt")
+        val source = java.io.File("app/src/main/java/com/aryan/reader/AndroidAiClient.kt")
             .takeIf { it.isFile }
-            ?: java.io.File("src/main/java/com/aryan/reader/Common.kt")
+            ?: java.io.File("src/main/java/com/aryan/reader/AndroidAiClient.kt")
         assertFalse(source.readText().contains("split(Regex("))
     }
 

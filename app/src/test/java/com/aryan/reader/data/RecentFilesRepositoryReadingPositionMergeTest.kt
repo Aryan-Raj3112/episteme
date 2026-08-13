@@ -83,6 +83,8 @@ class RecentFilesRepositoryReadingPositionMergeTest {
         assertEquals(24, inserted.captured.locatorBlockIndex)
         assertEquals(44, inserted.captured.locatorCharOffset)
         assertEquals(71.5f, inserted.captured.progressPercentage)
+        assertEquals(500L, inserted.captured.dateAddedTimestamp)
+        assertEquals(2_000L, inserted.captured.timestamp)
         coVerify { recentFileDao.insertOrUpdateFile(any()) }
     }
 
@@ -254,6 +256,7 @@ class RecentFilesRepositoryReadingPositionMergeTest {
             type = FileType.EPUB,
             displayName = "Old.epub",
             timestamp = 1_000L,
+            dateAddedTimestamp = 500L,
             coverImagePath = coverImagePath,
             title = "Old",
             author = "Author",

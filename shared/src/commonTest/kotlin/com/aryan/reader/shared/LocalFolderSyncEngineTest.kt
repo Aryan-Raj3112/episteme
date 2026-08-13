@@ -179,6 +179,50 @@ class LocalFolderSyncEngineTest {
     }
 
     @Test
+    fun `sync migrates legacy content hash folder identity without losing reading state`() {
+        val oldId = "a".repeat(64)
+        val existing = book(
+            id = oldId,
+            path = "C:/Library/Book.epub",
+            displayName = "Book.epub",
+            sourceFolder = "C:/Library",
+            fileSize = 123L,
+            title = "Embedded title",
+        ).copy(
+            progressPercentage = 42f,
+            lastPageIndex = 7,
+            fileContentModifiedTimestamp = 500L,
+        )
+        val result = LocalFolderSyncEngine.syncFolder(
+            state = SharedReaderScreenState(
+                rawLibraryBooks = listOf(existing),
+                selectedBookIds = setOf(oldId),
+                pinnedLibraryBookIds = setOf(oldId),
+            ),
+            folder = syncedFolder(),
+            files = listOf(
+                scannedFile(
+                    name = "Book.epub",
+                    relativePath = "Book.epub",
+                    size = 123L,
+                    lastModified = 500L,
+                )
+            ),
+            remoteMetadata = emptyMap(),
+            nowMillis = 1_000L,
+        )
+
+        val migrated = result.state.rawLibraryBooks.single()
+        assertEquals("local_Book.epub", migrated.id)
+        assertEquals(42f, migrated.progressPercentage)
+        assertEquals(7, migrated.lastPageIndex)
+        assertEquals("Embedded title", migrated.title)
+        assertEquals(setOf("local_Book.epub"), result.state.selectedBookIds)
+        assertEquals(setOf("local_Book.epub"), result.state.pinnedLibraryBookIds)
+        assertEquals(mapOf(oldId to "local_Book.epub"), result.idMigrations)
+    }
+
+    @Test
     fun `sync resolves legacy root id collision before migrating subfolder book`() {
         val oldId = "local_Book.pdf"
         val state = SharedReaderScreenState(
@@ -452,6 +496,8 @@ class LocalFolderSyncEngineTest {
         assertNull(updated.description)
         assertNull(updated.seriesName)
         assertNull(updated.originalTitle)
+        assertEquals(existing.progressPercentage, updated.progressPercentage)
+        assertEquals(existing.lastPageIndex, updated.lastPageIndex)
     }
 
     @Test

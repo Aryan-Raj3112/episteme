@@ -3,6 +3,7 @@ package com.aryan.reader.shared
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.isSpecified
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.text.font.FontFamily
 import com.aryan.reader.shared.reader.ReaderReadingMode
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.SharedReaderTextAlign
@@ -16,6 +17,13 @@ enum class ReaderFont(val id: String, val displayName: String, val fontFamilyNam
     LORA("lora", "Lora", "Lora"),
     ROBOTO_MONO("roboto_mono", "Roboto Mono", "Roboto Mono"),
     LEXEND("lexend", "Lexend", "Lexend")
+}
+
+fun ReaderSettings.toSharedReaderFontFamily(): FontFamily = when (fontFamily) {
+    "Merriweather", "Lora", "Serif" -> FontFamily.Serif
+    "Lato", "Lexend", "Sans" -> FontFamily.SansSerif
+    "Roboto Mono", "Mono" -> FontFamily.Monospace
+    else -> FontFamily.Default
 }
 
 enum class ReaderTextAlign(val id: String, val cssValue: String, val displayName: String) {
@@ -42,6 +50,38 @@ enum class PageInfoPosition(val id: Int, val title: String) {
     TOP(1, "Top")
 }
 
+fun shouldShowEpubPageInfoBar(
+    pageInfoMode: PageInfoMode,
+    showReaderChrome: Boolean
+): Boolean = when (pageInfoMode) {
+    PageInfoMode.DEFAULT -> true
+    PageInfoMode.SYNC -> showReaderChrome
+    PageInfoMode.HIDDEN -> false
+}
+
+fun shouldReserveEpubPageInfoBarSpace(
+    pageInfoMode: PageInfoMode,
+    showReaderChrome: Boolean,
+    isNativeVerticalMode: Boolean
+): Boolean {
+    if (isNativeVerticalMode || pageInfoMode == PageInfoMode.SYNC) return false
+    return shouldShowEpubPageInfoBar(pageInfoMode, showReaderChrome)
+}
+
+fun stepEpubFormatValue(
+    value: Float,
+    delta: Float,
+    minimum: Float,
+    maximum: Float,
+    precision: Float = 10f
+): Float = (((value + delta).coerceIn(minimum, maximum) * precision).roundToInt() / precision)
+
+fun nextEpubFontWeight(value: Int): Int =
+    if (value <= 0) 500 else (value + 100).coerceAtMost(1000)
+
+fun previousEpubFontWeight(value: Int): Int =
+    if (value <= 100) 0 else (value - 100).coerceAtLeast(100)
+
 data class FormatSettings(
     val fontSize: Float,
     val lineHeight: Float,
@@ -51,7 +91,9 @@ data class FormatSettings(
     val font: ReaderFont,
     val customPath: String?,
     val textAlign: ReaderTextAlign,
-    val verticalMargin: Float = 1.0f
+    val verticalMargin: Float = 1.0f,
+    val fontWeight: Int = 0,
+    val letterSpacing: Float = 0f
 )
 
 enum class ReaderTexture(val id: String, val displayName: String, val assetPath: String) {
@@ -115,6 +157,17 @@ fun List<ReaderTheme>.sanitizeCustomReaderThemes(): List<ReaderTheme> {
         .asReversed()
 }
 
+fun resolveReaderTheme(
+    themeId: String?,
+    builtInThemes: List<ReaderTheme>,
+    customThemes: List<ReaderTheme>,
+): ReaderTheme? {
+    val id = themeId?.takeIf(String::isNotBlank) ?: return builtInThemes.firstOrNull()
+    return customThemes.sanitizeCustomReaderThemes().firstOrNull { it.id == id }
+        ?: builtInThemes.firstOrNull { it.id == id }
+        ?: builtInThemes.firstOrNull()
+}
+
 private val StandardReaderSolidThemes = listOf(
     ReaderTheme("light", "Light", Color(0xFFFFFFFF), Color(0xFF000000), false),
     ReaderTheme("dark", "Dark", Color(0xFF121212), Color(0xFFE0E0E0), true),
@@ -151,6 +204,8 @@ fun FormatSettings.toReaderSettings(base: ReaderSettings = ReaderSettings()): Re
     return base.copy(
         fontSize = (ReaderAppearanceDefaults.fontSizePx * fontSize).roundToInt()
             .coerceIn(ReaderAppearanceDefaults.minFontSizePx, ReaderAppearanceDefaults.maxFontSizePx),
+        fontWeight = fontWeight.coerceIn(0, 1000),
+        letterSpacing = letterSpacing.coerceIn(-0.10f, 0.50f),
         lineSpacing = (ReaderAppearanceDefaults.lineSpacing * lineHeight)
             .coerceIn(ReaderAppearanceDefaults.minLineSpacing, ReaderAppearanceDefaults.maxLineSpacing),
         margin = max(horizontalMarginPx, verticalMarginPx),
@@ -170,6 +225,22 @@ fun FormatSettings.toReaderSettings(base: ReaderSettings = ReaderSettings()): Re
     )
 }
 
+/** Replaces only Android's Global/Local Format fields, preserving reader mode and visual options. */
+fun ReaderSettings.withReaderFormatFrom(format: ReaderSettings): ReaderSettings = copy(
+    fontSize = format.fontSize,
+    fontWeight = format.fontWeight,
+    letterSpacing = format.letterSpacing,
+    lineSpacing = format.lineSpacing,
+    margin = format.margin,
+    horizontalMargin = format.horizontalMargin,
+    verticalMargin = format.verticalMargin,
+    textAlign = format.textAlign,
+    fontFamily = format.fontFamily,
+    customFontPath = format.customFontPath,
+    paragraphSpacing = format.paragraphSpacing,
+    imageScale = format.imageScale
+)
+
 fun ReaderTheme.toReaderSettings(base: ReaderSettings = ReaderSettings()): ReaderSettings {
     return base.copy(
         darkMode = isDark,
@@ -184,6 +255,8 @@ fun ReaderSettings.resetReaderFormatSettings(): ReaderSettings {
     val defaults = ReaderSettings()
     return copy(
         fontSize = defaults.fontSize,
+        fontWeight = defaults.fontWeight,
+        letterSpacing = defaults.letterSpacing,
         lineSpacing = defaults.lineSpacing,
         margin = defaults.margin,
         horizontalMargin = defaults.horizontalMargin,
@@ -260,8 +333,8 @@ fun RenderMode.toReaderReadingMode(): ReaderReadingMode {
 
 fun ReaderTextAlign.toSharedReaderTextAlign(): SharedReaderTextAlign {
     return when (this) {
-        ReaderTextAlign.DEFAULT,
-        ReaderTextAlign.LEFT -> SharedReaderTextAlign.START
+        ReaderTextAlign.DEFAULT -> SharedReaderTextAlign.START
+        ReaderTextAlign.LEFT -> SharedReaderTextAlign.LEFT
         ReaderTextAlign.RIGHT -> SharedReaderTextAlign.RIGHT
         ReaderTextAlign.JUSTIFY -> SharedReaderTextAlign.JUSTIFY
     }

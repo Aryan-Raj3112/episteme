@@ -264,7 +264,7 @@ class SharedEpubPaginationCacheTest {
     }
 
     @Test
-    fun `saving more than three configurations removes oldest page cache`() = runBlocking {
+    fun `saving more than three configurations removes oldest page cache`(): Unit = runBlocking {
         val root = Files.createTempDirectory("reader-page-cache").toFile()
         try {
             val book = cacheBook()

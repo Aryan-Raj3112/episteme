@@ -845,6 +845,97 @@ object DesktopPdfium {
         }.getOrDefault(emptyList())
     }
 
+    @Synchronized
+    fun textForRange(
+        document: DesktopPdfDocument,
+        pageIndex: Int,
+        startIndex: Int,
+        endIndex: Int
+    ): String {
+        openPptxDocuments[document.handleId]?.let { pptx ->
+            val text = pptx.textPageData(pageIndex).text
+            if (text.isEmpty()) return ""
+            val first = minOf(startIndex, endIndex).coerceIn(0, text.lastIndex)
+            val last = maxOf(startIndex, endIndex).coerceIn(first, text.lastIndex)
+            return text.substring(first, last + 1)
+        }
+        val nativeDocument = openDocuments[document.handleId]?.pointer ?: return ""
+        if (document.pageSizes.getOrNull(pageIndex) == null) return ""
+        val first = minOf(startIndex, endIndex).coerceAtLeast(0)
+        val requestedLast = maxOf(startIndex, endIndex)
+        return runCatching {
+            loadPage(nativeDocument, pageIndex).usePointer { page ->
+                val textPage = api.FPDFText_LoadPage(page) ?: return@usePointer ""
+                try {
+                    val charCount = api.FPDFText_CountChars(textPage)
+                    if (first >= charCount) return@usePointer ""
+                    val safeLast = requestedLast.coerceAtMost(charCount - 1)
+                    val safeCount = (safeLast - first + 1).coerceAtLeast(1)
+                    buildString(safeCount) {
+                        for (index in first until first + safeCount) {
+                            val unicode = runCatching {
+                                api.FPDFText_GetUnicode(textPage, index)
+                            }.getOrDefault(0)
+                            if (unicode > 0) append(unicode.toChar())
+                        }
+                    }
+                } finally {
+                    api.FPDFText_ClosePage(textPage)
+                }
+            }
+        }.getOrDefault("")
+    }
+
+    @Synchronized
+    fun charRectsForRange(
+        document: DesktopPdfDocument,
+        pageIndex: Int,
+        startIndex: Int,
+        endIndex: Int,
+        viewportWidth: Int? = null,
+        viewportHeight: Int? = null
+    ): List<DesktopPdfTextRect> {
+        val nativeDocument = openDocuments[document.handleId]?.pointer ?: return emptyList()
+        val pageSize = document.pageSizes.getOrNull(pageIndex) ?: return emptyList()
+        val viewport = pageSize.normalizedViewport(viewportWidth, viewportHeight)
+        val first = minOf(startIndex, endIndex).coerceAtLeast(0)
+        val last = maxOf(startIndex, endIndex)
+        return runCatching {
+            loadPage(nativeDocument, pageIndex).usePointer { page ->
+                val textPage = api.FPDFText_LoadPage(page) ?: return@usePointer emptyList()
+                try {
+                    val charCount = api.FPDFText_CountChars(textPage)
+                    if (first >= charCount) return@usePointer emptyList()
+                    (first..last.coerceAtMost(charCount - 1)).mapNotNull { index ->
+                        val left = DoubleArray(1)
+                        val right = DoubleArray(1)
+                        val bottom = DoubleArray(1)
+                        val top = DoubleArray(1)
+                        val hasBox = runCatching {
+                            api.FPDFText_GetCharBox(textPage, index, left, right, bottom, top)
+                        }.getOrDefault(0) != 0
+                        if (!hasBox || right[0] <= left[0] || top[0] <= bottom[0]) {
+                            null
+                        } else {
+                            val bounds = pageToNormalizedBounds(
+                                page = page,
+                                pageSize = pageSize,
+                                viewport = viewport,
+                                left = left[0],
+                                top = top[0],
+                                right = right[0],
+                                bottom = bottom[0]
+                            )
+                            DesktopPdfTextRect(bounds.left, bounds.top, bounds.right, bounds.bottom)
+                        }
+                    }
+                } finally {
+                    api.FPDFText_ClosePage(textPage)
+                }
+            }
+        }.getOrDefault(emptyList())
+    }
+
     private fun linkAnnotationAt(
         document: Pointer,
         page: Pointer,

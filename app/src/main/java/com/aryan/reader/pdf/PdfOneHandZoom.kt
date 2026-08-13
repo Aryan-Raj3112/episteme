@@ -4,7 +4,6 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.input.pointer.PointerEventTimeoutCancellationException
 import androidx.compose.ui.input.pointer.PointerId
 import androidx.compose.ui.input.pointer.PointerInputChange
@@ -17,91 +16,8 @@ import kotlinx.coroutines.withTimeout
 import timber.log.Timber
 import kotlin.math.abs
 import kotlin.math.max
-import kotlin.math.pow
 
 internal const val PDF_ONE_HAND_ZOOM_TRACE_TAG = "PdfOneHandZoomTrace"
-internal const val PDF_ONE_HAND_ZOOM_HOLD_TIMEOUT_MS = 90L
-internal const val PDF_ONE_HAND_ZOOM_DRAG_DISTANCE_FOR_DOUBLE_DP = 240f
-
-internal enum class PdfSecondTapZoomAction {
-    QUICK_DOUBLE_TAP,
-    ONE_HAND_ZOOM,
-    HELD_NO_MOVEMENT
-}
-
-internal fun classifyPdfSecondTapZoomAction(
-    pressDurationMillis: Long,
-    totalDragY: Float,
-    movementSlopPx: Float,
-    holdTimeoutMillis: Long = PDF_ONE_HAND_ZOOM_HOLD_TIMEOUT_MS
-): PdfSecondTapZoomAction {
-    return when {
-        pressDurationMillis < holdTimeoutMillis -> PdfSecondTapZoomAction.QUICK_DOUBLE_TAP
-        abs(totalDragY) >= movementSlopPx -> PdfSecondTapZoomAction.ONE_HAND_ZOOM
-        else -> PdfSecondTapZoomAction.HELD_NO_MOVEMENT
-    }
-}
-
-internal fun pdfOneHandZoomScale(
-    startScale: Float,
-    totalDragY: Float,
-    dragDistanceForDoublePx: Float,
-    minScale: Float,
-    maxScale: Float
-): Float {
-    val safeStart = startScale.takeIf { it.isFinite() && it > 0f } ?: minScale
-    val safeDistance = dragDistanceForDoublePx.takeIf { it.isFinite() && it > 0f } ?: 1f
-    val scaleMultiplier = 2f.pow(totalDragY / safeDistance)
-    return (safeStart * scaleMultiplier).coerceIn(minScale, maxScale)
-}
-
-internal fun clampCenteredPdfCameraOffset(
-    scale: Float,
-    offset: Offset,
-    viewportSize: Size,
-    contentSize: Size
-): Offset {
-    if (viewportSize.width <= 0f || viewportSize.height <= 0f || scale <= 1f) {
-        return Offset.Zero
-    }
-    val maxOffsetX = ((contentSize.width * scale) - viewportSize.width).coerceAtLeast(0f) / 2f
-    val maxOffsetY = ((contentSize.height * scale) - viewportSize.height).coerceAtLeast(0f) / 2f
-    return Offset(
-        x = offset.x.coerceIn(-maxOffsetX, maxOffsetX),
-        y = offset.y.coerceIn(-maxOffsetY, maxOffsetY)
-    )
-}
-
-internal fun centeredPdfCameraOffsetForScaleChange(
-    previousScale: Float,
-    nextScale: Float,
-    previousOffset: Offset,
-    pivot: Offset,
-    viewportSize: Size,
-    contentSize: Size
-): Offset {
-    val safePreviousScale = previousScale.takeIf { it.isFinite() && it > 0f } ?: 1f
-    val ratio = nextScale / safePreviousScale
-    val viewportCenter = Offset(viewportSize.width / 2f, viewportSize.height / 2f)
-    val targetOffset = previousOffset * ratio + (pivot - viewportCenter) * (1f - ratio)
-    return clampCenteredPdfCameraOffset(
-        scale = nextScale,
-        offset = targetOffset,
-        viewportSize = viewportSize,
-        contentSize = contentSize
-    )
-}
-
-internal fun topLeftPdfPanForScaleChange(
-    previousScale: Float,
-    nextScale: Float,
-    previousPan: Offset,
-    pivot: Offset
-): Offset {
-    val safePreviousScale = previousScale.takeIf { it.isFinite() && it > 0f } ?: 1f
-    val contentPivot = (pivot - previousPan) / safePreviousScale
-    return pivot - (contentPivot * nextScale)
-}
 
 private fun Offset.traceString(): String = "(${x.toInt()},${y.toInt()})"
 

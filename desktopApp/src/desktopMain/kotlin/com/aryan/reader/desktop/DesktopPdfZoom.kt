@@ -618,6 +618,10 @@ internal fun Modifier.desktopPdfZoomGestures(
                     val zoomDelta = if (abs(scrollDelta.y) >= abs(scrollDelta.x)) scrollDelta.y else scrollDelta.x
                     val factor = desktopPdfScrollZoomFactor(zoomDelta)
                     if (abs(factor - 1f) > 0.0001f) {
+                        logDesktopTrackpadZoom {
+                            "event=compose_ctrl_scroll delta=$zoomDelta factor=$factor anchor=" +
+                                event.changes.firstOrNull()?.position.formatLogOffset()
+                        }
                         applyZoomFactor(factor, eventTime, event.changes.firstOrNull()?.position)
                         event.changes.forEach { it.consume() }
                     }
@@ -627,6 +631,9 @@ internal fun Modifier.desktopPdfZoomGestures(
                 val pressedPointers = event.changes.count { it.pressed }
                 if (pressedPointers > 1) {
                     val zoomChange = event.calculateZoom()
+                    logDesktopTrackpadZoom {
+                        "event=compose_multi_pointer pointers=$pressedPointers zoom=$zoomChange type=${event.type}"
+                    }
                     if (zoomChange.isFinite() && abs(zoomChange - 1f) > 0.005f) {
                         val centroid = event.calculateCentroid(useCurrent = false)
                         val anchor = if (centroid == Offset.Unspecified) {

@@ -28,6 +28,8 @@ private const val LINUX_SECRET_SERVICE_APPLICATION_VALUE = "Episteme.Reader"
 private const val LINUX_SECRET_SERVICE_KEY_ATTRIBUTE = "key"
 private const val LINUX_LIBSECRET_PREFIX = "linux-libsecret:"
 private const val LINUX_SECRET_TOOL_PREFIX = "secret-tool:"
+private const val MACOS_KEYCHAIN_PREFIX = "macos-keychain:"
+private const val MACOS_KEYCHAIN_SERVICE = "com.aryan.reader.Episteme"
 
 internal class DesktopAiByokStore(
     private val settingsFile: File = defaultSettingsFile(),
@@ -185,6 +187,8 @@ internal interface DesktopSecretCodec {
             val codec = when {
                 osName.startsWith("Windows", ignoreCase = true) -> WindowsSecretCodec
                 osName.contains("Linux", ignoreCase = true) -> LinuxSecretServiceCodec()
+                osName.startsWith("Mac", ignoreCase = true) ||
+                    osName.contains("Darwin", ignoreCase = true) -> MacOsKeychainSecretCodec()
                 else -> UnavailableDesktopSecretCodec
             }
             logDesktopTts("settings_platform os=\"${osName.desktopTtsPreview()}\" codec=${codec.name}")
@@ -219,6 +223,9 @@ internal interface DesktopSecretCommandRunner {
 
 private object DesktopProcessSecretCommandRunner : DesktopSecretCommandRunner {
     override fun isExecutableAvailable(command: String): Boolean {
+        if (command.contains(File.separatorChar)) {
+            return File(command).let { it.isFile && it.canExecute() }
+        }
         val path = System.getenv("PATH").orEmpty()
         return path.split(File.pathSeparator)
             .asSequence()
@@ -248,6 +255,72 @@ private object DesktopProcessSecretCommandRunner : DesktopSecretCommandRunner {
             stdout = process.inputStream.readBytes().toString(Charsets.UTF_8),
             stderr = process.errorStream.readBytes().toString(Charsets.UTF_8)
         )
+    }
+}
+
+internal class MacOsKeychainSecretCodec(
+    private val commandRunner: DesktopSecretCommandRunner = DesktopProcessSecretCommandRunner
+) : DesktopSecretCodec {
+    override val name: String = "macos-keychain"
+    override val isAvailable: Boolean
+        get() = commandRunner.isExecutableAvailable(SecurityCommand)
+
+    override fun protect(value: String): String = protect("secret", value)
+
+    override fun unprotect(value: String): String = unprotect("secret", value)
+
+    override fun protect(keyName: String, value: String): String {
+        check(isAvailable) { "macOS Keychain command is unavailable." }
+        val account = macOsKeychainAccount(keyName)
+        val result = commandRunner.run(
+            listOf(
+                SecurityCommand,
+                "add-generic-password",
+                "-U",
+                "-a", account,
+                "-s", MACOS_KEYCHAIN_SERVICE,
+                "-w", value
+            )
+        )
+        check(result.isSuccess) { "Could not store secret in macOS Keychain: ${result.errorSummary}" }
+        return "$MACOS_KEYCHAIN_PREFIX$account"
+    }
+
+    override fun unprotect(keyName: String, value: String): String {
+        if (!isAvailable) return ""
+        val account = value.removePrefix(MACOS_KEYCHAIN_PREFIX)
+            .takeIf { value.startsWith(MACOS_KEYCHAIN_PREFIX) && it.isNotBlank() }
+            ?: macOsKeychainAccount(keyName)
+        val result = commandRunner.run(
+            listOf(
+                SecurityCommand,
+                "find-generic-password",
+                "-a", account,
+                "-s", MACOS_KEYCHAIN_SERVICE,
+                "-w"
+            )
+        )
+        return if (result.isSuccess) result.stdout.trimEnd('\r', '\n') else ""
+    }
+
+    override fun delete(keyName: String) {
+        if (!isAvailable) return
+        commandRunner.run(
+            listOf(
+                SecurityCommand,
+                "delete-generic-password",
+                "-a", macOsKeychainAccount(keyName),
+                "-s", MACOS_KEYCHAIN_SERVICE
+            )
+        )
+    }
+
+    private fun macOsKeychainAccount(keyName: String): String {
+        return "Episteme.${keyName.replace(Regex("[^A-Za-z0-9._-]"), "_")}"
+    }
+
+    internal companion object {
+        const val SecurityCommand = "/usr/bin/security"
     }
 }
 

@@ -64,6 +64,16 @@ class FileCapabilitiesTest {
     }
 
     @Test
+    fun `iOS library filter exposes the Android readable type set`() {
+        val androidTypes = SharedFileCapabilities.readableTypesFor(ReaderPlatform.ANDROID)
+        val iosTypes = SharedFileCapabilities.readableTypesFor(ReaderPlatform.IOS)
+
+        assertEquals(androidTypes, iosTypes)
+        assertFalse(FileType.UNKNOWN in iosTypes)
+        assertFalse(FileType.AUDIOBOOK in iosTypes)
+    }
+
+    @Test
     fun `shared file capabilities map reader surfaces per platform`() {
         assertEquals(
             ReaderFeatureSurface.PDF_VIEWER,

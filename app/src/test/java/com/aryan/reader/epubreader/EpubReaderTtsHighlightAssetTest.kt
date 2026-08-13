@@ -41,6 +41,16 @@ class EpubReaderTtsHighlightAssetTest {
         assertTrue(!js.lineSequence().any { it.trim() == "width: min(100%, calc(100% * var(--reader-image-size))) !important;" })
     }
 
+    @Test
+    fun `vertical webview applies reader font weight and letter spacing`() {
+        val js = epubReaderAsset().readText()
+
+        assertTrue(js.contains("newFontWeight"))
+        assertTrue(js.contains("newLetterSpacing"))
+        assertTrue(js.contains("font-weight: ${'$'}{newFontWeight} !important;"))
+        assertTrue(js.contains("letter-spacing: ${'$'}{newLetterSpacing}em !important;"))
+    }
+
     private fun epubReaderAsset(): File {
         val candidates = listOf(
             File("src/main/assets/epub_reader.js"),

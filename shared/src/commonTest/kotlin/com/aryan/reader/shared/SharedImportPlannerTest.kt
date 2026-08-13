@@ -82,6 +82,26 @@ class SharedImportPlannerTest {
     }
 
     @Test
+    fun `content id prevents duplicate imports from different storage paths`() {
+        val plan = SharedImportPlanner.plan(
+            files = listOf(
+                ImportedBookFile(
+                    name = "same-book.epub",
+                    uriString = null,
+                    localPath = "/ios/imports/new-copy.epub",
+                    size = 4L,
+                    id = "sha256-content-id",
+                )
+            ),
+            existingBookIds = setOf("sha256-content-id"),
+            platform = ReaderPlatform.IOS,
+        )
+
+        assertEquals(SharedImportDecisionStatus.DUPLICATE, plan.decisions.single().status)
+        assertTrue(plan.importedBooks.isEmpty())
+    }
+
+    @Test
     fun `feedback prefers imported duplicate unsupported then failed outcomes`() {
         val imported = SharedImportPlanner.feedbackForCounts(
             counts = SharedImportOutcomeCounts(addedCount = 2, duplicateCount = 1, unsupportedCount = 1),

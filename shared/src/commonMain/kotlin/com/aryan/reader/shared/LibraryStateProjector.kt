@@ -13,6 +13,31 @@ data class BookShelfRef(
     val addedAt: Long
 )
 
+/** Portable library-only state. It deliberately excludes reader handles, account, settings, and platform UI state. */
+data class LibraryFeatureState(
+    val sortOrder: SortOrder = SortOrder.RECENT,
+    val searchQuery: String = "",
+    val filters: LibraryFilters = LibraryFilters(),
+    val syncedFolders: List<SyncedFolder> = emptyList(),
+    val pinnedHomeBookIds: Set<String> = emptySet(),
+    val pinnedLibraryBookIds: Set<String> = emptySet(),
+    val recentLimit: Int = 0,
+    val tabs: AppTabState = AppTabState(),
+    val viewingShelfId: String? = null,
+    val isAddingBooksToShelf: Boolean = false,
+    val addBooksSource: AddBooksSource = AddBooksSource.UNSHELVED,
+    val selectedBookIdsForAdding: Set<String> = emptySet(),
+    val selectedBookIds: Set<String> = emptySet(),
+    val selectedShelfIds: Set<String> = emptySet(),
+    val recentBooks: List<BookItem> = emptyList(),
+    val libraryBooks: List<BookItem> = emptyList(),
+    val rawBooks: List<BookItem> = emptyList(),
+    val shelves: List<Shelf> = emptyList(),
+    val openTabs: List<BookItem> = emptyList(),
+    val booksAvailableForAdding: List<BookItem> = emptyList(),
+    val tags: List<Tag> = emptyList(),
+)
+
 fun interface SharedFolderPathResolver {
     fun relativeFolderSegments(item: BookItem): List<String>
 }
@@ -22,7 +47,7 @@ object EmptySharedFolderPathResolver : SharedFolderPathResolver {
 }
 
 data class SharedLibraryProjectionInput(
-    val state: SharedReaderScreenState,
+    val state: LibraryFeatureState,
     val booksFromStore: List<BookItem>,
     val shelfRecords: List<ShelfRecord>,
     val shelfRefs: List<BookShelfRef>,
@@ -32,12 +57,12 @@ data class SharedLibraryProjectionInput(
 class SharedLibraryStateProjector(
     private val folderPathResolver: SharedFolderPathResolver = EmptySharedFolderPathResolver
 ) {
-    fun project(input: SharedLibraryProjectionInput): SharedReaderScreenState {
+    fun project(input: SharedLibraryProjectionInput): LibraryFeatureState {
         val current = input.state
-        val allLibraryBooks = input.booksFromStore
+        val allLibraryBooks = input.booksFromStore.distinctBy { it.sharedLibraryIdentity() }
         val syncedFolders = current.syncedFolders.withSourceFolderFallbacks(allLibraryBooks)
         val queried = filterBySearch(allLibraryBooks, current.searchQuery)
-        val filtered = applyLibraryFilters(queried, current.libraryFilters)
+        val filtered = applyLibraryFilters(queried, current.filters)
         val sortedLibraryBooks = sortBooks(filtered, current.sortOrder)
             .withPinnedFirst(current.pinnedLibraryBookIds)
         val visibleRecentBooks = sortBooks(
@@ -45,10 +70,10 @@ class SharedLibraryStateProjector(
             SortOrder.RECENT
         )
             .withPinnedFirst(current.pinnedHomeBookIds)
-            .take(if (current.recentFilesLimit > 0) current.recentFilesLimit else Int.MAX_VALUE)
-        val openTabs = current.openTabIds.mapNotNull { tabId -> allLibraryBooks.find { it.id == tabId } }
-        val openTabIds = openTabs.map { it.id }
-        val activeTabBookId = current.activeTabBookId?.takeIf { it in openTabIds }
+            .take(if (current.recentLimit > 0) current.recentLimit else Int.MAX_VALUE)
+        val booksById = allLibraryBooks.associateBy { it.id }
+        val tabState = current.tabs.reconcileAvailableBooks(booksById.keys)
+        val openTabs = tabState.openBookIds.mapNotNull(booksById::get)
         val shelfProjection = buildShelves(
             allLibraryBooks = allLibraryBooks,
             shelfRecords = input.shelfRecords,
@@ -61,16 +86,12 @@ class SharedLibraryStateProjector(
         val viewingShelfId = current.viewingShelfId?.takeIf { it in validShelfIds }
         val selectedShelfIds = current.selectedShelfIds.filterTo(mutableSetOf()) { it in validShelfIds }
         val booksAvailableForAdding = if (current.isAddingBooksToShelf && viewingShelfId != null) {
-            val currentShelfBookIds = shelfProjection.shelves
-                .find { it.id == viewingShelfId }
-                ?.books
-                ?.map { it.id }
-                ?.toSet()
-                ?: emptySet()
-            when (current.addBooksSource) {
-                AddBooksSource.UNSHELVED -> shelfProjection.unshelvedBooks
-                AddBooksSource.ALL_BOOKS -> allLibraryBooks.filter { it.id !in currentShelfBookIds }
-            }
+            booksAvailableForShelfAddition(
+                allLibraryBooks = allLibraryBooks,
+                shelves = shelfProjection.shelves,
+                shelfId = viewingShelfId,
+                source = current.addBooksSource,
+            )
         } else {
             emptyList()
         }
@@ -78,7 +99,7 @@ class SharedLibraryStateProjector(
         return current.copy(
             recentBooks = visibleRecentBooks,
             libraryBooks = sortedLibraryBooks,
-            rawLibraryBooks = allLibraryBooks,
+            rawBooks = allLibraryBooks,
             viewingShelfId = viewingShelfId,
             isAddingBooksToShelf = current.isAddingBooksToShelf && viewingShelfId != null,
             selectedShelfIds = selectedShelfIds,
@@ -87,10 +108,9 @@ class SharedLibraryStateProjector(
             },
             shelves = shelfProjection.shelves,
             openTabs = openTabs,
-            openTabIds = openTabIds,
-            activeTabBookId = activeTabBookId,
+            tabs = tabState,
             booksAvailableForAdding = booksAvailableForAdding,
-            allTags = input.tags,
+            tags = input.tags,
             syncedFolders = syncedFolders
         )
     }
@@ -107,12 +127,24 @@ class SharedLibraryStateProjector(
         val shelvedBookIds = mutableSetOf<String>()
         val booksById = allLibraryBooks.associateBy { it.id }
 
-        shelfRecords.forEach { shelf ->
+        shelfRecords
+            // "unshelved" is a synthetic shelf added below. Older persisted
+            // snapshots may contain a manual record with the same reserved ID.
+            .filterNot { it.id == "unshelved" }
+            .forEach { shelf ->
             if (shelf.isSmart && shelf.smartRulesJson != null) {
                 val definition = SmartCollectionEngine.fromJson(shelf.smartRulesJson)
                 if (definition != null) {
                     val matchingBooks = allLibraryBooks.filter { SmartCollectionEngine.evaluate(it, definition) }
-                    shelves.add(Shelf(shelf.id, shelf.name, ShelfType.SMART, sortBooks(matchingBooks, sortOrder)))
+                    shelves.add(
+                        Shelf(
+                            id = shelf.id,
+                            name = shelf.name,
+                            type = ShelfType.SMART,
+                            books = sortBooks(matchingBooks, sortOrder),
+                            smartRulesJson = shelf.smartRulesJson,
+                        )
+                    )
                     shelvedBookIds.addAll(matchingBooks.map { it.id })
                 }
             } else {
@@ -121,7 +153,18 @@ class SharedLibraryStateProjector(
                     .sortedBy { it.addedAt }
                     .map { it.bookId }
                 val books = bookIds.mapNotNull { booksById[it] }
-                shelves.add(Shelf(shelf.id, shelf.name, ShelfType.MANUAL, sortBooks(books, sortOrder)))
+                shelves.add(
+                    Shelf(
+                        id = shelf.id,
+                        name = shelf.name,
+                        type = ShelfType.MANUAL,
+                        books = sortBooks(books, sortOrder),
+                        directBooks = books,
+                        directBookAddedAt = shelfRefs
+                            .filter { it.shelfId == shelf.id && it.bookId in booksById }
+                            .associate { it.bookId to it.addedAt },
+                    )
+                )
                 shelvedBookIds.addAll(bookIds)
             }
         }
@@ -254,8 +297,28 @@ class SharedLibraryStateProjector(
     )
 }
 
+fun booksAvailableForShelfAddition(
+    allLibraryBooks: List<BookItem>,
+    shelves: List<Shelf>,
+    shelfId: String,
+    source: AddBooksSource,
+): List<BookItem> {
+    val currentShelfBookIds = shelves
+        .firstOrNull { it.id == shelfId }
+        ?.books
+        .orEmpty()
+        .mapTo(mutableSetOf()) { it.id }
+    val candidates = when (source) {
+        AddBooksSource.UNSHELVED -> shelves.firstOrNull { it.id == "unshelved" }?.books.orEmpty()
+        AddBooksSource.ALL_BOOKS -> allLibraryBooks
+    }
+    return candidates
+        .filterNot { it.id in currentShelfBookIds }
+        .distinctBy { it.sharedLibraryIdentity() }
+}
+
 private fun List<SyncedFolder>.withSourceFolderFallbacks(books: List<BookItem>): List<SyncedFolder> {
-    val knownFolders = mapTo(linkedSetOf()) { it.uriString }
+    val knownFolders = flatMapTo(linkedSetOf()) { folder -> listOf(folder.uriString, folder.name) }
     val missingFolders = books
         .mapNotNull { it.sourceFolder?.takeIf(String::isNotBlank) }
         .filterTo(linkedSetOf()) { knownFolders.add(it) }
@@ -287,6 +350,13 @@ fun filterBySearch(books: List<BookItem>, searchQuery: String): List<BookItem> {
     }
 }
 
+internal fun BookItem.sharedLibraryIdentity(): String =
+    path
+        ?.takeIf { it.isNotBlank() }
+        ?.let { if (it.startsWith("/private/")) it.removePrefix("/private") else it }
+        ?.let { "path:$it" }
+        ?: "id:$id"
+
 fun applyLibraryFilters(books: List<BookItem>, filters: LibraryFilters): List<BookItem> {
     return books.filter { book ->
         val matchType = filters.fileTypes.isEmpty() || book.type in filters.fileTypes
@@ -306,8 +376,8 @@ fun applyLibraryFilters(books: List<BookItem>, filters: LibraryFilters): List<Bo
 fun sortBooks(books: List<BookItem>, sortOrder: SortOrder): List<BookItem> {
     return when (sortOrder) {
         SortOrder.RECENT -> books.sortedByDescending { it.timestamp }
-        SortOrder.DATE_ADDED_NEWEST -> books.sortedByDescending { it.timestamp }
-        SortOrder.DATE_ADDED_OLDEST -> books.sortedBy { it.timestamp }
+        SortOrder.DATE_ADDED_NEWEST -> books.sortedByDescending { it.dateAddedTimestamp }
+        SortOrder.DATE_ADDED_OLDEST -> books.sortedBy { it.dateAddedTimestamp }
         SortOrder.TITLE_ASC -> books.sortedBy {
             it.titleSortKey?.lowercase() ?: it.title?.lowercase() ?: it.displayName.lowercase()
         }

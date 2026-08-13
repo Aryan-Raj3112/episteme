@@ -1,5 +1,6 @@
 package com.aryan.reader
 
+import com.aryan.reader.shared.ui.SharedMobileAppDestination
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -10,14 +11,14 @@ class AppNavigationBackTest {
     fun `app back intercepts reader routes because selected file state owns reader navigation`() {
         assertTrue(
             shouldInterceptAppNavBack(
-                currentRoute = AppDestinations.PDF_VIEWER_ROUTE,
+                currentRoute = SharedMobileAppDestination.PDF_VIEWER.route,
                 hasPreviousBackStackEntry = true,
                 isCurrentEntryResumed = true
             )
         )
         assertTrue(
             shouldInterceptAppNavBack(
-                currentRoute = AppDestinations.EPUB_READER_ROUTE,
+                currentRoute = SharedMobileAppDestination.EPUB_READER.route,
                 hasPreviousBackStackEntry = true,
                 isCurrentEntryResumed = true
             )
@@ -28,21 +29,21 @@ class AppNavigationBackTest {
     fun `app back intercepts non main routes even while transition is settling`() {
         assertFalse(
             shouldInterceptAppNavBack(
-                currentRoute = AppDestinations.MAIN_ROUTE,
+                currentRoute = SharedMobileAppDestination.MAIN.route,
                 hasPreviousBackStackEntry = true,
                 isCurrentEntryResumed = true
             )
         )
         assertFalse(
             shouldInterceptAppNavBack(
-                currentRoute = AppDestinations.SETTINGS_SCREEN_ROUTE,
+                currentRoute = SharedMobileAppDestination.SETTINGS.route,
                 hasPreviousBackStackEntry = false,
                 isCurrentEntryResumed = true
             )
         )
         assertTrue(
             shouldInterceptAppNavBack(
-                currentRoute = AppDestinations.SETTINGS_SCREEN_ROUTE,
+                currentRoute = SharedMobileAppDestination.SETTINGS.route,
                 hasPreviousBackStackEntry = true,
                 isCurrentEntryResumed = false
             )
@@ -51,16 +52,16 @@ class AppNavigationBackTest {
 
     @Test
     fun `selected reader file route sync does not close utility screens`() {
-        assertFalse(shouldSyncSelectedFileRoute(AppDestinations.PRO_SCREEN_ROUTE))
-        assertFalse(shouldSyncSelectedFileRoute(AppDestinations.SETTINGS_SCREEN_ROUTE))
-        assertFalse(shouldSyncSelectedFileRoute(AppDestinations.FEEDBACK_SCREEN_ROUTE))
+        assertFalse(shouldSyncSelectedFileRoute(SharedMobileAppDestination.PRO.route))
+        assertFalse(shouldSyncSelectedFileRoute(SharedMobileAppDestination.SETTINGS.route))
+        assertFalse(shouldSyncSelectedFileRoute(SharedMobileAppDestination.FEEDBACK.route))
     }
 
     @Test
     fun `selected reader file route sync remains enabled for main and reader routes`() {
         assertTrue(shouldSyncSelectedFileRoute(null))
-        assertTrue(shouldSyncSelectedFileRoute(AppDestinations.MAIN_ROUTE))
-        assertTrue(shouldSyncSelectedFileRoute(AppDestinations.PDF_VIEWER_ROUTE))
-        assertTrue(shouldSyncSelectedFileRoute(AppDestinations.EPUB_READER_ROUTE))
+        assertTrue(shouldSyncSelectedFileRoute(SharedMobileAppDestination.MAIN.route))
+        assertTrue(shouldSyncSelectedFileRoute(SharedMobileAppDestination.PDF_VIEWER.route))
+        assertTrue(shouldSyncSelectedFileRoute(SharedMobileAppDestination.EPUB_READER.route))
     }
 }

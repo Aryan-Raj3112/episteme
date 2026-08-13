@@ -61,9 +61,9 @@ android {
     defaultConfig {
         applicationId = "com.aryan.reader"
         minSdk = 26
-        targetSdk = 35
-        versionCode = 56
-        versionName = "1.0.52"
+        targetSdk = 36
+        versionCode = 58
+        versionName = "1.0.53"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         externalNativeBuild {
@@ -279,9 +279,9 @@ dependencies {
     implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("io.coil-kt:coil-svg:2.6.0")
 
-    implementation("androidx.media3:media3-exoplayer:1.8.0")
-    implementation("androidx.media3:media3-session:1.8.0")
-    implementation("androidx.media3:media3-ui:1.8.0")
+    implementation("androidx.media3:media3-exoplayer:1.10.1")
+    implementation("androidx.media3:media3-session:1.10.1")
+    implementation("androidx.media3:media3-ui:1.10.1")
 
     implementation("androidx.work:work-runtime-ktx:2.10.5")
     implementation("androidx.compose.runtime:runtime-livedata:1.9.3")

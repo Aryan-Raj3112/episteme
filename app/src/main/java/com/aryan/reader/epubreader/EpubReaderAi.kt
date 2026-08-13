@@ -32,12 +32,12 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import com.aryan.reader.AiDefinitionPopup
-import com.aryan.reader.AiFeature
-import com.aryan.reader.AiDefinitionResult
+import com.aryan.reader.shared.ReaderAiFeature as AiFeature
+import com.aryan.reader.shared.AiDefinitionResult
 import com.aryan.reader.AiHubBottomSheet
 import com.aryan.reader.BuildConfig
 import com.aryan.reader.R
-import com.aryan.reader.SummarizationResult
+import com.aryan.reader.shared.SummarizationResult
 import com.aryan.reader.SummaryCacheManager
 import com.aryan.reader.callByokTextAi
 import com.aryan.reader.epub.EpubBook

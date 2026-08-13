@@ -7,7 +7,7 @@ import android.net.Uri
 import androidx.core.net.toUri
 import com.aryan.reader.BookImporter
 import com.aryan.reader.FileType
-import com.aryan.reader.data.RecentFilesRepository
+import com.aryan.reader.data.AndroidBookArtifactStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.w3c.dom.Element
@@ -35,7 +35,7 @@ object CalibreBundleExtractor {
         zipUri: Uri,
         bookId: String,
         bookImporter: BookImporter,
-        recentFilesRepository: RecentFilesRepository
+        bookArtifactStore: AndroidBookArtifactStore
     ): CalibreBundleResult? = withContext(Dispatchers.IO) {
         var tempBookFile: File? = null
         var extractedType: FileType? = null
@@ -95,7 +95,7 @@ object CalibreBundleExtractor {
                 if (coverBytes != null) {
                     val bitmap = BitmapFactory.decodeByteArray(coverBytes, 0, coverBytes!!.size)
                     if (bitmap != null) {
-                        coverPath = recentFilesRepository.saveCoverToCache(bitmap, zipUri)
+                        coverPath = bookArtifactStore.saveCoverToCache(bitmap, zipUri)
                     }
                 }
 

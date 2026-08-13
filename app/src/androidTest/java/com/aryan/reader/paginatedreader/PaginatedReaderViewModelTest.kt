@@ -15,7 +15,7 @@ import androidx.compose.ui.unit.Density
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SdkSuppress
-import com.aryan.reader.SearchResult
+import com.aryan.reader.shared.SearchResult
 import com.aryan.reader.epub.EpubBook
 import com.google.common.truth.Truth.assertThat
 import io.mockk.mockk

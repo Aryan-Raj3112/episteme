@@ -7,6 +7,7 @@ import com.aryan.reader.shared.ReaderLocator
 
 private const val PdfZoomPerfLogTag = "EpistemePdfZoomPerf"
 private const val PdfZoomSettleLogTag = "EpistemePdfZoomSettle"
+private const val PdfSelectionLogTag = "EpistemePdfSelection"
 private const val PdfLinkLogTag = "EpistemePdfLink"
 private const val PdfChromeTapLogTag = "EpistemePdfChromeTap"
 private const val EpubLinkLogTag = "EpistemeEpubLink"
@@ -23,6 +24,8 @@ private const val WebViewLayoutLogTag = "EpistemeWebViewLayout"
 private const val ReaderModeSwitchLogTag = "EpistemeReaderModeSwitch"
 
 internal fun logPdfSelection(message: String) {
+    logDesktopDiagnostic(PdfSelectionLogTag) { message }
+    logDesktopTrackpadZoom { "event=pdf_selection $message" }
 }
 
 internal fun logPdfZoomPerf(message: String) {
@@ -47,10 +50,12 @@ internal fun logPdfLink(message: String) {
 
 internal fun logPdfChromeTap(message: String) {
     logDesktopDiagnostic(PdfChromeTapLogTag) { message }
+    logDesktopTrackpadZoom { "event=pdf_input $message" }
 }
 
 internal fun logPdfChromeTap(message: () -> String) {
-    logDesktopDiagnostic(PdfChromeTapLogTag, message)
+    val resolved = message()
+    logPdfChromeTap(resolved)
 }
 
 internal fun logEpubLink(message: String) {

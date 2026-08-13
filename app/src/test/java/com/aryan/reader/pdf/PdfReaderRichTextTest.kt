@@ -305,6 +305,8 @@ class PdfReaderRichTextTest {
         val file = repository.getFileForSync("folder/book:name?.pdf")
         assertTrue(file.name.matches(Regex("rich_doc_folder_book_name_\\.pdf\\.json")))
         assertTrue(file.exists())
+        assertFalse(file.readText().contains('\n'))
+        assertTrue(file.readText().startsWith("{\"text\":\"Saved rich text\",\"spans\":[{\"s\":0,\"e\":5"))
         assertEquals(document, repository.document.value)
 
         val reloaded = PdfRichTextRepository(context)

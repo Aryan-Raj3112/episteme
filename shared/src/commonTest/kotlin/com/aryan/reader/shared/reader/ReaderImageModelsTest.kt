@@ -6,9 +6,30 @@ import com.aryan.reader.paginatedreader.SemanticImage
 import com.aryan.reader.paginatedreader.SemanticParagraph
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertContentEquals
 import kotlin.test.assertNull
 
 class ReaderImageModelsTest {
+
+    @Test
+    fun `embedded reader image exposes downloadable bytes`() {
+        val reference = ReaderImageReference(
+            id = "image",
+            index = 0,
+            source = "data:image/png;base64,SGk=",
+            altText = "Greeting",
+            chapterIndex = 0,
+            chapterTitle = "One",
+            blockIndex = 0,
+            cfi = null,
+            intrinsicWidth = null,
+            intrinsicHeight = null,
+            locator = com.aryan.reader.shared.ReaderLocator(chapterIndex = 0)
+        )
+
+        assertContentEquals("Hi".encodeToByteArray(), reference.downloadBytes())
+        assertNull(reference.copy(source = "OPS/image.png").downloadBytes())
+    }
 
     @Test
     fun `reader image references keep chapter order and page locators`() {
@@ -104,5 +125,34 @@ class ReaderImageModelsTest {
         assertEquals(1, references.size)
         assertEquals("chart", references.first().displayTitle)
         assertEquals("chart.webp", references.first().suggestedDownloadFileName())
+    }
+
+    @Test
+    fun `reader image references fall back to retained epub html`() {
+        val book = SharedEpubBook(
+            id = "html-images",
+            fileName = "html-images.epub",
+            title = "HTML images",
+            chapters = listOf(
+                SharedEpubChapter(
+                    id = "chapter-one",
+                    title = "One",
+                    plainText = "An illustrated chapter",
+                    htmlContent = """<p>Before</p><img src="images/chart.png" alt="Growth chart" width="640" height="480"><p>After</p>""",
+                    baseHref = "Text/one.xhtml"
+                )
+            )
+        )
+
+        val references = book.readerImageReferences(
+            pages = listOf(ReaderPage(3, 0, "One", "An illustrated chapter", 0, 22))
+        )
+
+        assertEquals(1, references.size)
+        assertEquals("Growth chart", references.first().displayTitle)
+        assertEquals("640x480", references.first().dimensionLabel)
+        assertEquals("images/chart.png", references.first().source)
+        assertEquals(3, references.first().locator.pageIndex)
+        assertEquals("Text/one.xhtml", references.first().locator.href)
     }
 }

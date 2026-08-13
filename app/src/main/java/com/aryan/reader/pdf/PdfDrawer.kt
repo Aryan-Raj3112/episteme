@@ -73,6 +73,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontStyle
@@ -82,21 +83,19 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.aryan.reader.R
 import io.legere.pdfiumandroid.api.Bookmark
-import io.legere.pdfiumandroid.suspend.PdfDocumentKt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.json.JSONArray
 import timber.log.Timber
 import androidx.core.graphics.createBitmap
 import com.aryan.reader.cardTitle
 import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.pdf.data.VirtualPage
 import com.aryan.reader.shared.filterReaderTocEntries
+import com.aryan.reader.shared.pdf.LegacyPdfPageBookmark
+import com.aryan.reader.shared.pdf.LegacyPdfPageBookmarkCodec
 
-private const val MAX_FIXED_RECURSION = 128
-
-internal data class PdfBookmark(val pageIndex: Int, val title: String, val totalPages: Int)
+internal typealias PdfBookmark = LegacyPdfPageBookmark
 
 internal data class TocEntry(val title: String, val pageIndex: Int, val nestLevel: Int)
 
@@ -125,92 +124,6 @@ private val PdfDrawerSection.testTag: String?
         PdfDrawerSection.PAGES -> "PagesTab"
         PdfDrawerSection.CHAPTERS -> null
     }
-
-/**
- * Patches the library bug where siblings are truncated due to depth-state leakage.
- */
-suspend fun PdfDocumentKt.getFixedTableOfContents(): List<Bookmark> {
-    val tag = "PdfTocFix"
-    Timber.tag(tag).i("Starting Pure Reflection Traversal...")
-
-    return try {
-        // 1. Get the 'document' field (PdfDocumentU) from PdfDocumentKt
-        val documentField = PdfDocumentKt::class.java.getDeclaredField("document").apply { isAccessible = true }
-        val docUInstance = documentField.get(this) ?: return getTableOfContents()
-
-        // 2. Get the 'nativeDocument' field from PdfDocumentU
-        val nativeDocField = docUInstance.javaClass.getDeclaredField("nativeDocument").apply { isAccessible = true }
-        val nativeDocInstance = nativeDocField.get(docUInstance) ?: return getTableOfContents()
-
-        // 3. Get the native pointer (long) from PdfDocumentU
-        val ptrField = docUInstance.javaClass.getDeclaredField("mNativeDocPtr").apply { isAccessible = true }
-        val mNativeDocPtr = ptrField.get(docUInstance) as Long
-
-        // 4. Look up native methods using primitive 'long' types (mandatory for JNI)
-        val nClass = nativeDocInstance.javaClass
-        val lp = Long::class.javaPrimitiveType!! // Shorthand for 'long'
-
-        val getTitleM = nClass.getMethod("getBookmarkTitle", lp)
-        val getDestIdxM = nClass.getMethod("getBookmarkDestIndex", lp, lp)
-        val getFirstChildM = nClass.getMethod("getFirstChildBookmark", lp, lp)
-        val getSiblingM = nClass.getMethod("getSiblingBookmark", lp, lp)
-
-        val topLevel = mutableListOf<Bookmark>()
-        val visited = mutableSetOf<Long>()
-
-        /**
-         * Corrected traversal: Iterative for siblings, recursive for children.
-         */
-        fun walk(parentList: MutableList<Bookmark>, startPtr: Long, level: Int) {
-            var currentPtr = startPtr
-            var itemIndex = 0
-
-            while (currentPtr != 0L) {
-                if (visited.contains(currentPtr)) break
-                visited.add(currentPtr)
-
-                val title = getTitleM.invoke(nativeDocInstance, currentPtr) as? String ?: "Untitled"
-                val pageIdx = getDestIdxM.invoke(nativeDocInstance, mNativeDocPtr, currentPtr) as Long
-
-                Timber.tag(tag).v("Lvl $level | Item $itemIndex | Ptr: 0x${java.lang.Long.toHexString(currentPtr)} | $title")
-
-                val bookmark = Bookmark().apply {
-                    this.mNativePtr = currentPtr
-                    this.title = title
-                    this.pageIdx = pageIdx
-                }
-                parentList.add(bookmark)
-
-                // Recursive dive into children
-                val firstChild = getFirstChildM.invoke(nativeDocInstance, mNativeDocPtr, currentPtr) as Long
-                if (firstChild != 0L && level < MAX_FIXED_RECURSION) {
-                    walk(bookmark.children, firstChild, level + 1)
-                }
-
-                // Iterative move to next sibling
-                currentPtr = getSiblingM.invoke(nativeDocInstance, mNativeDocPtr, currentPtr) as Long
-                itemIndex++
-            }
-        }
-
-        // 5. Start from the root (Pass 0L as primitive long)
-        val firstRoot = getFirstChildM.invoke(nativeDocInstance, mNativeDocPtr, 0L) as Long
-        if (firstRoot != 0L) {
-            walk(topLevel, firstRoot, 0)
-        }
-
-        if (topLevel.isEmpty()) {
-            Timber.tag(tag).w("No items found, falling back to library.")
-            getTableOfContents()
-        } else {
-            Timber.tag(tag).i("TOC Successfully Patched! Nodes: ${visited.size}")
-            topLevel
-        }
-    } catch (e: Exception) {
-        Timber.tag(tag).e(e, "Reflection traversal critical error.")
-        this.getTableOfContents()
-    }
-}
 
 internal fun flattenToc(bookmarks: List<Bookmark>, level: Int = 0): List<TocEntry> {
     Timber.tag("PdfTocDebug").d("Processing level $level with ${bookmarks.size} items")
@@ -241,26 +154,7 @@ internal fun flattenToc(bookmarks: List<Bookmark>, level: Int = 0): List<TocEntr
 }
 
 internal fun loadPdfBookmarksFromJson(bookmarksJson: String?): Set<PdfBookmark> {
-    if (bookmarksJson.isNullOrBlank()) return emptySet()
-    return try {
-        val jsonArray = JSONArray(bookmarksJson)
-        (0 until jsonArray.length()).mapNotNull { i ->
-            try {
-                val json = jsonArray.getJSONObject(i)
-                PdfBookmark(
-                    pageIndex = json.getInt("pageIndex"),
-                    title = json.getString("title"),
-                    totalPages = json.getInt("totalPages")
-                )
-            } catch (e: Exception) {
-                Timber.e(e, "Failed to parse bookmark from JSON object")
-                null
-            }
-        }.toSet()
-    } catch (e: Exception) {
-        Timber.e(e, "Failed to parse bookmarks from JSON string: $bookmarksJson")
-        emptySet()
-    }
+    return LegacyPdfPageBookmarkCodec.decode(bookmarksJson)
 }
 
 @Composable
@@ -273,51 +167,18 @@ internal fun PdfTocTreeItem(
     onToggleExpand: () -> Unit,
     onClick: () -> Unit
 ) {
-    val backgroundColor by animateColorAsState(
-        targetValue = if (isCurrent) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.2f) else Color.Transparent,
-        label = "TocItemBackground"
+    com.aryan.reader.shared.ui.SharedAndroidReaderTocTreeItem(
+        label = label,
+        depth = nestLevel,
+        isExpanded = isExpanded,
+        hasChildren = hasChildren,
+        isCurrent = isCurrent,
+        collapseDescription = stringResource(R.string.content_desc_collapse),
+        expandDescription = stringResource(R.string.content_desc_expand),
+        verticalPadding = 4.dp,
+        onToggleExpand = onToggleExpand,
+        onClick = onClick,
     )
-
-    val contentColor = if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(min = 48.dp)
-            .background(backgroundColor)
-            .clickable(onClick = onClick)
-            .padding(vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Spacer(modifier = Modifier.width((16 * nestLevel).dp))
-
-        Box(
-            modifier = Modifier
-                .size(40.dp)
-                .clickable(enabled = hasChildren, onClick = onToggleExpand),
-            contentAlignment = Alignment.Center
-        ) {
-            if (hasChildren) {
-                Icon(
-                    imageVector = if (isExpanded) Icons.Default.KeyboardArrowDown else Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                    contentDescription = stringResource(
-                        if (isExpanded) R.string.content_desc_collapse else R.string.content_desc_expand
-                    ),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-
-        Text(
-            text = label,
-            style = if (nestLevel == 0) MaterialTheme.typography.bodyLarge else MaterialTheme.typography.bodyMedium,
-            fontWeight = if (isCurrent) FontWeight.Bold else if (nestLevel == 0) FontWeight.SemiBold else FontWeight.Normal,
-            color = contentColor,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f).padding(end = 16.dp)
-        )
-    }
 }
 
 @Composable
@@ -889,294 +750,75 @@ internal fun PdfNavigationDrawerContent(
                 }
 
                 PdfDrawerSection.BOOKMARKS -> { // Bookmarks Page
-                    if (bookmarks.isEmpty()) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(16.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                stringResource(R.string.no_bookmarks_yet),
-                                style = MaterialTheme.typography.bodyLarge,
-                                textAlign = TextAlign.Center
+                    val context = LocalContext.current
+                    val sortedBookmarks = remember(bookmarks) { bookmarks.sortedBy { it.pageIndex } }
+                    com.aryan.reader.shared.ui.SharedAndroidPdfBookmarksList(
+                        bookmarks = sortedBookmarks,
+                        strings = com.aryan.reader.shared.ui.SharedAndroidPdfBookmarkStrings(
+                            empty = stringResource(R.string.no_bookmarks_yet),
+                            moreOptionsDescription = stringResource(R.string.content_desc_more_options_bookmark),
+                            renameAction = stringResource(R.string.action_rename),
+                            deleteAction = stringResource(R.string.action_delete),
+                            renameDialogTitle = stringResource(R.string.dialog_rename_bookmark),
+                            newTitleLabel = stringResource(R.string.label_new_title),
+                            saveAction = stringResource(R.string.action_save),
+                            cancelAction = stringResource(R.string.action_cancel),
+                            deleteDialogTitle = stringResource(R.string.dialog_delete_bookmark),
+                            deleteDialogDescription = stringResource(R.string.dialog_delete_bookmark_desc),
+                        ),
+                        key = { index, bookmark -> "bm_${index}_${bookmark.pageIndex}" },
+                        title = PdfBookmark::title,
+                        supportingText = { bookmark ->
+                            context.resources.getString(
+                                R.string.page_of_pages,
+                                bookmark.pageIndex + 1,
+                                bookmark.totalPages,
                             )
-                        }
-                    } else {
-                        var bookmarkMenuExpandedFor by remember { mutableStateOf<PdfBookmark?>(null) }
-                        var showDeleteConfirmDialogFor by remember { mutableStateOf<PdfBookmark?>(null) }
-                        var showRenameBookmarkDialog by remember { mutableStateOf<PdfBookmark?>(null) }
-
-                        val sortedBookmarks = remember(bookmarks) {
-                            bookmarks.sortedBy { it.pageIndex }
-                        }
-
-                        LazyColumn(modifier = Modifier.fillMaxSize()) {
-                            itemsIndexed(
-                                items = sortedBookmarks, key = { index, bookmark ->
-                                    "bm_${index}_${bookmark.pageIndex}"
-                                }) { _, bookmark ->
-                                ListItem(headlineContent = {
-                                    Text(
-                                        bookmark.title,
-                                        fontWeight = FontWeight.Bold,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }, supportingContent = {
-                                    Text(
-                                        stringResource(R.string.page_of_pages, bookmark.pageIndex + 1, bookmark.totalPages),
-                                        style = MaterialTheme.typography.bodySmall
-                                    )
-                                }, trailingContent = {
-                                    Box {
-                                        IconButton(
-                                            onClick = {
-                                                bookmarkMenuExpandedFor = bookmark
-                                            }) {
-                                            Icon(
-                                                imageVector = Icons.Default.MoreVert,
-                                                contentDescription = stringResource(R.string.content_desc_more_options_bookmark)
-                                            )
-                                        }
-                                        DropdownMenu(
-                                            expanded = bookmarkMenuExpandedFor == bookmark,
-                                            onDismissRequest = {
-                                                bookmarkMenuExpandedFor = null
-                                            }) {
-                                            DropdownMenuItem(text = {
-                                                Text(stringResource(R.string.action_rename))
-                                            }, onClick = {
-                                                showRenameBookmarkDialog = bookmark
-                                                bookmarkMenuExpandedFor = null
-                                            })
-                                            DropdownMenuItem(text = {
-                                                Text(stringResource(R.string.action_delete))
-                                            }, onClick = {
-                                                showDeleteConfirmDialogFor = bookmark
-                                                bookmarkMenuExpandedFor = null
-                                            })
-                                        }
-                                    }
-                                }, modifier = Modifier
-                                    .clickable {
-                                        onCloseDrawer()
-                                        onPageSelected(bookmark.pageIndex)
-                                    }
-                                    .testTag(
-                                        "BookmarkItem_${bookmark.pageIndex}"
-                                    ))
-                                HorizontalDivider()
-                            }
-                        }
-
-                        showRenameBookmarkDialog?.let { bookmarkToRename ->
-                            var newTitle by remember(bookmarkToRename) { mutableStateOf(bookmarkToRename.title) }
-
-                            AlertDialog(onDismissRequest = {
-                                showRenameBookmarkDialog = null
-                            }, title = { Text(stringResource(R.string.dialog_rename_bookmark)) }, text = {
-                                OutlinedTextField(
-                                    value = newTitle,
-                                    onValueChange = { newTitle = it },
-                                    label = { Text(stringResource(R.string.label_new_title)) },
-                                    singleLine = true,
-                                    modifier = Modifier.fillMaxWidth()
-                                )
-                            }, confirmButton = {
-                                TextButton(
-                                    onClick = {
-                                        onRenameBookmark(bookmarkToRename, newTitle)
-                                        showRenameBookmarkDialog = null
-                                    }) { Text(stringResource(R.string.action_save)) }
-                            }, dismissButton = {
-                                TextButton(
-                                    onClick = {
-                                        showRenameBookmarkDialog = null
-                                    }) { Text(stringResource(R.string.action_cancel)) }
-                            })
-                        }
-
-                        showDeleteConfirmDialogFor?.let { bookmarkToDelete ->
-                            AlertDialog(onDismissRequest = {
-                                showDeleteConfirmDialogFor = null
-                            }, title = { Text(stringResource(R.string.dialog_delete_bookmark)) }, text = {
-                                Text(
-                                    stringResource(R.string.dialog_delete_bookmark_desc)
-                                )
-                            }, confirmButton = {
-                                TextButton(
-                                    onClick = {
-                                        onDeleteBookmark(bookmarkToDelete)
-                                        showDeleteConfirmDialogFor = null
-                                    }) { Text(stringResource(R.string.action_delete)) }
-                            }, dismissButton = {
-                                TextButton(
-                                    onClick = {
-                                        showDeleteConfirmDialogFor = null
-                                    }) { Text(stringResource(R.string.action_cancel)) }
-                            })
-                        }
-                    }
+                        },
+                        testTag = { bookmark -> "BookmarkItem_${bookmark.pageIndex}" },
+                        onNavigateToBookmark = { bookmark ->
+                            onCloseDrawer()
+                            onPageSelected(bookmark.pageIndex)
+                        },
+                        onRenameBookmark = onRenameBookmark,
+                        onDeleteBookmark = onDeleteBookmark,
+                    )
                 }
                 PdfDrawerSection.HIGHLIGHTS -> { // Highlights Page
-                    if (userHighlights.isEmpty()) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(16.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                stringResource(R.string.no_highlights_yet),
-                                style = MaterialTheme.typography.bodyLarge,
-                                textAlign = TextAlign.Center
-                            )
-                        }
-                    } else {
-                        var showDeleteConfirmDialogFor by remember { mutableStateOf<PdfUserHighlight?>(null) }
-                        var filterWithNotesOnly by remember { mutableStateOf(false) }
-
-                        Column(modifier = Modifier.fillMaxSize()) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                FilterChip(
-                                    selected = !filterWithNotesOnly,
-                                    onClick = { filterWithNotesOnly = false },
-                                    label = { Text(stringResource(R.string.read_status_all)) }
-                                )
-                                FilterChip(
-                                    selected = filterWithNotesOnly,
-                                    onClick = { filterWithNotesOnly = true },
-                                    label = { Text(stringResource(R.string.filter_with_notes)) }
-                                )
-                            }
-
-                            val filteredHighlights = if (filterWithNotesOnly) {
-                                userHighlights.filter { !it.note.isNullOrBlank() }
-                            } else {
-                                userHighlights.toList()
-                            }
-
-                            val sortedHighlights = remember(filteredHighlights) {
-                                filteredHighlights.sortedBy { it.pageIndex }
-                            }
-
-                            LazyColumn(modifier = Modifier.fillMaxSize()) {
-                                itemsIndexed(
-                                    items = sortedHighlights,
-                                    key = { _, highlight -> highlight.id }
-                                ) { _, highlight ->
-                                    ListItem(
-                                        headlineContent = {
-                                            Text(
-                                                text = highlight.text.ifBlank { stringResource(R.string.msg_highlighted_section_default) },
-                                                maxLines = 2,
-                                                overflow = TextOverflow.Ellipsis,
-                                                fontWeight = FontWeight.SemiBold
-                                            )
-                                        },
-                                        supportingContent = {
-                                            Column {
-                                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                                    val displayColor = highlight.resolvedColor(customHighlightColors)
-
-                                                    Box(
-                                                        modifier = Modifier
-                                                            .size(12.dp)
-                                                            .background(displayColor, CircleShape)
-                                                    )
-                                                    Spacer(Modifier.width(8.dp))
-                                                    Text(
-                                                        stringResource(R.string.pdf_page_short, highlight.pageIndex + 1),
-                                                        style = MaterialTheme.typography.labelMedium,
-                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                                    )
-                                                }
-                                                if (!highlight.note.isNullOrBlank()) {
-                                                    Spacer(Modifier.height(8.dp))
-                                                    Surface(
-                                                        shape = RoundedCornerShape(8.dp),
-                                                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                                                        modifier = Modifier.fillMaxWidth()
-                                                    ) {
-                                                        Text(
-                                                            text = highlight.note,
-                                                            style = MaterialTheme.typography.bodySmall.copy(fontStyle = FontStyle.Italic),
-                                                            modifier = Modifier.padding(12.dp),
-                                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                                        )
-                                                    }
-                                                }
-                                            }
-                                        },
-                                        trailingContent = {
-                                            Box {
-                                                var highlightMenuExpanded by remember { mutableStateOf(false) }
-                                                IconButton(onClick = { highlightMenuExpanded = true }) {
-                                                    Icon(Icons.Default.MoreVert, contentDescription = stringResource(R.string.content_desc_options))
-                                                }
-                                                DropdownMenu(
-                                                    expanded = highlightMenuExpanded,
-                                                    onDismissRequest = { highlightMenuExpanded = false }
-                                                ) {
-                                                    DropdownMenuItem(
-                                                        text = {
-                                                            Text(
-                                                                stringResource(
-                                                                    if (highlight.note.isNullOrBlank()) R.string.menu_add_note else R.string.menu_edit_note
-                                                                )
-                                                            )
-                                                        },
-                                                        onClick = {
-                                                            onNoteRequested(highlight.id)
-                                                            highlightMenuExpanded = false
-                                                            onCloseDrawer()
-                                                        }
-                                                    )
-                                                    DropdownMenuItem(
-                                                        text = { Text(stringResource(R.string.action_delete)) },
-                                                        onClick = {
-                                                            showDeleteConfirmDialogFor = highlight
-                                                            highlightMenuExpanded = false
-                                                        }
-                                                    )
-                                                }
-                                            }
-                                        },
-                                        modifier = Modifier.clickable {
-                                            onCloseDrawer()
-                                            onPageSelected(highlight.pageIndex)
-                                        }
-                                    )
-                                    HorizontalDivider()
-                                }
-                            }
-                        }
-
-                        showDeleteConfirmDialogFor?.let { highlightToDelete ->
-                            AlertDialog(
-                                onDismissRequest = { showDeleteConfirmDialogFor = null },
-                                title = { Text(stringResource(R.string.dialog_delete_highlight)) },
-                                text = { Text(stringResource(R.string.dialog_delete_highlight_desc)) },
-                                confirmButton = {
-                                    TextButton(
-                                        onClick = {
-                                            onDeleteHighlight(highlightToDelete)
-                                            showDeleteConfirmDialogFor = null
-                                        }
-                                    ) { Text(stringResource(R.string.action_delete)) }
-                                },
-                                dismissButton = {
-                                    TextButton(
-                                        onClick = { showDeleteConfirmDialogFor = null }
-                                    ) { Text(stringResource(R.string.action_cancel)) }
-                                }
-                            )
-                        }
-                    }
+                    val context = LocalContext.current
+                    com.aryan.reader.shared.ui.SharedAndroidPdfHighlightsList(
+                        highlights = userHighlights.toList(),
+                        strings = com.aryan.reader.shared.ui.SharedAndroidPdfHighlightStrings(
+                            empty = stringResource(R.string.no_highlights_yet),
+                            allFilter = stringResource(R.string.read_status_all),
+                            withNotesFilter = stringResource(R.string.filter_with_notes),
+                            defaultHighlight = stringResource(R.string.msg_highlighted_section_default),
+                            optionsDescription = stringResource(R.string.content_desc_options),
+                            addNoteAction = stringResource(R.string.menu_add_note),
+                            editNoteAction = stringResource(R.string.menu_edit_note),
+                            deleteAction = stringResource(R.string.action_delete),
+                            cancelAction = stringResource(R.string.action_cancel),
+                            deleteDialogTitle = stringResource(R.string.dialog_delete_highlight),
+                            deleteDialogDescription = stringResource(R.string.dialog_delete_highlight_desc),
+                        ),
+                        key = PdfUserHighlight::id,
+                        sortKey = PdfUserHighlight::pageIndex,
+                        text = PdfUserHighlight::text,
+                        note = PdfUserHighlight::note,
+                        pageLabel = { highlight ->
+                            context.resources.getString(R.string.pdf_page_short, highlight.pageIndex + 1)
+                        },
+                        color = { highlight -> highlight.resolvedColor(customHighlightColors) },
+                        onNavigateToHighlight = { highlight ->
+                            onCloseDrawer()
+                            onPageSelected(highlight.pageIndex)
+                        },
+                        onNoteRequested = { highlight ->
+                            onNoteRequested(highlight.id)
+                            onCloseDrawer()
+                        },
+                        onDeleteHighlight = onDeleteHighlight,
+                    )
                 }
                 PdfDrawerSection.PAGES -> { // Pages Page
                     val listState = rememberLazyListState()

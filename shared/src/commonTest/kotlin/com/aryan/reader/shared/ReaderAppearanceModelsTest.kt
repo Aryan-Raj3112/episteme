@@ -2,6 +2,7 @@ package com.aryan.reader.shared
 
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.text.font.FontFamily
 import com.aryan.reader.shared.pdf.PdfInkTool
 import com.aryan.reader.shared.pdf.SharedPdfAndroidHighlightColors
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationDefaults
@@ -12,11 +13,79 @@ import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.SharedReaderTextAlign
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class ReaderAppearanceModelsTest {
+    @Test
+    fun `epub page info visibility and reserved space match Android`() {
+        assertTrue(shouldShowEpubPageInfoBar(PageInfoMode.DEFAULT, showReaderChrome = false))
+        assertFalse(shouldShowEpubPageInfoBar(PageInfoMode.SYNC, showReaderChrome = false))
+        assertTrue(shouldShowEpubPageInfoBar(PageInfoMode.SYNC, showReaderChrome = true))
+        assertFalse(shouldShowEpubPageInfoBar(PageInfoMode.HIDDEN, showReaderChrome = true))
+        assertTrue(shouldReserveEpubPageInfoBarSpace(PageInfoMode.DEFAULT, false, false))
+        assertFalse(shouldReserveEpubPageInfoBarSpace(PageInfoMode.SYNC, true, false))
+        assertFalse(shouldReserveEpubPageInfoBarSpace(PageInfoMode.DEFAULT, true, true))
+    }
+
+    @Test
+    fun `epub format stepping and font weights match Android`() {
+        assertEquals(0.5f, stepEpubFormatValue(0.49f, 0.01f, -0.1f, 0.5f, 100f))
+        assertEquals(-0.1f, stepEpubFormatValue(-0.1f, -0.01f, -0.1f, 0.5f, 100f))
+        assertEquals(500, nextEpubFontWeight(0))
+        assertEquals(600, nextEpubFontWeight(500))
+        assertEquals(1000, nextEpubFontWeight(1000))
+        assertEquals(0, previousEpubFontWeight(100))
+        assertEquals(500, previousEpubFontWeight(600))
+    }
+
+    @Test
+    fun `mobile native reader maps selectable font families`() {
+        assertEquals(FontFamily.Serif, ReaderSettings(fontFamily = "Merriweather").toSharedReaderFontFamily())
+        assertEquals(FontFamily.Serif, ReaderSettings(fontFamily = "Lora").toSharedReaderFontFamily())
+        assertEquals(FontFamily.SansSerif, ReaderSettings(fontFamily = "Lato").toSharedReaderFontFamily())
+        assertEquals(FontFamily.SansSerif, ReaderSettings(fontFamily = "Lexend").toSharedReaderFontFamily())
+        assertEquals(FontFamily.Monospace, ReaderSettings(fontFamily = "Roboto Mono").toSharedReaderFontFamily())
+        assertEquals(FontFamily.Default, ReaderSettings(fontFamily = "Original").toSharedReaderFontFamily())
+    }
+
+    @Test
+    fun `default and explicit left alignment remain distinct in shared settings`() {
+        assertEquals(SharedReaderTextAlign.START, ReaderTextAlign.DEFAULT.toSharedReaderTextAlign())
+        assertEquals(SharedReaderTextAlign.LEFT, ReaderTextAlign.LEFT.toSharedReaderTextAlign())
+    }
+
+    @Test
+    fun `reader format replacement preserves navigation and visual settings`() {
+        val base = ReaderSettings(
+            fontSize = 18,
+            readingMode = ReaderReadingMode.PAGINATED,
+            rightToLeftPagination = true,
+            themeId = "sepia",
+            systemUiMode = SystemUiMode.HIDDEN
+        )
+        val format = ReaderSettings(
+            fontSize = 26,
+            lineSpacing = 2f,
+            textAlign = SharedReaderTextAlign.LEFT,
+            fontFamily = "Lora",
+            readingMode = ReaderReadingMode.VERTICAL,
+            themeId = "dark"
+        )
+
+        val result = base.withReaderFormatFrom(format)
+
+        assertEquals(26, result.fontSize)
+        assertEquals(SharedReaderTextAlign.LEFT, result.textAlign)
+        assertEquals("Lora", result.fontFamily)
+        assertEquals(ReaderReadingMode.PAGINATED, result.readingMode)
+        assertTrue(result.rightToLeftPagination)
+        assertEquals("sepia", result.themeId)
+        assertEquals(SystemUiMode.HIDDEN, result.systemUiMode)
+    }
+
 
     @Test
     fun `pdf built in themes include android pdf defaults and textured presets`() {
@@ -106,6 +175,24 @@ class ReaderAppearanceModelsTest {
         val builtIn = BuiltInReaderThemes.first().copy(isCustom = false)
 
         assertEquals(listOf(replacement), listOf(first, builtIn, replacement).sanitizeCustomReaderThemes())
+    }
+
+    @Test
+    fun `reader theme resolution includes valid custom themes and falls back safely`() {
+        val fallback = BuiltInPdfReaderThemes.first()
+        val custom = ReaderTheme(
+            id = "custom_pdf",
+            name = "Custom PDF",
+            backgroundColor = Color(0xFF102030),
+            textColor = Color(0xFFF0E0D0),
+            isDark = true,
+            isCustom = true,
+        )
+        val invalid = custom.copy(id = "invalid", isCustom = false)
+
+        assertEquals(custom, resolveReaderTheme(custom.id, BuiltInPdfReaderThemes, listOf(custom)))
+        assertEquals(fallback, resolveReaderTheme(invalid.id, BuiltInPdfReaderThemes, listOf(invalid)))
+        assertEquals(fallback, resolveReaderTheme("missing", BuiltInPdfReaderThemes, listOf(custom)))
     }
 
     @Test

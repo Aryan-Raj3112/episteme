@@ -119,7 +119,7 @@ import androidx.media3.common.util.UnstableApi
 import com.aryan.reader.BuildConfig
 import com.aryan.reader.R
 import com.aryan.reader.RenderMode
-import com.aryan.reader.SearchState
+import com.aryan.reader.shared.ReaderSearchState as SearchState
 import com.aryan.reader.SearchTopBar
 import com.aryan.reader.TooltipIconButton
 import com.aryan.reader.areReaderAiFeaturesEnabled
@@ -132,112 +132,35 @@ import com.aryan.reader.tts.TtsPlaybackManager.TtsState
 import com.aryan.reader.tts.formatReaderTtsChunkLabel
 import kotlin.math.roundToInt
 
-enum class ReaderTool(@StringRes val titleRes: Int, val category: String) {
-    DICTIONARY(R.string.tool_external_apps, "Top Bar"),
-    THEME(R.string.tooltip_theme_desc, "Top Bar"),
-    BRIGHTNESS(R.string.tool_brightness, "Top Bar"),
-    SLIDER(R.string.tool_navigation_slider, "Bottom Bar"),
-    TOC(R.string.tool_sidebar, "Bottom Bar"),
-    FORMAT(R.string.content_desc_text_formatting, "Bottom Bar"),
-    SEARCH(R.string.action_search, "Bottom Bar"),
-    AI_FEATURES(R.string.ai_features_title, "Bottom Bar"),
-    TTS_CONTROLS(R.string.tool_tts_controls, "Bottom Bar"),
-    FILE_INFO(R.string.file_information, "Overflow Menu"),
-    READING_MODE(R.string.tool_reading_mode, "Overflow Menu"),
-    BOOKMARK(R.string.content_desc_bookmark, "Overflow Menu"),
-    TAP_TO_TURN(R.string.menu_tap_to_turn_pages, "Overflow Menu"),
-    VOLUME_SCROLL(R.string.menu_volume_button_scrolling, "Overflow Menu"),
-    PAGE_TURN_ANIM(R.string.menu_realistic_page_turns, "Overflow Menu"),
-    KEEP_SCREEN_ON(R.string.menu_keep_screen_on, "Overflow Menu"),
-    VISUAL_OPTIONS(R.string.menu_visual_options, "Overflow Menu"),
-    SCREEN_ORIENTATION(R.string.menu_screen_orientation, "Top Bar"),
-    AUTO_SCROLL(R.string.menu_auto_scroll, "Overflow Menu"),
-    TTS_SETTINGS(R.string.menu_tts_settings, "Overflow Menu"),
-    TTS_REPLACEMENTS(R.string.menu_tts_word_replacements, "Overflow Menu"),
-    BOOK_REPLACEMENTS(R.string.menu_book_word_replacements, "Overflow Menu")
-}
+typealias ReaderTool = com.aryan.reader.shared.ReaderTool
 
-enum class FlatItemType { SECTION_HEADER, TOOL, EMPTY_PLACEHOLDER, MORE_HEADER, MORE_TOOL }
-
-data class FlatToolItem(
-    val id: String,
-    val type: FlatItemType,
-    val tool: ReaderTool? = null,
-    val section: ToolbarSection? = null,
-    val title: String? = null,
-    @StringRes val titleRes: Int? = null
-)
-
-fun sanitizePlaceholders(list: List<FlatToolItem>): List<FlatToolItem> {
-    val result = mutableListOf<FlatToolItem>()
-    val sectionMap = mutableMapOf<ToolbarSection, MutableList<FlatToolItem>>()
-    ToolbarSection.entries.forEach { sectionMap[it] = mutableListOf() }
-
-    list.forEach { item ->
-        if (item.type == FlatItemType.TOOL) {
-            item.section?.let { sectionMap[it]?.add(item) }
-        }
+val ReaderTool.titleRes: Int
+    @StringRes get() = when (this) {
+        ReaderTool.DICTIONARY -> R.string.tool_external_apps
+        ReaderTool.THEME -> R.string.tooltip_theme_desc
+        ReaderTool.BRIGHTNESS -> R.string.tool_brightness
+        ReaderTool.SLIDER -> R.string.tool_navigation_slider
+        ReaderTool.TOC -> R.string.tool_sidebar
+        ReaderTool.FORMAT -> R.string.content_desc_text_formatting
+        ReaderTool.SEARCH -> R.string.action_search
+        ReaderTool.AI_FEATURES -> R.string.ai_features_title
+        ReaderTool.TTS_CONTROLS -> R.string.tool_tts_controls
+        ReaderTool.FILE_INFO -> R.string.file_information
+        ReaderTool.READING_MODE -> R.string.tool_reading_mode
+        ReaderTool.BOOKMARK -> R.string.content_desc_bookmark
+        ReaderTool.TAP_TO_TURN -> R.string.menu_tap_to_turn_pages
+        ReaderTool.VOLUME_SCROLL -> R.string.menu_volume_button_scrolling
+        ReaderTool.PAGE_TURN_ANIM -> R.string.menu_realistic_page_turns
+        ReaderTool.KEEP_SCREEN_ON -> R.string.menu_keep_screen_on
+        ReaderTool.VISUAL_OPTIONS -> R.string.menu_visual_options
+        ReaderTool.SCREEN_ORIENTATION -> R.string.menu_screen_orientation
+        ReaderTool.AUTO_SCROLL -> R.string.menu_auto_scroll
+        ReaderTool.TTS_SETTINGS -> R.string.menu_tts_settings
+        ReaderTool.TTS_REPLACEMENTS -> R.string.menu_tts_word_replacements
+        ReaderTool.BOOK_REPLACEMENTS -> R.string.menu_book_word_replacements
     }
 
-    ToolbarSection.entries.forEach { section ->
-        result.add(FlatToolItem("header_${section.name}", FlatItemType.SECTION_HEADER, section = section, titleRes = section.titleRes))
-
-        val tools = sectionMap[section] ?: emptyList()
-        if (tools.isEmpty()) {
-            result.add(FlatToolItem("empty_${section.name}", FlatItemType.EMPTY_PLACEHOLDER, section = section))
-        } else {
-            result.addAll(tools)
-        }
-    }
-
-    // Maintain More menu items
-    list.filter { it.type == FlatItemType.MORE_HEADER || it.type == FlatItemType.MORE_TOOL }.forEach {
-        result.add(it)
-    }
-
-    return result
-}
-
-class DragDropState(
-    val lazyListState: LazyListState,
-    val onMove: (String, String) -> Unit
-) {
-    var draggedItemId by mutableStateOf<String?>(null)
-    var dragOffset by mutableStateOf(Offset.Zero)
-
-    fun onDragStart(id: String) {
-        draggedItemId = id
-        dragOffset = Offset.Zero
-    }
-
-    fun onDrag(delta: Offset) {
-        val draggedId = draggedItemId ?: return
-        dragOffset += delta
-
-        val visibleItems = lazyListState.layoutInfo.visibleItemsInfo
-        val currentItem = visibleItems.find { it.key == draggedId } ?: return
-
-        val startY = currentItem.offset + dragOffset.y
-        val center = startY + currentItem.size / 2f
-
-        val targetItem = visibleItems.find {
-            it.key != draggedId && center >= it.offset && center <= (it.offset + it.size)
-        }
-
-        if (targetItem != null) {
-            onMove(draggedId, targetItem.key.toString())
-            // Adjust visual offset to prevent snapping when items swap in the layout
-            dragOffset = dragOffset.copy(y = dragOffset.y - (targetItem.offset - currentItem.offset))
-        }
-    }
-
-    fun onDragEnd() {
-        draggedItemId = null
-        dragOffset = Offset.Zero
-    }
-}
-
-private val epubToolbarTools = setOf(
+internal val epubToolbarTools = setOf(
     ReaderTool.DICTIONARY,
     ReaderTool.THEME,
     ReaderTool.BRIGHTNESS,
@@ -250,23 +173,7 @@ private val epubToolbarTools = setOf(
     ReaderTool.SCREEN_ORIENTATION
 )
 
-internal enum class EpubOverflowMenuSection {
-    CUSTOMIZE_TOOLBAR,
-    HIDDEN_TOOLS,
-    VIEW_ORIGINAL_PDF,
-    DELETE_TEXT_VIEW,
-    READING_MODE,
-    BOOKMARK,
-    TAP_TO_TURN,
-    VOLUME_SCROLL,
-    PAGE_TURN_ANIM,
-    KEEP_SCREEN_ON,
-    VISUAL_OPTIONS,
-    AUTO_SCROLL,
-    BOOK_REPLACEMENTS,
-    TTS_SETTINGS,
-    FILE_INFO
-}
+internal typealias EpubOverflowMenuSection = com.aryan.reader.shared.EpubOverflowMenuSection
 
 internal fun epubOverflowMenuSections(
     hiddenTools: Set<String>,
@@ -274,30 +181,13 @@ internal fun epubOverflowMenuSections(
     hasToggleReflow: Boolean,
     hasDeleteReflow: Boolean,
     hasFileInfo: Boolean = true
-): List<EpubOverflowMenuSection> = buildList {
-    add(EpubOverflowMenuSection.CUSTOMIZE_TOOLBAR)
-    if (hasHiddenToolbarTools) add(EpubOverflowMenuSection.HIDDEN_TOOLS)
-    if (hasToggleReflow) add(EpubOverflowMenuSection.VIEW_ORIGINAL_PDF)
-    if (hasDeleteReflow) add(EpubOverflowMenuSection.DELETE_TEXT_VIEW)
-    if (!hiddenTools.contains(ReaderTool.READING_MODE.name)) add(EpubOverflowMenuSection.READING_MODE)
-    if (!hiddenTools.contains(ReaderTool.BOOKMARK.name)) add(EpubOverflowMenuSection.BOOKMARK)
-    if (!hiddenTools.contains(ReaderTool.TAP_TO_TURN.name)) add(EpubOverflowMenuSection.TAP_TO_TURN)
-    if (!hiddenTools.contains(ReaderTool.VOLUME_SCROLL.name)) add(EpubOverflowMenuSection.VOLUME_SCROLL)
-    if (!hiddenTools.contains(ReaderTool.PAGE_TURN_ANIM.name)) add(EpubOverflowMenuSection.PAGE_TURN_ANIM)
-    if (!hiddenTools.contains(ReaderTool.KEEP_SCREEN_ON.name)) add(EpubOverflowMenuSection.KEEP_SCREEN_ON)
-    if (!hiddenTools.contains(ReaderTool.VISUAL_OPTIONS.name)) add(EpubOverflowMenuSection.VISUAL_OPTIONS)
-    if (!hiddenTools.contains(ReaderTool.AUTO_SCROLL.name)) add(EpubOverflowMenuSection.AUTO_SCROLL)
-    if (!hiddenTools.contains(ReaderTool.BOOK_REPLACEMENTS.name)) add(EpubOverflowMenuSection.BOOK_REPLACEMENTS)
-    if (
-        !hiddenTools.contains(ReaderTool.TTS_SETTINGS.name) ||
-        !hiddenTools.contains(ReaderTool.TTS_REPLACEMENTS.name)
-    ) {
-        add(EpubOverflowMenuSection.TTS_SETTINGS)
-    }
-    if (hasFileInfo && !hiddenTools.contains(ReaderTool.FILE_INFO.name)) {
-        add(EpubOverflowMenuSection.FILE_INFO)
-    }
-}
+): List<EpubOverflowMenuSection> = com.aryan.reader.shared.epubOverflowMenuSections(
+    hiddenTools = hiddenTools,
+    hasHiddenToolbarTools = hasHiddenToolbarTools,
+    hasToggleReflow = hasToggleReflow,
+    hasDeleteReflow = hasDeleteReflow,
+    hasFileInfo = hasFileInfo,
+)
 
 internal fun defaultReaderHiddenTools(): Set<String> = setOf(
     ReaderTool.SCREEN_ORIENTATION.name,
@@ -308,43 +198,6 @@ internal fun defaultReaderToolOrder(): List<ReaderTool> = ReaderTool.entries.toL
 
 internal fun defaultReaderBottomTools(): Set<String> {
     return ReaderTool.entries.filter { it.category == "Bottom Bar" }.map { it.name }.toSet()
-}
-
-internal fun buildReaderToolbarItems(
-    hiddenTools: Set<String>,
-    toolOrder: List<ReaderTool>,
-    bottomTools: Set<String>
-): List<FlatToolItem> {
-    val toolbarTools = toolOrder.filter { it in epubToolbarTools }
-    val topTools = toolbarTools.filter { !bottomTools.contains(it.name) && !hiddenTools.contains(it.name) }
-    val bottomToolsList = toolbarTools.filter { bottomTools.contains(it.name) && !hiddenTools.contains(it.name) }
-    val hiddenToolsList = toolbarTools.filter { hiddenTools.contains(it.name) }
-    val moreTools = toolOrder.filter { it !in epubToolbarTools }
-
-    val list = mutableListOf<FlatToolItem>()
-
-    ToolbarSection.entries.forEach { section ->
-        val tools = when (section) {
-            ToolbarSection.TOP -> topTools
-            ToolbarSection.BOTTOM -> bottomToolsList
-            ToolbarSection.HIDDEN -> hiddenToolsList
-        }
-        list.add(FlatToolItem("header_${section.name}", FlatItemType.SECTION_HEADER, section = section, titleRes = section.titleRes))
-        if (tools.isEmpty()) {
-            list.add(FlatToolItem("empty_${section.name}", FlatItemType.EMPTY_PLACEHOLDER, section = section))
-        } else {
-            tools.forEach { tool ->
-                list.add(FlatToolItem("tool_${tool.name}", FlatItemType.TOOL, tool = tool, section = section))
-            }
-        }
-    }
-
-    list.add(FlatToolItem("more_header", FlatItemType.MORE_HEADER, titleRes = R.string.toolbar_more_menu))
-    moreTools.forEach { tool ->
-        list.add(FlatToolItem("more_${tool.name}", FlatItemType.MORE_TOOL, tool = tool))
-    }
-
-    return list
 }
 
 @Composable
@@ -397,26 +250,13 @@ fun EpubReaderTopBar(
     onToggleReflow: (() -> Unit)? = null,
     onDeleteReflow: (() -> Unit)? = null,
 ) {
-    AnimatedVisibility(
+    com.aryan.reader.shared.ui.SharedReaderBarVisibility(
         visible = isVisible,
-        enter = slideInVertically(animationSpec = tween(200)) { -it } + fadeIn(animationSpec = tween(200)),
-        exit = slideOutVertically(animationSpec = tween(200)) { -it } + fadeOut(animationSpec = tween(200)),
+        edge = com.aryan.reader.shared.ui.SharedReaderBarEdge.TOP,
         modifier = modifier
     ) {
-        Surface(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(55.dp),
-            color = MaterialTheme.colorScheme.surface,
-            tonalElevation = 4.dp
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .windowInsetsPadding(WindowInsets.navigationBars.only(WindowInsetsSides.Horizontal))
-                    .padding(horizontal = 4.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+        com.aryan.reader.shared.ui.SharedReaderToolbarSurface(height = 55.dp) {
+            com.aryan.reader.shared.ui.SharedEpubTopToolbarRow {
                 if (searchState.isSearchActive) {
                     SearchTopBar(
                         searchState = searchState,
@@ -439,8 +279,13 @@ fun EpubReaderTopBar(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f)
                     )
-                    toolOrder
-                        .filter { it in epubToolbarTools && !bottomTools.contains(it.name) && !hiddenTools.contains(it.name) }
+                    com.aryan.reader.shared.ui.sharedEpubToolbarTools(
+                        toolOrder = toolOrder,
+                        toolbarTools = epubToolbarTools,
+                        hiddenToolNamesOrIds = hiddenTools,
+                        bottomToolNamesOrIds = bottomTools,
+                        placement = com.aryan.reader.shared.ui.SharedReaderToolbarPlacement.TOP,
+                    )
                         .forEach { tool ->
                             when (tool) {
                                 ReaderTool.DICTIONARY -> TooltipIconButton(
@@ -534,42 +379,33 @@ fun EpubReaderTopBar(
                             }
                         }
                     Box {
-                        var showMoreMenu by remember { mutableStateOf(false) }
-                        var showHiddenToolsExpanded by remember { mutableStateOf(false) }
-                        var showReadingModeExpanded by remember { mutableStateOf(false) }
-                        var showTtsSettingsExpanded by remember { mutableStateOf(false) }
+                        val overflowMenuState = com.aryan.reader.shared.ui.rememberSharedReaderOverflowMenuState()
+                        var showMoreMenu by overflowMenuState.menuExpanded
+                        var showHiddenToolsExpanded by overflowMenuState.hiddenToolsExpanded
+                        var showReadingModeExpanded by overflowMenuState.readingModeExpanded
+                        var showTtsSettingsExpanded by overflowMenuState.ttsSettingsExpanded
                         TooltipIconButton(
                             text = stringResource(R.string.tooltip_more_options),
                             description = stringResource(R.string.tooltip_more_options_desc),
-                            onClick = {
-                                showHiddenToolsExpanded = false
-                                showReadingModeExpanded = false
-                                showTtsSettingsExpanded = false
-                                showMoreMenu = true
-                            }
+                            onClick = overflowMenuState::open
                         ) {
                             Icon(Icons.Default.MoreVert, contentDescription = stringResource(R.string.content_desc_more_options))
                         }
 
-                        DropdownMenu(
-                            expanded = showMoreMenu,
-                            onDismissRequest = {
-                                showHiddenToolsExpanded = false
-                                showReadingModeExpanded = false
-                                showTtsSettingsExpanded = false
-                                showMoreMenu = false
-                            }
+                        com.aryan.reader.shared.ui.SharedReaderOverflowMenu(
+                            state = overflowMenuState,
                         ) {
                             val hiddenToolbarTools = toolOrder.filter { it in epubToolbarTools && hiddenTools.contains(it.name) }
                             val showTtsVoiceSettings = !hiddenTools.contains(ReaderTool.TTS_SETTINGS.name)
                             val showTtsReplacements = !hiddenTools.contains(ReaderTool.TTS_REPLACEMENTS.name)
-                            epubOverflowMenuSections(
-                                hiddenTools = hiddenTools,
-                                hasHiddenToolbarTools = hiddenToolbarTools.isNotEmpty(),
-                                hasToggleReflow = onToggleReflow != null,
-                                hasDeleteReflow = onDeleteReflow != null
-                            ).forEachIndexed { index, section ->
-                                if (index > 0) HorizontalDivider()
+                            com.aryan.reader.shared.ui.SharedReaderOverflowSectionList(
+                                sections = epubOverflowMenuSections(
+                                    hiddenTools = hiddenTools,
+                                    hasHiddenToolbarTools = hiddenToolbarTools.isNotEmpty(),
+                                    hasToggleReflow = onToggleReflow != null,
+                                    hasDeleteReflow = onDeleteReflow != null,
+                                ),
+                            ) { section ->
                                 when (section) {
                                     EpubOverflowMenuSection.CUSTOMIZE_TOOLBAR -> {
                                         DropdownMenuItem(
@@ -1035,27 +871,20 @@ fun EpubReaderBottomBar(
     bottomTools: Set<String>,
     modifier: Modifier = Modifier
 ) {
-    AnimatedVisibility(
+    com.aryan.reader.shared.ui.SharedReaderBarVisibility(
         visible = isVisible,
-        enter = slideInVertically(animationSpec = tween(200)) { it } + fadeIn(animationSpec = tween(200)),
-        exit = slideOutVertically(animationSpec = tween(200)) { it } + fadeOut(animationSpec = tween(200)),
+        edge = com.aryan.reader.shared.ui.SharedReaderBarEdge.BOTTOM,
         modifier = modifier
     ) {
-        Surface(
-            modifier = Modifier.fillMaxWidth().height(45.dp),
-            color = MaterialTheme.colorScheme.surface,
-            tonalElevation = 4.dp
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .windowInsetsPadding(WindowInsets.navigationBars.only(WindowInsetsSides.Horizontal))
-                    .padding(horizontal = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceAround
-            ) {
-                toolOrder
-                    .filter { it in epubToolbarTools && bottomTools.contains(it.name) && !hiddenTools.contains(it.name) }
+        com.aryan.reader.shared.ui.SharedReaderToolbarSurface(height = 45.dp) {
+            com.aryan.reader.shared.ui.SharedEpubBottomToolbarRow {
+                com.aryan.reader.shared.ui.sharedEpubToolbarTools(
+                    toolOrder = toolOrder,
+                    toolbarTools = epubToolbarTools,
+                    hiddenToolNamesOrIds = hiddenTools,
+                    bottomToolNamesOrIds = bottomTools,
+                    placement = com.aryan.reader.shared.ui.SharedReaderToolbarPlacement.BOTTOM,
+                )
                     .forEach { tool ->
                         when (tool) {
                             ReaderTool.DICTIONARY -> TooltipIconButton(
@@ -1726,301 +1555,34 @@ fun CustomizeToolsSheet(
     onPlacementUpdate: (Set<String>) -> Unit,
     onDismiss: () -> Unit
 ) {
-    var localHiddenTools by remember { mutableStateOf(hiddenTools) }
-
-    var flatItems by remember {
-        mutableStateOf(
-            buildReaderToolbarItems(
-                hiddenTools = hiddenTools,
-                toolOrder = toolOrder,
-                bottomTools = bottomTools
-            )
-        )
-    }
-
-    val commitDragDrop = {
-        val newHidden = localHiddenTools.filter { toolName ->
-            toolOrder.find { it.name == toolName } !in epubToolbarTools
-        }.toMutableSet()
-
-        val newBottom = mutableSetOf<String>()
-        val newOrder = mutableListOf<ReaderTool>()
-
-        flatItems.forEach { item ->
-            if (item.type == FlatItemType.TOOL && item.tool != null) {
-                newOrder.add(item.tool)
-                if (item.section == ToolbarSection.HIDDEN) newHidden.add(item.tool.name)
-                if (item.section == ToolbarSection.BOTTOM) newBottom.add(item.tool.name)
-            }
-        }
-
-        val moreTools = flatItems.filter { it.type == FlatItemType.MORE_TOOL }.mapNotNull { it.tool }
-        newOrder.addAll(moreTools)
-
-        localHiddenTools = newHidden
-        onUpdate(newHidden)
-        onPlacementUpdate(newBottom)
-        onOrderUpdate(newOrder)
-    }
-
-    val lazyListState = rememberLazyListState()
-    val dragDropState = remember {
-        DragDropState(lazyListState) { fromKey, toKey ->
-            val fromIndex = flatItems.indexOfFirst { it.id == fromKey }
-            val toIndex = flatItems.indexOfFirst { it.id == toKey }
-            if (fromIndex == -1 || toIndex == -1 || fromIndex == toIndex) return@DragDropState
-
-            val fromItem = flatItems[fromIndex]
-            if (fromItem.type != FlatItemType.TOOL) return@DragDropState
-
-            val toItem = flatItems[toIndex]
-            if (toItem.type == FlatItemType.MORE_HEADER || toItem.type == FlatItemType.MORE_TOOL) return@DragDropState
-
-            val newList = flatItems.toMutableList()
-            val movedItem = newList.removeAt(fromIndex)
-
-            val newToIndex = newList.indexOfFirst { it.id == toKey }
-            val insertIndex = if (fromIndex < toIndex) newToIndex + 1 else newToIndex
-
-            newList.add(insertIndex, movedItem)
-
-            var actualSection = movedItem.section
-            for (i in insertIndex downTo 0) {
-                val item = newList[i]
-                if (item.type == FlatItemType.SECTION_HEADER) {
-                    actualSection = item.section
-                    break
-                }
-            }
-
-            newList[insertIndex] = movedItem.copy(section = actualSection)
-
-            flatItems = newList
-        }
-    }
-
-    val resetToDefault = {
-        val defaultHiddenTools = defaultReaderHiddenTools()
-        val defaultToolOrder = defaultReaderToolOrder()
-        val defaultBottomTools = defaultReaderBottomTools()
-
-        localHiddenTools = defaultHiddenTools
-        flatItems = buildReaderToolbarItems(
-            hiddenTools = defaultHiddenTools,
-            toolOrder = defaultToolOrder,
-            bottomTools = defaultBottomTools
-        )
-        onUpdate(defaultHiddenTools)
-        onPlacementUpdate(defaultBottomTools)
-        onOrderUpdate(defaultToolOrder)
-    }
-
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
-    ) {
-        Surface(
-            modifier = Modifier
-                .fillMaxSize()
-                .windowInsetsPadding(WindowInsets.navigationBars),
-            color = MaterialTheme.colorScheme.surface
-        ) {
-            Column(modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = stringResource(R.string.title_customize_toolbar),
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.weight(1f)
-                    )
-                    TextButton(onClick = resetToDefault) {
-                        Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text(stringResource(R.string.action_reset))
-                    }
-                    IconButton(onClick = onDismiss) {
-                        Icon(Icons.Default.Close, contentDescription = stringResource(R.string.action_close))
-                    }
-                }
-
-                LazyColumn(
-                    state = lazyListState,
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(bottom = 24.dp)
-                ) {
-                    items(flatItems, key = { it.id }) { item ->
-                        val isDragged = item.id == dragDropState.draggedItemId
-
-                        val zIndex = if (isDragged) 1f else 0f
-                        val elevation = if (isDragged) 8.dp else 0.dp
-                        val scale = if (isDragged) 1.03f else 1f
-                        val translationY = if (isDragged) dragDropState.dragOffset.y else 0f
-
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .then(if (isDragged) Modifier else Modifier.animateItem())
-                                .zIndex(zIndex)
-                                .graphicsLayer {
-                                    this.translationY = translationY
-                                    this.scaleX = scale
-                                    this.scaleY = scale
-                                    this.shadowElevation = elevation.toPx()
-                                }
-                        ) {
-                            when (item.type) {
-                                FlatItemType.SECTION_HEADER -> {
-                                    val titleRes = item.titleRes
-                                    Text(
-                                        text = if (titleRes != null) stringResource(titleRes) else item.title.orEmpty(),
-                                        style = MaterialTheme.typography.titleMedium,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.onSurface,
-                                        modifier = Modifier.padding(top = 16.dp, bottom = 8.dp, start = 4.dp)
-                                    )
-                                }
-                                FlatItemType.EMPTY_PLACEHOLDER -> {
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(64.dp)
-                                            .padding(vertical = 4.dp)
-                                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f), RoundedCornerShape(12.dp)),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Text(stringResource(R.string.toolbar_drop_tools_here), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    }
-                                }
-                                FlatItemType.TOOL -> {
-                                    ToolbarDragRow(
-                                        tool = item.tool!!,
-                                        isDragging = isDragged,
-                                        onDragStart = { dragDropState.onDragStart(item.id) },
-                                        onDrag = { dragDropState.onDrag(it) },
-                                        onDragEnd = {
-                                            dragDropState.onDragEnd()
-                                            flatItems = sanitizePlaceholders(flatItems).toMutableList()
-                                            commitDragDrop()
-                                        }
-                                    )
-                                }
-                                FlatItemType.MORE_HEADER -> {
-                                    val titleRes = item.titleRes
-                                    Text(
-                                        text = if (titleRes != null) stringResource(titleRes) else item.title ?: stringResource(R.string.toolbar_more_menu),
-                                        style = MaterialTheme.typography.labelMedium,
-                                        color = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.padding(top = 24.dp, bottom = 8.dp, start = 4.dp)
-                                    )
-                                }
-                                FlatItemType.MORE_TOOL -> {
-                                    MoreToolVisibilityRow(
-                                        title = stringResource(item.tool!!.titleRes),
-                                        visible = !localHiddenTools.contains(item.tool.name),
-                                        onToggle = {
-                                            localHiddenTools = if (localHiddenTools.contains(item.tool.name)) {
-                                                localHiddenTools - item.tool.name
-                                            } else {
-                                                localHiddenTools + item.tool.name
-                                            }
-                                            onUpdate(localHiddenTools)
-                                        }
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ToolbarDragRow(
-    tool: ReaderTool,
-    isDragging: Boolean,
-    onDragStart: () -> Unit,
-    onDrag: (Offset) -> Unit,
-    onDragEnd: () -> Unit
-) {
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp),
-        shape = RoundedCornerShape(12.dp),
-        color = if (isDragging) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-    ) {
-        Row(
-            modifier = Modifier.padding(start = 16.dp, top = 8.dp, bottom = 8.dp, end = 4.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            ToolPreviewIcon(tool)
-            Spacer(Modifier.width(16.dp))
-            Text(
-                text = stringResource(tool.titleRes),
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.weight(1f)
-            )
-            Icon(
-                Icons.Default.Menu,
-                contentDescription = stringResource(R.string.content_desc_drag_to_reorder),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier
-                    .size(32.dp)
-                    .padding(6.dp)
-                    .clip(CircleShape)
-                    .pointerInput(tool) {
-                        detectDragGestures(
-                            onDragStart = { onDragStart() },
-                            onDrag = { change, dragAmount ->
-                                change.consume()
-                                onDrag(dragAmount)
-                            },
-                            onDragEnd = onDragEnd,
-                            onDragCancel = onDragEnd
-                        )
-                    }
-            )
-        }
-    }
-}
-
-@Composable
-private fun MoreToolVisibilityRow(
-    title: String,
-    visible: Boolean,
-    onToggle: () -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .clickable(onClick = onToggle)
-            .padding(vertical = 12.dp, horizontal = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.weight(1f)
-        )
-        if (visible) {
-            Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-        }
-    }
-}
-
-enum class ToolbarSection(@StringRes val titleRes: Int) {
-    TOP(R.string.toolbar_top_bar),
-    BOTTOM(R.string.toolbar_bottom_bar),
-    HIDDEN(R.string.toolbar_hidden_tools)
+    val context = LocalContext.current
+    com.aryan.reader.shared.ui.SharedEpubToolbarCustomizationDialog(
+        hiddenToolIds = hiddenTools.mapNotNullTo(mutableSetOf()) { ReaderTool.fromId(it)?.id },
+        toolOrder = toolOrder,
+        bottomToolIds = bottomTools.mapNotNullTo(mutableSetOf()) { ReaderTool.fromId(it)?.id },
+        toolbarTools = epubToolbarTools,
+        availableTools = ReaderTool.entries.toSet(),
+        labels = com.aryan.reader.shared.ui.SharedEpubToolbarCustomizationLabels(
+            title = stringResource(R.string.title_customize_toolbar),
+            reset = stringResource(R.string.action_reset),
+            close = stringResource(R.string.action_close),
+            topBar = stringResource(R.string.toolbar_top_bar),
+            bottomBar = stringResource(R.string.toolbar_bottom_bar),
+            hiddenTools = stringResource(R.string.toolbar_hidden_tools),
+            dropToolsHere = stringResource(R.string.toolbar_drop_tools_here),
+            moreMenu = stringResource(R.string.toolbar_more_menu),
+        ),
+        toolTitle = { context.getString(it.titleRes) },
+        onHiddenToolsUpdate = { ids ->
+            onUpdate(ids.mapNotNullTo(mutableSetOf()) { ReaderTool.fromId(it)?.name })
+        },
+        onToolOrderUpdate = onOrderUpdate,
+        onBottomToolsUpdate = { ids ->
+            onPlacementUpdate(ids.mapNotNullTo(mutableSetOf()) { ReaderTool.fromId(it)?.name })
+        },
+        onDismiss = onDismiss,
+        toolIcon = { ToolPreviewIcon(it) },
+    )
 }
 
 @Composable
@@ -2109,8 +1671,6 @@ fun TtsOverlayControls(
     val context = LocalContext.current
     var rate by remember { mutableFloatStateOf(loadTtsSpeechRate(context)) }
     var pitch by remember { mutableFloatStateOf(loadTtsPitch(context)) }
-    var isDraggingRate by remember { mutableStateOf(false) }
-    var isDraggingPitch by remember { mutableStateOf(false) }
 
     val activeMode = try { com.aryan.reader.tts.TtsPlaybackManager.TtsMode.valueOf(ttsState.ttsMode) } catch(_: Exception) { com.aryan.reader.tts.TtsPlaybackManager.TtsMode.CLOUD }
     val progressPercent = ttsState.bookProgressPercent
@@ -2161,11 +1721,7 @@ fun TtsOverlayControls(
     val saveAndApply = {
         saveTtsSpeechRate(context, rate)
         saveTtsPitch(context, pitch)
-        if (activeMode == com.aryan.reader.tts.TtsPlaybackManager.TtsMode.CLOUD) {
-            ttsController.setPlaybackParameters(rate, pitch)
-        } else {
-            ttsController.sliceAndRetainPosition()
-        }
+        ttsController.setPlaybackParameters(rate, pitch)
     }
 
     Surface(
@@ -2551,12 +2107,8 @@ fun TtsOverlayControls(
                                     }
                                     Slider(
                                         value = rate,
-                                        onValueChange = {
-                                            rate = it; if (!isDraggingRate && activeMode != com.aryan.reader.tts.TtsPlaybackManager.TtsMode.CLOUD) {
-                                            isDraggingRate = true; ttsController.pause()
-                                        }
-                                        },
-                                        onValueChangeFinished = { isDraggingRate = false; saveAndApply() },
+                                        onValueChange = { rate = it },
+                                        onValueChangeFinished = saveAndApply,
                                         valueRange = 0.5f..3.0f,
                                         modifier = Modifier.weight(1f).height(20.dp),
                                         thumb = {
@@ -2624,12 +2176,8 @@ fun TtsOverlayControls(
                                     }
                                     Slider(
                                         value = pitch,
-                                        onValueChange = {
-                                            pitch = it; if (!isDraggingPitch && activeMode != com.aryan.reader.tts.TtsPlaybackManager.TtsMode.CLOUD) {
-                                            isDraggingPitch = true; ttsController.pause()
-                                        }
-                                        },
-                                        onValueChangeFinished = { isDraggingPitch = false; saveAndApply() },
+                                        onValueChange = { pitch = it },
+                                        onValueChangeFinished = saveAndApply,
                                         valueRange = 0.5f..2.0f,
                                         modifier = Modifier.weight(1f).height(20.dp),
                                         thumb = {

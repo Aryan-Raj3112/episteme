@@ -28,7 +28,14 @@ class SharedJvmBookLoadCacheTest {
                 fileName = "book.epub",
                 title = "Cached Book",
                 author = "Author",
+                language = "fr",
+                seriesName = "Series",
+                seriesIndex = 2.5,
+                description = "Description",
                 css = mapOf("style.css" to "p { margin: 0; }"),
+                pageList = listOf(MobileEpubPageTarget("p1", "1", "One", "one.xhtml#p1")),
+                images = listOf(MobileEpubImage("images/cover.png")),
+                coverImagePath = "images/cover.png",
                 chapters = listOf(
                     SharedEpubChapter(
                         id = "one",
@@ -46,7 +53,10 @@ class SharedJvmBookLoadCacheTest {
                                 blockIndex = 0
                             )
                         ),
-                        baseHref = "one.xhtml"
+                        baseHref = "one.xhtml",
+                        fragmentId = "opening",
+                        depth = 2,
+                        isInToc = false
                     )
                 )
             )
@@ -58,6 +68,16 @@ class SharedJvmBookLoadCacheTest {
             assertEquals(book.title, loaded.title)
             assertEquals(book.css, loaded.css)
             assertEquals("Hello cache.", loaded.chapters.single().plainText)
+            assertEquals("opening", loaded.chapters.single().fragmentId)
+            assertEquals(2, loaded.chapters.single().depth)
+            assertEquals(false, loaded.chapters.single().isInToc)
+            assertEquals(book.pageList, loaded.pageList)
+            assertEquals("fr", loaded.language)
+            assertEquals("Series", loaded.seriesName)
+            assertEquals(2.5, loaded.seriesIndex)
+            assertEquals("Description", loaded.description)
+            assertEquals(book.images, loaded.images)
+            assertEquals("images/cover.png", loaded.coverImagePath)
         } finally {
             root.deleteRecursively()
         }

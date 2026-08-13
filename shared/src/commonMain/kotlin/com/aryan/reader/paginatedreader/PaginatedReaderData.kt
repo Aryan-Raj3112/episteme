@@ -401,6 +401,26 @@ data class FlexContainerBlock(
 ) : ContentBlock
 
 @Serializable
+data class ChantUnitBlock(
+    @ProtoNumber(1) @Serializable(with = AnnotatedStringSerializer::class) val neume: AnnotatedString,
+    @ProtoNumber(2) @Serializable(with = AnnotatedStringSerializer::class) val lyric: AnnotatedString,
+    @ProtoNumber(3) val keepWithNext: Boolean = false,
+    @ProtoNumber(4) val underlineBefore: Boolean = false,
+    @ProtoNumber(5) val underlineAfter: Boolean = false,
+    @ProtoNumber(6) val isDropCap: Boolean = false
+)
+
+@Serializable
+data class ChantScoreBlock(
+    @ProtoNumber(1) val units: List<ChantUnitBlock>,
+    @ProtoNumber(2) override val style: BlockStyle = BlockStyle(),
+    @ProtoNumber(3) override val elementId: String? = null,
+    @ProtoNumber(4) override val cfi: String? = null,
+    @ProtoNumber(5) override val blockIndex: Int,
+    @ProtoNumber(6) override val expectedHeight: Int = 0
+) : ContentBlock
+
+@Serializable
 data class OptimizedCssRules(
     @ProtoNumber(1) val byTag: Map<String, List<CssRule>> = emptyMap(),
     @ProtoNumber(2) val byClass: Map<String, List<CssRule>> = emptyMap(),

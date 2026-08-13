@@ -1,5 +1,7 @@
 package com.aryan.reader.shared.pdf
 
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.unit.IntSize
 import kotlinx.serialization.Serializable
 import kotlin.math.ceil
@@ -321,6 +323,11 @@ fun PdfPageBounds.resizedBy(
     ).coercedToPage()
 }
 
+/** True when the normalized point (0..1 page coordinates) falls inside this bounds rect. */
+fun PdfPageBounds.containsNormalizedPoint(x: Float, y: Float): Boolean {
+    return x in left..right && y in top..bottom
+}
+
 fun PdfPageBounds.movedBy(
     deltaXPx: Float,
     deltaYPx: Float,
@@ -409,5 +416,54 @@ private fun PdfPageBounds.coercedToPage(): PdfPageBounds {
         top = coercedTop,
         right = coercedRight,
         bottom = coercedBottom
+    )
+}
+
+/**
+ * Mirrors Android's pagination text-box drag (PdfViewerScreen.onTextBoxDragEnd): while dragging
+ * a text box across pages in pagination mode, the box's top-left follows the finger in container
+ * (screen) coordinates, and on release its position is re-expressed relative to the target page
+ * surface, clamped to a fixed padding inset.
+ */
+data class SharedPdfTextDragState(
+    val draftId: String,
+    val originDisplayPage: Int,
+    val originPdfPage: Int,
+    val relWidth: Float,
+    val relHeight: Float,
+    val dragOffset: Offset,
+    val originCanvasSize: IntSize,
+    val dragWidthPx: Float,
+    val dragHeightPx: Float,
+    val dragCameraScale: Float
+)
+
+/**
+ * Converts a drop position in container coordinates into page-relative bounds on the target
+ * page surface, clamped with [paddingPx] insets (Android's 14dp box padding).
+ */
+fun sharedPdfTextDropBounds(
+    dropTopLeft: Offset,
+    targetRect: Rect,
+    relWidth: Float,
+    relHeight: Float,
+    paddingPx: Float
+): PdfPageBounds {
+    if (targetRect.width <= 0f || targetRect.height <= 0f) {
+        return PdfPageBounds(0f, 0f, relWidth.coerceIn(0f, 1f), relHeight.coerceIn(0f, 1f))
+    }
+    val padRelX = paddingPx / targetRect.width
+    val padRelY = paddingPx / targetRect.height
+    val rawRelX = (dropTopLeft.x - targetRect.left) / targetRect.width
+    val rawRelY = (dropTopLeft.y - targetRect.top) / targetRect.height
+    val maxRelX = (1f - relWidth - padRelX).coerceAtLeast(padRelX)
+    val maxRelY = (1f - relHeight - padRelY).coerceAtLeast(padRelY)
+    val finalRelX = rawRelX.coerceIn(padRelX, maxRelX)
+    val finalRelY = rawRelY.coerceIn(padRelY, maxRelY)
+    return PdfPageBounds(
+        left = finalRelX,
+        top = finalRelY,
+        right = finalRelX + relWidth,
+        bottom = finalRelY + relHeight
     )
 }

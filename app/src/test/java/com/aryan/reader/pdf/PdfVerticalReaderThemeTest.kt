@@ -1,7 +1,7 @@
 package com.aryan.reader.pdf
 
 import androidx.compose.ui.graphics.Color
-import com.aryan.reader.ReaderTheme
+import com.aryan.reader.shared.ReaderTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Test

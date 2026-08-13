@@ -6,6 +6,7 @@ import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.unit.IntSize
 import kotlin.math.PI
 import kotlin.math.abs
@@ -13,6 +14,15 @@ import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.math.sqrt
+
+fun sharedPdfIsEraserOverride(pointerType: PointerType, stylusButtonPressed: Boolean): Boolean {
+    return pointerType == PointerType.Eraser ||
+        (pointerType == PointerType.Stylus && stylusButtonPressed)
+}
+
+fun sharedPdfIsInkDownAllowed(isStylusOnlyMode: Boolean, type: PointerType): Boolean {
+    return !isStylusOnlyMode || type != PointerType.Touch
+}
 
 sealed interface SharedPdfInkRenderData {
     data class Standard(

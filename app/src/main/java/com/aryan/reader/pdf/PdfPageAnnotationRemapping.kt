@@ -143,54 +143,14 @@ internal fun buildPdfPageIndexMapping(
     updatedLayout: List<VirtualPage>,
     sourcePageIndices: Iterable<Int>
 ): Map<Int, Int> {
-    val distinctSourcePageIndices = sourcePageIndices.toSet()
-    if (distinctSourcePageIndices.isEmpty()) return emptyMap()
-
-    val minimumCurrentPageCount = maxOf(
-        currentLayout.size,
-        distinctSourcePageIndices.maxOrNull()?.plus(1) ?: 0
+    return buildSharedPdfPageIndexMapping(
+        currentLayout = currentLayout.map(VirtualPage::toSharedPageIdentity),
+        updatedLayout = updatedLayout.map(VirtualPage::toSharedPageIdentity),
+        sourcePageIndices = sourcePageIndices,
     )
-    val effectiveCurrentLayout = currentLayout.withDefaultPdfPagesUntil(minimumCurrentPageCount)
-    val currentTokens = effectiveCurrentLayout.toOccurrenceTokens()
-    val updatedTokenIndices = updatedLayout.toOccurrenceTokens()
-        .mapIndexed { index, token -> token to index }
-        .toMap()
-
-    return distinctSourcePageIndices.mapNotNull { sourcePageIndex ->
-        val token = currentTokens.getOrNull(sourcePageIndex) ?: return@mapNotNull null
-        val targetPageIndex = updatedTokenIndices[token] ?: return@mapNotNull null
-        sourcePageIndex to targetPageIndex
-    }.toMap()
 }
 
-private fun List<VirtualPage>.withDefaultPdfPagesUntil(pageCount: Int): List<VirtualPage> {
-    if (size >= pageCount) return this
-    return this + (size until pageCount).map { VirtualPage.PdfPage(it) }
-}
-
-private fun List<VirtualPage>.toOccurrenceTokens(): List<VirtualPageOccurrenceToken> {
-    val seen = mutableMapOf<VirtualPageKey, Int>()
-    return map { page ->
-        val key = page.toVirtualPageKey()
-        val occurrence = seen.getOrDefault(key, 0)
-        seen[key] = occurrence + 1
-        VirtualPageOccurrenceToken(key, occurrence)
-    }
-}
-
-private fun VirtualPage.toVirtualPageKey(): VirtualPageKey {
-    return when (this) {
-        is VirtualPage.PdfPage -> VirtualPageKey.Pdf(pdfIndex)
-        is VirtualPage.BlankPage -> VirtualPageKey.Blank(id)
-    }
-}
-
-private data class VirtualPageOccurrenceToken(
-    val key: VirtualPageKey,
-    val occurrence: Int
-)
-
-private sealed interface VirtualPageKey {
-    data class Pdf(val pdfIndex: Int) : VirtualPageKey
-    data class Blank(val id: String) : VirtualPageKey
+private fun VirtualPage.toSharedPageIdentity(): PdfPageIdentity = when (this) {
+    is VirtualPage.PdfPage -> PdfPageIdentity.Pdf(pdfIndex)
+    is VirtualPage.BlankPage -> PdfPageIdentity.Blank(id)
 }

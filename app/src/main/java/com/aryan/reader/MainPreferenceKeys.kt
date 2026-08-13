@@ -6,6 +6,8 @@ internal const val KEY_MAIN_SCREEN_START_PAGE = "main_screen_start_page"
 internal const val KEY_LIBRARY_SCREEN_START_PAGE = "library_screen_start_page"
 internal const val KEY_LAST_VIEWING_SHELF_ID = "last_viewing_shelf_id"
 internal const val KEY_LAST_ADDING_BOOKS_TO_SHELF = "last_adding_books_to_shelf"
+internal const val KEY_UNIFIED_LIBRARY_SECTION = "unified_library_section"
+internal const val KEY_UNIFIED_LIBRARY_LIST_VIEW = "unified_library_list_view"
 
 internal const val KEY_FILTER_FILE_TYPES = "filter_file_types"
 internal const val KEY_FILTER_FOLDERS = "filter_folders"

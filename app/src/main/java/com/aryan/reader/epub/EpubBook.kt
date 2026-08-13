@@ -20,18 +20,16 @@
 package com.aryan.reader.epub
 
 import android.graphics.Bitmap
-import com.aryan.reader.epub.EpubParser.EpubPageTarget
+import com.aryan.reader.shared.reader.MobileEpubPageTarget
+import com.aryan.reader.shared.reader.MobileEpubTocEntry
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
 import java.io.File
+import com.aryan.reader.shared.reader.mobileEpubContentFilePath
+import com.aryan.reader.shared.reader.isMobileEpubExtractionCacheReadable
 
-@Serializable
-data class EpubTocEntry(
-    val label: String,
-    val absolutePath: String,
-    val fragmentId: String?,
-    val depth: Int
-)
+typealias EpubTocEntry = MobileEpubTocEntry
+typealias EpubPageTarget = MobileEpubPageTarget
 
 @Serializable
 data class EpubBook(
@@ -53,17 +51,21 @@ data class EpubBook(
     val description: String? = null,
 )
 
-fun epubContentFilePath(path: String): String = path.substringBefore('#').substringBefore('?')
+fun epubContentFilePath(path: String): String = mobileEpubContentFilePath(path)
 
 fun EpubChapter.contentFilePath(): String = epubContentFilePath(htmlFilePath)
 
 fun EpubBook.hasReadableExtractedContent(): Boolean {
-    if (extractionBasePath.isBlank()) return false
+    val hasBasePath = extractionBasePath.isNotBlank()
     val extractionDir = File(extractionBasePath)
-    if (!extractionDir.isDirectory) return false
-    if (chapters.isEmpty()) return extractionDir.list()?.isNotEmpty() == true
-
-    return chapters.all { chapter ->
-        File(extractionDir, chapter.contentFilePath()).isFile
-    }
+    val hasDirectory = hasBasePath && extractionDir.isDirectory
+    return isMobileEpubExtractionCacheReadable(
+        extractionBasePathPresent = hasBasePath,
+        extractionDirectoryPresent = hasDirectory,
+        chapterCount = chapters.size,
+        extractionDirectoryHasEntries = hasDirectory && extractionDir.list()?.isNotEmpty() == true,
+        allChapterFilesPresent = hasDirectory && chapters.all { chapter ->
+            File(extractionDir, chapter.contentFilePath()).isFile
+        }
+    )
 }

@@ -8,6 +8,7 @@ import com.aryan.reader.paginatedreader.CssStyle
 import com.aryan.reader.paginatedreader.SemanticParagraph
 import com.aryan.reader.shared.HighlightColor
 import com.aryan.reader.shared.ReaderLocator
+import com.aryan.reader.shared.ReaderExternalLookupAction
 import com.aryan.reader.shared.UserHighlight
 import com.aryan.reader.shared.reader.ReaderPage
 import kotlin.test.Test
@@ -17,6 +18,38 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 
 class SharedNativePaginatedReaderInteractionTest {
+    @Test
+    fun `native selection lookup actions match vertical reader actions`() {
+        assertEquals(ReaderExternalLookupAction.DICTIONARY, SharedNativeReaderSelectionAction.DEFINE.externalLookupActionOrNull())
+        assertEquals(ReaderExternalLookupAction.TRANSLATE, SharedNativeReaderSelectionAction.TRANSLATE.externalLookupActionOrNull())
+        assertEquals(ReaderExternalLookupAction.SEARCH, SharedNativeReaderSelectionAction.SEARCH.externalLookupActionOrNull())
+        assertNull(SharedNativeReaderSelectionAction.SPEAK.externalLookupActionOrNull())
+        assertNull(SharedNativeReaderSelectionAction.NOTE.externalLookupActionOrNull())
+    }
+
+    @Test
+    fun `paginated edge taps follow reading direction`() {
+        assertEquals(SharedPaginatedTapAction.PREVIOUS_PAGE, sharedPaginatedTapAction(0.1f, true, false))
+        assertEquals(SharedPaginatedTapAction.NEXT_PAGE, sharedPaginatedTapAction(0.9f, true, false))
+        assertEquals(SharedPaginatedTapAction.NEXT_PAGE, sharedPaginatedTapAction(0.1f, true, true))
+        assertEquals(SharedPaginatedTapAction.PREVIOUS_PAGE, sharedPaginatedTapAction(0.9f, true, true))
+    }
+
+    @Test
+    fun `paginated center and disabled tap navigation toggle chrome`() {
+        assertEquals(SharedPaginatedTapAction.TOGGLE_CHROME, sharedPaginatedTapAction(0.5f, true, false))
+        assertEquals(SharedPaginatedTapAction.TOGGLE_CHROME, sharedPaginatedTapAction(0.1f, false, false))
+    }
+
+    @Test
+    fun `page transition direction follows pagination direction`() {
+        assertEquals(1, sharedPaginatedTransitionDirection(2, 3, false))
+        assertEquals(-1, sharedPaginatedTransitionDirection(3, 2, false))
+        assertEquals(-1, sharedPaginatedTransitionDirection(2, 3, true))
+        assertEquals(1, sharedPaginatedTransitionDirection(3, 2, true))
+        assertEquals(0, sharedPaginatedTransitionDirection(2, 2, false))
+    }
+
     @Test
     fun `word selection trims punctuation around long press range`() {
         val range = sharedNativeReaderTrimmedWordRange(

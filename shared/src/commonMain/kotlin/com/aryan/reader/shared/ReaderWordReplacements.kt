@@ -173,6 +173,56 @@ object ReaderBookReplacementEngine {
             rules = preferences.activeRulesForFile(fileId),
         )
     }
+
+    /** Rewrites visible HTML text while leaving markup and script/style content untouched. */
+    fun applyToHtml(
+        html: String,
+        preferences: ReaderBookReplacementPreferences,
+        fileId: String?,
+    ): String {
+        val rules = preferences.activeRulesForFile(fileId)
+        if (html.isEmpty() || rules.isEmpty()) return html
+
+        val output = StringBuilder(html.length)
+        val text = StringBuilder()
+        var index = 0
+        var blockedDepth = 0
+
+        fun flushText() {
+            if (text.isEmpty()) return
+            output.append(
+                if (blockedDepth > 0) text
+                else ReaderWordReplacementEngine.apply(text.toString(), rules).text
+            )
+            text.clear()
+        }
+
+        while (index < html.length) {
+            if (html[index] != '<') {
+                text.append(html[index++])
+                continue
+            }
+            val tagEnd = html.indexOf('>', startIndex = index + 1)
+            if (tagEnd < 0) {
+                text.append(html.substring(index))
+                break
+            }
+            flushText()
+            val tag = html.substring(index, tagEnd + 1)
+            val tagBody = tag.drop(1).dropLast(1).trimStart()
+            val isClosing = tagBody.startsWith('/')
+            val normalizedBody = tagBody.removePrefix("/").trimStart()
+            val tagName = normalizedBody.takeWhile { it.isLetterOrDigit() }.lowercase()
+            val isBlockedTag = tagName == "script" || tagName == "style" || tagName == "noscript"
+            val isSelfClosing = normalizedBody.trimEnd().endsWith('/')
+            if (isBlockedTag && isClosing) blockedDepth = (blockedDepth - 1).coerceAtLeast(0)
+            output.append(tag)
+            if (isBlockedTag && !isClosing && !isSelfClosing) blockedDepth += 1
+            index = tagEnd + 1
+        }
+        flushText()
+        return output.toString()
+    }
 }
 
 object ReaderBookReplacementPreferencesJson {

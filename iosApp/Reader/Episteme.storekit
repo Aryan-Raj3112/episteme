@@ -1,0 +1,85 @@
+{
+  "identifier" : "B24F4E51-08BC-47A5-8FB8-CC8F101311FA",
+  "nonRenewingSubscriptions" : [
+
+  ],
+  "products" : [
+    {
+      "displayPrice" : "24.99",
+      "familyShareable" : false,
+      "internalID" : "DD55B468-430F-4F34-AF88-D905415C123F",
+      "localizations" : [
+        {
+          "description" : "Unlock Episteme Pro features with a one-time purchase.",
+          "displayName" : "Episteme Pro Lifetime",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "episteme_pro_lifetime",
+      "referenceName" : "Episteme Pro Lifetime",
+      "type" : "NonConsumable"
+    },
+    {
+      "displayPrice" : "0.99",
+      "familyShareable" : false,
+      "internalID" : "45451194-623B-4E52-A09D-6D655F0788EF",
+      "localizations" : [
+        {
+          "description" : "Add 100 credits for cloud features.",
+          "displayName" : "100 Credits",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "credits_100",
+      "referenceName" : "100 Credits",
+      "type" : "Consumable"
+    },
+    {
+      "displayPrice" : "2.49",
+      "familyShareable" : false,
+      "internalID" : "8501BE75-3832-4881-94C4-993655B0610E",
+      "localizations" : [
+        {
+          "description" : "Add 300 credits for cloud features.",
+          "displayName" : "300 Credits",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "credits_300",
+      "referenceName" : "300 Credits",
+      "type" : "Consumable"
+    },
+    {
+      "displayPrice" : "4.99",
+      "familyShareable" : false,
+      "internalID" : "43DE99E9-52A8-472F-B205-702454916573",
+      "localizations" : [
+        {
+          "description" : "Add 750 credits for cloud features.",
+          "displayName" : "750 Credits",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "credits_750",
+      "referenceName" : "750 Credits",
+      "type" : "Consumable"
+    }
+  ],
+  "settings" : {
+    "_applicationInternalID" : "1234567890",
+    "_developerTeamID" : "",
+    "_failTransactionsEnabled" : false,
+    "_locale" : "en_US",
+    "_storefront" : "USA",
+    "_storeKitErrors" : [
+
+    ]
+  },
+  "subscriptionGroups" : [
+
+  ],
+  "version" : {
+    "major" : 4,
+    "minor" : 0
+  }
+}

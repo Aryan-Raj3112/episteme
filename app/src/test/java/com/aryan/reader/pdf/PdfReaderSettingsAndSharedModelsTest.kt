@@ -9,6 +9,10 @@ import com.aryan.reader.pdf.data.AnnotationToolSettings
 import com.aryan.reader.pdf.data.TextStyleConfig
 import com.aryan.reader.pdf.data.ToolConfig
 import com.aryan.reader.shared.HighlightStyle
+import com.aryan.reader.shared.PdfToolbarPreferences
+import com.aryan.reader.shared.ui.SharedToolbarFlatItemType
+import com.aryan.reader.shared.ui.SharedToolbarSection
+import com.aryan.reader.shared.ui.buildSharedPdfToolbarItems
 import com.aryan.reader.shared.pdf.PdfAnnotationKind
 import com.aryan.reader.shared.pdf.PdfInkTool
 import com.aryan.reader.shared.pdf.PdfPageBounds
@@ -229,37 +233,43 @@ class PdfReaderSettingsAndSharedModelsTest {
             defaultPdfBottomTools()
         )
 
-        val defaultItems = buildPdfToolbarItems(
-            hiddenTools = defaultPdfHiddenTools(),
-            toolOrder = defaultPdfToolOrder(),
-            bottomTools = defaultPdfBottomTools()
+        val defaultItems = buildSharedPdfToolbarItems(
+            preferences = PdfToolbarPreferences(
+                hiddenToolIds = defaultPdfHiddenTools().mapNotNullTo(mutableSetOf()) { PdfReaderTool.fromId(it)?.id },
+                toolOrder = defaultPdfToolOrder(),
+                bottomToolIds = defaultPdfBottomTools().mapNotNullTo(mutableSetOf()) { PdfReaderTool.fromId(it)?.id },
+            ),
+            availableTools = defaultPdfToolOrder().toSet(),
         )
 
         assertEquals(
-            PdfToolbarSection.HIDDEN,
-            defaultItems.single { it.tool == PdfReaderTool.SCREEN_ORIENTATION }.section
+            SharedToolbarSection.HIDDEN,
+            defaultItems.single { it.toolId == PdfReaderTool.SCREEN_ORIENTATION.id }.section
         )
         assertEquals(
-            PdfToolbarSection.HIDDEN,
-            defaultItems.single { it.tool == PdfReaderTool.HIGHLIGHT_ALL }.section
+            SharedToolbarSection.HIDDEN,
+            defaultItems.single { it.toolId == PdfReaderTool.HIGHLIGHT_ALL.id }.section
         )
         assertEquals(
-            PdfToolbarSection.HIDDEN,
-            defaultItems.single { it.tool == PdfReaderTool.BRIGHTNESS }.section
+            SharedToolbarSection.HIDDEN,
+            defaultItems.single { it.toolId == PdfReaderTool.BRIGHTNESS.id }.section
         )
         assertEquals(
-            PdfToolbarSection.BOTTOM,
-            defaultItems.single { it.tool == PdfReaderTool.SLIDER }.section
+            SharedToolbarSection.BOTTOM,
+            defaultItems.single { it.toolId == PdfReaderTool.SLIDER.id }.section
         )
 
-        val customPlacementItems = buildPdfToolbarItems(
-            hiddenTools = emptySet(),
-            toolOrder = defaultPdfToolOrder(),
-            bottomTools = setOf(PdfReaderTool.THEME.name)
+        val customPlacementItems = buildSharedPdfToolbarItems(
+            preferences = PdfToolbarPreferences(
+                hiddenToolIds = emptySet(),
+                toolOrder = defaultPdfToolOrder(),
+                bottomToolIds = setOf(PdfReaderTool.THEME.id),
+            ),
+            availableTools = defaultPdfToolOrder().toSet(),
         )
         assertEquals(
-            PdfToolbarSection.BOTTOM,
-            customPlacementItems.single { it.tool == PdfReaderTool.THEME }.section
+            SharedToolbarSection.BOTTOM,
+            customPlacementItems.single { it.toolId == PdfReaderTool.THEME.id }.section
         )
 
         val expectedMoreTools = buildSet {
@@ -287,13 +297,13 @@ class PdfReaderSettingsAndSharedModelsTest {
         assertEquals(
             expectedMoreTools,
             defaultItems
-                .filter { it.type == PdfFlatItemType.MORE_TOOL }
-                .mapNotNull { it.tool }
+                .filter { it.type == SharedToolbarFlatItemType.MORE_TOOL }
+                .mapNotNull { it.toolId?.let(PdfReaderTool::fromId) }
                 .toSet()
         )
-        assertFalse(defaultItems.any { it.tool?.name == "FULL_SCREEN" })
+        assertFalse(defaultItems.any { it.toolId == "FULL_SCREEN" })
         if (!BuildConfig.IS_PRO) {
-            assertFalse(defaultItems.any { it.tool == PdfReaderTool.OCR_LANGUAGE })
+            assertFalse(defaultItems.any { it.toolId == PdfReaderTool.OCR_LANGUAGE.id })
         }
     }
 

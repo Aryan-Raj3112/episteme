@@ -53,7 +53,7 @@ import com.aryan.reader.shared.pdf.updateCurrentSharedPdfTextStyle
 import com.aryan.reader.shared.reader.ReaderPageSpreadMode
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.ui.SharedPdfHighlighterPaletteEditor
-import com.aryan.reader.shared.ui.SharedPdfTextAnnotationDock
+import com.aryan.reader.shared.ui.SharedDesktopPdfTextAnnotationDock
 import com.aryan.reader.shared.ui.SharedReaderThemeControls
 import com.aryan.reader.shared.ui.SharedReaderVerticalScrollbar
 import com.aryan.reader.shared.ui.readerString
@@ -372,7 +372,7 @@ private fun ColumnScope.DesktopPdfInspectorContent(
                     if (isRichTextMode || selectedTool == PdfInkTool.TEXT) {
                         item {
                             DesktopPdfInspectorSection(readerString("desktop_text_style", "Text style")) {
-                                SharedPdfTextAnnotationDock(
+                                SharedDesktopPdfTextAnnotationDock(
                                     style = if (isRichTextMode) {
                                         richTextController.currentSharedPdfTextStyleConfig()
                                     } else {

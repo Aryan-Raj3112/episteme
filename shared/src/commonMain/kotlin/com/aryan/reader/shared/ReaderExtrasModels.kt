@@ -210,12 +210,70 @@ enum class ReaderExternalLookupAction(val title: String) {
     SEARCH("Search")
 }
 
-fun externalLookupUrl(action: ReaderExternalLookupAction, text: String): String {
+enum class ReaderExternalLookupService(val id: String, val title: String) {
+    SYSTEM("system", "System Dictionary"),
+    GOOGLE("google", "Google"),
+    GOOGLE_TRANSLATE("google_translate", "Google Translate"),
+    DUCKDUCKGO("duckduckgo", "DuckDuckGo"),
+    BING("bing", "Bing");
+
+    companion object {
+        fun fromId(id: String?): ReaderExternalLookupService {
+            return entries.firstOrNull { it.id.equals(id, ignoreCase = true) } ?: SYSTEM
+        }
+    }
+}
+
+val ReaderDictionaryServiceOptions = listOf(
+    ReaderExternalLookupService.SYSTEM,
+    ReaderExternalLookupService.GOOGLE,
+)
+
+val ReaderTranslateServiceOptions = listOf(
+    ReaderExternalLookupService.GOOGLE_TRANSLATE,
+    ReaderExternalLookupService.BING,
+)
+
+val ReaderSearchServiceOptions = listOf(
+    ReaderExternalLookupService.GOOGLE,
+    ReaderExternalLookupService.DUCKDUCKGO,
+    ReaderExternalLookupService.BING,
+)
+
+const val ReaderExternalLookupSelectionLimit = 2_000
+
+fun readerExternalLookupActionsAvailable(selectionLength: Int): Boolean {
+    return selectionLength in 0..ReaderExternalLookupSelectionLimit
+}
+
+fun readerExternalLookupActionForSelectionId(id: String): ReaderExternalLookupAction? {
+    return when (id.trim().lowercase()) {
+        "dictionary" -> ReaderExternalLookupAction.DICTIONARY
+        "translate" -> ReaderExternalLookupAction.TRANSLATE
+        "web-search", "search" -> ReaderExternalLookupAction.SEARCH
+        else -> null
+    }
+}
+
+fun externalLookupUrl(
+    action: ReaderExternalLookupAction,
+    text: String,
+    service: ReaderExternalLookupService = ReaderExternalLookupService.GOOGLE,
+): String {
     val encoded = text.trim().urlEncoded()
-    return when (action) {
-        ReaderExternalLookupAction.DICTIONARY -> "https://www.google.com/search?q=define+$encoded"
-        ReaderExternalLookupAction.TRANSLATE -> "https://translate.google.com/?sl=auto&tl=en&text=$encoded&op=translate"
-        ReaderExternalLookupAction.SEARCH -> "https://www.google.com/search?q=$encoded"
+    return when (service) {
+        ReaderExternalLookupService.GOOGLE_TRANSLATE ->
+            "https://translate.google.com/?sl=auto&tl=en&text=$encoded&op=translate"
+        ReaderExternalLookupService.DUCKDUCKGO -> "https://duckduckgo.com/?q=$encoded"
+        ReaderExternalLookupService.BING -> when (action) {
+            ReaderExternalLookupAction.TRANSLATE -> "https://www.bing.com/translator/?text=$encoded"
+            else -> "https://www.bing.com/search?q=$encoded"
+        }
+        ReaderExternalLookupService.SYSTEM, ReaderExternalLookupService.GOOGLE -> when (action) {
+            ReaderExternalLookupAction.DICTIONARY -> "https://www.google.com/search?q=define+$encoded"
+            ReaderExternalLookupAction.TRANSLATE -> "https://translate.google.com/?sl=auto&tl=en&text=$encoded&op=translate"
+            ReaderExternalLookupAction.SEARCH -> "https://www.google.com/search?q=$encoded"
+        }
     }
 }
 
@@ -226,6 +284,93 @@ data class ReaderAutoScrollState(
     fun sanitized(): ReaderAutoScrollState {
         return copy(speed = speed.coerceIn(12f, 160f))
     }
+}
+
+data class ReaderAutoScrollProfile(
+    val speed: Float = 0.8f,
+    val minSpeed: Float = 0.1f,
+    val maxSpeed: Float = 10f,
+) {
+    fun sanitized(): ReaderAutoScrollProfile {
+        val min = minSpeed.coerceIn(0.1f, 10f)
+        val max = maxSpeed.coerceIn(min, 10f)
+        return copy(
+            speed = speed.coerceIn(min, max),
+            minSpeed = min,
+            maxSpeed = max,
+        )
+    }
+
+    fun withMinSpeed(value: Float): ReaderAutoScrollProfile {
+        val min = value.coerceIn(0.1f, 10f)
+        val max = maxSpeed.coerceAtLeast(min)
+        return copy(speed = speed.coerceIn(min, max), minSpeed = min, maxSpeed = max).sanitized()
+    }
+
+    fun withMaxSpeed(value: Float): ReaderAutoScrollProfile {
+        val max = value.coerceIn(0.1f, 10f)
+        val min = minSpeed.coerceAtMost(max)
+        return copy(speed = speed.coerceIn(min, max), minSpeed = min, maxSpeed = max).sanitized()
+    }
+}
+
+/**
+ * Android advances by `speed * 0.5` pixels per display frame. The iOS web
+ * reader uses a time-based timer, so normalize that contract to 60 Hz.
+ */
+fun readerAutoScrollPixelsPerSecond(speedMultiplier: Float): Float =
+    speedMultiplier.coerceIn(0.1f, 10f) * 0.5f * 60f
+
+fun migrateLegacyIosReaderAutoScrollSpeed(value: Float): Float =
+    if (value > 10f) (value / 60f).coerceIn(0.1f, 10f) else value.coerceIn(0.1f, 10f)
+
+const val ReaderSearchDebounceMillis = 350L
+const val ReaderSearchFocusDelayMillis = 100L
+
+fun readerSearchDelayMillis(requestId: Long, immediateRequestId: Long): Long =
+    if (requestId == immediateRequestId) 0L else ReaderSearchDebounceMillis
+
+enum class ReaderAutoScrollBoundaryAction { NEXT_CHAPTER, STOP }
+
+fun readerAutoScrollBoundaryAction(
+    currentChapterIndex: Int,
+    chapterCount: Int,
+): ReaderAutoScrollBoundaryAction =
+    if (currentChapterIndex in 0 until (chapterCount - 1)) {
+        ReaderAutoScrollBoundaryAction.NEXT_CHAPTER
+    } else {
+        ReaderAutoScrollBoundaryAction.STOP
+    }
+
+const val ReaderMusicianHoldDurationMillis = 1_000L
+const val ReaderMusicianTapPauseMillis = 600L
+const val ReaderMusicianHoldPauseMillis = 1_000L
+const val ReaderMusicianViewportJumpFraction = 0.75f
+
+enum class ReaderMusicianNavigationTarget { RELATIVE, START, END }
+
+data class ReaderMusicianGesturePlan(
+    val target: ReaderMusicianNavigationTarget,
+    val relativeViewportDelta: Float,
+    val pauseMillis: Long,
+)
+
+fun planReaderMusicianGesture(
+    isRightRegion: Boolean,
+    isLongPress: Boolean,
+): ReaderMusicianGesturePlan {
+    if (isLongPress) {
+        return ReaderMusicianGesturePlan(
+            target = if (isRightRegion) ReaderMusicianNavigationTarget.END else ReaderMusicianNavigationTarget.START,
+            relativeViewportDelta = 0f,
+            pauseMillis = ReaderMusicianHoldPauseMillis,
+        )
+    }
+    return ReaderMusicianGesturePlan(
+        target = ReaderMusicianNavigationTarget.RELATIVE,
+        relativeViewportDelta = ReaderMusicianViewportJumpFraction * if (isRightRegion) 1f else -1f,
+        pauseMillis = ReaderMusicianTapPauseMillis,
+    )
 }
 
 enum class ReaderTtsReadScope(val label: String) {
