@@ -17,7 +17,6 @@ class SharedOpdsLocalBookMatcherTest {
         val match = SharedOpdsLocalBookMatcher.find(
             entry = entry,
             books = localBooks,
-            title = { it.title },
             displayName = { it.displayName },
             path = { it.path }
         )

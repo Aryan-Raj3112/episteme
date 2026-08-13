@@ -113,7 +113,7 @@ internal class IosOpdsRepository : SharedOpdsRepository {
                 contentDisposition = response.headers["Content-Disposition"],
                 urlPathSegment = acquisition.url.substringBefore('?').substringBefore('#').substringAfterLast('/')
             )
-            val fileName = "opds_dl_${SharedOpdsDownloadNamer.safeFileStem(entry.title).take(50)}$extension"
+            val fileName = SharedOpdsDownloadNamer.cleanFileName(entry.title, extension)
             val fileUrl = documentsDirectoryUrl()
                 ?: error("Could not access iOS Documents directory")
             val destination = fileUrl.URLByAppendingPathComponent(uniqueFileName(fileUrl, fileName))

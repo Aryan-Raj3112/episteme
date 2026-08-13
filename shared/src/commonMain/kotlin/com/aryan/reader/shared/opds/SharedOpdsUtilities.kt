@@ -73,6 +73,12 @@ object SharedOpdsSearch {
 }
 
 object SharedOpdsDownloadNamer {
+    fun cleanFileName(title: String, extension: String): String {
+        val normalizedExtension = extension.takeIf { it.startsWith('.') } ?: ".$extension"
+        val stem = safeFileStem(title)
+        return if (stem.endsWith(normalizedExtension, ignoreCase = true)) stem else "$stem$normalizedExtension"
+    }
+
     fun resolveExtension(
         acquisition: OpdsAcquisition,
         contentDisposition: String?,
@@ -106,7 +112,7 @@ object SharedOpdsDownloadNamer {
 
     fun safeFileStem(title: String, fallback: String = "opds_book"): String {
         val safe = title
-            .replace(Regex("""[^a-zA-Z0-9._-]+"""), "_")
+            .replace(Regex("""[^\p{L}\p{N}._-]+"""), "_")
             .trim('_')
             .take(80)
         return safe.ifBlank { fallback }
@@ -146,7 +152,6 @@ object SharedOpdsLocalBookMatcher {
         return find(
             entry = entry,
             books = books,
-            title = { it.title },
             displayName = { it.displayName },
             path = { it.path }
         )
@@ -155,20 +160,19 @@ object SharedOpdsLocalBookMatcher {
     fun <T> find(
         entry: OpdsEntry,
         books: List<T>,
-        title: (T) -> String?,
         displayName: (T) -> String?,
         path: (T) -> String?
     ): T? {
         val entryKeys = entry.matchKeys()
         return books.firstOrNull { book ->
-            book.matchKeys(title, displayName, path).any { it in entryKeys }
+            book.matchKeys(displayName, path).any { it in entryKeys }
         }
     }
 
     private fun OpdsEntry.matchKeys(): Set<String> {
         return buildSet {
             addNormalized(title)
-            val safeTitle = SharedOpdsDownloadNamer.safeFileStem(title)
+            val safeTitle = SharedOpdsDownloadNamer.safeFileStem(title, fallback = "")
             addNormalized(safeTitle)
             addNormalized(safeTitle.take(50))
             acquisitions.forEach { acquisition ->
@@ -178,12 +182,10 @@ object SharedOpdsLocalBookMatcher {
     }
 
     private fun <T> T.matchKeys(
-        title: (T) -> String?,
         displayName: (T) -> String?,
         path: (T) -> String?
     ): Set<String> {
         return buildSet {
-            addNormalized(title(this@matchKeys))
             addFileNameKeys(displayName(this@matchKeys))
             addFileNameKeys(path(this@matchKeys))
         }
@@ -199,9 +201,16 @@ object SharedOpdsLocalBookMatcher {
             ?.percentDecode()
             ?.takeIf { it.isNotBlank() }
             ?: return
+        if (!decodedName.isCredibleFileMatchName()) return
         addNormalized(decodedName)
         addNormalized(decodedName.withoutKnownExtension())
         addNormalized(decodedName.withoutKnownExtension().withoutOpdsDownloadPrefix())
+    }
+
+    private fun String.isCredibleFileMatchName(): Boolean {
+        val stem = withoutKnownExtension().withoutOpdsDownloadPrefix().trim().lowercase()
+        if (stem.isBlank() || stem.all(Char::isDigit)) return false
+        return stem !in setOf("download", "downloads", "file", "book", "opds_book", "acquire", "acquisition")
     }
 
     private fun MutableSet<String>.addNormalized(value: String?) {
