@@ -39,6 +39,7 @@ import org.jsoup.nodes.TextNode
 import org.jsoup.select.Selector
 import java.util.ArrayDeque
 import java.util.IdentityHashMap
+import java.util.PriorityQueue
 
 private val cssUrlRegex = Regex("""url\((['"]?)(.*?)\1\)""", RegexOption.IGNORE_CASE)
 private const val MAX_SEMANTIC_TEXT_BLOCK_CHARS = 32_000
@@ -174,33 +175,66 @@ private data class SortedCssRuleBuckets(
     val otherComplex: List<CssRule>
 )
 
+private val cssRuleCascadeComparator =
+    compareBy<CssRule> { it.selector.specificity }.thenBy { it.sourceOrder }
+
+private data class CssRuleMergeCursor(
+    val listIndex: Int,
+    val ruleIndex: Int,
+    val rule: CssRule
+)
+
+private fun mergeCssRuleBuckets(lists: List<List<CssRule>>): List<CssRule> {
+    if (lists.isEmpty()) return emptyList()
+    if (lists.size == 1) return lists.single()
+
+    val queue = PriorityQueue<CssRuleMergeCursor> { left, right ->
+        cssRuleCascadeComparator.compare(left.rule, right.rule)
+            .takeIf { it != 0 }
+            ?: left.listIndex.compareTo(right.listIndex)
+    }
+    lists.forEachIndexed { listIndex, rules ->
+        rules.firstOrNull()?.let { queue += CssRuleMergeCursor(listIndex, 0, it) }
+    }
+    val merged = ArrayList<CssRule>(lists.sumOf { it.size })
+    val seen = HashSet<CssRule>()
+    while (queue.isNotEmpty()) {
+        val cursor = queue.remove()
+        if (seen.add(cursor.rule)) merged += cursor.rule
+        val nextIndex = cursor.ruleIndex + 1
+        lists[cursor.listIndex].getOrNull(nextIndex)?.let { nextRule ->
+            queue += CssRuleMergeCursor(cursor.listIndex, nextIndex, nextRule)
+        }
+    }
+    return merged
+}
+
 private fun OptimizedCssRules.sortedForMatching(): SortedCssRuleBuckets {
-    val comparator = compareBy<CssRule> { it.selector.specificity }.thenBy { it.sourceOrder }
     val hasBuckets = byTag.isNotEmpty() || byClass.isNotEmpty() || byId.isNotEmpty() || otherComplex.isNotEmpty()
     if (!hasBuckets) {
         return SortedCssRuleBuckets(
             byTag = emptyMap(),
             byClass = emptyMap(),
             byId = emptyMap(),
-            otherComplex = toFlatList().sortedWith(comparator)
+            otherComplex = toFlatList().sortedWith(cssRuleCascadeComparator)
         )
     }
 
     fun Map<String, List<CssRule>>.sortedValues(): Map<String, List<CssRule>> {
-        return mapValues { (_, rules) -> rules.sortedWith(comparator) }
+        return mapValues { (_, rules) -> rules.sortedWith(cssRuleCascadeComparator) }
     }
 
     fun Map<String, List<CssRule>>.sortedTagValues(): Map<String, List<CssRule>> {
         return entries
             .groupBy({ it.key.lowercase() }, { it.value })
-            .mapValues { (_, groupedRules) -> groupedRules.flatten().sortedWith(comparator) }
+            .mapValues { (_, groupedRules) -> groupedRules.flatten().sortedWith(cssRuleCascadeComparator) }
     }
 
     return SortedCssRuleBuckets(
         byTag = byTag.sortedTagValues(),
         byClass = byClass.sortedValues(),
         byId = byId.sortedValues(),
-        otherComplex = otherComplex.sortedWith(comparator)
+        otherComplex = otherComplex.sortedWith(cssRuleCascadeComparator)
     )
 }
 
@@ -235,6 +269,7 @@ private class SemanticHtmlParser(
 ) {
     private val semanticBlockDescendantCache = IdentityHashMap<Element, Boolean>()
     private val matchedRulesCache = IdentityHashMap<Element, MutableMap<String, List<CssRule>>>()
+    private val unsupportedSelectorCache = HashMap<String, Boolean>()
     private var combinedRules: OptimizedCssRules = cssRules
     private var sortedRuleBuckets: SortedCssRuleBuckets = cssRules.sortedForMatching()
     private val currentFontFamilyMap: MutableMap<String, FontFamily> = fontFamilyMap.toMutableMap()
@@ -369,7 +404,10 @@ private class SemanticHtmlParser(
     private fun CssRule.matchesElement(element: Element, pseudoElement: String? = null): Boolean {
         if (element.tagName().lowercase() in nonRenderableHtmlTags) return false
         if (this.pseudoElement != pseudoElement) return false
-        if (selector.selector.hasUnsupportedPseudoElement()) return false
+        if (unsupportedSelectorCache.getOrPut(selector.selector) {
+                selector.selector.hasUnsupportedPseudoElement()
+            }
+        ) return false
         return try {
             element.`is`(selector.selector)
         } catch (e: Selector.SelectorParseException) {
@@ -389,21 +427,18 @@ private class SemanticHtmlParser(
 
     private fun rulesLikelyToMatch(element: Element): List<CssRule> {
         val tagName = element.tagName().lowercase()
-        val candidates = ArrayList<CssRule>(
-            (sortedRuleBuckets.byTag[tagName]?.size ?: 0) +
-                element.classNames().sumOf { sortedRuleBuckets.byClass[it]?.size ?: 0 } +
-                (element.id().takeIf { it.isNotBlank() }?.let { sortedRuleBuckets.byId[it]?.size } ?: 0) +
-                sortedRuleBuckets.otherComplex.size
-        )
-        sortedRuleBuckets.byTag[tagName]?.let { candidates.addAll(it) }
+        val candidateBuckets = ArrayList<List<CssRule>>(element.classNames().size + 3)
+        sortedRuleBuckets.byTag[tagName]?.let(candidateBuckets::add)
         element.classNames().forEach { className ->
-            sortedRuleBuckets.byClass[className]?.let { candidates.addAll(it) }
+            sortedRuleBuckets.byClass[className]?.let(candidateBuckets::add)
         }
         element.id().takeIf { it.isNotBlank() }?.let { id ->
-            sortedRuleBuckets.byId[id]?.let { candidates.addAll(it) }
+            sortedRuleBuckets.byId[id]?.let(candidateBuckets::add)
         }
-        candidates.addAll(sortedRuleBuckets.otherComplex)
-        return candidates.sortedWith(compareBy<CssRule> { it.selector.specificity }.thenBy { it.sourceOrder })
+        if (sortedRuleBuckets.otherComplex.isNotEmpty()) {
+            candidateBuckets += sortedRuleBuckets.otherComplex
+        }
+        return mergeCssRuleBuckets(candidateBuckets)
     }
 
     private fun getElementStyle(element: Element, inheritedCustomProperties: Map<String, String> = emptyMap()): CssStyle {
@@ -1299,7 +1334,8 @@ private class SemanticHtmlParser(
                 }
 
                 val cellContent = parseContainer(cellElement, cellCssStyle, inheritedLinkHref)
-                SemanticTableCell(cellContent, tagName == "th", cellElement.attr("colspan").toIntOrNull() ?: 1, cellCssStyle)
+                val colspan = cellElement.attr("colspan").toIntOrNull()?.coerceAtLeast(1) ?: 1
+                SemanticTableCell(cellContent, tagName == "th", colspan, cellCssStyle)
             }
             cells.ifEmpty { null }
         }

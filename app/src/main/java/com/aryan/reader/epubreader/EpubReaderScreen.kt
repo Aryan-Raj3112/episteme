@@ -821,11 +821,14 @@ fun EpubReaderHost(
     }
 
     var readerImages by remember(epubBook) { mutableStateOf<List<EpubReaderImageReference>>(emptyList()) }
+    var readerImagesLoaded by remember(epubBook) { mutableStateOf(false) }
 
-    LaunchedEffect(epubBook) {
+    LaunchedEffect(epubBook, drawerState.isOpen) {
+        if (!drawerState.isOpen || readerImagesLoaded) return@LaunchedEffect
         readerImages = withContext(Dispatchers.IO) {
             epubBook.readerImageReferencesForDrawer()
         }
+        readerImagesLoaded = true
     }
 
     var currentChapterIndex by rememberSaveable(epubBook.title) {
@@ -4559,6 +4562,10 @@ fun EpubReaderHost(
                                     label = "ChapterChangeAnimation",
                                     modifier = Modifier.fillMaxSize()
                                 ) { targetChapterIndex ->
+                                    // AnimatedContent may keep composing its outgoing state after a
+                                    // replacement book has supplied a shorter chapter list.
+                                    val chapterToRender = chapters.getOrNull(targetChapterIndex)
+                                        ?: return@AnimatedContent
                                     if (isChapterParsing) {
                                         Box(
                                             modifier = Modifier.fillMaxSize(),
@@ -4610,7 +4617,6 @@ fun EpubReaderHost(
                                             </html>
                                         """.trimIndent()
 
-                                        val chapterToRender = chapters[targetChapterIndex]
                                         val chapterFontFaceCss = remember(
                                             chapterHead,
                                             chapterToRender.absPath,

@@ -1796,12 +1796,12 @@ internal fun PaginatedReaderContent(
                                                                                         cellStyle.width
                                                                                     )
                                                                                     else Modifier.weight(
-                                                                                        cell.colspan.toFloat(),
+                                                                                        cell.colspan.coerceAtLeast(1).toFloat(),
                                                                                         fill = true
                                                                                     )
                                                                                 } else {
                                                                                     Modifier.weight(
-                                                                                        cell.colspan.toFloat(),
+                                                                                        cell.colspan.coerceAtLeast(1).toFloat(),
                                                                                         fill = true
                                                                                     )
                                                                                 }
@@ -2890,7 +2890,7 @@ internal fun RenderFlexChildBlock(
                             } else if (hasFixedWidths && cellStyle.width != Dp.Unspecified) {
                                 Modifier.width(cellStyle.width)
                             } else {
-                                Modifier.weight(cell.colspan.toFloat(), fill = true)
+                                Modifier.weight(cell.colspan.coerceAtLeast(1).toFloat(), fill = true)
                             }
                             val cellModifier = cellContainerModifier
                                 .then(

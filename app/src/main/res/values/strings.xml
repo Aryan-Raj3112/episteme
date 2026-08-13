@@ -2221,4 +2221,5 @@
 
     <string name="listen_timer">Timer</string>
     <string name="listen_chapter_number">Chapter %1$d</string>
+    <string name="document_picker_unavailable">No document picker is available on this device.</string>
 </resources>

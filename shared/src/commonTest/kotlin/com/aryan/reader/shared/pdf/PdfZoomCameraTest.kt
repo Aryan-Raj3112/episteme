@@ -36,6 +36,15 @@ class PdfZoomCameraTest {
     }
 
     @Test
+    fun nonFiniteCameraValuesFallBackToFiniteDefaults() {
+        val camera = PdfZoomCamera(Float.NaN, PdfZoomPoint(Float.NaN, Float.POSITIVE_INFINITY))
+            .normalized(viewport, content)
+
+        assertEquals(PdfZoomCamera(), camera)
+        assertEquals(7f, finitePdfZoomValue(Float.NaN, 7f))
+    }
+
+    @Test
     fun paginatedOrientationChangeResetsCameraButResizeAndVerticalModeDoNot() {
         val portrait = PdfZoomSize(400f, 800f)
         val landscape = PdfZoomSize(800f, 400f)

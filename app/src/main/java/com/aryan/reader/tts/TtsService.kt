@@ -343,7 +343,7 @@ private class TtsNotificationActionFactory(
         return delegate.createCustomActionFromCustomCommandButton(mediaSession, customCommandButton)
     }
 
-    override fun createMediaActionPendingIntent(mediaSession: MediaSession, command: Long): PendingIntent {
+    override fun createMediaActionPendingIntent(mediaSession: MediaSession, command: Int): PendingIntent {
         return delegate.createMediaActionPendingIntent(mediaSession, command)
     }
 
@@ -1210,6 +1210,10 @@ class TtsService : MediaSessionService() {
         super.onCreate()
         Timber.d("TtsService created.")
         setMediaNotificationProvider(TtsMediaNotificationProvider(this))
+        // ExoPlayer, the media session and the playback manager can be slow to initialize on
+        // low-end devices. Promote immediately so a startForegroundService request cannot time
+        // out while onCreate is still building those objects.
+        showPreparingForegroundNotification("onCreate")
         val hasNotificationPermission = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
         Timber.tag(TTS_NOTIFICATION_DIAG_TAG).i(

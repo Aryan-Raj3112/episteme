@@ -11,6 +11,9 @@ data class PdfZoomPoint(val x: Float, val y: Float) {
 
 data class PdfZoomSize(val width: Float, val height: Float)
 
+fun finitePdfZoomValue(value: Float, fallback: Float = 0f): Float =
+    value.takeIf { it.isFinite() } ?: fallback
+
 fun shouldResetPdfZoomForOrientationChange(
     previousViewport: PdfZoomSize?,
     currentViewport: PdfZoomSize,
@@ -33,13 +36,16 @@ data class PdfZoomCamera(
         minScale: Float = 1f,
         maxScale: Float = 4f
     ): PdfZoomCamera {
-        val safeScale = scale.takeIf { it.isFinite() }?.coerceIn(minScale, maxScale) ?: minScale
+        val safeScale = finitePdfZoomValue(scale, minScale).coerceIn(minScale, maxScale)
         if (safeScale <= minScale + PdfZoomEpsilon) return PdfZoomCamera(minScale)
         val maxX = ((content.width * safeScale) - viewport.width).coerceAtLeast(0f) / 2f
         val maxY = ((content.height * safeScale) - viewport.height).coerceAtLeast(0f) / 2f
         return PdfZoomCamera(
             safeScale,
-            PdfZoomPoint(offset.x.coerceIn(-maxX, maxX), offset.y.coerceIn(-maxY, maxY))
+            PdfZoomPoint(
+                finitePdfZoomValue(offset.x).coerceIn(-maxX, maxX),
+                finitePdfZoomValue(offset.y).coerceIn(-maxY, maxY)
+            )
         )
     }
 

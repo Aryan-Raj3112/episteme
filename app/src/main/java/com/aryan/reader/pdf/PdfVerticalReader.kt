@@ -117,6 +117,7 @@ import com.aryan.reader.pdf.data.PdfAnnotation
 import com.aryan.reader.pdf.data.PdfTextBox
 import com.aryan.reader.pdf.data.VirtualPage
 import com.aryan.reader.shared.pdf.calculatePdfVerticalPageLayoutPx
+import com.aryan.reader.shared.pdf.finitePdfZoomValue
 import com.aryan.reader.shared.pdf.pdfVerticalPageGapDp
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.CoroutineStart
@@ -621,25 +622,31 @@ internal fun PdfVerticalReader(
         fun clampValues(
             targetZoom: Float, targetPanX: Float, targetPanY: Float
         ): Triple<Float, Float, Float> {
-            val constrainedZoom = targetZoom.coerceIn(fitZoom, 5f)
-            val zoomedDocWidth = screenWidth * constrainedZoom
-            val zoomedDocHeight = totalDocHeight * constrainedZoom
+            val safeFitZoom = finitePdfZoomValue(fitZoom, 1f).coerceIn(0.1f, 5f)
+            val constrainedZoom = finitePdfZoomValue(targetZoom, safeFitZoom).coerceIn(safeFitZoom, 5f)
+            val safeScreenWidth = finitePdfZoomValue(screenWidth).coerceAtLeast(0f)
+            val safeScreenHeight = finitePdfZoomValue(screenHeight).coerceAtLeast(0f)
+            val safeDocumentHeight = finitePdfZoomValue(totalDocHeight).coerceAtLeast(0f)
+            val safeHeaderHeight = finitePdfZoomValue(headerHeightPx).coerceAtLeast(0f)
+            val safeFooterHeight = finitePdfZoomValue(footerHeightPx).coerceAtLeast(0f)
+            val zoomedDocWidth = safeScreenWidth * constrainedZoom
+            val zoomedDocHeight = safeDocumentHeight * constrainedZoom
 
-            val constrainedX = if (zoomedDocWidth < screenWidth) {
-                (screenWidth - zoomedDocWidth) / 2f
+            val constrainedX = if (zoomedDocWidth < safeScreenWidth) {
+                (safeScreenWidth - zoomedDocWidth) / 2f
             } else {
                 val maxPanX = 0f
-                val minPanX = -(zoomedDocWidth - screenWidth)
-                targetPanX.coerceIn(minPanX, maxPanX)
+                val minPanX = -(zoomedDocWidth - safeScreenWidth)
+                finitePdfZoomValue(targetPanX).coerceIn(minPanX, maxPanX)
             }
 
-            val minPanY = if (zoomedDocHeight < (screenHeight - headerHeightPx - footerHeightPx)) {
-                headerHeightPx
+            val minPanY = if (zoomedDocHeight < (safeScreenHeight - safeHeaderHeight - safeFooterHeight)) {
+                safeHeaderHeight
             } else {
-                (screenHeight - footerHeightPx - zoomedDocHeight).coerceAtMost(headerHeightPx)
+                (safeScreenHeight - safeFooterHeight - zoomedDocHeight).coerceAtMost(safeHeaderHeight)
             }
 
-            val constrainedY = targetPanY.coerceIn(minPanY, headerHeightPx)
+            val constrainedY = finitePdfZoomValue(targetPanY, safeHeaderHeight).coerceIn(minPanY, safeHeaderHeight)
 
             return Triple(constrainedZoom, constrainedX, constrainedY)
         }
@@ -651,18 +658,24 @@ internal fun PdfVerticalReader(
         }
 
         fun updatePanBoundsForZoom(finalZoom: Float) {
-            val zoomedDocWidth = screenWidth * finalZoom
-            val (finalMinX, finalMaxX) = if (zoomedDocWidth < screenWidth) {
-                val centeredX = (screenWidth - zoomedDocWidth) / 2f
+            val safeScreenWidth = finitePdfZoomValue(screenWidth).coerceAtLeast(0f)
+            val safeScreenHeight = finitePdfZoomValue(screenHeight).coerceAtLeast(0f)
+            val safeDocumentHeight = finitePdfZoomValue(totalDocHeight).coerceAtLeast(0f)
+            val safeHeaderHeight = finitePdfZoomValue(headerHeightPx).coerceAtLeast(0f)
+            val safeFooterHeight = finitePdfZoomValue(footerHeightPx).coerceAtLeast(0f)
+            val safeZoom = finitePdfZoomValue(finalZoom, 1f).coerceAtLeast(0.1f)
+            val zoomedDocWidth = safeScreenWidth * safeZoom
+            val (finalMinX, finalMaxX) = if (zoomedDocWidth < safeScreenWidth) {
+                val centeredX = (safeScreenWidth - zoomedDocWidth) / 2f
                 centeredX to centeredX
             } else {
-                -(zoomedDocWidth - screenWidth) to 0f
+                -(zoomedDocWidth - safeScreenWidth) to 0f
             }
             panXAnimatable.updateBounds(lowerBound = finalMinX, upperBound = finalMaxX)
 
-            val zoomedDocHeight = totalDocHeight * finalZoom
-            val minPanY = (screenHeight - footerHeightPx - zoomedDocHeight).coerceAtMost(headerHeightPx)
-            panYAnimatable.updateBounds(lowerBound = minPanY, upperBound = headerHeightPx)
+            val zoomedDocHeight = safeDocumentHeight * safeZoom
+            val minPanY = (safeScreenHeight - safeFooterHeight - zoomedDocHeight).coerceAtMost(safeHeaderHeight)
+            panYAnimatable.updateBounds(lowerBound = minPanY, upperBound = safeHeaderHeight)
         }
 
         LaunchedEffect(resetZoomTrigger) {
@@ -688,12 +701,12 @@ internal fun PdfVerticalReader(
                     val (finalZoom, finalX, finalY) = clampCamera(fitZoom, rawNextPanX, rawNextPanY)
 
                     panXAnimatable.updateBounds(
-                        lowerBound = minOf(panXAnimatable.lowerBound ?: finalX, finalX, startPanX),
-                        upperBound = maxOf(panXAnimatable.upperBound ?: finalX, finalX, startPanX)
+                        lowerBound = minOf(finitePdfZoomValue(panXAnimatable.lowerBound ?: finalX, finalX), finalX, finitePdfZoomValue(startPanX, finalX)),
+                        upperBound = maxOf(finitePdfZoomValue(panXAnimatable.upperBound ?: finalX, finalX), finalX, finitePdfZoomValue(startPanX, finalX))
                     )
                     panYAnimatable.updateBounds(
-                        lowerBound = minOf(panYAnimatable.lowerBound ?: finalY, finalY, startPanY),
-                        upperBound = maxOf(panYAnimatable.upperBound ?: finalY, finalY, startPanY)
+                        lowerBound = minOf(finitePdfZoomValue(panYAnimatable.lowerBound ?: finalY, finalY), finalY, finitePdfZoomValue(startPanY, finalY)),
+                        upperBound = maxOf(finitePdfZoomValue(panYAnimatable.upperBound ?: finalY, finalY), finalY, finitePdfZoomValue(startPanY, finalY))
                     )
 
                     coroutineScope {
@@ -704,22 +717,7 @@ internal fun PdfVerticalReader(
 
                     onZoomChange(zoomAnimatable.value)
 
-                    val zoomedDocWidth = screenWidth * finalZoom
-                    val finalMinX: Float
-                    val finalMaxX: Float
-                    if (zoomedDocWidth < screenWidth) {
-                        val centeredX = (screenWidth - zoomedDocWidth) / 2f
-                        finalMinX = centeredX
-                        finalMaxX = centeredX
-                    } else {
-                        finalMinX = -(zoomedDocWidth - screenWidth)
-                        finalMaxX = 0f
-                    }
-                    panXAnimatable.updateBounds(lowerBound = finalMinX, upperBound = finalMaxX)
-
-                    val zDocH = totalDocHeight * finalZoom
-                    val minScrollY = (screenHeight - footerHeightPx - zDocH).coerceAtMost(headerHeightPx)
-                    panYAnimatable.updateBounds(lowerBound = minScrollY, upperBound = headerHeightPx)
+                    updatePanBoundsForZoom(finalZoom)
                 }
             }
         }
@@ -1115,12 +1113,12 @@ internal fun PdfVerticalReader(
                     val (finalZoom, finalX, finalY) = clampCamera(targetZoom, rawNextPanX, rawNextPanY)
 
                     panXAnimatable.updateBounds(
-                        lowerBound = minOf(panXAnimatable.lowerBound ?: finalX, finalX, startPanX),
-                        upperBound = maxOf(panXAnimatable.upperBound ?: finalX, finalX, startPanX)
+                        lowerBound = minOf(finitePdfZoomValue(panXAnimatable.lowerBound ?: finalX, finalX), finalX, finitePdfZoomValue(startPanX, finalX)),
+                        upperBound = maxOf(finitePdfZoomValue(panXAnimatable.upperBound ?: finalX, finalX), finalX, finitePdfZoomValue(startPanX, finalX))
                     )
                     panYAnimatable.updateBounds(
-                        lowerBound = minOf(panYAnimatable.lowerBound ?: finalY, finalY, startPanY),
-                        upperBound = maxOf(panYAnimatable.upperBound ?: finalY, finalY, startPanY)
+                        lowerBound = minOf(finitePdfZoomValue(panYAnimatable.lowerBound ?: finalY, finalY), finalY, finitePdfZoomValue(startPanY, finalY)),
+                        upperBound = maxOf(finitePdfZoomValue(panYAnimatable.upperBound ?: finalY, finalY), finalY, finitePdfZoomValue(startPanY, finalY))
                     )
 
                     coroutineScope {
@@ -1131,22 +1129,7 @@ internal fun PdfVerticalReader(
 
                     onZoomChange(zoomAnimatable.value)
 
-                    val zoomedDocWidth = screenWidth * finalZoom
-                    val finalMinX: Float
-                    val finalMaxX: Float
-                    if (zoomedDocWidth < screenWidth) {
-                        val centeredX = (screenWidth - zoomedDocWidth) / 2f
-                        finalMinX = centeredX
-                        finalMaxX = centeredX
-                    } else {
-                        finalMinX = -(zoomedDocWidth - screenWidth)
-                        finalMaxX = 0f
-                    }
-                    panXAnimatable.updateBounds(lowerBound = finalMinX, upperBound = finalMaxX)
-
-                    val zDocH = totalDocHeight * finalZoom
-                    val minScrollY = (screenHeight - footerHeightPx - zDocH).coerceAtMost(headerHeightPx)
-                    panYAnimatable.updateBounds(lowerBound = minScrollY, upperBound = headerHeightPx)
+                    updatePanBoundsForZoom(finalZoom)
                 }
             }
         }
@@ -2583,9 +2566,9 @@ internal fun PdfVerticalReader(
             }
         }
 
-        if (isEditMode && (selectedTool == InkType.ERASER || isStylusEraserOverride) && globalEraserPosition != null) {
+        val eraserPosition = globalEraserPosition
+        if (isEditMode && (selectedTool == InkType.ERASER || isStylusEraserOverride) && eraserPosition != null) {
             Canvas(modifier = Modifier.fillMaxSize()) {
-                val pos = globalEraserPosition!!
                 val eraserStrokeWidth = resolveEraserStrokeWidth(
                     isStylusEraserOverride,
                     activeToolThickness,
@@ -2597,12 +2580,12 @@ internal fun PdfVerticalReader(
                     8.dp.toPx()
                 }
 
-                drawCircle(color = Color.White.copy(alpha = 0.3f), radius = radiusPx, center = pos)
+                drawCircle(color = Color.White.copy(alpha = 0.3f), radius = radiusPx, center = eraserPosition)
 
                 drawCircle(
                     color = Color.Black,
                     radius = radiusPx,
-                    center = pos,
+                    center = eraserPosition,
                     style = Stroke(width = 1.dp.toPx())
                 )
             }

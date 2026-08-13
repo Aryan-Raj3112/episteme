@@ -27,6 +27,7 @@ package com.aryan.reader.pdf
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.Context
 import android.content.pm.PackageManager
@@ -2595,7 +2596,12 @@ fun PdfViewerScreen(
         val suggestedName = getSuggestedFilename(
             originalFileName, isAnnotated = false
         )
-        saveLauncher.launch(suggestedName)
+        try {
+            saveLauncher.launch(suggestedName)
+        } catch (_: ActivityNotFoundException) {
+            pendingSaveMode = null
+            Toast.makeText(context, R.string.document_picker_unavailable, Toast.LENGTH_LONG).show()
+        }
     }
 
     val launchAnnotatedSaveCopy: () -> Unit = {
@@ -2603,7 +2609,12 @@ fun PdfViewerScreen(
         val suggestedName = getSuggestedFilename(
             originalFileName, isAnnotated = true
         )
-        saveLauncher.launch(suggestedName)
+        try {
+            saveLauncher.launch(suggestedName)
+        } catch (_: ActivityNotFoundException) {
+            pendingSaveMode = null
+            Toast.makeText(context, R.string.document_picker_unavailable, Toast.LENGTH_LONG).show()
+        }
     }
 
     val shareOriginalPdf: () -> Unit = {
@@ -7040,8 +7051,11 @@ fun PdfViewerScreen(
                     val currentDensity = LocalDensity.current
                     val imeHeightPx = WindowInsets.ime.getBottom(currentDensity)
                     val isImeVisible = imeHeightPx > 0
-                    val windowHeightPx = window?.windowManager?.currentWindowMetrics?.bounds?.height()
-                        ?: view.rootView.height
+                    val windowHeightPx = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                        window?.windowManager?.currentWindowMetrics?.bounds?.height()
+                    } else {
+                        null
+                    } ?: view.rootView.height
                     val applyImePadding = shouldApplyPdfTextDockImePadding(
                         layoutHeightPx = constraints.maxHeight,
                         windowHeightPx = windowHeightPx,

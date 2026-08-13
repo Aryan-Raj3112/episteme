@@ -1,5 +1,6 @@
 package com.aryan.reader
 
+import android.content.ActivityNotFoundException
 import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -243,12 +244,25 @@ fun UnifiedLibraryScreen(
         if (destination != null && contents != null) viewModel.saveAnnotationExport(contents, destination)
     }
 
+    fun launchDocumentPicker(onUnavailable: () -> Unit = {}, launch: () -> Unit) {
+        try {
+            launch()
+        } catch (_: ActivityNotFoundException) {
+            onUnavailable()
+            viewModel.showBanner(context.getString(R.string.document_picker_unavailable), isError = true)
+        }
+    }
+
     fun exportAnnotations(item: RecentFileItem, format: AnnotationExportFormat) {
         viewModel.prepareAnnotationExport(item, format) { prepared ->
             pendingAnnotationExportText = prepared.contents
             when (format) {
-                AnnotationExportFormat.MARKDOWN -> saveMarkdownAnnotationsLauncher.launch(prepared.fileName)
-                AnnotationExportFormat.TEXT -> saveTextAnnotationsLauncher.launch(prepared.fileName)
+                AnnotationExportFormat.MARKDOWN -> launchDocumentPicker(
+                    onUnavailable = { pendingAnnotationExportText = null }
+                ) { saveMarkdownAnnotationsLauncher.launch(prepared.fileName) }
+                AnnotationExportFormat.TEXT -> launchDocumentPicker(
+                    onUnavailable = { pendingAnnotationExportText = null }
+                ) { saveTextAnnotationsLauncher.launch(prepared.fileName) }
             }
         }
     }
@@ -456,7 +470,9 @@ fun UnifiedLibraryScreen(
                             ?.let { item ->
                                 {
                                     pendingSaveOriginalItem = item
-                                    saveOriginalLauncher.launch(item.suggestedOriginalFileName())
+                                    launchDocumentPicker(
+                                        onUnavailable = { pendingSaveOriginalItem = null }
+                                    ) { saveOriginalLauncher.launch(item.suggestedOriginalFileName()) }
                                 }
                             },
                         onShareClick = selectedItems.singleOrNull()
@@ -566,7 +582,7 @@ fun UnifiedLibraryScreen(
                     folders = uiState.syncedFolders,
                     allRecentFiles = uiState.rawLibraryFiles,
                     isLoading = uiState.isLoading,
-                    onAddFolder = { folderPicker.launch(null) },
+                    onAddFolder = { launchDocumentPicker { folderPicker.launch(null) } },
                     onScan = viewModel::scanSyncedFolder,
                     onSyncMetadata = viewModel::syncFolderMetadata,
                     onToggleLocalSync = viewModel::setFolderLocalSyncEnabled,
@@ -614,25 +630,29 @@ fun UnifiedLibraryScreen(
         AudiobookAddSheet(
             onChooseFile = {
                 showAudiobookAddSheet = false
-                audiobookPicker.launch(
-                    arrayOf(
-                        "audio/*",
-                        "application/octet-stream"
+                launchDocumentPicker {
+                    audiobookPicker.launch(
+                        arrayOf(
+                            "audio/*",
+                            "application/octet-stream"
+                        )
                     )
-                )
+                }
             },
             onChooseMultiple = {
                 showAudiobookAddSheet = false
-                audiobookMultiplePicker.launch(
-                    arrayOf(
-                        "audio/*",
-                        "application/octet-stream"
+                launchDocumentPicker {
+                    audiobookMultiplePicker.launch(
+                        arrayOf(
+                            "audio/*",
+                            "application/octet-stream"
+                        )
                     )
-                )
+                }
             },
             onChooseFolder = {
                 showAudiobookAddSheet = false
-                audiobookFolderPicker.launch(null)
+                launchDocumentPicker { audiobookFolderPicker.launch(null) }
             },
             onChooseTtsBook = {
                 showAudiobookAddSheet = false

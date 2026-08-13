@@ -14,6 +14,19 @@ import androidx.compose.ui.graphics.Color
 
 class HtmlParserLinkTest {
     @Test
+    fun `table colspan is always positive`() {
+        val blocks = parse(
+            """
+            <table><tr><td colspan="0">Zero</td><td colspan="-2">Negative</td></tr></table>
+            """.trimIndent()
+        )
+
+        val table = blocks.single() as SemanticTable
+
+        assertEquals(listOf(1, 1), table.rows.single().map { it.colspan })
+    }
+
+    @Test
     fun `block anchor propagates href to paragraph text`() {
         val blocks = parse(
             """
