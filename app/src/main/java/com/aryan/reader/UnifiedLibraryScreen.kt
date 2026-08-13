@@ -173,7 +173,6 @@ fun UnifiedLibraryScreen(
     var selectedShelfId by rememberSaveable { mutableStateOf<String?>(null) }
     var filter by rememberSaveable { mutableStateOf(UnifiedLibraryFilter.ALL) }
     var query by rememberSaveable { mutableStateOf("") }
-    var isSearchVisible by rememberSaveable { mutableStateOf(false) }
     var showLibraryControls by rememberSaveable { mutableStateOf(false) }
     var showAdvancedFilters by rememberSaveable { mutableStateOf(false) }
     var showThemeSheet by rememberSaveable { mutableStateOf(false) }
@@ -477,7 +476,9 @@ fun UnifiedLibraryScreen(
                         onMenuClick = { scope.launch { drawerState.open() } },
                         onBackFromShelf = { selectedShelfId = null },
                         uiState = uiState,
-                        onAccountClick = { scope.launch { accountDrawerState.open() } }
+                        onAccountClick = { scope.launch { accountDrawerState.open() } },
+                        searchQuery = if (section == UnifiedLibrarySection.HOME) query else null,
+                        onSearchQueryChange = { query = it },
                     )
                 }
             },
@@ -489,19 +490,17 @@ fun UnifiedLibraryScreen(
                     continueReading = continueReading,
                     filter = filter,
                     query = query,
-                    isSearchVisible = isSearchVisible,
                     sortOrder = uiState.sortOrder,
                     advancedFilterCount = advancedFilterCount,
+                    useListView = uiState.unifiedLibraryListView,
                     selectedBookIds = uiState.contextualActionItems.mapTo(mutableSetOf()) { it.bookId },
+                    pinnedBookIds = uiState.pinnedLibraryBookIds,
                     downloadingBookIds = uiState.downloadingBookIds,
                     usePdfFileNameAsDisplayName = uiState.usePdfFileNameAsDisplayName,
                     onFilterChange = { filter = it },
-                    onQueryChange = { query = it },
-                    onSearchToggle = {
-                        isSearchVisible = !isSearchVisible
-                        if (!isSearchVisible) query = ""
-                    },
                     onControlsClick = { showLibraryControls = true },
+                    onAdvancedFiltersClick = { showAdvancedFilters = true },
+                    onListViewChange = viewModel::setUnifiedLibraryListView,
                     onBookClick = { item ->
                         if (item.type == FileType.AUDIOBOOK) {
                             importedAudiobooks.firstOrNull { it.bookId == item.bookId }?.let { audiobookPlayerItem = it.toUiItem() }
@@ -864,6 +863,8 @@ private fun UnifiedLibraryTopBar(
     onBackFromShelf: () -> Unit,
     uiState: ReaderScreenState,
     onAccountClick: () -> Unit,
+    searchQuery: String?,
+    onSearchQueryChange: (String) -> Unit,
 ) {
     val title = selectedShelf?.name ?: when (section) {
         UnifiedLibrarySection.HOME -> null
@@ -881,6 +882,10 @@ private fun UnifiedLibraryTopBar(
         onBackFromShelf = onBackFromShelf,
         onAccount = onAccountClick,
         accountAvatar = { UnifiedProfileAvatar(uiState) },
+        searchQuery = searchQuery,
+        searchPlaceholder = stringResource(R.string.unified_library_search_books),
+        clearSearchDescription = stringResource(R.string.content_desc_clear_query),
+        onSearchQueryChange = onSearchQueryChange,
     )
 }
 
@@ -905,51 +910,39 @@ private fun UnifiedLibraryHome(
     continueReading: RecentFileItem?,
     filter: UnifiedLibraryFilter,
     query: String,
-    isSearchVisible: Boolean,
     sortOrder: SortOrder,
     advancedFilterCount: Int,
+    useListView: Boolean,
     selectedBookIds: Set<String>,
+    pinnedBookIds: Set<String>,
     downloadingBookIds: Set<String>,
     usePdfFileNameAsDisplayName: Boolean,
     onFilterChange: (UnifiedLibraryFilter) -> Unit,
-    onQueryChange: (String) -> Unit,
-    onSearchToggle: () -> Unit,
     onControlsClick: () -> Unit,
+    onAdvancedFiltersClick: () -> Unit,
+    onListViewChange: (Boolean) -> Unit,
     onBookClick: (RecentFileItem) -> Unit,
     onBookLongClick: (RecentFileItem) -> Unit,
 ) {
-    if (isSearchVisible) {
-        UnifiedLibrarySearchResults(
-            modifier = modifier,
-            books = books,
-            query = query,
-            selectedBookIds = selectedBookIds,
-            downloadingBookIds = downloadingBookIds,
-            usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName,
-            onQueryChange = onQueryChange,
-            onClose = onSearchToggle,
-            onBookClick = onBookClick,
-            onBookLongClick = onBookLongClick
-        )
-        return
-    }
     com.aryan.reader.shared.ui.SharedAndroidUnifiedLibraryHome(
         books = books,
-        continueReading = continueReading,
+        continueReading = continueReading.takeIf { filter == UnifiedLibraryFilter.ALL && query.isBlank() },
         filter = filter,
         sortLabel = stringResource(sortOrder.labelRes),
         advancedFilterCount = advancedFilterCount,
+        useListView = useListView,
         strings = com.aryan.reader.shared.ui.SharedAndroidUnifiedHomeStrings(
-            yourBooks = stringResource(R.string.unified_library_your_books),
-            bookCount = "${books.size} ${if (books.size == 1) "book" else "books"}",
-            searchBooks = stringResource(R.string.unified_library_search_books),
             noBooks = stringResource(R.string.unified_library_no_books),
+            filterBooks = stringResource(R.string.content_desc_filter),
+            gridView = stringResource(R.string.unified_library_grid_view),
+            listView = stringResource(R.string.unified_library_list_view),
             filterLabels = UnifiedLibraryFilter.entries.associateWith { stringResource(it.labelRes) },
         ),
         itemKey = { it.bookId },
         onFilterChange = onFilterChange,
-        onSearch = onSearchToggle,
         onControls = onControlsClick,
+        onAdvancedFilters = onAdvancedFiltersClick,
+        onListViewChange = onListViewChange,
         continueCard = { item, cardModifier -> UnifiedContinueReadingCard(item, { onBookClick(item) }, cardModifier) },
         bookCard = { item ->
             RecentFileCard(
@@ -958,6 +951,17 @@ private fun UnifiedLibraryHome(
                 modifier = Modifier.fillMaxWidth(),
                 onClick = { onBookClick(item) },
                 onLongClick = { onBookLongClick(item) },
+                isDownloading = item.bookId in downloadingBookIds,
+                usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName,
+            )
+        },
+        bookListItem = { item ->
+            LibraryListItem(
+                item = item,
+                isSelected = item.bookId in selectedBookIds,
+                isPinned = item.bookId in pinnedBookIds,
+                onItemClick = { onBookClick(item) },
+                onItemLongClick = { onBookLongClick(item) },
                 isDownloading = item.bookId in downloadingBookIds,
                 usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName,
             )

@@ -58,6 +58,8 @@ data class ReaderScreenState(
     val mainScreenStartPage: Int = 0,
     /** Android-only section selected inside the experimental unified library. */
     val unifiedLibrarySection: Int = 0,
+    /** Android-only display preference for the experimental unified library. */
+    val unifiedLibraryListView: Boolean = false,
     val booksAvailableForAdding: List<RecentFileItem> = emptyList(),
     val contextualActionShelfIds: Set<String> = emptySet(),
     val currentUser: UserData? = null,

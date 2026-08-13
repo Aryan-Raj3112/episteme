@@ -858,6 +858,23 @@ class MainViewModelTest {
     }
 
     @Test
+    fun `unified library list view survives restore and changes persist`() = runTest(testDispatcher) {
+        viewModel.setUnifiedLibraryListView(true)
+        verify { mockEditor.putBoolean(KEY_UNIFIED_LIBRARY_LIST_VIEW, true) }
+
+        every { mockPrefs.getBoolean(KEY_UNIFIED_LIBRARY_LIST_VIEW, false) } returns true
+
+        val restored = TestMainViewModel(mockApplication)
+        try {
+            advanceUntilIdle()
+            assertTrue(restored.uiState.value.unifiedLibraryListView)
+        } finally {
+            restored.clearForTest()
+            testDispatcher.scheduler.advanceUntilIdle()
+        }
+    }
+
+    @Test
     fun `updateLibraryFilters clears active filters and persists empty dimensions`() = runTest(testDispatcher) {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect {}

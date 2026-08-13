@@ -611,6 +611,7 @@ internal fun TtsBookPickerSheet(
         return
     }
     val context = LocalContext.current
+    var customSleepTimers by remember(context) { mutableStateOf(loadCustomSleepTimerMinutes(context)) }
     val controller = remember { AudiobookController(context) }
     val playback by controller.state.collectAsStateWithLifecycle()
     LaunchedEffect(item.id) { item.playbackRequest?.let(controller::connect) }
@@ -642,6 +643,11 @@ internal fun TtsBookPickerSheet(
         onSleepTimer = { minutes ->
             if (minutes == null) controller.toggleSleepTimer() else controller.toggleSleepTimer(minutes)
         },
+        customSleepTimerMinutes = customSleepTimers,
+        onCustomSleepTimerMinutesChange = { updated ->
+            customSleepTimers = updated
+            saveCustomSleepTimerMinutes(context, updated)
+        },
         onStopPlayback = controller::stop,
         onDismiss = onDismiss,
     )
@@ -652,6 +658,7 @@ internal fun TtsBookPickerSheet(
 @Composable
 private fun BookTtsPlayerSheet(item: AudiobookUiItem, onDismiss: () -> Unit) {
     val context = LocalContext.current
+    var customSleepTimers by remember(context) { mutableStateOf(loadCustomSleepTimerMinutes(context)) }
     val sourceBook = item.sourceBook ?: return
     val controller = remember(sourceBook.bookId) { BookTtsAudiobookController(context) }
     val prepared by controller.uiState.collectAsStateWithLifecycle()
@@ -719,6 +726,11 @@ private fun BookTtsPlayerSheet(item: AudiobookUiItem, onDismiss: () -> Unit) {
             controller.setParameters(rate = selectedSpeed, pitch = adapterPitch)
         },
         onSleepTimer = { minutes -> controller.startSleepTimer(minutes ?: 0) },
+        customSleepTimerMinutes = customSleepTimers,
+        onCustomSleepTimerMinutesChange = { updated ->
+            customSleepTimers = updated
+            saveCustomSleepTimerMinutes(context, updated)
+        },
         onStopPlayback = controller::stop,
         onDismiss = onDismiss,
     )

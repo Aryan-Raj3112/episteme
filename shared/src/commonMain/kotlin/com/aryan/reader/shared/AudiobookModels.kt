@@ -190,6 +190,36 @@ fun sharedAudiobookRemainingLabel(durationMs: Long, positionMs: Long): String {
 fun formatSharedSleepTimerLabel(remainingMs: Long): String =
     formatSharedAudiobookSleepTimer((remainingMs.coerceAtLeast(0L) / 1000L).toInt())
 
+const val MAX_CUSTOM_SLEEP_TIMERS: Int = 3
+const val MAX_CUSTOM_SLEEP_TIMER_MINUTES: Int = 24 * 60
+
+fun sanitizeCustomSleepTimerMinutes(values: Iterable<Int>): List<Int> =
+    values.asSequence()
+        .filter { it in 1..MAX_CUSTOM_SLEEP_TIMER_MINUTES }
+        .distinct()
+        .take(MAX_CUSTOM_SLEEP_TIMERS)
+        .toList()
+
+fun addCustomSleepTimer(
+    current: Iterable<Int>,
+    hours: Int,
+    minutes: Int,
+): List<Int> {
+    if (hours < 0 || minutes !in 0..59) return sanitizeCustomSleepTimerMinutes(current)
+    val totalMinutesLong = hours.toLong() * 60L + minutes
+    if (totalMinutesLong !in 1L..MAX_CUSTOM_SLEEP_TIMER_MINUTES.toLong()) return sanitizeCustomSleepTimerMinutes(current)
+    val totalMinutes = totalMinutesLong.toInt()
+    val sanitized = sanitizeCustomSleepTimerMinutes(current)
+    if (totalMinutes in sanitized) return sanitized
+    return (sanitized + totalMinutes).takeLast(MAX_CUSTOM_SLEEP_TIMERS)
+}
+
+fun removeCustomSleepTimer(current: Iterable<Int>, minutes: Int): List<Int> =
+    sanitizeCustomSleepTimerMinutes(current).filterNot { it == minutes }
+
+fun advanceSharedSleepTimer(remainingSeconds: Int, isPlaying: Boolean): Int =
+    if (isPlaying) (remainingSeconds - 1).coerceAtLeast(0) else remainingSeconds.coerceAtLeast(0)
+
 object SharedAudiobookFormats {
     val supportedExtensions: Set<String> = setOf("mp3", "m4a", "m4b", "aac", "ogg", "opus", "flac")
 

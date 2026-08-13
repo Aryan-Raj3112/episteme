@@ -684,7 +684,7 @@ class BookTtsAudiobookController(context: Context) {
                     "${remaining / 60}:${(remaining % 60).toString().padStart(2, '0')}"
 
                 delay(1_000.milliseconds)
-                remaining--
+                remaining = com.aryan.reader.shared.advanceSharedSleepTimer(remaining, playbackState.value.isPlaying)
             }
 
             _sleepTimerRemainingMs.value = 0L

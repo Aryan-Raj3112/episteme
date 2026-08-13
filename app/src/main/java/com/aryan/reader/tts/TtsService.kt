@@ -661,7 +661,14 @@ class TtsService : MediaSessionService() {
 
                 if (minutes > 0) {
                     bookSleepTimerJob = scope.launch {
-                        delay((minutes * 60_000L).milliseconds)
+                        var remainingSeconds = minutes * 60
+                        while (remainingSeconds > 0) {
+                            delay(1_000.milliseconds)
+                            remainingSeconds = com.aryan.reader.shared.advanceSharedSleepTimer(
+                                remainingSeconds,
+                                ::player.isInitialized && player.isPlaying,
+                            )
+                        }
 
                         bookSleepTimerJob = null
 

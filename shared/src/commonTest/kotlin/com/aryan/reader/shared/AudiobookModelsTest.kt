@@ -114,6 +114,28 @@ class AudiobookModelsTest {
     }
 
     @Test
+    fun `custom sleep timers validate deduplicate and keep three choices`() {
+        assertEquals(listOf(62), addCustomSleepTimer(emptyList(), hours = 1, minutes = 2))
+        assertEquals(listOf(62), addCustomSleepTimer(listOf(62), hours = 1, minutes = 2))
+        assertEquals(listOf(20, 30, 40), addCustomSleepTimer(listOf(10, 20, 30), hours = 0, minutes = 40))
+        assertEquals(listOf(10), addCustomSleepTimer(listOf(10), hours = 0, minutes = 60))
+        assertEquals(listOf(10), addCustomSleepTimer(listOf(10), hours = 0, minutes = 0))
+    }
+
+    @Test
+    fun `custom sleep timer persistence values are sanitized and removable`() {
+        assertEquals(listOf(15, 62, 90), sanitizeCustomSleepTimerMinutes(listOf(0, 15, 15, 62, 90, 120, 1500)))
+        assertEquals(listOf(15, 90), removeCustomSleepTimer(listOf(15, 62, 90), 62))
+    }
+
+    @Test
+    fun `sleep timer advances only during active playback`() {
+        assertEquals(120, advanceSharedSleepTimer(120, isPlaying = false))
+        assertEquals(119, advanceSharedSleepTimer(120, isPlaying = true))
+        assertEquals(0, advanceSharedSleepTimer(0, isPlaying = true))
+    }
+
+    @Test
     fun `remaining label matches Android listen row text`() {
         assertEquals("Duration unavailable", sharedAudiobookRemainingLabel(0L, 0L))
         assertEquals("1 hr 40 min", sharedAudiobookRemainingLabel(6_000_000L, 0L))

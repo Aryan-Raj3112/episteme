@@ -16,9 +16,12 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
@@ -98,10 +101,12 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.aryan.reader.shared.BookItem
+import com.aryan.reader.shared.MAX_CUSTOM_SLEEP_TIMERS
 import com.aryan.reader.shared.SharedAudiobook
 import com.aryan.reader.shared.SharedAudiobookPlaybackState
 import com.aryan.reader.shared.SharedAudiobookSort
@@ -110,9 +115,12 @@ import com.aryan.reader.shared.SharedBookTtsListenState
 import com.aryan.reader.shared.SharedTtsListenItem
 import com.aryan.reader.shared.SharedTtsListenCapabilities
 import com.aryan.reader.shared.filterSharedAudiobooks
+import com.aryan.reader.shared.addCustomSleepTimer
 import com.aryan.reader.shared.formatSharedPlaybackTime
 import com.aryan.reader.shared.formatSharedSleepTimerLabel
 import com.aryan.reader.shared.matchesSharedAudiobookQuery
+import com.aryan.reader.shared.removeCustomSleepTimer
+import com.aryan.reader.shared.sanitizeCustomSleepTimerMinutes
 import com.aryan.reader.shared.progressFraction
 import com.aryan.reader.shared.sharedAudiobookRemainingLabel
 import com.aryan.reader.shared.sharedShouldAutoStartTtsListen
@@ -1079,6 +1087,8 @@ fun SharedMobileAudiobookPlayerSheet(
     onSeek: (Long) -> Unit,
     onSpeedChange: (Float) -> Unit,
     onSleepTimer: (Int?) -> Unit,
+    customSleepTimerMinutes: List<Int> = emptyList(),
+    onCustomSleepTimerMinutesChange: (List<Int>) -> Unit = {},
     onStopPlayback: () -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -1216,6 +1226,8 @@ fun SharedMobileAudiobookPlayerSheet(
     }
     if (showSleepDialog) {
         SharedMobileAudiobookSleepTimerDialog(
+            customDurations = customSleepTimerMinutes,
+            onCustomDurationsChange = onCustomSleepTimerMinutesChange,
             onDurationSelected = { minutes ->
                 onSleepTimer(minutes)
                 showSleepDialog = false
@@ -1281,34 +1293,156 @@ fun SharedMobileAudiobookSpeedDialog(
     )
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun SharedMobileAudiobookSleepTimerDialog(
     onDurationSelected: (Int) -> Unit,
     onCancelSleep: () -> Unit,
     onDismiss: () -> Unit,
+    customDurations: List<Int> = emptyList(),
+    onCustomDurationsChange: (List<Int>) -> Unit = {},
 ) {
-    val durations = listOf(1, 15, 30, 45, 60)
+    val durations = listOf(15, 30, 45, 60)
+    val savedDurations = sanitizeCustomSleepTimerMinutes(customDurations)
+    var addingCustom by remember { mutableStateOf(false) }
+    var hoursText by remember { mutableStateOf("") }
+    var minutesText by remember { mutableStateOf("") }
+    val enteredHours = hoursText.toIntOrNull() ?: 0
+    val enteredMinutes = minutesText.toIntOrNull() ?: 0
+    val enteredTotal = enteredHours * 60 + enteredMinutes
+    val customTimerValid = enteredHours >= 0 && enteredMinutes in 0..59 &&
+        enteredTotal in 1..(24 * 60) && enteredTotal !in savedDurations
+
+    @Composable
+    fun durationLabel(totalMinutes: Int): String {
+        val hours = totalMinutes / 60
+        val minutes = totalMinutes % 60
+        return when {
+            hours > 0 && minutes > 0 -> readerString(
+                "audiobooks_hours_minutes",
+                "%1\$d hr %2\$d min",
+                hours,
+                minutes,
+            )
+            hours == 1 -> readerString("audiobooks_one_hour", "1 hour")
+            hours > 1 -> readerString("audiobooks_hours", "%1\$d hours", hours)
+            else -> readerString("audiobooks_minutes", "%1\$d minutes", minutes)
+        }
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(readerString("audiobooks_sleep_timer", "Sleep timer")) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                durations.forEach { minutes ->
-                    val label = when (minutes) {
-                        60 -> readerString("audiobooks_one_hour", "1 hour")
-                        1 -> readerString("audiobooks_one_minute", "1 minute")
-                        else -> readerString("audiobooks_minutes", "%1\$d minutes", minutes)
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth()
-                            .clip(RoundedCornerShape(14.dp))
-                            .clickable {
-                                onDurationSelected(minutes)
-                            }
-                            .padding(horizontal = 16.dp, vertical = 14.dp),
-                        verticalAlignment = Alignment.CenterVertically,
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                if (savedDurations.isNotEmpty()) {
+                    Text(
+                        readerString("audiobooks_your_timers", "Your timers"),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        Text(label, style = MaterialTheme.typography.bodyLarge)
+                        savedDurations.forEach { minutes ->
+                            Surface(
+                                shape = RoundedCornerShape(50),
+                                color = MaterialTheme.colorScheme.primaryContainer,
+                                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        durationLabel(minutes),
+                                        modifier = Modifier.clickable { onDurationSelected(minutes) }
+                                            .padding(start = 14.dp, end = 6.dp, top = 9.dp, bottom = 9.dp),
+                                        style = MaterialTheme.typography.labelLarge,
+                                    )
+                                    IconButton(
+                                        onClick = { onCustomDurationsChange(removeCustomSleepTimer(savedDurations, minutes)) },
+                                        modifier = Modifier.size(34.dp),
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Close,
+                                            contentDescription = readerString("audiobooks_remove_custom_timer", "Remove custom timer"),
+                                            modifier = Modifier.size(17.dp),
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Text(
+                    readerString("audiobooks_quick_timers", "Quick timers"),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    durations.forEach { minutes ->
+                        AssistChip(
+                            onClick = { onDurationSelected(minutes) },
+                            label = { Text(durationLabel(minutes)) },
+                        )
+                    }
+                }
+                if (addingCustom) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(readerString("audiobooks_custom_timer", "Custom timer"), style = MaterialTheme.typography.titleSmall)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            OutlinedTextField(
+                                value = hoursText,
+                                onValueChange = { value -> hoursText = value.filter(Char::isDigit).take(2) },
+                                modifier = Modifier.weight(1f),
+                                label = { Text(readerString("audiobooks_timer_hours", "Hours")) },
+                                placeholder = { Text("0") },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                singleLine = true,
+                            )
+                            OutlinedTextField(
+                                value = minutesText,
+                                onValueChange = { value -> minutesText = value.filter(Char::isDigit).take(2) },
+                                modifier = Modifier.weight(1f),
+                                label = { Text(readerString("audiobooks_timer_minutes", "Minutes")) },
+                                placeholder = { Text("00") },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                singleLine = true,
+                                isError = minutesText.toIntOrNull()?.let { it !in 0..59 } == true,
+                            )
+                            Button(
+                                enabled = customTimerValid,
+                                onClick = {
+                                    onCustomDurationsChange(addCustomSleepTimer(savedDurations, enteredHours, enteredMinutes))
+                                    hoursText = ""
+                                    minutesText = ""
+                                    addingCustom = false
+                                },
+                            ) {
+                                Text(readerString("action_save", "Save"))
+                            }
+                        }
+                    }
+                } else {
+                    TextButton(
+                        onClick = { addingCustom = true },
+                        enabled = savedDurations.size < MAX_CUSTOM_SLEEP_TIMERS,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            if (savedDurations.size < MAX_CUSTOM_SLEEP_TIMERS) {
+                                readerString("audiobooks_add_custom_timer", "Add custom timer")
+                            } else {
+                                readerString("audiobooks_custom_timer_limit", "Up to 3 custom timers")
+                            }
+                        )
                     }
                 }
             }
@@ -1683,6 +1817,8 @@ fun SharedMobileTtsPlayerSheet(
     onSeekChapter: (Int) -> Unit,
     onSpeedChange: (Float) -> Unit,
     onSleepTimer: (Int?) -> Unit,
+    customSleepTimerMinutes: List<Int> = emptyList(),
+    onCustomSleepTimerMinutesChange: (List<Int>) -> Unit = {},
     onStopPlayback: () -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -1896,6 +2032,8 @@ fun SharedMobileTtsPlayerSheet(
     }
     if (showSleepDialog) {
         SharedMobileAudiobookSleepTimerDialog(
+            customDurations = customSleepTimerMinutes,
+            onCustomDurationsChange = onCustomSleepTimerMinutesChange,
             onDurationSelected = { minutes ->
                 onSleepTimer(minutes)
                 showSleepDialog = false

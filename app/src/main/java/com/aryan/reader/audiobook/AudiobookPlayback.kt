@@ -107,7 +107,11 @@ class AudiobookPlaybackService : MediaSessionService(), Player.Listener {
 
                 if (minutes > 0) {
                     sleepTimerJob = scope.launch {
-                        delay((minutes * 60_000L).milliseconds)
+                        var remainingSeconds = minutes * 60
+                        while (remainingSeconds > 0) {
+                            delay(1_000)
+                            remainingSeconds = com.aryan.reader.shared.advanceSharedSleepTimer(remainingSeconds, player.isPlaying)
+                        }
 
                         persistPosition()
 
@@ -271,7 +275,7 @@ class AudiobookController(context: Context) : Player.Listener {
                 _sleepTimerLabel.value = formatSleepTimerLabel(remaining)
                 _state.value = _state.value.copy(sleepTimerRemainingMs = sleepTimerRemainingMs)
                 delay(1_000)
-                remaining--
+                remaining = com.aryan.reader.shared.advanceSharedSleepTimer(remaining, _state.value.isPlaying)
             }
             sleepTimerRemainingMs = 0L
             _sleepTimerLabel.value = "Sleep"

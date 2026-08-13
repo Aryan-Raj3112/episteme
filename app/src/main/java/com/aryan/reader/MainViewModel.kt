@@ -598,6 +598,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             mainScreenStartPage = prefs.getInt(KEY_MAIN_SCREEN_START_PAGE, 0).coerceIn(0, 2),
             unifiedLibrarySection = prefs.getInt(KEY_UNIFIED_LIBRARY_SECTION, 0)
                 .coerceIn(0, 4),
+            unifiedLibraryListView = prefs.getBoolean(KEY_UNIFIED_LIBRARY_LIST_VIEW, false),
             currentUser = authRepository.getSignedInUser(),
             isSyncEnabled = prefs.getBoolean(KEY_SYNC_ENABLED, false),
             isFolderSyncEnabled = prefs.getBoolean(KEY_FOLDER_SYNC_ENABLED, false),
@@ -6491,6 +6492,12 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         persistLibraryLandingState()
     }
 
+    fun setUnifiedLibraryListView(useListView: Boolean) {
+        if (_internalState.value.unifiedLibraryListView == useListView) return
+        _internalState.update { it.copy(unifiedLibraryListView = useListView) }
+        persistLibraryLandingState()
+    }
+
     fun navigateToShelf(id: String) {
         _internalState.update {
             it.copy(
@@ -6713,6 +6720,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             putInt(KEY_MAIN_SCREEN_START_PAGE, state.mainScreenStartPage)
             putInt(KEY_LIBRARY_SCREEN_START_PAGE, state.libraryScreenStartPage)
             putInt(KEY_UNIFIED_LIBRARY_SECTION, state.unifiedLibrarySection)
+            putBoolean(KEY_UNIFIED_LIBRARY_LIST_VIEW, state.unifiedLibraryListView)
             putString(KEY_LAST_VIEWING_SHELF_ID, resolvedUiState.viewingShelfId)
             putBoolean(KEY_LAST_ADDING_BOOKS_TO_SHELF, resolvedUiState.isAddingBooksToShelf)
         }

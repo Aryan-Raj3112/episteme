@@ -1223,7 +1223,7 @@ private fun ShelfListItem(
     }
 }
 @Composable
-private fun LibraryListItem(
+internal fun LibraryListItem(
     item: RecentFileItem,
     isSelected: Boolean,
     isPinned: Boolean = false,

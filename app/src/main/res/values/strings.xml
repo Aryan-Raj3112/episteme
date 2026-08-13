@@ -94,6 +94,8 @@
     <string name="unified_library_no_shelves">No shelves yet</string>
     <string name="unified_library_no_folders">No synced folders yet</string>
     <string name="unified_library_search_books">Search your books</string>
+    <string name="unified_library_grid_view">Grid view</string>
+    <string name="unified_library_list_view">List view</string>
     <string name="unified_library_sort_filter">Sort and filter</string>
     <string name="unified_library_account">Account</string>
     <string name="unified_library_signed_out">You are not signed in</string>
@@ -104,6 +106,16 @@
     <string name="unified_library_recent_searches">Recent searches</string>
     <string name="unified_library_clear_recent_searches">Clear recent searches</string>
     <string name="unified_library_reading_now">%1$d books in progress</string>
+    <string name="audiobooks_your_timers">Your timers</string>
+    <string name="audiobooks_quick_timers">Quick timers</string>
+    <string name="audiobooks_custom_timer">Custom timer</string>
+    <string name="audiobooks_add_custom_timer">Add custom timer</string>
+    <string name="audiobooks_custom_timer_limit">Up to 3 custom timers</string>
+    <string name="audiobooks_remove_custom_timer">Remove custom timer</string>
+    <string name="audiobooks_timer_hours">Hours</string>
+    <string name="audiobooks_timer_minutes">Minutes</string>
+    <string name="audiobooks_hours_minutes">%1$d hr %2$d min</string>
+    <string name="audiobooks_hours">%1$d hours</string>
     <string name="audiobooks_title">Audiobooks</string>
     <string name="audiobooks_listen_anywhere">Your listening library</string>
     <string name="audiobooks_listen_anywhere_desc">Recorded audiobooks and text-to-speech, together in one place.</string>
