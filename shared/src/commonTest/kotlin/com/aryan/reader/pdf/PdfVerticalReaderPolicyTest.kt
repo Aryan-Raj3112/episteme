@@ -4,6 +4,8 @@ import androidx.compose.ui.graphics.Color
 import com.aryan.reader.shared.ReaderTheme
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class PdfVerticalReaderPolicyTest {
     @Test
@@ -61,6 +63,46 @@ class PdfVerticalReaderPolicyTest {
                 newPageTopY = 1_200f,
                 newPageHeight = 1_200f,
             ),
+        )
+    }
+
+    @Test
+    fun `release invalidates camera samples queued by the completed gesture`() {
+        val gestureEpoch = nextPdfVerticalCameraEpoch(12L)
+        assertTrue(shouldApplyPdfVerticalCameraSample(gestureEpoch, gestureEpoch))
+
+        val releaseEpoch = nextPdfVerticalCameraEpoch(gestureEpoch)
+        assertFalse(shouldApplyPdfVerticalCameraSample(gestureEpoch, releaseEpoch))
+        assertTrue(shouldApplyPdfVerticalCameraSample(releaseEpoch, releaseEpoch))
+    }
+
+    @Test
+    fun `camera epoch wraps without reusing the active maximum value`() {
+        assertEquals(0L, nextPdfVerticalCameraEpoch(Long.MAX_VALUE))
+    }
+
+    @Test
+    fun `selection menu hidden by motion does not flash back when motion settles`() {
+        assertFalse(
+            shouldShowPdfSelectionMenu(
+                hasMenu = true,
+                isPageMoving = true,
+                suppressedForCurrentSelection = false,
+            )
+        )
+        assertFalse(
+            shouldShowPdfSelectionMenu(
+                hasMenu = true,
+                isPageMoving = false,
+                suppressedForCurrentSelection = true,
+            )
+        )
+        assertTrue(
+            shouldShowPdfSelectionMenu(
+                hasMenu = true,
+                isPageMoving = false,
+                suppressedForCurrentSelection = false,
+            )
         )
     }
 

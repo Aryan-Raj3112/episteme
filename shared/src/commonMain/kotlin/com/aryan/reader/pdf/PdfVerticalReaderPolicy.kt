@@ -19,6 +19,24 @@ data class PdfLockedOrientationResetCamera(
     val panY: Float,
 )
 
+/** A queued drag sample is valid only while the gesture that produced it still owns the camera. */
+fun shouldApplyPdfVerticalCameraSample(sampleEpoch: Long, activeEpoch: Long): Boolean =
+    sampleEpoch == activeEpoch
+
+/** Advancing ownership invalidates every sample queued by the previous gesture or animation. */
+fun nextPdfVerticalCameraEpoch(currentEpoch: Long): Long =
+    if (currentEpoch == Long.MAX_VALUE) 0L else currentEpoch + 1L
+
+/**
+ * Once page motion has hidden a selection menu, keep that same menu hidden after motion settles.
+ * A new selection resets [suppressedForCurrentSelection] when it installs its new menu state.
+ */
+fun shouldShowPdfSelectionMenu(
+    hasMenu: Boolean,
+    isPageMoving: Boolean,
+    suppressedForCurrentSelection: Boolean,
+): Boolean = hasMenu && !isPageMoving && !suppressedForCurrentSelection
+
 fun preservedPdfVerticalPanY(
     oldPanY: Float,
     oldZoom: Float,

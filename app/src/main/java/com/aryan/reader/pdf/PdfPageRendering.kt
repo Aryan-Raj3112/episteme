@@ -27,10 +27,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -1135,11 +1137,31 @@ internal fun PdfPageRenderer(
             }
         }
 
+        var menuSuppressedForCurrentSelection by remember(menuState) { mutableStateOf(false) }
+        var wasScrollingForCurrentSelection by remember(menuState) { mutableStateOf(isScrolling) }
+        LaunchedEffect(isScrolling, menuState) {
+            // A menu can be created before the long-press gesture has fully left the
+            // scrolling state. Only later motion of an established menu should suppress it.
+            if (isScrolling && !wasScrollingForCurrentSelection && menuState != null) {
+                menuSuppressedForCurrentSelection = true
+            }
+            wasScrollingForCurrentSelection = isScrolling
+        }
+
         if (menuState != null) {
             BackHandler(enabled = true, onBack = onMenuDismiss)
         }
 
-        if (menuState != null && !isScrolling && draggingBoxId == null && activeDraggingHandle == null) {
+        if (
+            menuState != null &&
+            shouldShowPdfSelectionMenu(
+                hasMenu = true,
+                isPageMoving = isScrolling,
+                suppressedForCurrentSelection = menuSuppressedForCurrentSelection,
+            ) &&
+            draggingBoxId == null &&
+            activeDraggingHandle == null
+        ) {
             if (menuState.anchorRect.width() > 0 || menuState.anchorRect.height() > 0) {
                 val popupPositionProvider = remember(menuState.anchorRect, density, offset, scale, layoutCoordinates) {
                     object : PopupPositionProvider {

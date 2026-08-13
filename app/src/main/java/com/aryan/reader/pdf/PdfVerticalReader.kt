@@ -137,6 +137,13 @@ import kotlin.math.roundToInt
 private const val SCROLL_BOUNDS_TAG = "PdfScrollBounds"
 private const val VERTICAL_TILE_RENDER_IDLE_COOLDOWN_MS = 220L
 
+private data class PdfVerticalCameraSample(
+    val epoch: Long,
+    val zoom: Float,
+    val panX: Float,
+    val panY: Float,
+)
+
 @Stable
 class VerticalPdfReaderState {
     var currentPage by mutableIntStateOf(0)
@@ -411,15 +418,16 @@ internal fun PdfVerticalReader(
         val zoomAnimatable = remember { Animatable(fitZoom) }
         val panXAnimatable = remember { Animatable(if ((screenWidth * fitZoom) < screenWidth) (screenWidth - (screenWidth * fitZoom)) / 2f else 0f) }
         val panYAnimatable = remember { Animatable(0f) }
-        val dragCameraUpdates = remember {
-            Channel<Triple<Float, Float, Float>>(Channel.CONFLATED)
-        }
+        var cameraEpoch by remember { mutableLongStateOf(0L) }
+        val dragCameraUpdates = remember { Channel<PdfVerticalCameraSample>(Channel.CONFLATED) }
         val oneHandZoomDistancePx = with(density) {
             PDF_ONE_HAND_ZOOM_DRAG_DISTANCE_FOR_DOUBLE_DP.dp.toPx()
         }
         var oneHandZoomStartZoom by remember { mutableFloatStateOf(fitZoom) }
         var oneHandZoomStartPan by remember { mutableStateOf(Offset.Zero) }
         var oneHandZoomPivotScreen by remember { mutableStateOf(Offset.Zero) }
+        var oneHandZoomFinalCamera by remember { mutableStateOf(Triple(fitZoom, 0f, 0f)) }
+        var oneHandZoomCameraEpoch by remember { mutableLongStateOf(0L) }
         var isVerticalOneHandZooming by remember { mutableStateOf(false) }
         val latestIsVerticalOneHandZooming by rememberUpdatedState(isVerticalOneHandZooming)
 
@@ -430,7 +438,11 @@ internal fun PdfVerticalReader(
         }
 
         LaunchedEffect(dragCameraUpdates) {
-            for ((targetZoom, targetPanX, targetPanY) in dragCameraUpdates) {
+            for (sample in dragCameraUpdates) {
+                if (!shouldApplyPdfVerticalCameraSample(sample.epoch, cameraEpoch)) continue
+                val targetZoom = sample.zoom
+                val targetPanX = sample.panX
+                val targetPanY = sample.panY
                 if (zoomAnimatable.value != targetZoom) {
                     zoomAnimatable.snapTo(targetZoom)
                 }
@@ -475,8 +487,8 @@ internal fun PdfVerticalReader(
 
         var hasRestoredLockedState by remember { mutableStateOf(false) }
 
-        LaunchedEffect(isScrollLocked, lockedState, totalDocHeight, screenWidth, isInteracting) {
-            if (!hasRestoredLockedState && isScrollLocked && lockedState != null && totalDocHeight > 0f && screenWidth > 0f && !isInteracting) {
+        LaunchedEffect(isScrollLocked, lockedState, totalDocHeight, screenWidth, isInteracting, isFlinging) {
+            if (!hasRestoredLockedState && isScrollLocked && lockedState != null && totalDocHeight > 0f && screenWidth > 0f && !isInteracting && !isFlinging) {
                 val (savedScale, savedPanX, savedPanY) = lockedState
 
                 Timber.tag("PdfLockDiagnostic").i("RESTORING: Scale=$savedScale, X=$savedPanX, Y=$savedPanY")
@@ -505,7 +517,10 @@ internal fun PdfVerticalReader(
             }
         }
 
-        LaunchedEffect(layoutState.pages) {
+        LaunchedEffect(layoutState.pages, isInteracting, isFlinging) {
+            // Real page dimensions can arrive while the pointer or decay animation owns the
+            // camera. Re-run this effect when motion ends instead of correcting underneath it.
+            if (isInteracting || isFlinging) return@LaunchedEffect
             if (!isInitialLayout && isScrollLocked && lockedOrientationChangedDuringResize) {
                 val targetPageIdx = if (targetPageDuringResize.intValue != -1) {
                     targetPageDuringResize.intValue
@@ -885,8 +900,16 @@ internal fun PdfVerticalReader(
             }
         }
 
-        LaunchedEffect(isAutoScrollPlaying, isAutoScrollTempPaused, autoScrollSpeed, totalDocHeight, screenHeight) {
-            if (isAutoScrollPlaying && !isAutoScrollTempPaused) {
+        LaunchedEffect(
+            isAutoScrollPlaying,
+            isAutoScrollTempPaused,
+            autoScrollSpeed,
+            totalDocHeight,
+            screenHeight,
+            isInteracting,
+            isFlinging,
+        ) {
+            if (isAutoScrollPlaying && !isAutoScrollTempPaused && !isInteracting && !isFlinging) {
                 val baseSpeedPxPerSec = 80f
                 var lastFrameTime = withFrameNanos { it }
 
@@ -1043,11 +1066,13 @@ internal fun PdfVerticalReader(
             density,
             isEditMode,
             selectedTool,
-            layoutInfo
+            layoutInfo,
+            isInteracting,
+            isFlinging,
         ) {
             val controller = richTextController ?: return@LaunchedEffect
 
-            if (imeBottom == 0 || !isEditMode || selectedTool != InkType.TEXT) {
+            if (imeBottom == 0 || !isEditMode || selectedTool != InkType.TEXT || isInteracting || isFlinging) {
                 return@LaunchedEffect
             }
 
@@ -1136,6 +1161,17 @@ internal fun PdfVerticalReader(
 
         val onDoubleTapDragZoomStart: (Offset) -> Unit = {
             if (!isScrollLocked) {
+                verticalFlingJob?.cancel()
+                verticalFlingJob = null
+                cameraEpoch = nextPdfVerticalCameraEpoch(cameraEpoch)
+                oneHandZoomCameraEpoch = cameraEpoch
+                scope.launch(start = CoroutineStart.UNDISPATCHED) {
+                    zoomAnimatable.stop()
+                    panXAnimatable.stop()
+                    panYAnimatable.stop()
+                    panXAnimatable.updateBounds(null, null)
+                    panYAnimatable.updateBounds(null, null)
+                }
                 isVerticalOneHandZooming = true
                 Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
                     "vertical.oneHandStart requestedPivot=$it center=(${(screenWidth / 2f).toInt()},${(screenHeight / 2f).toInt()}) " +
@@ -1144,15 +1180,13 @@ internal fun PdfVerticalReader(
                 oneHandZoomPivotScreen = Offset(screenWidth / 2f, screenHeight / 2f)
                 oneHandZoomStartZoom = zoomAnimatable.value
                 oneHandZoomStartPan = Offset(panXAnimatable.value, panYAnimatable.value)
+                oneHandZoomFinalCamera = Triple(
+                    oneHandZoomStartZoom,
+                    oneHandZoomStartPan.x,
+                    oneHandZoomStartPan.y,
+                )
                 isInteracting = true
                 isDragging = true
-                scope.launch {
-                    zoomAnimatable.stop()
-                    panXAnimatable.stop()
-                    panYAnimatable.stop()
-                    panXAnimatable.updateBounds(null, null)
-                    panYAnimatable.updateBounds(null, null)
-                }
             }
         }
 
@@ -1178,7 +1212,10 @@ internal fun PdfVerticalReader(
                         "targetZoom=$targetZoom finalZoom=$finalZoom pan=($finalX,$finalY)"
                 )
                 onZoomChange(finalZoom)
-                dragCameraUpdates.trySend(Triple(finalZoom, finalX, finalY))
+                oneHandZoomFinalCamera = Triple(finalZoom, finalX, finalY)
+                dragCameraUpdates.trySend(
+                    PdfVerticalCameraSample(oneHandZoomCameraEpoch, finalZoom, finalX, finalY)
+                )
             }
         }
 
@@ -1186,14 +1223,14 @@ internal fun PdfVerticalReader(
             val wasOneHandZooming = isVerticalOneHandZooming
             isVerticalOneHandZooming = false
             if (!isScrollLocked || wasOneHandZooming) {
-                Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
-                    "vertical.oneHandEnd zoom=${zoomAnimatable.value} pan=(${panXAnimatable.value},${panYAnimatable.value})"
-                )
-                isInteracting = false
-                isDragging = false
-                val currentZoom = zoomAnimatable.value
-                if (currentZoom > fitZoom && currentZoom < fitZoom * 1.05f) {
-                    scope.launch {
+                cameraEpoch = nextPdfVerticalCameraEpoch(cameraEpoch)
+                val finalCamera = oneHandZoomFinalCamera
+                scope.launch {
+                    zoomAnimatable.snapTo(finalCamera.first)
+                    panXAnimatable.snapTo(finalCamera.second)
+                    panYAnimatable.snapTo(finalCamera.third)
+                    val currentZoom = finalCamera.first
+                    if (currentZoom > fitZoom && currentZoom < fitZoom * 1.05f) {
                         val (finalZoom, finalX, finalY) = clampCamera(
                             fitZoom,
                             panXAnimatable.value,
@@ -1206,10 +1243,15 @@ internal fun PdfVerticalReader(
                         }
                         onZoomChange(finalZoom)
                         updatePanBoundsForZoom(finalZoom)
+                    } else {
+                        updatePanBoundsForZoom(currentZoom)
                     }
-                } else {
-                    updatePanBoundsForZoom(currentZoom)
+                    isInteracting = false
+                    isDragging = false
                 }
+                Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
+                    "vertical.oneHandEnd zoom=${finalCamera.first} pan=(${finalCamera.second},${finalCamera.third})"
+                )
             }
         }
 
@@ -1353,13 +1395,13 @@ internal fun PdfVerticalReader(
                             )
 
                             if (targetPanY != panYAnimatable.value) {
-                                dragCameraUpdates.trySend(
-                                    Triple(
-                                        zoomAnimatable.value,
-                                        panXAnimatable.value,
-                                        targetPanY
-                                    )
-                                )
+                                verticalFlingJob?.cancel()
+                                verticalFlingJob = null
+                                cameraEpoch = nextPdfVerticalCameraEpoch(cameraEpoch)
+                                scope.launch(start = CoroutineStart.UNDISPATCHED) {
+                                    panYAnimatable.stop()
+                                    panYAnimatable.snapTo(targetPanY)
+                                }
                             }
                             event.changes.forEach { it.consume() }
                         }
@@ -1524,6 +1566,8 @@ internal fun PdfVerticalReader(
                         // slightly when a finger interrupted deceleration.
                         verticalFlingJob?.cancel()
                         verticalFlingJob = null
+                        cameraEpoch = nextPdfVerticalCameraEpoch(cameraEpoch)
+                        val gestureCameraEpoch = cameraEpoch
                         scope.launch(start = CoroutineStart.UNDISPATCHED) {
                             zoomAnimatable.stop()
                             panXAnimatable.stop()
@@ -1673,7 +1717,12 @@ internal fun PdfVerticalReader(
                                         // per available UI turn. This keeps zoom and pan together and
                                         // avoids launching a coroutine for every pointer sample.
                                         dragCameraUpdates.trySend(
-                                            Triple(accumulatedZoom, accumulatedPanX, accumulatedPanY)
+                                            PdfVerticalCameraSample(
+                                                epoch = gestureCameraEpoch,
+                                                zoom = accumulatedZoom,
+                                                panX = accumulatedPanX,
+                                                panY = accumulatedPanY,
+                                            )
                                         )
 
                                         val consumedChanges = event.changes.count { it.positionChanged() }
@@ -1706,12 +1755,6 @@ internal fun PdfVerticalReader(
                             }
                         } while (!canceled && event.changes.any { it.pressed })
 
-                        if (isInteracting) {
-                            Timber.tag("PdfTouchDebug").v("VerticalReader: Interaction ended")
-                            isInteracting = false
-                        }
-                        isDragging = false
-
                         val gestureDurationMs = PdfVerticalPerfLog.elapsedMs(gestureStartNanos)
 
                         if (panLocked) {
@@ -1720,6 +1763,19 @@ internal fun PdfVerticalReader(
                             val (finalZoom, finalX, finalY) = clampCamera(
                                 accumulatedZoom, accumulatedPanX, accumulatedPanY
                             )
+                            // Revoke queued drag samples and synchronously commit the exact final
+                            // pointer position before idle effects or fling animation can observe it.
+                            cameraEpoch = nextPdfVerticalCameraEpoch(cameraEpoch)
+                            scope.launch(start = CoroutineStart.UNDISPATCHED) {
+                                zoomAnimatable.snapTo(finalZoom)
+                                panXAnimatable.snapTo(finalX)
+                                panYAnimatable.snapTo(finalY)
+                            }
+                            if (isInteracting) {
+                                Timber.tag("PdfTouchDebug").v("VerticalReader: Interaction ended")
+                                isInteracting = false
+                            }
+                            isDragging = false
                             val zoomedDocWidth = screenWidth * finalZoom
                             val zoomedDocHeight = totalDocHeight * finalZoom
 
@@ -1752,8 +1808,10 @@ internal fun PdfVerticalReader(
                             )
 
                             if (shouldRunFling) {
+                                // Publish ownership before launching so idle effects cannot run in
+                                // the release-to-fling scheduling gap.
+                                isFlinging = true
                                 verticalFlingJob = scope.launch {
-                                    isFlinging = true
                                     val flingStartNanos = PdfVerticalPerfLog.nowNanos()
                                     PdfVerticalPerfLog.i(
                                         "fling-start fling=${PdfVerticalPerfLog.xy(flingX, flingY)} " +
@@ -1806,6 +1864,12 @@ internal fun PdfVerticalReader(
                                 panYAnimatable.updateBounds(minPanY, headerHeightPx)
                             }
                         } else {
+                            cameraEpoch = nextPdfVerticalCameraEpoch(cameraEpoch)
+                            if (isInteracting) {
+                                Timber.tag("PdfTouchDebug").v("VerticalReader: Interaction ended")
+                                isInteracting = false
+                            }
+                            isDragging = false
                             PdfVerticalPerfLog.i(
                                 "gesture-end duration=${gestureDurationMs}ms events=$gestureEventCount consumed=$gestureConsumedEventCount " +
                                     "canceled=$gestureCanceledEventCount zoomEvents=$gestureZoomEventCount maxPanDelta=${PdfVerticalPerfLog.f(gestureMaxPanDelta)} " +
@@ -2479,6 +2543,12 @@ internal fun PdfVerticalReader(
                                     )
 
                                     try {
+                                        verticalFlingJob?.cancel()
+                                        verticalFlingJob = null
+                                        cameraEpoch = nextPdfVerticalCameraEpoch(cameraEpoch)
+                                        scope.launch(start = CoroutineStart.UNDISPATCHED) {
+                                            panYAnimatable.stop()
+                                        }
                                         isDraggingScrollbar = true
                                         isInteracting = true
                                         lastScrollInteraction = System.currentTimeMillis()
@@ -2538,10 +2608,10 @@ internal fun PdfVerticalReader(
                                                     minS, maxS
                                                 )
 
-                                                scope.launch {
-                                                    panYAnimatable.snapTo(
-                                                        clampedTargetPanY
-                                                    )
+                                                cameraEpoch = nextPdfVerticalCameraEpoch(cameraEpoch)
+                                                scope.launch(start = CoroutineStart.UNDISPATCHED) {
+                                                    panYAnimatable.stop()
+                                                    panYAnimatable.snapTo(clampedTargetPanY)
                                                 }
 
                                                 lastScrollInteraction = System.currentTimeMillis()
