@@ -37,6 +37,22 @@ fun shouldShowPdfSelectionMenu(
     suppressedForCurrentSelection: Boolean,
 ): Boolean = hasMenu && !isPageMoving && !suppressedForCurrentSelection
 
+/**
+ * Geometry refinement may follow the initial placeholder layout. Only keep treating the camera
+ * as fitted while it is still close to the actual fit scale; an absolute threshold breaks
+ * landscape documents whose fit scale is below 1.
+ */
+fun isPdfVerticalZoomNearFit(
+    currentZoom: Float,
+    fitZoom: Float,
+    tolerance: Float = 0.1f,
+): Boolean {
+    val safeFitZoom = fitZoom.takeIf { it.isFinite() && it > 0f } ?: return false
+    val safeCurrentZoom = currentZoom.takeIf { it.isFinite() && it > 0f } ?: return false
+    val safeTolerance = tolerance.takeIf { it.isFinite() }?.coerceAtLeast(0f) ?: 0f
+    return safeCurrentZoom <= safeFitZoom * (1f + safeTolerance)
+}
+
 fun preservedPdfVerticalPanY(
     oldPanY: Float,
     oldZoom: Float,

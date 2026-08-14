@@ -571,7 +571,7 @@ internal fun PdfVerticalReader(
 
                 if (pageLayout != null) {
                     val currentZoom = zoomAnimatable.value
-                    val isFit = currentZoom <= 1.1f
+                    val isFit = isPdfVerticalZoomNearFit(currentZoom, fitZoom)
                     val targetZoom = if (isFit) fitZoom else currentZoom
                     val isViewportResize = targetPageDuringResize.intValue != -1
                     val oldAnchorPage = if (!isViewportResize && previousPageLayout.isNotEmpty()) {

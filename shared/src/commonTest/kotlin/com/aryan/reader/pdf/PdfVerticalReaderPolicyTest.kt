@@ -67,6 +67,19 @@ class PdfVerticalReaderPolicyTest {
     }
 
     @Test
+    fun `geometry refinement only resets zoom close to landscape fit scale`() {
+        assertTrue(isPdfVerticalZoomNearFit(currentZoom = 0.54f, fitZoom = 0.5f))
+        assertFalse(isPdfVerticalZoomNearFit(currentZoom = 0.88f, fitZoom = 0.5f))
+        assertFalse(isPdfVerticalZoomNearFit(currentZoom = 1.1f, fitZoom = 0.5f))
+    }
+
+    @Test
+    fun `geometry refinement keeps portrait fit tolerance`() {
+        assertTrue(isPdfVerticalZoomNearFit(currentZoom = 1.1f, fitZoom = 1f))
+        assertFalse(isPdfVerticalZoomNearFit(currentZoom = 1.11f, fitZoom = 1f))
+    }
+
+    @Test
     fun `release invalidates camera samples queued by the completed gesture`() {
         val gestureEpoch = nextPdfVerticalCameraEpoch(12L)
         assertTrue(shouldApplyPdfVerticalCameraSample(gestureEpoch, gestureEpoch))
