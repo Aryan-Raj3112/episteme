@@ -38,9 +38,10 @@ import com.aryan.reader.audiobook.BookTtsListeningProgressEntity
         TagEntity::class,
         BookTagCrossRef::class,
         AudiobookEntity::class,
-        BookTtsListeningProgressEntity::class
+        BookTtsListeningProgressEntity::class,
+        PendingFolderAnnotationExportEntity::class,
     ],
-    version = 27,
+    version = 28,
     exportSchema = false
 )
 @TypeConverters(FileTypeConverter::class)
@@ -51,6 +52,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun tagDao(): TagDao
     abstract fun audiobookDao(): AudiobookDao
     abstract fun bookTtsListeningProgressDao(): BookTtsListeningProgressDao
+    abstract fun pendingFolderAnnotationExportDao(): PendingFolderAnnotationExportDao
 
     companion object {
         @Volatile
@@ -370,6 +372,25 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_27_28 = object : Migration(27, 28) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `pending_folder_annotation_exports` (
+                        `bookId` TEXT NOT NULL,
+                        `revision` INTEGER NOT NULL,
+                        `dirtySince` INTEGER NOT NULL,
+                        `updatedAt` INTEGER NOT NULL,
+                        `lastAttemptAt` INTEGER NOT NULL,
+                        `attemptCount` INTEGER NOT NULL,
+                        `reason` TEXT NOT NULL,
+                        PRIMARY KEY(`bookId`)
+                    )
+                    """.trimIndent()
+                )
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -384,7 +405,7 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16,
                         MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20,
                         MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24,
-                        MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27
+                        MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28
                     )
                     .fallbackToDestructiveMigration(false)
                     .build()

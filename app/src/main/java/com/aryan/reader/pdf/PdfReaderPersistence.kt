@@ -38,7 +38,7 @@ internal class PdfReaderPersistence(
     private val highlightRepository: PdfHighlightRepository,
     private val onBookmarksChanged: (String) -> Unit,
     private val onSavePosition: suspend (Uri, Int, Int) -> Unit,
-    private val queueCloudUpload: (String) -> Unit
+    private val onSidecarsCommitted: suspend (bookId: String, reason: String, immediate: Boolean) -> Unit
 ) {
     private val saveMutex = Mutex()
     private val lastSavedHashes = IntArray(5) { -1 }
@@ -160,11 +160,15 @@ internal class PdfReaderPersistence(
                         }
                         lastSavedHashes[4] = page
                     }
-                    if (sidecarsSaved) {
+                    if (sidecarsSaved || (force && canSaveSidecars)) {
                         logCloudAnnotationSyncTrace {
-                            "android.reader.sidecar_upload_queue book=$bookId force=$force"
+                            "android.reader.sidecar_export_queue book=$bookId force=$force changed=$sidecarsSaved"
                         }
-                        queueCloudUpload(bookId)
+                        onSidecarsCommitted(
+                            bookId,
+                            if (force) "lifecycle_flush" else "debounced_save",
+                            force,
+                        )
                     }
                 }
             }
@@ -202,6 +206,6 @@ internal class PdfReaderPersistence(
             "android.reader.persist_ink book=$bookId reason=$reason count=${annotations.values.sumOf { it.size }} " +
                 "deletedIds=${deletedIds.sorted()}"
         }
-        queueCloudUpload(bookId)
+        onSidecarsCommitted(bookId, reason, false)
     }
 }

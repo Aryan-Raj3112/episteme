@@ -1016,7 +1016,8 @@ fun PdfViewerScreen(
         if (currentBookId != null) RichTextController(
             richTextRepository,
             coroutineScope,
-            currentBookId!!
+            currentBookId!!,
+            viewModel::onPdfSidecarsCommitted,
         )
         else null
     }
@@ -1347,7 +1348,7 @@ fun PdfViewerScreen(
             highlightRepository = highlightRepository,
             onBookmarksChanged = onBookmarksChanged,
             onSavePosition = onSavePosition,
-            queueCloudUpload = viewModel::queuePdfSidecarCloudUpload
+            onSidecarsCommitted = viewModel::onPdfSidecarsCommitted
         )
     }
 
@@ -1438,7 +1439,7 @@ fun PdfViewerScreen(
         sidecarsReadyForCurrentBook
     ) {
         if (sidecarsReadyForCurrentBook && initialScrollDone) {
-            delay(2000) // Debounce period
+            delay(500) // Keep local state near-current; folder export is coalesced separately.
             saveAllData(false)
         }
     }
