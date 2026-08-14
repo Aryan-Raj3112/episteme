@@ -376,8 +376,8 @@ fun applyLibraryFilters(books: List<BookItem>, filters: LibraryFilters): List<Bo
 fun sortBooks(books: List<BookItem>, sortOrder: SortOrder): List<BookItem> {
     return when (sortOrder) {
         SortOrder.RECENT -> books.sortedByDescending { it.timestamp }
-        SortOrder.DATE_ADDED_NEWEST -> books.sortedByDescending { it.dateAddedTimestamp }
-        SortOrder.DATE_ADDED_OLDEST -> books.sortedBy { it.dateAddedTimestamp }
+        SortOrder.DATE_ADDED_NEWEST -> books.sortedByDescending { it.libraryFileDateTimestamp() }
+        SortOrder.DATE_ADDED_OLDEST -> books.sortedBy { it.libraryFileDateTimestamp() }
         SortOrder.TITLE_ASC -> books.sortedBy {
             it.titleSortKey?.lowercase() ?: it.title?.lowercase() ?: it.displayName.lowercase()
         }
@@ -388,6 +388,11 @@ fun sortBooks(books: List<BookItem>, sortOrder: SortOrder): List<BookItem> {
         SortOrder.SIZE_DESC -> books.sortedByDescending { it.fileSize }
     }
 }
+
+/** Synced-folder entries follow their source file date; regular imports keep their app-added date. */
+internal fun BookItem.libraryFileDateTimestamp(): Long =
+    fileContentModifiedTimestamp.takeIf { !sourceFolder.isNullOrBlank() && it > 0L }
+        ?: dateAddedTimestamp
 
 fun SharedReaderScreenState.withImportedFiles(
     files: List<ImportedBookFile>,

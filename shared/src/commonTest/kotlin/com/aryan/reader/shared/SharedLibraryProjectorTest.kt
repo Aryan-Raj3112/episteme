@@ -477,6 +477,36 @@ class SharedLibraryProjectorTest {
     }
 
     @Test
+    fun `newest and oldest use original modification date for synced folder files`() {
+        val originallyOld = book("originally-old", timestamp = 30L, sourceFolder = "content://sync")
+            .copy(dateAddedTimestamp = 30L, fileContentModifiedTimestamp = 10L)
+        val originallyNew = book("originally-new", timestamp = 10L, sourceFolder = "content://sync")
+            .copy(dateAddedTimestamp = 10L, fileContentModifiedTimestamp = 30L)
+
+        assertEquals(
+            listOf("originally-new", "originally-old"),
+            sortBooks(listOf(originallyOld, originallyNew), SortOrder.DATE_ADDED_NEWEST).ids(),
+        )
+        assertEquals(
+            listOf("originally-old", "originally-new"),
+            sortBooks(listOf(originallyOld, originallyNew), SortOrder.DATE_ADDED_OLDEST).ids(),
+        )
+    }
+
+    @Test
+    fun `date sorting keeps app-added date for non-folder and unknown-date files`() {
+        val regularImport = book("regular", sourceFolder = null)
+            .copy(dateAddedTimestamp = 20L, fileContentModifiedTimestamp = 5L)
+        val syncedWithoutFileDate = book("unknown", sourceFolder = "content://sync")
+            .copy(dateAddedTimestamp = 10L, fileContentModifiedTimestamp = 0L)
+
+        assertEquals(
+            listOf("regular", "unknown"),
+            sortBooks(listOf(syncedWithoutFileDate, regularImport), SortOrder.DATE_ADDED_NEWEST).ids(),
+        )
+    }
+
+    @Test
     fun `shared screen models expose home and library derived state`() {
         val folderBook = book("folder", sourceFolder = "/books")
         val recent = book("recent")
