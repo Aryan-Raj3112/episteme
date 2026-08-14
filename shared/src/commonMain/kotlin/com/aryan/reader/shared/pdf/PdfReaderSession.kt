@@ -396,7 +396,8 @@ data class SharedPdfReaderState(
             pageCount = safePageCount,
             activeSearchResultIndex = activeSearchResultIndex.coerceAtLeast(-1),
             zoom = zoomSpec.clamp(zoom),
-            lockedZoomScale = lockedZoomScale.takeIf { it.isFinite() }?.coerceIn(1f, 5f) ?: 1f,
+            lockedZoomScale = lockedZoomScale.takeIf { it.isFinite() }
+                ?.coerceIn(PDF_MIN_ZOOM_SCALE, PDF_MAX_ZOOM_SCALE) ?: PDF_MIN_ZOOM_SCALE,
             lockedZoomOffsetX = lockedZoomOffsetX.takeIf { it.isFinite() } ?: 0f,
             lockedZoomOffsetY = lockedZoomOffsetY.takeIf { it.isFinite() } ?: 0f,
             bookmarks = bookmarks.normalizedBookmarks(lastPdfPageIndex),
@@ -553,7 +554,8 @@ fun SharedPdfReaderState.reduce(
         is SharedPdfReaderAction.ZoomBy -> copy(zoom = zoomSpec.clamp(zoom + action.delta))
         is SharedPdfReaderAction.ScrollLockChanged -> copy(
             isScrollLocked = action.locked,
-            lockedZoomScale = action.zoomScale.takeIf { it.isFinite() }?.coerceIn(1f, 5f) ?: 1f,
+            lockedZoomScale = action.zoomScale.takeIf { it.isFinite() }
+                ?.coerceIn(PDF_MIN_ZOOM_SCALE, PDF_MAX_ZOOM_SCALE) ?: PDF_MIN_ZOOM_SCALE,
             lockedZoomOffsetX = action.offsetX.takeIf { it.isFinite() } ?: 0f,
             lockedZoomOffsetY = action.offsetY.takeIf { it.isFinite() } ?: 0f
         )

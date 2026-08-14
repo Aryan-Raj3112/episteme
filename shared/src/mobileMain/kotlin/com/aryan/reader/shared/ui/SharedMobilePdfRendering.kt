@@ -169,6 +169,7 @@ import com.aryan.reader.shared.pdf.isZoomed
 import com.aryan.reader.shared.pdf.pdfDoubleTapTargetScale
 import com.aryan.reader.shared.pdf.pdfVerticalDoubleTapTargetScale
 import com.aryan.reader.shared.pdf.pdfZoomIndicatorPercent
+import com.aryan.reader.shared.pdf.PDF_MAX_ZOOM_SCALE
 import com.aryan.reader.shared.pdf.visiblePdfPageBounds
 import com.aryan.reader.shared.pdf.SharedPdfAnnotation
 import com.aryan.reader.shared.pdf.SharedPdfRichTextController
@@ -677,7 +678,7 @@ internal fun SharedMobilePdfVerticalPages(
             onCameraChanged = onZoomCameraChanged,
             zoomEnabled = userScrollEnabled && state.selectedTool == PdfInkTool.NONE,
             tapGesturesEnabled = state.selectedTool == PdfInkTool.NONE || state.selectedTool == PdfInkTool.TEXT || isStylusOnlyMode,
-            maxScale = 5f,
+            maxScale = PDF_MAX_ZOOM_SCALE,
             verticalDocumentMode = true,
             onSingleTap = { onToggleChrome() },
             modifier = Modifier.fillMaxSize()
@@ -1049,7 +1050,7 @@ internal fun SharedMobilePdfPaginatedPages(
             onCameraChanged = onZoomCameraChanged,
             zoomEnabled = userScrollEnabled && state.selectedTool == PdfInkTool.NONE,
             tapGesturesEnabled = state.selectedTool == PdfInkTool.NONE || state.selectedTool == PdfInkTool.TEXT || isStylusOnlyMode,
-            maxScale = 4f,
+            maxScale = PDF_MAX_ZOOM_SCALE,
             onSingleTap = { offset ->
                 val viewportWidthForTap = paginationViewportSize.width.toFloat()
                 val edge = viewportWidthForTap * 0.25f

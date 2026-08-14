@@ -273,6 +273,7 @@ import com.aryan.reader.scaledToCanvasLimit
 import com.aryan.reader.shared.ReaderTtsReplacementPreferences
 import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.pdf.PdfSpreadLayout
+import com.aryan.reader.shared.pdf.PDF_MAX_ZOOM_SCALE
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationSessionAction
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationSessionState
 import com.aryan.reader.shared.pdf.SharedPdfJumpHistory
@@ -4588,7 +4589,7 @@ fun PdfViewerScreen(
                                                                                 totalDragY = totalDragY,
                                                                                 dragDistanceForDoublePx = oneHandZoomDistancePx,
                                                                                 minScale = 1f,
-                                                                                maxScale = 4f
+                                                                                maxScale = PDF_MAX_ZOOM_SCALE
                                                                             )
                                                                             currentActiveScale = nextScale
                                                                             currentActiveOffset = spreadTargetOffset(
@@ -4683,7 +4684,8 @@ fun PdfViewerScreen(
                                                                                     if (mode == 1 || mode == 2) {
                                                                                         val oldScale = gestureScale
                                                                                         val nextScale = if (mode == 2 && pointerCount > 1) {
-                                                                                            (gestureScale * zoomChange).coerceIn(1f, 4f)
+                                                                                            (gestureScale * zoomChange)
+                                                                                                .coerceIn(1f, PDF_MAX_ZOOM_SCALE)
                                                                                         } else {
                                                                                             gestureScale
                                                                                         }
@@ -4732,7 +4734,8 @@ fun PdfViewerScreen(
 
                                                                                     if (mode == 2) {
                                                                                         val oldScale = gestureScale
-                                                                                        val nextScale = (gestureScale * zoomChange).coerceIn(1f, 4f)
+                                                                                        val nextScale = (gestureScale * zoomChange)
+                                                                                            .coerceIn(1f, PDF_MAX_ZOOM_SCALE)
                                                                                         val ratio = if (oldScale == 0f) 1f else nextScale / oldScale
                                                                                         val previousCentroid = event.calculateCentroid(useCurrent = false)
                                                                                         val viewportCenter = Offset(size.width / 2f, size.height / 2f)

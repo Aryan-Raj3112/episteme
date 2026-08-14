@@ -18,6 +18,11 @@ import kotlin.math.abs
 import kotlin.math.max
 
 internal const val PDF_ONE_HAND_ZOOM_TRACE_TAG = "PdfOneHandZoomTrace"
+internal const val PDF_ZOOM_DIAGNOSTIC_TAG = "PdfZoomDiagnostic"
+
+internal fun pdfZoomDiagnostic(message: String) {
+    Timber.tag(PDF_ZOOM_DIAGNOSTIC_TAG).d(message)
+}
 
 private fun Offset.traceString(): String = "(${x.toInt()},${y.toInt()})"
 
@@ -42,15 +47,23 @@ internal suspend fun PointerInputScope.detectPdfTapAndOneHandZoomGestures(
 ) {
     awaitEachGesture {
         val firstDown = awaitFirstDown(requireUnconsumed = false)
+        pdfZoomDiagnostic(
+            "detector firstDown position=${firstDown.position.traceString()} consumed=${firstDown.isConsumed} " +
+                "consumeSingleTap=$consumeSingleTap"
+        )
         traceOneHandZoom(
             "detector.firstDown ${firstDown.traceString()} consumeSingleTap=$consumeSingleTap " +
                 "doubleTapTimeout=${viewConfiguration.doubleTapTimeoutMillis} holdTimeout=$PDF_ONE_HAND_ZOOM_HOLD_TIMEOUT_MS"
         )
         val firstUp = waitForUpOrCancellation()
         if (firstUp == null) {
+            pdfZoomDiagnostic("detector firstUp canceled")
             traceOneHandZoom("detector.firstUpCanceled first=${firstDown.traceString()}")
             return@awaitEachGesture
         }
+        pdfZoomDiagnostic(
+            "detector firstUp position=${firstUp.position.traceString()} consumed=${firstUp.isConsumed}"
+        )
         traceOneHandZoom("detector.firstUp ${firstUp.traceString()}")
 
         val secondDown = awaitPdfSecondDown(
@@ -59,6 +72,9 @@ internal suspend fun PointerInputScope.detectPdfTapAndOneHandZoomGestures(
         )
 
         if (secondDown == null) {
+            pdfZoomDiagnostic(
+                "detector singleTap position=${firstDown.position.traceString()} firstUpConsumed=${firstUp.isConsumed}"
+            )
             traceOneHandZoom(
                 "detector.singleTap noSecondDown consume=$consumeSingleTap firstUpConsumedBefore=${firstUp.isConsumed} " +
                     "tap=${firstDown.position.traceString()}"
@@ -67,6 +83,10 @@ internal suspend fun PointerInputScope.detectPdfTapAndOneHandZoomGestures(
             onTap(firstDown.position)
             return@awaitEachGesture
         }
+
+        pdfZoomDiagnostic(
+            "detector secondDown position=${secondDown.position.traceString()} consumed=${secondDown.isConsumed}"
+        )
 
         val pivot = secondDown.position
         var latestPosition = pivot
@@ -143,12 +163,17 @@ internal suspend fun PointerInputScope.detectPdfTapAndOneHandZoomGestures(
         }
 
         if (canceled) {
+            pdfZoomDiagnostic("detector doubleTap canceled before action position=${latestPosition.traceString()}")
             traceOneHandZoom("detector.end canceledBeforeAction latest=${latestPosition.traceString()}")
             return@awaitEachGesture
         }
 
         if (quickDoubleTapUp != null) {
             val quickAllowed = canHandleQuickDoubleTap()
+            pdfZoomDiagnostic(
+                "detector quickDoubleTap position=${pivot.traceString()} allowed=$quickAllowed " +
+                    "upConsumed=${quickDoubleTapUp?.isConsumed}"
+            )
             traceOneHandZoom(
                 "detector.quickDoubleTap fire quickAllowed=$quickAllowed upConsumedBefore=${quickDoubleTapUp?.isConsumed} " +
                     "pivot=${pivot.traceString()}"
@@ -161,6 +186,7 @@ internal suspend fun PointerInputScope.detectPdfTapAndOneHandZoomGestures(
         }
 
         if (!oneHandAllowed) {
+            pdfZoomDiagnostic("detector oneHand blocked position=${pivot.traceString()}")
             traceOneHandZoom("detector.oneHandBlocked waitingForUp pivot=${pivot.traceString()}")
             waitForUpOrCancellation()
             return@awaitEachGesture
@@ -199,6 +225,9 @@ internal suspend fun PointerInputScope.detectPdfTapAndOneHandZoomGestures(
 
         traceOneHandZoom(
             "detector.oneHandHoldStart pivot=${pivot.traceString()} latest=${latestPosition.traceString()}"
+        )
+        pdfZoomDiagnostic(
+            "detector oneHand start position=${pivot.traceString()} latest=${latestPosition.traceString()}"
         )
         onOneHandZoomHoldStart(pivot)
         try {
@@ -242,6 +271,9 @@ internal suspend fun PointerInputScope.detectPdfTapAndOneHandZoomGestures(
                 }
             }
         } finally {
+            pdfZoomDiagnostic(
+                "detector oneHand end started=$zoomStarted latest=${latestPosition.traceString()}"
+            )
             traceOneHandZoom(
                 "detector.oneHandEnd zoomStarted=$zoomStarted latest=${latestPosition.traceString()}"
             )
