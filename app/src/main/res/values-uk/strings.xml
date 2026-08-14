@@ -116,7 +116,7 @@
     <string name="scan_all">Сканувати все</string>
     <string name="scanning">Сканування…</string>
     <string name="sync_meta">Синхронізувати метадані</string>
-    <string name="last_sync">ОСТАННЯ СИНХРОНІЗАЦІЯ</string>
+    <string name="last_sync">ОСТАННЄ СКАНУВАННЯ</string>
     <string name="books_count">КНИЖКИ</string>
     <string name="menu_edit_filters">Вибрати фільтр</string>
     <string name="menu_remove_folder">Видалити папку</string>

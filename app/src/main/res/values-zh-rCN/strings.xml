@@ -117,7 +117,7 @@
     <string name="scan_all">全部扫描</string>
     <string name="scanning">正在扫描…</string>
     <string name="sync_meta">同步元数据</string>
-    <string name="last_sync">上次同步</string>
+    <string name="last_sync">上次扫描</string>
     <string name="books_count">图书</string>
     <string name="menu_edit_filters">编辑筛选器</string>
     <string name="menu_remove_folder">移除文件夹</string>

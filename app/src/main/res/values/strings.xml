@@ -252,7 +252,7 @@
     <!-- Button label on a folder sync card — triggers syncing only the metadata (not the actual files). -->
     <string name="sync_meta">Sync Meta</string>
     <!-- Small uppercase label on a folder sync card, followed by a date/time stamp. -->
-    <string name="last_sync">LAST SYNC</string>
+    <string name="last_sync">LAST SCAN</string>
     <!-- Small uppercase label on a folder sync card, followed by the count of synced books. -->
     <string name="books_count">BOOKS</string>
     <string name="menu_edit_filters">Edit Filters</string>
@@ -534,7 +534,7 @@
     <string name="banner_downloaded">Downloaded %1$s</string>
     <!-- Generic compound filter label. %1$s = filter category name; %2$s = filter value. Example: "Type: PDF". -->
     <string name="filter_facet">%1$s: %2$s</string>
-    <!-- Shown in the folder sync card\'s "Last Sync" field when the folder has never been scanned. -->
+    <!-- Shown in the folder sync card\'s "Last Scan" field when the folder has never been scanned. -->
     <string name="never">Never</string>
     <!-- Folder filter chip label. %1$s = folder display name; %2$d = number of books in that folder. Example: "Downloads: 12". -->
     <string name="folder_filter_count">%1$s: %2$d</string>

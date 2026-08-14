@@ -117,7 +117,7 @@
     <string name="scan_all">Quét tất cả</string>
     <string name="scanning">Đang quét…</string>
     <string name="sync_meta">Đồng bộ metadata</string>
-    <string name="last_sync">LẦN ĐỒNG BỘ CUỐI</string>
+    <string name="last_sync">LẦN QUÉT CUỐI</string>
     <string name="books_count">SÁCH</string>
     <string name="menu_edit_filters">Sửa bộ lọc</string>
     <string name="menu_remove_folder">Xóa thư mục</string>
