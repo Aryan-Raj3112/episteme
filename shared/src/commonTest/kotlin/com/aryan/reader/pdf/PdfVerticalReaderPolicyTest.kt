@@ -1,5 +1,6 @@
 package com.aryan.reader.pdf
 
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import com.aryan.reader.shared.ReaderTheme
 import kotlin.test.Test
@@ -80,16 +81,6 @@ class PdfVerticalReaderPolicyTest {
     }
 
     @Test
-    fun `release invalidates camera samples queued by the completed gesture`() {
-        val gestureEpoch = nextPdfVerticalCameraEpoch(12L)
-        assertTrue(shouldApplyPdfVerticalCameraSample(gestureEpoch, gestureEpoch))
-
-        val releaseEpoch = nextPdfVerticalCameraEpoch(gestureEpoch)
-        assertFalse(shouldApplyPdfVerticalCameraSample(gestureEpoch, releaseEpoch))
-        assertTrue(shouldApplyPdfVerticalCameraSample(releaseEpoch, releaseEpoch))
-    }
-
-    @Test
     fun `camera epoch wraps without reusing the active maximum value`() {
         assertEquals(0L, nextPdfVerticalCameraEpoch(Long.MAX_VALUE))
     }
@@ -115,6 +106,55 @@ class PdfVerticalReaderPolicyTest {
                 hasMenu = true,
                 isPageMoving = false,
                 suppressedForCurrentSelection = false,
+            )
+        )
+    }
+
+    @Test
+    fun `pan acquisition preserves only movement beyond touch slop`() {
+        assertEquals(
+            Offset(0f, -2f),
+            pdfPanAfterTouchSlop(Offset(0f, -12f), touchSlop = 10f),
+        )
+        assertEquals(
+            Offset.Zero,
+            pdfPanAfterTouchSlop(Offset(3f, 4f), touchSlop = 10f),
+        )
+    }
+
+    @Test
+    fun `camera decay consumes exact frame delta until it reaches a bound`() {
+        assertEquals(
+            PdfConsumedAxisDelta(position = -125f, consumed = -25f),
+            consumePdfAxisDelta(current = -100f, delta = -25f, minimum = -200f, maximum = 0f),
+        )
+        assertEquals(
+            PdfConsumedAxisDelta(position = -200f, consumed = -100f),
+            consumePdfAxisDelta(current = -100f, delta = -150f, minimum = -200f, maximum = 0f),
+        )
+    }
+
+    @Test
+    fun `zero distance initialization frame does not cancel decay`() {
+        assertFalse(
+            shouldStopPdfDecayFrame(
+                requestedDistanceDelta = 0f,
+                consumedX = 0f,
+                consumedY = 0f,
+            )
+        )
+        assertTrue(
+            shouldStopPdfDecayFrame(
+                requestedDistanceDelta = 12f,
+                consumedX = 0f,
+                consumedY = 0f,
+            )
+        )
+        assertFalse(
+            shouldStopPdfDecayFrame(
+                requestedDistanceDelta = 12f,
+                consumedX = 0f,
+                consumedY = -12f,
             )
         )
     }
