@@ -1,5 +1,6 @@
 package com.aryan.reader.opds
 
+import com.aryan.reader.shared.opds.SharedOpdsDownloadLocation
 import okhttp3.Protocol
 import okhttp3.Request
 import okhttp3.Response
@@ -128,6 +129,26 @@ class OpdsRepositoryTest {
             OpdsRepository.OpdsAuthenticator("user", "pass")
                 .authenticate(null, responseFor(request, "Bearer realm=\"x\""))
         )
+    }
+
+    @Test
+    fun `opds download location persists and clears in prefs`() {
+        val repository = repositoryWithFreshPrefs()
+        assertNull(repository.loadOpdsDownloadLocation())
+
+        val folderLocation = SharedOpdsDownloadLocation(
+            folderUriString = "content://tree/comics",
+            folderName = "Comics"
+        )
+        repository.saveOpdsDownloadLocation(folderLocation)
+        assertEquals(folderLocation, repository.loadOpdsDownloadLocation())
+
+        val reopened = OpdsRepository(RuntimeEnvironment.getApplication())
+        assertEquals(folderLocation, reopened.loadOpdsDownloadLocation())
+
+        repository.saveOpdsDownloadLocation(SharedOpdsDownloadLocation())
+        assertNull(repository.loadOpdsDownloadLocation())
+        assertNull(OpdsRepository(RuntimeEnvironment.getApplication()).loadOpdsDownloadLocation())
     }
 
     private fun repositoryWithFreshPrefs(): OpdsRepository {

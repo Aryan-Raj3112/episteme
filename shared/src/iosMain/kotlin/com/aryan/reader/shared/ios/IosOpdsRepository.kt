@@ -1,5 +1,8 @@
+@file:OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
+
 package com.aryan.reader.shared.ios
 
+import com.aryan.reader.shared.SyncedFolder
 import com.aryan.reader.shared.currentTimestamp
 import com.aryan.reader.shared.opds.OpdsAcquisition
 import com.aryan.reader.shared.opds.OpdsAuthor
@@ -8,6 +11,8 @@ import com.aryan.reader.shared.opds.OpdsEntry
 import com.aryan.reader.shared.opds.OpdsFacet
 import com.aryan.reader.shared.opds.OpdsFeed
 import com.aryan.reader.shared.opds.SharedOpdsCatalogs
+import com.aryan.reader.shared.opds.SharedOpdsDownloadLocation
+import com.aryan.reader.shared.opds.SharedOpdsDownloadLocationCodec
 import com.aryan.reader.shared.opds.SharedOpdsDownloadNamer
 import com.aryan.reader.shared.opds.SharedOpdsRepository
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -56,7 +61,9 @@ import platform.Foundation.setValue
 import platform.Foundation.writeToURL
 import platform.darwin.NSObject
 
-internal class IosOpdsRepository : SharedOpdsRepository {
+internal class IosOpdsRepository(
+    private val folderFileAdditionHandler: (folderName: String, sourcePath: String, fileName: String) -> String? = { _, _, _ -> null }
+) : SharedOpdsRepository {
     private val parser = IosOpdsParser()
     private val httpClient = IosUrlSessionHttpClient()
 
@@ -77,6 +84,21 @@ internal class IosOpdsRepository : SharedOpdsRepository {
             SharedOpdsCatalogs.encode(catalogs),
             forKey = KeyCatalogsJson
         )
+    }
+
+    override fun loadOpdsDownloadLocation(): SharedOpdsDownloadLocation? {
+        return SharedOpdsDownloadLocationCodec.decode(
+            NSUserDefaults.standardUserDefaults.stringForKey(KeyDownloadLocationJson)
+        )
+    }
+
+    override fun saveOpdsDownloadLocation(location: SharedOpdsDownloadLocation?) {
+        val encoded = SharedOpdsDownloadLocationCodec.encode(location)
+        if (encoded == null) {
+            NSUserDefaults.standardUserDefaults.removeObjectForKey(KeyDownloadLocationJson)
+        } else {
+            NSUserDefaults.standardUserDefaults.setObject(encoded, forKey = KeyDownloadLocationJson)
+        }
     }
 
     override suspend fun fetchFeed(url: String, username: String?, password: String?): Result<OpdsFeed> {
@@ -102,8 +124,9 @@ internal class IosOpdsRepository : SharedOpdsRepository {
         entry: OpdsEntry,
         acquisition: OpdsAcquisition,
         username: String?,
-        password: String?
-    ): Result<IosDownloadedOpdsBook> {
+        password: String?,
+        destinationFolder: SyncedFolder? = null
+    ): Result<IosOpdsDownloadResult> {
         return runCatching {
             val response = fetch(acquisition.url, username, password)
             if (response.statusCode !in 200..299) error("HTTP ${response.statusCode}")
@@ -116,14 +139,39 @@ internal class IosOpdsRepository : SharedOpdsRepository {
             val fileName = SharedOpdsDownloadNamer.cleanFileName(entry.title, extension)
             val fileUrl = documentsDirectoryUrl()
                 ?: error("Could not access iOS Documents directory")
+
+            if (destinationFolder != null) {
+                val tempDestination = fileUrl.URLByAppendingPathComponent(uniqueFileName(fileUrl, ".opds-download-$fileName"))
+                    ?: error("Could not create temporary destination URL")
+                if (data.writeToURL(tempDestination, atomically = true)) {
+                    val managedPath = folderFileAdditionHandler(
+                        destinationFolder.name,
+                        tempDestination.path ?: error("Could not locate downloaded file"),
+                        fileName
+                    )
+                    runCatching { NSFileManager.defaultManager.removeItemAtPath(tempDestination.path.orEmpty(), error = null) }
+                    if (managedPath != null) {
+                        return@runCatching IosOpdsDownloadResult(
+                            book = IosDownloadedOpdsBook(
+                                name = fileName,
+                                path = managedPath
+                            ),
+                            folderName = destinationFolder.name
+                        )
+                    }
+                }
+            }
+
             val destination = fileUrl.URLByAppendingPathComponent(uniqueFileName(fileUrl, fileName))
                 ?: error("Could not create destination URL")
             if (!data.writeToURL(destination, atomically = true)) {
                 error("Could not save downloaded file")
             }
-            IosDownloadedOpdsBook(
-                name = destination.lastPathComponent ?: fileName,
-                path = destination.path ?: acquisition.url
+            IosOpdsDownloadResult(
+                book = IosDownloadedOpdsBook(
+                    name = destination.lastPathComponent ?: fileName,
+                    path = destination.path ?: acquisition.url
+                )
             )
         }
     }
@@ -181,6 +229,7 @@ internal class IosOpdsRepository : SharedOpdsRepository {
 
     private companion object {
         private const val KeyCatalogsJson = "reader_ios_opds_catalogs_json"
+        private const val KeyDownloadLocationJson = "reader_ios_opds_download_location_json"
     }
 }
 
@@ -211,6 +260,11 @@ private fun List<OpdsCatalog>.withUniqueIds(): List<OpdsCatalog> {
 internal data class IosDownloadedOpdsBook(
     val name: String,
     val path: String
+)
+
+internal data class IosOpdsDownloadResult(
+    val book: IosDownloadedOpdsBook,
+    val folderName: String? = null
 )
 
 private data class IosHttpResponse(

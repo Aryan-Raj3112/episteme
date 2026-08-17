@@ -4,6 +4,8 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.core.content.edit
 import com.aryan.reader.shared.opds.SharedOpdsCatalogs
+import com.aryan.reader.shared.opds.SharedOpdsDownloadLocation
+import com.aryan.reader.shared.opds.SharedOpdsDownloadLocationCodec
 import com.aryan.reader.shared.opds.SharedOpdsRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -19,6 +21,7 @@ class OpdsRepository(context: Context) : SharedOpdsRepository {
 
     companion object {
         private const val KEY_CATALOGS_JSON = "opds_catalogs_json"
+        private const val KEY_DOWNLOAD_LOCATION_JSON = "opds_download_location_json"
 
         val sharedHttpClient: OkHttpClient by lazy {
             OkHttpClient.Builder()
@@ -88,6 +91,23 @@ class OpdsRepository(context: Context) : SharedOpdsRepository {
 
     override fun saveCatalogs(catalogs: List<OpdsCatalog>) {
         prefs.edit { putString(KEY_CATALOGS_JSON, SharedOpdsCatalogs.encode(catalogs)) }
+    }
+
+    override fun loadOpdsDownloadLocation(): SharedOpdsDownloadLocation? {
+        return SharedOpdsDownloadLocationCodec.decode(
+            prefs.getString(KEY_DOWNLOAD_LOCATION_JSON, null)
+        )
+    }
+
+    override fun saveOpdsDownloadLocation(location: SharedOpdsDownloadLocation?) {
+        val encoded = SharedOpdsDownloadLocationCodec.encode(location)
+        prefs.edit {
+            if (encoded == null) {
+                remove(KEY_DOWNLOAD_LOCATION_JSON)
+            } else {
+                putString(KEY_DOWNLOAD_LOCATION_JSON, encoded)
+            }
+        }
     }
 
     fun getAuthenticatedClient(username: String?, password: String?): OkHttpClient {

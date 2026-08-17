@@ -601,7 +601,9 @@ fun UnifiedLibraryScreen(
                             onStreamBook = { entry, catalog ->
                                 viewModel.streamOpdsBook(entry.id, entry.title, entry.pseUrlTemplate!!, entry.pseCount!!, catalog?.id)
                             },
-                            onDeleteCatalogStreams = viewModel::deleteStreamedBooksForCatalog
+                            onDeleteCatalogStreams = viewModel::deleteStreamedBooksForCatalog,
+                            onShowBanner = viewModel::showBanner,
+                            syncedFolders = uiState.syncedFolders
                         )
                     }
                 }

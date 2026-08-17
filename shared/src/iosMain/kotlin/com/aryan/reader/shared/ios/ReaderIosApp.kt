@@ -145,6 +145,7 @@ import com.aryan.reader.shared.shouldRequestCloudSyncAfterFolderSyncChange
 import com.aryan.reader.shared.opds.OpdsEntry
 import com.aryan.reader.shared.opds.OpdsStreamReference
 import com.aryan.reader.shared.opds.SharedOpdsController
+import com.aryan.reader.shared.opds.SharedOpdsDownloadLocation
 import com.aryan.reader.shared.opds.SharedOpdsDownloadState
 import com.aryan.reader.shared.opds.SharedOpdsStreamUri
 import com.aryan.reader.shared.opds.opdsStreamBooksForCatalog
@@ -271,6 +272,7 @@ class ReaderIosBridge internal constructor(
     private var cloudUploadHandler: ((String) -> Unit)? = null
     private var folderFileDeletionHandler: ((String, List<String>) -> Unit)? = null
     private var folderFileReplacementHandler: ((String, String) -> String?)? = null
+    private var folderFileAdditionHandler: ((String, String, String) -> String?)? = null
     internal var audiobookPlayHandler: ((String, Double, Double) -> Unit)? = null
     internal var audiobookPauseHandler: (() -> Unit)? = null
     internal var audiobookSpeedAndResumeHandler: ((Float) -> Unit)? = null
@@ -540,6 +542,14 @@ class ReaderIosBridge internal constructor(
 
     fun setFolderFileReplacementHandler(handler: (String, String) -> String?) {
         folderFileReplacementHandler = handler
+    }
+
+    fun setFolderFileAdditionHandler(handler: (folderName: String, sourcePath: String, fileName: String) -> String?) {
+        folderFileAdditionHandler = handler
+    }
+
+    internal fun addFolderManagedFile(folderName: String, sourcePath: String, fileName: String): String? {
+        return folderFileAdditionHandler?.invoke(folderName, sourcePath, fileName)
     }
 
     fun setAudiobookPlayHandler(handler: (filePath: String, positionMs: Double, speed: Double) -> Unit) {
@@ -1635,7 +1645,7 @@ private fun ReaderIosApp(
     LaunchedEffect(state.appLanguageTag) {
         stringResolver = loadIosStringResolver(state.appLanguageTag)
     }
-    val opdsRepository = remember { IosOpdsRepository() }
+    val opdsRepository = remember { IosOpdsRepository(folderFileAdditionHandler = bridge::addFolderManagedFile) }
     val opdsController = remember {
         SharedOpdsController(
             repository = opdsRepository,
@@ -3273,19 +3283,36 @@ private fun ReaderIosApp(
                                             SharedOpdsDownloadState(isDownloading = true, progress = null)
                                         )
                                         val catalog = opdsState.currentCatalog
-                                        opdsRepository.downloadBook(entry, acquisition, catalog?.username, catalog?.password)
-                                            .onSuccess { downloaded ->
+                                        val destinationFolder = opdsState.downloadLocation
+                                            ?.takeIf { it.folderUriString != null }
+                                            ?.let { location ->
+                                                state.syncedFolders.firstOrNull {
+                                                    it.uriString == location.folderUriString || it.name == location.folderName
+                                                }
+                                            }
+                                        opdsRepository.downloadBook(
+                                            entry,
+                                            acquisition,
+                                            catalog?.username,
+                                            catalog?.password,
+                                            destinationFolder
+                                        ).onSuccess { result ->
+                                            val folderName = result.folderName
+                                            if (folderName == null) {
                                                 bridge.recordImportedFiles(
-                                                    fileNames = listOf(downloaded.name),
-                                                    filePaths = listOf(downloaded.path)
+                                                    fileNames = listOf(result.book.name),
+                                                    filePaths = listOf(result.book.path)
                                                 )
-                                                showMessage("Downloaded ${downloaded.name}")
+                                                showMessage("Downloaded ${result.book.name}")
+                                            } else {
+                                                refreshFolders()
+                                                showMessage("Downloaded ${result.book.name} to $folderName")
                                             }
-                                            .onFailure { error ->
-                                                opdsState = opdsController.setErrorMessage(
-                                                    "Download failed: ${error.message ?: "unknown error"}"
-                                                )
-                                            }
+                                        }.onFailure { error ->
+                                            opdsState = opdsController.setErrorMessage(
+                                                "Download failed: ${error.message ?: "unknown error"}"
+                                            )
+                                        }
                                         opdsState = opdsController.updateDownloadState(entry.id, null)
                                     }
                                 },
@@ -3310,6 +3337,9 @@ private fun ReaderIosApp(
                                         password = opdsState.currentCatalog?.password,
                                         modifier = coverModifier,
                                     )
+                                },
+                                onOpdsDownloadLocationChange = {
+                                    opdsState = opdsController.setDownloadLocation(it)
                                 },
                                 modifier = Modifier.fillMaxSize()
                             )
@@ -3391,22 +3421,43 @@ private fun ReaderIosApp(
                                                     SharedOpdsDownloadState(isDownloading = true, progress = null),
                                                 )
                                                 val catalog = opdsState.currentCatalog
-                                                opdsRepository.downloadBook(entry, acquisition, catalog?.username, catalog?.password)
-                                                    .onSuccess { downloaded ->
+                                                val destinationFolder = opdsState.downloadLocation
+                                                    ?.takeIf { it.folderUriString != null }
+                                                    ?.let { location ->
+                                                        state.syncedFolders.firstOrNull {
+                                                            it.uriString == location.folderUriString || it.name == location.folderName
+                                                        }
+                                                    }
+                                                opdsRepository.downloadBook(
+                                                    entry,
+                                                    acquisition,
+                                                    catalog?.username,
+                                                    catalog?.password,
+                                                    destinationFolder,
+                                                ).onSuccess { result ->
+                                                    val folderName = result.folderName
+                                                    if (folderName == null) {
                                                         bridge.recordImportedFiles(
-                                                            fileNames = listOf(downloaded.name),
-                                                            filePaths = listOf(downloaded.path),
+                                                            fileNames = listOf(result.book.name),
+                                                            filePaths = listOf(result.book.path),
                                                         )
-                                                        showMessage("Downloaded ${downloaded.name}")
+                                                        showMessage("Downloaded ${result.book.name}")
+                                                    } else {
+                                                        refreshFolders()
+                                                        showMessage("Downloaded ${result.book.name} to $folderName")
                                                     }
-                                                    .onFailure { error ->
-                                                        opdsState = opdsController.setErrorMessage(
-                                                            "Download failed: ${error.message ?: "unknown error"}",
-                                                        )
-                                                    }
+                                                }.onFailure { error ->
+                                                    opdsState = opdsController.setErrorMessage(
+                                                        "Download failed: ${error.message ?: "unknown error"}",
+                                                    )
+                                                }
                                                 opdsState = opdsController.updateDownloadState(entry.id, null)
                                             }
                                         },
+                                        onDownloadLocationChange = {
+                                            opdsState = opdsController.setDownloadLocation(it)
+                                        },
+                                        syncedFolders = state.syncedFolders,
                                         onReadBook = ::openLibraryBook,
                                         onStreamBook = { entry, catalog ->
                                             val count = entry.pseCount

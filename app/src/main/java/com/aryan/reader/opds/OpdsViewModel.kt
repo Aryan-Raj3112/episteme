@@ -2,11 +2,19 @@ package com.aryan.reader.opds
 
 import android.app.Application
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
+import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.work.Data
+import androidx.work.ExistingWorkPolicy
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkManager
+import com.aryan.reader.FolderSyncWorker
 import com.aryan.reader.R
 import com.aryan.reader.shared.opds.SharedOpdsController
+import com.aryan.reader.shared.opds.SharedOpdsDownloadLocation
 import com.aryan.reader.shared.opds.SharedOpdsDownloadNamer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -39,13 +47,20 @@ class OpdsViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun downloadBook(entry: OpdsEntry, acquisition: OpdsAcquisition, context: Context, onDownloaded: (Uri) -> Unit) {
+    fun downloadBook(
+        entry: OpdsEntry,
+        acquisition: OpdsAcquisition,
+        context: Context,
+        onDownloaded: (Uri) -> Unit,
+        onDownloadedToFolder: (String) -> Unit
+    ) {
         val downloadUrl = acquisition.url
         val catalog = _uiState.value.currentCatalog
+        val destination = _uiState.value.downloadLocation
         viewModelScope.launch {
             updateDownloadState(entry.id, OpdsDownloadState(isDownloading = true, progress = 0f))
             try {
-                val tempFile = withContext(Dispatchers.IO) {
+                val downloadResult = withContext(Dispatchers.IO) {
                     val client = repository.getAuthenticatedClient(catalog?.username, catalog?.password)
                     val request = Request.Builder().url(downloadUrl).build()
 
@@ -99,7 +114,15 @@ class OpdsViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
 
-                onDownloaded(Uri.fromFile(tempFile))
+                val savedToFolderName = destination
+                    ?.takeIf { !it.isAppStorage }
+                    ?.let { location -> saveToSyncedFolder(context, location, downloadResult, acquisition) }
+                if (savedToFolderName == null) {
+                    onDownloaded(Uri.fromFile(downloadResult))
+                } else {
+                    triggerFolderScan(context, destination?.folderUriString)
+                    onDownloadedToFolder(savedToFolderName)
+                }
             } catch (e: Exception) {
                 Timber.e(e, "Download error")
                 val message = if (e is OpdsDownloadFailedException) {
@@ -112,6 +135,64 @@ class OpdsViewModel(application: Application) : AndroidViewModel(application) {
                 updateDownloadState(entry.id, null)
             }
         }
+    }
+
+    private fun saveToSyncedFolder(
+        context: Context,
+        location: SharedOpdsDownloadLocation,
+        source: File,
+        acquisition: OpdsAcquisition
+    ): String? {
+        val folderUriString = location.folderUriString ?: return null
+        return runCatching {
+            val folderUri = Uri.parse(folderUriString)
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    folderUri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                )
+            }.getOrThrow()
+            val tree = DocumentFile.fromTreeUri(context, folderUri) ?: return null
+            if (!tree.isDirectory) return null
+            val uniqueName = uniqueFolderFileName(tree, source.name)
+            val mimeType = acquisition.mimeType.takeIf { it.isNotBlank() } ?: "application/octet-stream"
+            val created = tree.createFile(mimeType, uniqueName) ?: return null
+            context.contentResolver.openOutputStream(created.uri)?.use { output ->
+                source.inputStream().use { input -> input.copyTo(output) }
+            } ?: return null
+            source.delete()
+            location.folderName?.takeIf { it.isNotBlank() } ?: tree.name.orEmpty()
+        }.getOrNull()
+    }
+
+    private fun uniqueFolderFileName(tree: DocumentFile, preferredName: String): String {
+        var candidate = preferredName
+        var suffix = 1
+        val stem = preferredName.substringBeforeLast('.', preferredName)
+        val extension = preferredName.substringAfterLast('.', missingDelimiterValue = "").takeIf { it.isNotBlank() }
+        while (tree.findFile(candidate) != null) {
+            candidate = if (extension == null) "${stem}_$suffix" else "${stem}_$suffix.$extension"
+            suffix++
+        }
+        return candidate
+    }
+
+    private fun triggerFolderScan(context: Context, folderUriString: String?) {
+        if (folderUriString.isNullOrBlank()) return
+        val data = Data.Builder()
+            .putBoolean(FolderSyncWorker.KEY_METADATA_ONLY, false)
+            .putString(FolderSyncWorker.KEY_TARGET_FOLDER_URI, folderUriString)
+            .build()
+        val request = OneTimeWorkRequestBuilder<FolderSyncWorker>().setInputData(data).build()
+        WorkManager.getInstance(context).enqueueUniqueWork(
+            FolderSyncWorker.WORK_NAME_ONETIME,
+            ExistingWorkPolicy.REPLACE,
+            request
+        )
+    }
+
+    fun setDownloadLocation(location: SharedOpdsDownloadLocation) {
+        emitState(controller.setDownloadLocation(location))
     }
 
     private fun resolveOpdsDownloadExtension(acquisition: OpdsAcquisition, response: Response): String {

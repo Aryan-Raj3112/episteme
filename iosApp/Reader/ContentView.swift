@@ -149,6 +149,9 @@ struct ContentView: View {
             bridge.setFolderFileReplacementHandler { folderName, managedPath in
                 replaceImportedFolderFile(folderName: folderName, managedPath: managedPath)
             }
+            bridge.setFolderFileAdditionHandler { folderName, sourcePath, fileName in
+                addImportedFolderFile(folderName: folderName, sourcePath: sourcePath, fileName: fileName)
+            }
             audiobookPlayer.onPlaybackUpdate = { isPlaying, isLoading, positionMs, durationMs, speed, sleepTimerRemainingMs, error in
                 bridge.updateAudiobookPlaybackState(
                     isPlaying: isPlaying,
@@ -386,6 +389,77 @@ private func deleteImportedFolderFiles(folderName: String, managedPaths: [String
         try? FileManager.default.removeItem(at: sourceURL)
         try? FileManager.default.removeItem(at: managedURL)
     }
+}
+
+private func addImportedFolderFile(folderName: String, sourcePath: String, fileName: String) -> String? {
+    let bookmarks = UserDefaults.standard.dictionary(forKey: importedFolderBookmarksKey) as? [String: Data] ?? [:]
+    guard let bookmark = bookmarks[folderName] else { return nil }
+    var isStale = false
+    guard let sourceRoot = try? URL(
+        resolvingBookmarkData: bookmark,
+        options: [.withoutUI],
+        relativeTo: nil,
+        bookmarkDataIsStale: &isStale
+    ), let appSupport = try? FileManager.default.url(
+        for: .applicationSupportDirectory,
+        in: .userDomainMask,
+        appropriateFor: nil,
+        create: true
+    ) else {
+        return nil
+    }
+    if isStale {
+        updateImportedFolderBookmark(sourceRoot, folderName: folderName)
+    }
+
+    let managedRoot = appSupport
+        .appendingPathComponent("LocalFolders", isDirectory: true)
+        .appendingPathComponent(safeLocalFolderName(folderName), isDirectory: true)
+    let sourceURL = URL(fileURLWithPath: sourcePath)
+    let uniqueName = uniqueImportedFolderFileName(
+        sourceRoot: sourceRoot.standardizedFileURL,
+        managedRoot: managedRoot.standardizedFileURL,
+        preferredName: fileName
+    )
+
+    let didStartAccessing = sourceRoot.startAccessingSecurityScopedResource()
+    defer {
+        if didStartAccessing {
+            sourceRoot.stopAccessingSecurityScopedResource()
+        }
+    }
+    do {
+        let fileManager = FileManager.default
+        try fileManager.createDirectory(at: managedRoot, withIntermediateDirectories: true)
+        let managedURL = managedRoot.appendingPathComponent(uniqueName)
+        try fileManager.copyItem(at: sourceURL, to: managedURL)
+        try? fileManager.copyItem(at: sourceURL, to: sourceRoot.appendingPathComponent(uniqueName))
+        return managedURL.path
+    } catch {
+        try? FileManager.default.removeItem(at: managedRoot.appendingPathComponent(uniqueName))
+        return nil
+    }
+}
+
+private func uniqueImportedFolderFileName(
+    sourceRoot: URL,
+    managedRoot: URL,
+    preferredName: String
+) -> String {
+    let stem = (preferredName as NSString).deletingPathExtension
+    let fileExtension = (preferredName as NSString).pathExtension
+    var candidate = preferredName
+    var suffix = 1
+    func exists(_ url: URL) -> Bool {
+        FileManager.default.fileExists(atPath: url.path)
+    }
+    while exists(sourceRoot.appendingPathComponent(candidate)) || exists(managedRoot.appendingPathComponent(candidate)) {
+        candidate = fileExtension.isEmpty
+            ? "\(stem)_\(suffix)"
+            : "\(stem)_\(suffix).\(fileExtension)"
+        suffix += 1
+    }
+    return candidate
 }
 
 private func replaceImportedFolderFile(folderName: String, managedPath: String) -> String? {

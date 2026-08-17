@@ -125,6 +125,7 @@ import com.aryan.reader.shared.buildSharedTtsListenItems
 import com.aryan.reader.shared.opds.OpdsAcquisition
 import com.aryan.reader.shared.opds.OpdsCatalog
 import com.aryan.reader.shared.opds.OpdsEntry
+import com.aryan.reader.shared.opds.SharedOpdsDownloadLocation
 import com.aryan.reader.shared.opds.SharedOpdsScreenState
 import com.aryan.reader.shared.sortBooks
 import kotlinx.coroutines.launch
@@ -1004,6 +1005,7 @@ fun SharedMobileLibraryScreen(
     onDownloadOpdsBook: (OpdsEntry, OpdsAcquisition) -> Unit = { _, _ -> },
     onStreamOpdsBook: (OpdsEntry, OpdsCatalog?) -> Unit = { _, _ -> },
     onClearOpdsError: () -> Unit = {},
+    onOpdsDownloadLocationChange: (SharedOpdsDownloadLocation) -> Unit = {},
     opdsCoverContent: (@Composable (OpdsEntry, Modifier) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
@@ -1297,6 +1299,8 @@ fun SharedMobileLibraryScreen(
                         onDeleteCatalogStreams = onDeleteCatalogStreams,
                         onDownloadBook = onDownloadOpdsBook, onReadBook = onOpenBook,
                         onStreamBook = onStreamOpdsBook, onClearError = onClearOpdsError,
+                        onDownloadLocationChange = onOpdsDownloadLocationChange,
+                        syncedFolders = state.syncedFolders,
                         mobileLayout = true, modifier = catalogModifier,
                     )
                 } else {
@@ -1309,6 +1313,8 @@ fun SharedMobileLibraryScreen(
                         onDeleteCatalogStreams = onDeleteCatalogStreams,
                         onDownloadBook = onDownloadOpdsBook, onReadBook = onOpenBook,
                         onStreamBook = onStreamOpdsBook, onClearError = onClearOpdsError,
+                        onDownloadLocationChange = onOpdsDownloadLocationChange,
+                        syncedFolders = state.syncedFolders,
                         coverContent = opdsCoverContent, mobileLayout = true, modifier = catalogModifier,
                     )
                 }

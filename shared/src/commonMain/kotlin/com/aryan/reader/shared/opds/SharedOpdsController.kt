@@ -12,10 +12,19 @@ class SharedOpdsController(
 ) {
     private val urlStack = mutableListOf<String>()
 
-    var state: SharedOpdsScreenState = SharedOpdsScreenState(catalogs = repository.loadCatalogs())
+    var state: SharedOpdsScreenState = SharedOpdsScreenState(
+        catalogs = repository.loadCatalogs(),
+        downloadLocation = repository.loadOpdsDownloadLocation()
+    )
         private set
 
     fun hasFeedHistory(): Boolean = urlStack.size > 1
+
+    fun setDownloadLocation(location: SharedOpdsDownloadLocation?): SharedOpdsScreenState {
+        repository.saveOpdsDownloadLocation(location)
+        state = state.copy(downloadLocation = location)
+        return state
+    }
 
     fun reloadCatalogs(): SharedOpdsScreenState {
         state = state.copy(catalogs = repository.loadCatalogs())

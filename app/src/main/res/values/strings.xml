@@ -532,6 +532,8 @@
     <string name="feedback_email_subject" translatable="false">Feedback: Episteme Reader</string>
     <!-- Banner shown after a file is downloaded from an OPDS catalog. %1$s = the downloaded filename. Example: "Downloaded Dracula.epub". -->
     <string name="banner_downloaded">Downloaded %1$s</string>
+    <!-- Banner shown after an OPDS file is downloaded into a local folder. %1$s = the downloaded filename; %2$s = the destination folder name. Example: "Downloaded Dracula.epub to Comics". -->
+    <string name="banner_downloaded_to_folder">Downloaded %1$s to %2$s</string>
     <!-- Generic compound filter label. %1$s = filter category name; %2$s = filter value. Example: "Type: PDF". -->
     <string name="filter_facet">%1$s: %2$s</string>
     <!-- Shown in the folder sync card\'s "Last Scan" field when the folder has never been scanned. -->

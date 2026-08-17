@@ -435,6 +435,7 @@ fun LibraryScreen(
                 )
             },
             onDeleteCatalogStreams = viewModel::deleteStreamedBooksForCatalog,
+            onShowBanner = viewModel::showBanner,
             onSettingsClick = { navController.navigateIfReady(com.aryan.reader.shared.ui.SharedMobileAppDestination.SETTINGS) },
             usePdfFileNameAsDisplayName = uiState.usePdfFileNameAsDisplayName
         )
@@ -740,6 +741,7 @@ fun LibraryScreenContent(
     onOpdsBookDownloaded: (Uri, String) -> Unit,
     onStreamOpdsBook: (OpdsEntry, OpdsCatalog?) -> Unit,
     onDeleteCatalogStreams: (String) -> Unit,
+    onShowBanner: (String) -> Unit,
     onSettingsClick: () -> Unit,
     usePdfFileNameAsDisplayName: Boolean,
 ) {
@@ -868,6 +870,8 @@ fun LibraryScreenContent(
                     onReadBook = onItemClick,
                     onStreamBook = onStreamOpdsBook,
                     onDeleteCatalogStreams = onDeleteCatalogStreams,
+                    onShowBanner = onShowBanner,
+                    syncedFolders = syncedFolders,
                 )
             }
         },
@@ -1526,6 +1530,8 @@ fun OpdsTab(
     onReadBook: (RecentFileItem) -> Unit,
     onStreamBook: (OpdsEntry, OpdsCatalog?) -> Unit,
     onDeleteCatalogStreams: (String) -> Unit,
+    onShowBanner: (String) -> Unit,
+    syncedFolders: List<SyncedFolder>,
     opdsViewModel: OpdsViewModel = viewModel()
 ) {
     val uiState by opdsViewModel.uiState.collectAsStateWithLifecycle()
@@ -1552,10 +1558,18 @@ fun OpdsTab(
         onRemoveCatalog = { opdsViewModel.removeCatalog(it.id) },
         onDeleteCatalogStreams = onDeleteCatalogStreams,
         onDownloadBook = { entry, acquisition ->
-            opdsViewModel.downloadBook(entry, acquisition, context) { downloadedUri ->
-                onBookDownloaded(downloadedUri, entry.title)
-            }
+            opdsViewModel.downloadBook(
+                entry, acquisition, context,
+                onDownloaded = { downloadedUri ->
+                    onBookDownloaded(downloadedUri, entry.title)
+                },
+                onDownloadedToFolder = { folderName ->
+                    onShowBanner(context.getString(R.string.banner_downloaded_to_folder, entry.title, folderName))
+                }
+            )
         },
+        onDownloadLocationChange = opdsViewModel::setDownloadLocation,
+        syncedFolders = syncedFolders,
         onReadBook = { sharedBook ->
             localLibraryFiles.firstOrNull { it.bookId == sharedBook.id }?.let(onReadBook)
         },
