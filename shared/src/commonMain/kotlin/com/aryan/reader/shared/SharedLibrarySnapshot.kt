@@ -727,7 +727,8 @@ private fun JsonElement.asReaderSettingsOrNull(): ReaderSettings? {
             defaults.pdfFirstPageStandaloneInSpread
         ),
         seamlessChapterNavigation = obj.boolean("seamlessChapterNavigation", defaults.seamlessChapterNavigation),
-        chapterTurnDragMultiplier = obj.float("chapterTurnDragMultiplier") ?: defaults.chapterTurnDragMultiplier
+        chapterTurnDragMultiplier = obj.float("chapterTurnDragMultiplier") ?: defaults.chapterTurnDragMultiplier,
+        hideImages = obj.boolean("hideImages", defaults.hideImages)
     )
 }
 
@@ -879,7 +880,8 @@ private fun ReaderSettings?.asJson(): JsonElement {
             "pdfPageNumberOverlayVisible" to JsonPrimitive(settings.pdfPageNumberOverlayVisible),
             "pdfFirstPageStandaloneInSpread" to JsonPrimitive(settings.pdfFirstPageStandaloneInSpread),
             "seamlessChapterNavigation" to JsonPrimitive(settings.seamlessChapterNavigation),
-            "chapterTurnDragMultiplier" to JsonPrimitive(settings.chapterTurnDragMultiplier)
+            "chapterTurnDragMultiplier" to JsonPrimitive(settings.chapterTurnDragMultiplier),
+            "hideImages" to JsonPrimitive(settings.hideImages)
         )
     )
 }

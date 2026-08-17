@@ -105,7 +105,8 @@ class SuspendingAndroidBlockMeasurementProvider(
     private val constraints: Constraints,
     private val textStyle: TextStyle,
     private val density: Density,
-    private val imageSizeMultiplier: Float
+    private val imageSizeMultiplier: Float,
+    private val hideImages: Boolean = false
 ) : BlockMeasurementProvider {
     private val measurementCache = ConcurrentHashMap<Int, Int>()
     private val chantUnitMeasurementCache = ConcurrentHashMap<Int, Pair<Int, Int>>()
@@ -131,7 +132,8 @@ class SuspendingAndroidBlockMeasurementProvider(
             defaultStyle = textStyle,
             headerStyle = textStyle.copy(fontWeight = FontWeight.Bold),
             density = density,
-            imageSizeMultiplier = imageSizeMultiplier
+            imageSizeMultiplier = imageSizeMultiplier,
+            hideImages = hideImages
         )
         measurementCache[cacheKey] = measured
         return measured
@@ -143,6 +145,7 @@ class SuspendingAndroidBlockMeasurementProvider(
         result = 31 * result + constraints.maxHeight
         result = 31 * result + textStyle.hashCode()
         result = 31 * result + imageSizeMultiplier.hashCode()
+        result = 31 * result + hideImages.hashCode()
         return result
     }
 
@@ -162,7 +165,9 @@ class SuspendingAndroidBlockMeasurementProvider(
         coroutineContext.ensureActive()
 
         val imageBlock = block.floatedImage
-        val (imageWidthPx, imageHeightPx) = run {
+        val (imageWidthPx, imageHeightPx) = if (hideImages) {
+            0f to 0f
+        } else run {
             measureScaledImageSizePx(
                 block = imageBlock,
                 density = density,
@@ -399,7 +404,8 @@ class SuspendingAndroidBlockMeasurementProvider(
                         defaultStyle = textStyle,
                         headerStyle = textStyle.copy(fontWeight = FontWeight.Bold),
                         density = density,
-                        imageSizeMultiplier = imageSizeMultiplier
+                        imageSizeMultiplier = imageSizeMultiplier,
+                        hideImages = hideImages
                     )?.let { (part1Row, part2Row) ->
                         logAndroidEpubCutoff(
                             "cutoff_probe layer=android_stacked_table_split_success block=${block.blockIndex} " +
@@ -561,6 +567,7 @@ private suspend fun measureBlockHeight(
     headerStyle: TextStyle,
     density: Density,
     imageSizeMultiplier: Float = 1.0f,
+    hideImages: Boolean = false,
     includeCenteredTextSafetyPadding: Boolean = true
 ): Int {
     coroutineContext.ensureActive()
@@ -595,18 +602,22 @@ private suspend fun measureBlockHeight(
             height + centeredTextSafetyPaddingPx(style, density, includeCenteredTextSafetyPadding)
         }
         is ImageBlock -> {
-            val measuredHeight = measureScaledImageHeightPx(
-                block = block,
-                density = density,
-                contentMaxWidth = adjustedConstraints.maxWidth.toFloat(),
-                imageSizeMultiplier = imageSizeMultiplier
-            ) ?: with(density) { 250.dp.toPx() }
+            if (hideImages) {
+                0
+            } else {
+                val measuredHeight = measureScaledImageHeightPx(
+                    block = block,
+                    density = density,
+                    contentMaxWidth = adjustedConstraints.maxWidth.toFloat(),
+                    imageSizeMultiplier = imageSizeMultiplier
+                ) ?: with(density) { 250.dp.toPx() }
 
-            val finalHeight = measuredHeight.coerceAtMost(constraints.maxHeight.toFloat()).roundToInt()
-            if (DEBUG_PAGINATION_LOGS) {
-                Timber.tag("IMAGE_DIAG").d("Measured Image [#${block.blockIndex}]: $finalHeight px (Capped at ${constraints.maxHeight})")
+                val finalHeight = measuredHeight.coerceAtMost(constraints.maxHeight.toFloat()).roundToInt()
+                if (DEBUG_PAGINATION_LOGS) {
+                    Timber.tag("IMAGE_DIAG").d("Measured Image [#${block.blockIndex}]: $finalHeight px (Capped at ${constraints.maxHeight})")
+                }
+                finalHeight
             }
-            finalHeight
         }
         is SpacerBlock -> {
             val height = with(density) { block.height.toPx().roundToInt() }
@@ -655,6 +666,7 @@ private suspend fun measureBlockHeight(
                     headerStyle = headerStyle,
                     density = density,
                     imageSizeMultiplier = imageSizeMultiplier,
+                    hideImages = hideImages,
                     stackCellsVertically = stackRows
                 )
             }
@@ -662,7 +674,9 @@ private suspend fun measureBlockHeight(
         is WrappingContentBlock -> {
             val imageBlock = block.floatedImage
 
-            val (imageWidthPx, imageHeightPx) = run {
+            val (imageWidthPx, imageHeightPx) = if (hideImages) {
+                0f to 0f
+            } else run {
                 measureScaledImageSizePx(
                     block = imageBlock,
                     density = density,
@@ -674,7 +688,7 @@ private suspend fun measureBlockHeight(
             // If image has no size, it can't float. Just measure the paragraphs.
             if (imageWidthPx <= 0 || imageHeightPx <= 0) {
                 val height = block.paragraphsToWrap.sumOf { p ->
-                    measureBlockHeight(p, textMeasurer, adjustedConstraints, defaultStyle, headerStyle, density, imageSizeMultiplier)
+                    measureBlockHeight(p, textMeasurer, adjustedConstraints, defaultStyle, headerStyle, density, imageSizeMultiplier, hideImages)
                 }
                 return height
             }
@@ -773,7 +787,7 @@ private suspend fun measureBlockHeight(
                 childrenForMeasure.forEach { child ->
                     val childWidth = chantUnitEstimatedWidthPx(child, defaultStyle, density)
                         .coerceAtMost(adjustedConstraints.maxWidth)
-                    val childHeight = measureBlockHeight(child, textMeasurer, adjustedConstraints, defaultStyle, headerStyle, density, imageSizeMultiplier)
+                    val childHeight = measureBlockHeight(child, textMeasurer, adjustedConstraints, defaultStyle, headerStyle, density, imageSizeMultiplier, hideImages)
                     if (rowWidth > 0 && rowWidth + childWidth > adjustedConstraints.maxWidth) {
                         totalHeight += rowHeight
                         rowWidth = 0
@@ -785,11 +799,11 @@ private suspend fun measureBlockHeight(
                 totalHeight + rowHeight
             } else if (isRow) {
                 childrenForMeasure.maxOfOrNull { child ->
-                    measureBlockHeight(child, textMeasurer, adjustedConstraints, defaultStyle, headerStyle, density, imageSizeMultiplier)
+                    measureBlockHeight(child, textMeasurer, adjustedConstraints, defaultStyle, headerStyle, density, imageSizeMultiplier, hideImages)
                 } ?: 0
             } else {
                 childrenForMeasure.sumOf { child ->
-                    measureBlockHeight(child, textMeasurer, adjustedConstraints, defaultStyle, headerStyle, density, imageSizeMultiplier)
+                    measureBlockHeight(child, textMeasurer, adjustedConstraints, defaultStyle, headerStyle, density, imageSizeMultiplier, hideImages)
                 }
             }
             height
@@ -913,6 +927,7 @@ private suspend fun measureTableRowHeight(
     headerStyle: TextStyle,
     density: Density,
     imageSizeMultiplier: Float,
+    hideImages: Boolean = false,
     stackCellsVertically: Boolean
 ): Int {
     coroutineContext.ensureActive()
@@ -943,7 +958,8 @@ private suspend fun measureTableRowHeight(
                 defaultStyle = cellDefaultStyle,
                 headerStyle = cellHeaderStyle,
                 density = density,
-                imageSizeMultiplier = imageSizeMultiplier
+                imageSizeMultiplier = imageSizeMultiplier,
+                hideImages = hideImages
             )
         } else {
             calculateContentHeightWithMargins(
@@ -953,7 +969,8 @@ private suspend fun measureTableRowHeight(
                 cellDefaultStyle,
                 cellHeaderStyle,
                 density,
-                imageSizeMultiplier
+                imageSizeMultiplier,
+                hideImages
             )
         }
 
@@ -975,7 +992,8 @@ private suspend fun measureStackedTableCellContentHeight(
     defaultStyle: TextStyle,
     headerStyle: TextStyle,
     density: Density,
-    imageSizeMultiplier: Float
+    imageSizeMultiplier: Float,
+    hideImages: Boolean = false
 ): Int {
     var totalHeight = 0
     for ((index, child) in children.withIndex()) {
@@ -987,7 +1005,8 @@ private suspend fun measureStackedTableCellContentHeight(
             defaultStyle = defaultStyle,
             headerStyle = headerStyle,
             density = density,
-            imageSizeMultiplier = imageSizeMultiplier
+            imageSizeMultiplier = imageSizeMultiplier,
+            hideImages = hideImages
         )
         val margin = with(density) {
             collapsedVerticalMarginPxForPagination(
@@ -1010,7 +1029,8 @@ private suspend fun measureStackedTableCellChildHeight(
     defaultStyle: TextStyle,
     headerStyle: TextStyle,
     density: Density,
-    imageSizeMultiplier: Float
+    imageSizeMultiplier: Float,
+    hideImages: Boolean = false
 ): Int {
     return when (child) {
         is HeaderBlock -> measureStackedTableCellTextHeight(child.content, textMeasurer, constraints, headerStyle)
@@ -1023,6 +1043,7 @@ private suspend fun measureStackedTableCellChildHeight(
             headerStyle = headerStyle,
             density = density,
             imageSizeMultiplier = imageSizeMultiplier,
+            hideImages = hideImages,
             includeCenteredTextSafetyPadding = false
         )
     }
@@ -1067,7 +1088,8 @@ private suspend fun splitStackedTableRow(
     defaultStyle: TextStyle,
     headerStyle: TextStyle,
     density: Density,
-    imageSizeMultiplier: Float
+    imageSizeMultiplier: Float,
+    hideImages: Boolean = false
 ): Pair<List<TableCell>, List<TableCell>>? {
     coroutineContext.ensureActive()
     if (row.size != 1 || availableHeight <= 0) return null
@@ -1104,6 +1126,7 @@ private suspend fun splitStackedTableRow(
             headerStyle = cellHeaderStyle,
             density = density,
             imageSizeMultiplier = imageSizeMultiplier,
+            hideImages = hideImages,
             includeCenteredTextSafetyPadding = false
         )
 
@@ -1790,12 +1813,13 @@ private suspend fun calculateContentHeightWithMargins(
     headerStyle: TextStyle,
     density: Density,
     imageSizeMultiplier: Float = 1.0f,
+    hideImages: Boolean = false,
     includeCenteredTextSafetyPadding: Boolean = true
 ): Int {
     var totalHeight = 0
     for ((index, child) in children.withIndex()) {
         coroutineContext.ensureActive()
-        val childHeight = measureBlockHeight(child, textMeasurer, constraints, defaultStyle, headerStyle, density, imageSizeMultiplier, includeCenteredTextSafetyPadding)
+        val childHeight = measureBlockHeight(child, textMeasurer, constraints, defaultStyle, headerStyle, density, imageSizeMultiplier, hideImages, includeCenteredTextSafetyPadding)
         val margin = with(density) {
             collapsedVerticalMarginPxForPagination(
                 previousBottomMarginPx = children.getOrNull(index - 1)?.style?.margin?.bottom?.toPx(),

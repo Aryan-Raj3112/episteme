@@ -828,7 +828,11 @@ fun SharedMobileEpubReaderScreen(
                             modifier = Modifier.fillMaxSize()
                         )
                         else -> SharedMobileEpubImages(
-                            images = loadedBook?.readerImageReferences(pages).orEmpty(),
+                            images = if (settings.hideImages) {
+                                emptyList()
+                            } else {
+                                loadedBook?.readerImageReferences(pages).orEmpty()
+                            },
                             onImageClick = { image ->
                                 loadedBook?.chapters?.getOrNull(image.chapterIndex)?.let {
                                     recordJumpAndNavigate(image.locator)
@@ -1038,10 +1042,12 @@ fun SharedMobileEpubReaderScreen(
                                 if (!(autoScrollMusicianMode && autoScrollModeActive)) showChrome = !showChrome
                             },
                             imageContent = { image, imageModifier ->
-                                SharedMobileEpubNativeImage(
-                                    image = image,
-                                    modifier = imageModifier
-                                )
+                                if (!settings.hideImages) {
+                                    SharedMobileEpubNativeImage(
+                                        image = image,
+                                        modifier = imageModifier
+                                    )
+                                }
                             },
                             verticalScrollController = nativeVerticalScrollController,
                             modifier = Modifier.fillMaxSize()

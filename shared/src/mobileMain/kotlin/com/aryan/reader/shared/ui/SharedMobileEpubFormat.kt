@@ -843,6 +843,44 @@ internal fun SharedMobileEpubVisualOptionsSheet(
                     }
                 }
             }
+            Spacer(Modifier.height(8.dp))
+            SharedMobileEpubReaderImagesToggle(
+                hideImages = settings.hideImages,
+                onHideImagesChange = { hideImages -> onSettingsChange(settings.copy(hideImages = hideImages)) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun SharedMobileEpubReaderImagesToggle(
+    hideImages: Boolean,
+    onHideImagesChange: (Boolean) -> Unit
+) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column {
+            Row(
+                Modifier.fillMaxWidth().clickable { onHideImagesChange(!hideImages) }.padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Hide Images", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "Turn this on to read with all images in the book hidden.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Spacer(Modifier.width(16.dp))
+                Switch(
+                    checked = hideImages,
+                    onCheckedChange = onHideImagesChange
+                )
+            }
         }
     }
 }

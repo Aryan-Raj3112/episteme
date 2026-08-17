@@ -591,6 +591,8 @@
     <string name="visual_options_seamless_chapter_desc">Tải ngay chương tiếp theo/trước đó khi cuộn qua cuối, không có hoạt ảnh kéo để làm mới.</string>
     <string name="visual_options_edge_padding">Xóa khoảng đệm cạnh</string>
     <string name="visual_options_edge_padding_desc">Xóa khoảng trống ngang ở cạnh trái và phải.</string>
+    <string name="visual_options_hide_images">Ẩn hình ảnh</string>
+    <string name="visual_options_hide_images_desc">Bật tùy chọn này để đọc với tất cả hình ảnh trong sách được ẩn.</string>
     <string name="dict_app_label_search">Tìm kiếm</string>
     <string name="error_opening_dictionary">Lỗi khi mở từ điển</string>
     <string name="error_opening_translate">Lỗi khi mở ứng dụng dịch</string>

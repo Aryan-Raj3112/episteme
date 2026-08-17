@@ -713,6 +713,35 @@ class ReaderHtmlDocumentBuilderTest {
     }
 
     @Test
+    fun `hide images setting toggles css variable, image rule and appearance update script`() {
+        val hiddenHtml = ReaderHtmlDocumentBuilder.verticalDocument(
+            book = repeatedWordBook("alpha beta"),
+            settings = ReaderSettings(hideImages = true),
+            pages = listOf(ReaderPage(0, 0, "One", "alpha", 0, 5))
+        )
+        val visibleHtml = ReaderHtmlDocumentBuilder.verticalDocument(
+            book = repeatedWordBook("alpha beta"),
+            settings = ReaderSettings(),
+            pages = listOf(ReaderPage(0, 0, "One", "alpha", 0, 5))
+        )
+
+        assertTrue(hiddenHtml.contains("--reader-hide-images: none;"))
+        assertTrue(visibleHtml.contains("--reader-hide-images: block;"))
+        assertTrue(hiddenHtml.contains("display: var(--reader-hide-images);"))
+
+        assertTrue(
+            ReaderHtmlDocumentBuilder.appearanceUpdateScript(
+                settings = ReaderSettings(hideImages = true)
+            ).contains("root.style.setProperty('--reader-hide-images', 'none');")
+        )
+        assertTrue(
+            ReaderHtmlDocumentBuilder.appearanceUpdateScript(
+                settings = ReaderSettings()
+            ).contains("root.style.setProperty('--reader-hide-images', 'block');")
+        )
+    }
+
+    @Test
     fun `page anchor update script avoids full vertical document reload`() {
         val script = ReaderHtmlDocumentBuilder.pageAnchorsUpdateScript(
             listOf(

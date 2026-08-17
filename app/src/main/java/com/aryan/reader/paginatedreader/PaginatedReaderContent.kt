@@ -158,6 +158,7 @@ internal fun PaginatedReaderContent(
     ttsHighlightInfo: TtsHighlightInfo?,
     textStyle: TextStyle,
     imageSizeMultiplier: Float,
+    hideImages: Boolean = false,
     horizontalPadding: Dp,
     verticalPadding: Dp,
     onGetPage: (Int) -> Page?,
@@ -1351,6 +1352,7 @@ internal fun PaginatedReaderContent(
                                                                 block = block,
                                                                 textStyle = textStyle,
                                                                 imageSizeMultiplier = imageSizeMultiplier,
+                                                                hideImages = hideImages,
                                                                 modifier = paddingModifier,
                                                                 searchQuery = searchQuery,
                                                                 ttsHighlightInfo = ttsHighlightInfo,
@@ -1387,6 +1389,7 @@ internal fun PaginatedReaderContent(
                                                                             childBlock = childBlock,
                                                                             textStyle = textStyle,
                                                                             imageSizeMultiplier = imageSizeMultiplier,
+                                                                            hideImages = hideImages,
                                                                             searchQuery = searchQuery,
                                                                             searchHighlightColor = searchHighlightColor,
                                                                             ttsHighlightInfo = ttsHighlightInfo,
@@ -1457,6 +1460,7 @@ internal fun PaginatedReaderContent(
                                                                             childBlock = childBlock,
                                                                             textStyle = textStyle,
                                                                             imageSizeMultiplier = imageSizeMultiplier,
+                                                                            hideImages = hideImages,
                                                                             searchQuery = searchQuery,
                                                                             searchHighlightColor = searchHighlightColor,
                                                                             ttsHighlightInfo = ttsHighlightInfo,
@@ -1619,7 +1623,7 @@ internal fun PaginatedReaderContent(
                                                             }
                                                         }
 
-                                                        is ImageBlock -> {
+                                                        is ImageBlock -> if (!hideImages) {
                                                             val style = block.style
                                                             val colorFilter =
                                                                 if (block.style.filter == "invert(100%)") {
@@ -1979,7 +1983,7 @@ internal fun PaginatedReaderContent(
                                                                                             )
                                                                                         }
 
-                                                                                        is ImageBlock -> {
+                                                                                        is ImageBlock -> if (!hideImages) {
                                                                                             AsyncImage(
                                                                                                 model = Builder(
                                                                                                     LocalContext.current
@@ -2650,6 +2654,7 @@ internal fun RenderFlexChildBlock(
     childBlock: ContentBlock,
     textStyle: TextStyle,
     imageSizeMultiplier: Float,
+    hideImages: Boolean = false,
     searchQuery: String,
     searchHighlightColor: Color,
     ttsHighlightInfo: TtsHighlightInfo?,
@@ -2777,7 +2782,7 @@ internal fun RenderFlexChildBlock(
         is HeaderBlock -> renderTextBlock(childBlock)
         is QuoteBlock -> renderTextBlock(childBlock)
         is TextContentBlock -> renderTextBlock(childBlock)
-        is ImageBlock -> {
+        is ImageBlock -> if (!hideImages) {
             val style = childBlock.style
             val colorFilter = if (childBlock.style.filter == "invert(100%)") {
                 val matrix = floatArrayOf(
@@ -2954,7 +2959,7 @@ internal fun RenderFlexChildBlock(
                                             onGeneralTap = onGeneralTapCallback,
                                             wrapDiagnosticsContext = "page=${pageIndex + 1} source=flex_table_cell tableBlock=${childBlock.blockIndex} row=$rowIndex cell=$cellIndex cellBlock=${blockInCell.blockIndex}"
                                         )
-                                    } else if (blockInCell is ImageBlock) {
+                                    } else if (blockInCell is ImageBlock && !hideImages) {
                                         AsyncImage(
                                             model = Builder(LocalContext.current).data(
                                                 nativeVerticalImageModelData(blockInCell.path)
@@ -2979,11 +2984,12 @@ internal fun RenderFlexChildBlock(
         is FlexContainerBlock -> {
             val content: @Composable () -> Unit = {
                 childBlock.children.forEach { nested ->
-                    RenderFlexChildBlock(
-                        childBlock = nested,
-                        textStyle = textStyle,
-                        imageSizeMultiplier = imageSizeMultiplier,
-                        searchQuery = searchQuery,
+                                                                RenderFlexChildBlock(
+                                                                            childBlock = childBlock,
+                                                                            textStyle = textStyle,
+                                                                            imageSizeMultiplier = imageSizeMultiplier,
+                                                                            hideImages = hideImages,
+                                                                            searchQuery = searchQuery,
                         searchHighlightColor = searchHighlightColor,
                         ttsHighlightInfo = ttsHighlightInfo,
                         ttsHighlightColor = ttsHighlightColor,

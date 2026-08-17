@@ -1735,6 +1735,7 @@ internal fun WrappingContentLayout(
     block: WrappingContentBlock,
     textStyle: TextStyle,
     imageSizeMultiplier: Float,
+    hideImages: Boolean = false,
     modifier: Modifier = Modifier,
     searchQuery: String,
     ttsHighlightInfo: TtsHighlightInfo?,
@@ -1892,7 +1893,7 @@ internal fun WrappingContentLayout(
             )
         }
 
-        val imagePlacable = if (imageRenderWidthPx > 0 && imageRenderHeightPx > 0) {
+        val imagePlacable = if (!hideImages && imageRenderWidthPx > 0 && imageRenderHeightPx > 0) {
             measurables.first().measure(
                 Constraints.fixed(
                     imageRenderWidthPx.roundToInt(), imageRenderHeightPx.roundToInt()

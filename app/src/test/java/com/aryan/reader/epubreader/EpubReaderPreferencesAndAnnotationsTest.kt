@@ -159,6 +159,7 @@ class EpubReaderPreferencesAndAnnotationsTest {
         saveTapToNavigateSetting(context, true)
         saveVolumeScrollSetting(context, true)
         saveRemoveEdgePadding(context, true)
+        saveHideImages(context, true)
         saveFormatIsLocal(context, "book", true)
         saveNativeVerticalRenderer(context, true)
 
@@ -173,6 +174,7 @@ class EpubReaderPreferencesAndAnnotationsTest {
         assertTrue(loadTapToNavigateSetting(context))
         assertTrue(loadVolumeScrollSetting(context))
         assertTrue(loadRemoveEdgePadding(context))
+        assertTrue(loadHideImages(context))
         assertTrue(loadFormatIsLocal(context, "book"))
         assertTrue(loadNativeVerticalRenderer(context))
         assertEquals(0f, loadHorizontalMargin(context), 0.0001f)

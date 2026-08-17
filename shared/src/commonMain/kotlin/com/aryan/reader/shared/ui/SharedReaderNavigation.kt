@@ -823,8 +823,12 @@ internal fun SharedReaderImagesTab(
     onDownloadImage: ((ReaderImageReference) -> Unit)?,
     imagePreviewContent: (@Composable (ReaderImageReference, Modifier) -> Unit)?
 ) {
-    val images = remember(session.reader.book, session.reader.pages) {
-        session.reader.book.readerImageReferences(session.reader.pages)
+    val images = remember(session.reader.settings.hideImages, session.reader.book, session.reader.pages) {
+        if (session.reader.settings.hideImages) {
+            emptyList()
+        } else {
+            session.reader.book.readerImageReferences(session.reader.pages)
+        }
     }
     if (images.isEmpty()) {
         SharedReaderEmptyNavigation(readerString("no_images_found", "No images found."))

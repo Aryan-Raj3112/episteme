@@ -38,6 +38,7 @@ internal fun readerDocumentStyles(
               --reader-vertical-page-width: max(0px, calc(100% - (var(--reader-margin-x) * 2)));
               --reader-paragraph-spacing: ${settings.paragraphSpacing};
               --reader-image-scale: ${settings.readerImageScaleCss()};
+              --reader-hide-images: ${if (settings.hideImages) "none" else "block"};
               --reader-align: $align;
               --reader-family: $family;
             }
@@ -280,6 +281,9 @@ internal fun readerDocumentStyles(
             img, svg, video {
               max-width: var(--reader-image-scale);
               height: auto;
+            }
+            img {
+              display: var(--reader-hide-images);
             }
             table {
               max-width: 100%;

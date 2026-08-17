@@ -479,6 +479,7 @@ fun EpubReaderHost(
     var showScreenOrientationSheet by remember { mutableStateOf(false) }
     var pullToTurnEnabled by remember { mutableStateOf(loadPullToTurn(context)) }
     var pullToTurnMultiplier by remember { mutableFloatStateOf(loadPullToTurnMultiplier(context)) }
+    var hideImages by remember { mutableStateOf(loadHideImages(context)) }
     var showVisualOptionsSheet by remember { mutableStateOf(false) }
     ReaderScreenOrientationEffect(screenOrientationMode)
 
@@ -826,7 +827,7 @@ fun EpubReaderHost(
     LaunchedEffect(epubBook, drawerState.isOpen) {
         if (!drawerState.isOpen || readerImagesLoaded) return@LaunchedEffect
         readerImages = withContext(Dispatchers.IO) {
-            epubBook.readerImageReferencesForDrawer()
+            if (hideImages) emptyList() else epubBook.readerImageReferencesForDrawer()
         }
         readerImagesLoaded = true
     }
@@ -4395,6 +4396,7 @@ fun EpubReaderHost(
                                     lineHeightMultiplier = currentLineHeight,
                                     paragraphGapMultiplier = currentParagraphGap,
                                     imageSizeMultiplier = currentImageSize,
+                                    hideImages = hideImages,
                                     horizontalMarginMultiplier = currentHorizontalMargin,
                                     verticalMarginMultiplier = currentVerticalMargin,
                                     fontFamily = activeFontFamily,
@@ -5001,6 +5003,7 @@ fun EpubReaderHost(
                                             currentFontFamily = currentFontFamily,
                                             currentFontWeight = currentFontWeight,
                                             currentLetterSpacing = currentLetterSpacing,
+                                            hideImages = hideImages,
                                             customFontPath = currentCustomFontPath,
                                             epubFontFaceCss = listOf(epubFontFaceCss, chapterFontFaceCss)
                                                 .filter { it.isNotBlank() }
@@ -5577,6 +5580,7 @@ fun EpubReaderHost(
                                 lineHeightMultiplier = currentLineHeight,
                                 paragraphGapMultiplier = currentParagraphGap,
                                 imageSizeMultiplier = currentImageSize,
+                                hideImages = hideImages,
                                 horizontalMarginMultiplier = currentHorizontalMargin,
                                 verticalMarginMultiplier = currentVerticalMargin,
                                 fontFamily = activeFontFamily,
@@ -7400,6 +7404,11 @@ fun EpubReaderHost(
                 onPullToTurnMultiplierChange = {
                     pullToTurnMultiplier = it
                     savePullToTurnMultiplier(context, it)
+                },
+                hideImages = hideImages,
+                onHideImagesChange = {
+                    hideImages = it
+                    saveHideImages(context, it)
                 },
                 onDismiss = { showVisualOptionsSheet = false }
             )

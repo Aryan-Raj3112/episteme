@@ -87,7 +87,9 @@ data class SharedReaderVisualOptionsLabels(
     val seamlessChapterDescription: String,
     val pullDistance: String,
     val shortDistance: String,
-    val longDistance: String
+    val longDistance: String,
+    val hideImages: String,
+    val hideImagesDescription: String
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -103,6 +105,8 @@ fun SharedReaderVisualOptionsSheet(
     onPullToTurnChange: (Boolean) -> Unit,
     pullToTurnMultiplier: Float,
     onPullToTurnMultiplierChange: (Float) -> Unit,
+    hideImages: Boolean,
+    onHideImagesChange: (Boolean) -> Unit,
     maxSheetHeight: Dp,
     labels: SharedReaderVisualOptionsLabels,
     onDismiss: () -> Unit
@@ -187,6 +191,25 @@ fun SharedReaderVisualOptionsSheet(
                             }
                         }
                     }
+                }
+            }
+            Spacer(Modifier.height(24.dp))
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().clickable { onHideImagesChange(!hideImages) }.padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(labels.hideImages, style = MaterialTheme.typography.titleMedium)
+                        Text(labels.hideImagesDescription, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Spacer(Modifier.width(16.dp))
+                    Switch(checked = hideImages, onCheckedChange = onHideImagesChange)
                 }
             }
             Spacer(Modifier.height(32.dp))

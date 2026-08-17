@@ -183,6 +183,7 @@ class BookPaginator(
     private val userTextAlign: TextAlign?,
     private val paragraphGapMultiplier: Float,
     private val imageSizeMultiplier: Float,
+    private val hideImages: Boolean = false,
     private val verticalMarginMultiplier: Float,
     private val bookReplacementPreferences: ReaderBookReplacementPreferences = ReaderBookReplacementPreferences(),
     private val bookReplacementFileId: String? = null
@@ -384,6 +385,7 @@ class BookPaginator(
                 "textAlign" to userTextAlign,
                 "paragraphGap" to paragraphGapMultiplier,
                 "imageScale" to imageSizeMultiplier,
+                "hideImages" to hideImages,
                 "verticalMargin" to verticalMarginMultiplier,
                 "bookReplacements" to bookReplacementPreferences.signatureForFile(bookReplacementFileId),
                 "processingVersion" to LATEST_PROCESSING_VERSION,
@@ -1410,7 +1412,8 @@ class BookPaginator(
             constraints = constraints,
             textStyle = textStyle,
             density = density,
-            imageSizeMultiplier = imageSizeMultiplier
+            imageSizeMultiplier = imageSizeMultiplier,
+            hideImages = hideImages
         )
         Timber.d("paginateChapter: Calling PaginatorLogic for chapter $chapterIndex.")
         val pages = paginate(

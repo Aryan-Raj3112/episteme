@@ -627,6 +627,8 @@
     <string name="visual_options_seamless_chapter_desc">Laadi lõpust mööda kerides kohe järgmine/eelmine peatükk, ilma tõmmake värskendamiseks animatsioonita.</string>
     <string name="visual_options_edge_padding">Eemalda servapolsterdus</string>
     <string name="visual_options_edge_padding_desc">Eemaldab horisontaalse vahe vasakust ja paremast servast.</string>
+    <string name="visual_options_hide_images">Peida pildid</string>
+    <string name="visual_options_hide_images_desc">Lülita see sisse, et lugeda raamatut kõikide piltide peidetult.</string>
     <string name="reader_brightness_title">Heledus</string>
     <string name="reader_brightness_system">Kasutage süsteemi heledust</string>
     <string name="reader_brightness_system_desc">Järgib seadme heleduse seadistust.</string>

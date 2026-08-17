@@ -332,6 +332,7 @@ object ReaderHtmlDocumentBuilder {
               root.style.setProperty('--reader-vertical-page-width', 'max(0px, calc(100% - (var(--reader-margin-x) * 2)))');
               root.style.setProperty('--reader-paragraph-spacing', ${settings.paragraphSpacing.toString().toJsStringLiteral()});
               root.style.setProperty('--reader-image-scale', ${settings.readerImageScaleCss().toJsStringLiteral()});
+              root.style.setProperty('--reader-hide-images', ${if (settings.hideImages) "'none'" else "'block'"});
               root.style.setProperty('--reader-align', ${settings.readerTextAlignCss().toJsStringLiteral()});
               root.style.setProperty('--reader-family', ${settings.readerFontFamilyCss().toJsStringLiteral()});
               var customFontCss = ${customFontCss.toJsStringLiteral()};

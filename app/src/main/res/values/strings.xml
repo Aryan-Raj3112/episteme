@@ -983,6 +983,8 @@
     <string name="visual_options_seamless_chapter_desc">Instantly load the next/previous chapter when scrolling past the end, without the pull-to-refresh animation.</string>
     <string name="visual_options_edge_padding">Remove Edge Padding</string>
     <string name="visual_options_edge_padding_desc">Removes the horizontal gap on the left and right edges.</string>
+    <string name="visual_options_hide_images">Hide Images</string>
+    <string name="visual_options_hide_images_desc">Turn this on to read with all images in the book hidden.</string>
     <string name="reader_brightness_title">Brightness</string>
     <string name="reader_brightness_system">Use system brightness</string>
     <string name="reader_brightness_system_desc">Follows the device brightness setting.</string>

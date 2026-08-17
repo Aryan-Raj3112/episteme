@@ -110,7 +110,8 @@ data class ReaderSettings(
     val pdfPageNumberOverlayVisible: Boolean = true,
     val pdfFirstPageStandaloneInSpread: Boolean = false,
     val seamlessChapterNavigation: Boolean = true,
-    val chapterTurnDragMultiplier: Float = 1.0f
+    val chapterTurnDragMultiplier: Float = 1.0f,
+    val hideImages: Boolean = false
 ) {
     val resolvedHorizontalMargin: Int get() = horizontalMargin ?: margin
     val resolvedVerticalMargin: Int get() = verticalMargin ?: margin
@@ -130,7 +131,8 @@ data class ReaderLayoutSignature(
     val paragraphSpacing: Float,
     val imageScale: Float,
     val pageSpreadMode: ReaderPageSpreadMode,
-    val customFontPath: String?
+    val customFontPath: String?,
+    val hideImages: Boolean
 )
 
 data class ReaderAppearanceSignature(
@@ -157,7 +159,8 @@ fun ReaderSettings.layoutSignature(): ReaderLayoutSignature {
         paragraphSpacing = paragraphSpacing,
         imageScale = imageScale,
         pageSpreadMode = pageSpreadMode,
-        customFontPath = customFontPath
+        customFontPath = customFontPath,
+        hideImages = hideImages
     )
 }
 

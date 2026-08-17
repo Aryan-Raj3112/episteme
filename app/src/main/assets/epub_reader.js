@@ -926,7 +926,7 @@
         getReaderImageElements().forEach(function (image) {
             var anchor = image.getAttribute("data-reader-image-anchor") || "center";
 
-            image.style.setProperty("display", "block", "important");
+            image.style.setProperty("display", window.__readerHideImages ? "none" : "block", "important");
             image.style.setProperty("height", "auto", "important");
             image.style.setProperty("object-fit", "contain", "important");
 
@@ -945,7 +945,7 @@
         });
     }
 
-    window.updateReaderStyles = function (fontSizeEm, lineHeight, fontFamily, textAlign, paragraphGap, imageSize, horizontalMargin, verticalMargin, fontWeight, letterSpacing) {
+    window.updateReaderStyles = function (fontSizeEm, lineHeight, fontFamily, textAlign, paragraphGap, imageSize, horizontalMargin, verticalMargin, fontWeight, letterSpacing, hideImages) {
         var logTag = "ReaderFontDiagnosis";
         console.log(
             logTag +
@@ -994,6 +994,8 @@
         if (isNaN(newFontWeight) || newFontWeight < 0 || newFontWeight > 1000) newFontWeight = 0;
         if (isNaN(newLetterSpacing) || newLetterSpacing < -0.1 || newLetterSpacing > 0.5) newLetterSpacing = 0;
 
+        window.__readerHideImages = !!hideImages;
+
         var styleSignature = [
             newFontSize,
             newLineHeight,
@@ -1005,6 +1007,7 @@
             newVerticalMargin,
             newFontWeight,
             newLetterSpacing,
+            hideImages ? 1 : 0,
         ].join("|");
 
         if (window.__readerStyleSignature === styleSignature && dynamicStyleElement.innerHTML.trim().length > 0) {
@@ -1153,7 +1156,11 @@
             }
         `;
 
-        dynamicStyleElement.innerHTML = [sizeCss, lineHeightCss, typographyOverrideCss, fontCss, alignCss, gapCss, viewportContainmentCss, imageCss, horizontalMarginCss].join("\n");
+        var hideImagesCss = hideImages
+            ? "body img { display: none !important; }"
+            : "";
+
+        dynamicStyleElement.innerHTML = [sizeCss, lineHeightCss, typographyOverrideCss, fontCss, alignCss, gapCss, viewportContainmentCss, imageCss, horizontalMarginCss, hideImagesCss].join("\n");
         applyReaderImageAnchors();
         setTimeout(applyReaderImageAnchors, 80);
         logVerticalJitter(

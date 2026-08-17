@@ -143,6 +143,7 @@ fun PaginatedReaderScreen(
     lineHeightMultiplier: Float,
     paragraphGapMultiplier: Float,
     imageSizeMultiplier: Float,
+    hideImages: Boolean = false,
     horizontalMarginMultiplier: Float,
     verticalMarginMultiplier: Float,
     fontFamily: FontFamily,
@@ -218,6 +219,7 @@ fun PaginatedReaderScreen(
         var debouncedLineHeightMult by remember { mutableFloatStateOf(lineHeightMultiplier) }
         var debouncedParagraphGapMult by remember { mutableFloatStateOf(paragraphGapMultiplier) }
         var debouncedImageSizeMult by remember { mutableFloatStateOf(imageSizeMultiplier) }
+        var debouncedHideImages by remember { mutableStateOf(hideImages) }
         var debouncedHorizontalMarginMult by remember { mutableFloatStateOf(horizontalMarginMultiplier) }
         var debouncedVerticalMarginMult by remember { mutableFloatStateOf(verticalMarginMultiplier) }
         var debouncedFontFamily by remember { mutableStateOf(fontFamily) }
@@ -298,11 +300,12 @@ fun PaginatedReaderScreen(
             }
         }
 
-        LaunchedEffect(fontSizeMultiplier, lineHeightMultiplier, paragraphGapMultiplier, imageSizeMultiplier, horizontalMarginMultiplier, verticalMarginMultiplier, fontFamily, fontWeight, letterSpacing, textAlign, bookReplacementSignature, bookReplacementFileId) {
+        LaunchedEffect(fontSizeMultiplier, lineHeightMultiplier, paragraphGapMultiplier, imageSizeMultiplier, hideImages, horizontalMarginMultiplier, verticalMarginMultiplier, fontFamily, fontWeight, letterSpacing, textAlign, bookReplacementSignature, bookReplacementFileId) {
             if (fontSizeMultiplier != debouncedFontSizeMult ||
                 lineHeightMultiplier != debouncedLineHeightMult ||
                 paragraphGapMultiplier != debouncedParagraphGapMult ||
                 imageSizeMultiplier != debouncedImageSizeMult ||
+                hideImages != debouncedHideImages ||
                 horizontalMarginMultiplier != debouncedHorizontalMarginMult ||
                 verticalMarginMultiplier != debouncedVerticalMarginMult ||
                 fontFamily != debouncedFontFamily ||
@@ -329,6 +332,7 @@ fun PaginatedReaderScreen(
                 debouncedLineHeightMult = lineHeightMultiplier
                 debouncedParagraphGapMult = paragraphGapMultiplier
                 debouncedImageSizeMult = imageSizeMultiplier
+                debouncedHideImages = hideImages
                 debouncedHorizontalMarginMult = horizontalMarginMultiplier
                 debouncedVerticalMarginMult = verticalMarginMultiplier
                 debouncedFontFamily = fontFamily
@@ -411,7 +415,7 @@ fun PaginatedReaderScreen(
             }
         }
 
-        val paginator = remember(book, bookId, textConstraints, layoutTextStyle, userTextAlign, debouncedParagraphGapMult, debouncedImageSizeMult, debouncedVerticalMarginMult, debouncedBookReplacementSignature, debouncedBookReplacementFileId) {
+        val paginator = remember(book, bookId, textConstraints, layoutTextStyle, userTextAlign, debouncedParagraphGapMult, debouncedImageSizeMult, debouncedHideImages, debouncedVerticalMarginMult, debouncedBookReplacementSignature, debouncedBookReplacementFileId) {
         val userAgentStylesheet = UserAgentStylesheet.default
             var allRules = OptimizedCssRules()
             val allFontFaces = mutableListOf<FontFaceInfo>()
@@ -477,6 +481,7 @@ fun PaginatedReaderScreen(
                 userTextAlign = userTextAlign,
                 paragraphGapMultiplier = debouncedParagraphGapMult,
                 imageSizeMultiplier = debouncedImageSizeMult,
+                hideImages = debouncedHideImages,
                 verticalMarginMultiplier = debouncedVerticalMarginMult,
                 bookReplacementPreferences = debouncedBookReplacementPreferences,
                 bookReplacementFileId = debouncedBookReplacementFileId
@@ -673,6 +678,7 @@ fun PaginatedReaderScreen(
             ttsHighlightInfo = ttsHighlightInfo,
             textStyle = textStyle,
             imageSizeMultiplier = debouncedImageSizeMult,
+            hideImages = debouncedHideImages,
             horizontalPadding = horizontalPadding,
             verticalPadding = verticalPadding,
             onGetPage = { pageIndex ->
