@@ -123,41 +123,49 @@ class PdfVerticalReaderPolicyTest {
     }
 
     @Test
-    fun `camera decay consumes exact frame delta until it reaches a bound`() {
+    fun `fling axes remain independent when horizontal motion is clamped`() {
         assertEquals(
-            PdfConsumedAxisDelta(position = -125f, consumed = -25f),
-            consumePdfAxisDelta(current = -100f, delta = -25f, minimum = -200f, maximum = 0f),
+            PdfFlingVelocity(x = 0f, y = -2400f),
+            resolvePdfFlingVelocity(
+                rawX = 1800f,
+                rawY = -2400f,
+                displacementX = 80f,
+                displacementY = -160f,
+                minimumVelocity = 131f,
+                maximumVelocity = 8000f,
+                allowHorizontal = false,
+            ),
         )
         assertEquals(
-            PdfConsumedAxisDelta(position = -200f, consumed = -100f),
-            consumePdfAxisDelta(current = -100f, delta = -150f, minimum = -200f, maximum = 0f),
+            PdfFlingVelocity(x = 1800f, y = -2400f),
+            resolvePdfFlingVelocity(
+                rawX = 1800f,
+                rawY = -2400f,
+                displacementX = 80f,
+                displacementY = -160f,
+                minimumVelocity = 131f,
+                maximumVelocity = 8000f,
+                allowHorizontal = true,
+            ),
         )
     }
 
     @Test
-    fun `zero distance initialization frame does not cancel decay`() {
-        assertFalse(
-            shouldStopPdfDecayFrame(
-                requestedDistanceDelta = 0f,
-                consumedX = 0f,
-                consumedY = 0f,
-            )
-        )
-        assertTrue(
-            shouldStopPdfDecayFrame(
-                requestedDistanceDelta = 12f,
-                consumedX = 0f,
-                consumedY = 0f,
-            )
-        )
-        assertFalse(
-            shouldStopPdfDecayFrame(
-                requestedDistanceDelta = 12f,
-                consumedX = 0f,
-                consumedY = -12f,
-            )
+    fun `release jitter cannot fling opposite the completed gesture`() {
+        assertEquals(
+            PdfFlingVelocity(x = 0f, y = 0f),
+            resolvePdfFlingVelocity(
+                rawX = -65f,
+                rawY = 559f,
+                displacementX = 56f,
+                displacementY = -174f,
+                minimumVelocity = 131f,
+                maximumVelocity = 8000f,
+                allowHorizontal = true,
+            ),
         )
     }
+
 
     private fun theme(id: String, background: Color): ReaderTheme = ReaderTheme(
         id = id,

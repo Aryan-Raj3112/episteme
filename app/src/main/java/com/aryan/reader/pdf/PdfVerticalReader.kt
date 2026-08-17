@@ -30,8 +30,6 @@ import android.graphics.RectF
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.AnimationState
-import androidx.compose.animation.core.animateDecay
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.splineBasedDecay
 import androidx.compose.animation.core.tween
@@ -137,7 +135,6 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
-import kotlin.math.sqrt
 
 private const val SCROLL_BOUNDS_TAG = "PdfScrollBounds"
 private const val VERTICAL_TILE_RENDER_IDLE_COOLDOWN_MS = 220L
@@ -350,6 +347,7 @@ internal fun PdfVerticalReader(
         var isDragging by remember { mutableStateOf(false) }
         var isScrollPreparing by remember { mutableStateOf(false) }
         var scrollTraceGestureId by remember { mutableLongStateOf(0L) }
+        val renderedFlingVelocity = remember { FloatArray(2) }
         var isTileRenderIdleCooldownActive by remember { mutableStateOf(false) }
 
         LaunchedEffect(isDragging, isFlinging) {
@@ -1621,8 +1619,12 @@ internal fun PdfVerticalReader(
                         // to advance after the samples below, which made the document jump
                         // slightly when a finger interrupted deceleration.
                         val wasFlinging = verticalFlingJob?.isActive == true && isFlinging
-                        val interruptedFlingVelocityX = if (wasFlinging) panXAnimatable.velocity else 0f
-                        val interruptedFlingVelocityY = if (wasFlinging) panYAnimatable.velocity else 0f
+                        val interruptedFlingVelocityX = if (wasFlinging) {
+                            renderedFlingVelocity[0]
+                        } else 0f
+                        val interruptedFlingVelocityY = if (wasFlinging) {
+                            renderedFlingVelocity[1]
+                        } else 0f
                         PdfScrollTrace.d(
                             "g=$traceGestureId DOWN t=${down.uptimeMillis} pos=${PdfVerticalPerfLog.xy(down.position.x, down.position.y)} " +
                                 "camera=${PdfVerticalPerfLog.xy(cameraPanX, cameraPanY)} zoom=${PdfVerticalPerfLog.f(cameraZoom)} " +
@@ -1916,16 +1918,17 @@ internal fun PdfVerticalReader(
                                 (screenHeight - footerHeightPx - zoomedDocHeight).coerceAtMost(
                                     headerHeightPx
                                 )
-                            val rawX = velocity.x.coerceIn(
-                                -viewConfiguration.maximumFlingVelocity,
-                                viewConfiguration.maximumFlingVelocity,
+                            val resolvedFling = resolvePdfFlingVelocity(
+                                rawX = velocity.x,
+                                rawY = velocity.y,
+                                displacementX = netGesturePan.x,
+                                displacementY = netGesturePan.y,
+                                minimumVelocity = minFlingVelocity,
+                                maximumVelocity = viewConfiguration.maximumFlingVelocity,
+                                allowHorizontal = !isScrollLocked,
                             )
-                            val rawY = velocity.y.coerceIn(
-                                -viewConfiguration.maximumFlingVelocity,
-                                viewConfiguration.maximumFlingVelocity,
-                            )
-                            val flingX = if (abs(rawX) > minFlingVelocity && !isScrollLocked) rawX else 0f
-                            val flingY = if (abs(rawY) > minFlingVelocity) rawY else 0f
+                            val flingX = resolvedFling.x
+                            val flingY = resolvedFling.y
                             val shouldRunFling = flingX != 0f || flingY != 0f ||
                                 accumulatedZoom !in fitZoom..PDF_MAX_ZOOM_SCALE
                             PdfScrollTrace.d(
@@ -1973,56 +1976,52 @@ internal fun PdfVerticalReader(
                                             .d("- totalDocHeight: $totalDocHeight, zoom: $finalZoom -> zoomedDocHeight: $zoomedDocHeight")
                                         Timber.tag(SCROLL_BOUNDS_TAG)
                                             .d("- Fling bounds set to Y:[$minPanY, $headerHeightPx]")
-                                        val flingSpeed = sqrt(flingX * flingX + flingY * flingY)
-                                        if (flingSpeed > 0f) {
-                                            val directionX = flingX / flingSpeed
-                                            val directionY = flingY / flingSpeed
-                                            var previousDistance = 0f
-                                            AnimationState(
-                                                initialValue = 0f,
-                                                initialVelocity = flingSpeed,
-                                            ).animateDecay(decay) {
-                                                val distanceDelta = value - previousDistance
-                                                previousDistance = value
-                                                val previousX = cameraPanX
-                                                val previousY = cameraPanY
-                                                val xResult = consumePdfAxisDelta(
-                                                    previousX,
-                                                    distanceDelta * directionX,
-                                                    flingMinX,
-                                                    flingMaxX,
-                                                )
-                                                val yResult = consumePdfAxisDelta(
-                                                    previousY,
-                                                    distanceDelta * directionY,
-                                                    minPanY,
-                                                    headerHeightPx,
-                                                )
-                                                commitRenderedCamera(
-                                                    finalZoom,
-                                                    xResult.position,
-                                                    yResult.position,
-                                                )
-
-                                                val consumedX = xResult.consumed
-                                                val consumedY = yResult.consumed
-                                                if (shouldStopPdfDecayFrame(
-                                                        requestedDistanceDelta = distanceDelta,
-                                                        consumedX = consumedX,
-                                                        consumedY = consumedY,
-                                                    )
-                                                ) {
-                                                    cancelAnimation()
+                                        // Android scroll physics decays each axis independently.
+                                        // Local drivers feed their frame values straight into the
+                                        // rendered camera, so there is no camera queue or mirror.
+                                        // Keeping the axes independent also prevents an X velocity
+                                        // clamped at fit zoom from shortening/canceling the Y fling.
+                                        coroutineScope {
+                                            if (flingX != 0f) {
+                                                launch {
+                                                    Animatable(finalX).apply {
+                                                        updateBounds(flingMinX, flingMaxX)
+                                                        animateDecay(flingX, decay) {
+                                                            renderedFlingVelocity[0] = this.velocity
+                                                            commitRenderedCamera(
+                                                                finalZoom,
+                                                                value,
+                                                                cameraPanY,
+                                                            )
+                                                        }
+                                                    }
                                                 }
-
-                                                val elapsed = PdfVerticalPerfLog.elapsedMs(flingStartNanos)
-                                                if (elapsed - traceLastFlingMs >= PdfScrollTrace.FRAME_SAMPLE_INTERVAL_MS) {
-                                                    traceLastFlingMs = elapsed
-                                                    PdfScrollTrace.d(
-                                                        "g=$traceGestureId FLING t=${elapsed}ms y=${PdfVerticalPerfLog.f(cameraPanY)} " +
-                                                            "velocity=${PdfVerticalPerfLog.f(this.velocity * directionY)} " +
-                                                            "bounds=${PdfVerticalPerfLog.xy(minPanY, headerHeightPx)}"
-                                                    )
+                                            }
+                                            if (flingY != 0f) {
+                                                launch {
+                                                    Animatable(finalY).apply {
+                                                        updateBounds(minPanY, headerHeightPx)
+                                                        animateDecay(flingY, decay) {
+                                                            renderedFlingVelocity[1] = this.velocity
+                                                            commitRenderedCamera(
+                                                                finalZoom,
+                                                                cameraPanX,
+                                                                value,
+                                                            )
+                                                            val elapsed = PdfVerticalPerfLog.elapsedMs(
+                                                                flingStartNanos
+                                                            )
+                                                            if (elapsed - traceLastFlingMs >= PdfScrollTrace.FRAME_SAMPLE_INTERVAL_MS) {
+                                                                traceLastFlingMs = elapsed
+                                                                PdfScrollTrace.d(
+                                                                    "g=$traceGestureId FLING t=${elapsed}ms " +
+                                                                        "y=${PdfVerticalPerfLog.f(value)} " +
+                                                                        "velocity=${PdfVerticalPerfLog.f(this.velocity)} " +
+                                                                        "bounds=${PdfVerticalPerfLog.xy(minPanY, headerHeightPx)}"
+                                                                )
+                                                            }
+                                                        }
+                                                    }
                                                 }
                                             }
                                         }
@@ -2035,10 +2034,12 @@ internal fun PdfVerticalReader(
                                         panXAnimatable.snapTo(cameraPanX)
                                         panYAnimatable.snapTo(cameraPanY)
                                     } finally {
+                                        val endingVelocityX = renderedFlingVelocity[0]
+                                        val endingVelocityY = renderedFlingVelocity[1]
                                         PdfVerticalPerfLog.i(
                                             "fling-end duration=${PdfVerticalPerfLog.elapsedMs(flingStartNanos)}ms " +
                                                 "zoom=${PdfVerticalPerfLog.f(cameraZoom)} pan=${PdfVerticalPerfLog.xy(cameraPanX, cameraPanY)} " +
-                                                "velocity=${PdfVerticalPerfLog.xy(panXAnimatable.velocity, panYAnimatable.velocity)}"
+                                                "velocity=${PdfVerticalPerfLog.xy(endingVelocityX, endingVelocityY)}"
                                         )
                                         // A newer gesture/fling owns this flag after advancing the
                                         // camera epoch; an older canceled decay must not clear it.
@@ -2048,9 +2049,11 @@ internal fun PdfVerticalReader(
                                         PdfScrollTrace.d(
                                             "g=$traceGestureId END duration=${PdfVerticalPerfLog.elapsedMs(flingStartNanos)}ms " +
                                                 "camera=${PdfVerticalPerfLog.xy(cameraPanX, cameraPanY)} " +
-                                                "velocity=${PdfVerticalPerfLog.xy(panXAnimatable.velocity, panYAnimatable.velocity)} " +
+                                                "velocity=${PdfVerticalPerfLog.xy(endingVelocityX, endingVelocityY)} " +
                                                 "stillOwner=${cameraEpoch == flingCameraEpoch}"
                                         )
+                                        renderedFlingVelocity[0] = 0f
+                                        renderedFlingVelocity[1] = 0f
                                     }
                                 }
                             } else {

@@ -4,7 +4,6 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.isSpecified
 import com.aryan.reader.shared.ReaderTheme
-import kotlin.math.abs
 
 fun resolvePdfVerticalPageBackgroundColor(activeTheme: ReaderTheme): Color {
     val resolved = when (activeTheme.id) {
@@ -21,36 +20,34 @@ data class PdfLockedOrientationResetCamera(
     val panY: Float,
 )
 
-data class PdfConsumedAxisDelta(
-    val position: Float,
-    val consumed: Float,
+data class PdfFlingVelocity(
+    val x: Float,
+    val y: Float,
 )
 
-/** Applies one animation-frame delta and reports how much was consumed at the bounds. */
-fun consumePdfAxisDelta(
-    current: Float,
-    delta: Float,
-    minimum: Float,
-    maximum: Float,
-): PdfConsumedAxisDelta {
-    val position = (current + delta).coerceIn(minimum, maximum)
-    return PdfConsumedAxisDelta(position = position, consumed = position - current)
+/** Resolves independent axis velocities without projecting one axis through the other. */
+fun resolvePdfFlingVelocity(
+    rawX: Float,
+    rawY: Float,
+    displacementX: Float,
+    displacementY: Float,
+    minimumVelocity: Float,
+    maximumVelocity: Float,
+    allowHorizontal: Boolean,
+): PdfFlingVelocity {
+    val safeMaximum = maximumVelocity.coerceAtLeast(0f)
+    val safeMinimum = minimumVelocity.coerceIn(0f, safeMaximum)
+    val x = rawX.coerceIn(-safeMaximum, safeMaximum)
+    val y = rawY.coerceIn(-safeMaximum, safeMaximum)
+    val xMatchesGesture = displacementX == 0f || x * displacementX > 0f
+    val yMatchesGesture = displacementY == 0f || y * displacementY > 0f
+    return PdfFlingVelocity(
+        x = if (
+            allowHorizontal && xMatchesGesture && kotlin.math.abs(x) > safeMinimum
+        ) x else 0f,
+        y = if (yMatchesGesture && kotlin.math.abs(y) > safeMinimum) y else 0f,
+    )
 }
-
-/**
- * Stops decay only after a real requested frame was rejected by both axes.
- * AnimationState may emit an initialization frame whose delta is exactly zero;
- * canceling on that frame makes otherwise valid micro-flings end immediately.
- */
-fun shouldStopPdfDecayFrame(
-    requestedDistanceDelta: Float,
-    consumedX: Float,
-    consumedY: Float,
-    epsilon: Float = 0.01f,
-): Boolean =
-    abs(requestedDistanceDelta) >= epsilon &&
-        abs(consumedX) < epsilon &&
-        abs(consumedY) < epsilon
 
 /** Returns only motion beyond touch slop, matching Android drag acquisition semantics. */
 fun pdfPanAfterTouchSlop(accumulatedPan: Offset, touchSlop: Float): Offset {
