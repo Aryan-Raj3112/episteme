@@ -177,7 +177,6 @@ import com.aryan.reader.shared.pdf.SharedPdfTextDraft
 import com.aryan.reader.shared.pdf.SharedPdfTextDragState
 import com.aryan.reader.shared.pdf.sharedPdfTextDropBounds
 import com.aryan.reader.shared.pdf.containsNormalizedPoint
-import com.aryan.reader.shared.pdf.shouldReplaceLastPdfInkPoint
 import com.aryan.reader.shared.pdf.withBounds
 import com.aryan.reader.shared.pdf.withText
 import com.aryan.reader.shared.pdf.SharedPdfReaderState
@@ -2049,18 +2048,7 @@ internal fun SharedMobilePdfPageSurface(
                                     if (localCanvasSize.width > 0 && localCanvasSize.height > 0) {
                                         val mutableStroke = activeStroke as? MutableList<PdfPagePoint>
                                         if (mutableStroke != null) {
-                                            val nextPoint = change.position.toSharedMobilePdfPoint(localCanvasSize)
-                                            val replaceEndpoint = shouldReplaceLastPdfInkPoint(
-                                                points = mutableStroke,
-                                                next = nextPoint,
-                                                inkTool = if (eraserOverride) PdfInkTool.ERASER else selectedTool,
-                                                strokeWidth = strokeWidth,
-                                            )
-                                            if (replaceEndpoint) {
-                                                mutableStroke[mutableStroke.lastIndex] = nextPoint
-                                            } else {
-                                                mutableStroke.add(nextPoint)
-                                            }
+                                            mutableStroke.add(change.position.toSharedMobilePdfPoint(localCanvasSize))
                                         }
                                         if (eraserOverride) eraserOverridePosition = change.position
                                     }
