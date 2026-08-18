@@ -279,10 +279,10 @@ private object IosPdfiumRenderer {
                     val pageWidth = FPDF_GetPageWidthF(page).coerceAtLeast(1f)
                     val pageHeight = FPDF_GetPageHeightF(page).coerceAtLeast(1f)
                     val aspectRatio = (pageWidth / pageHeight).coerceIn(0.1f, 10f)
-                    val targetSide = MaxRenderedPageSidePx
-                    val scale = targetSide / maxOf(pageWidth, pageHeight)
+                    val targetHeight = MaxRenderedPageHeightPx
+                    val scale = targetHeight / pageHeight
                     val bitmapWidth = (pageWidth * scale).roundToInt().coerceAtLeast(1)
-                    val bitmapHeight = (pageHeight * scale).roundToInt().coerceAtLeast(1)
+                    val bitmapHeight = targetHeight.roundToInt().coerceAtLeast(1)
                     val bitmap = FPDFBitmap_Create(bitmapWidth, bitmapHeight, 1)
                         ?: return SharedMobilePdfPageRender(
                             pageCount = pageCount,
@@ -458,7 +458,7 @@ private fun recognizeTextLineBounds(image: CGImageRef): List<PdfPageBounds> {
     }
 }
 
-private const val MaxRenderedPageSidePx = 1600f
+private const val MaxRenderedPageHeightPx = 2048f
 private const val ThumbnailTargetWidthPx = 240
 private const val SearchPreviewRadius = 42
 private const val MaxSearchResults = 500

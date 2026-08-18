@@ -163,6 +163,7 @@ import com.aryan.reader.shared.Tag
 import com.aryan.reader.shared.cardTitle
 import com.aryan.reader.shared.currentTimestamp
 import com.aryan.reader.shared.resolveReaderTheme
+import com.aryan.reader.pdf.shouldShowPdfAnnotationExportChoice
 import com.aryan.reader.shared.pdf.PdfAnnotationKind
 import com.aryan.reader.shared.pdf.PdfInkTool
 import com.aryan.reader.shared.pdf.PdfTtsSessionPlanner
@@ -215,6 +216,8 @@ import kotlinx.coroutines.withContext
 enum class SharedMobilePdfNativeAction {
     DICTIONARY_SETTINGS,
     SHARE,
+    SHARE_ANNOTATED,
+    SHARE_ORIGINAL,
     SAVE_COPY,
     PRINT,
     TEXT_VIEW,
@@ -304,6 +307,7 @@ fun SharedMobilePdfReaderScreen(
     var pdfPassword by remember(book.id) { mutableStateOf<String?>(null) }
     var pdfPasswordDraft by remember(book.id) { mutableStateOf("") }
     var showPasswordProtectedPrintWarning by remember(book.id) { mutableStateOf(false) }
+    var showShareFormatChoice by remember(book.id) { mutableStateOf(false) }
     var showVerticalPageGap by remember(book.id) {
         mutableStateOf(readerDefaultSettings.pdfVerticalPageGapVisible)
     }
@@ -1029,6 +1033,18 @@ fun SharedMobilePdfReaderScreen(
                             onNativeAction = { action ->
                                 if (action == SharedMobilePdfNativeAction.PRINT && pdfPassword != null) {
                                     showPasswordProtectedPrintWarning = true
+                                } else if (action == SharedMobilePdfNativeAction.SHARE && shouldShowPdfAnnotationExportChoice(
+                                        sidecarsReady = true,
+                                        inkAnnotationCounts = readerState.annotations
+                                            .filter { it.kind == PdfAnnotationKind.INK }
+                                            .groupBy { it.pageIndex }
+                                            .values
+                                            .map { it.size },
+                                        textBoxCount = readerState.annotations.count { it.kind == PdfAnnotationKind.TEXT },
+                                        highlightCount = readerState.annotations.count { it.kind == PdfAnnotationKind.HIGHLIGHT },
+                                    )
+                                ) {
+                                    showShareFormatChoice = true
                                 } else {
                                     onNativePdfAction(book, action, pdfPassword, SharedPdfExportSnapshot(readerState.copy(richTextDocumentJson = richTextDocumentJson), richTextController.pageLayouts))
                                 }
@@ -1683,6 +1699,24 @@ fun SharedMobilePdfReaderScreen(
                     Text("OK")
                 }
             },
+        )
+    }
+    if (showShareFormatChoice) {
+        SharedMobileDocumentFormatDialog(
+            title = "Share",
+            description = "Choose a format for sharing",
+            annotatedLabel = "With annotations",
+            originalLabel = "Original",
+            cancelLabel = "Cancel",
+            onAnnotated = {
+                showShareFormatChoice = false
+                onNativePdfAction(book, SharedMobilePdfNativeAction.SHARE_ANNOTATED, pdfPassword, SharedPdfExportSnapshot(readerState.copy(richTextDocumentJson = richTextDocumentJson), richTextController.pageLayouts))
+            },
+            onOriginal = {
+                showShareFormatChoice = false
+                onNativePdfAction(book, SharedMobilePdfNativeAction.SHARE_ORIGINAL, pdfPassword, SharedPdfExportSnapshot(readerState.copy(richTextDocumentJson = richTextDocumentJson), richTextController.pageLayouts))
+            },
+            onDismiss = { showShareFormatChoice = false },
         )
     }
     if (showBrightnessSheet) {

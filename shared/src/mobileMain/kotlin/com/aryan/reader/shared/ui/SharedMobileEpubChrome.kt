@@ -125,6 +125,7 @@ internal fun SharedMobileEpubTopBar(
     onTtsSettings: () -> Unit,
     onTtsReplacements: () -> Unit,
     onBookReplacements: () -> Unit,
+    onOpenDictionarySettings: () -> Unit,
     readingMode: ReaderReadingMode,
     rightToLeftPagination: Boolean,
     useNativeVerticalRenderer: Boolean,
@@ -180,6 +181,9 @@ internal fun SharedMobileEpubTopBar(
                     ReaderTool.SCREEN_ORIENTATION -> IconButton(onClick = onScreenOrientation) {
                         Icon(SharedReaderIcons.ScreenRotation, contentDescription = "Screen orientation")
                     }
+                    ReaderTool.DICTIONARY -> IconButton(onClick = onOpenDictionarySettings) {
+                        Icon(SharedReaderIcons.Dictionary, contentDescription = "Dictionary")
+                    }
                     else -> Unit
                 }
             }
@@ -215,6 +219,7 @@ internal fun SharedMobileEpubTopBar(
                                             ReaderTool.TTS_CONTROLS -> onLocalTtsToggle()
                                             ReaderTool.BRIGHTNESS -> onBrightness()
                                             ReaderTool.SCREEN_ORIENTATION -> onScreenOrientation()
+                                            ReaderTool.DICTIONARY -> onOpenDictionarySettings()
                                             else -> Unit
                                         }
                                         showHiddenToolsExpanded = false
@@ -380,7 +385,8 @@ internal val SharedMobileEpubToolbarTools = setOf(
     ReaderTool.SEARCH,
     ReaderTool.TTS_CONTROLS,
     ReaderTool.BRIGHTNESS,
-    ReaderTool.SCREEN_ORIENTATION
+    ReaderTool.SCREEN_ORIENTATION,
+    ReaderTool.DICTIONARY
 )
 
 internal val SharedMobileEpubCustomizableTools = SharedMobileEpubToolbarTools + setOf(
@@ -524,6 +530,7 @@ internal fun SharedMobileEpubBottomBar(
     onBookmark: () -> Unit,
     onVisualOptions: () -> Unit,
     onOpenSlider: () -> Unit,
+    onDictionary: () -> Unit,
     localTtsState: SharedMobileEpubLocalTtsState,
     onLocalTtsToggle: () -> Unit,
     modifier: Modifier = Modifier
@@ -549,6 +556,7 @@ internal fun SharedMobileEpubBottomBar(
                         }
                         ReaderTool.VISUAL_OPTIONS -> IconButton(onClick = onVisualOptions) { Icon(Icons.Default.Settings, contentDescription = "Visual options") }
                         ReaderTool.SLIDER -> IconButton(onClick = onOpenSlider) { Icon(SharedReaderIcons.Slider, contentDescription = "Navigation slider") }
+                        ReaderTool.DICTIONARY -> IconButton(onClick = onDictionary) { Icon(SharedReaderIcons.Dictionary, contentDescription = "Dictionary") }
                         ReaderTool.TTS_CONTROLS -> IconButton(onClick = onLocalTtsToggle) {
                             Icon(localTtsState.icon(), contentDescription = localTtsState.menuLabel())
                         }

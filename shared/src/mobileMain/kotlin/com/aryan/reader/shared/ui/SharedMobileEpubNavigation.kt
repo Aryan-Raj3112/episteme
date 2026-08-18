@@ -61,6 +61,7 @@ import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.SharedEpubBook
 import com.aryan.reader.shared.reader.SharedEpubTocEntry
 import com.aryan.reader.shared.reader.findElementOffset
+import com.aryan.reader.paginatedreader.SemanticTextBlock
 import kotlinx.coroutines.delay
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -455,6 +456,14 @@ internal fun sharedMobileEpubActiveTocScript(book: SharedEpubBook, chapterIndex:
 
 internal fun ReaderPage.toMobileEpubLocator(book: SharedEpubBook?): ReaderLocator {
     val chapter = book?.chapters?.getOrNull(chapterIndex)
+    val textBlock = semanticBlocks
+        .flatMap { it.flattenForLocator() }
+        .filterIsInstance<SemanticTextBlock>()
+        .firstOrNull { it.text.isNotBlank() }
+    val localCharOffset = 0
+    val androidStyleCfi = textBlock?.cfi
+        ?.takeIf { it.startsWith("/") }
+        ?.let { "$it:$localCharOffset" }
     return ReaderLocator(
         chapterIndex = chapterIndex,
         chapterId = chapter?.id,
@@ -462,8 +471,26 @@ internal fun ReaderPage.toMobileEpubLocator(book: SharedEpubBook?): ReaderLocato
         pageIndex = pageIndex,
         startOffset = startOffset,
         endOffset = startOffset,
-        textQuote = text.take(120)
+        textQuote = text.take(120),
+        blockIndex = textBlock?.blockIndex,
+        charOffset = textBlock?.startCharOffsetInSource,
+        cfi = androidStyleCfi
     )
+}
+
+private fun com.aryan.reader.paginatedreader.SemanticBlock.flattenForLocator(): List<com.aryan.reader.paginatedreader.SemanticBlock> {
+    return when (this) {
+        is com.aryan.reader.paginatedreader.SemanticList -> listOf(this) + items
+        is com.aryan.reader.paginatedreader.SemanticTable -> listOf(this) +
+            rows.flatMap { row -> row.flatMap { cell -> cell.content.flattenAllForLocator() } }
+        is com.aryan.reader.paginatedreader.SemanticFlexContainer -> listOf(this) + children.flatMap { it.flattenForLocator() }
+        is com.aryan.reader.paginatedreader.SemanticWrappingBlock -> listOf(this, floatedImage) + paragraphsToWrap
+        else -> listOf(this)
+    }
+}
+
+private fun List<com.aryan.reader.paginatedreader.SemanticBlock>.flattenAllForLocator(): List<com.aryan.reader.paginatedreader.SemanticBlock> {
+    return flatMap { it.flattenForLocator() }
 }
 
 internal fun sharedMobileEpubNavigationScript(

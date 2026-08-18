@@ -162,6 +162,8 @@ fun SharedMobileUnifiedLibraryScreen(
     onSeekAudiobook: (Long) -> Unit = {},
     onAudiobookSpeedChange: (Float) -> Unit = {},
     onAudiobookSleepTimer: (Int?) -> Unit = {},
+    customSleepTimerMinutes: List<Int> = emptyList(),
+    onCustomSleepTimerMinutesChange: (List<Int>) -> Unit = {},
     onStopAudiobookPlayback: () -> Unit = {},
     ttsListenState: SharedBookTtsListenState = SharedBookTtsListenState(),
     ttsProgress: List<SharedBookTtsListeningProgress> = emptyList(),
@@ -556,6 +558,8 @@ fun SharedMobileUnifiedLibraryScreen(
                 onSeek = onSeekAudiobook,
                 onSpeedChange = onAudiobookSpeedChange,
                 onSleepTimer = onAudiobookSleepTimer,
+                customSleepTimerMinutes = customSleepTimerMinutes,
+                onCustomSleepTimerMinutesChange = onCustomSleepTimerMinutesChange,
                 onStopPlayback = onStopAudiobookPlayback,
                 onDismiss = { showPlayerSheet = false },
             )
@@ -584,6 +588,8 @@ fun SharedMobileUnifiedLibraryScreen(
                 },
                 onSpeedChange = onTtsSpeedChange,
                 onSleepTimer = onTtsSleepTimer,
+                customSleepTimerMinutes = customSleepTimerMinutes,
+                onCustomSleepTimerMinutesChange = onCustomSleepTimerMinutesChange,
                 onStopPlayback = onStopTtsPlayback,
                 onDismiss = { showTtsPlayerSheet = false },
             )

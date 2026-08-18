@@ -238,6 +238,7 @@ object SharedEpubPackageLoader {
                 .extractEpubBodyOrSelf()
                 .rewriteEpubHtmlResources(item.absPath, ::dataUri)
             val plainText = raw.epubHtmlToText()
+            val semanticBlocks = sharedEpubHtmlToSemanticBlocks(body)
             val fallbackTitle = resolveMobileEpubSpineChapterTitle(raw.firstEpubHeading(), index)
             val navigation = resolveMobileEpubChapterNavigation(item.absPath, fallbackTitle, navigationMetadata)
             val sections = materializeEpubTocSections(
@@ -250,6 +251,7 @@ object SharedEpubPackageLoader {
                         id = item.id.ifBlank { "chapter_$index" },
                         title = navigation.title ?: fallbackTitle,
                         plainText = plainText,
+                        semanticBlocks = semanticBlocks,
                         htmlContent = body,
                         baseHref = item.absPath,
                         depth = navigation.depth,
@@ -262,6 +264,7 @@ object SharedEpubPackageLoader {
                         id = "${item.id.ifBlank { "chapter_$index" }}#${section.fragmentId}",
                         title = section.entry.label.ifBlank { fallbackTitle },
                         plainText = section.html.epubHtmlToText().ifBlank { fallbackTitle },
+                        semanticBlocks = sharedEpubHtmlToSemanticBlocks(section.html),
                         htmlContent = section.html,
                         baseHref = item.absPath,
                         fragmentId = section.fragmentId,
@@ -656,13 +659,13 @@ private fun String.hasOnlyValidEpubXmlEntities(): Boolean {
 private fun Int?.isValidEpubXmlCodePoint(): Boolean =
     this != null && (this == 0x9 || this == 0xA || this == 0xD || this in 0x20..0xD7FF || this in 0xE000..0xFFFD || this in 0x10000..0x10FFFF)
 
-private data class SharedEpubXmlToken(
+internal data class SharedEpubXmlToken(
     val start: Int,
     val endExclusive: Int,
     val value: String
 )
 
-private fun sharedEpubXmlTokens(raw: String): Sequence<SharedEpubXmlToken> = sequence {
+internal fun sharedEpubXmlTokens(raw: String): Sequence<SharedEpubXmlToken> = sequence {
     var searchFrom = 0
     while (searchFrom < raw.length) {
         val start = raw.indexOf('<', searchFrom)
@@ -700,7 +703,7 @@ private fun String.sharedEpubTagEnd(start: Int, trackDoctypeSubset: Boolean): In
     return null
 }
 
-private val EpubXmlAttributeRegex = Regex("""(?is)([:_\p{L}][:_\p{L}\p{N}.\-\p{M}]*)\s*=\s*([\"'])(.*?)\2""")
+internal val EpubXmlAttributeRegex = Regex("""(?is)([:_\p{L}][:_\p{L}\p{N}.\-\p{M}]*)\s*=\s*([\"'])(.*?)\2""")
 private val EpubXmlNameRegex = Regex("""[:_\p{L}][:_\p{L}\p{N}.\-\p{M}]*""")
 private val EpubXmlNamedEntities = setOf("amp", "lt", "gt", "quot", "apos")
 private val EpubCssImportRegex = Regex(
@@ -936,7 +939,7 @@ private fun String.percentDecodeEpubPath(): String {
     return output.toByteArray().decodeToString()
 }
 
-private fun String.decodeEpubEntities(): String {
+internal fun String.decodeEpubEntities(): String {
     return replace(Regex("&#(?:x([0-9a-fA-F]+)|([0-9]+));")) { match ->
         val codePoint = match.groupValues[1].takeIf(String::isNotBlank)?.toIntOrNull(16)
             ?: match.groupValues[2].toIntOrNull()
@@ -964,7 +967,7 @@ private fun epubCodePointToString(codePoint: Int): String {
     return charArrayOf(((value ushr 10) + 0xD800).toChar(), ((value and 0x3FF) + 0xDC00).toChar()).concatToString()
 }
 
-private fun String.normalizeEpubWhitespace(): String {
+internal fun String.normalizeEpubWhitespace(): String {
     return replace('\u0000', ' ')
         .replace(Regex("[ \\t\\x0B\\f\\r]+"), " ")
         .replace(Regex(" *\\n *"), "\n")

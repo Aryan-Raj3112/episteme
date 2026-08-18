@@ -162,6 +162,7 @@ fun SharedMobileEpubReaderScreen(
     onReaderTtsReplacementPreferencesChange: (ReaderTtsReplacementPreferences) -> Unit = {},
     readerBookReplacementPreferences: ReaderBookReplacementPreferences = ReaderBookReplacementPreferences(),
     onReaderBookReplacementPreferencesChange: (ReaderBookReplacementPreferences) -> Unit = {},
+    onOpenDictionarySettings: () -> Unit = {},
     readerBrightness: Float? = null,
     readerCustomBrightness: Float = com.aryan.reader.shared.DefaultReaderCustomBrightness,
     readerBrightnessSupported: Boolean = false,
@@ -1333,6 +1334,7 @@ fun SharedMobileEpubReaderScreen(
                         onTtsReplacements = { showTtsReplacementsSheet = true },
                         onTtsSettings = { showTtsSettingsSheet = true },
                         onBookReplacements = { showBookReplacementsSheet = true },
+                        onOpenDictionarySettings = onOpenDictionarySettings,
                         readingMode = settings.readingMode,
                         rightToLeftPagination = settings.rightToLeftPagination,
                         useNativeVerticalRenderer = useNativeVerticalRenderer,
@@ -1411,6 +1413,7 @@ fun SharedMobileEpubReaderScreen(
                             onBookmark = ::toggleBookmark,
                             onVisualOptions = { showVisualOptionsSheet = true },
                             onOpenSlider = { showSlider = !showSlider },
+                            onDictionary = onOpenDictionarySettings,
                             localTtsState = localTts.state,
                             onLocalTtsToggle = {
                                 when (localTts.state) {

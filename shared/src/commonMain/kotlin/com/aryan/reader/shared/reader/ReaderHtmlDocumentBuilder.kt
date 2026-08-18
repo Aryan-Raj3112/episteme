@@ -107,7 +107,9 @@ object ReaderHtmlDocumentBuilder {
         chunkNodeCount: Int = 20
     ): List<String> {
         val chapter = book.chapters.getOrNull(chapterIndex) ?: return emptyList()
-        return splitReaderHtmlAtTopLevel(chapter.toHtml("", ReaderSearchOptions()), chunkNodeCount)
+        val html = chapter.htmlContent.takeIf { it.isNotBlank() }
+            ?: chapter.toHtml("", ReaderSearchOptions())
+        return splitReaderHtmlAtTopLevel(html, chunkNodeCount)
     }
 
     private fun virtualReaderBootstrapScript(totalChunks: Int): String = """

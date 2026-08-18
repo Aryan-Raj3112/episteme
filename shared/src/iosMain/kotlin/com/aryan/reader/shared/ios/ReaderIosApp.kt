@@ -9,6 +9,7 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -52,6 +53,7 @@ import com.aryan.reader.shared.AppAction
 import com.aryan.reader.shared.AddBooksSource
 import com.aryan.reader.shared.AnnotationExportFormat
 import com.aryan.reader.shared.AnnotationExportFormatter
+import com.aryan.reader.shared.sanitizeCustomSleepTimerMinutes
 import com.aryan.reader.shared.AccountAuthProvider
 import com.aryan.reader.shared.BannerMessage
 import com.aryan.reader.shared.BookItem
@@ -621,7 +623,7 @@ class ReaderIosBridge internal constructor(
         return presentIosShareSheet(NSURL.fileURLWithPath(path))
     }
 
-    fun exportAnnotations(book: BookItem): Boolean {
+    fun exportAnnotations(book: BookItem, format: AnnotationExportFormat): Boolean {
         val document = when (book.type) {
             FileType.PDF -> AnnotationExportFormatter.fromPdfAnnotations(
                 bookTitle = book.cardTitle(),
@@ -630,7 +632,6 @@ class ReaderIosBridge internal constructor(
             else -> AnnotationExportFormatter.fromEpubBook(book)
         }
         if (!document.hasAnnotations) return false
-        val format = AnnotationExportFormat.MARKDOWN
         val fileName = AnnotationExportFormatter.suggestedFileName(document.bookTitle, format)
         val path = NSTemporaryDirectory() + fileName
         if (!writeIosUtf8File(path, AnnotationExportFormatter.render(document, format))) return false
@@ -1055,6 +1056,23 @@ private fun loadIosReaderOrientation(): ReaderScreenOrientationMode {
 
 private fun persistIosReaderOrientation(mode: ReaderScreenOrientationMode) {
     NSUserDefaults.standardUserDefaults.setObject(mode.name, forKey = IosReaderOrientationDefaultsKey)
+}
+
+private const val IosCustomSleepTimerMinutesDefaultsKey = "custom_sleep_timers"
+
+private fun loadIosCustomSleepTimerMinutes(): List<Int> {
+    val stored = NSUserDefaults.standardUserDefaults.stringForKey(IosCustomSleepTimerMinutesDefaultsKey)
+        .orEmpty()
+        .split(',')
+        .mapNotNull(String::toIntOrNull)
+    return sanitizeCustomSleepTimerMinutes(stored)
+}
+
+private fun persistIosCustomSleepTimerMinutes(values: List<Int>) {
+    NSUserDefaults.standardUserDefaults.setObject(
+        sanitizeCustomSleepTimerMinutes(values).joinToString(","),
+        forKey = IosCustomSleepTimerMinutesDefaultsKey,
+    )
 }
 
 private fun loadIosReaderBrightness(): Float? {
@@ -1604,6 +1622,8 @@ private fun ReaderIosApp(
     var settingsQuery by remember { mutableStateOf("") }
     var showAppThemePanel by remember { mutableStateOf(false) }
     var showRecentLimitDialog by remember { mutableStateOf(false) }
+    var annotationExportBook by remember { mutableStateOf<BookItem?>(null) }
+    var customSleepTimerMinutes by remember { mutableStateOf(loadIosCustomSleepTimerMinutes()) }
     var showExternalFileBehaviorDialog by remember { mutableStateOf(false) }
     var showStrictFilterConfirmation by remember { mutableStateOf(false) }
     var showClearReflowCacheConfirmation by remember { mutableStateOf(false) }
@@ -2340,6 +2360,16 @@ private fun ReaderIosApp(
                                             is IosPdfSaveCopyPreparation.Unavailable -> showMessage(export.message)
                                         }
                                     }
+                                    SharedMobilePdfNativeAction.SHARE_ANNOTATED -> scope.launch {
+                                        when (val export = prepareIosPdfSaveCopy(pdfBook, password, pdfExport)) {
+                                            is IosPdfSaveCopyPreparation.Ready -> if (!bridge.performPdfNativeAction(export.book, SharedMobilePdfNativeAction.SHARE)) showMessage("Unable to share ${pdfBook.displayName}.")
+                                            is IosPdfSaveCopyPreparation.Unavailable -> showMessage(export.message)
+                                        }
+                                    }
+                                    SharedMobilePdfNativeAction.SHARE_ORIGINAL -> {
+                                        val handled = bridge.performPdfNativeAction(pdfBook, SharedMobilePdfNativeAction.SHARE)
+                                        if (!handled) showMessage("Unable to share ${pdfBook.displayName}.")
+                                    }
                                     else -> {
                                         val handled = bridge.performPdfNativeAction(pdfBook, action)
                                         if (!handled) {
@@ -2436,29 +2466,6 @@ private fun ReaderIosApp(
                             onSystemUiAppearanceChange = bridge::updateSystemUi,
                             modifier = Modifier.fillMaxSize()
                         )
-                        if (showDictionarySettingsSheet) {
-                            SharedMobileDictionarySettingsSheet(
-                                dictionaryService = lookupDictionaryService,
-                                translateService = lookupTranslateService,
-                                searchService = lookupSearchService,
-                                onDictionaryServiceChange = { service ->
-                                    lookupDictionaryService = service
-                                    IosReaderLookupServices.dictionary = service
-                                    persistIosLookupService(IosLookupDictionaryServiceKey, service)
-                                },
-                                onTranslateServiceChange = { service ->
-                                    lookupTranslateService = service
-                                    IosReaderLookupServices.translate = service
-                                    persistIosLookupService(IosLookupTranslateServiceKey, service)
-                                },
-                                onSearchServiceChange = { service ->
-                                    lookupSearchService = service
-                                    IosReaderLookupServices.search = service
-                                    persistIosLookupService(IosLookupSearchServiceKey, service)
-                                },
-                                onDismiss = { showDictionarySettingsSheet = false },
-                            )
-                        }
                     }
                     FileType.EPUB,
                     FileType.TXT,
@@ -2559,6 +2566,7 @@ private fun ReaderIosApp(
                             onReaderBookReplacementPreferencesChange = { preferences ->
                                 state = state.reduce(AppAction.ReaderBookReplacementPreferencesChanged(preferences))
                             },
+                            onOpenDictionarySettings = { showDictionarySettingsSheet = true },
                             readerBrightness = readerBrightness,
                             readerCustomBrightness = readerCustomBrightness,
                             readerBrightnessSupported = true,
@@ -2602,6 +2610,29 @@ private fun ReaderIosApp(
                         )
                     }
                     else -> Unit
+                }
+                if (showDictionarySettingsSheet) {
+                    SharedMobileDictionarySettingsSheet(
+                        dictionaryService = lookupDictionaryService,
+                        translateService = lookupTranslateService,
+                        searchService = lookupSearchService,
+                        onDictionaryServiceChange = { service ->
+                            lookupDictionaryService = service
+                            IosReaderLookupServices.dictionary = service
+                            persistIosLookupService(IosLookupDictionaryServiceKey, service)
+                        },
+                        onTranslateServiceChange = { service ->
+                            lookupTranslateService = service
+                            IosReaderLookupServices.translate = service
+                            persistIosLookupService(IosLookupTranslateServiceKey, service)
+                        },
+                        onSearchServiceChange = { service ->
+                            lookupSearchService = service
+                            IosReaderLookupServices.search = service
+                            persistIosLookupService(IosLookupSearchServiceKey, service)
+                        },
+                        onDismiss = { showDictionarySettingsSheet = false },
+                    )
                 }
                 return@Surface
             }
@@ -3015,9 +3046,7 @@ private fun ReaderIosApp(
                                         }
                                     }
                                     override fun exportAnnotations(book: BookItem) {
-                                        if (!bridge.exportAnnotations(book)) {
-                                            showMessage("This book has no annotations to export")
-                                        }
+                                        annotationExportBook = book
                                     }
                                     override fun importCover() = onImportCover()
                                     override fun createAndAssignTag(name: String) {
@@ -3138,9 +3167,7 @@ private fun ReaderIosApp(
                                     }
                                 },
                                 onExportAnnotations = { book ->
-                                    if (!bridge.exportAnnotations(book)) {
-                                        showMessage("This book has no annotations to export")
-                                    }
+                                    annotationExportBook = book
                                 },
                                 onImportCover = onImportCover,
                                 importedCoverPath = bridge.importedCoverPath,
@@ -3515,6 +3542,11 @@ private fun ReaderIosApp(
                                 onSeekAudiobook = audiobookPlayer::seekTo,
                                 onAudiobookSpeedChange = audiobookPlayer::setSpeed,
                                 onAudiobookSleepTimer = { minutes -> if (minutes == null) audiobookPlayer.cancelSleepTimer() else audiobookPlayer.setSleepTimer(minutes) },
+                                customSleepTimerMinutes = customSleepTimerMinutes,
+                                onCustomSleepTimerMinutesChange = { values ->
+                                    customSleepTimerMinutes = sanitizeCustomSleepTimerMinutes(values)
+                                    persistIosCustomSleepTimerMinutes(customSleepTimerMinutes)
+                                },
                                 onStopAudiobookPlayback = {
                                     audiobookPlayer.stop()
                                 },
@@ -3565,6 +3597,30 @@ private fun ReaderIosApp(
                 showRecentLimitDialog = false
             },
             onDismiss = { showRecentLimitDialog = false },
+        )
+    }
+    annotationExportBook?.let { book ->
+        AlertDialog(
+            onDismissRequest = { annotationExportBook = null },
+            title = { Text("Export Annotations") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = {
+                        annotationExportBook = null
+                        if (!bridge.exportAnnotations(book, AnnotationExportFormat.MARKDOWN)) {
+                            showMessage("This book has no annotations to export")
+                        }
+                    }) { Text("Markdown") }
+                    TextButton(onClick = {
+                        annotationExportBook = null
+                        if (!bridge.exportAnnotations(book, AnnotationExportFormat.TEXT)) {
+                            showMessage("This book has no annotations to export")
+                        }
+                    }) { Text("Text") }
+                }
+            },
+            confirmButton = {},
+            dismissButton = { TextButton(onClick = { annotationExportBook = null }) { Text("Cancel") } }
         )
     }
     if (showExternalFileBehaviorDialog) {

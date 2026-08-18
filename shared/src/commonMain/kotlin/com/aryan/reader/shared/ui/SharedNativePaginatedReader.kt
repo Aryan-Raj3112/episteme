@@ -31,11 +31,18 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.isSpecified
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.layer.drawLayer
+import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.layout.LayoutCoordinates
@@ -44,6 +51,9 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
@@ -58,6 +68,8 @@ import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.logSharedReaderDiagnostic
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.isActive
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 internal enum class SharedPaginatedTapAction {
@@ -272,6 +284,25 @@ fun SharedNativePaginatedReader(
     var selectionHandleDragging by remember(renderPlan.navigationTarget.requestId) {
         mutableStateOf(false)
     }
+    val selectionHaptics = rememberSharedNativeSelectionHaptics()
+    var magnifierCenter by remember(renderPlan.navigationTarget.requestId) {
+        mutableStateOf(Offset.Unspecified)
+    }
+    var magnifierBitmap by remember(renderPlan.navigationTarget.requestId) {
+        mutableStateOf<ImageBitmap?>(null)
+    }
+    val magnifierCaptureLayer = rememberGraphicsLayer()
+    LaunchedEffect(magnifierCenter, selectionHandleDragging) {
+        magnifierBitmap = if (magnifierCenter.isSpecified && selectionHandleDragging) {
+            runCatching { magnifierCaptureLayer.toImageBitmap() }.getOrNull()
+        } else {
+            null
+        }
+    }
+    val visiblePageIndices = remember(visiblePages) { visiblePages.map { it.pageIndex } }
+    val selectionLayouts = remember(renderPlan.navigationTarget.requestId, visiblePageIndices) {
+        mutableStateMapOf<String, SharedNativeTextLayoutInfo>()
+    }
     fun updateActiveSelection(selection: SharedNativeReaderTextSelection?) {
         activeSelection = selection
         if (selection == null) {
@@ -279,9 +310,22 @@ fun SharedNativePaginatedReader(
             selectionHandleDragging = false
         }
     }
-    val visiblePageIndices = remember(visiblePages) { visiblePages.map { it.pageIndex } }
-    val selectionLayouts = remember(renderPlan.navigationTarget.requestId, visiblePageIndices) {
-        mutableStateMapOf<String, SharedNativeTextLayoutInfo>()
+    fun updateSelectionAt(
+        currentSelection: SharedNativeReaderTextSelection,
+        handle: SharedNativeSelectionHandle,
+        windowPosition: Offset,
+        withHaptic: Boolean
+    ) {
+        val updated = sharedNativeSelectionWithHandleMoved(
+            selection = currentSelection,
+            handle = handle,
+            windowPosition = windowPosition,
+            layouts = selectionLayouts.values
+        )
+        if (updated != null && updated != currentSelection) {
+            if (withHaptic) selectionHaptics.selectionChanged()
+            updateActiveSelection(updated)
+        }
     }
     var readerCoordinates by remember(renderPlan.navigationTarget.requestId) {
         mutableStateOf<LayoutCoordinates?>(null)
@@ -322,7 +366,17 @@ fun SharedNativePaginatedReader(
         BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
-                .background(renderPlan.background),
+                .background(renderPlan.background)
+                .drawWithContent {
+                    magnifierCaptureLayer.record(
+                        density = Density(this@drawWithContent.density),
+                        layoutDirection = this@drawWithContent.layoutDirection,
+                        size = IntSize(size.width.roundToInt(), size.height.roundToInt())
+                    ) {
+                        this@drawWithContent.drawContent()
+                    }
+                    drawLayer(magnifierCaptureLayer)
+                },
             contentAlignment = Alignment.Center
         ) {
             val pageGap = 28.dp
@@ -388,16 +442,24 @@ fun SharedNativePaginatedReader(
                     handle = handle,
                     selectionLayouts = selectionLayouts.values,
                     readerCoordinates = readerCoordinates,
-                    onDragActiveChange = { selectionHandleDragging = it },
+                    onDragActiveChange = { dragging ->
+                        selectionHandleDragging = dragging
+                        if (!dragging) magnifierCenter = Offset.Unspecified
+                    },
                     onDrag = { windowPosition ->
                         val currentSelection = activeSelection
                         if (currentSelection != null) {
-                            sharedNativeSelectionWithHandleMoved(
-                                selection = currentSelection,
-                                handle = handle,
-                                windowPosition = windowPosition,
-                                layouts = selectionLayouts.values
-                            )?.let(::updateActiveSelection)
+                            magnifierCenter = readerCoordinates
+                                ?.takeIf { it.isAttached }
+                                ?.let { coordinates ->
+                                    val rootPosition = coordinates.windowToLocal(windowPosition)
+                                    Offset(
+                                        rootPosition.x,
+                                        rootPosition.y - with(readerDensity) { 36.dp.toPx() }
+                                    )
+                                }
+                                ?: Offset.Unspecified
+                            updateSelectionAt(currentSelection, handle, windowPosition, withHaptic = true)
                         }
                     },
                     modifier = Modifier.align(Alignment.TopStart)
@@ -442,6 +504,29 @@ fun SharedNativePaginatedReader(
                                 density = readerDensity,
                                 highlightPaletteSize = highlightPalette.size,
                                 actionCount = enabledSelectionActions.size + 2
+                            )
+                        }
+                )
+            }
+            val capturedMagnifierBitmap = magnifierBitmap
+            if (
+                magnifierCenter.isSpecified &&
+                selectionHandleDragging &&
+                capturedMagnifierBitmap != null &&
+                capturedMagnifierBitmap.width > 0
+            ) {
+                SharedTextMagnifier(
+                    sourceBitmap = capturedMagnifierBitmap,
+                    magnifierCenter = magnifierCenter,
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .offset {
+                            val lensSize = with(readerDensity) {
+                                IntSize(140.dp.roundToPx(), 48.dp.roundToPx())
+                            }
+                            IntOffset(
+                                x = (magnifierCenter.x - lensSize.width / 2f).roundToInt(),
+                                y = (magnifierCenter.y - lensSize.height / 2f).roundToInt()
                             )
                         }
                 )
@@ -523,6 +608,33 @@ fun SharedNativeVerticalReader(
     var selectionHandleDragging by remember(renderPlan.navigationTarget.requestId) {
         mutableStateOf(false)
     }
+    val selectionHaptics = rememberSharedNativeSelectionHaptics()
+    var magnifierCenter by remember(renderPlan.navigationTarget.requestId) {
+        mutableStateOf(Offset.Unspecified)
+    }
+    var magnifierBitmap by remember(renderPlan.navigationTarget.requestId) {
+        mutableStateOf<ImageBitmap?>(null)
+    }
+    val magnifierCaptureLayer = rememberGraphicsLayer()
+    LaunchedEffect(magnifierCenter, selectionHandleDragging) {
+        magnifierBitmap = if (magnifierCenter.isSpecified && selectionHandleDragging) {
+            runCatching { magnifierCaptureLayer.toImageBitmap() }.getOrNull()
+        } else {
+            null
+        }
+    }
+    var selectionEdgeScrollDelta by remember(renderPlan.navigationTarget.requestId) {
+        mutableStateOf(0f)
+    }
+    var selectionEdgeDragWindowPos by remember(renderPlan.navigationTarget.requestId) {
+        mutableStateOf(Offset.Unspecified)
+    }
+    var selectionEdgeDragHandle by remember(renderPlan.navigationTarget.requestId) {
+        mutableStateOf<SharedNativeSelectionHandle?>(null)
+    }
+    val selectionLayouts = remember(renderPlan.navigationTarget.requestId, renderPlan.book.id) {
+        mutableStateMapOf<String, SharedNativeTextLayoutInfo>()
+    }
     fun updateActiveSelection(selection: SharedNativeReaderTextSelection?) {
         activeSelection = selection
         if (selection == null) {
@@ -530,8 +642,42 @@ fun SharedNativeVerticalReader(
             selectionHandleDragging = false
         }
     }
-    val selectionLayouts = remember(renderPlan.navigationTarget.requestId, renderPlan.book.id) {
-        mutableStateMapOf<String, SharedNativeTextLayoutInfo>()
+    fun updateSelectionAt(
+        currentSelection: SharedNativeReaderTextSelection,
+        handle: SharedNativeSelectionHandle,
+        windowPosition: Offset,
+        withHaptic: Boolean
+    ) {
+        val updated = sharedNativeSelectionWithHandleMoved(
+            selection = currentSelection,
+            handle = handle,
+            windowPosition = windowPosition,
+            layouts = selectionLayouts.values
+        )
+        if (updated != null && updated != currentSelection) {
+            if (withHaptic) selectionHaptics.selectionChanged()
+            updateActiveSelection(updated)
+        }
+    }
+    LaunchedEffect(selectionHandleDragging) {
+        while (selectionHandleDragging && isActive) {
+            val delta = selectionEdgeScrollDelta
+            if (sharedNativeSelectionIsInEdgeBand(delta)) {
+                listState.scrollBy(delta)
+                withFrameNanos { }
+                val handle = selectionEdgeDragHandle
+                val windowPosition = selectionEdgeDragWindowPos
+                val currentSelection = activeSelection
+                if (handle != null && windowPosition.isSpecified && currentSelection != null) {
+                    updateSelectionAt(currentSelection, handle, windowPosition, withHaptic = false)
+                }
+            } else {
+                withFrameNanos { }
+            }
+        }
+        selectionEdgeScrollDelta = 0f
+        selectionEdgeDragWindowPos = Offset.Unspecified
+        selectionEdgeDragHandle = null
     }
     var readerCoordinates by remember(renderPlan.navigationTarget.requestId) {
         mutableStateOf<LayoutCoordinates?>(null)
@@ -588,6 +734,16 @@ fun SharedNativeVerticalReader(
             modifier = Modifier
                 .fillMaxSize()
                 .background(renderPlan.background)
+                .drawWithContent {
+                    magnifierCaptureLayer.record(
+                        density = Density(this@drawWithContent.density),
+                        layoutDirection = this@drawWithContent.layoutDirection,
+                        size = IntSize(size.width.roundToInt(), size.height.roundToInt())
+                    ) {
+                        this@drawWithContent.drawContent()
+                    }
+                    drawLayer(magnifierCaptureLayer)
+                }
         ) {
             val requestedHorizontalPadding = renderPlan.settings.resolvedHorizontalMargin.dp
             val requestedVerticalPadding = renderPlan.settings.resolvedVerticalMargin.dp
@@ -736,16 +892,41 @@ fun SharedNativeVerticalReader(
                     handle = handle,
                     selectionLayouts = selectionLayouts.values,
                     readerCoordinates = readerCoordinates,
-                    onDragActiveChange = { selectionHandleDragging = it },
+                    onDragActiveChange = { dragging ->
+                        selectionHandleDragging = dragging
+                        if (!dragging) magnifierCenter = Offset.Unspecified
+                    },
                     onDrag = { windowPosition ->
                         val currentSelection = activeSelection
                         if (currentSelection != null) {
-                            sharedNativeSelectionWithHandleMoved(
+                            val rootPosition = readerCoordinates
+                                ?.takeIf { it.isAttached }
+                                ?.windowToLocal(windowPosition)
+                            val edgeDelta = rootPosition?.let { position ->
+                                sharedNativeSelectionEdgeScrollDelta(
+                                    pointerY = position.y,
+                                    rootHeightPx = readerCoordinates?.size?.height?.toFloat() ?: 0f,
+                                    density = density
+                                )
+                            } ?: 0f
+                            if (sharedNativeSelectionIsInEdgeBand(edgeDelta)) {
+                                selectionEdgeScrollDelta = edgeDelta
+                                selectionEdgeDragWindowPos = windowPosition
+                                selectionEdgeDragHandle = handle
+                            } else {
+                                selectionEdgeScrollDelta = 0f
+                                updateSelectionAt(currentSelection, handle, windowPosition, withHaptic = true)
+                            }
+                            magnifierCenter = sharedNativeSelectionHandleOffset(
                                 selection = currentSelection,
                                 handle = handle,
-                                windowPosition = windowPosition,
-                                layouts = selectionLayouts.values
-                            )?.let(::updateActiveSelection)
+                                layouts = selectionLayouts.values,
+                                readerCoordinates = readerCoordinates,
+                                density = density
+                            )?.let { anchor ->
+                                val halfHandlePx = with(density) { 14.dp.toPx() }
+                                Offset(anchor.x + halfHandlePx, anchor.y.toFloat())
+                            } ?: Offset.Unspecified
                         }
                     },
                     modifier = Modifier.align(Alignment.TopStart)
@@ -782,6 +963,29 @@ fun SharedNativeVerticalReader(
                                 density = density,
                                 highlightPaletteSize = highlightPalette.size,
                                 actionCount = enabledSelectionActions.size + 2
+                            )
+                        }
+                )
+            }
+            val capturedMagnifierBitmap = magnifierBitmap
+            if (
+                magnifierCenter.isSpecified &&
+                selectionHandleDragging &&
+                capturedMagnifierBitmap != null &&
+                capturedMagnifierBitmap.width > 0
+            ) {
+                SharedTextMagnifier(
+                    sourceBitmap = capturedMagnifierBitmap,
+                    magnifierCenter = magnifierCenter,
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .offset {
+                            val lensSize = with(density) {
+                                IntSize(140.dp.roundToPx(), 48.dp.roundToPx())
+                            }
+                            IntOffset(
+                                x = (magnifierCenter.x - lensSize.width / 2f).roundToInt(),
+                                y = (magnifierCenter.y - lensSize.height / 2f).roundToInt()
                             )
                         }
                 )
