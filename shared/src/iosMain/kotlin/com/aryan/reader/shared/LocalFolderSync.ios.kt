@@ -6,7 +6,7 @@ internal actual fun localFolderSyncSha256ShortHex(value: String): String {
     }.take(12)
 }
 
-private fun sha256(input: ByteArray): ByteArray {
+internal fun sha256(input: ByteArray): ByteArray {
     val messageLengthBits = input.size.toLong() * 8L
     val paddingLength = ((56 - (input.size + 1) % 64) + 64) % 64
     val padded = ByteArray(input.size + 1 + paddingLength + 8)

@@ -94,7 +94,8 @@ struct ContentView: View {
                         filePaths: importedFiles.map(\.path),
                         contentIds: importedFiles.map(\.contentId),
                         failedCount: Int32(urls.count - importedFiles.count),
-                        wasCancelled: false
+                        wasCancelled: false,
+                        autoOpen: true
                     )
                 }
             case .failure(let error):
@@ -122,7 +123,8 @@ struct ContentView: View {
                         filePaths: [],
                         contentIds: [],
                         failedCount: wasCancelled ? 0 : 1,
-                        wasCancelled: wasCancelled
+                        wasCancelled: wasCancelled,
+                        autoOpen: true
                     )
                 }
             }

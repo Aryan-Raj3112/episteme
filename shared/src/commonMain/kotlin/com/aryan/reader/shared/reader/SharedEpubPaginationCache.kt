@@ -6,15 +6,16 @@ import com.aryan.reader.paginatedreader.SemanticBlock
 import com.aryan.reader.paginatedreader.semanticBlockModule
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromByteArray
 import kotlinx.serialization.encodeToByteArray
 import kotlinx.serialization.protobuf.ProtoBuf
 import kotlinx.serialization.protobuf.ProtoNumber
-import java.io.File
-import java.security.MessageDigest
-import java.util.Locale
+import kotlin.math.roundToLong
+import kotlin.time.TimeSource
 
 private const val SharedEpubPaginationCacheSchemaVersion = 1
 private const val SharedEpubPaginationProcessingVersion = 12
@@ -34,17 +35,19 @@ data class SharedEpubPaginationCacheKey(
 }
 
 class SharedEpubPaginationCache(
-    private val cacheRoot: File = defaultCacheRoot()
+    private val storage: SharedEpubPageCacheStorage = defaultSharedEpubPageCacheStorage()
 ) {
     private val proto = ProtoBuf {
         serializersModule = semanticBlockModule
         encodeDefaults = true
     }
 
-    private val memoryCache = SharedJvmLruMemoryCache<String, List<ReaderPage>>(maxEntries = 10)
-    private val chapterMemoryCache = SharedJvmLruMemoryCache<String, List<ReaderPage>>(maxEntries = 24)
+    private val memoryCache = SharedLruMemoryCache<String, List<ReaderPage>>(maxEntries = 10)
+    private val chapterMemoryCache = SharedLruMemoryCache<String, List<ReaderPage>>(maxEntries = 24)
+    private val memoryCacheMutex = Mutex()
+    private val chapterMemoryCacheMutex = Mutex()
 
-    fun loadMemory(
+    suspend fun loadMemory(
         book: SharedEpubBook,
         settings: ReaderSettings,
         viewport: ReaderViewportSpec,
@@ -52,7 +55,7 @@ class SharedEpubPaginationCache(
         fontScale: Float = 1f
     ): List<ReaderPage>? {
         val key = keyFor(book, settings, viewport, density, fontScale)
-        return synchronized(memoryCache) {
+        return memoryCacheMutex.withLock {
             memoryCache[key.cacheId]
         }?.also { pages ->
             logEpubPaginationCache {
@@ -68,37 +71,37 @@ class SharedEpubPaginationCache(
         viewport: ReaderViewportSpec,
         density: Float = 1f,
         fontScale: Float = 1f
-    ): List<ReaderPage>? = withContext(Dispatchers.IO) {
-        val startedAt = System.nanoTime()
+    ): List<ReaderPage>? = withContext(Dispatchers.Default) {
+        val startedAt = TimeSource.Monotonic.markNow()
         val key = keyFor(book, settings, viewport, density, fontScale)
-        synchronized(memoryCache) {
+        memoryCacheMutex.withLock {
             memoryCache[key.cacheId]?.let { pages ->
                 logEpubPaginationCache {
                     "cache_lookup result=memory_hit book=\"${book.title.logPreview()}\" pages=${pages.size} " +
                         "viewport=${viewport.widthPx}x${viewport.heightPx} config=${key.configHash.toUInt().toString(16)} " +
-                        "elapsedMs=${startedAt.elapsedMillis()}"
+                        "elapsedMs=${startedAt.elapsedNow().inWholeMilliseconds}"
                 }
                 return@withContext pages
             }
         }
 
-        val file = cacheFile(key)
-        if (!file.isFile) {
+        val bytes = storage.readBytes(cacheFilePath(key))
+        if (bytes == null) {
             logEpubPaginationCache {
                 "cache_lookup result=miss reason=no_file book=\"${book.title.logPreview()}\" " +
                     "viewport=${viewport.widthPx}x${viewport.heightPx} config=${key.configHash.toUInt().toString(16)} " +
-                    "path=\"${file.absolutePath.logPreview(220)}\" elapsedMs=${startedAt.elapsedMillis()}"
+                    "root=\"${storage.rootLabel().logPreview(220)}\" elapsedMs=${startedAt.elapsedNow().inWholeMilliseconds}"
             }
             return@withContext null
         }
 
         runCatching {
-            val record = proto.decodeFromByteArray<CachedReaderPages>(file.readBytes())
+            val record = proto.decodeFromByteArray<CachedReaderPages>(bytes)
             if (!record.matches(key)) {
                 logEpubPaginationCache {
                     "cache_lookup result=miss reason=stale_record book=\"${book.title.logPreview()}\" " +
                         "viewport=${viewport.widthPx}x${viewport.heightPx} config=${key.configHash.toUInt().toString(16)} " +
-                        "fileBytes=${file.length()} elapsedMs=${startedAt.elapsedMillis()}"
+                        "fileBytes=${bytes.size} elapsedMs=${startedAt.elapsedNow().inWholeMilliseconds}"
                 }
                 return@runCatching null
             }
@@ -106,31 +109,31 @@ class SharedEpubPaginationCache(
             if (pages.isEmpty() || pages.size != record.pageCount) {
                 logEpubPaginationCache {
                     "cache_lookup result=miss reason=page_count_mismatch book=\"${book.title.logPreview()}\" " +
-                        "storedPages=${record.pageCount} decodedPages=${pages.size} elapsedMs=${startedAt.elapsedMillis()}"
+                        "storedPages=${record.pageCount} decodedPages=${pages.size} elapsedMs=${startedAt.elapsedNow().inWholeMilliseconds}"
                 }
                 return@runCatching null
             }
             if (!pages.carriesRequiredSemanticBlocksFor(book)) {
                 logEpubPaginationCache {
                     "cache_lookup result=miss reason=missing_semantic_blocks book=\"${book.title.logPreview()}\" " +
-                        "pages=${pages.size} elapsedMs=${startedAt.elapsedMillis()}"
+                        "pages=${pages.size} elapsedMs=${startedAt.elapsedNow().inWholeMilliseconds}"
                 }
                 return@runCatching null
             }
-            synchronized(memoryCache) {
+            memoryCacheMutex.withLock {
                 memoryCache[key.cacheId] = pages
             }
             logEpubPaginationCache {
                 "cache_lookup result=disk_hit book=\"${book.title.logPreview()}\" pages=${pages.size} " +
                     "viewport=${viewport.widthPx}x${viewport.heightPx} config=${key.configHash.toUInt().toString(16)} " +
-                    "fileBytes=${file.length()} elapsedMs=${startedAt.elapsedMillis()}"
+                    "fileBytes=${bytes.size} elapsedMs=${startedAt.elapsedNow().inWholeMilliseconds}"
             }
             pages
         }.getOrElse { error ->
             logEpubPaginationCache {
                 "cache_lookup result=miss reason=decode_failed book=\"${book.title.logPreview()}\" " +
                     "viewport=${viewport.widthPx}x${viewport.heightPx} config=${key.configHash.toUInt().toString(16)} " +
-                    "error=\"${error.message.orEmpty().logPreview(180)}\" elapsedMs=${startedAt.elapsedMillis()}"
+                    "error=\"${error.message.orEmpty().logPreview(180)}\" elapsedMs=${startedAt.elapsedNow().inWholeMilliseconds}"
             }
             null
         }
@@ -143,8 +146,8 @@ class SharedEpubPaginationCache(
         chapterIndex: Int,
         density: Float = 1f,
         fontScale: Float = 1f
-    ): List<ReaderPage>? = withContext(Dispatchers.IO) {
-        val startedAt = System.nanoTime()
+    ): List<ReaderPage>? = withContext(Dispatchers.Default) {
+        val startedAt = TimeSource.Monotonic.markNow()
         val key = keyFor(book, settings, viewport, density, fontScale)
         if (chapterIndex !in key.chapterVersions.indices) {
             logEpubPaginationCache {
@@ -154,34 +157,34 @@ class SharedEpubPaginationCache(
             return@withContext null
         }
         val memoryKey = key.chapterCacheId(chapterIndex)
-        synchronized(chapterMemoryCache) {
+        chapterMemoryCacheMutex.withLock {
             chapterMemoryCache[memoryKey]?.let { pages ->
                 logEpubPaginationCache {
                     "chapter_cache_lookup result=memory_hit book=\"${book.title.logPreview()}\" chapter=$chapterIndex " +
                         "pages=${pages.size} viewport=${viewport.widthPx}x${viewport.heightPx} " +
-                        "config=${key.configHash.toUInt().toString(16)} elapsedMs=${startedAt.elapsedMillis()}"
+                        "config=${key.configHash.toUInt().toString(16)} elapsedMs=${startedAt.elapsedNow().inWholeMilliseconds}"
                 }
                 return@withContext pages
             }
         }
 
-        val file = chapterCacheFile(key, chapterIndex)
-        if (!file.isFile) {
+        val bytes = storage.readBytes(chapterCacheFilePath(key, chapterIndex))
+        if (bytes == null) {
             logEpubPaginationCache {
                 "chapter_cache_lookup result=miss reason=no_file book=\"${book.title.logPreview()}\" chapter=$chapterIndex " +
                     "viewport=${viewport.widthPx}x${viewport.heightPx} config=${key.configHash.toUInt().toString(16)} " +
-                    "elapsedMs=${startedAt.elapsedMillis()}"
+                    "elapsedMs=${startedAt.elapsedNow().inWholeMilliseconds}"
             }
             return@withContext null
         }
 
         runCatching {
-            val record = proto.decodeFromByteArray<CachedReaderChapterPages>(file.readBytes())
+            val record = proto.decodeFromByteArray<CachedReaderChapterPages>(bytes)
             if (!record.matches(key, chapterIndex)) {
                 logEpubPaginationCache {
                     "chapter_cache_lookup result=miss reason=stale_record book=\"${book.title.logPreview()}\" " +
                         "chapter=$chapterIndex viewport=${viewport.widthPx}x${viewport.heightPx} " +
-                        "fileBytes=${file.length()} elapsedMs=${startedAt.elapsedMillis()}"
+                        "fileBytes=${bytes.size} elapsedMs=${startedAt.elapsedNow().inWholeMilliseconds}"
                 }
                 return@runCatching null
             }
@@ -190,32 +193,32 @@ class SharedEpubPaginationCache(
                 logEpubPaginationCache {
                     "chapter_cache_lookup result=miss reason=page_count_mismatch book=\"${book.title.logPreview()}\" " +
                         "chapter=$chapterIndex storedPages=${record.pageCount} decodedPages=${pages.size} " +
-                        "elapsedMs=${startedAt.elapsedMillis()}"
+                        "elapsedMs=${startedAt.elapsedNow().inWholeMilliseconds}"
                 }
                 return@runCatching null
             }
             if (!pages.carriesRequiredSemanticBlocksForChapter(book, chapterIndex)) {
                 logEpubPaginationCache {
                     "chapter_cache_lookup result=miss reason=missing_semantic_blocks book=\"${book.title.logPreview()}\" " +
-                        "chapter=$chapterIndex pages=${pages.size} elapsedMs=${startedAt.elapsedMillis()}"
+                        "chapter=$chapterIndex pages=${pages.size} elapsedMs=${startedAt.elapsedNow().inWholeMilliseconds}"
                 }
                 return@runCatching null
             }
-            synchronized(chapterMemoryCache) {
+            chapterMemoryCacheMutex.withLock {
                 chapterMemoryCache[memoryKey] = pages
             }
             logEpubPaginationCache {
                 "chapter_cache_lookup result=disk_hit book=\"${book.title.logPreview()}\" chapter=$chapterIndex " +
                     "pages=${pages.size} viewport=${viewport.widthPx}x${viewport.heightPx} " +
-                    "config=${key.configHash.toUInt().toString(16)} fileBytes=${file.length()} " +
-                    "elapsedMs=${startedAt.elapsedMillis()}"
+                    "config=${key.configHash.toUInt().toString(16)} fileBytes=${bytes.size} " +
+                    "elapsedMs=${startedAt.elapsedNow().inWholeMilliseconds}"
             }
             pages
         }.getOrElse { error ->
             logEpubPaginationCache {
                 "chapter_cache_lookup result=miss reason=decode_failed book=\"${book.title.logPreview()}\" " +
                     "chapter=$chapterIndex viewport=${viewport.widthPx}x${viewport.heightPx} " +
-                    "error=\"${error.message.orEmpty().logPreview(180)}\" elapsedMs=${startedAt.elapsedMillis()}"
+                    "error=\"${error.message.orEmpty().logPreview(180)}\" elapsedMs=${startedAt.elapsedNow().inWholeMilliseconds}"
             }
             null
         }
@@ -228,7 +231,7 @@ class SharedEpubPaginationCache(
         pages: List<ReaderPage>,
         density: Float = 1f,
         fontScale: Float = 1f
-    ): Unit = withContext(Dispatchers.IO) {
+    ): Unit = withContext(Dispatchers.Default) {
         if (pages.isEmpty()) {
             logEpubPaginationCache {
                 "cache_save result=skip reason=empty_pages book=\"${book.title.logPreview()}\" " +
@@ -254,10 +257,10 @@ class SharedEpubPaginationCache(
             pageCount = pages.size,
             pages = pages.map(CachedReaderPage::from)
         )
-        val file = cacheFile(key)
         runCatching {
-            writeAtomically(file, proto.encodeToByteArray(record))
-            synchronized(memoryCache) {
+            val bytes = proto.encodeToByteArray(record)
+            storage.writeBytesAtomically(cacheFilePath(key), bytes)
+            memoryCacheMutex.withLock {
                 memoryCache[key.cacheId] = pages.mapIndexed { index, page -> page.copy(pageIndex = index) }
             }
             saveChapterCaches(key, book, pages)
@@ -265,7 +268,7 @@ class SharedEpubPaginationCache(
             logEpubPaginationCache {
                 "cache_save result=ok book=\"${book.title.logPreview()}\" pages=${pages.size} " +
                     "viewport=${viewport.widthPx}x${viewport.heightPx} config=${key.configHash.toUInt().toString(16)} " +
-                    "fileBytes=${file.length()}"
+                    "fileBytes=${bytes.size}"
             }
         }.onFailure { error ->
             logEpubPaginationCache {
@@ -286,7 +289,7 @@ class SharedEpubPaginationCache(
         firstPageIndex: Int,
         density: Float = 1f,
         fontScale: Float = 1f
-    ): Unit = withContext(Dispatchers.IO) {
+    ): Unit = withContext(Dispatchers.Default) {
         if (pages.isEmpty()) {
             logEpubPaginationCache {
                 "chapter_cache_save result=skip reason=empty_pages book=\"${book.title.logPreview()}\" " +
@@ -319,8 +322,8 @@ class SharedEpubPaginationCache(
             pages = normalizedPages.map(CachedReaderPage::from)
         )
         runCatching {
-            writeAtomically(chapterCacheFile(key, chapterIndex), proto.encodeToByteArray(record))
-            synchronized(chapterMemoryCache) {
+            storage.writeBytesAtomically(chapterCacheFilePath(key, chapterIndex), proto.encodeToByteArray(record))
+            chapterMemoryCacheMutex.withLock {
                 chapterMemoryCache[key.chapterCacheId(chapterIndex)] = normalizedPages
             }
             logEpubPaginationCache {
@@ -366,53 +369,53 @@ class SharedEpubPaginationCache(
             settings.paragraphSpacing.roundCacheValue(),
             settings.imageScale.roundCacheValue(),
             settings.pageSpreadMode.name,
-            settings.customFontPath.orEmpty()
+            settings.customFontPath.orEmpty(),
+            settings.hideImages
         )
         return SharedEpubPaginationCacheKey(
-            bookHash = sha256Hex("${book.id}|${book.fileName}|$bookFingerprint").take(32),
+            bookHash = sharedSha256Hex("${book.id}|${book.fileName}|$bookFingerprint").take(32),
             bookFingerprint = bookFingerprint,
             configHash = configHash,
             chapterVersions = chapterVersions
         )
     }
 
-    fun clearBook(book: SharedEpubBook) {
+    suspend fun clearBook(book: SharedEpubBook) {
         val chapterVersions = book.chapters.map(::chapterContentVersion)
         val bookFingerprint = bookFingerprint(book, chapterVersions)
-        val bookHash = sha256Hex("${book.id}|${book.fileName}|$bookFingerprint").take(32)
-        File(cacheRoot, bookHash).deleteRecursively()
-        synchronized(memoryCache) {
+        val bookHash = sharedSha256Hex("${book.id}|${book.fileName}|$bookFingerprint").take(32)
+        storage.deleteDirectory(bookHash)
+        memoryCacheMutex.withLock {
             memoryCache.clear()
         }
-        synchronized(chapterMemoryCache) {
+        chapterMemoryCacheMutex.withLock {
             chapterMemoryCache.clear()
         }
     }
 
-    fun clearAll() {
-        cacheRoot.deleteRecursively()
-        cacheRoot.mkdirs()
-        synchronized(memoryCache) {
+    suspend fun clearAll() {
+        storage.deleteAll()
+        memoryCacheMutex.withLock {
             memoryCache.clear()
         }
-        synchronized(chapterMemoryCache) {
+        chapterMemoryCacheMutex.withLock {
             chapterMemoryCache.clear()
         }
     }
 
-    private fun cacheFile(key: SharedEpubPaginationCacheKey): File {
-        return File(File(cacheRoot, key.bookHash), "${key.configHash.toUInt().toString(16)}.pages.pb")
+    private fun cacheFilePath(key: SharedEpubPaginationCacheKey): String {
+        return "${key.bookHash}/${key.configHash.toUInt().toString(16)}.pages.pb"
     }
 
-    private fun chapterCacheDir(key: SharedEpubPaginationCacheKey): File {
-        return File(File(cacheRoot, key.bookHash), "${key.configHash.toUInt().toString(16)}.chapters")
+    private fun chapterCacheDirPath(key: SharedEpubPaginationCacheKey): String {
+        return "${key.bookHash}/${key.configHash.toUInt().toString(16)}.chapters"
     }
 
-    private fun chapterCacheFile(key: SharedEpubPaginationCacheKey, chapterIndex: Int): File {
-        return File(chapterCacheDir(key), "chapter_$chapterIndex.pages.pb")
+    private fun chapterCacheFilePath(key: SharedEpubPaginationCacheKey, chapterIndex: Int): String {
+        return "${chapterCacheDirPath(key)}/chapter_$chapterIndex.pages.pb"
     }
 
-    private fun saveChapterCaches(
+    private suspend fun saveChapterCaches(
         key: SharedEpubPaginationCacheKey,
         book: SharedEpubBook,
         pages: List<ReaderPage>
@@ -436,36 +439,29 @@ class SharedEpubPaginationCache(
                 pageCount = normalizedPages.size,
                 pages = normalizedPages.map(CachedReaderPage::from)
             )
-            writeAtomically(chapterCacheFile(key, chapterIndex), proto.encodeToByteArray(record))
-            synchronized(chapterMemoryCache) {
+            storage.writeBytesAtomically(chapterCacheFilePath(key, chapterIndex), proto.encodeToByteArray(record))
+            chapterMemoryCacheMutex.withLock {
                 chapterMemoryCache[key.chapterCacheId(chapterIndex)] = normalizedPages
             }
         }
     }
 
     private fun cleanupOldConfigurations(bookHash: String) {
-        val bookDir = File(cacheRoot, bookHash)
-        val files = pageCacheFiles(bookDir)
-        files.drop(3).forEach { file ->
-            file.delete()
-            File(bookDir, file.name.removeSuffix(".pages.pb") + ".chapters").deleteRecursively()
+        val pagesFiles = pageCacheFiles(bookHash)
+        pagesFiles.drop(3).forEach { name ->
+            storage.deleteFile("$bookHash/$name")
+            storage.deleteDirectory("$bookHash/${name.removeSuffix(".pages.pb")}.chapters")
         }
-        val activeConfigNames = files.take(3).map { it.name.removeSuffix(".pages.pb") }.toSet()
-        chapterCacheDirs(bookDir)
-            .filterNot { dir -> dir.name.removeSuffix(".chapters") in activeConfigNames }
-            .forEach { it.deleteRecursively() }
+        val activeConfigNames = pagesFiles.take(3).map { it.removeSuffix(".pages.pb") }.toSet()
+        storage.listFileNames(bookHash)
+            .filter { name -> name.endsWith(".chapters") && name.removeSuffix(".chapters") !in activeConfigNames }
+            .forEach { name -> storage.deleteDirectory("$bookHash/$name") }
     }
 
-    private fun pageCacheFiles(bookDir: File): List<File> {
-        val files = bookDir.listFiles() ?: return emptyList()
-        return files
-            .filter { file -> file.isFile && file.name.endsWith(".pages.pb") }
-            .sortedByDescending { file -> file.lastModified() }
-    }
-
-    private fun chapterCacheDirs(bookDir: File): List<File> {
-        val files = bookDir.listFiles() ?: return emptyList()
-        return files.filter { file -> file.isDirectory && file.name.endsWith(".chapters") }
+    private fun pageCacheFiles(bookHash: String): List<String> {
+        return storage.listFileNames(bookHash)
+            .filter { name -> name.endsWith(".pages.pb") }
+            .sortedByDescending { name -> storage.lastModifiedMillis("$bookHash/$name") }
     }
 
     private fun CachedReaderPages.matches(key: SharedEpubPaginationCacheKey): Boolean {
@@ -489,14 +485,6 @@ class SharedEpubPaginationCache(
             chapterIndex == expectedChapterIndex &&
             expectedChapterIndex in key.chapterVersions.indices &&
             chapterVersion == key.chapterVersions[expectedChapterIndex]
-    }
-
-    companion object {
-        fun defaultCacheRoot(): File {
-            val overridePath = System.getProperty("reader.epub.pagination.cache.dir")
-            if (!overridePath.isNullOrBlank()) return File(overridePath).apply { mkdirs() }
-            return File(sharedJvmEpistemeCacheRoot(), "epub_page_cache").apply { mkdirs() }
-        }
     }
 }
 
@@ -619,36 +607,17 @@ internal fun stableHash(vararg parts: Any?): Int {
     }.hashCode()
 }
 
-internal fun sha256Hex(value: String): String {
-    val digest = MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.UTF_8))
-    return digest.joinToString("") { byte -> "%02x".format(Locale.US, byte.toInt() and 0xFF) }
-}
-
 private fun Float.roundCacheValue(): String {
-    return "%.4f".format(Locale.US, this)
-}
-
-private fun writeAtomically(file: File, bytes: ByteArray) {
-    file.parentFile?.mkdirs()
-    val parent = file.parentFile ?: file.absoluteFile.parentFile ?: File(".")
-    val temp = File(parent, "${file.name}.tmp")
-    temp.writeBytes(bytes)
-    if (file.exists() && !file.delete()) {
-        temp.delete()
-        return
-    }
-    if (!temp.renameTo(file)) {
-        file.writeBytes(bytes)
-        temp.delete()
-    }
+    val scaled = (this * 10_000).roundToLong()
+    val negative = scaled < 0
+    val absolute = kotlin.math.abs(scaled)
+    val integerPart = absolute / 10_000
+    val fractionPart = (absolute % 10_000).toString().padStart(4, '0')
+    return (if (negative) "-" else "") + "$integerPart.$fractionPart"
 }
 
 private inline fun logEpubPaginationCache(message: () -> String) {
     logSharedReaderDiagnostic("EpistemeEpubPagination", message)
-}
-
-private fun Long.elapsedMillis(): Long {
-    return ((System.nanoTime() - this) / 1_000_000L).coerceAtLeast(0L)
 }
 
 private fun String.logPreview(maxLength: Int = 96): String {

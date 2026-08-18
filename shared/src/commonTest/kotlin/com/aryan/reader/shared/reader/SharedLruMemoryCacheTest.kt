@@ -4,10 +4,10 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 
-class SharedJvmLruMemoryCacheTest {
+class SharedLruMemoryCacheTest {
     @Test
     fun `cache evicts least recently used entry`() {
-        val cache = SharedJvmLruMemoryCache<String, Int>(maxEntries = 2)
+        val cache = SharedLruMemoryCache<String, Int>(maxEntries = 2)
 
         cache["one"] = 1
         cache["two"] = 2

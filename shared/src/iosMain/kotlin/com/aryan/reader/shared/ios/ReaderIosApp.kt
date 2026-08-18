@@ -338,6 +338,7 @@ class ReaderIosBridge internal constructor(
         contentIds: List<String> = emptyList(),
         failedCount: Int = 0,
         wasCancelled: Boolean = false,
+        autoOpen: Boolean = true,
     ) {
         if (wasCancelled) {
             latestNativeEvent = "Import cancelled"
@@ -357,6 +358,7 @@ class ReaderIosBridge internal constructor(
             pendingImportBatches = pendingImportBatches + IosPendingImportBatch(
                 files = imported,
                 failedCount = failedCount.coerceAtLeast(0),
+                autoOpen = autoOpen,
             )
         }
         latestNativeEvent = when {
@@ -877,6 +879,7 @@ data class IosImportedFile(
 data class IosPendingImportBatch(
     val files: List<IosImportedFile>,
     val failedCount: Int,
+    val autoOpen: Boolean = true,
 )
 
 internal data class IosExternalOpen(
@@ -2095,7 +2098,7 @@ private fun ReaderIosApp(
                 existingBookIds = state.rawLibraryBooks.mapTo(mutableSetOf()) { it.id },
                 failedCount = batch.failedCount,
             )
-            val bookToOpen = outcome.singleSelectionOpenBook(existingBooks)
+            val bookToOpen = outcome.singleSelectionOpenBook(existingBooks).takeIf { batch.autoOpen }
             val rejectedPaths = outcome.plan.decisions
                 .filterNot { it.status == com.aryan.reader.shared.SharedImportDecisionStatus.IMPORTABLE }
                 .mapNotNull { it.file.localPath }
@@ -3301,7 +3304,8 @@ private fun ReaderIosApp(
                                             if (folderName == null) {
                                                 bridge.recordImportedFiles(
                                                     fileNames = listOf(result.book.name),
-                                                    filePaths = listOf(result.book.path)
+                                                    filePaths = listOf(result.book.path),
+                                                    autoOpen = false,
                                                 )
                                                 showMessage("Downloaded ${result.book.name}")
                                             } else {
@@ -3440,6 +3444,7 @@ private fun ReaderIosApp(
                                                         bridge.recordImportedFiles(
                                                             fileNames = listOf(result.book.name),
                                                             filePaths = listOf(result.book.path),
+                                                            autoOpen = false,
                                                         )
                                                         showMessage("Downloaded ${result.book.name}")
                                                     } else {

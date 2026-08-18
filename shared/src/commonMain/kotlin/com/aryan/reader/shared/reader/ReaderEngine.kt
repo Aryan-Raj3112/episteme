@@ -859,7 +859,7 @@ private fun ReaderPage.containsCollapsedOffset(offset: Int): Boolean {
     }
 }
 
-private fun List<ReaderPage>.findPageIndexForLocator(locator: ReaderLocator): Int {
+internal fun List<ReaderPage>.findPageIndexForLocator(locator: ReaderLocator): Int {
     if (locator.blockIndex != null) {
         val blockIndex = findPageIndexForBlockLocator(locator)
         if (blockIndex >= 0) return blockIndex
@@ -1187,14 +1187,14 @@ private fun String.percentDecodedOrSelf(): String {
     }.getOrDefault(this)
 }
 
-private fun Iterable<SemanticBlock>.findElementOffset(elementId: String): Int? {
+internal fun Iterable<SemanticBlock>.findElementOffset(elementId: String): Int? {
     for (block in this) {
         block.findElementOffset(elementId)?.let { return it }
     }
     return null
 }
 
-private fun SemanticBlock.findElementOffset(elementId: String): Int? {
+internal fun SemanticBlock.findElementOffset(elementId: String): Int? {
     if (this is SemanticTextBlock) {
         if (this.elementId == elementId) return startCharOffsetInSource
         spans.firstOrNull { it.elementId == elementId }?.let { span ->

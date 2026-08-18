@@ -213,7 +213,7 @@ internal fun SharedMobileEpubTopBar(
                                             ReaderTool.SEARCH -> onSearch()
                                             ReaderTool.SLIDER -> onOpenSlider()
                                             ReaderTool.TTS_CONTROLS -> onLocalTtsToggle()
-                                            ReaderTool.BRIGHTNESS -> onVisualOptions()
+                                            ReaderTool.BRIGHTNESS -> onBrightness()
                                             ReaderTool.SCREEN_ORIENTATION -> onScreenOrientation()
                                             else -> Unit
                                         }

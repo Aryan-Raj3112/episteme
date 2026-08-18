@@ -11,31 +11,39 @@ import kotlinx.serialization.decodeFromByteArray
 import kotlinx.serialization.encodeToByteArray
 import kotlinx.serialization.protobuf.ProtoBuf
 import kotlinx.serialization.protobuf.ProtoNumber
-import java.io.File
 
-private const val SharedJvmBookLoadCacheSchemaVersion = 1
-private const val SharedJvmBookLoadCacheProcessingVersion = 11
+internal const val SharedBookLoadCacheSchemaVersion = 1
+internal const val SharedBookLoadCacheProcessingVersion = 11
 
-enum class SharedJvmBookLoadSemanticMode {
+enum class SharedBookLoadSemanticMode {
     FULL,
     SKIP
 }
 
-data class SharedJvmBookLoadCacheKey(
+data class SharedBookLoadCacheKey(
     val canonicalPath: String,
     val type: FileType,
     val length: Long,
     val lastModified: Long,
-    val semanticMode: SharedJvmBookLoadSemanticMode = SharedJvmBookLoadSemanticMode.FULL,
+    val semanticMode: SharedBookLoadSemanticMode = SharedBookLoadSemanticMode.FULL,
     val htmlChapterRange: String? = null
 ) {
-    val cacheId: String = sha256Hex(
-        "$SharedJvmBookLoadCacheProcessingVersion|${semanticMode.name}|${htmlChapterRange.orEmpty()}|$canonicalPath|${type.name}|$length|$lastModified"
+    val cacheId: String = sharedSha256Hex(
+        "$SharedBookLoadCacheProcessingVersion|${semanticMode.name}|${htmlChapterRange.orEmpty()}|$canonicalPath|${type.name}|$length|$lastModified"
     ).take(32)
 }
 
-class SharedJvmBookLoadCache(
-    private val cacheRoot: File = defaultCacheRoot()
+interface SharedBookLoadCacheStorage {
+    fun read(cacheId: String): ByteArray?
+    fun write(cacheId: String, bytes: ByteArray): Boolean
+    fun cleanupOldEntries()
+    fun clear()
+}
+
+expect fun defaultSharedBookLoadCacheStorage(): SharedBookLoadCacheStorage
+
+class SharedBookLoadCache(
+    private val storage: SharedBookLoadCacheStorage = defaultSharedBookLoadCacheStorage()
 ) {
     private val proto = ProtoBuf {
         serializersModule = semanticBlockModule
@@ -44,11 +52,10 @@ class SharedJvmBookLoadCache(
         encodeDefaults = false
     }
 
-    fun load(key: SharedJvmBookLoadCacheKey): SharedEpubBook? {
-        val file = cacheFile(key)
-        if (!file.isFile) return null
+    fun load(key: SharedBookLoadCacheKey): SharedEpubBook? {
+        val bytes = storage.read(key.cacheId) ?: return null
         return runCatching {
-            val record = proto.decodeFromByteArray<CachedSharedEpubBook>(file.readBytes())
+            val record = proto.decodeFromByteArray<CachedSharedEpubBook>(bytes)
             if (!record.matches(key)) return@runCatching null
             record.toBook().takeUnless {
                 key.requiresCachedSemanticBlocks() && it.hasHtmlContentWithoutSemanticBlocks()
@@ -56,53 +63,23 @@ class SharedJvmBookLoadCache(
         }.getOrNull()
     }
 
-    fun save(key: SharedJvmBookLoadCacheKey, book: SharedEpubBook) {
+    fun save(key: SharedBookLoadCacheKey, book: SharedEpubBook) {
         if (key.requiresCachedSemanticBlocks() && book.hasHtmlContentWithoutSemanticBlocks()) return
         val record = CachedSharedEpubBook.from(key, book)
         runCatching {
-            writeBookLoadCacheAtomically(cacheFile(key), proto.encodeToByteArray(record))
-            cleanupOldEntries()
+            if (storage.write(key.cacheId, proto.encodeToByteArray(record))) {
+                storage.cleanupOldEntries()
+            }
         }
     }
 
     fun clear() {
-        cacheRoot.deleteRecursively()
-        cacheRoot.mkdirs()
-    }
-
-    private fun cacheFile(key: SharedJvmBookLoadCacheKey): File {
-        return File(cacheRoot, "${key.cacheId}.book.pb")
-    }
-
-    private fun cleanupOldEntries() {
-        val files = cacheRoot.listFiles { file -> file.isFile && file.name.endsWith(".book.pb") }
-            ?.sortedByDescending { it.lastModified() }
-            .orEmpty()
-        files.drop(80).forEach { it.delete() }
-    }
-
-    private fun CachedSharedEpubBook.matches(key: SharedJvmBookLoadCacheKey): Boolean {
-        return schemaVersion == SharedJvmBookLoadCacheSchemaVersion &&
-            processingVersion == SharedJvmBookLoadCacheProcessingVersion &&
-            canonicalPath == key.canonicalPath &&
-            type == key.type.name &&
-            length == key.length &&
-            lastModified == key.lastModified &&
-            semanticMode == key.semanticMode.name &&
-            htmlChapterRange == key.htmlChapterRange
-    }
-
-    companion object {
-        fun defaultCacheRoot(): File {
-            val overridePath = System.getProperty("reader.book.load.cache.dir")
-            if (!overridePath.isNullOrBlank()) return File(overridePath).apply { mkdirs() }
-            return File(sharedJvmEpistemeCacheRoot(), "book_load_cache").apply { mkdirs() }
-        }
+        storage.clear()
     }
 }
 
 @Serializable
-private data class CachedSharedEpubBook(
+internal data class CachedSharedEpubBook(
     @ProtoNumber(1) val schemaVersion: Int,
     @ProtoNumber(2) val processingVersion: Int,
     @ProtoNumber(3) val canonicalPath: String,
@@ -116,7 +93,7 @@ private data class CachedSharedEpubBook(
     @ProtoNumber(11) val css: Map<String, String>,
     @ProtoNumber(12) val chapters: List<CachedSharedEpubChapter>,
     @ProtoNumber(13) val tableOfContents: List<CachedSharedEpubTocEntry> = emptyList(),
-    @ProtoNumber(14) val semanticMode: String = SharedJvmBookLoadSemanticMode.FULL.name,
+    @ProtoNumber(14) val semanticMode: String = SharedBookLoadSemanticMode.FULL.name,
     @ProtoNumber(15) val htmlChapterRange: String? = null,
     @ProtoNumber(16) val pageList: List<MobileEpubPageTarget> = emptyList(),
     @ProtoNumber(17) val language: String = "en",
@@ -145,11 +122,22 @@ private data class CachedSharedEpubBook(
         )
     }
 
+    fun matches(key: SharedBookLoadCacheKey): Boolean {
+        return schemaVersion == SharedBookLoadCacheSchemaVersion &&
+            processingVersion == SharedBookLoadCacheProcessingVersion &&
+            canonicalPath == key.canonicalPath &&
+            type == key.type.name &&
+            length == key.length &&
+            lastModified == key.lastModified &&
+            semanticMode == key.semanticMode.name &&
+            htmlChapterRange == key.htmlChapterRange
+    }
+
     companion object {
-        fun from(key: SharedJvmBookLoadCacheKey, book: SharedEpubBook): CachedSharedEpubBook {
+        fun from(key: SharedBookLoadCacheKey, book: SharedEpubBook): CachedSharedEpubBook {
             return CachedSharedEpubBook(
-                schemaVersion = SharedJvmBookLoadCacheSchemaVersion,
-                processingVersion = SharedJvmBookLoadCacheProcessingVersion,
+                schemaVersion = SharedBookLoadCacheSchemaVersion,
+                processingVersion = SharedBookLoadCacheProcessingVersion,
                 canonicalPath = key.canonicalPath,
                 type = key.type.name,
                 length = key.length,
@@ -176,7 +164,7 @@ private data class CachedSharedEpubBook(
 }
 
 @Serializable
-private data class CachedSharedEpubTocEntry(
+internal data class CachedSharedEpubTocEntry(
     @ProtoNumber(1) val label: String,
     @ProtoNumber(2) val href: String,
     @ProtoNumber(3) val fragmentId: String?,
@@ -204,7 +192,7 @@ private data class CachedSharedEpubTocEntry(
 }
 
 @Serializable
-private data class CachedSharedEpubChapter(
+internal data class CachedSharedEpubChapter(
     @ProtoNumber(1) val id: String,
     @ProtoNumber(2) val title: String,
     @ProtoNumber(3) val plainText: String,
@@ -246,8 +234,8 @@ private data class CachedSharedEpubChapter(
     }
 }
 
-private fun SharedJvmBookLoadCacheKey.requiresCachedSemanticBlocks(): Boolean {
-    if (semanticMode == SharedJvmBookLoadSemanticMode.SKIP) return false
+private fun SharedBookLoadCacheKey.requiresCachedSemanticBlocks(): Boolean {
+    if (semanticMode == SharedBookLoadSemanticMode.SKIP) return false
     return type.requiresCachedSemanticBlocks()
 }
 
@@ -267,19 +255,4 @@ private fun FileType.requiresCachedSemanticBlocks(): Boolean {
 private fun SharedEpubBook.hasHtmlContentWithoutSemanticBlocks(): Boolean {
     return chapters.any { it.htmlContent.isNotBlank() } &&
         chapters.none { it.semanticBlocks.isNotEmpty() }
-}
-
-private fun writeBookLoadCacheAtomically(file: File, bytes: ByteArray) {
-    file.parentFile?.mkdirs()
-    val parent = file.parentFile ?: file.absoluteFile.parentFile ?: File(".")
-    val temp = File(parent, "${file.name}.tmp")
-    temp.writeBytes(bytes)
-    if (file.exists() && !file.delete()) {
-        temp.delete()
-        return
-    }
-    if (!temp.renameTo(file)) {
-        file.writeBytes(bytes)
-        temp.delete()
-    }
 }

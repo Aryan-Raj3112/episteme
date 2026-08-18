@@ -4,15 +4,18 @@ import androidx.compose.ui.text.ParagraphStyle
 import androidx.compose.ui.text.style.Hyphens
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextIndent
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aryan.reader.paginatedreader.BlockStyle
 import com.aryan.reader.paginatedreader.BoxBorders
 import com.aryan.reader.paginatedreader.CssStyle
+import com.aryan.reader.paginatedreader.SemanticImage
 import com.aryan.reader.paginatedreader.SemanticParagraph
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
 
 class SharedMeasuredEpubPaginatorTest {
 
@@ -207,5 +210,27 @@ class SharedMeasuredEpubPaginatorTest {
                 includeTrailingBottomMargin = false
             )
         )
+    }
+
+    @Test
+    fun `hideImages measures image blocks as zero height like the android benchmark`() {
+        val settings = ReaderSettings(readingMode = ReaderReadingMode.PAGINATED)
+        val hiddenSettings = settings.copy(hideImages = true)
+        val image = SemanticImage(
+            path = "cover.png",
+            altText = "Cover",
+            intrinsicWidth = 1200f,
+            intrinsicHeight = 800f,
+            style = CssStyle(),
+            elementId = "cover",
+            cfi = "epubcfi(/6/4)"
+        )
+        val geometry = measuredPageGeometryFor(hiddenSettings, ReaderViewportSpec(widthPx = 900, heightPx = 700))
+
+        val visibleSize = measureImageSize(image, geometry, settings, maxWidthPx = 804, density = Density(1f))
+        val hiddenSize = measureImageSize(image, geometry, hiddenSettings, maxWidthPx = 804, density = Density(1f))
+
+        assertTrue(visibleSize.second > 0)
+        assertEquals(0 to 0, hiddenSize)
     }
 }

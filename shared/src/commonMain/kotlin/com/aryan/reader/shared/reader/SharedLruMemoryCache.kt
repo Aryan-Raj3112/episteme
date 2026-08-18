@@ -1,15 +1,21 @@
 package com.aryan.reader.shared.reader
 
-internal class SharedJvmLruMemoryCache<K, V>(
+internal class SharedLruMemoryCache<K, V>(
     private val maxEntries: Int
 ) {
-    private val entries = LinkedHashMap<K, V>(maxEntries, 0.75f, true)
+    private val entries = LinkedHashMap<K, V>()
 
     operator fun get(key: K): V? {
-        return entries[key]
+        val value = entries[key] ?: return null
+        if (maxEntries > 1) {
+            entries.remove(key)
+            entries[key] = value
+        }
+        return value
     }
 
     operator fun set(key: K, value: V) {
+        entries.remove(key)
         entries[key] = value
         trimToMaxEntries()
     }

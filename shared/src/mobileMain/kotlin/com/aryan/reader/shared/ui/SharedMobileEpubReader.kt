@@ -25,6 +25,8 @@ import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -52,10 +54,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.CustomFontItem
@@ -102,6 +106,10 @@ import com.aryan.reader.shared.reader.ReaderScreenOrientationMode
 import com.aryan.reader.shared.reader.ReaderSearchOptions
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.ReaderSpreadLayout
+import com.aryan.reader.shared.reader.ReaderViewportSpec
+import com.aryan.reader.shared.reader.SharedEpubPaginationCache
+import com.aryan.reader.shared.reader.SharedMeasuredEpubPaginator
+import com.aryan.reader.shared.reader.findPageIndexForLocator
 import com.aryan.reader.shared.reader.layoutSignature
 import com.aryan.reader.shared.reader.readerImageReferences
 import kotlinx.coroutines.Dispatchers
@@ -214,6 +222,7 @@ fun SharedMobileEpubReaderScreen(
         )
     }
     var pages by remember(book.id) { mutableStateOf<List<ReaderPage>>(emptyList()) }
+    var measuredPagesApplied by remember(book.id) { mutableStateOf(false) }
     var currentLocator by remember(book.id) { mutableStateOf(book.readerPosition) }
     var currentPageIndex by remember(book.id) { mutableStateOf(book.lastPageIndex ?: 0) }
     var currentChapterIndex by remember(book.id) {
@@ -288,6 +297,27 @@ fun SharedMobileEpubReaderScreen(
     var explicitNavigationChunkHtml by remember(book.id) { mutableStateOf<String?>(null) }
     var navigationRequestId by remember(book.id) { mutableLongStateOf(0L) }
     var commandScript by remember(book.id) { mutableStateOf<String?>(null) }
+    var readerViewport by remember(book.id) { mutableStateOf(ReaderViewportSpec(0, 0)) }
+    val readerDensity = LocalDensity.current
+    val readerTextMeasurer = rememberTextMeasurer()
+    val paginationCacheWriteScope = rememberCoroutineScope()
+    val epubPaginationCache = remember(book.id) { SharedEpubPaginationCache() }
+    val measuredPaginator = remember(
+        readerTextMeasurer,
+        readerDensity,
+        settings.fontFamily,
+        settings.customFontPath,
+        epubPaginationCache,
+        paginationCacheWriteScope
+    ) {
+        SharedMeasuredEpubPaginator(
+            textMeasurer = readerTextMeasurer,
+            density = readerDensity,
+            fontFamily = settings.toSharedReaderFontFamily(),
+            pageCache = epubPaginationCache,
+            cacheWriteScope = paginationCacheWriteScope
+        )
+    }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val focusManager = LocalFocusManager.current
@@ -325,6 +355,7 @@ fun SharedMobileEpubReaderScreen(
 
     LaunchedEffect(loadedBook?.id) {
         loadedBook?.let {
+            measuredPagesApplied = false
             jumpHistory = jumpHistory.pruned(it.chapters.size)
             currentChapterIndex = currentChapterIndex.coerceIn(0, it.chapters.lastIndex.coerceAtLeast(0))
             if (selectedTocIndex < 0) {
@@ -340,6 +371,7 @@ fun SharedMobileEpubReaderScreen(
     LaunchedEffect(loadedBook, settings.layoutSignature()) {
         val epub = loadedBook ?: return@LaunchedEffect
         if (pages.isNotEmpty()) delay(180)
+        if (measuredPagesApplied) return@LaunchedEffect
         val locator = currentLocator ?: book.readerPosition
         val readerState = withContext(Dispatchers.Default) {
             ReaderEngine().createSession(
@@ -351,6 +383,28 @@ fun SharedMobileEpubReaderScreen(
         }
         pages = readerState.pages
         currentPageIndex = readerState.currentPageIndex.coerceIn(0, readerState.pages.lastIndex.coerceAtLeast(0))
+    }
+
+    LaunchedEffect(
+        loadedBook,
+        settings.layoutSignature(),
+        readerViewport,
+        measuredPaginator
+    ) {
+        val epub = loadedBook ?: return@LaunchedEffect
+        if (settings.readingMode != ReaderReadingMode.PAGINATED) return@LaunchedEffect
+        if (!readerViewport.isSpecified) return@LaunchedEffect
+        val measuredPages = withContext(Dispatchers.Default) {
+            measuredPaginator.paginate(epub, settings, readerViewport)
+        }
+        measuredPagesApplied = true
+        val anchor = currentLocator ?: book.readerPosition
+        val targetIndex = anchor
+            ?.let { measuredPages.findPageIndexForLocator(it) }
+            ?.takeIf { it >= 0 }
+            ?: currentPageIndex.coerceIn(0, measuredPages.lastIndex.coerceAtLeast(0))
+        pages = measuredPages
+        currentPageIndex = targetIndex
     }
 
     LaunchedEffect(keepScreenOn) { onKeepScreenOnChange(keepScreenOn) }
@@ -851,6 +905,9 @@ fun SharedMobileEpubReaderScreen(
             Box(
                 Modifier
                     .fillMaxSize()
+                    .onSizeChanged { size ->
+                        readerViewport = ReaderViewportSpec(size.width, size.height)
+                    }
                     .then(
                         if (!systemUiHidden) {
                             Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top))
@@ -1616,10 +1673,10 @@ fun SharedMobileEpubReaderScreen(
     if (showVisualOptionsSheet) {
         SharedMobileEpubVisualOptionsSheet(
             settings = settings,
-            readerBrightness = readerBrightness,
-            readerBrightnessSupported = readerBrightnessSupported,
-            onReaderBrightnessChange = onReaderBrightnessChange,
-            onSettingsChange = { settings = it },
+            onSettingsChange = {
+                settings = it
+                onReaderDefaultSettingsChange(it)
+            },
             onDismiss = { showVisualOptionsSheet = false }
         )
     }

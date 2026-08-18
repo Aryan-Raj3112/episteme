@@ -772,14 +772,12 @@ internal fun SharedMobileEpubChapterChangeIndicator(direction: String, progress:
 @Composable
 internal fun SharedMobileEpubVisualOptionsSheet(
     settings: ReaderSettings,
-    readerBrightness: Float?,
-    readerBrightnessSupported: Boolean,
-    onReaderBrightnessChange: (Float?) -> Unit,
     onSettingsChange: (ReaderSettings) -> Unit,
     onDismiss: () -> Unit
 ) {
-    ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp).padding(bottom = 32.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+        Column(Modifier.fillMaxWidth().fillMaxHeight(0.72f).verticalScroll(rememberScrollState()).padding(horizontal = 24.dp).padding(bottom = 32.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text("Visual Options", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                 IconButton(onClick = onDismiss) {
@@ -826,8 +824,8 @@ internal fun SharedMobileEpubVisualOptionsSheet(
                         }
                         Spacer(Modifier.width(16.dp))
                         Switch(
-                            checked = !settings.seamlessChapterNavigation,
-                            onCheckedChange = { seamless -> onSettingsChange(settings.copy(seamlessChapterNavigation = !seamless)) }
+                            checked = settings.seamlessChapterNavigation,
+                            onCheckedChange = { seamless -> onSettingsChange(settings.copy(seamlessChapterNavigation = seamless)) }
                         )
                     }
                     if (settings.seamlessChapterNavigation) {

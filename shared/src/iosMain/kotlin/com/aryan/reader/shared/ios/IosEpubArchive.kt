@@ -51,11 +51,14 @@ import com.aryan.reader.shared.libarchive.archive_write_open_filename
 import com.aryan.reader.shared.libarchive.archive_write_set_format_zip
 import com.aryan.reader.shared.libarchive.archive_write_set_options
 import cnames.structs.archive_entry
+import com.aryan.reader.shared.reader.SharedBookLoadCache
+import com.aryan.reader.shared.reader.SharedBookLoadCacheKey
 import com.aryan.reader.shared.reader.SharedEpubArchive
 import com.aryan.reader.shared.reader.SharedEpubBook
 import com.aryan.reader.shared.reader.SharedEpubChapter
 import com.aryan.reader.shared.reader.SharedEpubPackageLoader
 import com.aryan.reader.shared.reader.SharedEpubTocEntry
+import com.aryan.reader.shared.reader.SharedLruMemoryCache
 import com.aryan.reader.shared.reader.SharedMobiTocPoint
 import com.aryan.reader.shared.reader.rewriteMobiResourceReferences
 import com.aryan.reader.shared.reader.splitMobiHtml
@@ -77,10 +80,17 @@ import kotlinx.cinterop.usePinned
 import kotlinx.cinterop.value
 import kotlinx.cinterop.UIntVar
 import platform.Foundation.NSApplicationSupportDirectory
+import platform.Foundation.NSDate
 import platform.Foundation.NSDocumentDirectory
 import platform.Foundation.NSFileManager
+import platform.Foundation.NSFileModificationDate
+import platform.Foundation.NSFileSize
+import platform.Foundation.NSLock
+import platform.Foundation.NSNumber
 import platform.Foundation.NSURL
 import platform.Foundation.NSUserDomainMask
+import platform.Foundation.timeIntervalSince1970
+import kotlin.math.roundToLong
 import com.aryan.reader.shared.libarchive.AE_IFREG
 import platform.posix.memcpy
 import platform.posix.fclose
@@ -340,36 +350,92 @@ private fun String.normalizeIosZipPathSegments(): String {
 internal fun loadIosEpubBook(book: BookItem): SharedEpubBook {
     val startedAt = currentTimestamp()
     iosEpubLoadLog { "Load started id=${book.id} type=${book.type} name=${book.displayName} path=${book.path ?: "<null>"}" }
+    val cacheKey = book.iosBookLoadCacheKey()
+    if (cacheKey != null) {
+        iosBookLoadMemoryGet(cacheKey.cacheId)?.let { cached ->
+            iosEpubLoadLog { "Load memory cache hit cacheId=${cacheKey.cacheId} elapsed=${currentTimestamp() - startedAt}ms" }
+            return cached
+        }
+        iosBookLoadDiskCache.load(cacheKey)?.let { cached ->
+            iosBookLoadMemoryPut(cacheKey.cacheId, cached)
+            iosEpubLoadLog { "Load disk cache hit cacheId=${cacheKey.cacheId} elapsed=${currentTimestamp() - startedAt}ms" }
+            return cached
+        }
+    }
     if (book.type == FileType.CBZ) {
-        return loadIosCbzBook(book)
+        return loadIosCbzBook(book).also { book.iosBookLoadCacheSave(cacheKey, it) }
     }
     if (book.type == FileType.CBT) {
-        return loadIosCbtBook(book)
+        return loadIosCbtBook(book).also { book.iosBookLoadCacheSave(cacheKey, it) }
     }
     if (book.type == FileType.CBR || book.type == FileType.CB7) {
-        return loadIosLibarchiveComicBook(book)
+        return loadIosLibarchiveComicBook(book).also { book.iosBookLoadCacheSave(cacheKey, it) }
     }
     if (book.type == FileType.MOBI) {
         iosMobiLog { "Routing book to MOBI loader id=${book.id} file=${book.displayName}" }
-        return loadIosMobiBook(book)
+        return loadIosMobiBook(book).also { book.iosBookLoadCacheSave(cacheKey, it) }
     }
     if (book.type in IOS_ZIP_DOCUMENT_READER_TYPES) {
-        return loadIosZipDocumentBook(book)
+        return loadIosZipDocumentBook(book).also { book.iosBookLoadCacheSave(cacheKey, it) }
     }
     if (book.type in IOS_SINGLE_DOCUMENT_READER_TYPES) {
-        return loadIosSingleDocumentBook(book)
+        return loadIosSingleDocumentBook(book).also { book.iosBookLoadCacheSave(cacheKey, it) }
     }
     val path = book.path.resolveIosEpubSourcePath()
         ?: error("EPUB path is unavailable")
     val archive = IosZipEpubArchive(path)
     iosEpubLoadLog { "Archive opened path=$path entries=${archive.entryPaths.size} elapsed=${currentTimestamp() - startedAt}ms" }
-    val book = SharedEpubPackageLoader.load(
+    val loaded = SharedEpubPackageLoader.load(
         archive = archive,
         sourceId = book.id,
         fileName = book.displayName.ifBlank { path.substringAfterLast('/') }
     )
-    iosEpubLoadLog { "Load finished chapters=${book.chapters.size} elapsed=${currentTimestamp() - startedAt}ms" }
-    return book
+    iosEpubLoadLog { "Load finished chapters=${loaded.chapters.size} elapsed=${currentTimestamp() - startedAt}ms" }
+    book.iosBookLoadCacheSave(cacheKey, loaded)
+    return loaded
+}
+
+private val iosBookLoadMemoryCache = SharedLruMemoryCache<String, SharedEpubBook>(maxEntries = 6)
+private val iosBookLoadDiskCache = SharedBookLoadCache()
+private val iosBookLoadLock = NSLock()
+
+private fun BookItem.iosBookLoadCacheKey(): SharedBookLoadCacheKey? {
+    val path = path.resolveIosEpubSourcePath() ?: return null
+    val attributes = NSFileManager.defaultManager.attributesOfItemAtPath(path, error = null) ?: return null
+    val length = (attributes[NSFileSize] as? NSNumber)?.longLongValue ?: 0L
+    if (length <= 0L) return null
+    val lastModified = ((attributes[NSFileModificationDate] as? NSDate)?.timeIntervalSince1970 ?: 0.0)
+        .let { (it * 1000.0).roundToLong() }
+    return SharedBookLoadCacheKey(
+        canonicalPath = path,
+        type = type,
+        length = length,
+        lastModified = lastModified
+    )
+}
+
+private fun BookItem.iosBookLoadCacheSave(key: SharedBookLoadCacheKey?, book: SharedEpubBook) {
+    if (key == null) return
+    iosBookLoadDiskCache.save(key, book)
+    iosBookLoadMemoryPut(key.cacheId, book)
+}
+
+private fun iosBookLoadMemoryGet(cacheId: String): SharedEpubBook? {
+    iosBookLoadLock.lock()
+    try {
+        return iosBookLoadMemoryCache[cacheId]
+    } finally {
+        iosBookLoadLock.unlock()
+    }
+}
+
+private fun iosBookLoadMemoryPut(cacheId: String, book: SharedEpubBook) {
+    iosBookLoadLock.lock()
+    try {
+        iosBookLoadMemoryCache[cacheId] = book
+    } finally {
+        iosBookLoadLock.unlock()
+    }
 }
 
 private val IOS_ZIP_DOCUMENT_READER_TYPES = setOf(

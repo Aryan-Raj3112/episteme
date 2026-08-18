@@ -50,12 +50,13 @@ class SharedMeasuredEpubPaginator(
     private val fontFamily: FontFamily = FontFamily.Default,
     private val pageCache: SharedEpubPaginationCache? = null,
     private val cacheWriteScope: CoroutineScope? = null
-) {
-    suspend fun paginate(
+) : SharedReaderPaginator {
+
+    override suspend fun paginate(
         book: SharedEpubBook,
         settings: ReaderSettings,
         viewport: ReaderViewportSpec,
-        readCache: Boolean = true
+        readCache: Boolean
     ): List<ReaderPage> {
         currentCoroutineContext().ensureActive()
         if (readCache) {
@@ -498,7 +499,7 @@ class SharedMeasuredEpubPaginator(
         settings: ReaderSettings
     ): Int {
         val contentWidth = block.measuredTextContentWidthPx(geometry)
-        val imageSize = measureImageSize(block.floatedImage, geometry, settings, maxWidthPx = contentWidth)
+        val imageSize = measureImageSize(block.floatedImage, geometry, settings, maxWidthPx = contentWidth, density = density)
         if (imageSize.first <= 0 || imageSize.second <= 0) {
             return measureBlockStack(
                 blocks = block.paragraphsToWrap,
@@ -619,57 +620,8 @@ class SharedMeasuredEpubPaginator(
     }
 
     private fun measureImage(block: SemanticImage, geometry: MeasuredPageGeometry, settings: ReaderSettings): Int {
-        return measureImageSize(block, geometry, settings, maxWidthPx = geometry.pageWidthPx)
+        return measureImageSize(block, geometry, settings, maxWidthPx = geometry.pageWidthPx, density = density)
             .second
-    }
-
-    private fun measureImageSize(
-        block: SemanticImage,
-        geometry: MeasuredPageGeometry,
-        settings: ReaderSettings,
-        maxWidthPx: Int
-    ): Pair<Int, Int> {
-        val width = block.intrinsicWidth?.takeIf { it > 0f }
-        val height = block.intrinsicHeight?.takeIf { it > 0f }
-        val imageScale = settings.imageScale.coerceIn(0.5f, 2.0f)
-        when {
-            width != null && height != null -> {
-                val style = block.style.blockStyle
-                val contentMaxWidth = maxWidthPx.toFloat()
-                val baseWidth = if (style.width.isSpecified && style.width > 0.dp) {
-                    style.width.toPxInt().toFloat()
-                } else {
-                    contentMaxWidth
-                }
-                var scaledWidth = baseWidth * imageScale
-                if (style.maxWidth.isSpecified && style.maxWidth > 0.dp) {
-                    scaledWidth = scaledWidth.coerceAtMost(style.maxWidth.toPxInt() * imageScale)
-                }
-                scaledWidth = scaledWidth.coerceAtMost(contentMaxWidth)
-                val measuredWidth = scaledWidth.roundToInt().coerceAtLeast(1)
-                val measuredHeight = (scaledWidth * (height / width)).roundToInt()
-                return measuredWidth to measuredHeight.coerceIn(
-                    24,
-                    (geometry.pageHeightPx * 0.86f).roundToInt().coerceAtLeast(24)
-                )
-            }
-        }
-        val style = block.style.blockStyle
-        val measuredWidth = when {
-            style.width.isSpecified && style.width > 0.dp -> style.width.toPxInt()
-            style.maxWidth.isSpecified && style.maxWidth > 0.dp -> minOf(maxWidthPx, style.maxWidth.toPxInt())
-            else -> maxWidthPx
-        }.coerceAtLeast(1)
-        val measuredHeight = if (style.height.isSpecified && style.height > 0.dp) {
-            style.height.toPxInt()
-        } else {
-            with(density) { (settings.fontSize * 8f).sp.toPx().roundToInt() }
-        }
-        val coercedHeight = measuredHeight.coerceIn(
-            24,
-            (geometry.pageHeightPx * 0.86f).roundToInt().coerceAtLeast(24)
-        )
-        return measuredWidth to coercedHeight
     }
 
     private suspend fun splitBlock(
@@ -988,6 +940,57 @@ internal fun measuredPageGeometryFor(
     densityScale: Float = 1f
 ): MeasuredPageGeometry {
     return MeasuredPageGeometry.from(settings, viewport, densityScale)
+}
+
+internal fun measureImageSize(
+    block: SemanticImage,
+    geometry: MeasuredPageGeometry,
+    settings: ReaderSettings,
+    maxWidthPx: Int,
+    density: Density
+): Pair<Int, Int> {
+    if (settings.hideImages) return 0 to 0
+    val width = block.intrinsicWidth?.takeIf { it > 0f }
+    val height = block.intrinsicHeight?.takeIf { it > 0f }
+    val imageScale = settings.imageScale.coerceIn(0.5f, 2.0f)
+    when {
+        width != null && height != null -> {
+            val style = block.style.blockStyle
+            val contentMaxWidth = maxWidthPx.toFloat()
+            val baseWidth = if (style.width.isSpecified && style.width > 0.dp) {
+                with(density) { style.width.toPx().roundToInt() }.toFloat()
+            } else {
+                contentMaxWidth
+            }
+            var scaledWidth = baseWidth * imageScale
+            if (style.maxWidth.isSpecified && style.maxWidth > 0.dp) {
+                scaledWidth = scaledWidth.coerceAtMost(with(density) { style.maxWidth.toPx().roundToInt() } * imageScale)
+            }
+            scaledWidth = scaledWidth.coerceAtMost(contentMaxWidth)
+            val measuredWidth = scaledWidth.roundToInt().coerceAtLeast(1)
+            val measuredHeight = (scaledWidth * (height / width)).roundToInt()
+            return measuredWidth to measuredHeight.coerceIn(
+                24,
+                (geometry.pageHeightPx * 0.86f).roundToInt().coerceAtLeast(24)
+            )
+        }
+    }
+    val style = block.style.blockStyle
+    val measuredWidth = when {
+        style.width.isSpecified && style.width > 0.dp -> with(density) { style.width.toPx().roundToInt() }
+        style.maxWidth.isSpecified && style.maxWidth > 0.dp -> minOf(maxWidthPx, with(density) { style.maxWidth.toPx().roundToInt() })
+        else -> maxWidthPx
+    }.coerceAtLeast(1)
+    val measuredHeight = if (style.height.isSpecified && style.height > 0.dp) {
+        with(density) { style.height.toPx().roundToInt() }
+    } else {
+        with(density) { (settings.fontSize * 8f).sp.toPx().roundToInt() }
+    }
+    val coercedHeight = measuredHeight.coerceIn(
+        24,
+        (geometry.pageHeightPx * 0.86f).roundToInt().coerceAtLeast(24)
+    )
+    return measuredWidth to coercedHeight
 }
 
 private const val MeasuredSpreadGutterPx = 28
