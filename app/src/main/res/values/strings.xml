@@ -1167,6 +1167,17 @@
     <string name="loading_page">Loading page…</string>
     <!-- PDF = file format name — do not translate. "Viewer" = the screen/component name. -->
     <string name="pdf_viewer">PDF Viewer</string>
+    <string name="pdf_split_reader_open">Open in split reader</string>
+    <string name="pdf_split_reader_open_desc">Open another PDF beside this document</string>
+    <string name="pdf_split_reader_title">Split Reader</string>
+    <string name="pdf_split_reader_vertical">Vertical split</string>
+    <string name="pdf_split_reader_horizontal">Horizontal split</string>
+    <string name="pdf_split_reader_swap">Swap documents</string>
+    <string name="pdf_split_reader_close">Close split reader</string>
+    <string name="pdf_split_reader_close_pane">Close document pane</string>
+    <string name="pdf_split_reader_add_document">Add PDF to split reader</string>
+    <string name="pdf_split_reader_choose_document">Choose a PDF to open beside this document</string>
+    <string name="pdf_split_reader_no_other_documents">No other PDFs are available</string>
     <!-- "Pen Playground" is the name of a developer/debug canvas for testing the annotation pen tool. -->
     <string name="pen_playground">Pen Playground</string>
     <!-- SVG = Scalable Vector Graphics (file format name — do not translate). -->

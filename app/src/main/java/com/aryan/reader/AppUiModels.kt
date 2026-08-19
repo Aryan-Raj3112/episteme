@@ -10,6 +10,7 @@ import com.aryan.reader.shared.LibraryAction as SharedLibraryAction
 import com.aryan.reader.shared.reconcileAvailableBooks
 import com.aryan.reader.shared.reduce
 import com.aryan.reader.shared.toggleSelection
+import com.aryan.reader.shared.PdfSplitWorkspaceState
 import java.util.Date
 
 typealias BannerMessage = com.aryan.reader.shared.BannerMessage
@@ -38,6 +39,8 @@ data class ReaderScreenState(
     val selectedEpubBook: EpubBook? = null,
     val selectedEpubUri: Uri? = null,
     val readerSession: AppReaderSessionState = AppReaderSessionState(),
+    /** The Android PDF split workspace uses a portable shared model for future iOS adoption. */
+    val pdfSplitWorkspace: PdfSplitWorkspaceState = PdfSplitWorkspaceState(),
     val tabState: AppTabState = AppTabState(),
     val shelfState: AppShelfState = AppShelfState(),
     val pinState: AppPinState = AppPinState(),

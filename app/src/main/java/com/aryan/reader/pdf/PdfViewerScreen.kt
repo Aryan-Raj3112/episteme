@@ -302,6 +302,7 @@ import com.aryan.reader.shouldRenderReaderSlider
 import com.aryan.reader.summarizationUrl
 import com.aryan.reader.tts.ReaderTtsOverlaySize
 import com.aryan.reader.tts.SpeakerSamplePlayer
+import com.aryan.reader.tts.TtsController
 import com.aryan.reader.tts.TtsPlaybackManager
 import com.aryan.reader.tts.loadReaderTtsOverlaySize
 import com.aryan.reader.tts.readerTtsOverlayAlignmentBias
@@ -352,8 +353,13 @@ fun PdfViewerScreen(
     onSavePosition: suspend (uri: Uri, page: Int, totalPages: Int) -> Unit,
     onBookmarksChanged: (bookmarksJson: String) -> Unit,
     onNavigateToPro: () -> Unit,
-    viewModel: MainViewModel
+    viewModel: MainViewModel,
+    pane: PdfViewerPane? = null,
+    isPaneFocused: Boolean = true,
+    onOpenSplit: (() -> Unit)? = null,
+    ttsControllerOverride: TtsController? = null,
 ) {
+    val isSplitPane = pane != null
     val context = LocalContext.current
     LaunchedEffect(Unit) {
         PdfFontCache.init(context.assets)
@@ -407,7 +413,9 @@ fun PdfViewerScreen(
     var showPasswordDialog by remember { mutableStateOf(false) }
     var isPasswordError by remember { mutableStateOf(false) }
     LocalView.current
-    ReaderScreenOrientationEffect(screenOrientationMode)
+    if (!isSplitPane || isPaneFocused) {
+        ReaderScreenOrientationEffect(screenOrientationMode)
+    }
 
     var ocrLanguage by remember { mutableStateOf(loadOcrLanguage(context)) }
     var hasSelectedOcrLanguage by remember { mutableStateOf(hasUserSelectedOcrLanguage(context)) }
@@ -472,8 +480,14 @@ fun PdfViewerScreen(
     var backgroundIndexingProgress by remember { mutableFloatStateOf(0f) }
 
     val uiState by viewModel.uiState.collectAsState()
-    val effectivePdfUri = uiState.selectedPdfUri ?: pdfUri
-    val effectiveFileType = uiState.selectedFileType ?: FileType.PDF
+    val paneBookId = pane?.bookId
+    val paneInitialPage = pane?.initialPage
+    val paneInitialBookmarksJson = pane?.initialBookmarksJson
+    val selectedBookIdForPane = paneBookId ?: uiState.selectedBookId
+    val effectivePdfUri = pane?.pdfUri ?: uiState.selectedPdfUri ?: pdfUri
+    val effectiveFileType = if (pane != null) FileType.PDF else uiState.selectedFileType ?: FileType.PDF
+    val effectiveInitialPage = paneInitialPage ?: initialPage
+    val effectiveInitialBookmarksJson = paneInitialBookmarksJson ?: initialBookmarksJson
     var documentPassword by rememberSaveable(effectivePdfUri.toString()) { mutableStateOf<String?>(null) }
     var isPrintBlockedForPasswordProtectedPdf by rememberSaveable(effectivePdfUri.toString()) { mutableStateOf(false) }
     val isComicFile = effectiveFileType in COMIC_ARCHIVE_FILE_TYPES
@@ -482,14 +496,14 @@ fun PdfViewerScreen(
     var showFileInfoDialog by remember { mutableStateOf(false) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
 
-    val isTabsEnabled = uiState.isTabsEnabled
-    val openTabs = uiState.openTabs
-    val activeTabBookId = uiState.activeTabBookId
+    val isTabsEnabled = !isSplitPane && uiState.isTabsEnabled
+    val openTabs = if (isSplitPane) emptyList() else uiState.openTabs
+    val activeTabBookId = if (isSplitPane) null else uiState.activeTabBookId
     val canShowPdfTabs = isTabsEnabled && openTabs.isNotEmpty() && effectiveFileType == FileType.PDF
     val isPdfTabStripVisible = canShowPdfTabs && showTopTabStrip
-    val originalFileName by remember(uiState.allRecentFiles, uiState.rawLibraryFiles, uiState.recentFiles, uiState.selectedBookId, effectivePdfUri) {
+    val originalFileName by remember(uiState.allRecentFiles, uiState.rawLibraryFiles, uiState.recentFiles, selectedBookIdForPane, effectivePdfUri) {
         derivedStateOf {
-            (uiState.selectedBookId?.let { selectedId ->
+            (selectedBookIdForPane?.let { selectedId ->
                 uiState.allRecentFiles.find { it.bookId == selectedId }
                     ?: uiState.rawLibraryFiles.find { it.bookId == selectedId }
                     ?: uiState.recentFiles.find { it.bookId == selectedId }
@@ -500,9 +514,9 @@ fun PdfViewerScreen(
         }
     }
     var documentMetadataTitle by remember { mutableStateOf<String?>(null) }
-    val activeLibraryItem by remember(uiState.allRecentFiles, uiState.rawLibraryFiles, uiState.recentFiles, uiState.selectedBookId, effectivePdfUri) {
+    val activeLibraryItem by remember(uiState.allRecentFiles, uiState.rawLibraryFiles, uiState.recentFiles, selectedBookIdForPane, effectivePdfUri) {
         derivedStateOf {
-            uiState.selectedBookId?.let { selectedId ->
+            selectedBookIdForPane?.let { selectedId ->
                 uiState.allRecentFiles.find { it.bookId == selectedId }
                     ?: uiState.rawLibraryFiles.find { it.bookId == selectedId }
                     ?: uiState.recentFiles.find { it.bookId == selectedId }
@@ -525,7 +539,7 @@ fun PdfViewerScreen(
                 ?: readerDisplayTitle
         }
     }
-    var currentBookId by remember { mutableStateOf<String?>(null) }
+    var currentBookId by remember(paneBookId, effectivePdfUri) { mutableStateOf(paneBookId) }
     val bookId = currentBookId ?: effectivePdfUri.toString().hashCode().toString()
     val activeDocumentRenderKey = currentBookId ?: effectivePdfUri.toString()
     val view = LocalView.current
@@ -539,11 +553,11 @@ fun PdfViewerScreen(
         effectiveReaderBookTitle,
         originalFileName,
         currentBookId,
-        uiState.selectedBookId,
+        selectedBookIdForPane,
         effectivePdfUri
     ) {
         Timber.tag(PDF_RENAME_TRACE_TAG).i(
-            "pdfScreen.titleResolved selectedBookId=${uiState.selectedBookId} currentBookId=$currentBookId " +
+            "pdfScreen.titleResolved selectedBookId=$selectedBookIdForPane currentBookId=$currentBookId " +
                 "uri=$effectivePdfUri activeItemId=${activeLibraryItem?.bookId} " +
                 "displayName=${activeLibraryItem?.displayName} title=${activeLibraryItem?.title} " +
                 "customName=${activeLibraryItem?.customName} documentMetadataTitle=$documentMetadataTitle " +
@@ -553,9 +567,9 @@ fun PdfViewerScreen(
     }
 
     val reflowBookId = remember(bookId) { "${bookId}_reflow" }
-    val hasReflowFile by remember(uiState.allRecentFiles, reflowBookId) {
+    val hasReflowFile by remember(uiState.allRecentFiles, reflowBookId, isSplitPane) {
         derivedStateOf {
-            uiState.allRecentFiles.any { it.bookId == reflowBookId && !it.isDeleted }
+            !isSplitPane && uiState.allRecentFiles.any { it.bookId == reflowBookId && !it.isDeleted }
         }
     }
 
@@ -585,8 +599,9 @@ fun PdfViewerScreen(
     var isStylusOnlyMode by remember { mutableStateOf(loadStylusOnlyMode(context)) }
     var showTtsControlsSheet by remember { mutableStateOf(false) }
     var isKeepScreenOn by remember { mutableStateOf(loadKeepScreenOn(context)) }
-    val ttsController = rememberTtsController()
+    val ttsController = ttsControllerOverride ?: rememberTtsController()
     val ttsState by ttsController.ttsState.collectAsState()
+    val isTtsPlaybackForThisPane = !isSplitPane || ttsState.bookId == bookId
     ttsState.currentText
     var currentTtsMode by remember {
         mutableStateOf(
@@ -603,8 +618,8 @@ fun PdfViewerScreen(
         saveTtsReplacementPreferences(context, next)
     }
 
-    DisposableEffect(isKeepScreenOn) {
-        view.keepScreenOn = isKeepScreenOn
+    DisposableEffect(isKeepScreenOn, isSplitPane, isPaneFocused) {
+        view.keepScreenOn = isKeepScreenOn && (!isSplitPane || isPaneFocused)
         onDispose {
             view.keepScreenOn = false
         }
@@ -646,7 +661,7 @@ fun PdfViewerScreen(
     val onOcrStateChange: (Boolean) -> Unit = {}
 
     var showZoomIndicator by remember { mutableStateOf(false) }
-    var bookmarks by remember(pdfUri) { mutableStateOf(loadPdfBookmarksFromJson(initialBookmarksJson)) }
+    var bookmarks by remember(effectivePdfUri) { mutableStateOf(loadPdfBookmarksFromJson(effectiveInitialBookmarksJson)) }
 
     var showPenPlayground by rememberSaveable { mutableStateOf(false) }
     var isEditMode by rememberSaveable { mutableStateOf(false) }
@@ -810,22 +825,25 @@ fun PdfViewerScreen(
     val showStandardBars = showBars && !isEditMode
     var readerBrightnessSettings by remember { mutableStateOf(loadReaderBrightnessSettings(context)) }
     var showBrightnessSheet by remember { mutableStateOf(false) }
-    ReaderBrightnessEffect(window, readerBrightnessSettings)
+    if (!isSplitPane || isPaneFocused) {
+        ReaderBrightnessEffect(window, readerBrightnessSettings)
+    }
 
     val updateReaderBrightness: (com.aryan.reader.ReaderBrightnessSettings) -> Unit = { settings ->
         readerBrightnessSettings = settings
         saveReaderBrightnessSettings(context, settings)
     }
 
-    DisposableEffect(window, view) {
+    DisposableEffect(window, view, isSplitPane, isPaneFocused) {
         onDispose {
-            window?.let {
+            if (!isSplitPane || isPaneFocused) window?.let {
                 WindowCompat.getInsetsController(it, view).show(WindowInsetsCompat.Type.systemBars())
             }
         }
     }
 
-    LaunchedEffect(systemUiMode, showStandardBars) {
+    LaunchedEffect(systemUiMode, showStandardBars, isSplitPane, isPaneFocused) {
+        if (isSplitPane && !isPaneFocused) return@LaunchedEffect
         if (window != null) {
             val insetsController = WindowCompat.getInsetsController(window, view)
             val visibility = mobilePdfSystemBarsVisibility(systemUiMode, showStandardBars)
@@ -943,7 +961,8 @@ fun PdfViewerScreen(
         }
     }
 
-    LaunchedEffect(ttsState.errorMessage) {
+    LaunchedEffect(ttsState.errorMessage, isTtsPlaybackForThisPane, isPaneFocused) {
+        if (isSplitPane && (!isPaneFocused || !isTtsPlaybackForThisPane)) return@LaunchedEffect
         ttsState.errorMessage?.let { message ->
             if (message == "INSUFFICIENT_CREDITS") {
                 showInsufficientCreditsDialog = true
@@ -3343,13 +3362,18 @@ fun PdfViewerScreen(
         onDispose {
             Timber.d("Disposing sample MediaPlayer.")
             speakerPlayer.release()
-            PdfBitmapPool.clear()
-            PdfThumbnailCache.clear()
+            if (!isSplitPane) {
+                PdfBitmapPool.clear()
+                PdfThumbnailCache.clear()
+            }
         }
     }
 
-    LaunchedEffect(ttsState.sessionFinished) {
-        if (ttsState.sessionFinished && ttsState.playbackSource == "READER") {
+    LaunchedEffect(ttsState.sessionFinished, isTtsPlaybackForThisPane, isPaneFocused) {
+        if (
+            isSplitPane && (!isPaneFocused || !isTtsPlaybackForThisPane)
+        ) return@LaunchedEffect
+        if (ttsState.sessionFinished && ttsState.playbackSource == "READER" && isTtsPlaybackForThisPane) {
             val lastPlayedPage = ttsPageData?.pageIndex ?: (currentPage - 1)
             val nextPage = lastPlayedPage + 1
             if (nextPage < totalPages) {
@@ -3391,7 +3415,11 @@ fun PdfViewerScreen(
         }
     }
 
-    LaunchedEffect(ttsState.currentText, ttsPageData, ttsState.startOffsetInSource) {
+    LaunchedEffect(ttsState.currentText, ttsPageData, ttsState.startOffsetInSource, isTtsPlaybackForThisPane) {
+        if (!isTtsPlaybackForThisPane) {
+            ttsHighlightData = null
+            return@LaunchedEffect
+        }
         val currentText = ttsState.currentText
         val currentTtsData = ttsPageData
         val chunkIndex = ttsState.startOffsetInSource
@@ -3448,20 +3476,20 @@ fun PdfViewerScreen(
     LaunchedEffect(effectivePdfUri, pdfiumCore, documentPassword) {
         Timber.tag("PdfTabSync").i("UI: LaunchedEffect triggered by URI change: $effectivePdfUri")
         Timber.tag(PDF_RENAME_TRACE_TAG).i(
-            "pdfScreen.openEffect.start uri=$effectivePdfUri selectedBookId=${uiState.selectedBookId} " +
-                "activeTabBookId=${uiState.activeTabBookId} currentBookId=$currentBookId " +
+            "pdfScreen.openEffect.start uri=$effectivePdfUri selectedBookId=$selectedBookIdForPane " +
+                "activeTabBookId=$activeTabBookId currentBookId=$currentBookId " +
                 "activeItemId=${activeLibraryItem?.bookId} customName=${activeLibraryItem?.customName} " +
                 "displayName=${activeLibraryItem?.displayName} title=${activeLibraryItem?.title}"
         )
         Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
             "ui.open.start uri=$effectivePdfUri scheme=${effectivePdfUri.scheme} " +
-                "selectedBookId=${uiState.selectedBookId} previousBookId=$currentBookId " +
+                "selectedBookId=$selectedBookIdForPane previousBookId=$currentBookId " +
                 "documentPasswordSet=${documentPassword != null}"
         )
 
-        Timber.tag("PdfTabSync").d("UI: Loading State -> activeTabBookId: ${uiState.activeTabBookId}, isLoading: $isLoadingDocument")
+        Timber.tag("PdfTabSync").d("UI: Loading State -> activeTabBookId: $activeTabBookId, isLoading: $isLoadingDocument")
 
-        bookmarks = loadPdfBookmarksFromJson(uiState.initialBookmarksJson ?: initialBookmarksJson)
+        bookmarks = loadPdfBookmarksFromJson(effectiveInitialBookmarksJson)
 
         isLoadingDocument = true
         isDocumentReady = false
@@ -3490,9 +3518,9 @@ fun PdfViewerScreen(
         flatTableOfContents = emptyList()
 
         val fastId = getFastFileId(context, effectivePdfUri)
-        val selectedId = uiState.selectedBookId
+        val selectedId = selectedBookIdForPane
         Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
-            "ui.open.ids uri=$effectivePdfUri fastId=$fastId selectedId=$selectedId activeTabBookId=${uiState.activeTabBookId}"
+            "ui.open.ids uri=$effectivePdfUri fastId=$fastId selectedId=$selectedId activeTabBookId=$activeTabBookId"
         )
         val shouldPreserveCurrentTtsSession =
             uiState.isOpeningFromTtsNotification ||
@@ -3502,7 +3530,7 @@ fun PdfViewerScreen(
                         ttsState.bookId == selectedId
                     )
 
-        if (!shouldPreserveCurrentTtsSession) {
+        if (!isSplitPane && !shouldPreserveCurrentTtsSession) {
             ttsController.stop()
         }
 
@@ -3548,13 +3576,13 @@ fun PdfViewerScreen(
             isPrintBlockedForPasswordProtectedPdf = cachedItem.isPasswordProtectedPdf
 
             val mapPage = tabStateMap[currentBookId!!]
-            val uiPage = uiState.initialPageInBook
-            val restorePage = if (uiState.initialPageInBookIsExplicit) {
-                uiPage ?: mapPage ?: initialPage
+            val uiPage = if (isSplitPane) paneInitialPage else uiState.initialPageInBook
+            val restorePage = if (!isSplitPane && uiState.initialPageInBookIsExplicit) {
+                uiPage ?: mapPage ?: effectiveInitialPage
             } else {
-                mapPage ?: uiPage ?: initialPage
+                mapPage ?: uiPage ?: effectiveInitialPage
             }
-            Timber.tag("PdfTabSync").d("UI: Restoring position | tabStateMap=$mapPage, uiState=$uiPage, initialPage=$initialPage")
+            Timber.tag("PdfTabSync").d("UI: Restoring position | tabStateMap=$mapPage, uiState=$uiPage, initialPage=$effectiveInitialPage")
 
             pendingRestorePage = restorePage
             initialScrollDone = false
@@ -3569,13 +3597,13 @@ fun PdfViewerScreen(
         Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i("ui.open.cacheMiss bookId=$activeBookIdForLoad")
 
         val mapPageInit = tabStateMap[currentBookId!!]
-        val uiPageInit = uiState.initialPageInBook
-        val restorePageInit = if (uiState.initialPageInBookIsExplicit) {
-            uiPageInit ?: mapPageInit ?: initialPage
+        val uiPageInit = if (isSplitPane) paneInitialPage else uiState.initialPageInBook
+        val restorePageInit = if (!isSplitPane && uiState.initialPageInBookIsExplicit) {
+            uiPageInit ?: mapPageInit ?: effectiveInitialPage
         } else {
-            mapPageInit ?: uiPageInit ?: initialPage
+            mapPageInit ?: uiPageInit ?: effectiveInitialPage
         }
-        Timber.tag("PdfTabSync").d("UI: Initial position | tabStateMap=$mapPageInit, uiState=$uiPageInit, initialPage=$initialPage")
+        Timber.tag("PdfTabSync").d("UI: Initial position | tabStateMap=$mapPageInit, uiState=$uiPageInit, initialPage=$effectiveInitialPage")
         pendingRestorePage = restorePageInit
         initialScrollDone = false
 
@@ -3587,7 +3615,7 @@ fun PdfViewerScreen(
             withContext(Dispatchers.IO) {
                 Timber.tag("PdfTabSync").v("UI: Opening document for $effectivePdfUri")
 
-                val selectedDocumentType = uiState.selectedFileType ?: FileType.PDF
+                val selectedDocumentType = effectiveFileType
                 val doc = DocumentFactory.loadDocument(context, effectivePdfUri, selectedDocumentType, documentPassword, pdfiumCore)
                 val loadedPasswordProtectedPdf = selectedDocumentType == FileType.PDF &&
                     (documentPassword != null || isPdfLikelyEncryptedForPrint(context, effectivePdfUri))
@@ -3751,20 +3779,31 @@ fun PdfViewerScreen(
         }
     }
 
-    LaunchedEffect(pagerState.isScrollInProgress) {
+    LaunchedEffect(pagerState.isScrollInProgress, isTtsPlaybackForThisPane, isPaneFocused) {
         if (pagerState.isScrollInProgress) {
-            if (displayMode == DisplayMode.PAGINATION && !isAutoPagingForTts && (ttsState.isPlaying || ttsState.isLoading)) {
+            if (
+                (!isSplitPane || isPaneFocused) &&
+                isTtsPlaybackForThisPane &&
+                displayMode == DisplayMode.PAGINATION &&
+                !isAutoPagingForTts &&
+                (ttsState.isPlaying || ttsState.isLoading)
+            ) {
                 ttsController.stop()
             }
         }
     }
 
     var previousPage by remember(displayMode) { mutableIntStateOf(-1) }
-    LaunchedEffect(currentPage) {
+    LaunchedEffect(currentPage, isTtsPlaybackForThisPane, isPaneFocused) {
         if (previousPage != -1 && previousPage != currentPage) {
-            if (isAutoPagingForTts) {
+            if (isAutoPagingForTts && isTtsPlaybackForThisPane && (!isSplitPane || isPaneFocused)) {
                 startTts(continueSession = true)
-            } else if (displayMode == DisplayMode.PAGINATION && (ttsState.isPlaying || ttsState.isLoading)) {
+            } else if (
+                isTtsPlaybackForThisPane &&
+                (!isSplitPane || isPaneFocused) &&
+                displayMode == DisplayMode.PAGINATION &&
+                (ttsState.isPlaying || ttsState.isLoading)
+            ) {
                 Timber.d("Page changed manually while TTS active, stopping.")
                 ttsController.stop()
             }
@@ -3832,9 +3871,11 @@ fun PdfViewerScreen(
     DisposableEffect(Unit) {
         onDispose {
             Timber.d("DisposableEffect: Screen disposing. Closing PDF document and PFD.")
-            ttsController.stop()
-            PdfBitmapPool.clear()
-            PdfThumbnailCache.clear()
+            if (!isSplitPane) {
+                ttsController.stop()
+                PdfBitmapPool.clear()
+                PdfThumbnailCache.clear()
+            }
             documentCache.evictAll()
 
             val docToClose = pdfDocument
@@ -3864,7 +3905,7 @@ fun PdfViewerScreen(
     LaunchedEffect(effectivePdfUri, currentBookId, totalPages) {
         if (currentBookId == null || totalPages == 0) return@LaunchedEffect
         if (isBackgroundIndexing && backgroundIndexingProgress > 0f) return@LaunchedEffect
-        val selectedDocumentType = uiState.selectedFileType ?: return@LaunchedEffect
+        val selectedDocumentType = effectiveFileType
         if (selectedDocumentType != FileType.PDF && selectedDocumentType != FileType.PPTX) return@LaunchedEffect
 
         withContext(Dispatchers.IO) {
@@ -4112,7 +4153,12 @@ fun PdfViewerScreen(
     }
 
     val isTtsSessionActive =
-        ((ttsState.currentText != null || ttsState.isLoading) && ttsState.playbackSource == "READER") || isAutoPagingForTts
+        ((ttsState.currentText != null || ttsState.isLoading) &&
+            ttsState.playbackSource == "READER" &&
+            isTtsPlaybackForThisPane) ||
+            (isAutoPagingForTts && isTtsPlaybackForThisPane)
+    val isTtsPlayingOrLoading = isTtsPlaybackForThisPane &&
+        (ttsState.isPlaying || ttsState.isLoading || isAutoPagingForTts)
 
     val onInternalLinkNav: (Int) -> Unit = { targetPage ->
         coroutineScope.launch {
@@ -4181,7 +4227,7 @@ fun PdfViewerScreen(
         }
     }
 
-    BackHandler(enabled = true) {
+    if (!isSplitPane) BackHandler(enabled = true) {
         val backAction = selectMobilePdfReaderBackAction(
             MobilePdfReaderBackState(
                 passwordPromptVisible = showPasswordDialog,
@@ -4446,7 +4492,8 @@ fun PdfViewerScreen(
                                             reverseLayout = rightToLeftPagination,
                                             userScrollEnabled = run {
                                                 (currentPageScale == 1f || (isScrollLocked && displayMode == DisplayMode.PAGINATION)) &&
-                                                    !(ttsState.isPlaying || ttsState.isLoading || searchState.isSearchActive) &&
+                                                    !isTtsPlayingOrLoading &&
+                                                    !searchState.isSearchActive &&
                                                     !isPageSliderVisible &&
                                                     paginationDraggingBoxId == null
                                             }
@@ -6093,7 +6140,7 @@ fun PdfViewerScreen(
                     )
                 }
 
-                val isPdfTtsPlayingOrLoading = ttsState.isPlaying || ttsState.isLoading
+                val isPdfTtsPlayingOrLoading = isTtsPlayingOrLoading
                 val showPdfThemePanel = { showThemePanel = true }
                 val showPdfDictionarySettings = { showDictionarySettingsSheet = true }
                 val togglePdfScrollLock = {
@@ -6215,6 +6262,7 @@ fun PdfViewerScreen(
                     usePdfFileNameAsDisplayName = uiState.usePdfFileNameAsDisplayName,
                     effectiveFileType = effectiveFileType,
                     onNavigateBack = { saveStateAndExit() },
+                    onOpenSplit = if (!isSplitPane) onOpenSplit else null,
                     onShowThemePanel = showPdfThemePanel,
                     onShowBrightnessControl = { showBrightnessSheet = true },
                     onToggleScrollLock = togglePdfScrollLock,
@@ -7236,7 +7284,7 @@ fun PdfViewerScreen(
                 )
 
                 AnimatedVisibility(
-                    visible = isTtsSessionActive && showBars,
+                    visible = isTtsSessionActive && showBars && (!isSplitPane || isPaneFocused),
                     enter = slideInVertically(animationSpec = tween(200)) { it } + fadeIn(animationSpec = tween(200)),
                     exit = slideOutVertically(animationSpec = tween(200)) { it } + fadeOut(animationSpec = tween(200)),
                     modifier = Modifier
@@ -8114,7 +8162,7 @@ fun PdfViewerScreen(
         isFileInfoVisible = showFileInfoDialog,
         onFileInfoVisibleChange = { showFileInfoDialog = it },
         uiState = uiState,
-        primaryBookId = uiState.selectedBookId,
+        primaryBookId = selectedBookIdForPane,
         secondaryBookId = currentBookId ?: activeTabBookId,
         uriString = effectivePdfUri.toString(),
         viewModel = viewModel

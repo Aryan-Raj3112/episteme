@@ -106,6 +106,7 @@ internal fun PdfTopBar(
     usePdfFileNameAsDisplayName: Boolean,
     effectiveFileType: FileType,
     onNavigateBack: () -> Unit,
+    onOpenSplit: (() -> Unit)? = null,
     onShowThemePanel: () -> Unit,
     onShowBrightnessControl: () -> Unit,
     onToggleScrollLock: () -> Unit,
@@ -176,6 +177,15 @@ internal fun PdfTopBar(
                             onClick = onNavigateBack
                         ) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
+                        }
+                        if (onOpenSplit != null) {
+                            TooltipIconButton(
+                                text = stringResource(R.string.pdf_split_reader_open),
+                                description = stringResource(R.string.pdf_split_reader_open_desc),
+                                onClick = onOpenSplit,
+                            ) {
+                                Icon(Icons.Default.OpenInNew, contentDescription = stringResource(R.string.pdf_split_reader_open_desc))
+                            }
                         }
                         val titleText = when {
                             isLoadingDocument -> stringResource(R.string.loading_pdf)

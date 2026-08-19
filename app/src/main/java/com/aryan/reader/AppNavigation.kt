@@ -45,9 +45,13 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.windowsizeclass.WindowSizeClass
+import androidx.compose.material3.windowsizeclass.WindowWidthSizeClass
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -63,7 +67,10 @@ import com.aryan.reader.epubreader.EpubReaderScreen
 import com.aryan.reader.feedback.FeedbackScreen
 import com.aryan.reader.feedback.SupportProjectScreen
 import com.aryan.reader.pdf.PdfViewerScreen
+import com.aryan.reader.pdf.PdfSplitPdfPicker
+import com.aryan.reader.pdf.PdfSplitReaderScreen
 import com.aryan.reader.shared.ReaderFeatureSurface
+import com.aryan.reader.shared.PdfSplitOrientation
 import com.aryan.reader.shared.ui.SharedMobileAppDestination
 import com.aryan.reader.tts.ReaderTtsMiniBar
 import com.aryan.reader.tts.readerTtsMiniBarBottomPaddingDp
@@ -166,7 +173,15 @@ fun AppNavigation(
     val currentRoute = currentBackStackEntry?.destination?.route
     val ttsController = viewModel.ttsController
     val ttsState by ttsController.ttsState.collectAsStateWithLifecycle()
+    var showPdfSplitPicker by remember { mutableStateOf(false) }
     val currentDestination = SharedMobileAppDestination.fromRoute(currentRoute)
+    val defaultPdfSplitOrientation = if (
+        windowSizeClass.widthSizeClass == WindowWidthSizeClass.Compact
+    ) {
+        PdfSplitOrientation.HORIZONTAL
+    } else {
+        PdfSplitOrientation.VERTICAL
+    }
     val isOnReaderRoute = currentDestination?.isReader == true
     val showTtsMiniBar = shouldShowReaderTtsMiniBar(
         ttsState = ttsState,
@@ -180,6 +195,8 @@ fun AppNavigation(
         hasPreviousBackStackEntry = navController.previousBackStackEntry != null,
         isCurrentEntryResumed = currentBackStackEntry?.lifecycle?.currentState == Lifecycle.State.RESUMED
     )
+    val shouldHandleReaderBack = shouldInterceptBack ||
+        (currentDestination == SharedMobileAppDestination.PDF_VIEWER && uiState.pdfSplitWorkspace.isOpen)
 
     LaunchedEffect(currentRoute, uiState.selectedFileType, uiState.isLoading, uiState.selectedEpubBook, uiState.selectedPdfUri) {
         if (!uiState.isLoading && shouldSyncSelectedFileRoute(currentRoute)) {
@@ -209,9 +226,15 @@ fun AppNavigation(
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        BackHandler(enabled = shouldInterceptBack) {
+        BackHandler(enabled = shouldHandleReaderBack) {
             when (currentDestination) {
-                SharedMobileAppDestination.PDF_VIEWER,
+                SharedMobileAppDestination.PDF_VIEWER -> {
+                    if (uiState.pdfSplitWorkspace.isOpen) {
+                        viewModel.closePdfSplitWorkspace()
+                    } else {
+                        viewModel.clearSelectedFile()
+                    }
+                }
                 SharedMobileAppDestination.EPUB_READER -> viewModel.clearSelectedFile()
                 else -> navController.popBackStackIfReady()
             }
@@ -259,28 +282,54 @@ fun AppNavigation(
                 )
                 Timber.i("Displaying PDF Viewer for URI: $pdfUri, initialPage: $initialPage")
                 Box(modifier = Modifier.fillMaxSize()) {
-                    PdfViewerScreen(
-                        pdfUri = pdfUri,
-                        initialPage = initialPage,
-                        initialBookmarksJson = initialBookmarksJson,
-                        isProUser = uiState.isProUser,
-                        onNavigateBack = {
-                            Timber.d("Back action triggered from PDF Viewer.")
-                            viewModel.clearSelectedFile()
-                        },
-                        onSavePosition = viewModel::savePdfReadingPosition,
-                        onBookmarksChanged = { bookmarksJson ->
-                            if (bookId != null) {
-                                viewModel.saveBookmarks(bookId, bookmarksJson)
-                            } else {
-                                Timber.w("Could not find bookId to save PDF bookmarks for URI: ${uiState.selectedPdfUri}")
-                            }
-                        },
-                        onNavigateToPro = {
-                            navController.navigateIfReady(SharedMobileAppDestination.PRO, popUpToStart = true)
-                        },
-                        viewModel = viewModel
-                    )
+                    if (uiState.pdfSplitWorkspace.isOpen) {
+                        PdfSplitReaderScreen(
+                            workspace = uiState.pdfSplitWorkspace,
+                            availablePdfs = uiState.rawLibraryFiles.filter {
+                                it.type == FileType.PDF && !it.isDeleted
+                            },
+                            isProUser = uiState.isProUser,
+                            usePdfFileNameAsDisplayName = uiState.usePdfFileNameAsDisplayName,
+                            viewModel = viewModel,
+                            onFocusPane = viewModel::focusPdfSplitPane,
+                            onClosePane = { pane ->
+                                val remainsOpen = viewModel.closePdfSplitPane(pane)
+                                if (!remainsOpen) viewModel.clearSelectedFile()
+                            },
+                            onCloseWorkspace = viewModel::closePdfSplitWorkspace,
+                            onSwapPanes = viewModel::swapPdfSplitPanes,
+                            onOrientationChange = viewModel::setPdfSplitOrientation,
+                            onDividerChange = viewModel::setPdfSplitDividerFraction,
+                            onOpenDocument = viewModel::openPdfSplitPane,
+                            onNavigateToPro = {
+                                navController.navigateIfReady(SharedMobileAppDestination.PRO, popUpToStart = true)
+                            },
+                        )
+                    } else {
+                        PdfViewerScreen(
+                            pdfUri = pdfUri,
+                            initialPage = initialPage,
+                            initialBookmarksJson = initialBookmarksJson,
+                            isProUser = uiState.isProUser,
+                            onNavigateBack = {
+                                Timber.d("Back action triggered from PDF Viewer.")
+                                viewModel.clearSelectedFile()
+                            },
+                            onSavePosition = viewModel::savePdfReadingPosition,
+                            onBookmarksChanged = { bookmarksJson ->
+                                if (bookId != null) {
+                                    viewModel.saveBookmarks(bookId, bookmarksJson)
+                                } else {
+                                    Timber.w("Could not find bookId to save PDF bookmarks for URI: ${uiState.selectedPdfUri}")
+                                }
+                            },
+                            onNavigateToPro = {
+                                navController.navigateIfReady(SharedMobileAppDestination.PRO, popUpToStart = true)
+                            },
+                            viewModel = viewModel,
+                            onOpenSplit = { showPdfSplitPicker = true },
+                        )
+                    }
 
                     if (uiState.isLoading) {
                         Box(
@@ -294,6 +343,22 @@ fun AppNavigation(
                     }
 
                     CustomTopBanner(bannerMessage = uiState.bannerMessage)
+                }
+                if (showPdfSplitPicker && !uiState.pdfSplitWorkspace.isOpen) {
+                    PdfSplitPdfPicker(
+                        availablePdfs = uiState.rawLibraryFiles.filter {
+                                it.type == FileType.PDF &&
+                                !it.isDeleted &&
+                                it.bookId != bookId &&
+                                it.uriString != uiState.selectedPdfUri?.toString()
+                        },
+                        usePdfFileNameAsDisplayName = uiState.usePdfFileNameAsDisplayName,
+                        onDismiss = { showPdfSplitPicker = false },
+                        onDocumentSelected = { item ->
+                            showPdfSplitPicker = false
+                            viewModel.openPdfSplit(item.bookId, defaultPdfSplitOrientation)
+                        },
+                    )
                 }
             } else if (uiState.isLoading) {
                 Timber.d("PDF URI is null but loading is in progress. Showing loading indicator.")
