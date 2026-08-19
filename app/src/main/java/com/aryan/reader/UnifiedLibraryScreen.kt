@@ -2,6 +2,7 @@ package com.aryan.reader
 
 import android.content.ActivityNotFoundException
 import android.net.Uri
+import android.view.View
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -102,8 +103,9 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -1134,6 +1136,11 @@ private fun UnifiedCreateShelfDialog(onConfirm: (String) -> Unit, onDismiss: () 
 @Composable
 private fun UnifiedContinueReadingCard(item: RecentFileItem, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val progress = (item.progressPercentage ?: 0f).coerceIn(0f, 100f)
+    val appLayoutDirection = if (LocalConfiguration.current.layoutDirection == View.LAYOUT_DIRECTION_RTL) {
+        LayoutDirection.Rtl
+    } else {
+        LayoutDirection.Ltr
+    }
     com.aryan.reader.shared.ui.SharedAndroidUnifiedContinueCard(
         sectionLabel = stringResource(R.string.unified_library_continue_reading),
         title = item.cardTitle(),
@@ -1142,6 +1149,7 @@ private fun UnifiedContinueReadingCard(item: RecentFileItem, onClick: () -> Unit
         progressLabel = stringResource(R.string.progress_complete, progress.toInt()),
         sourceLabel = if (item.sourceFolderUri != null) "· Local folder" else null,
         coverTone = generatedBookCoverColor(item),
+        cardLayoutDirection = appLayoutDirection,
         onClick = onClick,
         modifier = modifier,
         cover = { coverModifier ->
