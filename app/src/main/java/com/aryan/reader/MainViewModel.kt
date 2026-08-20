@@ -132,6 +132,7 @@ import com.aryan.reader.shared.PdfSplitOrientation
 import com.aryan.reader.shared.PdfSplitPane
 import com.aryan.reader.shared.PdfSplitPaneState
 import com.aryan.reader.shared.PdfSplitWorkspaceAction
+import com.aryan.reader.shared.samePdfDocument
 import com.aryan.reader.shared.syncedFolderAddDecision
 import com.aryan.reader.shared.withSyncedFolder
 import com.aryan.reader.shared.withoutSyncedFolder
@@ -867,7 +868,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         } ?: return false
         val secondaryUri = secondaryItem.getUri() ?: return false
         val primaryBookId = current.selectedBookId ?: primaryUri.toString()
-        if (primaryBookId == secondaryItem.bookId || primaryUri == secondaryUri) return false
+        val primaryDocument = PdfSplitPaneState(primaryBookId, primaryUri.toString())
+        val secondaryDocument = PdfSplitPaneState(secondaryItem.bookId, secondaryUri.toString())
+        if (primaryDocument.samePdfDocument(secondaryDocument)) return false
 
         _internalState.update { state ->
             val workspace = state.pdfSplitWorkspace
@@ -909,8 +912,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         val uri = item.getUri() ?: return false
         val workspace = current.pdfSplitWorkspace
         if (!workspace.isOpen) return openPdfSplit(bookId)
-        if (workspace.primary?.bookId == item.bookId || workspace.primary?.uriString == uri.toString()) return false
-        if (workspace.secondary?.bookId == item.bookId || workspace.secondary?.uriString == uri.toString()) return false
+        val document = PdfSplitPaneState(item.bookId, uri.toString())
+        if (workspace.primary?.samePdfDocument(document) == true) return false
+        if (workspace.secondary?.samePdfDocument(document) == true) return false
 
         _internalState.update { state ->
             state.copy(
@@ -978,16 +982,16 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         return _internalState.value.pdfSplitWorkspace.isOpen
     }
 
-    /** Leaves split mode while keeping the primary workspace document selected. */
+    /** Leaves split mode while keeping the focused workspace document selected. */
     fun closePdfSplitWorkspace() {
         val current = _internalState.value
-        val primary = current.pdfSplitWorkspace.primary
+        val exitDocument = current.pdfSplitWorkspace.exitTargetDocument
         val selectedBookId = current.selectedBookId
         _internalState.update { state ->
             state.copy(pdfSplitWorkspace = state.pdfSplitWorkspace.reduce(PdfSplitWorkspaceAction.Closed))
         }
-        if (primary != null && primary.bookId != selectedBookId) {
-            activatePdfPane(primary.bookId)
+        if (exitDocument != null && exitDocument.bookId != selectedBookId) {
+            activatePdfPane(exitDocument.bookId)
         }
     }
 
