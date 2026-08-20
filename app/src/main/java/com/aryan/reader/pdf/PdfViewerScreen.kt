@@ -3789,14 +3789,13 @@ fun PdfViewerScreen(
             if (errorString.contains("PasswordException") || causeString.contains("PasswordException")) {
                 Timber.w("PDF is password protected or password incorrect.")
                 withContext(Dispatchers.Main) {
-                    if (ownsPaneGlobals) {
-                        if (documentPassword != null) {
-                            isPasswordError = true
-                            showPasswordDialog = true
-                        } else {
-                            showPasswordDialog = true
-                        }
+                    if (documentPassword != null) {
+                        isPasswordError = true
                     }
+                    // The dialog is rendered only by the focused/active pane below. Keep
+                    // this state pending so a pane that loses focus during loading can
+                    // present the prompt when it becomes the owner again.
+                    showPasswordDialog = true
                     isLoadingDocument = false
                 }
             } else {
@@ -6207,7 +6206,6 @@ fun PdfViewerScreen(
                         showFileInfoDialog = false
                         showSaveDialog = false
                         showShareDialog = false
-                        showPasswordDialog = false
                         showOcrLanguageDialog = false
                         showReindexDialog = null
                         showCustomizeToolsSheet = false
@@ -7710,7 +7708,7 @@ fun PdfViewerScreen(
     }
     // --- END PANEL POPUP ---
 
-    if (showPasswordDialog) {
+    if (ownsPaneGlobals && showPasswordDialog) {
         SharedMobilePdfPasswordDialog(
             labels = SharedMobilePdfPasswordLabels(
                 title = stringResource(R.string.title_password_protected),
