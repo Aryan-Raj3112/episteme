@@ -55,6 +55,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
@@ -68,6 +69,8 @@ import com.aryan.reader.paginatedreader.SemanticImage
 import com.aryan.reader.shared.HighlightColor
 import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.reader.ReaderPage
+import com.aryan.reader.shared.reader.paintOnlyColorOverlayText
+import com.aryan.reader.shared.reader.withoutForegroundColorSpans
 import com.aryan.reader.shared.reader.logSharedReaderDiagnostic
 import kotlin.math.roundToInt
 
@@ -675,6 +678,10 @@ internal fun SharedNativeInteractiveText(
     val viewConfiguration = LocalViewConfiguration.current
     val textBlockKey = textBlock.key.stableKey
     val selectionGestureKey = sharedNativeReaderSelectionGestureKey(textBlockKey, text)
+    val shapingText = remember(text) { text.withoutForegroundColorSpans() }
+    val paintOnlyColorOverlayText = remember(text, color) {
+        text.paintOnlyColorOverlayText(baseColor = color)
+    }
     DisposableEffect(textBlockKey, selectionLayouts) {
         onDispose {
             selectionLayouts.remove(textBlockKey)
@@ -721,10 +728,7 @@ internal fun SharedNativeInteractiveText(
                 "clipPx=$clipPx lines=${layout.lineCount} range=${label.sourceRange} textChars=${label.textChars}"
         }
     }
-    Text(
-        text = text,
-        color = color,
-        modifier = modifier
+    Box(modifier = modifier
             .fillMaxWidth()
             .onGloballyPositioned { textCoordinates = it }
             .pointerInput(selectionGestureKey) {
@@ -897,9 +901,24 @@ internal fun SharedNativeInteractiveText(
                         }
                     }
                 }
-            },
-        textAlign = textAlign,
-        style = style,
-        onTextLayout = { textLayoutResult = it }
-    )
+            }) {
+        Text(
+            text = shapingText,
+            color = color,
+            modifier = Modifier.fillMaxWidth(),
+            textAlign = textAlign,
+            style = style,
+            onTextLayout = { textLayoutResult = it }
+        )
+        if (paintOnlyColorOverlayText.isNotEmpty()) {
+            Text(
+                text = paintOnlyColorOverlayText,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clearAndSetSemantics {},
+                textAlign = textAlign,
+                style = style.copy(color = Color.Transparent)
+            )
+        }
+    }
 }

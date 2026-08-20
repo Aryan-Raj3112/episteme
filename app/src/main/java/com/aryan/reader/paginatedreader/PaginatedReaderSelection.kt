@@ -11,6 +11,7 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -30,7 +31,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.isSpecified
@@ -47,6 +48,7 @@ import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalViewConfiguration
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLayoutResult
@@ -77,6 +79,8 @@ import com.aryan.reader.epub.plainTextCharacterCount
 import com.aryan.reader.epubreader.TtsHighlightInfo
 import com.aryan.reader.epubreader.UserHighlight
 import com.aryan.reader.shared.ReaderLocator as SharedReaderLocator
+import com.aryan.reader.shared.reader.paintOnlyColorOverlayText
+import com.aryan.reader.shared.reader.withoutForegroundColorSpans
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import org.jsoup.Jsoup
@@ -1536,10 +1540,24 @@ internal fun LinkAwareText(
         }
     }
 
-    Text(
-        text = displayText,
-        style = style,
-        modifier = modifier
+    // Foreground colors are paint-only. Keep one shaping input so contextual
+    // OpenType features can cross author color spans. A second input restores
+    // colors through native character-level paint spans, which can color an
+    // attached mark without recoloring its base.
+    val shapingDisplayText = remember(displayText) {
+        displayText.withoutForegroundColorSpans()
+    }
+    val paintOnlyColorOverlayText = remember(displayText, style.color) {
+        displayText.paintOnlyColorOverlayText(
+            baseColor = style.color.takeIf { it.isSpecified } ?: Color.Unspecified
+        )
+    }
+
+    Box(modifier = modifier) {
+        Text(
+            text = shapingDisplayText,
+            style = style,
+            modifier = Modifier.fillMaxWidth()
             .pointerInput(displayText, viewConfiguration.touchSlop) {
                 awaitEachGesture {
                     awaitReaderLinkTap(
@@ -1607,7 +1625,17 @@ internal fun LinkAwareText(
                 )
             }
         }
-    )
+        )
+        if (paintOnlyColorOverlayText.isNotEmpty()) {
+            Text(
+                text = paintOnlyColorOverlayText,
+                modifier = Modifier
+                    .matchParentSize()
+                    .clearAndSetSemantics {},
+                style = style.copy(color = Color.Transparent)
+            )
+        }
+    }
 }
 
 internal fun computeImageRenderSizePx(
@@ -1730,6 +1758,13 @@ internal fun tableCellImageModifier(
     }
 }
 
+private data class WrappingTextLayout(
+    val layout: TextLayoutResult,
+    val overlayLayout: TextLayoutResult?,
+    val offset: Offset,
+    val textStartOffset: Int
+)
+
 @Composable
 internal fun WrappingContentLayout(
     block: WrappingContentBlock,
@@ -1788,6 +1823,14 @@ internal fun WrappingContentLayout(
             themeTextColor = textStyle.color.takeIf { it.isSpecified } ?: themeTextColor
         )
     }
+    val shapingDisplayFullText = remember(displayFullText) {
+        displayFullText.withoutForegroundColorSpans()
+    }
+    val paintOnlyColorOverlayText = remember(displayFullText, textStyle.color) {
+        displayFullText.paintOnlyColorOverlayText(
+            baseColor = textStyle.color.takeIf { it.isSpecified } ?: Color.Unspecified
+        )
+    }
     val (paragraphStartOffsets, paragraphEndOffsetMap) = remember(block.paragraphsToWrap) {
         val starts = mutableSetOf<Int>()
         val endMap = mutableMapOf<Int, Int>()
@@ -1805,7 +1848,7 @@ internal fun WrappingContentLayout(
     val density = LocalDensity.current
     val viewConfiguration = LocalViewConfiguration.current
     var textLayouts by remember {
-        mutableStateOf<List<Triple<TextLayoutResult, Offset, Int>>>(emptyList())
+        mutableStateOf<List<WrappingTextLayout>>(emptyList())
     }
     var totalHeight by remember { mutableIntStateOf(0) }
     val latestTextLayouts = rememberUpdatedState(textLayouts)
@@ -1821,9 +1864,13 @@ internal fun WrappingContentLayout(
             contentScale = imageContentScale(block.floatedImage.style)
         )
     }, modifier = modifier
-        .drawBehind {
-            textLayouts.forEach { (layout, offset, _) ->
-                drawText(layout, topLeft = offset)
+        .drawWithContent {
+            drawContent()
+            textLayouts.forEach { line ->
+                drawText(line.layout, topLeft = line.offset)
+                line.overlayLayout?.let { overlayLayout ->
+                    drawText(overlayLayout, topLeft = line.offset)
+                }
             }
         }
         .pointerInput(displayFullText, viewConfiguration.touchSlop) {
@@ -1831,7 +1878,10 @@ internal fun WrappingContentLayout(
                 awaitReaderLinkTap(
                     source = "WrappingContentLayout:block=${block.blockIndex}",
                     urlAtPosition = { offset ->
-                        latestTextLayouts.value.firstNotNullOfOrNull { (layout, topLeft, textStartOffset) ->
+                        latestTextLayouts.value.firstNotNullOfOrNull { line ->
+                            val layout = line.layout
+                            val topLeft = line.offset
+                            val textStartOffset = line.textStartOffset
                             val localOffset = Offset(offset.x - topLeft.x, offset.y - topLeft.y)
                             if (
                                 localOffset.x >= 0f &&
@@ -1857,7 +1907,10 @@ internal fun WrappingContentLayout(
         .pointerInput(displayFullText) {
             detectTapGestures(
                 onTap = { offset ->
-                    for ((layout, topLeft, textStartOffset) in latestTextLayouts.value) {
+                    for (line in latestTextLayouts.value) {
+                        val layout = line.layout
+                        val topLeft = line.offset
+                        val textStartOffset = line.textStartOffset
                         val localOffset = Offset(offset.x - topLeft.x, offset.y - topLeft.y)
                         if (
                             localOffset.x >= 0f &&
@@ -1908,9 +1961,9 @@ internal fun WrappingContentLayout(
 
         var currentY = 0f
         var textOffset = 0
-        val layouts = mutableListOf<Triple<TextLayoutResult, Offset, Int>>()
+        val layouts = mutableListOf<WrappingTextLayout>()
 
-        while (textOffset < displayFullText.length) {
+        while (textOffset < shapingDisplayFullText.length) {
             val isBesideImage = currentY < effectiveImageHeight
             val floatLeft = block.floatedImage.style.float == "left"
 
@@ -1923,7 +1976,7 @@ internal fun WrappingContentLayout(
             if (currentMaxWidth <= 0) break
 
             val lineConstraints = constraints.copy(minWidth = 0, maxWidth = currentMaxWidth)
-            val remainingText = displayFullText.subSequence(textOffset, displayFullText.length)
+            val remainingText = shapingDisplayFullText.subSequence(textOffset, shapingDisplayFullText.length)
 
             val styleForMeasure =
                 remainingText.spanStyles.firstOrNull { it.item.fontFamily != null }?.item?.fontFamily?.let {
@@ -1964,9 +2017,49 @@ internal fun WrappingContentLayout(
             val lineLayout = textMeasurer.measure(
                 finalLineText, style = styleForMeasure, constraints = lineConstraints
             )
+            val lineOverlayLayout = if (paintOnlyColorOverlayText.isNotEmpty()) {
+                val overlayLineText = paintOnlyColorOverlayText.subSequence(
+                    textOffset,
+                    textOffset + firstLineEndOffset
+                )
+                val finalOverlayLineText = if (isStartOfParagraph) {
+                    overlayLineText
+                } else {
+                    val stylesWithIndent =
+                        overlayLineText.paragraphStyles.filter { it.item.textIndent != null }
+                    if (stylesWithIndent.isNotEmpty()) {
+                        buildAnnotatedString {
+                            append(overlayLineText)
+                            stylesWithIndent.forEach {
+                                addStyle(
+                                    it.item.copy(textIndent = TextIndent(0.sp, 0.sp)),
+                                    it.start,
+                                    it.end
+                                )
+                            }
+                        }
+                    } else {
+                        overlayLineText
+                    }
+                }
+                textMeasurer.measure(
+                    finalOverlayLineText,
+                    style = styleForMeasure,
+                    constraints = lineConstraints
+                )
+            } else {
+                null
+            }
             val xOffset = if (isBesideImage && floatLeft) effectiveImageWidth.toFloat() else 0f
 
-            layouts.add(Triple(lineLayout, Offset(xOffset, currentY), textOffset))
+            layouts.add(
+                WrappingTextLayout(
+                    layout = lineLayout,
+                    overlayLayout = lineOverlayLayout,
+                    offset = Offset(xOffset, currentY),
+                    textStartOffset = textOffset
+                )
+            )
 
             currentY += lineLayout.size.height
             val endOfLineVisibleCharIndex = textOffset + firstLineEndOffset - 1
@@ -1984,7 +2077,7 @@ internal fun WrappingContentLayout(
                 currentY += gap
             }
             textOffset += firstLineEndOffset
-            while (textOffset < displayFullText.length && displayFullText[textOffset].isWhitespace()) {
+            while (textOffset < shapingDisplayFullText.length && shapingDisplayFullText[textOffset].isWhitespace()) {
                 textOffset++
             }
         }

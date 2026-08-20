@@ -38,6 +38,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.sp
+import com.aryan.reader.shared.reader.withoutForegroundColorSpans
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
@@ -231,7 +232,11 @@ class SuspendingAndroidBlockMeasurementProvider(
                 ?: textStyle
 
             val layoutResult = withContext(Dispatchers.Main) {
-                textMeasurer.measure(remainingText, style = styleForMeasure, constraints = lineConstraints)
+                textMeasurer.measure(
+                    remainingText.withoutForegroundColorSpans(),
+                    style = styleForMeasure,
+                    constraints = lineConstraints
+                )
             }
 
             val firstLineEndOffset = layoutResult.getLineEnd(0, visibleEnd = true)
@@ -581,7 +586,7 @@ private suspend fun measureBlockHeight(
             val paragraphStyle = defaultStyle.copy(textAlign = block.textAlign ?: defaultStyle.textAlign)
             val height = withContext(Dispatchers.Main) {
                 textMeasurer.measure(
-                    text = block.content,
+                    text = block.content.withoutForegroundColorSpans(),
                     style = paragraphStyle,
                     constraints = adjustedConstraints
                 ).paginationMeasuredHeightPx()
@@ -594,7 +599,7 @@ private suspend fun measureBlockHeight(
             )
             val height = withContext(Dispatchers.Main) {
                 textMeasurer.measure(
-                    text = block.content,
+                    text = block.content.withoutForegroundColorSpans(),
                     style = style,
                     constraints = adjustedConstraints
                 ).paginationMeasuredHeightPx()
@@ -627,7 +632,7 @@ private suspend fun measureBlockHeight(
             val quoteStyle = defaultStyle.copy(textAlign = block.textAlign ?: defaultStyle.textAlign)
             val height = withContext(Dispatchers.Main) {
                 textMeasurer.measure(
-                    text = block.content,
+                    text = block.content.withoutForegroundColorSpans(),
                     style = quoteStyle,
                     constraints = adjustedConstraints
                 ).paginationMeasuredHeightPx()
@@ -641,7 +646,7 @@ private suspend fun measureBlockHeight(
             )
             val textContentHeight = withContext(Dispatchers.Main) {
                 textMeasurer.measure(
-                    text = block.content,
+                    text = block.content.withoutForegroundColorSpans(),
                     style = defaultStyle,
                     constraints = textConstraints
                 ).paginationMeasuredHeightPx()
@@ -740,7 +745,11 @@ private suspend fun measureBlockHeight(
                     ?: defaultStyle
 
                 val layoutResult = withContext(Dispatchers.Main) {
-                    textMeasurer.measure(remainingText, style = styleForMeasure, constraints = lineConstraints)
+                    textMeasurer.measure(
+                        remainingText.withoutForegroundColorSpans(),
+                        style = styleForMeasure,
+                        constraints = lineConstraints
+                    )
                 }
 
                 val firstLineEndOffset = layoutResult.getLineEnd(0, visibleEnd = true)
@@ -889,8 +898,8 @@ private suspend fun measureChantRows(
     val measured = units.map { unit ->
         val key = 31 * unit.hashCode() + maxTextWidth
         unitCache?.get(key) ?: run {
-            val neume = if (unit.isDropCap) null else textMeasurer.measure(unit.neume, style = textStyle, constraints = Constraints(maxWidth = maxTextWidth))
-            val lyric = textMeasurer.measure(unit.lyric, style = textStyle, constraints = Constraints(maxWidth = maxTextWidth))
+            val neume = if (unit.isDropCap) null else textMeasurer.measure(unit.neume.withoutForegroundColorSpans(), style = textStyle, constraints = Constraints(maxWidth = maxTextWidth))
+            val lyric = textMeasurer.measure(unit.lyric.withoutForegroundColorSpans(), style = textStyle, constraints = Constraints(maxWidth = maxTextWidth))
             val size = maxOf(neume?.size?.width ?: 0, lyric.size.width).coerceAtLeast(1) + gap to
                 ((neume?.size?.height ?: 0) + lyric.size.height + gap)
             unitCache?.set(key, size)
@@ -1057,7 +1066,7 @@ private suspend fun measureStackedTableCellTextHeight(
 ): Int {
     return withContext(Dispatchers.Main) {
         textMeasurer.measure(
-            text = text.withStackedPaginationTextStartAlignment(),
+            text = text.withStackedPaginationTextStartAlignment().withoutForegroundColorSpans(),
             style = style.copy(textAlign = TextAlign.Left),
             constraints = constraints
         ).paginationMeasuredHeightPx()
@@ -1314,7 +1323,7 @@ private suspend fun logRenderedJustifiedSplitGapIfSuspicious(
 
     val renderedPart1Layout = withContext(Dispatchers.Main) {
         textMeasurer.measure(
-            text = part1Text,
+            text = part1Text.withoutForegroundColorSpans(),
             style = paragraphStyle,
             constraints = paragraphConstraints
         )
@@ -1357,7 +1366,7 @@ private suspend fun logRenderedJustifiedSplitGapIfSuspicious(
 
     val part2LineCount = withContext(Dispatchers.Main) {
         textMeasurer.measure(
-            text = part2Text,
+            text = part2Text.withoutForegroundColorSpans(),
             style = paragraphStyle,
             constraints = paragraphConstraints
         ).lineCount
@@ -1367,7 +1376,8 @@ private suspend fun logRenderedJustifiedSplitGapIfSuspicious(
     val remainingAfterNextWordLineCount = if (remainingAfterNextWordStart < part2Text.length) {
         withContext(Dispatchers.Main) {
             textMeasurer.measure(
-                text = part2Text.subSequence(remainingAfterNextWordStart, part2Text.length),
+                text = part2Text.subSequence(remainingAfterNextWordStart, part2Text.length)
+                    .withoutForegroundColorSpans(),
                 style = paragraphStyle,
                 constraints = paragraphConstraints
             ).lineCount
@@ -1456,7 +1466,7 @@ private suspend fun measureRenderedSplitCandidate(
 
     val prefixLayout = withContext(Dispatchers.Main) {
         textMeasurer.measure(
-            text = text.subSequence(0, prefixEnd),
+            text = text.subSequence(0, prefixEnd).withoutForegroundColorSpans(),
             style = paragraphStyle,
             constraints = paragraphConstraints
         )
@@ -1465,7 +1475,7 @@ private suspend fun measureRenderedSplitCandidate(
 
     val remainingLayout = withContext(Dispatchers.Main) {
         textMeasurer.measure(
-            text = text.subSequence(remainingStart, text.length),
+            text = text.subSequence(remainingStart, text.length).withoutForegroundColorSpans(),
             style = paragraphStyle,
             constraints = paragraphConstraints
         )
@@ -1648,7 +1658,7 @@ private suspend fun splitParagraphBlock(
 
     val layoutResult = withContext(Dispatchers.Main) {
         textMeasurer.measure(
-            text = text,
+            text = text.withoutForegroundColorSpans(),
             style = paragraphStyle,
             constraints = paragraphConstraints
         )
@@ -1689,7 +1699,7 @@ private suspend fun splitParagraphBlock(
     if (part2CheckText.isNotBlank()) {
         val part2Layout = withContext(Dispatchers.Main) {
             textMeasurer.measure(
-                text = part2CheckText,
+                text = part2CheckText.withoutForegroundColorSpans(),
                 style = paragraphStyle,
                 constraints = paragraphConstraints
             )

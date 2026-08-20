@@ -19,7 +19,7 @@ import kotlin.time.TimeSource
 
 private const val SharedEpubPaginationCacheSchemaVersion = 1
 private const val SharedEpubPaginationProcessingVersion = 12
-private const val SharedEpubPaginationPageCacheVersion = 2
+private const val SharedEpubPaginationPageCacheVersion = 3
 
 data class SharedEpubPaginationCacheKey(
     val bookHash: String,

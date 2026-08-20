@@ -100,6 +100,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
@@ -153,6 +154,8 @@ import com.aryan.reader.paginatedreader.data.BookCacheDatabase
 import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.ReaderBookReplacementPreferences
 import com.aryan.reader.shared.ReaderLocator as SharedReaderLocator
+import com.aryan.reader.shared.reader.paintOnlyColorOverlayText
+import com.aryan.reader.shared.reader.withoutForegroundColorSpans
 import com.aryan.reader.shared.ui.sharedAcceleratedLazyWheelScroll
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -2982,6 +2985,18 @@ internal fun TextWithEmphasis(
             themeTextColor = style.color.takeIf { it.isSpecified } ?: themeTextColor
         )
     }
+    // Foreground colors are paint-only. Removing them from the layout input
+    // keeps contextual OpenType shaping continuous across color-only spans.
+    // A second text input restores colors through native character-level paint
+    // spans, which can color an attached mark without recoloring its base.
+    val shapingDisplayText = remember(displayText) {
+        displayText.withoutForegroundColorSpans()
+    }
+    val paintOnlyColorOverlayText = remember(displayText, style.color) {
+        displayText.paintOnlyColorOverlayText(
+            baseColor = style.color.takeIf { it.isSpecified } ?: Color.Unspecified
+        )
+    }
 
     data class EmphasisMarkInfo(val center: Offset, val radius: Float, val color: Color)
     data class HighlightDrawInfo(val path: Path, val color: Color, val style: HighlightStyle, val range: IntRange)
@@ -3352,7 +3367,9 @@ internal fun TextWithEmphasis(
         logCutoffIfNeeded(textLayoutResult, layoutCoordinates, currentPageContentBounds)
     }
 
-    Text(text = displayText, style = style, modifier = modifier
+    Box(modifier = modifier) {
+        Text(text = shapingDisplayText, style = style, modifier = Modifier
+        .fillMaxWidth()
         .onGloballyPositioned {
             layoutCoordinates = it
             logCutoffIfNeeded(textLayoutResult, it)
@@ -3479,7 +3496,17 @@ internal fun TextWithEmphasis(
             onRegisterLayout?.invoke(it, layoutCoordinates!!)
         }
         logCutoffIfNeeded(it, layoutCoordinates)
-    })
+        })
+        if (paintOnlyColorOverlayText.isNotEmpty()) {
+            Text(
+                text = paintOnlyColorOverlayText,
+                modifier = Modifier
+                    .matchParentSize()
+                    .clearAndSetSemantics {},
+                style = style.copy(color = Color.Transparent)
+            )
+        }
+    }
 }
 
 @SuppressLint("BinaryOperationInTimber")

@@ -1048,30 +1048,12 @@ private class SemanticHtmlParser(
             }
         }
 
-        fun materializeCssContent(rawContent: String?, element: Element): String? {
-            if (rawContent.isNullOrBlank()) return null
-            val content = rawContent.trim()
-            if (content == "none" || content == "normal") return null
-            val tokens = Regex("""attr\(([^)]+)\)|"((?:\\.|[^"])*)"|'((?:\\.|[^'])*)'""")
-                .findAll(content)
-                .mapNotNull { match ->
-                    when {
-                        match.groupValues[1].isNotBlank() -> element.attr(match.groupValues[1].trim()).ifBlank { null }
-                        match.groupValues[2].isNotBlank() -> match.groupValues[2].replace("\\\"", "\"")
-                        match.groupValues[3].isNotBlank() -> match.groupValues[3].replace("\\'", "'")
-                        else -> null
-                    }
-                }
-                .toList()
-            return tokens.joinToString("").ifBlank {
-                content.removeSurrounding("\"").removeSurrounding("'").takeIf { it.isNotBlank() }
-            }
-        }
-
         fun appendGeneratedContent(element: Element, inheritedStyle: CssStyle, pseudoElement: String) {
             val generatedStyle = getPseudoElementStyle(element, pseudoElement, inheritedStyle)
             if (generatedStyle.display == "none") return
-            val text = materializeCssContent(generatedStyle.content, element) ?: return
+            val text = materializeCssGeneratedContent(generatedStyle.content) { attribute ->
+                element.attr(attribute).ifBlank { null }
+            } ?: return
             val start = textBuilder.length
             appendTransformedText(text, generatedStyle)
             val end = textBuilder.length

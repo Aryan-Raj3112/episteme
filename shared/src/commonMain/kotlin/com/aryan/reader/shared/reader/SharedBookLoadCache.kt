@@ -13,7 +13,7 @@ import kotlinx.serialization.protobuf.ProtoBuf
 import kotlinx.serialization.protobuf.ProtoNumber
 
 internal const val SharedBookLoadCacheSchemaVersion = 1
-internal const val SharedBookLoadCacheProcessingVersion = 11
+internal const val SharedBookLoadCacheProcessingVersion = 12
 
 enum class SharedBookLoadSemanticMode {
     FULL,

@@ -1119,7 +1119,7 @@ private fun SemanticTextBlock.toAnnotatedString(
                 )
             }
         }
-    }
+    }.withoutForegroundColorSpans()
 }
 
 internal fun SemanticTextBlock.toMeasurementParagraphStyleForPagination(fallbackTextAlign: TextAlign): ParagraphStyle {

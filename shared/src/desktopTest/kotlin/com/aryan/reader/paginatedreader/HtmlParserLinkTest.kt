@@ -183,6 +183,28 @@ class HtmlParserLinkTest {
     }
 
     @Test
+    fun `generated content decodes css hexadecimal escapes`() {
+        val cssRules = CssParser.parse(
+            cssContent = """
+                p::before { content: "\200c"; }
+                p::after { content: "\41!"; }
+            """.trimIndent(),
+            cssPath = null,
+            baseFontSizeSp = 16f,
+            density = 1f,
+            constraints = Constraints(maxWidth = 400, maxHeight = 800),
+            isDarkTheme = false
+        ).rules
+
+        val paragraph = parse(
+            html = "<html><body><p>Body</p></body></html>",
+            cssRules = cssRules
+        ).single() as SemanticParagraph
+
+        assertEquals("\u200cBodyA!", paragraph.text)
+    }
+
+    @Test
     fun `chant score preserves neume and lyric as atomic native flow units`() {
         val cssRules = CssParser.parse(
             cssContent = """
