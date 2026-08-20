@@ -128,6 +128,9 @@ fun PdfSplitReaderScreen(
     val ttsController = rememberTtsController()
     val ttsState by ttsController.ttsState.collectAsState()
     val lifecycleOwner = LocalLifecycleOwner.current
+    var isAppActive by remember {
+        mutableStateOf(lifecycleOwner.lifecycle.currentState == Lifecycle.State.RESUMED)
+    }
 
     DisposableEffect(ttsController) {
         onDispose {
@@ -136,7 +139,15 @@ fun PdfSplitReaderScreen(
     }
     DisposableEffect(lifecycleOwner, ttsController) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_STOP) ttsController.stop()
+            when (event) {
+                Lifecycle.Event.ON_RESUME -> isAppActive = true
+                Lifecycle.Event.ON_PAUSE,
+                Lifecycle.Event.ON_STOP -> {
+                    isAppActive = false
+                    if (event == Lifecycle.Event.ON_STOP) ttsController.stop()
+                }
+                else -> Unit
+            }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
@@ -195,6 +206,7 @@ fun PdfSplitReaderScreen(
                     isProUser = isProUser,
                     usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName,
                     viewModel = viewModel,
+                    isAppActive = isAppActive,
                     ttsController = ttsController,
                     onFocus = { pane, sessionId -> focusPane(pane, sessionId) },
                     onClose = { pane, sessionId -> closePane(pane, sessionId) },
@@ -217,6 +229,7 @@ fun PdfSplitReaderScreen(
                             isProUser = isProUser,
                             usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName,
                             viewModel = viewModel,
+                            isAppActive = isAppActive,
                             ttsController = ttsController,
                             onFocus = { pane, sessionId -> focusPane(pane, sessionId) },
                             onClose = { pane, sessionId -> closePane(pane, sessionId) },
@@ -233,6 +246,7 @@ fun PdfSplitReaderScreen(
                             isProUser = isProUser,
                             usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName,
                             viewModel = viewModel,
+                            isAppActive = isAppActive,
                             ttsController = ttsController,
                             onFocus = { pane, sessionId -> focusPane(pane, sessionId) },
                             onClose = { pane, sessionId -> closePane(pane, sessionId) },
@@ -673,6 +687,7 @@ private fun PdfSplitDocumentPane(
     isProUser: Boolean,
     usePdfFileNameAsDisplayName: Boolean,
     viewModel: MainViewModel,
+    isAppActive: Boolean,
     ttsController: TtsController,
     onFocus: (PdfSplitPane, Long) -> Unit,
     onClose: (PdfSplitPane, Long) -> Unit,
@@ -754,6 +769,7 @@ private fun PdfSplitDocumentPane(
                         onNavigateToPro = onNavigateToPro,
                         viewModel = viewModel,
                         ttsControllerOverride = ttsController,
+                        isPaneAppActive = isAppActive,
                         pane = PdfViewerPane(
                             bookId = document.bookId,
                             pdfUri = resolvedPdfUri,

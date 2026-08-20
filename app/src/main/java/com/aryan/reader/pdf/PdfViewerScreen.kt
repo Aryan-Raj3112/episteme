@@ -356,10 +356,15 @@ fun PdfViewerScreen(
     viewModel: MainViewModel,
     pane: PdfViewerPane? = null,
     isPaneFocused: Boolean = true,
+    isPaneAppActive: Boolean = true,
     onOpenSplit: (() -> Unit)? = null,
     ttsControllerOverride: TtsController? = null,
 ) {
     val isSplitPane = pane != null
+    // A split pane may remain composed while another pane owns process-global
+    // resources, or while the reader route is backgrounded. Keep the legacy
+    // full-screen defaults intact, but make ownership explicit for panes.
+    val ownsPaneGlobals = !isSplitPane || (isPaneFocused && isPaneAppActive)
     val context = LocalContext.current
     LaunchedEffect(Unit) {
         PdfFontCache.init(context.assets)
@@ -413,7 +418,7 @@ fun PdfViewerScreen(
     var showPasswordDialog by remember { mutableStateOf(false) }
     var isPasswordError by remember { mutableStateOf(false) }
     LocalView.current
-    if (!isSplitPane || isPaneFocused) {
+    if (ownsPaneGlobals) {
         ReaderScreenOrientationEffect(screenOrientationMode)
     }
 
@@ -463,13 +468,15 @@ fun PdfViewerScreen(
 
     val isOss = BuildConfig.FLAVOR == "oss"
 
-    val executeWithOcrCheck = remember(hasSelectedOcrLanguage) {
+    val executeWithOcrCheck = remember(hasSelectedOcrLanguage, ownsPaneGlobals) {
         { action: () -> Unit ->
-            if (isOss || hasSelectedOcrLanguage) {
-                action()
-            } else {
-                pendingActionAfterOcrSelection = action
-                showOcrLanguageDialog = true
+            if (ownsPaneGlobals) {
+                if (isOss || hasSelectedOcrLanguage) {
+                    action()
+                } else {
+                    pendingActionAfterOcrSelection = action
+                    showOcrLanguageDialog = true
+                }
             }
         }
     }
@@ -601,7 +608,7 @@ fun PdfViewerScreen(
     var isKeepScreenOn by remember { mutableStateOf(loadKeepScreenOn(context)) }
     val ttsController = ttsControllerOverride ?: rememberTtsController()
     val ttsState by ttsController.ttsState.collectAsState()
-    val isTtsPlaybackForThisPane = !isSplitPane || (isPaneFocused && ttsState.bookId == bookId)
+    val isTtsPlaybackForThisPane = !isSplitPane || (ownsPaneGlobals && ttsState.bookId == bookId)
     ttsState.currentText
     var currentTtsMode by remember {
         mutableStateOf(
@@ -618,8 +625,8 @@ fun PdfViewerScreen(
         saveTtsReplacementPreferences(context, next)
     }
 
-    DisposableEffect(isKeepScreenOn, isSplitPane, isPaneFocused) {
-        view.keepScreenOn = isKeepScreenOn && (!isSplitPane || isPaneFocused)
+    DisposableEffect(isKeepScreenOn, isSplitPane, ownsPaneGlobals) {
+        view.keepScreenOn = isKeepScreenOn && ownsPaneGlobals
         onDispose {
             view.keepScreenOn = false
         }
@@ -688,6 +695,7 @@ fun PdfViewerScreen(
     }
 
     val onPrintDocument: () -> Unit = onPrintDocument@{
+        if (!ownsPaneGlobals) return@onPrintDocument
         if (isPrintBlockedForPasswordProtectedPdf) {
             showBanner(context.getString(R.string.error_print_password_protected), isError = true)
             return@onPrintDocument
@@ -825,7 +833,7 @@ fun PdfViewerScreen(
     val showStandardBars = showBars && !isEditMode
     var readerBrightnessSettings by remember { mutableStateOf(loadReaderBrightnessSettings(context)) }
     var showBrightnessSheet by remember { mutableStateOf(false) }
-    if (!isSplitPane || isPaneFocused) {
+    if (ownsPaneGlobals) {
         ReaderBrightnessEffect(window, readerBrightnessSettings)
     }
 
@@ -834,16 +842,16 @@ fun PdfViewerScreen(
         saveReaderBrightnessSettings(context, settings)
     }
 
-    DisposableEffect(window, view, isSplitPane, isPaneFocused) {
+    DisposableEffect(window, view, isSplitPane, ownsPaneGlobals) {
         onDispose {
-            if (!isSplitPane || isPaneFocused) window?.let {
+            if (ownsPaneGlobals) window?.let {
                 WindowCompat.getInsetsController(it, view).show(WindowInsetsCompat.Type.systemBars())
             }
         }
     }
 
-    LaunchedEffect(systemUiMode, showStandardBars, isSplitPane, isPaneFocused) {
-        if (isSplitPane && !isPaneFocused) return@LaunchedEffect
+    LaunchedEffect(systemUiMode, showStandardBars, isSplitPane, ownsPaneGlobals) {
+        if (!ownsPaneGlobals) return@LaunchedEffect
         if (window != null) {
             val insetsController = WindowCompat.getInsetsController(window, view)
             val visibility = mobilePdfSystemBarsVisibility(systemUiMode, showStandardBars)
@@ -1353,6 +1361,7 @@ fun PdfViewerScreen(
     val currentInitialScrollDone by rememberUpdatedState(initialScrollDone)
     val currentPdfUri by rememberUpdatedState(effectivePdfUri)
     val currentVisibleAllAnnotations by rememberUpdatedState(visibleAllAnnotations)
+    val currentRichTextController by rememberUpdatedState(richTextController)
 
     val readerPersistence = remember(
         currentBookId,
@@ -1434,8 +1443,8 @@ fun PdfViewerScreen(
 
                 if (shouldSave) {
                     viewModel.viewModelScope.launch {
-                        if (richTextController != null) {
-                            withContext(NonCancellable) { richTextController.saveImmediate() }
+                        currentRichTextController?.let {
+                            withContext(NonCancellable) { it.saveImmediate() }
                         }
                         saveAllData(true).join()
                     }
@@ -2687,18 +2696,22 @@ fun PdfViewerScreen(
     }
 
     val requestSaveCopy: () -> Unit = {
-        if (shouldShowAnnotationExportChoice) {
-            showSaveDialog = true
-        } else {
-            launchOriginalSaveCopy()
+        if (ownsPaneGlobals) {
+            if (shouldShowAnnotationExportChoice) {
+                showSaveDialog = true
+            } else {
+                launchOriginalSaveCopy()
+            }
         }
     }
 
     val requestShare: () -> Unit = {
-        if (shouldShowAnnotationExportChoice) {
-            showShareDialog = true
-        } else {
-            shareOriginalPdf()
+        if (ownsPaneGlobals) {
+            if (shouldShowAnnotationExportChoice) {
+                showShareDialog = true
+            } else {
+                shareOriginalPdf()
+            }
         }
     }
 
@@ -2754,28 +2767,30 @@ fun PdfViewerScreen(
     }
 
     val saveStateAndExit = {
-        val activePage = richTextController?.activePageIndex ?: -1
-        Timber.tag("RichTextFlow").i("System Exit: isEditMode=$isEditMode, richActivePage=$activePage")
+        if (ownsPaneGlobals) {
+            val activePage = richTextController?.activePageIndex ?: -1
+            Timber.tag("RichTextFlow").i("System Exit: isEditMode=$isEditMode, richActivePage=$activePage")
 
-        if (isLoadingDocument) {
-            onNavigateBack()
-        } else {
-            ttsController.stop()
+            if (isLoadingDocument) {
+                onNavigateBack()
+            } else {
+                ttsController.stop()
 
-            viewModel.viewModelScope.launch {
-                initialScrollDone = true
+                viewModel.viewModelScope.launch {
+                    initialScrollDone = true
 
-                if (richTextController != null) {
-                    withContext(NonCancellable) {
-                        richTextController.saveImmediate()
+                    if (richTextController != null) {
+                        withContext(NonCancellable) {
+                            richTextController.saveImmediate()
+                        }
                     }
-                }
 
-                saveAllData(true).join()
+                    saveAllData(true).join()
 
-                withContext(Dispatchers.Main) {
-                    Timber.tag("PdfPositionDebug").d("Exit save complete. Navigating back.")
-                    onNavigateBack()
+                    withContext(Dispatchers.Main) {
+                        Timber.tag("PdfPositionDebug").d("Exit save complete. Navigating back.")
+                        onNavigateBack()
+                    }
                 }
             }
         }
@@ -2787,81 +2802,87 @@ fun PdfViewerScreen(
         { isLoading: Boolean -> isHighlightingLoading = isLoading }
     }
 
-    val onShowDictionaryUpsellDialogStable = remember(useOnlineDictionary) {
+    val onShowDictionaryUpsellDialogStable = remember(useOnlineDictionary, ownsPaneGlobals) {
         {
-            if (useOnlineDictionary) {
+            if (ownsPaneGlobals && useOnlineDictionary) {
                 showDictionaryUpsellDialog = true
             }
         }
     }
 
-    val onDictionaryLookupStable = remember(executeWithOcrCheck, useOnlineDictionary, selectedDictPackage, uiState.credits, isProUser) {
+    val onDictionaryLookupStable = remember(executeWithOcrCheck, useOnlineDictionary, selectedDictPackage, uiState.credits, isProUser, ownsPaneGlobals) {
         { text: String ->
-            executeWithOcrCheck {
-                val effectiveUseOnline = areReaderAiFeaturesEnabled(context) && useOnlineDictionary
+            if (ownsPaneGlobals) {
+                executeWithOcrCheck {
+                    val effectiveUseOnline = areReaderAiFeaturesEnabled(context) && useOnlineDictionary
 
-                if (effectiveUseOnline) {
-                    val wordCount = com.aryan.reader.countWords(text)
-                    if (BuildConfig.FLAVOR != "oss" && wordCount > 1 && !isProUser) {
-                        showDictionaryUpsellDialog = true
-                    } else {
-                        selectedTextForAi = text
-                        showAiDefinitionPopup = true
-                        coroutineScope.launch {
-                            val token = viewModel.getAuthToken()
-                            isAiDefinitionLoading = true
-                            aiDefinitionResult = null
-                            fetchAiDefinition(
-                                text = text,
-                                authToken = token,
-                                onUpdate = { chunk ->
-                                    val currentDefinition = aiDefinitionResult?.definition ?: ""
-                                    aiDefinitionResult = AiDefinitionResult(definition = currentDefinition + chunk)
-                                },
-                                onError = { error ->
-                                    if (error == "INSUFFICIENT_CREDITS") {
-                                        showInsufficientCreditsDialog = true
-                                        showAiDefinitionPopup = false
-                                        isAiDefinitionLoading = false
-                                    } else {
-                                        aiDefinitionResult = AiDefinitionResult(error = error)
-                                    }
-                                },
-                                onFinish = { isAiDefinitionLoading = false },
-                                context = context
-                            )
+                    if (effectiveUseOnline) {
+                        val wordCount = com.aryan.reader.countWords(text)
+                        if (BuildConfig.FLAVOR != "oss" && wordCount > 1 && !isProUser) {
+                            showDictionaryUpsellDialog = true
+                        } else {
+                            selectedTextForAi = text
+                            showAiDefinitionPopup = true
+                            coroutineScope.launch {
+                                val token = viewModel.getAuthToken()
+                                isAiDefinitionLoading = true
+                                aiDefinitionResult = null
+                                fetchAiDefinition(
+                                    text = text,
+                                    authToken = token,
+                                    onUpdate = { chunk ->
+                                        val currentDefinition = aiDefinitionResult?.definition ?: ""
+                                        aiDefinitionResult = AiDefinitionResult(definition = currentDefinition + chunk)
+                                    },
+                                    onError = { error ->
+                                        if (error == "INSUFFICIENT_CREDITS") {
+                                            showInsufficientCreditsDialog = true
+                                            showAiDefinitionPopup = false
+                                            isAiDefinitionLoading = false
+                                        } else {
+                                            aiDefinitionResult = AiDefinitionResult(error = error)
+                                        }
+                                    },
+                                    onFinish = { isAiDefinitionLoading = false },
+                                    context = context
+                                )
+                            }
                         }
-                    }
-                } else {
-                    if (!selectedDictPackage.isNullOrEmpty()) {
-                        ExternalDictionaryHelper.launchDictionary(context, selectedDictPackage!!, text)
                     } else {
-                        Toast.makeText(context, context.getString(R.string.toast_select_dictionary_first), Toast.LENGTH_SHORT).show()
-                        showDictionarySettingsSheet = true
+                        if (!selectedDictPackage.isNullOrEmpty()) {
+                            ExternalDictionaryHelper.launchDictionary(context, selectedDictPackage!!, text)
+                        } else {
+                            Toast.makeText(context, context.getString(R.string.toast_select_dictionary_first), Toast.LENGTH_SHORT).show()
+                            showDictionarySettingsSheet = true
+                        }
                     }
                 }
             }
         }
     }
 
-    val onTranslateTextStable = remember(selectedTranslatePackage) {
+    val onTranslateTextStable = remember(selectedTranslatePackage, ownsPaneGlobals) {
         { text: String ->
-            if (!selectedTranslatePackage.isNullOrEmpty()) {
-                ExternalDictionaryHelper.launchTranslate(context, selectedTranslatePackage!!, text)
-            } else {
-                Toast.makeText(context, context.getString(R.string.toast_select_translate_first), Toast.LENGTH_SHORT).show()
-                showDictionarySettingsSheet = true
+            if (ownsPaneGlobals) {
+                if (!selectedTranslatePackage.isNullOrEmpty()) {
+                    ExternalDictionaryHelper.launchTranslate(context, selectedTranslatePackage!!, text)
+                } else {
+                    Toast.makeText(context, context.getString(R.string.toast_select_translate_first), Toast.LENGTH_SHORT).show()
+                    showDictionarySettingsSheet = true
+                }
             }
         }
     }
 
-    val onSearchTextStable = remember(selectedSearchPackage) {
+    val onSearchTextStable = remember(selectedSearchPackage, ownsPaneGlobals) {
         { text: String ->
-            if (!selectedSearchPackage.isNullOrEmpty()) {
-                ExternalDictionaryHelper.launchSearch(context, selectedSearchPackage!!, text)
-            } else {
-                Toast.makeText(context, context.getString(R.string.toast_select_search_first), Toast.LENGTH_SHORT).show()
-                showDictionarySettingsSheet = true
+            if (ownsPaneGlobals) {
+                if (!selectedSearchPackage.isNullOrEmpty()) {
+                    ExternalDictionaryHelper.launchSearch(context, selectedSearchPackage!!, text)
+                } else {
+                    Toast.makeText(context, context.getString(R.string.toast_select_search_first), Toast.LENGTH_SHORT).show()
+                    showDictionarySettingsSheet = true
+                }
             }
         }
     }
@@ -3337,9 +3358,14 @@ fun PdfViewerScreen(
 
     var showPermissionRationaleDialog by remember { mutableStateOf(false) }
 
-    val startTtsWithPermissionCheck: (Int?, Int?) -> Unit = remember(context, activity, executeWithOcrCheck) {
+    val startTtsWithPermissionCheck: (Int?, Int?) -> Unit = remember(
+        context,
+        activity,
+        executeWithOcrCheck,
+        ownsPaneGlobals,
+    ) {
         { pageOverride, startCharIndex ->
-            executeWithOcrCheck {
+            if (ownsPaneGlobals) executeWithOcrCheck {
                 when {
                     ContextCompat.checkSelfPermission(
                         context, Manifest.permission.POST_NOTIFICATIONS
@@ -3763,11 +3789,13 @@ fun PdfViewerScreen(
             if (errorString.contains("PasswordException") || causeString.contains("PasswordException")) {
                 Timber.w("PDF is password protected or password incorrect.")
                 withContext(Dispatchers.Main) {
-                    if (documentPassword != null) {
-                        isPasswordError = true
-                        showPasswordDialog = true
-                    } else {
-                        showPasswordDialog = true
+                    if (ownsPaneGlobals) {
+                        if (documentPassword != null) {
+                            isPasswordError = true
+                            showPasswordDialog = true
+                        } else {
+                            showPasswordDialog = true
+                        }
                     }
                     isLoadingDocument = false
                 }
@@ -3874,6 +3902,17 @@ fun PdfViewerScreen(
     DisposableEffect(Unit) {
         onDispose {
             Timber.d("DisposableEffect: Screen disposing. Closing PDF document and PFD.")
+            if (isSplitPane) {
+                // Header close/replacement removes the composition without
+                // dispatching an Android lifecycle event. Flush this pane's
+                // latest session before releasing its renderer resources.
+                viewModel.viewModelScope.launch {
+                    currentRichTextController?.let {
+                        withContext(NonCancellable) { it.saveImmediate() }
+                    }
+                    saveAllData(true).join()
+                }
+            }
             if (!isSplitPane) {
                 ttsController.stop()
                 PdfBitmapPool.clear()
@@ -4232,7 +4271,7 @@ fun PdfViewerScreen(
 
     // A split workspace delegates back to the focused pane first so its
     // dialogs/search/editor state close before the workspace itself exits.
-    if (!isSplitPane || isPaneFocused) BackHandler(enabled = true) {
+    if (ownsPaneGlobals) BackHandler(enabled = true) {
         val backAction = selectMobilePdfReaderBackAction(
             MobilePdfReaderBackState(
                 passwordPromptVisible = showPasswordDialog,
@@ -6145,74 +6184,121 @@ fun PdfViewerScreen(
                     )
                 }
 
+                LaunchedEffect(ownsPaneGlobals) {
+                    if (!ownsPaneGlobals) {
+                        // Reader-local page/annotation state remains intact, but
+                        // process-global dialogs and controllers must not remain
+                        // owned by a pane after focus or app activity changes.
+                        showThemePanel = false
+                        showVisualOptionsSheet = false
+                        showBrightnessSheet = false
+                        showScreenOrientationSheet = false
+                        showTtsControlsSheet = false
+                        showTtsSettingsSheet = false
+                        showTtsReplacementsSheet = false
+                        showDictionarySettingsSheet = false
+                        showDictionaryUpsellDialog = false
+                        showSummarizationUpsellDialog = false
+                        showAiHubSheet = false
+                        showPermissionRationaleDialog = false
+                        showInsufficientCreditsDialog = false
+                        showBubbleZoomDownloadDialog = false
+                        showNewTabSheet = false
+                        showFileInfoDialog = false
+                        showSaveDialog = false
+                        showShareDialog = false
+                        showPasswordDialog = false
+                        showOcrLanguageDialog = false
+                        showReindexDialog = null
+                        showCustomizeToolsSheet = false
+                        pendingActionAfterOcrSelection = null
+                        pendingSaveMode = null
+                        drawerState.close()
+                        if (ttsState.bookId == bookId) ttsController.stop()
+                        showBars = false
+                    }
+                }
+
                 val isPdfTtsPlayingOrLoading = isTtsPlayingOrLoading
-                val showPdfThemePanel = { showThemePanel = true }
-                val showPdfDictionarySettings = { showDictionarySettingsSheet = true }
+                val showPdfThemePanel = { if (ownsPaneGlobals) showThemePanel = true }
+                val showPdfDictionarySettings = { if (ownsPaneGlobals) showDictionarySettingsSheet = true }
                 val togglePdfScrollLock = {
-                    val nextLocked = !isScrollLocked
-                    isScrollLocked = nextLocked
-                    savePdfScrollLocked(context, bookId, nextLocked)
-                    if (nextLocked) {
-                        currentPageScale = currentActiveScale
-                        savePdfLockedState(context, bookId, currentActiveScale, currentActiveOffset.x, currentActiveOffset.y)
-                        lockedState = Triple(currentActiveScale, currentActiveOffset.x, currentActiveOffset.y)
+                    if (ownsPaneGlobals) {
+                        val nextLocked = !isScrollLocked
+                        isScrollLocked = nextLocked
+                        savePdfScrollLocked(context, bookId, nextLocked)
+                        if (nextLocked) {
+                            currentPageScale = currentActiveScale
+                            savePdfLockedState(context, bookId, currentActiveScale, currentActiveOffset.x, currentActiveOffset.y)
+                            lockedState = Triple(currentActiveScale, currentActiveOffset.x, currentActiveOffset.y)
+                        }
                     }
                 }
                 val showPdfSlider = {
-                    val currentPageForSlider = if (displayMode == DisplayMode.PAGINATION) currentPaginationDisplayPage() else verticalReaderState.currentPage
-                    val nextState = readerSliderToggleState(
-                        isCurrentlyToggledOn = isPageSliderVisible,
-                        currentPage = currentPageForSlider
-                    )
-                    sliderStartPage = nextState.bookmarkPosition.startPage
-                    sliderCurrentPage = nextState.bookmarkPosition.currentPage
-                    isPageSliderVisible = nextState.isToggledOn
-                    showBars = true
-                }
-                val showPdfToc = {
-                    coroutineScope.launch { drawerState.open() }
-                    Unit
-                }
-                val showPdfSearch = {
-                    executeWithOcrCheck {
-                        searchState.isSearchActive = true
+                    if (ownsPaneGlobals) {
+                        val currentPageForSlider = if (displayMode == DisplayMode.PAGINATION) currentPaginationDisplayPage() else verticalReaderState.currentPage
+                        val nextState = readerSliderToggleState(
+                            isCurrentlyToggledOn = isPageSliderVisible,
+                            currentPage = currentPageForSlider
+                        )
+                        sliderStartPage = nextState.bookmarkPosition.startPage
+                        sliderCurrentPage = nextState.bookmarkPosition.currentPage
+                        isPageSliderVisible = nextState.isToggledOn
                         showBars = true
                     }
                 }
-                val togglePdfHighlights = {
-                    if (!showAllTextHighlights && !isHighlightingLoading) {
-                        showAllTextHighlights = true
-                        isHighlightingLoading = true
-                    } else if (showAllTextHighlights) {
-                        showAllTextHighlights = false
-                        isHighlightingLoading = false
-                    }
+                val showPdfToc = {
+                    if (ownsPaneGlobals) coroutineScope.launch { drawerState.open() }
+                    Unit
                 }
-                val showPdfAiHub = { showAiHubSheet = true }
-                val togglePdfEditMode = {
-                    val newEditMode = !isEditMode
-                    val currentActivePage = richTextController?.activePageIndex ?: -1
-                    Timber.tag("RichTextMigration").i("Edit Toggle: $isEditMode -> $newEditMode (ActivePage: $currentActivePage)")
-
-                    if (!newEditMode && richTextController != null) {
-                        coroutineScope.launch {
-                            richTextController.saveImmediate()
-                            withContext(Dispatchers.Main) {
-                                keyboardController?.hide()
-                            }
+                val showPdfSearch = {
+                    if (ownsPaneGlobals) {
+                        executeWithOcrCheck {
+                            searchState.isSearchActive = true
+                            showBars = true
                         }
                     }
+                }
+                val togglePdfHighlights = {
+                    if (ownsPaneGlobals) {
+                        if (!showAllTextHighlights && !isHighlightingLoading) {
+                            showAllTextHighlights = true
+                            isHighlightingLoading = true
+                        } else if (showAllTextHighlights) {
+                            showAllTextHighlights = false
+                            isHighlightingLoading = false
+                        }
+                    }
+                }
+                val showPdfAiHub = { if (ownsPaneGlobals) showAiHubSheet = true }
+                val togglePdfEditMode = {
+                    if (ownsPaneGlobals) {
+                        val newEditMode = !isEditMode
+                        val currentActivePage = richTextController?.activePageIndex ?: -1
+                        Timber.tag("RichTextMigration").i("Edit Toggle: $isEditMode -> $newEditMode (ActivePage: $currentActivePage)")
 
-                    isEditMode = newEditMode
-                    if (!newEditMode) showBars = true
+                        if (!newEditMode && richTextController != null) {
+                            coroutineScope.launch {
+                                richTextController.saveImmediate()
+                                withContext(Dispatchers.Main) {
+                                    keyboardController?.hide()
+                                }
+                            }
+                        }
+
+                        isEditMode = newEditMode
+                        if (!newEditMode) showBars = true
+                    }
                 }
                 val togglePdfTts = {
-                    if (isTtsSessionActive) {
-                        Timber.d("TTS button clicked: Stopping TTS")
-                        ttsController.stop()
-                        isAutoPagingForTts = false
-                    } else {
-                        startTtsWithPermissionCheck(null, null)
+                    if (ownsPaneGlobals) {
+                        if (isTtsSessionActive) {
+                            Timber.d("TTS button clicked: Stopping TTS")
+                            ttsController.stop()
+                            isAutoPagingForTts = false
+                        } else {
+                            startTtsWithPermissionCheck(null, null)
+                        }
                     }
                 }
 
@@ -6266,14 +6352,15 @@ fun PdfViewerScreen(
                     activeTabBookId = activeTabBookId,
                     usePdfFileNameAsDisplayName = uiState.usePdfFileNameAsDisplayName,
                     effectiveFileType = effectiveFileType,
-                    onNavigateBack = { saveStateAndExit() },
+                    onNavigateBack = { if (ownsPaneGlobals) saveStateAndExit() },
                     onOpenSplit = if (!isSplitPane) onOpenSplit else null,
                     onShowThemePanel = showPdfThemePanel,
-                    onShowBrightnessControl = { showBrightnessSheet = true },
+                    onShowBrightnessControl = { if (ownsPaneGlobals) showBrightnessSheet = true },
                     onToggleScrollLock = togglePdfScrollLock,
                     onShowDictionarySettings = showPdfDictionarySettings,
-                    onShowPenPlayground = { showPenPlayground = true },
+                    onShowPenPlayground = { if (ownsPaneGlobals) showPenPlayground = true },
                     onImportSvg = {
+                        if (!ownsPaneGlobals) return@PdfTopBar
                         val page = if (displayMode == DisplayMode.PAGINATION) currentPaginationDisplayPage() else verticalReaderState.currentPage
 
                         coroutineScope.launch(Dispatchers.IO) {
@@ -6303,15 +6390,15 @@ fun PdfViewerScreen(
                             }
                         }
                     },
-                    onShowCustomizeTools = { showCustomizeToolsSheet = true },
+                    onShowCustomizeTools = { if (ownsPaneGlobals) showCustomizeToolsSheet = true },
                     onShowOcrLanguage = {
-                        if (!isOss) {
+                        if (ownsPaneGlobals && !isOss) {
                             hasSelectedOcrLanguage = true
                             showOcrLanguageDialog = true
                         }
                     },
-                    onShowVisualOptions = { showVisualOptionsSheet = true },
-                    onShowScreenOrientation = { showScreenOrientationSheet = true },
+                    onShowVisualOptions = { if (ownsPaneGlobals) showVisualOptionsSheet = true },
+                    onShowScreenOrientation = { if (ownsPaneGlobals) showScreenOrientationSheet = true },
                     isTtsPlayingOrLoading = isPdfTtsPlayingOrLoading,
                     showAllTextHighlights = showAllTextHighlights,
                     isHighlightingLoading = isHighlightingLoading,
@@ -6324,30 +6411,39 @@ fun PdfViewerScreen(
                     onToggleTts = togglePdfTts,
                     tapToNavigateEnabled = tapToNavigateEnabled,
                     onToggleTapToNavigate = {
-                        tapToNavigateEnabled = !tapToNavigateEnabled
-                        saveTapToNavigateSetting(context, tapToNavigateEnabled)
+                        if (ownsPaneGlobals) {
+                            tapToNavigateEnabled = !tapToNavigateEnabled
+                            saveTapToNavigateSetting(context, tapToNavigateEnabled)
+                        }
                     },
-                    onChangeDisplayMode = { displayMode = it },
+                    onChangeDisplayMode = { if (ownsPaneGlobals) displayMode = it },
                     onSetRightToLeftPagination = { enabled ->
-                        rightToLeftPagination = enabled
-                        savePdfRightToLeftPagination(context, enabled)
+                        if (ownsPaneGlobals) {
+                            rightToLeftPagination = enabled
+                            savePdfRightToLeftPagination(context, enabled)
+                        }
                     },
                     onToggleKeepScreenOn = {
-                        isKeepScreenOn = !isKeepScreenOn
-                        saveKeepScreenOn(context, isKeepScreenOn)
+                        if (ownsPaneGlobals) {
+                            isKeepScreenOn = !isKeepScreenOn
+                            saveKeepScreenOn(context, isKeepScreenOn)
+                        }
                     },
                     onStartAutoScroll = {
-                        isAutoScrollModeActive = true
-                        isAutoScrollPlaying = true
-                        showBars = !isMusicianMode
+                        if (ownsPaneGlobals) {
+                            isAutoScrollModeActive = true
+                            isAutoScrollPlaying = true
+                            showBars = !isMusicianMode
+                        }
                     },
-                    onShowTtsSettings = { showTtsSettingsSheet = true },
-                    onShowTtsReplacements = { showTtsReplacementsSheet = true },
+                    onShowTtsSettings = { if (ownsPaneGlobals) showTtsSettingsSheet = true },
+                    onShowTtsReplacements = { if (ownsPaneGlobals) showTtsReplacementsSheet = true },
                     onToggleBookmark = onBookmarkClick,
-                    onShowFileInfo = { showFileInfoDialog = true },
+                    onShowFileInfo = { if (ownsPaneGlobals) showFileInfoDialog = true },
                     onInsertPage = onInsertPage,
                     onDeletePage = onDeletePage,
                     onReflowAction = {
+                        if (!ownsPaneGlobals) return@PdfTopBar
                         coroutineScope.launch {
                             if (richTextController != null) {
                                 withContext(NonCancellable) { richTextController.saveImmediate() }
@@ -6383,6 +6479,7 @@ fun PdfViewerScreen(
                         }
                     },
                     onTabClose = { tabBookId ->
+                        if (!ownsPaneGlobals) return@PdfTopBar
                         coroutineScope.launch {
                             val isSelected = tabBookId == activeTabBookId
                             if (isSelected) saveAllData(true).join()
@@ -6392,8 +6489,9 @@ fun PdfViewerScreen(
                             }
                         }
                     },
-                    onNewTabClick = { showNewTabSheet = true },
+                    onNewTabClick = { if (ownsPaneGlobals) showNewTabSheet = true },
                     onGenerateDemoAnnotations = {
+                        if (!ownsPaneGlobals) return@PdfTopBar
                         val page = if (displayMode == DisplayMode.PAGINATION) currentPaginationDisplayPage() else verticalReaderState.currentPage
                         val demoAnnots = DemoAnnotationGenerator.generateDemoAnnotations(page)
 
@@ -6653,7 +6751,7 @@ fun PdfViewerScreen(
                     isSliderActive = isPageSliderVisible,
                     ttsErrorMessage = null,
                     onShowThemePanel = showPdfThemePanel,
-                    onShowBrightnessControl = { showBrightnessSheet = true },
+                    onShowBrightnessControl = { if (ownsPaneGlobals) showBrightnessSheet = true },
                     onToggleScrollLock = togglePdfScrollLock,
                     onShowDictionarySettings = showPdfDictionarySettings,
                     onShowSlider = showPdfSlider,
@@ -6663,11 +6761,13 @@ fun PdfViewerScreen(
                     onShowAiHub = showPdfAiHub,
                     onToggleEditMode = togglePdfEditMode,
                     onToggleTts = togglePdfTts,
-                    onShowScreenOrientation = { showScreenOrientationSheet = true },
+                    onShowScreenOrientation = { if (ownsPaneGlobals) showScreenOrientationSheet = true },
                     showBubbleZoom = isComicFile,
                     isBubbleZoomModeActive = isBubbleZoomModeActive,
                     onToggleBubbleZoom = {
-                        if (isOss) {
+                        if (!ownsPaneGlobals) {
+                            return@PdfBottomBar
+                        } else if (isOss) {
                             showBanner(
                                 "Bubble Zoom is only available in Playstore version of Episteme",
                                 isError = true
@@ -7289,7 +7389,7 @@ fun PdfViewerScreen(
                 )
 
                 AnimatedVisibility(
-                    visible = isTtsSessionActive && showBars && (!isSplitPane || isPaneFocused),
+                    visible = isTtsSessionActive && showBars && ownsPaneGlobals,
                     enter = slideInVertically(animationSpec = tween(200)) { it } + fadeIn(animationSpec = tween(200)),
                     exit = slideOutVertically(animationSpec = tween(200)) { it } + fadeOut(animationSpec = tween(200)),
                     modifier = Modifier
@@ -7317,7 +7417,7 @@ fun PdfViewerScreen(
                                 }
                             }
                         },
-                        onOpenTtsSettings = { showTtsSettingsSheet = true },
+                        onOpenTtsSettings = { if (ownsPaneGlobals) showTtsSettingsSheet = true },
                         onClose = {
                             ttsController.stop()
                             isAutoPagingForTts = false
