@@ -113,6 +113,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -192,6 +193,9 @@ import com.aryan.reader.shared.pdf.toAnnotation
 import com.aryan.reader.shared.pdf.withStyle
 import com.aryan.reader.shared.pdf.SharedPdfReaderAction
 import com.aryan.reader.shared.pdf.SharedPdfReaderState
+import com.aryan.reader.shared.pdf.SharedPdfReaderGlobalResource
+import com.aryan.reader.shared.pdf.SharedPdfReaderHostConfig
+import com.aryan.reader.shared.pdf.SharedPdfReaderSessionKey
 import com.aryan.reader.shared.pdf.SharedPdfExportSnapshot
 import com.aryan.reader.shared.pdf.SharedPdfJumpHistory
 import com.aryan.reader.shared.pdf.SharedPdfSearchResult
@@ -229,6 +233,13 @@ data class SharedMobilePdfReflowUiState(
     val hasReflowBook: Boolean = false,
 )
 
+/**
+ * Compatibility entry point for the original full-screen reader.
+ *
+ * The actual implementation lives in [SharedMobilePdfReaderHost] so a split
+ * workspace can mount the same reader with a distinct session key and focus
+ * ownership without duplicating reader behavior.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SharedMobilePdfReaderScreen(
@@ -278,11 +289,130 @@ fun SharedMobilePdfReaderScreen(
     onPdfAutoScrollBookChange: (BookItem) -> Unit = {},
     onKeepScreenOnChange: (Boolean) -> Unit = {},
     onSystemUiAppearanceChange: (hidden: Boolean, lightContent: Boolean, backgroundArgb: Long, edgeToEdge: Boolean) -> Unit = { _, _, _, _ -> },
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
 ) {
-    val pdfCardTitle = book.cardTitle(LocalUsePdfFileNameAsDisplayName.current)
-    val initialPage = book.lastPageIndex?.coerceAtLeast(0) ?: 0
-    var readerState by remember(book.id, initialReaderState) {
+    SharedMobilePdfReaderHost(
+        book = book,
+        onBack = onBack,
+        onNativePdfAction = onNativePdfAction,
+        pdfReflowUiState = pdfReflowUiState,
+        pdfTabsEnabled = pdfTabsEnabled,
+        openPdfTabs = openPdfTabs,
+        activePdfTabBookId = activePdfTabBookId,
+        availablePdfTabBooks = availablePdfTabBooks,
+        pdfTopTabStripVisible = pdfTopTabStripVisible,
+        onPdfTopTabStripVisibilityChange = onPdfTopTabStripVisibilityChange,
+        onOpenPdfTab = onOpenPdfTab,
+        onClosePdfTab = onClosePdfTab,
+        onBookInfoChange = onBookInfoChange,
+        knownTags = knownTags,
+        pdfToolbarPreferences = pdfToolbarPreferences,
+        onPdfToolbarPreferencesChange = onPdfToolbarPreferencesChange,
+        readerBrightness = readerBrightness,
+        readerCustomBrightness = readerCustomBrightness,
+        onReaderBrightnessChange = onReaderBrightnessChange,
+        readerScreenOrientationMode = readerScreenOrientationMode,
+        onReaderScreenOrientationModeChange = onReaderScreenOrientationModeChange,
+        onApplyReaderScreenOrientation = onApplyReaderScreenOrientation,
+        readerTtsReplacementPreferences = readerTtsReplacementPreferences,
+        onReaderTtsReplacementPreferencesChange = onReaderTtsReplacementPreferencesChange,
+        onTtsError = onTtsError,
+        initialReaderState = initialReaderState,
+        readerDefaultSettings = readerDefaultSettings,
+        onReaderDefaultSettingsChange = onReaderDefaultSettingsChange,
+        customReaderThemes = customReaderThemes,
+        onCustomReaderThemesChange = onCustomReaderThemesChange,
+        initialKeepScreenOn = initialKeepScreenOn,
+        onKeepScreenOnPreferenceChange = onKeepScreenOnPreferenceChange,
+        initialStylusOnlyMode = initialStylusOnlyMode,
+        onStylusOnlyModePreferenceChange = onStylusOnlyModePreferenceChange,
+        initialPageSliderVisible = initialPageSliderVisible,
+        onPageSliderVisibilityPreferenceChange = onPageSliderVisibilityPreferenceChange,
+        onReaderStateChange = onReaderStateChange,
+        pdfAutoScrollGlobalProfile = pdfAutoScrollGlobalProfile,
+        onPdfAutoScrollGlobalProfileChange = onPdfAutoScrollGlobalProfileChange,
+        initialPdfAutoScrollMusicianMode = initialPdfAutoScrollMusicianMode,
+        onPdfAutoScrollMusicianModeChange = onPdfAutoScrollMusicianModeChange,
+        initialPdfAutoScrollUseSlider = initialPdfAutoScrollUseSlider,
+        onPdfAutoScrollUseSliderChange = onPdfAutoScrollUseSliderChange,
+        onPdfAutoScrollBookChange = onPdfAutoScrollBookChange,
+        onKeepScreenOnChange = onKeepScreenOnChange,
+        onSystemUiAppearanceChange = onSystemUiAppearanceChange,
+        modifier = modifier,
+        hostConfig = SharedPdfReaderHostConfig.fullScreen(book.id),
+    )
+}
+
+/**
+ * Pane-safe shared PDF reader implementation.
+ *
+ * Split hosts should provide a session id from the workspace pane and update
+ * [SharedPdfReaderHostConfig.isFocused] as focus moves between documents.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SharedMobilePdfReaderHost(
+    book: BookItem,
+    onBack: () -> Unit,
+    onNativePdfAction: (BookItem, SharedMobilePdfNativeAction, password: String?, SharedPdfExportSnapshot) -> Unit,
+    pdfReflowUiState: SharedMobilePdfReflowUiState = SharedMobilePdfReflowUiState(),
+    pdfTabsEnabled: Boolean = false,
+    openPdfTabs: List<BookItem> = emptyList(),
+    activePdfTabBookId: String? = null,
+    availablePdfTabBooks: List<BookItem> = emptyList(),
+    pdfTopTabStripVisible: Boolean = true,
+    onPdfTopTabStripVisibilityChange: (Boolean) -> Unit = {},
+    onOpenPdfTab: (BookItem) -> Unit = {},
+    onClosePdfTab: (BookItem) -> Unit = {},
+    onBookInfoChange: (BookItem) -> Unit = {},
+    knownTags: List<Tag> = emptyList(),
+    pdfToolbarPreferences: PdfToolbarPreferences = PdfToolbarPreferences(),
+    onPdfToolbarPreferencesChange: (PdfToolbarPreferences) -> Unit = {},
+    readerBrightness: Float? = null,
+    readerCustomBrightness: Float = com.aryan.reader.shared.DefaultReaderCustomBrightness,
+    onReaderBrightnessChange: (Float?) -> Unit = {},
+    readerScreenOrientationMode: ReaderScreenOrientationMode = ReaderScreenOrientationMode.FOLLOW_SYSTEM,
+    onReaderScreenOrientationModeChange: (ReaderScreenOrientationMode) -> Unit = {},
+    onApplyReaderScreenOrientation: (ReaderScreenOrientationMode) -> Unit = {},
+    readerTtsReplacementPreferences: ReaderTtsReplacementPreferences = ReaderTtsReplacementPreferences(),
+    onReaderTtsReplacementPreferencesChange: (ReaderTtsReplacementPreferences) -> Unit = {},
+    onTtsError: ((String) -> Unit)? = null,
+    initialReaderState: SharedPdfReaderState? = null,
+    readerDefaultSettings: ReaderSettings = ReaderSettings(themeId = "no_theme"),
+    onReaderDefaultSettingsChange: (ReaderSettings) -> Unit = {},
+    customReaderThemes: List<ReaderTheme> = emptyList(),
+    onCustomReaderThemesChange: (List<ReaderTheme>) -> Unit = {},
+    initialKeepScreenOn: Boolean = false,
+    onKeepScreenOnPreferenceChange: (Boolean) -> Unit = {},
+    initialStylusOnlyMode: Boolean = false,
+    onStylusOnlyModePreferenceChange: (Boolean) -> Unit = {},
+    initialPageSliderVisible: Boolean = false,
+    onPageSliderVisibilityPreferenceChange: (Boolean) -> Unit = {},
+    onReaderStateChange: (SharedPdfReaderState) -> Unit = {},
+    onReaderSessionStateChange: (SharedPdfReaderSessionKey, SharedPdfReaderState) -> Unit = { _, _ -> },
+    pdfAutoScrollGlobalProfile: PdfAutoScrollProfile = PdfAutoScrollProfile(),
+    onPdfAutoScrollGlobalProfileChange: (PdfAutoScrollProfile) -> Unit = {},
+    initialPdfAutoScrollMusicianMode: Boolean = false,
+    onPdfAutoScrollMusicianModeChange: (Boolean) -> Unit = {},
+    initialPdfAutoScrollUseSlider: Boolean = false,
+    onPdfAutoScrollUseSliderChange: (Boolean) -> Unit = {},
+    onPdfAutoScrollBookChange: (BookItem) -> Unit = {},
+    onKeepScreenOnChange: (Boolean) -> Unit = {},
+    onSystemUiAppearanceChange: (hidden: Boolean, lightContent: Boolean, backgroundArgb: Long, edgeToEdge: Boolean) -> Unit = { _, _, _, _ -> },
+    modifier: Modifier = Modifier,
+    hostConfig: SharedPdfReaderHostConfig = SharedPdfReaderHostConfig.fullScreen(book.id),
+) {
+    val readerSessionKey = hostConfig.sessionKey
+    val ownsSystemUi = hostConfig.owns(SharedPdfReaderGlobalResource.SYSTEM_UI)
+    val ownsKeepScreenOn = hostConfig.owns(SharedPdfReaderGlobalResource.KEEP_SCREEN_ON)
+    val ownsKeyboardCommands = hostConfig.owns(SharedPdfReaderGlobalResource.KEYBOARD_COMMANDS)
+    val ownsTts = hostConfig.owns(SharedPdfReaderGlobalResource.TTS)
+    val ownsGlobalModal = hostConfig.owns(SharedPdfReaderGlobalResource.GLOBAL_MODAL)
+    val ownsNativeAction = hostConfig.owns(SharedPdfReaderGlobalResource.NATIVE_ACTION)
+    key(readerSessionKey) {
+        val pdfCardTitle = book.cardTitle(LocalUsePdfFileNameAsDisplayName.current)
+        val initialPage = book.lastPageIndex?.coerceAtLeast(0) ?: 0
+    var readerState by remember(readerSessionKey, initialReaderState) {
         mutableStateOf(
             initialSharedPdfReaderState(
                 persistedState = initialReaderState,
@@ -292,50 +422,50 @@ fun SharedMobilePdfReaderScreen(
         )
     }
     // Android intentionally starts every PDF session distraction-free.
-    var showChrome by remember(book.id) { mutableStateOf(false) }
-    var showReaderOptions by remember(book.id) { mutableStateOf(false) }
-    var showThemePanel by remember(book.id) { mutableStateOf(false) }
-    var showPageSlider by remember(book.id) { mutableStateOf(initialPageSliderVisible) }
-    var showFileInformation by remember(book.id) { mutableStateOf(false) }
-    var showBrightnessSheet by remember(book.id) { mutableStateOf(false) }
-    var showScreenOrientationSheet by remember(book.id) { mutableStateOf(false) }
-    var showToolbarCustomization by remember(book.id) { mutableStateOf(false) }
-    var showTtsSettingsSheet by remember(book.id) { mutableStateOf(false) }
-    var showTtsReplacementsSheet by remember(book.id) { mutableStateOf(false) }
-    var showNewPdfTabSheet by remember(book.id) { mutableStateOf(false) }
-    var pendingExternalLink by remember(book.id) { mutableStateOf<String?>(null) }
-    var pdfPassword by remember(book.id) { mutableStateOf<String?>(null) }
-    var pdfPasswordDraft by remember(book.id) { mutableStateOf("") }
-    var showPasswordProtectedPrintWarning by remember(book.id) { mutableStateOf(false) }
-    var showShareFormatChoice by remember(book.id) { mutableStateOf(false) }
-    var showVerticalPageGap by remember(book.id) {
+    var showChrome by remember(readerSessionKey) { mutableStateOf(false) }
+    var showReaderOptions by remember(readerSessionKey) { mutableStateOf(false) }
+    var showThemePanel by remember(readerSessionKey) { mutableStateOf(false) }
+    var showPageSlider by remember(readerSessionKey) { mutableStateOf(initialPageSliderVisible) }
+    var showFileInformation by remember(readerSessionKey) { mutableStateOf(false) }
+    var showBrightnessSheet by remember(readerSessionKey) { mutableStateOf(false) }
+    var showScreenOrientationSheet by remember(readerSessionKey) { mutableStateOf(false) }
+    var showToolbarCustomization by remember(readerSessionKey) { mutableStateOf(false) }
+    var showTtsSettingsSheet by remember(readerSessionKey) { mutableStateOf(false) }
+    var showTtsReplacementsSheet by remember(readerSessionKey) { mutableStateOf(false) }
+    var showNewPdfTabSheet by remember(readerSessionKey) { mutableStateOf(false) }
+    var pendingExternalLink by remember(readerSessionKey) { mutableStateOf<String?>(null) }
+    var pdfPassword by remember(readerSessionKey) { mutableStateOf<String?>(null) }
+    var pdfPasswordDraft by remember(readerSessionKey) { mutableStateOf("") }
+    var showPasswordProtectedPrintWarning by remember(readerSessionKey) { mutableStateOf(false) }
+    var showShareFormatChoice by remember(readerSessionKey) { mutableStateOf(false) }
+    var showVerticalPageGap by remember(readerSessionKey) {
         mutableStateOf(readerDefaultSettings.pdfVerticalPageGapVisible)
     }
-    var showPageNumberOverlay by remember(book.id) {
+    var showPageNumberOverlay by remember(readerSessionKey) {
         mutableStateOf(readerDefaultSettings.pdfPageNumberOverlayVisible)
     }
-    var systemUiMode by remember(book.id) {
+    var systemUiMode by remember(readerSessionKey) {
         mutableStateOf(readerDefaultSettings.systemUiMode.toSharedMobilePdfSystemUiMode())
     }
-    var rightToLeftPagination by remember(book.id) {
+    var rightToLeftPagination by remember(readerSessionKey) {
         mutableStateOf(readerDefaultSettings.rightToLeftPagination)
     }
-    var useTwoPageSpread by remember(book.id) {
+    var useTwoPageSpread by remember(readerSessionKey) {
         mutableStateOf(readerDefaultSettings.pageSpreadMode == ReaderPageSpreadMode.TWO_PAGE)
     }
-    var firstPageStandaloneInSpread by remember(book.id) {
+    var firstPageStandaloneInSpread by remember(readerSessionKey) {
         mutableStateOf(readerDefaultSettings.pdfFirstPageStandaloneInSpread)
     }
-    var globalTextureTransparency by remember(book.id) {
+    var globalTextureTransparency by remember(readerSessionKey) {
         mutableStateOf(1f - readerDefaultSettings.textureAlpha.coerceIn(0f, 1f))
     }
-    var keepScreenOn by remember(book.id) { mutableStateOf(initialKeepScreenOn) }
-    var isStylusOnlyMode by remember(book.id) { mutableStateOf(initialStylusOnlyMode) }
-    var autoScrollModeActive by remember(book.id) { mutableStateOf(false) }
-    var autoScrollPlaying by remember(book.id) { mutableStateOf(false) }
-    var autoScrollTemporarilyPaused by remember(book.id) { mutableStateOf(false) }
-    var autoScrollIsLocal by remember(book.id) { mutableStateOf(book.pdfAutoScrollIsLocal) }
-    var autoScrollProfile by remember(book.id) {
+    var keepScreenOn by remember(readerSessionKey) { mutableStateOf(initialKeepScreenOn) }
+    var isStylusOnlyMode by remember(readerSessionKey) { mutableStateOf(initialStylusOnlyMode) }
+    var autoScrollModeActive by remember(readerSessionKey) { mutableStateOf(false) }
+    var autoScrollPlaying by remember(readerSessionKey) { mutableStateOf(false) }
+    var autoScrollTemporarilyPaused by remember(readerSessionKey) { mutableStateOf(false) }
+    var autoScrollIsLocal by remember(readerSessionKey) { mutableStateOf(book.pdfAutoScrollIsLocal) }
+    var autoScrollProfile by remember(readerSessionKey) {
         mutableStateOf(
             if (book.pdfAutoScrollIsLocal && book.pdfAutoScrollLocalSpeed != null) {
                 PdfAutoScrollProfile(
@@ -348,15 +478,15 @@ fun SharedMobilePdfReaderScreen(
             }
         )
     }
-    var autoScrollMusicianMode by remember(book.id) { mutableStateOf(initialPdfAutoScrollMusicianMode) }
-    var autoScrollUseSlider by remember(book.id) { mutableStateOf(initialPdfAutoScrollUseSlider) }
-    var autoScrollCollapsed by remember(book.id) { mutableStateOf(false) }
-    var autoScrollInteractionToken by remember(book.id) { mutableStateOf(0) }
-    var autoScrollPauseDurationMillis by remember(book.id) { mutableStateOf(300L) }
-    var tapToTurnPages by remember(book.id) { mutableStateOf(true) }
-    var pdfSliderScrubbingPage by remember(book.id) { mutableStateOf<Int?>(null) }
-    var showAllTextHighlights by remember(book.id) { mutableStateOf(false) }
-    var isAllTextHighlightLoading by remember(book.id) { mutableStateOf(false) }
+    var autoScrollMusicianMode by remember(readerSessionKey) { mutableStateOf(initialPdfAutoScrollMusicianMode) }
+    var autoScrollUseSlider by remember(readerSessionKey) { mutableStateOf(initialPdfAutoScrollUseSlider) }
+    var autoScrollCollapsed by remember(readerSessionKey) { mutableStateOf(false) }
+    var autoScrollInteractionToken by remember(readerSessionKey) { mutableStateOf(0) }
+    var autoScrollPauseDurationMillis by remember(readerSessionKey) { mutableStateOf(300L) }
+    var tapToTurnPages by remember(readerSessionKey) { mutableStateOf(true) }
+    var pdfSliderScrubbingPage by remember(readerSessionKey) { mutableStateOf<Int?>(null) }
+    var showAllTextHighlights by remember(readerSessionKey) { mutableStateOf(false) }
+    var isAllTextHighlightLoading by remember(readerSessionKey) { mutableStateOf(false) }
     fun toggleAllTextHighlights() {
         if (!showAllTextHighlights && !isAllTextHighlightLoading) {
             showAllTextHighlights = true
@@ -416,50 +546,79 @@ fun SharedMobilePdfReaderScreen(
         }
     }
 
-    LaunchedEffect(pdfAutoScrollGlobalProfile, autoScrollIsLocal) {
+    LaunchedEffect(readerSessionKey, pdfAutoScrollGlobalProfile, autoScrollIsLocal) {
         if (!autoScrollIsLocal) autoScrollProfile = pdfAutoScrollGlobalProfile.sanitized()
     }
 
-    DisposableEffect(readerScreenOrientationMode, onApplyReaderScreenOrientation) {
-        onApplyReaderScreenOrientation(readerScreenOrientationMode)
-        onDispose { onApplyReaderScreenOrientation(ReaderScreenOrientationMode.FOLLOW_SYSTEM) }
+    DisposableEffect(readerSessionKey, readerScreenOrientationMode, onApplyReaderScreenOrientation, ownsSystemUi) {
+        if (ownsSystemUi) onApplyReaderScreenOrientation(readerScreenOrientationMode)
+        onDispose {
+            if (ownsSystemUi) onApplyReaderScreenOrientation(ReaderScreenOrientationMode.FOLLOW_SYSTEM)
+        }
     }
-    var pdfZoomCamera by remember(book.id, initialReaderState) {
+    var pdfZoomCamera by remember(readerSessionKey, initialReaderState) {
         mutableStateOf(
             initialReaderState?.takeIf { it.isScrollLocked }?.let {
                 PdfZoomCamera(it.lockedZoomScale, PdfZoomPoint(it.lockedZoomOffsetX, it.lockedZoomOffsetY))
             } ?: PdfZoomCamera()
         )
     }
-    var navigationRequestPage by remember(book.id) { mutableStateOf(readerState.pageIndex) }
-    var navigationRequestToken by remember(book.id) { mutableStateOf(0) }
-    var navigationCenterFraction by remember(book.id) { mutableStateOf(0.5f) }
-    var navigationReason by remember(book.id) { mutableStateOf(PdfNavigationReason.INITIAL) }
-    var jumpHistory by remember(book.id) { mutableStateOf(SharedPdfJumpHistory()) }
+    var navigationRequestPage by remember(readerSessionKey) { mutableStateOf(readerState.pageIndex) }
+    var navigationRequestToken by remember(readerSessionKey) { mutableStateOf(0) }
+    var navigationCenterFraction by remember(readerSessionKey) { mutableStateOf(0.5f) }
+    var navigationReason by remember(readerSessionKey) { mutableStateOf(PdfNavigationReason.INITIAL) }
+    var jumpHistory by remember(readerSessionKey) { mutableStateOf(SharedPdfJumpHistory()) }
     val pdfTts = rememberSharedMobileEpubLocalTts()
-    LaunchedEffect(pdfTts.errorMessage) {
-        pdfTts.errorMessage?.let { message -> onTtsError?.invoke(message) }
+    LaunchedEffect(pdfTts.errorMessage, ownsTts) {
+        if (ownsTts) pdfTts.errorMessage?.let { message -> onTtsError?.invoke(message) }
     }
-    var ttsPageIndex by remember(book.id) { mutableStateOf(readerState.pageIndex) }
-    var pendingTtsStart by remember(book.id) { mutableStateOf<Int?>(null) }
-    var pendingTtsStartAtLastChunk by remember(book.id) { mutableStateOf(false) }
-    var pendingTtsPlayWhenReady by remember(book.id) { mutableStateOf(true) }
-    var ttsHighlightBounds by remember(book.id) { mutableStateOf<List<PdfPageBounds>>(emptyList()) }
-    var lastTtsCompletionCount by remember(book.id) { mutableStateOf(pdfTts.completionCount) }
+    var ttsPageIndex by remember(readerSessionKey) { mutableStateOf(readerState.pageIndex) }
+    var pendingTtsStart by remember(readerSessionKey) { mutableStateOf<Int?>(null) }
+    var pendingTtsStartAtLastChunk by remember(readerSessionKey) { mutableStateOf(false) }
+    var pendingTtsPlayWhenReady by remember(readerSessionKey) { mutableStateOf(true) }
+    var ttsHighlightBounds by remember(readerSessionKey) { mutableStateOf<List<PdfPageBounds>>(emptyList()) }
+    var lastTtsCompletionCount by remember(readerSessionKey) { mutableStateOf(pdfTts.completionCount) }
+    LaunchedEffect(readerSessionKey, ownsTts) {
+        if (!ownsTts) {
+            // A pane that loses focus must not keep driving the process-global
+            // speech engine after another pane becomes the owner.
+            pdfTts.stop()
+            pendingTtsStart = null
+            pendingTtsStartAtLastChunk = false
+            ttsHighlightBounds = emptyList()
+        }
+    }
     val ttsTextSession = rememberPdfTextPageSession(book, ttsPageIndex, pdfPassword)
-    var searchResults by remember(book.id) { mutableStateOf<List<SharedPdfSearchResult>>(emptyList()) }
-    var tableOfContents by remember(book.id) { mutableStateOf<List<PdfTocEntry>>(emptyList()) }
-    var noteAnnotationId by remember(book.id) { mutableStateOf<String?>(null) }
-    var isSearchInProgress by remember(book.id) { mutableStateOf(false) }
+    var searchResults by remember(readerSessionKey) { mutableStateOf<List<SharedPdfSearchResult>>(emptyList()) }
+    var tableOfContents by remember(readerSessionKey) { mutableStateOf<List<PdfTocEntry>>(emptyList()) }
+    var noteAnnotationId by remember(readerSessionKey) { mutableStateOf<String?>(null) }
+    var isSearchInProgress by remember(readerSessionKey) { mutableStateOf(false) }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
-    val pdfReaderFocusRequester = remember(book.id) { FocusRequester() }
-    val pdfVerticalScrollController = remember(book.id) { SharedMobilePdfVerticalScrollController() }
-    LaunchedEffect(book.id) {
+    LaunchedEffect(readerSessionKey, ownsGlobalModal) {
+        if (!ownsGlobalModal) {
+            showReaderOptions = false
+            showThemePanel = false
+            showFileInformation = false
+            showBrightnessSheet = false
+            showScreenOrientationSheet = false
+            showToolbarCustomization = false
+            showTtsSettingsSheet = false
+            showTtsReplacementsSheet = false
+            showNewPdfTabSheet = false
+            showPasswordProtectedPrintWarning = false
+            showShareFormatChoice = false
+            pendingExternalLink = null
+            noteAnnotationId = null
+        }
+    }
+    val pdfReaderFocusRequester = remember(readerSessionKey) { FocusRequester() }
+    val pdfVerticalScrollController = remember(readerSessionKey) { SharedMobilePdfVerticalScrollController() }
+    LaunchedEffect(readerSessionKey) {
         runCatching { pdfReaderFocusRequester.requestFocus() }
     }
-    var richTextDocumentJson by remember(book.id) { mutableStateOf(initialReaderState?.richTextDocumentJson.orEmpty()) }
-    val richTextController = remember(book.id, initialReaderState) {
+    var richTextDocumentJson by remember(readerSessionKey) { mutableStateOf(initialReaderState?.richTextDocumentJson.orEmpty()) }
+    val richTextController = remember(readerSessionKey, initialReaderState) {
         SharedPdfRichTextController(
             scope = scope,
             initialDocument = SharedPdfRichTextSerializer.decode(initialReaderState?.richTextDocumentJson.orEmpty()),
@@ -468,8 +627,22 @@ fun SharedMobilePdfReaderScreen(
             }
         )
     }
+    fun publishReaderState(state: SharedPdfReaderState) {
+        if (hostConfig.acceptsCallback(readerSessionKey)) {
+            onReaderStateChange(state)
+            onReaderSessionStateChange(readerSessionKey, state)
+        }
+    }
     val closeReader = {
-        scope.saveAndCloseSharedMobilePdfReader(richTextController, readerState, { richTextDocumentJson }, onReaderStateChange, onBack)
+        if (ownsGlobalModal) {
+            scope.saveAndCloseSharedMobilePdfReader(
+                richTextController,
+                readerState,
+                { richTextDocumentJson },
+                ::publishReaderState,
+                onBack,
+            )
+        }
     }
     // Document metadata must not follow the visible page. A newly requested page starts with
     // SharedMobilePdfPageRender's loading value (pageCount = 1); using that transient value here
@@ -480,7 +653,7 @@ fun SharedMobilePdfReaderScreen(
     } else {
         readerState.pageCount.coerceAtLeast(1)
     }
-    val virtualLayout = remember(pageCount, readerState.blankPageInsertions) {
+    val virtualLayout = remember(readerSessionKey, pageCount, readerState.blankPageInsertions) {
         buildSharedPdfVirtualPageLayout(pageCount, readerState.blankPageInsertions)
     }
     val displayPageCount = virtualLayout.size
@@ -489,7 +662,7 @@ fun SharedMobilePdfReaderScreen(
     val isCurrentPageBlank = (virtualLayout.getOrNull(readerState.pageIndex) as? SharedPdfVirtualPage.BlankPage) != null
     val prefetchedTtsPageIndex = (ttsPageIndex + 1).coerceAtMost(pageCount - 1)
     val prefetchedTtsTextSession = rememberPdfTextPageSession(book, prefetchedTtsPageIndex, pdfPassword)
-    val activeTheme = remember(readerState.themeId, customReaderThemes) {
+    val activeTheme = remember(readerSessionKey, readerState.themeId, customReaderThemes) {
         resolveReaderTheme(readerState.themeId, BuiltInPdfReaderThemes, customReaderThemes)
             ?: BuiltInPdfReaderThemes.first()
     }
@@ -515,31 +688,42 @@ fun SharedMobilePdfReaderScreen(
     val isPdfTtsPlayingOrLoading =
         pdfTts.state == SharedMobileEpubLocalTtsState.SPEAKING || pendingTtsStart != null
     val pdfSliderBottomPadding = pdfBottomChromePadding + if (isJumpHistoryVisible) 40.dp else 0.dp
-    LaunchedEffect(hideSystemUi, systemBarColor, edgeToEdgeSystemUi) {
-        onSystemUiAppearanceChange(
-            hideSystemUi,
-            systemBarColor.luminance() < 0.5f,
-            systemBarColor.toArgb().toLong(),
-            edgeToEdgeSystemUi
-        )
+    LaunchedEffect(readerSessionKey, hideSystemUi, systemBarColor, edgeToEdgeSystemUi, ownsSystemUi) {
+        if (ownsSystemUi) {
+            onSystemUiAppearanceChange(
+                hideSystemUi,
+                systemBarColor.luminance() < 0.5f,
+                systemBarColor.toArgb().toLong(),
+                edgeToEdgeSystemUi
+            )
+        }
     }
-    DisposableEffect(Unit) {
-        onDispose { onSystemUiAppearanceChange(false, false, 0xFFFFFFFFL, false) }
+    DisposableEffect(readerSessionKey, ownsSystemUi, onSystemUiAppearanceChange) {
+        onDispose {
+            if (ownsSystemUi) onSystemUiAppearanceChange(false, false, 0xFFFFFFFFL, false)
+        }
     }
-    var canvasSize by remember(book.id) { mutableStateOf(IntSize.Zero) }
-    val activeStroke = remember(book.id, readerState.pageIndex) { mutableStateListOf<PdfPagePoint>() }
-    var textStyle by remember(book.id) { mutableStateOf(SharedPdfTextStyleConfig()) }
-    var textDraft by remember(book.id) { mutableStateOf<SharedPdfTextDraft?>(null) }
+    var canvasSize by remember(readerSessionKey) { mutableStateOf(IntSize.Zero) }
+    val activeStroke = remember(readerSessionKey, readerState.pageIndex) { mutableStateListOf<PdfPagePoint>() }
+    var textStyle by remember(readerSessionKey) { mutableStateOf(SharedPdfTextStyleConfig()) }
+    var textDraft by remember(readerSessionKey) { mutableStateOf<SharedPdfTextDraft?>(null) }
     val isRichTextEditingEnabled = readerState.selectedTool == PdfInkTool.TEXT && textDraft == null
 
     fun dispatch(action: SharedPdfReaderAction) {
         readerState = readerState.reduce(action)
     }
     fun stopPdfTtsSession() {
-        pdfTts.stop()
+        if (ownsTts) pdfTts.stop()
         pendingTtsStart = null
         pendingTtsStartAtLastChunk = false
         ttsHighlightBounds = emptyList()
+    }
+
+    fun dispatchNativePdfAction(
+        action: SharedMobilePdfNativeAction,
+        snapshot: SharedPdfExportSnapshot,
+    ) {
+        if (ownsNativeAction) onNativePdfAction(book, action, pdfPassword, snapshot)
     }
 
     fun navigateToPage(
@@ -569,6 +753,7 @@ fun SharedMobilePdfReaderScreen(
         startAtLastChunk: Boolean = false,
         playWhenReady: Boolean = true
     ) {
+        if (!ownsTts) return
         val target = pageIndex.coerceIn(0, (displayPageCount - 1).coerceAtLeast(0))
         pdfTts.prepare()
         ttsPageIndex = sharedPdfPdfPageIndexAt(virtualLayout, target)
@@ -744,7 +929,7 @@ fun SharedMobilePdfReaderScreen(
         }
     }
 
-    LaunchedEffect(pageCount) {
+    LaunchedEffect(readerSessionKey, pageCount) {
         if (readerState.pageCount != pageCount) {
             readerState = readerState.copy(pageCount = pageCount).coerced()
         }
@@ -753,7 +938,7 @@ fun SharedMobilePdfReaderScreen(
     // Mirrors Android's auto page management for the flowing rich text document
     // (PdfViewerScreen lines ~2208-2360): text overflowing the last page appends blank pages,
     // trailing auto-added blank pages with no content are pruned. Manual blank pages are kept.
-    val highestRequiredTextPageIndex by remember(richTextController.pageLayouts) {
+    val highestRequiredTextPageIndex by remember(readerSessionKey, richTextController.pageLayouts) {
         derivedStateOf { richTextController.pageLayouts.maxOfOrNull { it.pageIndex } ?: -1 }
     }
     fun hasRichTextOnPage(pageIndex: Int): Boolean {
@@ -761,7 +946,7 @@ fun SharedMobilePdfReaderScreen(
             it.pageIndex == pageIndex && it.visibleText.isNotBlank()
         }
     }
-    LaunchedEffect(highestRequiredTextPageIndex, displayPageCount, richTextController.pageLayouts) {
+    LaunchedEffect(readerSessionKey, highestRequiredTextPageIndex, displayPageCount, richTextController.pageLayouts) {
         if (richTextController.pageLayouts.isEmpty() || highestRequiredTextPageIndex < 0) return@LaunchedEffect
         delay(500)
         val requiredPages = highestRequiredTextPageIndex + 1
@@ -790,18 +975,19 @@ fun SharedMobilePdfReaderScreen(
         }
     }
 
-    LaunchedEffect(readerState, richTextDocumentJson) {
-        onReaderStateChange(readerState.copy(richTextDocumentJson = richTextDocumentJson))
+    LaunchedEffect(readerSessionKey, readerState, richTextDocumentJson) {
+        val state = readerState.copy(richTextDocumentJson = richTextDocumentJson)
+        publishReaderState(state)
     }
 
-    LaunchedEffect(autoScrollInteractionToken) {
+    LaunchedEffect(readerSessionKey, autoScrollInteractionToken) {
         if (autoScrollInteractionToken == 0 || !autoScrollPlaying) return@LaunchedEffect
         autoScrollTemporarilyPaused = true
         delay(autoScrollPauseDurationMillis)
         autoScrollTemporarilyPaused = false
     }
 
-    LaunchedEffect(readerState.displayMode) {
+    LaunchedEffect(readerSessionKey, readerState.displayMode) {
         if (readerState.displayMode != PdfDisplayMode.VERTICAL_SCROLL) {
             autoScrollModeActive = false
             autoScrollPlaying = false
@@ -809,7 +995,7 @@ fun SharedMobilePdfReaderScreen(
         }
     }
 
-    LaunchedEffect(readerState.searchQuery) {
+    LaunchedEffect(readerSessionKey, readerState.searchQuery) {
         val query = readerState.searchQuery.trim()
         if (query.isBlank()) {
             searchResults = emptyList()
@@ -824,7 +1010,7 @@ fun SharedMobilePdfReaderScreen(
         isSearchInProgress = false
     }
 
-    LaunchedEffect(book.path, pdfPassword, documentRender.openError) {
+    LaunchedEffect(readerSessionKey, book.path, pdfPassword, documentRender.openError) {
         tableOfContents = if (documentRender.openError == null) {
             withContext(Dispatchers.Default) { loadSharedMobilePdfOutline(book, pdfPassword) }
         } else {
@@ -832,7 +1018,8 @@ fun SharedMobilePdfReaderScreen(
         }
     }
 
-    LaunchedEffect(ttsTextSession, pendingTtsStart, ttsPageIndex) {
+    LaunchedEffect(readerSessionKey, ttsTextSession, pendingTtsStart, ttsPageIndex, ownsTts) {
+        if (!ownsTts) return@LaunchedEffect
         val start = pendingTtsStart ?: return@LaunchedEffect
         val session = ttsTextSession ?: return@LaunchedEffect
         val source = session.textForRange(0, session.pageCharCount).orEmpty()
@@ -860,7 +1047,8 @@ fun SharedMobilePdfReaderScreen(
         }
     }
 
-    LaunchedEffect(pdfTts.progress.currentChunk, ttsTextSession, ttsPageIndex) {
+    LaunchedEffect(readerSessionKey, pdfTts.progress.currentChunk, ttsTextSession, ttsPageIndex, ownsTts) {
+        if (!ownsTts) return@LaunchedEffect
         val session = ttsTextSession
         val range = PdfTtsSessionPlanner.highlightRange(pdfTts.progress.currentChunk, session?.pageCharCount ?: 0)
         ttsHighlightBounds = if (session != null && range != null) {
@@ -873,7 +1061,8 @@ fun SharedMobilePdfReaderScreen(
         }
     }
 
-    LaunchedEffect(pdfTts.completionCount) {
+    LaunchedEffect(readerSessionKey, pdfTts.completionCount, ownsTts) {
+        if (!ownsTts) return@LaunchedEffect
         if (pdfTts.completionCount == lastTtsCompletionCount) return@LaunchedEffect
         lastTtsCompletionCount = pdfTts.completionCount
         val next = PdfTtsSessionPlanner.nextPage(ttsPageIndex, pageCount)
@@ -895,16 +1084,18 @@ fun SharedMobilePdfReaderScreen(
         }
     }
 
-    LaunchedEffect(keepScreenOn) {
-        onKeepScreenOnChange(keepScreenOn)
+    LaunchedEffect(readerSessionKey, keepScreenOn, ownsKeepScreenOn) {
+        if (ownsKeepScreenOn) onKeepScreenOnChange(keepScreenOn)
     }
 
-    LaunchedEffect(isStylusOnlyMode) {
+    LaunchedEffect(readerSessionKey, isStylusOnlyMode) {
         onStylusOnlyModePreferenceChange(isStylusOnlyMode)
     }
 
-    DisposableEffect(onKeepScreenOnChange) {
-        onDispose { onKeepScreenOnChange(false) }
+    DisposableEffect(readerSessionKey, ownsKeepScreenOn, onKeepScreenOnChange) {
+        onDispose {
+            if (ownsKeepScreenOn) onKeepScreenOnChange(false)
+        }
     }
 
     ModalNavigationDrawer(
@@ -983,8 +1174,8 @@ fun SharedMobilePdfReaderScreen(
                                 dispatch(SharedPdfReaderAction.BookmarkToggled(currentPdfIndex, createdAt = currentTimestamp()))
                             },
                             onToggleDisplayMode = ::toggleDisplayMode,
-                            onTheme = { showThemePanel = true },
-                            onVisualOptions = { showReaderOptions = !showReaderOptions },
+                            onTheme = { if (ownsGlobalModal) showThemePanel = true },
+                            onVisualOptions = { if (ownsGlobalModal) showReaderOptions = !showReaderOptions },
                             tapToTurnPages = tapToTurnPages,
                             onToggleTapToTurnPages = { tapToTurnPages = !tapToTurnPages },
                             isScrollLocked = readerState.isScrollLocked,
@@ -1022,31 +1213,33 @@ fun SharedMobilePdfReaderScreen(
                                 onPageSliderVisibilityPreferenceChange(showPageSlider)
                             },
                             onToggleTts = {
-                                when (pdfTts.state) {
+                                if (ownsTts) when (pdfTts.state) {
                                     SharedMobileEpubLocalTtsState.IDLE -> requestTts()
                                     SharedMobileEpubLocalTtsState.SPEAKING -> pdfTts.pause()
                                     SharedMobileEpubLocalTtsState.PAUSED -> pdfTts.resume()
                                 }
                             },
-                            onVoiceSettings = { showTtsSettingsSheet = true },
-                            onWordReplacements = { showTtsReplacementsSheet = true },
+                            onVoiceSettings = { if (ownsGlobalModal && ownsTts) showTtsSettingsSheet = true },
+                            onWordReplacements = { if (ownsGlobalModal && ownsTts) showTtsReplacementsSheet = true },
                             onNativeAction = { action ->
-                                if (action == SharedMobilePdfNativeAction.PRINT && pdfPassword != null) {
-                                    showPasswordProtectedPrintWarning = true
-                                } else if (action == SharedMobilePdfNativeAction.SHARE && shouldShowPdfAnnotationExportChoice(
-                                        sidecarsReady = true,
-                                        inkAnnotationCounts = readerState.annotations
-                                            .filter { it.kind == PdfAnnotationKind.INK }
-                                            .groupBy { it.pageIndex }
-                                            .values
-                                            .map { it.size },
-                                        textBoxCount = readerState.annotations.count { it.kind == PdfAnnotationKind.TEXT },
-                                        highlightCount = readerState.annotations.count { it.kind == PdfAnnotationKind.HIGHLIGHT },
-                                    )
-                                ) {
-                                    showShareFormatChoice = true
-                                } else {
-                                    onNativePdfAction(book, action, pdfPassword, SharedPdfExportSnapshot(readerState.copy(richTextDocumentJson = richTextDocumentJson), richTextController.pageLayouts))
+                                if (ownsNativeAction) {
+                                    if (action == SharedMobilePdfNativeAction.PRINT && pdfPassword != null) {
+                                        showPasswordProtectedPrintWarning = true
+                                    } else if (action == SharedMobilePdfNativeAction.SHARE && shouldShowPdfAnnotationExportChoice(
+                                            sidecarsReady = true,
+                                            inkAnnotationCounts = readerState.annotations
+                                                .filter { it.kind == PdfAnnotationKind.INK }
+                                                .groupBy { it.pageIndex }
+                                                .values
+                                                .map { it.size },
+                                            textBoxCount = readerState.annotations.count { it.kind == PdfAnnotationKind.TEXT },
+                                            highlightCount = readerState.annotations.count { it.kind == PdfAnnotationKind.HIGHLIGHT },
+                                        )
+                                    ) {
+                                        showShareFormatChoice = true
+                                    } else {
+                                        dispatchNativePdfAction(action, SharedPdfExportSnapshot(readerState.copy(richTextDocumentJson = richTextDocumentJson), richTextController.pageLayouts))
+                                    }
                                 }
                             },
                             isCurrentPageBlank = isCurrentPageBlank,
@@ -1054,12 +1247,12 @@ fun SharedMobilePdfReaderScreen(
                             onDeleteBlankPage = ::deleteBlankPageAtCurrentPosition,
                             pdfReflowUiState = pdfReflowUiState,
                             isTtsPlayingOrLoading = isPdfTtsPlayingOrLoading,
-                            onFileInformation = { showFileInformation = true },
-                            onBrightness = { showBrightnessSheet = true },
-                            onScreenOrientation = { showScreenOrientationSheet = true },
+                            onFileInformation = { if (ownsGlobalModal) showFileInformation = true },
+                            onBrightness = { if (ownsGlobalModal) showBrightnessSheet = true },
+                            onScreenOrientation = { if (ownsGlobalModal) showScreenOrientationSheet = true },
                             topTools = pdfTopTools,
                             toolbarPreferences = sanitizedPdfToolbarPreferences,
-                            onCustomizeToolbar = { showToolbarCustomization = true },
+                            onCustomizeToolbar = { if (ownsGlobalModal) showToolbarCustomization = true },
                             applySystemBarInsets = systemUiMode == SharedMobilePdfSystemUiMode.SYNC_WITH_MENUS
                         )
                         if (
@@ -1102,14 +1295,14 @@ fun SharedMobilePdfReaderScreen(
                         ttsState = pdfTts.state,
                         isTtsPlayingOrLoading = isPdfTtsPlayingOrLoading,
                         onToggleTts = {
-                            when (pdfTts.state) {
+                            if (ownsTts) when (pdfTts.state) {
                                 SharedMobileEpubLocalTtsState.IDLE -> requestTts()
                                 SharedMobileEpubLocalTtsState.SPEAKING -> pdfTts.pause()
                                 SharedMobileEpubLocalTtsState.PAUSED -> pdfTts.resume()
                             }
                         },
-                        onTheme = { showThemePanel = true },
-                        onBrightness = { showBrightnessSheet = true },
+                        onTheme = { if (ownsGlobalModal) showThemePanel = true },
+                        onBrightness = { if (ownsGlobalModal) showBrightnessSheet = true },
                         onToggleScrollLock = {
                             dispatch(
                                 SharedPdfReaderAction.ScrollLockChanged(
@@ -1120,8 +1313,8 @@ fun SharedMobilePdfReaderScreen(
                                 )
                             )
                         },
-                        onScreenOrientation = { showScreenOrientationSheet = true },
-                        onDictionary = { onNativePdfAction(book, SharedMobilePdfNativeAction.DICTIONARY_SETTINGS, pdfPassword, SharedPdfExportSnapshot(readerState)) },
+                        onScreenOrientation = { if (ownsGlobalModal) showScreenOrientationSheet = true },
+                        onDictionary = { dispatchNativePdfAction(SharedMobilePdfNativeAction.DICTIONARY_SETTINGS, SharedPdfExportSnapshot(readerState)) },
                         showAllTextHighlights = showAllTextHighlights,
                         isAllTextHighlightLoading = isAllTextHighlightLoading,
                         onToggleHighlights = ::toggleAllTextHighlights,
@@ -1138,6 +1331,7 @@ fun SharedMobilePdfReaderScreen(
                     .focusRequester(pdfReaderFocusRequester)
                     .focusable()
                     .onPreviewKeyEvent { event ->
+                        if (!ownsKeyboardCommands) return@onPreviewKeyEvent false
                         if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                         when (sharedPdfKeyboardNavigationAction(event.key, readerState.displayMode)) {
                             SharedPdfKeyboardNavigationAction.NEXT_PAGE -> {
@@ -1200,7 +1394,7 @@ fun SharedMobilePdfReaderScreen(
                         onVisiblePageChanged = { dispatch(SharedPdfReaderAction.GoToPage(it)) },
                         onCanvasSizeChanged = { canvasSize = it },
                         onFinishInkStroke = { page, eraserOverride -> finishInkStroke(page, eraserOverride) },
-                        onExternalLink = { url -> pendingExternalLink = url },
+                        onExternalLink = { url -> if (ownsGlobalModal) pendingExternalLink = url },
                         onInternalLink = { navigateToPage(sharedPdfDisplayIndexFor(virtualLayout, it), reason = PdfNavigationReason.INTERNAL_LINK) },
                         onExistingHighlightTap = { noteAnnotationId = it.id },
                         onHighlight = { page, range, text, bounds, color, style, note -> addTextHighlight(page, range, text, bounds, color, style, note) },
@@ -1245,7 +1439,7 @@ fun SharedMobilePdfReaderScreen(
                         activeStroke = activeStroke,
                         isStylusOnlyMode = isStylusOnlyMode,
                         tapToTurnPages = tapToTurnPages,
-                        onExternalLink = { url -> pendingExternalLink = url },
+                        onExternalLink = { url -> if (ownsGlobalModal) pendingExternalLink = url },
                         onInternalLink = { navigateToPage(sharedPdfDisplayIndexFor(virtualLayout, it), reason = PdfNavigationReason.INTERNAL_LINK) },
                         onExistingHighlightTap = { noteAnnotationId = it.id },
                         onHighlight = { page, range, text, bounds, color, style, note -> addTextHighlight(page, range, text, bounds, color, style, note) },
@@ -1351,32 +1545,38 @@ fun SharedMobilePdfReaderScreen(
                         chunkIndex = pdfTts.progress.currentChunkIndex,
                         chunkCount = pdfTts.progress.chunks.size,
                         onPauseResume = {
-                            if (pdfTts.state == SharedMobileEpubLocalTtsState.SPEAKING) pdfTts.pause() else pdfTts.resume()
+                            if (ownsTts) {
+                                if (pdfTts.state == SharedMobileEpubLocalTtsState.SPEAKING) pdfTts.pause() else pdfTts.resume()
+                            }
                         },
                         onPreviousPage = {
-                            if (pdfTts.progress.currentChunkIndex > 0) {
-                                pdfTts.skipPrevious()
-                            } else if (ttsPageIndex > 0) {
-                                requestTts(
-                                    pageIndex = sharedPdfDisplayIndexFor(virtualLayout, ttsPageIndex - 1),
-                                    startAtLastChunk = true,
-                                    playWhenReady = pdfTts.state != SharedMobileEpubLocalTtsState.PAUSED
-                                )
+                            if (ownsTts) {
+                                if (pdfTts.progress.currentChunkIndex > 0) {
+                                    pdfTts.skipPrevious()
+                                } else if (ttsPageIndex > 0) {
+                                    requestTts(
+                                        pageIndex = sharedPdfDisplayIndexFor(virtualLayout, ttsPageIndex - 1),
+                                        startAtLastChunk = true,
+                                        playWhenReady = pdfTts.state != SharedMobileEpubLocalTtsState.PAUSED
+                                    )
+                                }
                             }
                         },
                         onNextPage = {
-                            if (pdfTts.progress.currentChunkIndex < pdfTts.progress.chunks.lastIndex) {
-                                pdfTts.skipNext()
-                            } else if (ttsPageIndex < pageCount - 1) {
-                                requestTts(
-                                    pageIndex = sharedPdfDisplayIndexFor(virtualLayout, ttsPageIndex + 1),
-                                    playWhenReady = pdfTts.state != SharedMobileEpubLocalTtsState.PAUSED
-                                )
+                            if (ownsTts) {
+                                if (pdfTts.progress.currentChunkIndex < pdfTts.progress.chunks.lastIndex) {
+                                    pdfTts.skipNext()
+                                } else if (ttsPageIndex < pageCount - 1) {
+                                    requestTts(
+                                        pageIndex = sharedPdfDisplayIndexFor(virtualLayout, ttsPageIndex + 1),
+                                        playWhenReady = pdfTts.state != SharedMobileEpubLocalTtsState.PAUSED
+                                    )
+                                }
                             }
                         },
                         onLocate = { navigateToPage(sharedPdfDisplayIndexFor(virtualLayout, ttsPageIndex), recordHistory = false, centerFraction = ttsHighlightBounds.centerYFraction(), reason = PdfNavigationReason.TTS) },
                         onStop = {
-                            pdfTts.stop()
+                            if (ownsTts) pdfTts.stop()
                             pendingTtsStart = null
                             pendingTtsStartAtLastChunk = false
                             ttsHighlightBounds = emptyList()
@@ -1710,11 +1910,11 @@ fun SharedMobilePdfReaderScreen(
             cancelLabel = "Cancel",
             onAnnotated = {
                 showShareFormatChoice = false
-                onNativePdfAction(book, SharedMobilePdfNativeAction.SHARE_ANNOTATED, pdfPassword, SharedPdfExportSnapshot(readerState.copy(richTextDocumentJson = richTextDocumentJson), richTextController.pageLayouts))
+                dispatchNativePdfAction(SharedMobilePdfNativeAction.SHARE_ANNOTATED, SharedPdfExportSnapshot(readerState.copy(richTextDocumentJson = richTextDocumentJson), richTextController.pageLayouts))
             },
             onOriginal = {
                 showShareFormatChoice = false
-                onNativePdfAction(book, SharedMobilePdfNativeAction.SHARE_ORIGINAL, pdfPassword, SharedPdfExportSnapshot(readerState.copy(richTextDocumentJson = richTextDocumentJson), richTextController.pageLayouts))
+                dispatchNativePdfAction(SharedMobilePdfNativeAction.SHARE_ORIGINAL, SharedPdfExportSnapshot(readerState.copy(richTextDocumentJson = richTextDocumentJson), richTextController.pageLayouts))
             },
             onDismiss = { showShareFormatChoice = false },
         )
@@ -1804,6 +2004,7 @@ fun SharedMobilePdfReaderScreen(
                     }
                 }
             }
+        }
         }
     }
 }
