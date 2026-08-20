@@ -154,6 +154,8 @@ import com.aryan.reader.shared.opds.opdsStreamBooksForCatalog
 import com.aryan.reader.shared.pdf.SharedPdfReaderState
 import com.aryan.reader.shared.pdf.SharedPdfExportSnapshot
 import com.aryan.reader.shared.pdf.SharedPdfReaderStateSerializer
+import com.aryan.reader.shared.pdf.SharedPdfReaderHostConfig
+import com.aryan.reader.shared.pdf.SharedPdfReaderSessionKey
 import com.aryan.reader.shared.pdf.PdfAutoScrollProfile
 import com.aryan.reader.shared.pdf.generateIosPdfReflowHtml
 import com.aryan.reader.shared.ui.SharedAppTheme
@@ -164,7 +166,7 @@ import com.aryan.reader.shared.ui.SharedHelpFeedbackScreen
 import com.aryan.reader.shared.ui.SharedMobileAppDrawerContent
 import com.aryan.reader.shared.ui.SharedMobileEpubReaderScreen
 import com.aryan.reader.shared.ui.SharedMobileReaderTtsSettingsSheet
-import com.aryan.reader.shared.ui.SharedMobilePdfReaderScreen
+import com.aryan.reader.shared.ui.SharedMobilePdfReaderHost
 import com.aryan.reader.shared.ui.SharedMobilePdfReflowUiState
 import com.aryan.reader.shared.ui.SharedMobileDictionarySettingsSheet
 import com.aryan.reader.shared.ui.SharedMobileHomeScreen
@@ -188,6 +190,10 @@ import com.aryan.reader.shared.ui.rememberSharedMobileEpubLocalTts
 import com.aryan.reader.shared.ui.withoutIosFolderFilter
 import com.aryan.reader.shared.reader.ReaderScreenOrientationMode
 import com.aryan.reader.shared.ui.SharedMobilePdfNativeAction
+import com.aryan.reader.shared.PdfSplitPane
+import com.aryan.reader.shared.PdfSplitWorkspaceAction
+import com.aryan.reader.shared.PdfSplitWorkspaceState
+import com.aryan.reader.shared.samePdfDocument
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -1533,18 +1539,35 @@ private fun ReaderIosApp(
             restoredAddBooksSource = restoredLibraryNavigation.addBooksSource,
         )
     }
+    val persistedPdfSplitWorkspace = remember { loadIosPdfSplitWorkspace() }
+    val restoredPdfSplitWorkspace = remember {
+        restoreIosPdfSplitWorkspace(
+            persisted = persistedPdfSplitWorkspace,
+            books = navigatedState.rawLibraryBooks,
+        )
+    }
     val restoredReaderBook = remember {
         loadIosReaderSessionBook(navigatedState.rawLibraryBooks)
     }
+    val initialReaderBook = remember(restoredPdfSplitWorkspace, restoredReaderBook) {
+        restoredPdfSplitWorkspace.exitTargetDocument
+            ?.let { resolveIosPdfSplitBook(it, navigatedState.rawLibraryBooks) }
+            ?: restoredReaderBook
+    }
     var state by remember {
-        mutableStateOf(
-            restoredReaderBook
-                ?.let(navigatedState::withRestoredMobileReaderSession)
-                ?: navigatedState
-        )
+        mutableStateOf(initialReaderBook?.let(navigatedState::withRestoredMobileReaderSession) ?: navigatedState)
     }
     LaunchedEffect(state) {
         persistIosLibrarySnapshot(state)
+    }
+    var pdfSplitWorkspace by remember { mutableStateOf(restoredPdfSplitWorkspace) }
+    var pendingPdfSplitWorkspaceRestore by remember {
+        mutableStateOf(persistedPdfSplitWorkspace.takeIf {
+            it.isSplit && !restoredPdfSplitWorkspace.isOpen
+        })
+    }
+    LaunchedEffect(pdfSplitWorkspace) {
+        persistIosPdfSplitWorkspace(pdfSplitWorkspace)
     }
     LaunchedEffect(state.viewingShelfId, state.isAddingBooksToShelf, state.addBooksSource) {
         persistIosMobileLibraryNavigation(state)
@@ -1642,7 +1665,23 @@ private fun ReaderIosApp(
     var lookupTranslateService by remember { mutableStateOf(initialLookupServices.second) }
     var lookupSearchService by remember { mutableStateOf(initialLookupServices.third) }
     var pdfReflowProgress by remember { mutableStateOf<Float?>(null) }
-    var activeReaderBook by remember { mutableStateOf(restoredReaderBook) }
+    var activeReaderBook by remember { mutableStateOf(initialReaderBook) }
+    var pdfSplitPickerTarget by remember { mutableStateOf<IosPdfSplitPickerTarget?>(null) }
+    LaunchedEffect(state.rawLibraryBooks, pendingPdfSplitWorkspaceRestore) {
+        val pending = pendingPdfSplitWorkspaceRestore ?: return@LaunchedEffect
+        if (pdfSplitWorkspace.isOpen) return@LaunchedEffect
+        val restored = restoreIosPdfSplitWorkspace(pending, state.rawLibraryBooks)
+        if (restored.isOpen) {
+            pdfSplitWorkspace = restored
+            pendingPdfSplitWorkspaceRestore = null
+            restored.exitTargetDocument?.let { exitTarget ->
+                resolveIosPdfSplitBook(exitTarget, state.rawLibraryBooks)?.let { focusedBook ->
+                    activeReaderBook = focusedBook
+                    persistIosReaderSession(focusedBook)
+                }
+            }
+        }
+    }
     var activeTemporaryBookId by remember { mutableStateOf<String?>(null) }
     var activeTemporaryBookPath by remember { mutableStateOf<String?>(null) }
     var activeExternalBookId by remember { mutableStateOf<String?>(null) }
@@ -1812,6 +1851,116 @@ private fun ReaderIosApp(
             }
         }
         activeReaderBook = openedBook
+    }
+
+    fun focusIosPdfSplitPane(pane: PdfSplitPane, sessionId: Long) {
+        val current = pdfSplitWorkspace.pane(pane) ?: return
+        if (current.sessionId != sessionId) return
+        val next = pdfSplitWorkspace.reduce(
+            PdfSplitWorkspaceAction.FocusChanged(
+                pane = pane,
+                expectedRevision = pdfSplitWorkspace.revision,
+                expectedSessionId = sessionId,
+            )
+        )
+        if (next == pdfSplitWorkspace) return
+        pdfSplitWorkspace = next
+        resolveIosPdfSplitBook(current, state.rawLibraryBooks)?.let { focusedBook ->
+            activeReaderBook = focusedBook
+            persistIosReaderSession(focusedBook)
+        }
+    }
+
+    fun closeIosPdfSplitPane(pane: PdfSplitPane, sessionId: Long) {
+        val current = pdfSplitWorkspace.pane(pane) ?: return
+        if (current.sessionId != sessionId) return
+        val next = pdfSplitWorkspace.reduce(
+            PdfSplitWorkspaceAction.PaneClosed(
+                pane = pane,
+                expectedRevision = pdfSplitWorkspace.revision,
+                expectedSessionId = sessionId,
+            )
+        )
+        if (next == pdfSplitWorkspace) return
+        pdfSplitWorkspace = next
+        resolveIosPdfSplitBook(next.exitTargetDocument ?: current, state.rawLibraryBooks)?.let { book ->
+            activeReaderBook = book
+            persistIosReaderSession(book)
+        }
+    }
+
+    fun closeIosPdfSplitWorkspace() {
+        val exitTarget = pdfSplitWorkspace.exitTargetDocument
+        pdfSplitWorkspace = pdfSplitWorkspace.reduce(PdfSplitWorkspaceAction.Closed)
+        resolveIosPdfSplitBook(exitTarget ?: return, state.rawLibraryBooks)?.let { book ->
+            activeReaderBook = book
+            persistIosReaderSession(book)
+        }
+    }
+
+    fun showIosPdfSplitPicker(targetPane: PdfSplitPane) {
+        pdfSplitPickerTarget = IosPdfSplitPickerTarget(
+            pane = targetPane,
+            expectedRevision = pdfSplitWorkspace.revision,
+            expectedSessionId = pdfSplitWorkspace.pane(targetPane)?.sessionId,
+        )
+    }
+
+    fun selectIosPdfSplitBook(book: BookItem) {
+        val target = pdfSplitPickerTarget ?: return
+        val selected = iosPdfSplitPaneState(book) ?: return
+        val current = activeReaderBook ?: return
+        val next = if (!pdfSplitWorkspace.isOpen) {
+            val primary = iosPdfSplitPaneState(current) ?: return
+            PdfSplitWorkspaceState().reduce(
+                PdfSplitWorkspaceAction.Open(
+                    primary = primary,
+                    secondary = selected,
+                    orientation = pdfSplitWorkspace.orientation,
+                )
+            )
+        } else {
+            pdfSplitWorkspace.reduce(
+                PdfSplitWorkspaceAction.PaneOpened(
+                    pane = target.pane,
+                    document = selected,
+                    expectedRevision = target.expectedRevision,
+                    expectedSessionId = target.expectedSessionId,
+                )
+            )
+        }
+        if (next == pdfSplitWorkspace && pdfSplitWorkspace.isOpen) {
+            pdfSplitPickerTarget = null
+            return
+        }
+        pdfSplitWorkspace = next
+        pdfSplitPickerTarget = null
+        resolveIosPdfSplitBook(next.exitTargetDocument ?: selected, state.rawLibraryBooks)?.let { focusedBook ->
+            activeReaderBook = focusedBook
+            persistIosReaderSession(focusedBook)
+        }
+    }
+
+    fun iosPdfSplitPickerBooks(target: IosPdfSplitPickerTarget): List<BookItem> {
+        val otherPane = pdfSplitWorkspace.pane(
+            when (target.pane) {
+                PdfSplitPane.PRIMARY -> PdfSplitPane.SECONDARY
+                PdfSplitPane.SECONDARY -> PdfSplitPane.PRIMARY
+            }
+        )
+        val currentBook = activeReaderBook
+        return state.rawLibraryBooks
+            .asSequence()
+            .filter { it.type == FileType.PDF && iosPdfSplitBookIsAvailable(it) }
+            .filter { candidate ->
+                val candidateState = iosPdfSplitPaneState(candidate) ?: return@filter false
+                val isOtherPane = candidateState.samePdfDocument(otherPane)
+                val isCurrentFullScreenBook = !pdfSplitWorkspace.isOpen &&
+                    candidateState.samePdfDocument(currentBook?.let(::iosPdfSplitPaneState))
+                !isOtherPane && !isCurrentFullScreenBook
+            }
+            .sortedBy { it.displayName.lowercase() }
+            .toList()
     }
 
     fun addBooksToLibrary(books: List<BookItem>, message: String? = null) {
@@ -2260,6 +2409,199 @@ private fun ReaderIosApp(
         }
     }
 
+    @Composable
+    fun renderIosPdfHost(
+        paneBook: BookItem,
+        onBack: () -> Unit,
+        hostConfig: SharedPdfReaderHostConfig,
+        pdfTabsEnabled: Boolean,
+    ) {
+        val initialPdfReaderState = remember(hostConfig.sessionKey) {
+            loadPersistedIosPdfReaderState(paneBook)
+        }
+        LaunchedEffect(
+            hostConfig.sessionKey,
+            hostConfig.isFocused,
+            bridge.appLifecycleState.eventId,
+            readerBrightness,
+        ) {
+            if (hostConfig.isFocused && hostConfig.isAppActive) {
+                bridge.setReaderBrightness(readerBrightness)
+            }
+        }
+        SharedMobilePdfReaderHost(
+            book = paneBook,
+            onBack = onBack,
+            pdfReflowUiState = SharedMobilePdfReflowUiState(
+                isGenerating = pdfReflowProgress != null,
+                progress = pdfReflowProgress ?: 0f,
+                hasReflowBook = state.rawLibraryBooks.any { it.id == "${paneBook.id}_reflow" },
+            ),
+            pdfTabsEnabled = pdfTabsEnabled,
+            openPdfTabs = if (pdfTabsEnabled) state.openTabs else emptyList(),
+            activePdfTabBookId = if (pdfTabsEnabled) state.activeTabBookId else null,
+            availablePdfTabBooks = if (pdfTabsEnabled) state.rawLibraryBooks else emptyList(),
+            pdfTopTabStripVisible = pdfTopTabStripVisible,
+            onPdfTopTabStripVisibilityChange = { visible ->
+                if (pdfTabsEnabled) {
+                    pdfTopTabStripVisible = visible
+                    persistIosPdfTopTabStripVisible(visible)
+                }
+            },
+            onOpenPdfTab = { tab ->
+                if (pdfTabsEnabled && tab.id != paneBook.id) openLibraryBook(tab)
+            },
+            onClosePdfTab = { tab ->
+                if (!pdfTabsEnabled) return@SharedMobilePdfReaderHost
+                val closingActiveTab = tab.id == state.activeTabBookId
+                state = state.withMobileBookClosed(tab.id)
+                finishManagedExternalOpen(tab)
+                if (closingActiveTab) {
+                    val nextBook = state.activeTabBookId?.let { nextId ->
+                        state.rawLibraryBooks.firstOrNull { it.id == nextId }
+                    }
+                    if (nextBook == null) {
+                        closeActiveReader(paneBook)
+                    } else {
+                        activeReaderBook = nextBook
+                        persistIosReaderSession(nextBook)
+                    }
+                }
+            },
+            onNativePdfAction = { pdfBook, action, password, pdfExport ->
+                when (action) {
+                    SharedMobilePdfNativeAction.DICTIONARY_SETTINGS -> {
+                        showDictionarySettingsSheet = true
+                    }
+                    SharedMobilePdfNativeAction.TEXT_VIEW -> {
+                        startIosPdfReflow(pdfBook, password)
+                    }
+                    SharedMobilePdfNativeAction.SAVE_COPY -> scope.launch {
+                        when (val export = prepareIosPdfSaveCopy(pdfBook, password, pdfExport)) {
+                            is IosPdfSaveCopyPreparation.Ready -> {
+                                if (!bridge.performPdfNativeAction(export.book, action)) {
+                                    showMessage("Unable to export ${pdfBook.displayName}.")
+                                }
+                            }
+                            is IosPdfSaveCopyPreparation.Unavailable -> showMessage(export.message)
+                        }
+                    }
+                    SharedMobilePdfNativeAction.SHARE_ANNOTATED -> scope.launch {
+                        when (val export = prepareIosPdfSaveCopy(pdfBook, password, pdfExport)) {
+                            is IosPdfSaveCopyPreparation.Ready -> {
+                                if (!bridge.performPdfNativeAction(export.book, SharedMobilePdfNativeAction.SHARE)) {
+                                    showMessage("Unable to share ${pdfBook.displayName}.")
+                                }
+                            }
+                            is IosPdfSaveCopyPreparation.Unavailable -> showMessage(export.message)
+                        }
+                    }
+                    SharedMobilePdfNativeAction.SHARE_ORIGINAL -> {
+                        if (!bridge.performPdfNativeAction(pdfBook, SharedMobilePdfNativeAction.SHARE)) {
+                            showMessage("Unable to share ${pdfBook.displayName}.")
+                        }
+                    }
+                    else -> {
+                        if (!bridge.performPdfNativeAction(pdfBook, action)) {
+                            showMessage(
+                                when (action) {
+                                    SharedMobilePdfNativeAction.SHARE -> "Unable to share ${pdfBook.displayName}."
+                                    SharedMobilePdfNativeAction.SAVE_COPY -> "Unable to export ${pdfBook.displayName}."
+                                    SharedMobilePdfNativeAction.PRINT -> "Printing is unavailable."
+                                    else -> "Unable to perform PDF action."
+                                },
+                            )
+                        }
+                    }
+                }
+            },
+            onBookInfoChange = { updated ->
+                val currentBook = state.rawLibraryBooks.firstOrNull { it.id == paneBook.id } ?: paneBook
+                val persisted = currentBook.withUserEditedMetadata(updated)
+                state = state.withUpdatedIosBook(persisted)
+                if (activeReaderBook?.id == paneBook.id) activeReaderBook = persisted
+            },
+            knownTags = state.allTags,
+            pdfToolbarPreferences = pdfToolbarPreferences,
+            onPdfToolbarPreferencesChange = { preferences ->
+                pdfToolbarPreferences = preferences
+                persistIosPdfToolbarPreferences(preferences)
+            },
+            readerBrightness = readerBrightness,
+            readerCustomBrightness = readerCustomBrightness,
+            onReaderBrightnessChange = { brightness ->
+                brightness?.let { readerCustomBrightness = normalizeReaderBrightness(it) }
+                readerBrightness = brightness
+                persistIosReaderBrightness(brightness, readerCustomBrightness)
+                bridge.setReaderBrightness(brightness)
+            },
+            readerScreenOrientationMode = readerOrientation,
+            onReaderScreenOrientationModeChange = { mode ->
+                readerOrientation = mode
+                persistIosReaderOrientation(mode)
+            },
+            onApplyReaderScreenOrientation = bridge::applyReaderOrientation,
+            readerTtsReplacementPreferences = state.readerTtsReplacementPreferences,
+            onReaderTtsReplacementPreferencesChange = {
+                state = state.reduce(AppAction.ReaderTtsReplacementPreferencesChanged(it))
+            },
+            onTtsError = { message ->
+                state = state.reduce(AppAction.BannerShown(BannerMessage(message, isError = true)))
+            },
+            initialReaderState = initialPdfReaderState,
+            readerDefaultSettings = state.pdfReaderDefaultSettings,
+            onReaderDefaultSettingsChange = { defaults ->
+                state = state.reduce(AppAction.PdfReaderDefaultSettingsChanged(defaults))
+            },
+            customReaderThemes = state.customReaderThemes,
+            onCustomReaderThemesChange = { themes ->
+                state = state.reduce(AppAction.CustomReaderThemesChanged(themes))
+            },
+            initialKeepScreenOn = loadIosKeepScreenOn(),
+            onKeepScreenOnPreferenceChange = ::persistIosKeepScreenOn,
+            initialStylusOnlyMode = loadIosStylusOnlyMode(),
+            onStylusOnlyModePreferenceChange = ::persistIosStylusOnlyMode,
+            initialPageSliderVisible = loadIosPdfPageSliderVisible(paneBook.id),
+            onPageSliderVisibilityPreferenceChange = { visible ->
+                persistIosPdfPageSliderVisible(paneBook.id, visible)
+            },
+            onReaderStateChange = {},
+            onReaderSessionStateChange = { sessionKey, pdfState ->
+                if (!hostConfig.acceptsCallback(sessionKey)) return@SharedMobilePdfReaderHost
+                val currentBook = state.rawLibraryBooks.firstOrNull { it.id == paneBook.id } ?: paneBook
+                persistIosPdfReaderState(currentBook, pdfState)
+                val updatedBook = currentBook.withIosPdfReaderProgress(pdfState)
+                if (updatedBook != currentBook) {
+                    state = state.withUpdatedIosBook(updatedBook)
+                    if (activeReaderBook?.id == paneBook.id) activeReaderBook = updatedBook
+                }
+            },
+            pdfAutoScrollGlobalProfile = pdfAutoScrollProfile,
+            onPdfAutoScrollGlobalProfileChange = { profile ->
+                pdfAutoScrollProfile = profile.sanitized()
+                persistIosPdfAutoScrollProfile(pdfAutoScrollProfile)
+            },
+            initialPdfAutoScrollMusicianMode = pdfAutoScrollMusicianMode,
+            onPdfAutoScrollMusicianModeChange = { enabled ->
+                pdfAutoScrollMusicianMode = enabled
+                NSUserDefaults.standardUserDefaults.setBool(enabled, forKey = IosPdfAutoScrollMusicianDefaultsKey)
+            },
+            initialPdfAutoScrollUseSlider = pdfAutoScrollUseSlider,
+            onPdfAutoScrollUseSliderChange = { enabled ->
+                pdfAutoScrollUseSlider = enabled
+                NSUserDefaults.standardUserDefaults.setBool(enabled, forKey = IosPdfAutoScrollSliderDefaultsKey)
+            },
+            onPdfAutoScrollBookChange = { updated ->
+                state = state.withUpdatedIosBook(updated)
+                if (activeReaderBook?.id == paneBook.id) activeReaderBook = updated
+            },
+            onKeepScreenOnChange = bridge::setKeepScreenOn,
+            onSystemUiAppearanceChange = bridge::updateSystemUi,
+            modifier = Modifier.fillMaxSize(),
+            hostConfig = hostConfig.copy(isAppActive = bridge.appLifecycleState.isActive),
+        )
+    }
+
     SharedAppTheme(
         appThemeMode = state.appThemeMode,
         appContrastOption = state.appContrastOption,
@@ -2304,168 +2646,92 @@ private fun ReaderIosApp(
             activeReaderBook?.let { book ->
                 when (book.type) {
                     FileType.PDF -> {
-                        val initialPdfReaderState = remember(book.id) { loadPersistedIosPdfReaderState(book) }
-                        LaunchedEffect(book.id, readerBrightness) {
-                            bridge.setReaderBrightness(readerBrightness)
-                        }
-                        SharedMobilePdfReaderScreen(
-                            book = book,
-                            onBack = {
-                                closeActiveReader(book)
-                            },
-                            pdfReflowUiState = SharedMobilePdfReflowUiState(
-                                isGenerating = pdfReflowProgress != null,
-                                progress = pdfReflowProgress ?: 0f,
-                                hasReflowBook = state.rawLibraryBooks.any { it.id == "${book.id}_reflow" },
-                            ),
-                            pdfTabsEnabled = state.isTabsEnabled,
-                            openPdfTabs = state.openTabs,
-                            activePdfTabBookId = state.activeTabBookId,
-                            availablePdfTabBooks = state.rawLibraryBooks,
-                            pdfTopTabStripVisible = pdfTopTabStripVisible,
-                            onPdfTopTabStripVisibilityChange = { visible ->
-                                pdfTopTabStripVisible = visible
-                                persistIosPdfTopTabStripVisible(visible)
-                            },
-                            onOpenPdfTab = { tab ->
-                                if (tab.id != book.id) openLibraryBook(tab)
-                            },
-                            onClosePdfTab = { tab ->
-                                val closingActiveTab = tab.id == state.activeTabBookId
-                                state = state.withMobileBookClosed(tab.id)
-                                finishManagedExternalOpen(tab)
-                                if (closingActiveTab) {
-                                    val nextBook = state.activeTabBookId?.let { nextId ->
-                                        state.rawLibraryBooks.firstOrNull { it.id == nextId }
+                        if (pdfSplitWorkspace.isOpen) {
+                            IosPdfSplitWorkspaceScreen(
+                                workspace = pdfSplitWorkspace,
+                                titleForDocument = { document ->
+                                    resolveIosPdfSplitBook(document, state.rawLibraryBooks)?.displayName
+                                        ?: document.uriString.substringAfterLast('/').ifBlank { "PDF" }
+                                },
+                                onFocusPane = { pane, sessionId ->
+                                    focusIosPdfSplitPane(pane, sessionId)
+                                },
+                                onClosePane = { pane, sessionId ->
+                                    closeIosPdfSplitPane(pane, sessionId)
+                                },
+                                onCloseWorkspace = ::closeIosPdfSplitWorkspace,
+                                onSwapPanes = {
+                                    val swapped = pdfSplitWorkspace.reduce(PdfSplitWorkspaceAction.PanesSwapped)
+                                    pdfSplitWorkspace = swapped
+                                    swapped.exitTargetDocument?.let { exitTarget ->
+                                        resolveIosPdfSplitBook(exitTarget, state.rawLibraryBooks)
+                                    }?.let { focusedBook ->
+                                        activeReaderBook = focusedBook
+                                        persistIosReaderSession(focusedBook)
                                     }
-                                    if (nextBook == null) {
-                                        closeActiveReader(book)
-                                    } else {
-                                        activeReaderBook = nextBook
-                                        persistIosReaderSession(nextBook)
-                                    }
-                                }
-                            },
-                            onNativePdfAction = { pdfBook, action, password, pdfExport ->
-                                when (action) {
-                                    SharedMobilePdfNativeAction.DICTIONARY_SETTINGS -> {
-                                        showDictionarySettingsSheet = true
-                                    }
-                                    SharedMobilePdfNativeAction.TEXT_VIEW -> {
-                                        startIosPdfReflow(pdfBook, password)
-                                    }
-                                    SharedMobilePdfNativeAction.SAVE_COPY -> scope.launch {
-                                        when (val export = prepareIosPdfSaveCopy(pdfBook, password, pdfExport)) {
-                                            is IosPdfSaveCopyPreparation.Ready -> if (!bridge.performPdfNativeAction(export.book, action)) showMessage("Unable to export ${pdfBook.displayName}.")
-                                            is IosPdfSaveCopyPreparation.Unavailable -> showMessage(export.message)
-                                        }
-                                    }
-                                    SharedMobilePdfNativeAction.SHARE_ANNOTATED -> scope.launch {
-                                        when (val export = prepareIosPdfSaveCopy(pdfBook, password, pdfExport)) {
-                                            is IosPdfSaveCopyPreparation.Ready -> if (!bridge.performPdfNativeAction(export.book, SharedMobilePdfNativeAction.SHARE)) showMessage("Unable to share ${pdfBook.displayName}.")
-                                            is IosPdfSaveCopyPreparation.Unavailable -> showMessage(export.message)
-                                        }
-                                    }
-                                    SharedMobilePdfNativeAction.SHARE_ORIGINAL -> {
-                                        val handled = bridge.performPdfNativeAction(pdfBook, SharedMobilePdfNativeAction.SHARE)
-                                        if (!handled) showMessage("Unable to share ${pdfBook.displayName}.")
-                                    }
-                                    else -> {
-                                        val handled = bridge.performPdfNativeAction(pdfBook, action)
-                                        if (!handled) {
-                                            showMessage(
-                                                when (action) {
-                                                    SharedMobilePdfNativeAction.SHARE -> "Unable to share ${pdfBook.displayName}."
-                                                    SharedMobilePdfNativeAction.SAVE_COPY -> "Unable to export ${pdfBook.displayName}."
-                                                    SharedMobilePdfNativeAction.PRINT -> "Printing is unavailable."
+                                },
+                                onOrientationChange = { orientation ->
+                                    pdfSplitWorkspace = pdfSplitWorkspace.reduce(
+                                        PdfSplitWorkspaceAction.OrientationChanged(
+                                            orientation = orientation,
+                                            expectedRevision = pdfSplitWorkspace.revision,
+                                        )
+                                    )
+                                },
+                                onDividerChange = { fraction, orientation, revision ->
+                                    pdfSplitWorkspace = pdfSplitWorkspace.reduce(
+                                        PdfSplitWorkspaceAction.DividerChanged(
+                                            fraction = fraction,
+                                            orientation = orientation,
+                                            expectedRevision = revision,
+                                        )
+                                    )
+                                },
+                                onAddDocument = ::showIosPdfSplitPicker,
+                                renderPane = { document, isFocused ->
+                                    val paneBook = resolveIosPdfSplitBook(document, state.rawLibraryBooks)
+                                    if (paneBook != null) {
+                                        renderIosPdfHost(
+                                            paneBook = paneBook,
+                                            onBack = {
+                                                val pane = if (document == pdfSplitWorkspace.primary) {
+                                                    PdfSplitPane.PRIMARY
+                                                } else {
+                                                    PdfSplitPane.SECONDARY
                                                 }
-                                            )
-                                        }
+                                                closeIosPdfSplitPane(pane = pane, sessionId = document.sessionId)
+                                            },
+                                            hostConfig = SharedPdfReaderHostConfig(
+                                                sessionKey = SharedPdfReaderSessionKey(
+                                                    bookId = document.canonicalBookId,
+                                                    sessionId = document.sessionId,
+                                                ),
+                                                isFocused = isFocused,
+                                                isAppActive = bridge.appLifecycleState.isActive,
+                                            ),
+                                            pdfTabsEnabled = false,
+                                        )
                                     }
+                                },
+                            )
+                        } else {
+                            Box(Modifier.fillMaxSize()) {
+                                renderIosPdfHost(
+                                    paneBook = book,
+                                    onBack = { closeActiveReader(book) },
+                                    hostConfig = SharedPdfReaderHostConfig.fullScreen(book.id),
+                                    pdfTabsEnabled = state.isTabsEnabled,
+                                )
+                                TextButton(
+                                    onClick = { showIosPdfSplitPicker(PdfSplitPane.SECONDARY) },
+                                    modifier = Modifier
+                                        .align(Alignment.TopEnd)
+                                        .padding(8.dp),
+                                ) {
+                                    Text("Split")
                                 }
-                            },
-                            onBookInfoChange = { updated ->
-                                val currentBook = activeReaderBook?.takeIf { it.id == book.id } ?: book
-                                val persisted = currentBook.withUserEditedMetadata(updated)
-                                activeReaderBook = persisted
-                                state = state.withUpdatedIosBook(persisted)
-                            },
-                            knownTags = state.allTags,
-                            pdfToolbarPreferences = pdfToolbarPreferences,
-                            onPdfToolbarPreferencesChange = { preferences ->
-                                pdfToolbarPreferences = preferences
-                                persistIosPdfToolbarPreferences(preferences)
-                            },
-                            readerBrightness = readerBrightness,
-                            readerCustomBrightness = readerCustomBrightness,
-                            onReaderBrightnessChange = { brightness ->
-                                brightness?.let { readerCustomBrightness = normalizeReaderBrightness(it) }
-                                readerBrightness = brightness
-                                persistIosReaderBrightness(brightness, readerCustomBrightness)
-                                bridge.setReaderBrightness(brightness)
-                            },
-                            readerScreenOrientationMode = readerOrientation,
-                            onReaderScreenOrientationModeChange = { mode ->
-                                readerOrientation = mode
-                                persistIosReaderOrientation(mode)
-                            },
-                            onApplyReaderScreenOrientation = bridge::applyReaderOrientation,
-                            readerTtsReplacementPreferences = state.readerTtsReplacementPreferences,
-                            onReaderTtsReplacementPreferencesChange = {
-                                state = state.reduce(AppAction.ReaderTtsReplacementPreferencesChanged(it))
-                            },
-                            onTtsError = { message ->
-                                state = state.reduce(AppAction.BannerShown(BannerMessage(message, isError = true)))
-                            },
-                            initialReaderState = initialPdfReaderState,
-                            readerDefaultSettings = state.pdfReaderDefaultSettings,
-                            onReaderDefaultSettingsChange = { defaults ->
-                                state = state.reduce(AppAction.PdfReaderDefaultSettingsChanged(defaults))
-                            },
-                            customReaderThemes = state.customReaderThemes,
-                            onCustomReaderThemesChange = { themes ->
-                                state = state.reduce(AppAction.CustomReaderThemesChanged(themes))
-                            },
-                            initialKeepScreenOn = loadIosKeepScreenOn(),
-                            onKeepScreenOnPreferenceChange = ::persistIosKeepScreenOn,
-                            initialStylusOnlyMode = loadIosStylusOnlyMode(),
-                            onStylusOnlyModePreferenceChange = ::persistIosStylusOnlyMode,
-                            initialPageSliderVisible = loadIosPdfPageSliderVisible(book.id),
-                            onPageSliderVisibilityPreferenceChange = { visible ->
-                                persistIosPdfPageSliderVisible(book.id, visible)
-                            },
-                            onReaderStateChange = { pdfState ->
-                                val currentBook = activeReaderBook?.takeIf { it.id == book.id } ?: book
-                                persistIosPdfReaderState(currentBook, pdfState)
-                                val updatedBook = currentBook.withIosPdfReaderProgress(pdfState)
-                                if (updatedBook != currentBook) {
-                                    activeReaderBook = updatedBook
-                                    state = state.withUpdatedIosBook(updatedBook)
-                                }
-                            },
-                            pdfAutoScrollGlobalProfile = pdfAutoScrollProfile,
-                            onPdfAutoScrollGlobalProfileChange = { profile ->
-                                pdfAutoScrollProfile = profile.sanitized()
-                                persistIosPdfAutoScrollProfile(pdfAutoScrollProfile)
-                            },
-                            initialPdfAutoScrollMusicianMode = pdfAutoScrollMusicianMode,
-                            onPdfAutoScrollMusicianModeChange = { enabled ->
-                                pdfAutoScrollMusicianMode = enabled
-                                NSUserDefaults.standardUserDefaults.setBool(enabled, forKey = IosPdfAutoScrollMusicianDefaultsKey)
-                            },
-                            initialPdfAutoScrollUseSlider = pdfAutoScrollUseSlider,
-                            onPdfAutoScrollUseSliderChange = { enabled ->
-                                pdfAutoScrollUseSlider = enabled
-                                NSUserDefaults.standardUserDefaults.setBool(enabled, forKey = IosPdfAutoScrollSliderDefaultsKey)
-                            },
-                            onPdfAutoScrollBookChange = { updated ->
-                                activeReaderBook = updated
-                                state = state.withUpdatedIosBook(updated)
-                            },
-                            onKeepScreenOnChange = bridge::setKeepScreenOn,
-                            onSystemUiAppearanceChange = bridge::updateSystemUi,
-                            modifier = Modifier.fillMaxSize()
-                        )
+                            }
+                        }
                     }
                     FileType.EPUB,
                     FileType.TXT,
@@ -2632,6 +2898,14 @@ private fun ReaderIosApp(
                             persistIosLookupService(IosLookupSearchServiceKey, service)
                         },
                         onDismiss = { showDictionarySettingsSheet = false },
+                    )
+                }
+                pdfSplitPickerTarget?.let { target ->
+                    IosPdfSplitPickerDialog(
+                        books = iosPdfSplitPickerBooks(target),
+                        title = if (pdfSplitWorkspace.isSplit) "Replace PDF" else "Open PDF beside this one",
+                        onDismiss = { pdfSplitPickerTarget = null },
+                        onBookSelected = ::selectIosPdfSplitBook,
                     )
                 }
                 return@Surface
