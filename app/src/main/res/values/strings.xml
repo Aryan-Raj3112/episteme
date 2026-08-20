@@ -1185,6 +1185,8 @@
     <string name="pdf_split_reader_divider_desc">PDF split divider</string>
     <string name="pdf_split_reader_divider_decrease">Decrease divider position</string>
     <string name="pdf_split_reader_divider_increase">Increase divider position</string>
+    <string name="pdf_split_reader_missing_document">A split PDF was unavailable, so the available document was kept open.</string>
+    <string name="pdf_split_reader_all_documents_missing">The split PDFs are no longer available, so split mode was closed.</string>
     <!-- "Pen Playground" is the name of a developer/debug canvas for testing the annotation pen tool. -->
     <string name="pen_playground">Pen Playground</string>
     <!-- SVG = Scalable Vector Graphics (file format name — do not translate). -->

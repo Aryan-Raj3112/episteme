@@ -118,6 +118,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -550,10 +551,16 @@ fun SharedMobilePdfReaderHost(
         if (!autoScrollIsLocal) autoScrollProfile = pdfAutoScrollGlobalProfile.sanitized()
     }
 
-    DisposableEffect(readerSessionKey, readerScreenOrientationMode, onApplyReaderScreenOrientation, ownsSystemUi) {
-        if (ownsSystemUi) onApplyReaderScreenOrientation(readerScreenOrientationMode)
+    val latestOwnsSystemUi = rememberUpdatedState(ownsSystemUi)
+    val latestApplyReaderScreenOrientation = rememberUpdatedState(onApplyReaderScreenOrientation)
+    LaunchedEffect(readerSessionKey, readerScreenOrientationMode, ownsSystemUi) {
+        if (ownsSystemUi) latestApplyReaderScreenOrientation.value(readerScreenOrientationMode)
+    }
+    DisposableEffect(readerSessionKey) {
         onDispose {
-            if (ownsSystemUi) onApplyReaderScreenOrientation(ReaderScreenOrientationMode.FOLLOW_SYSTEM)
+            if (latestOwnsSystemUi.value) {
+                latestApplyReaderScreenOrientation.value(ReaderScreenOrientationMode.FOLLOW_SYSTEM)
+            }
         }
     }
     var pdfZoomCamera by remember(readerSessionKey, initialReaderState) {
@@ -578,11 +585,15 @@ fun SharedMobilePdfReaderHost(
     var pendingTtsPlayWhenReady by remember(readerSessionKey) { mutableStateOf(true) }
     var ttsHighlightBounds by remember(readerSessionKey) { mutableStateOf<List<PdfPageBounds>>(emptyList()) }
     var lastTtsCompletionCount by remember(readerSessionKey) { mutableStateOf(pdfTts.completionCount) }
+    var hasOwnedTts by remember(readerSessionKey) { mutableStateOf(false) }
     LaunchedEffect(readerSessionKey, ownsTts) {
-        if (!ownsTts) {
+        if (ownsTts) {
+            hasOwnedTts = true
+        } else if (hasOwnedTts) {
             // A pane that loses focus must not keep driving the process-global
             // speech engine after another pane becomes the owner.
             pdfTts.stop()
+            hasOwnedTts = false
             pendingTtsStart = null
             pendingTtsStartAtLastChunk = false
             ttsHighlightBounds = emptyList()
@@ -688,9 +699,10 @@ fun SharedMobilePdfReaderHost(
     val isPdfTtsPlayingOrLoading =
         pdfTts.state == SharedMobileEpubLocalTtsState.SPEAKING || pendingTtsStart != null
     val pdfSliderBottomPadding = pdfBottomChromePadding + if (isJumpHistoryVisible) 40.dp else 0.dp
+    val latestSystemUiAppearanceChange = rememberUpdatedState(onSystemUiAppearanceChange)
     LaunchedEffect(readerSessionKey, hideSystemUi, systemBarColor, edgeToEdgeSystemUi, ownsSystemUi) {
         if (ownsSystemUi) {
-            onSystemUiAppearanceChange(
+            latestSystemUiAppearanceChange.value(
                 hideSystemUi,
                 systemBarColor.luminance() < 0.5f,
                 systemBarColor.toArgb().toLong(),
@@ -698,9 +710,11 @@ fun SharedMobilePdfReaderHost(
             )
         }
     }
-    DisposableEffect(readerSessionKey, ownsSystemUi, onSystemUiAppearanceChange) {
+    DisposableEffect(readerSessionKey) {
         onDispose {
-            if (ownsSystemUi) onSystemUiAppearanceChange(false, false, 0xFFFFFFFFL, false)
+            if (latestOwnsSystemUi.value) {
+                latestSystemUiAppearanceChange.value(false, false, 0xFFFFFFFFL, false)
+            }
         }
     }
     var canvasSize by remember(readerSessionKey) { mutableStateOf(IntSize.Zero) }
@@ -1084,17 +1098,19 @@ fun SharedMobilePdfReaderHost(
         }
     }
 
+    val latestOwnsKeepScreenOn = rememberUpdatedState(ownsKeepScreenOn)
+    val latestKeepScreenOnChange = rememberUpdatedState(onKeepScreenOnChange)
     LaunchedEffect(readerSessionKey, keepScreenOn, ownsKeepScreenOn) {
-        if (ownsKeepScreenOn) onKeepScreenOnChange(keepScreenOn)
+        if (ownsKeepScreenOn) latestKeepScreenOnChange.value(keepScreenOn)
     }
 
     LaunchedEffect(readerSessionKey, isStylusOnlyMode) {
         onStylusOnlyModePreferenceChange(isStylusOnlyMode)
     }
 
-    DisposableEffect(readerSessionKey, ownsKeepScreenOn, onKeepScreenOnChange) {
+    DisposableEffect(readerSessionKey) {
         onDispose {
-            if (ownsKeepScreenOn) onKeepScreenOnChange(false)
+            if (latestOwnsKeepScreenOn.value) latestKeepScreenOnChange.value(false)
         }
     }
 

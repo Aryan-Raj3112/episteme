@@ -74,4 +74,24 @@ class PdfSplitDividerPolicyTest {
         assertFalse(released.isSnappedToCenter)
         assertEquals(0.58f, released.fraction)
     }
+
+    @Test
+    fun dividerDragCancellationDoesNotCommitPreview() {
+        val initial = PdfSplitDividerDragState(committedFraction = 0.3f)
+        val preview = initial.preview(0.65f)
+
+        assertEquals(0.65f, preview.displayedFraction, absoluteTolerance = 0.001f)
+        assertEquals(0.3f, preview.cancel().displayedFraction, absoluteTolerance = 0.001f)
+        assertEquals(0.3f, preview.cancel().committedFraction, absoluteTolerance = 0.001f)
+    }
+
+    @Test
+    fun dividerDragCommitClampsInvalidPreviewToSafeBounds() {
+        val committed = PdfSplitDividerDragState(committedFraction = 0.4f)
+            .preview(Float.NaN)
+            .commit()
+
+        assertEquals(DefaultPdfSplitDividerFraction, committed.committedFraction)
+        assertEquals(DefaultPdfSplitDividerFraction, committed.displayedFraction)
+    }
 }

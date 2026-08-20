@@ -35,6 +35,46 @@ data class PdfSplitDividerSnapState(
 )
 
 /**
+ * Local divider gesture state. Preview movement never mutates the durable
+ * workspace; [commit] is the only operation that produces a new committed
+ * fraction and [cancel] deliberately restores the last committed position.
+ */
+data class PdfSplitDividerDragState(
+    val committedFraction: Float,
+    val previewFraction: Float? = null,
+    val wasSnappedToCenter: Boolean = false,
+) {
+    val displayedFraction: Float
+        get() = previewFraction ?: safeDividerFraction(committedFraction)
+
+    fun preview(rawFraction: Float): PdfSplitDividerDragState {
+        val snapped = snapPdfSplitDividerFraction(
+            rawFraction = rawFraction,
+            wasSnappedToCenter = wasSnappedToCenter,
+        )
+        return copy(
+            previewFraction = snapped.fraction,
+            wasSnappedToCenter = snapped.isSnappedToCenter,
+        )
+    }
+
+    fun commit(): PdfSplitDividerDragState {
+        return copy(
+            committedFraction = displayedFraction,
+            previewFraction = null,
+            wasSnappedToCenter = false,
+        )
+    }
+
+    fun cancel(): PdfSplitDividerDragState {
+        return copy(
+            previewFraction = null,
+            wasSnappedToCenter = false,
+        )
+    }
+}
+
+/**
  * Applies a small center snap while dragging. Once engaged, the snap remains
  * active until the pointer leaves the larger exit window; this prevents the
  * divider from flickering around 50/50 while the user makes a fine adjustment.

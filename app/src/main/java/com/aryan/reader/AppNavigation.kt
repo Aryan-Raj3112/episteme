@@ -288,7 +288,7 @@ fun AppNavigation(
                         PdfSplitReaderScreen(
                             workspace = uiState.pdfSplitWorkspace,
                             availablePdfs = uiState.rawLibraryFiles.filter {
-                                it.type == FileType.PDF && !it.isDeleted
+                                it.type == FileType.PDF && !it.isDeleted && it.isAvailable
                             },
                             isProUser = uiState.isProUser,
                             usePdfFileNameAsDisplayName = uiState.usePdfFileNameAsDisplayName,
@@ -372,6 +372,7 @@ fun AppNavigation(
                         availablePdfs = uiState.rawLibraryFiles.filter {
                                 it.type == FileType.PDF &&
                                 !it.isDeleted &&
+                                it.isAvailable &&
                                 it.uriString?.let { uri ->
                                     !PdfSplitPaneState(
                                         bookId = it.bookId,

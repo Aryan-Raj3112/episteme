@@ -37,6 +37,27 @@ class PdfReaderPaneHostTest {
     }
 
     @Test
+    fun focusHandoffHasExactlyOneActiveOwnerWhenTheAppIsForegrounded() {
+        val first = SharedPdfReaderHostConfig(session, isFocused = true, isAppActive = true)
+        val second = SharedPdfReaderHostConfig(
+            SharedPdfReaderSessionKey("book-2", sessionId = 8L),
+            isFocused = false,
+            isAppActive = true,
+        )
+
+        SharedPdfReaderGlobalResource.entries.forEach { resource ->
+            assertTrue(first.owns(resource), "focused pane should own $resource")
+            assertFalse(second.owns(resource), "unfocused pane should not own $resource")
+        }
+
+        val handedOff = second.copy(isFocused = true)
+        SharedPdfReaderGlobalResource.entries.forEach { resource ->
+            assertFalse(first.copy(isFocused = false).owns(resource))
+            assertTrue(handedOff.owns(resource))
+        }
+    }
+
+    @Test
     fun sessionMatchingUsesCanonicalBookIdAndSessionId() {
         assertTrue(session.matches(SharedPdfReaderSessionKey("book-1", sessionId = 7L)))
         assertTrue(session.matches("book-1", 7L))

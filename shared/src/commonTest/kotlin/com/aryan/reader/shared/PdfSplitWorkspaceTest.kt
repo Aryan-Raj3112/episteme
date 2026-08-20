@@ -167,6 +167,76 @@ class PdfSplitWorkspaceTest {
     }
 
     @Test
+    fun missingPrimaryPromotesTheSurvivingSecondary() {
+        val state = openState()
+        val recovery = state.recoverMissingPanes(
+            primaryAvailable = false,
+            secondaryAvailable = true,
+        )
+
+        assertEquals(secondary.bookId, recovery.workspace.primary?.bookId)
+        assertNull(recovery.workspace.secondary)
+        assertEquals(setOf(PdfSplitPane.PRIMARY), recovery.missingPanes)
+        assertEquals(secondary.bookId, recovery.survivingDocument?.bookId)
+    }
+
+    @Test
+    fun missingSecondaryKeepsThePrimaryAndUsesItAsExitTarget() {
+        val state = openState().reduce(
+            PdfSplitWorkspaceAction.FocusChanged(PdfSplitPane.SECONDARY),
+        )
+        val recovery = state.recoverMissingPanes(
+            primaryAvailable = true,
+            secondaryAvailable = false,
+        )
+
+        assertEquals(primary.bookId, recovery.workspace.primary?.bookId)
+        assertNull(recovery.workspace.secondary)
+        assertEquals(PdfSplitPane.PRIMARY, recovery.workspace.focusedPane)
+        assertEquals(primary.bookId, recovery.workspace.exitTargetDocument?.bookId)
+        assertEquals(setOf(PdfSplitPane.SECONDARY), recovery.missingPanes)
+    }
+
+    @Test
+    fun missingBothPanesClosesTheWorkspace() {
+        val recovery = openState().recoverMissingPanes(
+            primaryAvailable = false,
+            secondaryAvailable = false,
+        )
+
+        assertFalse(recovery.workspace.isOpen)
+        assertNull(recovery.survivingDocument)
+        assertEquals(
+            setOf(PdfSplitPane.PRIMARY, PdfSplitPane.SECONDARY),
+            recovery.missingPanes,
+        )
+    }
+
+    @Test
+    fun staleCloseCannotUndoAReplacementAfterRecoverySnapshot() {
+        val state = openState()
+        val oldSecondarySession = state.secondary!!.sessionId
+        val replaced = state.reduce(
+            PdfSplitWorkspaceAction.PaneOpened(
+                pane = PdfSplitPane.SECONDARY,
+                document = PdfSplitPaneState("replacement", "content://replacement"),
+                expectedRevision = state.revision,
+                expectedSessionId = oldSecondarySession,
+            ),
+        )
+        val staleRecoveryClose = replaced.reduce(
+            PdfSplitWorkspaceAction.PaneClosed(
+                pane = PdfSplitPane.SECONDARY,
+                expectedRevision = state.revision,
+                expectedSessionId = oldSecondarySession,
+            ),
+        )
+
+        assertEquals(replaced, staleRecoveryClose)
+        assertEquals("replacement", staleRecoveryClose.secondary?.bookId)
+    }
+
+    @Test
     fun secondaryOnlyStateIsPromotedToPrimary() {
         val state = PdfSplitWorkspaceState(
             primary = null,

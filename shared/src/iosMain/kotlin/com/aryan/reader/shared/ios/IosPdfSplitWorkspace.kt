@@ -56,7 +56,7 @@ import com.aryan.reader.shared.DefaultPdfSplitDividerFraction
 import com.aryan.reader.shared.FileType
 import com.aryan.reader.shared.MaximumPdfSplitDividerFraction
 import com.aryan.reader.shared.MinimumPdfSplitDividerFraction
-import com.aryan.reader.shared.PdfSplitDividerSnapState
+import com.aryan.reader.shared.PdfSplitDividerDragState
 import com.aryan.reader.shared.PdfSplitOrientation
 import com.aryan.reader.shared.PdfSplitPane
 import com.aryan.reader.shared.PdfSplitPaneState
@@ -65,9 +65,10 @@ import com.aryan.reader.shared.PdfSplitWorkspaceAction
 import com.aryan.reader.shared.PdfSplitWorkspaceJson
 import com.aryan.reader.shared.PdfSplitWorkspaceState
 import com.aryan.reader.shared.pdfSplitDividerFractionAtAbsolutePosition
+import com.aryan.reader.shared.recoverMissingPanes
 import com.aryan.reader.shared.samePdfDocument
-import com.aryan.reader.shared.snapPdfSplitDividerFraction
 import com.aryan.reader.shared.resolveLayout
+import com.aryan.reader.shared.ui.readerString
 import kotlinx.cinterop.ExperimentalForeignApi
 import platform.Foundation.NSFileManager
 import platform.Foundation.NSUserDefaults
@@ -92,10 +93,14 @@ internal fun loadIosPdfSplitWorkspace(): PdfSplitWorkspaceState {
 }
 
 internal fun persistIosPdfSplitWorkspace(workspace: PdfSplitWorkspaceState) {
-    NSUserDefaults.standardUserDefaults.setObject(
-        PdfSplitWorkspaceJson.encode(workspace),
-        forKey = IosPdfSplitWorkspaceDefaultsKey,
-    )
+    if (workspace.isOpen) {
+        NSUserDefaults.standardUserDefaults.setObject(
+            PdfSplitWorkspaceJson.encode(workspace),
+            forKey = IosPdfSplitWorkspaceDefaultsKey,
+        )
+    } else {
+        NSUserDefaults.standardUserDefaults.removeObjectForKey(IosPdfSplitWorkspaceDefaultsKey)
+    }
 }
 
 internal fun iosPdfSplitPaneState(book: BookItem): PdfSplitPaneState? {
@@ -119,6 +124,7 @@ internal fun resolveIosPdfSplitBook(
 
 @OptIn(ExperimentalForeignApi::class)
 internal fun iosPdfSplitBookIsAvailable(book: BookItem): Boolean {
+    if (!book.isAvailable) return false
     val path = book.path?.trim().orEmpty()
     return path.startsWith("opds-pse://") ||
         (path.isNotBlank() && NSFileManager.defaultManager.fileExistsAtPath(path))
@@ -128,17 +134,51 @@ internal fun restoreIosPdfSplitWorkspace(
     persisted: PdfSplitWorkspaceState,
     books: Collection<BookItem>,
 ): PdfSplitWorkspaceState {
-    val primary = persisted.primary?.let { resolveIosPdfSplitBook(it, books) }
-    val secondary = persisted.secondary?.let { resolveIosPdfSplitBook(it, books) }
-    val primaryState = primary?.let(::iosPdfSplitPaneState)
-    val secondaryState = secondary?.let(::iosPdfSplitPaneState)
-    if (primaryState == null || secondaryState == null || primaryState.samePdfDocument(secondaryState)) {
-        return PdfSplitWorkspaceState()
-    }
-    return persisted.copy(
-        primary = primaryState,
-        secondary = secondaryState,
-    ).withFreshSessions()
+    return restoreIosPdfSplitWorkspaceWithRecovery(persisted, books).workspace
+}
+
+internal data class IosPdfSplitWorkspaceRecovery(
+    val workspace: PdfSplitWorkspaceState,
+    val missingPanes: Set<PdfSplitPane>,
+) {
+    val hasMissingPanes: Boolean
+        get() = missingPanes.isNotEmpty()
+
+    val survivingDocument: PdfSplitPaneState?
+        get() = workspace.primary.takeIf { hasMissingPanes }
+}
+
+internal fun recoverIosPdfSplitWorkspace(
+    workspace: PdfSplitWorkspaceState,
+    books: Collection<BookItem>,
+): IosPdfSplitWorkspaceRecovery {
+    val clean = workspace.sanitized()
+    val primaryBook = clean.primary?.let { resolveIosPdfSplitBook(it, books) }
+    val secondaryBook = clean.secondary?.let { resolveIosPdfSplitBook(it, books) }
+    val recovery = clean.recoverMissingPanes(
+        primaryAvailable = primaryBook != null,
+        secondaryAvailable = secondaryBook != null,
+    )
+    val repaired = recovery.workspace.copy(
+        primary = recovery.workspace.primary?.let { document ->
+            resolveIosPdfSplitBook(document, books)?.let(::iosPdfSplitPaneState) ?: document
+        },
+        secondary = recovery.workspace.secondary?.let { document ->
+            resolveIosPdfSplitBook(document, books)?.let(::iosPdfSplitPaneState) ?: document
+        },
+    ).sanitized()
+    return IosPdfSplitWorkspaceRecovery(
+        workspace = repaired,
+        missingPanes = recovery.missingPanes,
+    )
+}
+
+internal fun restoreIosPdfSplitWorkspaceWithRecovery(
+    persisted: PdfSplitWorkspaceState,
+    books: Collection<BookItem>,
+): IosPdfSplitWorkspaceRecovery {
+    val recovered = recoverIosPdfSplitWorkspace(persisted, books)
+    return recovered.copy(workspace = recovered.workspace.withFreshSessions())
 }
 
 @Composable
@@ -172,7 +212,7 @@ internal fun IosPdfSplitWorkspaceScreen(
             val secondary = workspace.secondary
             if (primary == null) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("No PDF is open")
+                    Text(readerString("pdf_split_reader_no_document", "No PDF is open"))
                 }
             } else if (secondary == null) {
                 IosPdfSplitDocumentPane(
@@ -239,7 +279,7 @@ private fun IosPdfSplitToolbar(
             horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             Text(
-                text = "Split reader",
+                text = readerString("pdf_split_reader_title", "Split Reader"),
                 style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier.weight(1f),
             )
@@ -254,9 +294,9 @@ private fun IosPdfSplitToolbar(
             }) {
                 Text(
                     if (workspace.orientation == PdfSplitOrientation.VERTICAL) {
-                        "Side by side"
+                        readerString("pdf_split_reader_vertical", "Side by side")
                     } else {
-                        "Stacked"
+                        readerString("pdf_split_reader_horizontal", "Stacked")
                     },
                     maxLines = 1,
                 )
@@ -264,12 +304,16 @@ private fun IosPdfSplitToolbar(
             TextButton(onClick = {
                 onAddDocument(if (workspace.isSplit) workspace.focusedPane else PdfSplitPane.SECONDARY)
             }) {
-                Text("Add")
+                Text(readerString("action_add", "Add"))
             }
             if (workspace.isSplit) {
-                TextButton(onClick = onSwapPanes) { Text("Swap") }
+                TextButton(onClick = onSwapPanes) {
+                    Text(readerString("pdf_split_reader_swap", "Swap documents"))
+                }
             }
-            TextButton(onClick = onCloseWorkspace) { Text("Close") }
+            TextButton(onClick = onCloseWorkspace) {
+                Text(readerString("pdf_split_reader_close", "Close split reader"))
+            }
         }
     }
 }
@@ -315,7 +359,7 @@ private fun IosPdfSplitDocumentPane(
                     modifier = Modifier.weight(1f),
                 )
                 TextButton(onClick = { onClose(pane, document.sessionId) }) {
-                    Text("Close")
+                    Text(readerString("pdf_split_reader_close_pane", "Close document pane"))
                 }
             }
         }
@@ -350,11 +394,10 @@ private fun IosPdfSplitPaneLayout(
             minPaneHeightPx = minPaneHeightPx,
             dividerThicknessPx = dividerThicknessPx,
         )
-        var dragFraction by remember(workspace.revision, plan.orientation) { mutableStateOf<Float?>(null) }
-        var wasSnappedToCenter by remember(workspace.revision, plan.orientation) {
-            mutableStateOf(false)
+        var dragState by remember(workspace.revision, plan.orientation) {
+            mutableStateOf(PdfSplitDividerDragState(plan.dividerFraction))
         }
-        val displayedFraction = dragFraction ?: plan.dividerFraction
+        val displayedFraction = dragState.displayedFraction
         val frameWorkspace = workspace.copy(
             orientation = plan.orientation,
             dividerFraction = displayedFraction,
@@ -377,6 +420,15 @@ private fun IosPdfSplitPaneLayout(
             dividerThicknessPx = dividerThicknessPx,
         )
         val dividerColor = MaterialTheme.colorScheme.outlineVariant
+        val dividerDescription = readerString("pdf_split_reader_divider_desc", "PDF split divider")
+        val dividerDecreaseDescription = readerString(
+            "pdf_split_reader_divider_decrease",
+            "Decrease divider position",
+        )
+        val dividerIncreaseDescription = readerString(
+            "pdf_split_reader_divider_increase",
+            "Increase divider position",
+        )
 
         if (plan.presentation == PdfSplitPresentation.SINGLE) {
             Box(Modifier.fillMaxSize()) {
@@ -421,15 +473,14 @@ private fun IosPdfSplitPaneLayout(
                 }
             }
             .semantics {
-                contentDescription = "Split divider"
+                contentDescription = dividerDescription
                 progressBarRangeInfo = ProgressBarRangeInfo(
                     current = displayedFraction,
                     range = MinimumPdfSplitDividerFraction..MaximumPdfSplitDividerFraction,
                     steps = 0,
                 )
                 setProgress { value ->
-                    dragFraction = null
-                    wasSnappedToCenter = false
+                    dragState = dragState.cancel()
                     onDividerChange(
                         value.coerceIn(MinimumPdfSplitDividerFraction, MaximumPdfSplitDividerFraction),
                         plan.orientation,
@@ -438,7 +489,10 @@ private fun IosPdfSplitPaneLayout(
                     true
                 }
                 customActions = listOf(
-                    CustomAccessibilityAction("Decrease split divider") {
+                    CustomAccessibilityAction(
+                        dividerDecreaseDescription,
+                    ) {
+                        dragState = dragState.cancel()
                         onDividerChange(
                             (displayedFraction - 0.05f).coerceIn(
                                 MinimumPdfSplitDividerFraction,
@@ -449,7 +503,10 @@ private fun IosPdfSplitPaneLayout(
                         )
                         true
                     },
-                    CustomAccessibilityAction("Increase split divider") {
+                    CustomAccessibilityAction(
+                        dividerIncreaseDescription,
+                    ) {
+                        dragState = dragState.cancel()
                         onDividerChange(
                             (displayedFraction + 0.05f).coerceIn(
                                 MinimumPdfSplitDividerFraction,
@@ -478,7 +535,10 @@ private fun IosPdfSplitPaneLayout(
                     while (true) {
                         val event = awaitPointerEvent()
                         val change = event.changes.firstOrNull { it.id == down.id }
-                            ?: return@awaitEachGesture
+                            ?: run {
+                                if (isDragging) dragState = dragState.cancel()
+                                return@awaitEachGesture
+                            }
                         val movedDistance = (change.position - startPosition).getDistance()
                         if (!isDragging && movedDistance > viewConfiguration.touchSlop) {
                             isDragging = true
@@ -497,25 +557,18 @@ private fun IosPdfSplitPaneLayout(
                                 dividerThicknessPx = dividerThicknessPx,
                                 isRtl = plan.orientation == PdfSplitOrientation.VERTICAL && isRtl,
                             )
-                            val snapped: PdfSplitDividerSnapState = snapPdfSplitDividerFraction(
-                                rawFraction = rawFraction,
-                                wasSnappedToCenter = wasSnappedToCenter,
-                            )
-                            dragFraction = snapped.fraction
-                            wasSnappedToCenter = snapped.isSnappedToCenter
+                            dragState = dragState.preview(rawFraction)
                         }
                         if (change.changedToUp()) {
                             if (isDragging) {
-                                val committed = dragFraction ?: displayedFraction
-                                dragFraction = null
-                                wasSnappedToCenter = false
+                                val committed = dragState.commit().committedFraction
+                                dragState = dragState.cancel()
                                 onDividerChange(committed, plan.orientation, workspace.revision)
                             } else {
                                 val isDoubleTap = lastTapTimeMillis != Long.MIN_VALUE &&
                                     down.uptimeMillis - lastTapTimeMillis in 1..IosPdfSplitDoubleTapTimeoutMillis
                                 if (isDoubleTap) {
-                                    dragFraction = null
-                                    wasSnappedToCenter = false
+                                    dragState = dragState.cancel()
                                     onDividerChange(
                                         DefaultPdfSplitDividerFraction,
                                         plan.orientation,
@@ -532,8 +585,7 @@ private fun IosPdfSplitPaneLayout(
                         if (!change.pressed) break
                     }
                     if (!didFinish && isDragging) {
-                        dragFraction = null
-                        wasSnappedToCenter = false
+                        dragState = dragState.cancel()
                     }
                 }
             }
@@ -583,16 +635,16 @@ private fun IosPdfSplitPaneSwitcher(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("Compact view")
+            Text(readerString("pdf_split_reader_compact_view", "Compact view"))
             FilterChip(
                 selected = focusedPane == PdfSplitPane.PRIMARY,
                 onClick = { onFocusPane(PdfSplitPane.PRIMARY) },
-                label = { Text("Primary") },
+                label = { Text(readerString("pdf_split_reader_primary_pane", "Primary pane")) },
             )
             FilterChip(
                 selected = focusedPane == PdfSplitPane.SECONDARY,
                 onClick = { onFocusPane(PdfSplitPane.SECONDARY) },
-                label = { Text("Secondary") },
+                label = { Text(readerString("pdf_split_reader_secondary_pane", "Secondary pane")) },
             )
         }
     }
@@ -610,7 +662,7 @@ internal fun IosPdfSplitPickerDialog(
         title = { Text(title) },
         text = {
             if (books.isEmpty()) {
-                Text("No other available PDFs")
+                Text(readerString("pdf_split_reader_no_other_documents", "No other PDFs are available"))
             } else {
                 LazyColumn {
                     items(books, key = { it.id }) { book ->
@@ -629,6 +681,10 @@ internal fun IosPdfSplitPickerDialog(
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text(readerString("action_cancel", "Cancel"))
+            }
+        },
     )
 }

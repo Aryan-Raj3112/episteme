@@ -71,6 +71,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.core.net.toUri
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.media3.common.util.UnstableApi
 import com.aryan.reader.MainViewModel
 import com.aryan.reader.R
@@ -85,10 +88,10 @@ import com.aryan.reader.shared.PdfSplitPresentation
 import com.aryan.reader.shared.DefaultPdfSplitDividerFraction
 import com.aryan.reader.shared.MaximumPdfSplitDividerFraction
 import com.aryan.reader.shared.MinimumPdfSplitDividerFraction
+import com.aryan.reader.shared.PdfSplitDividerDragState
 import com.aryan.reader.shared.pdfSplitDividerFractionAtAbsolutePosition
 import com.aryan.reader.shared.resolveLayout
 import com.aryan.reader.shared.samePdfDocument
-import com.aryan.reader.shared.snapPdfSplitDividerFraction
 import com.aryan.reader.tts.TtsController
 import com.aryan.reader.tts.rememberTtsController
 
@@ -124,11 +127,19 @@ fun PdfSplitReaderScreen(
     var pickerTargetRevision by rememberSaveable { mutableStateOf(0L) }
     val ttsController = rememberTtsController()
     val ttsState by ttsController.ttsState.collectAsState()
+    val lifecycleOwner = LocalLifecycleOwner.current
 
     DisposableEffect(ttsController) {
         onDispose {
             ttsController.stop()
         }
+    }
+    DisposableEffect(lifecycleOwner, ttsController) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) ttsController.stop()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     fun closePane(pane: PdfSplitPane, sessionId: Long) {
@@ -406,13 +417,10 @@ private fun PdfSplitPaneLayout(
             minPaneHeightPx = minPaneHeightPx,
             dividerThicknessPx = dividerThicknessPx,
         )
-        var dragFraction by remember(workspace.revision, plan.orientation) {
-            mutableStateOf<Float?>(null)
+        var dragState by remember(workspace.revision, plan.orientation) {
+            mutableStateOf(PdfSplitDividerDragState(plan.dividerFraction))
         }
-        var wasSnappedToCenter by remember(workspace.revision, plan.orientation) {
-            mutableStateOf(false)
-        }
-        val displayedFraction = dragFraction ?: plan.dividerFraction
+        val displayedFraction = dragState.displayedFraction
         val frameWorkspace = workspace.copy(
             orientation = plan.orientation,
             dividerFraction = displayedFraction,
@@ -482,8 +490,7 @@ private fun PdfSplitPaneLayout(
                         MinimumPdfSplitDividerFraction,
                         MaximumPdfSplitDividerFraction,
                     )
-                    dragFraction = null
-                    wasSnappedToCenter = false
+                    dragState = dragState.cancel()
                     onDividerChange(safe, plan.orientation, workspace.revision)
                     true
                 }
@@ -493,6 +500,7 @@ private fun PdfSplitPaneLayout(
                             MinimumPdfSplitDividerFraction,
                             MaximumPdfSplitDividerFraction,
                         )
+                        dragState = dragState.cancel()
                         onDividerChange(safe, plan.orientation, workspace.revision)
                         true
                     },
@@ -501,12 +509,14 @@ private fun PdfSplitPaneLayout(
                             MinimumPdfSplitDividerFraction,
                             MaximumPdfSplitDividerFraction,
                         )
+                        dragState = dragState.cancel()
                         onDividerChange(safe, plan.orientation, workspace.revision)
                         true
                     },
                 )
             }
             .pointerInput(
+                workspace.revision,
                 plan.orientation,
                 axisSizePx,
                 dividerThicknessPx,
@@ -523,7 +533,10 @@ private fun PdfSplitPaneLayout(
                     while (true) {
                         val event = awaitPointerEvent()
                         val change = event.changes.firstOrNull { it.id == pointerId }
-                            ?: return@awaitEachGesture
+                            ?: run {
+                                if (isDragging) dragState = dragState.cancel()
+                                return@awaitEachGesture
+                            }
                         val movedDistance = (change.position - startPosition).getDistance()
                         if (!isDragging && movedDistance > viewConfiguration.touchSlop) {
                             isDragging = true
@@ -543,26 +556,19 @@ private fun PdfSplitPaneLayout(
                                 dividerThicknessPx = dividerThicknessPx,
                                 isRtl = plan.orientation == PdfSplitOrientation.VERTICAL && isRtl,
                             )
-                            val snap = snapPdfSplitDividerFraction(
-                                rawFraction = rawFraction,
-                                wasSnappedToCenter = wasSnappedToCenter,
-                            )
-                            dragFraction = snap.fraction
-                            wasSnappedToCenter = snap.isSnappedToCenter
+                            dragState = dragState.preview(rawFraction)
                         }
 
                         if (change.changedToUp()) {
                             if (isDragging) {
-                                val committed = dragFraction ?: displayedFraction
-                                dragFraction = null
-                                wasSnappedToCenter = false
+                                val committed = dragState.commit().committedFraction
+                                dragState = dragState.cancel()
                                 onDividerChange(committed, plan.orientation, workspace.revision)
                             } else {
                                 val isDoubleTap = lastTapTimeMillis != Long.MIN_VALUE &&
                                     down.uptimeMillis - lastTapTimeMillis in 1..PdfSplitDoubleTapTimeoutMillis
                                 if (isDoubleTap) {
-                                    dragFraction = null
-                                    wasSnappedToCenter = false
+                                    dragState = dragState.cancel()
                                     onDividerChange(
                                         DefaultPdfSplitDividerFraction,
                                         plan.orientation,
@@ -580,8 +586,7 @@ private fun PdfSplitPaneLayout(
                     }
 
                     if (!didFinish && isDragging) {
-                        dragFraction = null
-                        wasSnappedToCenter = false
+                        dragState = dragState.cancel()
                     }
                 }
             }
@@ -726,33 +731,39 @@ private fun PdfSplitDocumentPane(
         }
 
         Box(Modifier.weight(1f).fillMaxWidth()) {
-            key(paneId, document.canonicalIdentity, document.sessionId) {
-                PdfViewerScreen(
-                    pdfUri = resolvedPdfUri,
-                    initialPage = item?.lastPage,
-                    initialBookmarksJson = item?.bookmarksJson,
-                    isProUser = isProUser,
-                    onNavigateBack = { onClose(paneId, document.sessionId) },
-                    onSavePosition = viewModel::savePdfReadingPosition,
-                    onBookmarksChanged = { bookmarksJson ->
-                        viewModel.saveBookmarks(
-                            bookId = document.bookId,
-                            bookmarksJson = bookmarksJson,
-                            documentUri = resolvedPdfUri,
-                        )
-                    },
-                    onNavigateToPro = onNavigateToPro,
-                    viewModel = viewModel,
-                    ttsControllerOverride = ttsController,
-                    pane = PdfViewerPane(
-                        bookId = document.bookId,
+            if (item == null) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text(stringResource(R.string.pdf_split_reader_missing_document))
+                }
+            } else {
+                key(paneId, document.canonicalIdentity, document.sessionId) {
+                    PdfViewerScreen(
                         pdfUri = resolvedPdfUri,
-                        sessionId = document.sessionId,
-                        initialPage = item?.lastPage,
-                        initialBookmarksJson = item?.bookmarksJson,
-                    ),
-                    isPaneFocused = isFocused,
-                )
+                        initialPage = item.lastPage,
+                        initialBookmarksJson = item.bookmarksJson,
+                        isProUser = isProUser,
+                        onNavigateBack = { onClose(paneId, document.sessionId) },
+                        onSavePosition = viewModel::savePdfReadingPosition,
+                        onBookmarksChanged = { bookmarksJson ->
+                            viewModel.saveBookmarks(
+                                bookId = document.bookId,
+                                bookmarksJson = bookmarksJson,
+                                documentUri = resolvedPdfUri,
+                            )
+                        },
+                        onNavigateToPro = onNavigateToPro,
+                        viewModel = viewModel,
+                        ttsControllerOverride = ttsController,
+                        pane = PdfViewerPane(
+                            bookId = document.bookId,
+                            pdfUri = resolvedPdfUri,
+                            sessionId = document.sessionId,
+                            initialPage = item.lastPage,
+                            initialBookmarksJson = item.bookmarksJson,
+                        ),
+                        isPaneFocused = isFocused,
+                    )
+                }
             }
         }
     }

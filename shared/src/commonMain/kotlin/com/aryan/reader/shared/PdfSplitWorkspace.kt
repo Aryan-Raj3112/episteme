@@ -167,6 +167,76 @@ data class PdfSplitWorkspaceState(
     }
 }
 
+/**
+ * Result of reconciling a restored workspace with the documents that are
+ * actually available on the current device.
+ *
+ * The surviving document is deliberately promoted through the same reducer
+ * path used by an interactive primary-pane close. This keeps focus, exit
+ * target, revision, and renderer-session semantics identical for restoration
+ * and for an in-session document disappearing from storage.
+ */
+data class PdfSplitWorkspaceRecovery(
+    val workspace: PdfSplitWorkspaceState,
+    val missingPanes: Set<PdfSplitPane>,
+) {
+    val hasMissingPanes: Boolean
+        get() = missingPanes.isNotEmpty()
+
+    val survivingDocument: PdfSplitPaneState?
+        get() = workspace.primary.takeIf { hasMissingPanes }
+}
+
+/**
+ * Reconciles pane identities with platform availability checks.
+ *
+ * Availability is supplied by Android/iOS because only the platform can
+ * validate a content URI or local file path. A missing secondary is removed;
+ * a missing primary promotes a valid secondary; when no valid pane remains,
+ * the split workspace is closed. The returned state is revision-safe for the
+ * caller's snapshot and can be conditionally committed by the platform host.
+ */
+fun PdfSplitWorkspaceState.recoverMissingPanes(
+    primaryAvailable: Boolean,
+    secondaryAvailable: Boolean,
+): PdfSplitWorkspaceRecovery {
+    val clean = sanitized()
+    val missing = buildSet {
+        if (clean.primary != null && !primaryAvailable) add(PdfSplitPane.PRIMARY)
+        if (clean.secondary != null && !secondaryAvailable) add(PdfSplitPane.SECONDARY)
+    }
+    if (missing.isEmpty()) {
+        return PdfSplitWorkspaceRecovery(clean, emptySet())
+    }
+
+    val next = when {
+        clean.primary != null && primaryAvailable &&
+            clean.secondary != null && !secondaryAvailable -> {
+            clean.reduce(
+                PdfSplitWorkspaceAction.PaneClosed(
+                    pane = PdfSplitPane.SECONDARY,
+                    expectedRevision = clean.revision,
+                    expectedSessionId = clean.secondary.sessionId,
+                ),
+            )
+        }
+
+        clean.secondary != null && secondaryAvailable &&
+            (clean.primary == null || !primaryAvailable) -> {
+            clean.reduce(
+                PdfSplitWorkspaceAction.PaneClosed(
+                    pane = PdfSplitPane.PRIMARY,
+                    expectedRevision = clean.revision,
+                    expectedSessionId = clean.primary?.sessionId,
+                ),
+            )
+        }
+
+        else -> clean.reduce(PdfSplitWorkspaceAction.Closed)
+    }
+    return PdfSplitWorkspaceRecovery(next, missing)
+}
+
 internal fun PdfSplitPaneState.sanitized(): PdfSplitPaneState? {
     val cleanBookId = bookId.trim()
     val cleanUri = uriString.trim()

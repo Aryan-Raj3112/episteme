@@ -134,6 +134,7 @@ import com.aryan.reader.shared.PdfSplitPaneState
 import com.aryan.reader.shared.PdfSplitWorkspaceAction
 import com.aryan.reader.shared.PdfSplitWorkspaceJson
 import com.aryan.reader.shared.PdfSplitWorkspaceState
+import com.aryan.reader.shared.recoverMissingPanes
 import com.aryan.reader.shared.samePdfDocument
 import com.aryan.reader.shared.syncedFolderAddDecision
 import com.aryan.reader.shared.withSyncedFolder
@@ -164,6 +165,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
@@ -860,6 +862,114 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    private fun reconcilePdfSplitWorkspace(libraryFiles: List<RecentFileItem>) {
+        val snapshot = _internalState.value.pdfSplitWorkspace
+        if (!snapshot.isOpen) return
+        val cleanSnapshot = snapshot.sanitized()
+
+        val recovery = cleanSnapshot.recoverMissingPanes(
+            primaryAvailable = cleanSnapshot.primary?.let {
+                resolveAvailablePdfSplitPane(it, libraryFiles) != null
+            } ?: false,
+            secondaryAvailable = cleanSnapshot.secondary?.let {
+                resolveAvailablePdfSplitPane(it, libraryFiles) != null
+            } ?: false,
+        )
+        if (!recovery.hasMissingPanes) return
+
+        val repairedWorkspace = recovery.workspace.copy(
+            primary = recovery.workspace.primary?.let { document ->
+                resolveAvailablePdfSplitPane(document, libraryFiles)?.let { item ->
+                    PdfSplitPaneState(item.bookId, item.uriString.orEmpty(), document.sessionId)
+                } ?: document
+            },
+            secondary = recovery.workspace.secondary?.let { document ->
+                resolveAvailablePdfSplitPane(document, libraryFiles)?.let { item ->
+                    PdfSplitPaneState(item.bookId, item.uriString.orEmpty(), document.sessionId)
+                } ?: document
+            },
+        ).sanitized()
+        val repairedRecovery = recovery.copy(workspace = repairedWorkspace)
+
+        var applied = false
+        _internalState.update { state ->
+            if (state.pdfSplitWorkspace != snapshot) {
+                state
+            } else {
+                applied = true
+                state.copy(pdfSplitWorkspace = repairedRecovery.workspace)
+            }
+        }
+        if (!applied) return
+        persistPdfSplitWorkspace(repairedRecovery.workspace)
+
+        viewModelScope.launch(Dispatchers.Main.immediate) {
+            val current = _internalState.value
+            if (current.pdfSplitWorkspace != repairedRecovery.workspace) return@launch
+
+            repairedRecovery.survivingDocument?.let { survivor ->
+                if (current.selectedBookId != survivor.bookId) {
+                    activatePdfPane(survivor, libraryFiles)
+                }
+            } ?: run {
+                // Closing the workspace must not delete an external file or
+                // clear caches owned by another reader. Only clear this
+                // reader session when it still points at one of the missing
+                // split documents.
+                val selectedBookId = current.selectedBookId
+                val missingBookIds = snapshot.primary
+                    ?.let { primary -> setOfNotNull(primary.bookId, snapshot.secondary?.bookId) }
+                    .orEmpty()
+                if (selectedBookId != null && selectedBookId in missingBookIds) {
+                    closeUnavailablePdfReaderSession()
+                }
+            }
+            showBanner(
+                appContext.getString(
+                    if (repairedRecovery.survivingDocument != null) {
+                        R.string.pdf_split_reader_missing_document
+                    } else {
+                        R.string.pdf_split_reader_all_documents_missing
+                    },
+                ),
+            )
+        }
+    }
+
+    private fun resolveAvailablePdfSplitPane(
+        document: PdfSplitPaneState,
+        libraryFiles: Collection<RecentFileItem>,
+    ): RecentFileItem? {
+        val item = libraryFiles.firstOrNull { candidate ->
+            candidate.type == FileType.PDF &&
+                !candidate.isDeleted &&
+                candidate.isAvailable &&
+                candidate.uriString != null &&
+                PdfSplitPaneState(candidate.bookId, candidate.uriString).samePdfDocument(document)
+        } ?: return null
+        val uri = item.getUri() ?: return null
+        val isReadable = runCatching {
+            appContext.contentResolver.openFileDescriptor(uri, "r")?.use { true } == true
+        }.getOrDefault(false)
+        return item.takeIf { isReadable }
+    }
+
+    private fun closeUnavailablePdfReaderSession() {
+        _internalState.update { current ->
+            closeReaderSession(current).copy(
+                selectedPdfUri = null,
+                selectedEpubUri = null,
+                selectedEpubBook = null,
+                isTemporaryExternalOpen = false,
+                initialLocator = null,
+                initialPageInBook = null,
+                initialPageInBookIsExplicit = false,
+                isOpeningFromTtsNotification = false,
+            )
+        }
+        clearPersistedReaderSession()
+    }
+
     /** Opens a second library PDF beside the currently selected PDF. */
     fun openPdfSplit(
         secondaryBookId: String,
@@ -870,7 +980,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         if (current.selectedFileType != FileType.PDF) return false
 
         val secondaryItem = uiState.value.rawLibraryFiles.firstOrNull {
-            it.bookId == secondaryBookId && it.type == FileType.PDF && !it.isDeleted
+            it.bookId == secondaryBookId && it.type == FileType.PDF && !it.isDeleted && it.isAvailable
         } ?: return false
         val secondaryUri = secondaryItem.getUri() ?: return false
         val primaryBookId = current.selectedBookId ?: primaryUri.toString()
@@ -919,7 +1029,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     ): Boolean {
         val current = _internalState.value
         val item = uiState.value.rawLibraryFiles.firstOrNull {
-            it.bookId == bookId && it.type == FileType.PDF && !it.isDeleted
+            it.bookId == bookId && it.type == FileType.PDF && !it.isDeleted && it.isAvailable
         } ?: return false
         val uri = item.getUri() ?: return false
         val workspace = current.pdfSplitWorkspace
@@ -1043,14 +1153,34 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             state.copy(pdfSplitWorkspace = next)
         }
         if (exitDocument != null && exitDocument.bookId != selectedBookId) {
-            activatePdfPane(exitDocument.bookId)
+            activatePdfPane(exitDocument, uiState.value.rawLibraryFiles)
         }
     }
 
-    private fun activatePdfPane(bookId: String) {
-        val item = uiState.value.rawLibraryFiles.firstOrNull {
-            it.bookId == bookId && it.type == FileType.PDF && !it.isDeleted
+    private fun activatePdfPane(
+        bookId: String,
+        libraryFiles: Collection<RecentFileItem>? = null,
+    ) {
+        val item = (libraryFiles ?: uiState.value.rawLibraryFiles).firstOrNull {
+            it.bookId == bookId && it.type == FileType.PDF && !it.isDeleted && it.isAvailable
         } ?: return
+        activatePdfPane(item)
+    }
+
+    private fun activatePdfPane(
+        document: PdfSplitPaneState,
+        libraryFiles: Collection<RecentFileItem>,
+    ) {
+        val item = libraryFiles.firstOrNull {
+            it.bookId == document.bookId && it.type == FileType.PDF && !it.isDeleted && it.isAvailable
+        } ?: libraryFiles.firstOrNull {
+            it.type == FileType.PDF && !it.isDeleted && it.isAvailable &&
+                it.uriString?.let { uri -> PdfSplitPaneState(it.bookId, uri).samePdfDocument(document) } == true
+        } ?: return
+        activatePdfPane(item)
+    }
+
+    private fun activatePdfPane(item: RecentFileItem) {
         val uri = item.getUri() ?: return
         persistReaderSession(item.bookId, item.type)
         _internalState.update { state ->
@@ -1476,6 +1606,17 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
     init {
         Timber.d("ViewModel instance created.")
+
+        // Durable split identities are only preferences. Reconcile them with
+        // the live library and provider as soon as the inventory is available
+        // so a deleted or revoked URI cannot remain a broken reader session.
+        viewModelScope.launch(Dispatchers.IO) {
+            libraryFlow
+                .map { it.first }
+                .distinctUntilChanged()
+                .collectLatest(::reconcilePdfSplitWorkspace)
+        }
+
         WorkManager.getInstance(application).apply {
             cancelUniqueWork(FolderSyncWorker.WORK_NAME)
             pruneWork()
