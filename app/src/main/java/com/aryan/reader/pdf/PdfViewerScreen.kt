@@ -601,7 +601,7 @@ fun PdfViewerScreen(
     var isKeepScreenOn by remember { mutableStateOf(loadKeepScreenOn(context)) }
     val ttsController = ttsControllerOverride ?: rememberTtsController()
     val ttsState by ttsController.ttsState.collectAsState()
-    val isTtsPlaybackForThisPane = !isSplitPane || ttsState.bookId == bookId
+    val isTtsPlaybackForThisPane = !isSplitPane || (isPaneFocused && ttsState.bookId == bookId)
     ttsState.currentText
     var currentTtsMode by remember {
         mutableStateOf(
@@ -3169,6 +3169,9 @@ fun PdfViewerScreen(
         startCharIndex: Int? = null,
         continueSession: Boolean = false
     ) {
+        if (isSplitPane && !isPaneFocused) {
+            return
+        }
         if (BuildConfig.FLAVOR != "oss" && currentTtsMode == TtsPlaybackManager.TtsMode.CLOUD && uiState.credits <= 0) {
             showInsufficientCreditsDialog = true
             return
@@ -4227,7 +4230,9 @@ fun PdfViewerScreen(
         }
     }
 
-    if (!isSplitPane) BackHandler(enabled = true) {
+    // A split workspace delegates back to the focused pane first so its
+    // dialogs/search/editor state close before the workspace itself exits.
+    if (!isSplitPane || isPaneFocused) BackHandler(enabled = true) {
         val backAction = selectMobilePdfReaderBackAction(
             MobilePdfReaderBackState(
                 passwordPromptVisible = showPasswordDialog,

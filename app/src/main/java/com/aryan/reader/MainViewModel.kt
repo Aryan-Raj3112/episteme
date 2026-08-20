@@ -132,6 +132,8 @@ import com.aryan.reader.shared.PdfSplitOrientation
 import com.aryan.reader.shared.PdfSplitPane
 import com.aryan.reader.shared.PdfSplitPaneState
 import com.aryan.reader.shared.PdfSplitWorkspaceAction
+import com.aryan.reader.shared.PdfSplitWorkspaceJson
+import com.aryan.reader.shared.PdfSplitWorkspaceState
 import com.aryan.reader.shared.samePdfDocument
 import com.aryan.reader.shared.syncedFolderAddDecision
 import com.aryan.reader.shared.withSyncedFolder
@@ -232,6 +234,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
     private val prefs: SharedPreferences =
         application.getSharedPreferences("reader_user_prefs", Context.MODE_PRIVATE)
+    private val restoredPdfSplitWorkspace = PdfSplitWorkspaceJson.decodeOrEmpty(
+        prefs.getString(KEY_PDF_SPLIT_WORKSPACE, null),
+    )
     private val firestoreRepository = appGraph.firestoreRepository
     private val googleDriveRepository = appGraph.googleDriveRepository
     private val billingClientWrapper =
@@ -604,6 +609,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             unifiedLibrarySection = prefs.getInt(KEY_UNIFIED_LIBRARY_SECTION, 0)
                 .coerceIn(0, 4),
             unifiedLibraryListView = prefs.getBoolean(KEY_UNIFIED_LIBRARY_LIST_VIEW, false),
+            pdfSplitWorkspace = restoredPdfSplitWorkspace,
             currentUser = authRepository.getSignedInUser(),
             isSyncEnabled = prefs.getBoolean(KEY_SYNC_ENABLED, false),
             isFolderSyncEnabled = prefs.getBoolean(KEY_FOLDER_SYNC_ENABLED, false),
@@ -883,7 +889,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                             uriString = secondaryUri.toString(),
                         ),
                     )
-                ).copy(orientation = orientation)
+                ).reduce(PdfSplitWorkspaceAction.OrientationChanged(orientation))
             } else {
                 workspace.reduce(
                     PdfSplitWorkspaceAction.Open(
@@ -899,73 +905,107 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     )
                 )
             }
+            persistPdfSplitWorkspace(next)
             state.copy(pdfSplitWorkspace = next)
         }
         return true
     }
 
-    fun openPdfSplitPane(bookId: String): Boolean {
+    fun openPdfSplitPane(
+        bookId: String,
+        targetPane: PdfSplitPane = PdfSplitPane.SECONDARY,
+        expectedRevision: Long? = null,
+        expectedSessionId: Long? = null,
+    ): Boolean {
         val current = _internalState.value
         val item = uiState.value.rawLibraryFiles.firstOrNull {
             it.bookId == bookId && it.type == FileType.PDF && !it.isDeleted
         } ?: return false
         val uri = item.getUri() ?: return false
         val workspace = current.pdfSplitWorkspace
-        if (!workspace.isOpen) return openPdfSplit(bookId)
+        if (!workspace.isOpen) return false
         val document = PdfSplitPaneState(item.bookId, uri.toString())
-        if (workspace.primary?.samePdfDocument(document) == true) return false
-        if (workspace.secondary?.samePdfDocument(document) == true) return false
-
-        _internalState.update { state ->
-            state.copy(
-                pdfSplitWorkspace = state.pdfSplitWorkspace.reduce(
-                    PdfSplitWorkspaceAction.PaneOpened(
-                        pane = PdfSplitPane.SECONDARY,
-                        document = PdfSplitPaneState(item.bookId, uri.toString()),
-                    )
-                )
-            )
+        val otherPane = when (targetPane) {
+            PdfSplitPane.PRIMARY -> workspace.secondary
+            PdfSplitPane.SECONDARY -> workspace.primary
         }
-        return true
+        if (otherPane?.samePdfDocument(document) == true) return false
+
+        var didOpen = false
+        _internalState.update { state ->
+            val next = state.pdfSplitWorkspace.reduce(
+                PdfSplitWorkspaceAction.PaneOpened(
+                    pane = targetPane,
+                    document = PdfSplitPaneState(item.bookId, uri.toString()),
+                    expectedRevision = expectedRevision,
+                    expectedSessionId = expectedSessionId,
+                ),
+            )
+            if (next == state.pdfSplitWorkspace) {
+                state
+            } else {
+                didOpen = true
+                persistPdfSplitWorkspace(next)
+                state.copy(pdfSplitWorkspace = next)
+            }
+        }
+        return didOpen
     }
 
-    fun setPdfSplitOrientation(orientation: PdfSplitOrientation) {
+    fun setPdfSplitOrientation(
+        orientation: PdfSplitOrientation,
+        expectedRevision: Long? = null,
+    ) {
         _internalState.update { state ->
-            state.copy(
-                pdfSplitWorkspace = state.pdfSplitWorkspace.reduce(
-                    PdfSplitWorkspaceAction.OrientationChanged(orientation)
-                )
+            val next = state.pdfSplitWorkspace.reduce(
+                PdfSplitWorkspaceAction.OrientationChanged(orientation, expectedRevision),
             )
+            persistPdfSplitWorkspace(next)
+            state.copy(pdfSplitWorkspace = next)
         }
     }
 
-    fun focusPdfSplitPane(pane: PdfSplitPane) {
+    fun focusPdfSplitPane(
+        pane: PdfSplitPane,
+        expectedRevision: Long? = null,
+        expectedSessionId: Long? = null,
+    ) {
         _internalState.update { state ->
-            state.copy(
-                pdfSplitWorkspace = state.pdfSplitWorkspace.reduce(
-                    PdfSplitWorkspaceAction.FocusChanged(pane)
-                )
+            val next = state.pdfSplitWorkspace.reduce(
+                PdfSplitWorkspaceAction.FocusChanged(
+                    pane = pane,
+                    expectedRevision = expectedRevision,
+                    expectedSessionId = expectedSessionId,
+                ),
             )
+            persistPdfSplitWorkspace(next)
+            state.copy(pdfSplitWorkspace = next)
         }
     }
 
-    fun setPdfSplitDividerFraction(fraction: Float) {
+    fun setPdfSplitDividerFraction(
+        fraction: Float,
+        orientation: PdfSplitOrientation? = null,
+        expectedRevision: Long? = null,
+    ) {
         _internalState.update { state ->
-            state.copy(
-                pdfSplitWorkspace = state.pdfSplitWorkspace.reduce(
-                    PdfSplitWorkspaceAction.DividerChanged(fraction)
-                )
+            val next = state.pdfSplitWorkspace.reduce(
+                PdfSplitWorkspaceAction.DividerChanged(
+                    fraction = fraction,
+                    orientation = orientation,
+                    expectedRevision = expectedRevision,
+                ),
             )
+            persistPdfSplitWorkspace(next)
+            state.copy(pdfSplitWorkspace = next)
         }
     }
 
     fun swapPdfSplitPanes() {
         _internalState.update { state ->
-            state.copy(
-                pdfSplitWorkspace = state.pdfSplitWorkspace.reduce(
-                    PdfSplitWorkspaceAction.PanesSwapped
-                )
-            )
+            val next = state.pdfSplitWorkspace.reduce(PdfSplitWorkspaceAction.PanesSwapped)
+            persistPdfSplitWorkspace(next)
+            state.copy(pdfSplitWorkspace = next)
         }
     }
 
@@ -974,10 +1014,20 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
      * expanded naturally or receive another document. Returns whether the
      * workspace still has a reader pane.
      */
-    fun closePdfSplitPane(pane: PdfSplitPane): Boolean {
-        val action = PdfSplitWorkspaceAction.PaneClosed(pane)
+    fun closePdfSplitPane(
+        pane: PdfSplitPane,
+        expectedRevision: Long? = null,
+        expectedSessionId: Long? = null,
+    ): Boolean {
+        val action = PdfSplitWorkspaceAction.PaneClosed(
+            pane = pane,
+            expectedRevision = expectedRevision,
+            expectedSessionId = expectedSessionId,
+        )
         _internalState.update { state ->
-            state.copy(pdfSplitWorkspace = state.pdfSplitWorkspace.reduce(action))
+            val next = state.pdfSplitWorkspace.reduce(action)
+            persistPdfSplitWorkspace(next)
+            state.copy(pdfSplitWorkspace = next)
         }
         return _internalState.value.pdfSplitWorkspace.isOpen
     }
@@ -988,7 +1038,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         val exitDocument = current.pdfSplitWorkspace.exitTargetDocument
         val selectedBookId = current.selectedBookId
         _internalState.update { state ->
-            state.copy(pdfSplitWorkspace = state.pdfSplitWorkspace.reduce(PdfSplitWorkspaceAction.Closed))
+            val next = state.pdfSplitWorkspace.reduce(PdfSplitWorkspaceAction.Closed)
+            persistPdfSplitWorkspace(next)
+            state.copy(pdfSplitWorkspace = next)
         }
         if (exitDocument != null && exitDocument.bookId != selectedBookId) {
             activatePdfPane(exitDocument.bookId)
@@ -1020,6 +1072,16 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 initialHighlightsJson = null,
                 isOpeningFromTtsNotification = false,
             )
+        }
+    }
+
+    private fun persistPdfSplitWorkspace(workspace: PdfSplitWorkspaceState) {
+        prefs.edit {
+            if (workspace.isOpen) {
+                putString(KEY_PDF_SPLIT_WORKSPACE, PdfSplitWorkspaceJson.encode(workspace))
+            } else {
+                remove(KEY_PDF_SPLIT_WORKSPACE)
+            }
         }
     }
 
@@ -6306,19 +6368,23 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    fun saveBookmarks(bookId: String, bookmarksJson: String) {
+    fun saveBookmarks(bookId: String, bookmarksJson: String, documentUri: Uri? = null) {
         Timber.d("saveBookmarks called. bookId=$bookId, bookmarksJson=$bookmarksJson")
         viewModelScope.launch {
-            val currentBookUri =
+            val currentBookUri = documentUri ?: (
                 _internalState.value.selectedPdfUri ?: _internalState.value.selectedEpubUri
+            )
             Timber.d("saveBookmarks: currentBookUri is $currentBookUri")
 
             if (currentBookUri != null) {
-                bookStore.getFileByUri(currentBookUri.toString())?.let { item ->
+                val item = bookStore.getFileByUri(currentBookUri.toString())
+                if (item != null) {
                     Timber.d(
                         "saveBookmarks: Found item by URI. Updating bookmarks for bookId=${item.bookId}"
                     )
                     bookStore.updateBookmarks(item.bookId, bookmarksJson)
+                } else if (bookId.isNotBlank()) {
+                    bookStore.updateBookmarks(bookId, bookmarksJson)
                 }
             } else if (bookId.isNotBlank()) {
                 Timber.d(
@@ -7767,6 +7833,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         private const val KEY_PENDING_EXTERNAL_FILE_REMOVALS = "pending_external_file_removals"
         private const val KEY_USE_STRICT_FILE_FILTER = "use_strict_file_filter"
         private const val KEY_USE_PDF_FILE_NAME_AS_DISPLAY_NAME = "use_pdf_file_name_as_display_name"
+        private const val KEY_PDF_SPLIT_WORKSPACE = "pdf_split_workspace"
         private const val KEY_SCREEN_CAPTURE_PROTECTION = "screen_capture_protection_enabled"
         private const val KEY_APP_THEME_MODE = "app_theme_mode"
         private const val KEY_APP_CONTRAST_OPTION = "app_contrast_option"

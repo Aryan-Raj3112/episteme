@@ -11,6 +11,8 @@ import android.net.Uri
 data class PdfViewerPane(
     val bookId: String,
     val pdfUri: Uri,
+    /** Shared workspace session token used to reject state from a replaced pane. */
+    val sessionId: Long = 0L,
     val initialPage: Int? = null,
     val initialBookmarksJson: String? = null,
 )

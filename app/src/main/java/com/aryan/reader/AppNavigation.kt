@@ -71,6 +71,8 @@ import com.aryan.reader.pdf.PdfSplitPdfPicker
 import com.aryan.reader.pdf.PdfSplitReaderScreen
 import com.aryan.reader.shared.ReaderFeatureSurface
 import com.aryan.reader.shared.PdfSplitOrientation
+import com.aryan.reader.shared.PdfSplitPaneState
+import com.aryan.reader.shared.samePdfDocument
 import com.aryan.reader.shared.ui.SharedMobileAppDestination
 import com.aryan.reader.tts.ReaderTtsMiniBar
 import com.aryan.reader.tts.readerTtsMiniBarBottomPaddingDp
@@ -291,16 +293,37 @@ fun AppNavigation(
                             isProUser = uiState.isProUser,
                             usePdfFileNameAsDisplayName = uiState.usePdfFileNameAsDisplayName,
                             viewModel = viewModel,
-                            onFocusPane = viewModel::focusPdfSplitPane,
-                            onClosePane = { pane ->
-                                val remainsOpen = viewModel.closePdfSplitPane(pane)
+                            onFocusPane = { pane, sessionId ->
+                                viewModel.focusPdfSplitPane(
+                                    pane = pane,
+                                    expectedSessionId = sessionId,
+                                )
+                            },
+                            onClosePane = { pane, sessionId ->
+                                val remainsOpen = viewModel.closePdfSplitPane(
+                                    pane = pane,
+                                    expectedSessionId = sessionId,
+                                )
                                 if (!remainsOpen) viewModel.clearSelectedFile()
                             },
                             onCloseWorkspace = viewModel::closePdfSplitWorkspace,
                             onSwapPanes = viewModel::swapPdfSplitPanes,
                             onOrientationChange = viewModel::setPdfSplitOrientation,
-                            onDividerChange = viewModel::setPdfSplitDividerFraction,
-                            onOpenDocument = viewModel::openPdfSplitPane,
+                            onDividerChange = { fraction, orientation, revision ->
+                                viewModel.setPdfSplitDividerFraction(
+                                    fraction = fraction,
+                                    orientation = orientation,
+                                    expectedRevision = revision,
+                                )
+                            },
+                            onOpenDocument = { selectedBookId, targetPane, sessionId, revision ->
+                                viewModel.openPdfSplitPane(
+                                    bookId = selectedBookId,
+                                    targetPane = targetPane,
+                                    expectedRevision = revision,
+                                    expectedSessionId = sessionId,
+                                )
+                            },
                             onNavigateToPro = {
                                 navController.navigateIfReady(SharedMobileAppDestination.PRO, popUpToStart = true)
                             },
@@ -349,8 +372,17 @@ fun AppNavigation(
                         availablePdfs = uiState.rawLibraryFiles.filter {
                                 it.type == FileType.PDF &&
                                 !it.isDeleted &&
-                                it.bookId != bookId &&
-                                it.uriString != uiState.selectedPdfUri?.toString()
+                                it.uriString?.let { uri ->
+                                    !PdfSplitPaneState(
+                                        bookId = it.bookId,
+                                        uriString = uri,
+                                    ).samePdfDocument(
+                                        PdfSplitPaneState(
+                                            bookId = bookId.orEmpty(),
+                                            uriString = uiState.selectedPdfUri?.toString().orEmpty(),
+                                        ),
+                                    )
+                                } == true
                         },
                         usePdfFileNameAsDisplayName = uiState.usePdfFileNameAsDisplayName,
                         onDismiss = { showPdfSplitPicker = false },

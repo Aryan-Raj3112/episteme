@@ -1177,7 +1177,14 @@
     <string name="pdf_split_reader_close_pane">Close document pane</string>
     <string name="pdf_split_reader_add_document">Add PDF to split reader</string>
     <string name="pdf_split_reader_choose_document">Choose a PDF to open beside this document</string>
+    <string name="pdf_split_reader_replace_document">Replace the selected split pane</string>
     <string name="pdf_split_reader_no_other_documents">No other PDFs are available</string>
+    <string name="pdf_split_reader_single_pane_fallback">Showing one pane to keep it readable</string>
+    <string name="pdf_split_reader_primary_pane">Primary pane</string>
+    <string name="pdf_split_reader_secondary_pane">Secondary pane</string>
+    <string name="pdf_split_reader_divider_desc">PDF split divider</string>
+    <string name="pdf_split_reader_divider_decrease">Decrease divider position</string>
+    <string name="pdf_split_reader_divider_increase">Increase divider position</string>
     <!-- "Pen Playground" is the name of a developer/debug canvas for testing the annotation pen tool. -->
     <string name="pen_playground">Pen Playground</string>
     <!-- SVG = Scalable Vector Graphics (file format name — do not translate). -->
