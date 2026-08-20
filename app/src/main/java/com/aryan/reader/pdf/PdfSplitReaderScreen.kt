@@ -549,8 +549,9 @@ private fun PdfSplitPaneLayout(
                     } else {
                         down.position.y
                     }
+                    val pointerAbsoluteAxis = currentDividerAbsoluteStartPx.value + pointerAxis
                     val dividerCenter = currentDividerAbsoluteStartPx.value + dividerThicknessPx / 2f
-                    if (abs(pointerAxis - dividerCenter) > dividerThicknessPx / 2f) {
+                    if (abs(pointerAbsoluteAxis - dividerCenter) > dividerThicknessPx / 2f) {
                         return@awaitEachGesture
                     }
                     // Once the pointer lands in the divider target, claim the
@@ -578,9 +579,9 @@ private fun PdfSplitPaneLayout(
                         if (isDragging) {
                             change.consume()
                             val absolutePointer = if (plan.orientation == PdfSplitOrientation.VERTICAL) {
-                                change.position.x
+                                currentDividerAbsoluteStartPx.value + change.position.x
                             } else {
-                                change.position.y
+                                currentDividerAbsoluteStartPx.value + change.position.y
                             }
                             val rawFraction = pdfSplitDividerFractionAtAbsolutePosition(
                                 pointerPositionPx = absolutePointer,
@@ -647,6 +648,8 @@ private fun PdfSplitPaneLayout(
             }
         }
 
+        val dividerInteractionModifier = dividerSemanticsModifier.then(dividerPointerModifier)
+
         if (plan.presentation == PdfSplitPresentation.SINGLE) {
             Box(Modifier.fillMaxSize()) {
                 if (workspace.focusedPane == PdfSplitPane.PRIMARY) first() else second()
@@ -685,9 +688,8 @@ private fun PdfSplitPaneLayout(
                             .offset(x = interactionDividerOffset)
                             .width(PdfSplitDividerTouchTarget)
                             .height(dividerHeight)
-                            .then(dividerSemanticsModifier),
+                            .then(dividerInteractionModifier),
                     )
-                    Box(Modifier.fillMaxSize().then(dividerPointerModifier))
                 }
             } else {
                 Box(Modifier.fillMaxSize()) {
@@ -708,9 +710,8 @@ private fun PdfSplitPaneLayout(
                             .offset(x = interactionDividerOffset)
                             .width(PdfSplitDividerTouchTarget)
                             .height(dividerHeight)
-                            .then(dividerSemanticsModifier),
+                            .then(dividerInteractionModifier),
                     )
-                    Box(Modifier.fillMaxSize().then(dividerPointerModifier))
                 }
             }
         } else {
@@ -735,9 +736,8 @@ private fun PdfSplitPaneLayout(
                         .offset(y = interactionDividerOffset)
                         .height(PdfSplitDividerTouchTarget)
                         .width(dividerWidth)
-                        .then(dividerSemanticsModifier),
+                        .then(dividerInteractionModifier),
                 )
-                Box(Modifier.fillMaxSize().then(dividerPointerModifier))
             }
         }
     }

@@ -2,9 +2,10 @@
 """Guard the Android split divider's stable interaction/preview contract.
 
 The divider's visual node is allowed to follow the local drag preview, but the
-pointer and accessibility nodes must remain anchored to the committed layout
+narrow pointer/accessibility target must remain anchored to the committed layout
 until release.  This source-level check keeps that distinction from being
-collapsed during future Compose refactors.
+collapsed during future Compose refactors and prevents a full-screen pointer
+overlay from stealing reader gestures.
 """
 
 from __future__ import annotations
@@ -28,9 +29,25 @@ def main() -> int:
 
     require(source, r"val\s+dividerSemanticsModifier\s*=\s*Modifier\s*\.semantics", "separate divider semantics")
     require(source, r"val\s+dividerPointerModifier\s*=\s*Modifier\.pointerInput", "separate divider pointer input")
-    require(source, r"Box\(Modifier\.fillMaxSize\(\)\.then\(dividerPointerModifier\)\)", "full-axis stable pointer target")
-    if source.count("Box(Modifier.fillMaxSize().then(dividerPointerModifier))") != 3:
-        raise AssertionError("vertical LTR/RTL and horizontal layouts must all attach the stable pointer target")
+    require(source, r"val\s+dividerInteractionModifier\s*=\s*dividerSemanticsModifier\.then\(dividerPointerModifier\)", "combined stable interaction modifier")
+    if "fillMaxSize().then(dividerPointerModifier)" in source:
+        raise AssertionError("divider pointer input must not be attached to a full-screen overlay")
+    if source.count(".then(dividerPointerModifier)") != 1:
+        raise AssertionError("pointer input must only be combined into the stable divider interaction modifier")
+    if source.count(".then(dividerInteractionModifier)") != 3:
+        raise AssertionError("vertical LTR/RTL and horizontal layouts must all attach the narrow interaction target")
+    require(
+        source,
+        r"\.offset\(x\s*=\s*interactionDividerOffset\).*?\.width\(PdfSplitDividerTouchTarget\).*?"
+        r"\.height\(dividerHeight\).*?\.then\(dividerInteractionModifier\)",
+        "vertical narrow stable interaction target",
+    )
+    require(
+        source,
+        r"\.offset\(y\s*=\s*interactionDividerOffset\).*?\.height\(PdfSplitDividerTouchTarget\).*?"
+        r"\.width\(dividerWidth\).*?\.then\(dividerInteractionModifier\)",
+        "horizontal narrow stable interaction target",
+    )
 
     require(
         source,
@@ -41,6 +58,9 @@ def main() -> int:
     require(source, r"val\s+interactionDividerOffset\s*=.*?plan\.firstPaneSizePx", "committed divider interaction position")
     require(source, r"down\.consume\(\)", "divider stream ownership")
     require(source, r"event\.type\s*==\s*PointerEventType\.Release", "release-only commit handling")
+    require(source, r"currentDividerAbsoluteStartPx\.value\s*\+\s*pointerAxis", "local down coordinate mapped to absolute axis")
+    require(source, r"currentDividerAbsoluteStartPx\.value\s*\+\s*change\.position\.x", "vertical local drag coordinate mapped to absolute axis")
+    require(source, r"currentDividerAbsoluteStartPx\.value\s*\+\s*change\.position\.y", "horizontal local drag coordinate mapped to absolute axis")
     require(source, r"pointerPositionPx\s*=\s*absolutePointer", "absolute pointer fraction mapping")
 
     print("PASS: split divider keeps visual preview separate from stable pointer/accessibility interaction")
