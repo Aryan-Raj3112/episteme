@@ -9,16 +9,20 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.ui.input.pointer.changedToUp
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
@@ -94,6 +98,7 @@ import com.aryan.reader.shared.resolveLayout
 import com.aryan.reader.shared.samePdfDocument
 import com.aryan.reader.tts.TtsController
 import com.aryan.reader.tts.rememberTtsController
+import kotlin.math.abs
 
 private val PdfSplitPaneHeaderHeight = 48.dp
 private val PdfSplitDividerTouchTarget = 24.dp
@@ -468,30 +473,26 @@ private fun PdfSplitPaneLayout(
         val dividerAbsoluteStartPx = if (
             plan.orientation == PdfSplitOrientation.VERTICAL && isRtl
         ) {
-            axisSizePx - framePlan.firstPaneSizePx - dividerThicknessPx
+            axisSizePx - plan.firstPaneSizePx - dividerThicknessPx
         } else {
-            framePlan.firstPaneSizePx
+            plan.firstPaneSizePx
+        }
+        val visualDividerOffset = with(density) {
+            if (plan.orientation == PdfSplitOrientation.VERTICAL) {
+                (if (isRtl) framePlan.secondPaneSizePx else framePlan.firstPaneSizePx).toDp()
+            } else {
+                framePlan.firstPaneSizePx.toDp()
+            }
+        }
+        val interactionDividerOffset = with(density) {
+            if (plan.orientation == PdfSplitOrientation.VERTICAL) {
+                (if (isRtl) plan.secondPaneSizePx else plan.firstPaneSizePx).toDp()
+            } else {
+                plan.firstPaneSizePx.toDp()
+            }
         }
         val currentDividerAbsoluteStartPx = rememberUpdatedState(dividerAbsoluteStartPx)
-        val dividerModifier = Modifier
-            .drawBehind {
-                val strokeWidth = PdfSplitDividerVisualThickness.toPx()
-                if (plan.orientation == PdfSplitOrientation.VERTICAL) {
-                    drawLine(
-                        color = dividerColor,
-                        start = Offset(size.width / 2f, 0f),
-                        end = Offset(size.width / 2f, size.height),
-                        strokeWidth = strokeWidth,
-                    )
-                } else {
-                    drawLine(
-                        color = dividerColor,
-                        start = Offset(0f, size.height / 2f),
-                        end = Offset(size.width, size.height / 2f),
-                        strokeWidth = strokeWidth,
-                    )
-                }
-            }
+        val dividerSemanticsModifier = Modifier
             .semantics {
                 contentDescription = dividerDescription
                 progressBarRangeInfo = ProgressBarRangeInfo(
@@ -529,7 +530,8 @@ private fun PdfSplitPaneLayout(
                     },
                 )
             }
-            .pointerInput(
+
+        val dividerPointerModifier = Modifier.pointerInput(
                 workspace.revision,
                 plan.orientation,
                 axisSizePx,
@@ -538,14 +540,30 @@ private fun PdfSplitPaneLayout(
             ) {
                 var lastTapTimeMillis = Long.MIN_VALUE
                 awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
+                    val down = awaitFirstDown(
+                        requireUnconsumed = false,
+                        pass = PointerEventPass.Initial,
+                    )
+                    val pointerAxis = if (plan.orientation == PdfSplitOrientation.VERTICAL) {
+                        down.position.x
+                    } else {
+                        down.position.y
+                    }
+                    val dividerCenter = currentDividerAbsoluteStartPx.value + dividerThicknessPx / 2f
+                    if (abs(pointerAxis - dividerCenter) > dividerThicknessPx / 2f) {
+                        return@awaitEachGesture
+                    }
+                    // Once the pointer lands in the divider target, claim the
+                    // stream before either reader pane can cancel it while the
+                    // preview changes pane constraints.
+                    down.consume()
                     val pointerId = down.id
                     val startPosition = down.position
                     var isDragging = false
                     var didFinish = false
 
                     while (true) {
-                        val event = awaitPointerEvent()
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
                         val change = event.changes.firstOrNull { it.id == pointerId }
                             ?: run {
                                 if (isDragging) dragState = dragState.cancel()
@@ -560,9 +578,9 @@ private fun PdfSplitPaneLayout(
                         if (isDragging) {
                             change.consume()
                             val absolutePointer = if (plan.orientation == PdfSplitOrientation.VERTICAL) {
-                                currentDividerAbsoluteStartPx.value + change.position.x
+                                change.position.x
                             } else {
-                                currentDividerAbsoluteStartPx.value + change.position.y
+                                change.position.y
                             }
                             val rawFraction = pdfSplitDividerFractionAtAbsolutePosition(
                                 pointerPositionPx = absolutePointer,
@@ -573,7 +591,10 @@ private fun PdfSplitPaneLayout(
                             dragState = dragState.preview(rawFraction)
                         }
 
-                        if (change.changedToUp()) {
+                        val isRelease = change.changedToUp() || (
+                            !change.pressed && event.type == PointerEventType.Release
+                            )
+                        if (isRelease) {
                             if (isDragging) {
                                 val committed = dragState.commit().committedFraction
                                 dragState = dragState.cancel()
@@ -596,7 +617,9 @@ private fun PdfSplitPaneLayout(
                             didFinish = true
                             break
                         }
-                        if (!change.pressed) break
+                        if (!change.pressed) {
+                            break
+                        }
                     }
 
                     if (!didFinish && isDragging) {
@@ -604,6 +627,25 @@ private fun PdfSplitPaneLayout(
                     }
                 }
             }
+
+        val dividerVisualModifier = Modifier.drawBehind {
+            val strokeWidth = PdfSplitDividerVisualThickness.toPx()
+            if (plan.orientation == PdfSplitOrientation.VERTICAL) {
+                drawLine(
+                    color = dividerColor,
+                    start = Offset(size.width / 2f, 0f),
+                    end = Offset(size.width / 2f, size.height),
+                    strokeWidth = strokeWidth,
+                )
+            } else {
+                drawLine(
+                    color = dividerColor,
+                    start = Offset(0f, size.height / 2f),
+                    end = Offset(size.width, size.height / 2f),
+                    strokeWidth = strokeWidth,
+                )
+            }
+        }
 
         if (plan.presentation == PdfSplitPresentation.SINGLE) {
             Box(Modifier.fillMaxSize()) {
@@ -617,26 +659,85 @@ private fun PdfSplitPaneLayout(
         } else if (plan.orientation == PdfSplitOrientation.VERTICAL) {
             val firstWidth = with(density) { framePlan.firstPaneSizePx.toDp() }
             val secondWidth = with(density) { framePlan.secondPaneSizePx.toDp() }
+            // Give the divider an explicit cross-axis size.  `fillMaxHeight()`
+            // alone can be measured to the header's intrinsic height by the
+            // Row when its siblings contain unconstrained reader content.  A
+            // short semantics/pointer node makes the divider impossible to
+            // drag from the document area even though the visual layout is
+            // side-by-side.
+            val dividerHeight = with(density) { availableHeight.toDp() }
             if (isRtl) {
-                Row(Modifier.fillMaxSize()) {
-                    Box(Modifier.width(secondWidth).fillMaxHeight()) { second() }
-                    Box(dividerModifier.width(PdfSplitDividerTouchTarget).fillMaxHeight())
-                    Box(Modifier.width(firstWidth).fillMaxHeight()) { first() }
+                Box(Modifier.fillMaxSize()) {
+                    Row(Modifier.fillMaxSize()) {
+                        Box(Modifier.width(secondWidth).fillMaxHeight()) { second() }
+                        Spacer(Modifier.width(PdfSplitDividerTouchTarget).fillMaxHeight())
+                        Box(Modifier.width(firstWidth).fillMaxHeight()) { first() }
+                    }
+                    Box(
+                        Modifier
+                            .offset(x = visualDividerOffset)
+                            .width(PdfSplitDividerTouchTarget)
+                            .height(dividerHeight)
+                            .then(dividerVisualModifier),
+                    )
+                    Box(
+                        Modifier
+                            .offset(x = interactionDividerOffset)
+                            .width(PdfSplitDividerTouchTarget)
+                            .height(dividerHeight)
+                            .then(dividerSemanticsModifier),
+                    )
+                    Box(Modifier.fillMaxSize().then(dividerPointerModifier))
                 }
             } else {
-                Row(Modifier.fillMaxSize()) {
-                    Box(Modifier.width(firstWidth).fillMaxHeight()) { first() }
-                    Box(dividerModifier.width(PdfSplitDividerTouchTarget).fillMaxHeight())
-                    Box(Modifier.width(secondWidth).fillMaxHeight()) { second() }
+                Box(Modifier.fillMaxSize()) {
+                    Row(Modifier.fillMaxSize()) {
+                        Box(Modifier.width(firstWidth).fillMaxHeight()) { first() }
+                        Spacer(Modifier.width(PdfSplitDividerTouchTarget).fillMaxHeight())
+                        Box(Modifier.width(secondWidth).fillMaxHeight()) { second() }
+                    }
+                    Box(
+                        Modifier
+                            .offset(x = visualDividerOffset)
+                            .width(PdfSplitDividerTouchTarget)
+                            .height(dividerHeight)
+                            .then(dividerVisualModifier),
+                    )
+                    Box(
+                        Modifier
+                            .offset(x = interactionDividerOffset)
+                            .width(PdfSplitDividerTouchTarget)
+                            .height(dividerHeight)
+                            .then(dividerSemanticsModifier),
+                    )
+                    Box(Modifier.fillMaxSize().then(dividerPointerModifier))
                 }
             }
         } else {
             val firstHeight = with(density) { framePlan.firstPaneSizePx.toDp() }
             val secondHeight = with(density) { framePlan.secondPaneSizePx.toDp() }
-            Column(Modifier.fillMaxSize()) {
-                Box(Modifier.height(firstHeight).fillMaxWidth()) { first() }
-                Box(dividerModifier.height(PdfSplitDividerTouchTarget).fillMaxWidth())
-                Box(Modifier.height(secondHeight).fillMaxWidth()) { second() }
+            val dividerWidth = with(density) { availableWidth.toDp() }
+            Box(Modifier.fillMaxSize()) {
+                Column(Modifier.fillMaxSize()) {
+                    Box(Modifier.height(firstHeight).fillMaxWidth()) { first() }
+                    Spacer(Modifier.height(PdfSplitDividerTouchTarget).fillMaxWidth())
+                    Box(Modifier.height(secondHeight).fillMaxWidth()) { second() }
+                }
+                Box(
+                    Modifier
+                        .offset(y = visualDividerOffset)
+                        .height(PdfSplitDividerTouchTarget)
+                        .width(dividerWidth)
+                        .then(dividerVisualModifier),
+                )
+                Box(
+                    Modifier
+                        .offset(y = interactionDividerOffset)
+                        .height(PdfSplitDividerTouchTarget)
+                        .width(dividerWidth)
+                        .then(dividerSemanticsModifier),
+                )
+                Box(Modifier.fillMaxSize().then(dividerPointerModifier))
             }
         }
     }
