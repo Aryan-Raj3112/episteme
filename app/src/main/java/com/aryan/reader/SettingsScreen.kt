@@ -51,6 +51,8 @@ import com.aryan.reader.pdf.loadPdfSystemUiMode
 import com.aryan.reader.pdf.loadPdfThemeId
 import com.aryan.reader.pdf.loadPdfVerticalPageGapVisible
 import com.aryan.reader.pdf.loadPdfPageNumberOverlayVisible
+import com.aryan.reader.loadPdfReverseColorMode
+import com.aryan.reader.savePdfReverseColorMode
 import com.aryan.reader.shared.BuiltInPdfReaderThemes
 import com.aryan.reader.shared.CustomFontItem
 import com.aryan.reader.shared.SharedSettingsAction
@@ -475,7 +477,9 @@ private fun loadAndroidPdfReaderDefaultSettings(
         textureAlpha = (1f - loadGlobalTextureTransparency(context)).coerceIn(0f, 1f),
         systemUiMode = loadPdfSystemUiMode(context),
         pdfVerticalPageGapVisible = loadPdfVerticalPageGapVisible(context),
-        pdfPageNumberOverlayVisible = loadPdfPageNumberOverlayVisible(context)
+        pdfPageNumberOverlayVisible = loadPdfPageNumberOverlayVisible(context),
+        pdfReverseColorMode = loadPdfReverseColorMode(context),
+        pdfPreserveImageColors = loadExcludeImages(context),
     )
     return BuiltInPdfReaderThemes.firstOrNull { it.id == base.themeId }?.toReaderSettings(base) ?: base
 }
@@ -515,6 +519,8 @@ private fun saveAndroidPdfReaderDefaultSettings(
     savePdfThemeId(context, settings.themeId ?: "no_theme")
     savePdfVerticalPageGapVisible(context, settings.pdfVerticalPageGapVisible)
     savePdfPageNumberOverlayVisible(context, settings.pdfPageNumberOverlayVisible)
+    savePdfReverseColorMode(context, settings.pdfReverseColorMode)
+    saveExcludeImages(context, settings.pdfPreserveImageColors)
     saveGlobalTextureTransparency(context, 1f - settings.textureAlpha.coerceIn(0f, 1f))
 }
 

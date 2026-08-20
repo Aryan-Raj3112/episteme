@@ -3,6 +3,7 @@ package com.aryan.reader.shared
 import com.aryan.reader.shared.reader.ReaderReadingMode
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.SharedReaderTextAlign
+import com.aryan.reader.shared.pdf.PdfReverseColorMode
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -74,7 +75,9 @@ class ReaderDefaultSettingsStateTest {
         val pdfDefaults = ReaderSettings(
             themeId = "reverse",
             pdfFirstPageStandaloneInSpread = true,
-            rightToLeftPagination = true
+            rightToLeftPagination = true,
+            pdfReverseColorMode = PdfReverseColorMode.LUMA_SYMMETRIC,
+            pdfPreserveImageColors = true
         )
 
         val decoded = SharedLibrarySnapshotJson.decodeOrEmpty(

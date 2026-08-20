@@ -105,6 +105,20 @@ class PdfReaderSessionTest {
     }
 
     @Test
+    fun `reverse color mode and image policy persist while legacy state defaults to rgb`() {
+        val state = SharedPdfReaderState.initial(pageCount = 2)
+            .reduce(SharedPdfReaderAction.ReverseColorModeChanged(PdfReverseColorMode.LUMA_SRGB_LINEAR))
+            .reduce(SharedPdfReaderAction.PreserveImageColorsChanged(true))
+        val restored = SharedPdfReaderStateSerializer.decode(SharedPdfReaderStateSerializer.encode(state))
+        val legacy = SharedPdfReaderStateSerializer.decode("""{"pageIndex":0,"pageCount":2}""")
+
+        assertEquals(PdfReverseColorMode.LUMA_SRGB_LINEAR, restored?.reverseColorMode)
+        assertEquals(true, restored?.preserveImageColors)
+        assertEquals(PdfReverseColorMode.RGB, legacy?.reverseColorMode)
+        assertEquals(false, legacy?.preserveImageColors)
+    }
+
+    @Test
     fun `zoom changes use provided zoom spec`() {
         val zoomSpec = PdfZoomSpec(min = 0.5f, max = 4f, default = 1f)
         val state = SharedPdfReaderState.initial(pageCount = 1, zoomSpec = zoomSpec)

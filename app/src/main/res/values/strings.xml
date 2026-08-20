@@ -1363,6 +1363,12 @@
     <string name="content_desc_shelf_cover">%1$s shelf cover</string>
     <string name="theme_preserve_image_colors">Preserve Image Colors</string>
     <string name="theme_preserve_image_colors_desc">Keep original image colors when theme changes</string>
+    <string name="pdf_reverse_colors">Reverse PDF colors</string>
+    <string name="pdf_reverse_colors_desc">Choose how PDF colors are inverted in the reverse theme</string>
+    <string name="pdf_reverse_rgb">Invert colors</string>
+    <string name="pdf_reverse_lightness">Invert lightness</string>
+    <string name="pdf_reverse_luma_srgb">Invert luma (sRGB linear)</string>
+    <string name="pdf_reverse_luma_symmetric">Invert luma (symmetric)</string>
 
     <!-- Enum labels used by library filters, sorting, and app theme controls. -->
     <string name="add_books_source_unshelved">Unshelved</string>

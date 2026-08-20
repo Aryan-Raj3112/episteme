@@ -18,6 +18,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import com.aryan.reader.shared.pdf.SharedPdfHighlighterPalette
 import com.aryan.reader.shared.pdf.SharedPdfReaderViewport
+import com.aryan.reader.shared.pdf.PdfReverseColorMode
 import com.aryan.reader.shared.reader.ReaderBookmark
 import com.aryan.reader.shared.reader.ReaderPageSpreadMode
 import com.aryan.reader.shared.reader.ReaderReadingMode
@@ -726,6 +727,13 @@ private fun JsonElement.asReaderSettingsOrNull(): ReaderSettings? {
             "pdfFirstPageStandaloneInSpread",
             defaults.pdfFirstPageStandaloneInSpread
         ),
+        pdfReverseColorMode = obj.string("pdfReverseColorMode")
+            ?.let(PdfReverseColorMode::fromId)
+            ?: defaults.pdfReverseColorMode,
+        pdfPreserveImageColors = obj.boolean(
+            "pdfPreserveImageColors",
+            defaults.pdfPreserveImageColors
+        ),
         seamlessChapterNavigation = obj.boolean("seamlessChapterNavigation", defaults.seamlessChapterNavigation),
         chapterTurnDragMultiplier = obj.float("chapterTurnDragMultiplier") ?: defaults.chapterTurnDragMultiplier,
         hideImages = obj.boolean("hideImages", defaults.hideImages)
@@ -879,6 +887,8 @@ private fun ReaderSettings?.asJson(): JsonElement {
             "pdfVerticalPageGapVisible" to JsonPrimitive(settings.pdfVerticalPageGapVisible),
             "pdfPageNumberOverlayVisible" to JsonPrimitive(settings.pdfPageNumberOverlayVisible),
             "pdfFirstPageStandaloneInSpread" to JsonPrimitive(settings.pdfFirstPageStandaloneInSpread),
+            "pdfReverseColorMode" to JsonPrimitive(settings.pdfReverseColorMode.id),
+            "pdfPreserveImageColors" to JsonPrimitive(settings.pdfPreserveImageColors),
             "seamlessChapterNavigation" to JsonPrimitive(settings.seamlessChapterNavigation),
             "chapterTurnDragMultiplier" to JsonPrimitive(settings.chapterTurnDragMultiplier),
             "hideImages" to JsonPrimitive(settings.hideImages)

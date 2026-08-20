@@ -118,6 +118,7 @@ import com.aryan.reader.pdf.data.PdfAnnotation
 import com.aryan.reader.pdf.data.PdfTextBox
 import com.aryan.reader.pdf.data.VirtualPage
 import com.aryan.reader.shared.pdf.calculatePdfVerticalPageLayoutPx
+import com.aryan.reader.shared.pdf.PdfReverseColorMode
 import com.aryan.reader.shared.pdf.finitePdfZoomValue
 import com.aryan.reader.shared.pdf.PDF_MAX_ZOOM_SCALE
 import com.aryan.reader.shared.pdf.pdfVerticalDoubleTapTargetScale
@@ -223,6 +224,7 @@ internal fun PdfVerticalReader(
     activeTheme: ReaderTheme,
     activeTextureAlpha: Float = 0.55f,
     excludeImages: Boolean = false,
+    reverseColorMode: PdfReverseColorMode = PdfReverseColorMode.RGB,
     totalPages: Int,
     virtualPages: List<VirtualPage> = emptyList(),
     pageAspectRatios: StableHolder<List<Float>>,
@@ -304,6 +306,11 @@ internal fun PdfVerticalReader(
     var globalEraserPosition by remember { mutableStateOf<Offset?>(null) }
     var isStylusEraserOverride by remember { mutableStateOf(false) }
     val isDarkMode = activeTheme.isDark || activeTheme.id == "reverse"
+    val effectiveReverseColorMode = if (activeTheme.id == "reverse") {
+        reverseColorMode
+    } else {
+        PdfReverseColorMode.RGB
+    }
     val verticalPageBackgroundColor = remember(activeTheme) {
         resolvePdfVerticalPageBackgroundColor(activeTheme)
     }
@@ -2366,6 +2373,7 @@ internal fun PdfVerticalReader(
                                     activeTheme = activeTheme,
                                     activeTextureAlpha = activeTextureAlpha,
                                     excludeImages = excludeImages,
+                                    reverseColorMode = effectiveReverseColorMode,
                                     externalScale = highResScale,
                                     onScaleChanged = {},
                                     showAllTextHighlights = showAllTextHighlights,

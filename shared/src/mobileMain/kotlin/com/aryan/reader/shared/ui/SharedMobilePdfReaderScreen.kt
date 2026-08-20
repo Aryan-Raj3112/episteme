@@ -168,6 +168,7 @@ import com.aryan.reader.shared.resolveReaderTheme
 import com.aryan.reader.pdf.shouldShowPdfAnnotationExportChoice
 import com.aryan.reader.shared.pdf.PdfAnnotationKind
 import com.aryan.reader.shared.pdf.PdfInkTool
+import com.aryan.reader.shared.pdf.PdfReverseColorMode
 import com.aryan.reader.shared.pdf.PdfTtsSessionPlanner
 import com.aryan.reader.shared.pdf.shouldStopPdfTtsForManualPageTurn
 import com.aryan.reader.shared.pdf.shouldStopPdfTtsForNavigation
@@ -655,10 +656,24 @@ fun SharedMobilePdfReaderHost(
             )
         }
     }
+    // A saved reverse-mode selection must not affect normal PDF themes. Keeping
+    // this effective value at the host boundary also prevents the shared Android
+    // and iOS renderers from doing work for an inactive option.
+    val effectiveReverseColorMode = if (readerState.themeId == "reverse") {
+        readerState.reverseColorMode
+    } else {
+        PdfReverseColorMode.RGB
+    }
     // Document metadata must not follow the visible page. A newly requested page starts with
     // SharedMobilePdfPageRender's loading value (pageCount = 1); using that transient value here
     // used to collapse the list/pager to page zero every time the user changed pages.
-    val documentRender = rememberSharedMobilePdfPageRender(book, 0, password = pdfPassword)
+    val documentRender = rememberSharedMobilePdfPageRender(
+        book,
+        0,
+        password = pdfPassword,
+        reverseColorMode = effectiveReverseColorMode,
+        preserveImageColors = readerState.preserveImageColors,
+    )
     val pageCount = if (documentRender.bitmap != null || documentRender.errorMessage != null) {
         documentRender.pageCount.coerceAtLeast(1)
     } else {
@@ -669,7 +684,13 @@ fun SharedMobilePdfReaderHost(
     }
     val displayPageCount = virtualLayout.size
     val currentPdfIndex = readerState.currentNearestPdfPageIndex ?: 0
-    val currentPageRender = rememberSharedMobilePdfPageRender(book, currentPdfIndex, password = pdfPassword)
+    val currentPageRender = rememberSharedMobilePdfPageRender(
+        book,
+        currentPdfIndex,
+        password = pdfPassword,
+        reverseColorMode = effectiveReverseColorMode,
+        preserveImageColors = readerState.preserveImageColors,
+    )
     val isCurrentPageBlank = (virtualLayout.getOrNull(readerState.pageIndex) as? SharedPdfVirtualPage.BlankPage) != null
     val prefetchedTtsPageIndex = (ttsPageIndex + 1).coerceAtMost(pageCount - 1)
     val prefetchedTtsTextSession = rememberPdfTextPageSession(book, prefetchedTtsPageIndex, pdfPassword)
@@ -1385,6 +1406,8 @@ fun SharedMobilePdfReaderHost(
                         pdfPassword = pdfPassword,
                         state = readerState,
                         activeTheme = activeTheme,
+                        reverseColorMode = effectiveReverseColorMode,
+                        preserveImageColors = readerState.preserveImageColors,
                         textureAlpha = 1f - globalTextureTransparency,
                         pageCount = displayPageCount,
                         virtualLayout = virtualLayout,
@@ -1439,6 +1462,8 @@ fun SharedMobilePdfReaderHost(
                         pdfPassword = pdfPassword,
                         state = readerState,
                         activeTheme = activeTheme,
+                        reverseColorMode = effectiveReverseColorMode,
+                        preserveImageColors = readerState.preserveImageColors,
                         textureAlpha = 1f - globalTextureTransparency,
                         pageCount = displayPageCount,
                         virtualLayout = virtualLayout,
@@ -1757,6 +1782,8 @@ fun SharedMobilePdfReaderHost(
                 settings = readerDefaultSettings.copy(
                     themeId = readerState.themeId,
                     textureAlpha = 1f - globalTextureTransparency,
+                    pdfReverseColorMode = readerState.reverseColorMode,
+                    pdfPreserveImageColors = readerState.preserveImageColors,
                 ),
                 customThemes = customReaderThemes,
                 onCustomThemesChange = onCustomReaderThemesChange,
@@ -1765,6 +1792,12 @@ fun SharedMobilePdfReaderHost(
                     if (settings.themeId != readerState.themeId) {
                         settings.themeId?.let { dispatch(SharedPdfReaderAction.ThemeChanged(it)) }
                         showThemePanel = false
+                    }
+                    if (settings.pdfReverseColorMode != readerState.reverseColorMode) {
+                        dispatch(SharedPdfReaderAction.ReverseColorModeChanged(settings.pdfReverseColorMode))
+                    }
+                    if (settings.pdfPreserveImageColors != readerState.preserveImageColors) {
+                        dispatch(SharedPdfReaderAction.PreserveImageColorsChanged(settings.pdfPreserveImageColors))
                     }
                     onReaderDefaultSettingsChange(settings)
                 },
@@ -3215,6 +3248,12 @@ private fun SharedMobilePdfPagesDrawerPage(
                                         book = book,
                                         pageIndex = pdfPage,
                                         password = pdfPassword,
+                                        reverseColorMode = if (state.themeId == "reverse") {
+                                            state.reverseColorMode
+                                        } else {
+                                            PdfReverseColorMode.RGB
+                                        },
+                                        preserveImageColors = state.themeId == "reverse" && state.preserveImageColors,
                                     )
                                     thumbnail.bitmap?.let { bitmap ->
                                         Image(
@@ -3712,6 +3751,13 @@ private fun SharedMobilePdfThemePanel(
                     customThemes = customThemes,
                     onCustomThemesChange = onCustomThemesChange,
                     onSettingsChange = onSettingsChange,
+                    showPdfColorOptions = true,
+                    onPdfReverseColorModeChange = { mode ->
+                        onSettingsChange(settings.copy(pdfReverseColorMode = mode))
+                    },
+                    onPdfPreserveImageColorsChange = { enabled ->
+                        onSettingsChange(settings.copy(pdfPreserveImageColors = enabled))
+                    },
                 )
             }
         }

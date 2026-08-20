@@ -36,6 +36,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -78,6 +79,7 @@ import com.aryan.reader.shared.shouldShowPageWidthFormatControl
 import com.aryan.reader.shared.toReaderSettings
 import com.aryan.reader.shared.withHorizontalReaderMargin
 import com.aryan.reader.shared.withVerticalReaderMargin
+import com.aryan.reader.shared.pdf.PdfReverseColorMode
 import com.aryan.reader.shared.reader.ReaderSessionState
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.SharedReaderTextAlign
@@ -532,6 +534,9 @@ fun SharedReaderThemeControls(
     customTextureIds: List<String> = emptyList(),
     onImportTexture: ((ReaderSettings) -> ReaderSettings?)? = null,
     texturePreviewContent: (@Composable (String, Modifier) -> Unit)? = null,
+    showPdfColorOptions: Boolean = false,
+    onPdfReverseColorModeChange: ((PdfReverseColorMode) -> Unit)? = null,
+    onPdfPreserveImageColorsChange: ((Boolean) -> Unit)? = null,
     onSettingsChange: (ReaderSettings) -> Unit
 ) {
     val activeCustomThemes = remember(customThemes) { customThemes.sanitizeCustomReaderThemes() }
@@ -609,6 +614,59 @@ fun SharedReaderThemeControls(
                     }
                 }
             )
+        }
+
+        if (showPdfColorOptions && settings.themeId == "reverse") {
+            SharedReaderPanelSection(readerString("pdf_reverse_colors", "Reverse colors")) {
+                Text(
+                    readerString("pdf_reverse_colors_desc", "Choose how PDF colors are inverted while keeping the reverse theme."),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                val modes = listOf(
+                    PdfReverseColorMode.RGB to readerString("pdf_reverse_rgb", "Invert colors"),
+                    PdfReverseColorMode.LIGHTNESS to readerString("pdf_reverse_lightness", "Invert lightness"),
+                    PdfReverseColorMode.LUMA_SRGB_LINEAR to readerString("pdf_reverse_luma_srgb", "Invert luma (sRGB linear)"),
+                    PdfReverseColorMode.LUMA_SYMMETRIC to readerString("pdf_reverse_luma_symmetric", "Invert luma (symmetric)"),
+                )
+                modes.chunked(2).forEach { rowModes ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                        rowModes.forEach { (mode, label) ->
+                            FilterChip(
+                                selected = settings.pdfReverseColorMode == mode,
+                                onClick = {
+                                    onPdfReverseColorModeChange?.invoke(mode)
+                                    onSettingsChange(settings.copy(pdfReverseColorMode = mode))
+                                },
+                                label = { Text(label, maxLines = 2, overflow = TextOverflow.Ellipsis) },
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                        repeat(2 - rowModes.size) { Spacer(Modifier.weight(1f)) }
+                    }
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(readerString("theme_preserve_image_colors", "Preserve Image Colors"), fontWeight = FontWeight.SemiBold)
+                        Text(
+                            readerString("theme_preserve_image_colors_desc", "Keep original image colors when the reverse theme changes"),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(
+                        checked = settings.pdfPreserveImageColors,
+                        onCheckedChange = {
+                            onPdfPreserveImageColorsChange?.invoke(it)
+                            onSettingsChange(settings.copy(pdfPreserveImageColors = it))
+                        },
+                    )
+                }
+            }
         }
 
         SharedReaderPanelSection(readerString("desktop_custom_colors", "Custom colors")) {

@@ -108,11 +108,13 @@ fun sharedPdfNearestPdfPageIndex(
 
 @Serializable
 data class SharedPdfReaderStore(
-    val version: Int = 1,
+    val version: Int = 2,
     val pageIndex: Int = 0,
     val pageCount: Int = 0,
     val displayMode: PdfDisplayMode = PdfDisplayMode.PAGINATION,
     val themeId: String = "no_theme",
+    val reverseColorMode: PdfReverseColorMode = PdfReverseColorMode.RGB,
+    val preserveImageColors: Boolean = false,
     val zoom: Float = PdfZoomSpec().default,
     val isScrollLocked: Boolean = false,
     val lockedZoomScale: Float = 1f,
@@ -166,6 +168,8 @@ object SharedPdfReaderStateSerializer {
                 pageCount = state.pageCount,
                 displayMode = state.displayMode,
                 themeId = state.themeId,
+                reverseColorMode = state.reverseColorMode,
+                preserveImageColors = state.preserveImageColors,
                 zoom = state.zoom,
                 isScrollLocked = state.isScrollLocked,
                 lockedZoomScale = state.lockedZoomScale,
@@ -202,6 +206,8 @@ object SharedPdfReaderStateSerializer {
             pageCount = restoredPageCount,
             displayMode = store.displayMode,
             themeId = store.themeId,
+            reverseColorMode = store.reverseColorMode,
+            preserveImageColors = store.preserveImageColors,
             zoom = store.zoom,
             isScrollLocked = store.isScrollLocked,
             lockedZoomScale = store.lockedZoomScale,
@@ -349,6 +355,9 @@ data class SharedPdfReaderState(
     val pageCount: Int = 0,
     val displayMode: PdfDisplayMode = PdfDisplayMode.PAGINATION,
     val themeId: String = "no_theme",
+    /** Persisted independently so changing the reverse theme never changes the legacy RGB default. */
+    val reverseColorMode: PdfReverseColorMode = PdfReverseColorMode.RGB,
+    val preserveImageColors: Boolean = false,
     val zoom: Float = PdfZoomSpec().default,
     val isScrollLocked: Boolean = false,
     val lockedZoomScale: Float = 1f,
@@ -449,7 +458,11 @@ fun initialSharedPdfReaderState(
     initialPageIndex: Int,
 ): SharedPdfReaderState {
     return persistedState
-        ?.copy(themeId = defaults.themeId ?: persistedState.themeId)
+        ?.copy(
+            themeId = defaults.themeId ?: persistedState.themeId,
+            reverseColorMode = defaults.pdfReverseColorMode,
+            preserveImageColors = defaults.pdfPreserveImageColors,
+        )
         ?.coerced()
         // Opening is asynchronous. Preserve the requested restore page until the renderer reports
         // the real page count instead of clamping every non-zero restore to page zero.
@@ -460,6 +473,8 @@ fun initialSharedPdfReaderState(
             .copy(
                 displayMode = PdfDisplayMode.VERTICAL_SCROLL,
                 themeId = defaults.themeId ?: "no_theme",
+                reverseColorMode = defaults.pdfReverseColorMode,
+                preserveImageColors = defaults.pdfPreserveImageColors,
             )
 }
 
@@ -477,6 +492,8 @@ sealed interface SharedPdfReaderAction {
     data class DisplayModeChanged(val mode: PdfDisplayMode) : SharedPdfReaderAction
     data object DisplayModeToggled : SharedPdfReaderAction
     data class ThemeChanged(val themeId: String) : SharedPdfReaderAction
+    data class ReverseColorModeChanged(val mode: PdfReverseColorMode) : SharedPdfReaderAction
+    data class PreserveImageColorsChanged(val enabled: Boolean) : SharedPdfReaderAction
     data class ZoomChanged(val zoom: Float) : SharedPdfReaderAction
     data class ZoomBy(val delta: Float) : SharedPdfReaderAction
     data class ScrollLockChanged(
@@ -550,6 +567,8 @@ fun SharedPdfReaderState.reduce(
             }
         )
         is SharedPdfReaderAction.ThemeChanged -> copy(themeId = action.themeId.ifBlank { "no_theme" })
+        is SharedPdfReaderAction.ReverseColorModeChanged -> copy(reverseColorMode = action.mode)
+        is SharedPdfReaderAction.PreserveImageColorsChanged -> copy(preserveImageColors = action.enabled)
         is SharedPdfReaderAction.ZoomChanged -> copy(zoom = zoomSpec.clamp(action.zoom))
         is SharedPdfReaderAction.ZoomBy -> copy(zoom = zoomSpec.clamp(zoom + action.delta))
         is SharedPdfReaderAction.ScrollLockChanged -> copy(

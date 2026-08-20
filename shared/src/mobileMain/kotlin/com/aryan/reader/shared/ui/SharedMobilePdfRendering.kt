@@ -149,6 +149,7 @@ import com.aryan.reader.shared.ReaderTheme
 import com.aryan.reader.shared.SearchHighlightMode
 import com.aryan.reader.shared.currentTimestamp
 import com.aryan.reader.shared.pdf.PdfAnnotationKind
+import com.aryan.reader.shared.pdf.PdfReverseColorMode
 import com.aryan.reader.shared.pdf.PdfInkTool
 import com.aryan.reader.shared.pdf.sharedPdfIsInkDownAllowed
 import com.aryan.reader.shared.pdf.sharedPdfIsEraserOverride
@@ -234,8 +235,13 @@ internal fun sharedMobilePdfPageTextColor(theme: ReaderTheme): Color {
     }
 }
 
-internal fun sharedMobilePdfColorFilter(theme: ReaderTheme): ColorFilter? {
+internal fun sharedMobilePdfColorFilter(
+    theme: ReaderTheme,
+    reverseColorMode: PdfReverseColorMode = PdfReverseColorMode.RGB,
+): ColorFilter? {
     if (theme.id == "no_theme" || theme.id == "system") return null
+    // Nonlinear Okular modes are applied once by the platform bitmap renderer.
+    if (theme.id == "reverse" && reverseColorMode != PdfReverseColorMode.RGB) return null
     val matrix = if (theme.id == "reverse") {
         floatArrayOf(
             -1f, 0f, 0f, 0f, 255f,
@@ -571,6 +577,8 @@ internal fun SharedMobilePdfVerticalPages(
     pdfPassword: String?,
     state: SharedPdfReaderState,
     activeTheme: ReaderTheme,
+    reverseColorMode: PdfReverseColorMode,
+    preserveImageColors: Boolean,
     textureAlpha: Float,
     pageCount: Int,
     virtualLayout: List<SharedPdfVirtualPage>,
@@ -643,6 +651,8 @@ internal fun SharedMobilePdfVerticalPages(
             ?: 0,
         zoomScale = zoomCamera.scale,
         password = pdfPassword,
+        reverseColorMode = reverseColorMode,
+        preserveImageColors = preserveImageColors,
     )
     LaunchedEffect(navigationRequestToken, pageCount, viewportSize, navigationRender.aspectRatio) {
         if (viewportSize.height <= 0) return@LaunchedEffect
@@ -712,7 +722,10 @@ internal fun SharedMobilePdfVerticalPages(
                             modifier = Modifier.fillMaxWidth()
                         )
                     } else {
-                        val render = rememberSharedMobilePdfPageRender(book, pdfPage, zoomScale, pdfPassword)
+                        val render = rememberSharedMobilePdfPageRender(
+                            book, pdfPage, zoomScale, pdfPassword,
+                            reverseColorMode, preserveImageColors,
+                        )
                         SharedMobilePdfPageSurface(
                         book = book,
                         pdfPassword = pdfPassword,
@@ -723,6 +736,8 @@ internal fun SharedMobilePdfVerticalPages(
                         pageRender = render,
                         zoomCamera = zoomCamera,
                         activeTheme = activeTheme,
+                        reverseColorMode = reverseColorMode,
+                        preserveImageColors = preserveImageColors,
                         textureAlpha = textureAlpha,
                         showPageNumberOverlay = showPageNumberOverlay,
                         searchResults = searchResults.filter { it.pageIndex == pdfPage },
@@ -873,6 +888,8 @@ internal fun SharedMobilePdfPaginatedPages(
     pdfPassword: String?,
     state: SharedPdfReaderState,
     activeTheme: ReaderTheme,
+    reverseColorMode: PdfReverseColorMode,
+    preserveImageColors: Boolean,
     textureAlpha: Float,
     pageCount: Int,
     virtualLayout: List<SharedPdfVirtualPage>,
@@ -1117,7 +1134,10 @@ internal fun SharedMobilePdfPaginatedPages(
                                 )
                             }
                         } else {
-                            val render = rememberSharedMobilePdfPageRender(book, pdfPage, zoomScale, pdfPassword)
+                            val render = rememberSharedMobilePdfPageRender(
+                                book, pdfPage, zoomScale, pdfPassword,
+                                reverseColorMode, preserveImageColors,
+                            )
                             val aspectRatio = render.aspectRatio.coerceIn(0.1f, 10f)
                             val widthLimited = slotWidth.value / viewportHeight.value <= aspectRatio
                             val fittedWidth = if (widthLimited) slotWidth else viewportHeight * aspectRatio
@@ -1136,6 +1156,8 @@ internal fun SharedMobilePdfPaginatedPages(
                                     pageRender = render,
                                     zoomCamera = activeZoomCamera,
                                     activeTheme = activeTheme,
+                                    reverseColorMode = reverseColorMode,
+                                    preserveImageColors = preserveImageColors,
                                     textureAlpha = textureAlpha,
                                     showPageNumberOverlay = showPageNumberOverlay,
                                     searchResults = searchResults.filter { it.pageIndex == pdfPage },
@@ -1874,6 +1896,8 @@ internal fun SharedMobilePdfPageSurface(
     pageRender: SharedMobilePdfPageRender,
     zoomCamera: PdfZoomCamera,
     activeTheme: ReaderTheme,
+    reverseColorMode: PdfReverseColorMode,
+    preserveImageColors: Boolean,
     textureAlpha: Float,
     showPageNumberOverlay: Boolean,
     overlayPageNumber: Int = pageIndex + 1,
@@ -1962,7 +1986,11 @@ internal fun SharedMobilePdfPageSurface(
         zoomScale = zoomCamera.scale,
         visibleBounds = visiblePageBounds,
         password = pdfPassword,
+        reverseColorMode = reverseColorMode,
+        preserveImageColors = preserveImageColors,
     )
+    val pageColorFilter = sharedMobilePdfColorFilter(activeTheme, reverseColorMode)
+        .takeUnless { pageRender.rasterizedReverseColorMode != null }
     Surface(
         color = sharedMobilePdfPageBackground(activeTheme),
         contentColor = sharedMobilePdfPageTextColor(activeTheme),
@@ -2124,7 +2152,7 @@ internal fun SharedMobilePdfPageSurface(
                     contentDescription = book.displayName,
                     modifier = Modifier.fillMaxSize(),
                     contentScale = ContentScale.Fit,
-                    colorFilter = sharedMobilePdfColorFilter(activeTheme)
+                    colorFilter = pageColorFilter
                 )
                 if (highResolutionTiles.isNotEmpty()) {
                     Canvas(Modifier.fillMaxSize()) {
@@ -2138,7 +2166,11 @@ internal fun SharedMobilePdfPageSurface(
                                 image = tile.bitmap,
                                 dstOffset = IntOffset(left, top),
                                 dstSize = IntSize((right - left).coerceAtLeast(1), (bottom - top).coerceAtLeast(1)),
-                                colorFilter = sharedMobilePdfColorFilter(activeTheme)
+                                colorFilter = if (tile.rasterizedReverseColorMode == null) {
+                                    sharedMobilePdfColorFilter(activeTheme, reverseColorMode)
+                                } else {
+                                    null
+                                }
                             )
                         }
                     }
@@ -2246,7 +2278,7 @@ internal fun SharedMobilePdfPageSurface(
                 pageRender = pageRender,
                 zoomTiles = highResolutionTiles,
                 zoomScale = zoomCamera.scale,
-                magnifierColorFilter = sharedMobilePdfColorFilter(activeTheme),
+                magnifierColorFilter = sharedMobilePdfColorFilter(activeTheme, reverseColorMode),
                 onExternalLink = onExternalLink,
                 onInternalLink = onInternalLink,
                 existingHighlights = annotations.filter { it.kind == PdfAnnotationKind.HIGHLIGHT },

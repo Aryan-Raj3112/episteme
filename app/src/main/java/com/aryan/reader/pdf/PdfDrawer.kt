@@ -70,6 +70,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalFocusManager
@@ -94,6 +96,7 @@ import com.aryan.reader.pdf.data.VirtualPage
 import com.aryan.reader.shared.filterReaderTocEntries
 import com.aryan.reader.shared.pdf.LegacyPdfPageBookmark
 import com.aryan.reader.shared.pdf.LegacyPdfPageBookmarkCodec
+import com.aryan.reader.shared.pdf.PdfReverseColorMode
 
 internal typealias PdfBookmark = LegacyPdfPageBookmark
 
@@ -442,6 +445,8 @@ internal fun PdfNavigationDrawerContent(
     activeTabBookId: String? = null,
     usePdfFileNameAsDisplayName: Boolean = false,
     isTopTabStripVisible: Boolean = true,
+    reverseColorMode: PdfReverseColorMode = PdfReverseColorMode.RGB,
+    excludeImages: Boolean = false,
     customHighlightColors: Map<PdfHighlightColor, Color>,
     onPageSelected: (Int) -> Unit,
     onTabSelected: (String) -> Unit = {},
@@ -884,26 +889,38 @@ internal fun PdfNavigationDrawerContent(
                                                     pdfRenderPageId(documentKey, pageIdx, VirtualPage.PdfPage(pageIdx))
                                                 }
                                                 var thumb by remember(thumbPageId) { mutableStateOf(PdfThumbnailCache.get(thumbPageId)) }
+                                                var imageRects by remember(thumbPageId) { mutableStateOf<List<android.graphics.Rect>>(emptyList()) }
 
-                                                LaunchedEffect(thumbPageId, pdfDocument) {
-                                                    if (thumb == null && pdfDocument != null) {
+                                                LaunchedEffect(thumbPageId, pdfDocument, excludeImages) {
+                                                    if (pdfDocument != null) {
                                                         withContext(kotlinx.coroutines.Dispatchers.IO) {
                                                             try {
-                                                                val cached = PdfThumbnailCache.get(thumbPageId)
-                                                                if (cached != null) {
-                                                                    thumb = cached
-                                                                } else {
-                                                                    pdfDocument.openPage(pageIdx)?.use { p ->
-                                                                        val w = p.getPageWidthPoint()
-                                                                        val h = p.getPageHeightPoint()
-                                                                        val ratio = if (h > 0) w.toFloat() / h.toFloat() else 1f
-                                                                        val thumbW = 200
-                                                                        val thumbH = (thumbW / ratio).toInt().coerceAtLeast(1)
+                                                                pdfDocument.openPage(pageIdx)?.use { p ->
+                                                                    val w = p.getPageWidthPoint()
+                                                                    val h = p.getPageHeightPoint()
+                                                                    val ratio = if (h > 0) w.toFloat() / h.toFloat() else 1f
+                                                                    val thumbW = 200
+                                                                    val thumbH = (thumbW / ratio).toInt().coerceAtLeast(1)
+                                                                    val cached = PdfThumbnailCache.get(thumbPageId)
+                                                                    if (cached != null) {
+                                                                        thumb = cached
+                                                                    } else {
                                                                         val bmp = createBitmap(thumbW, thumbH)
                                                                         bmp.eraseColor(android.graphics.Color.WHITE)
                                                                         p.renderPageBitmap(bmp, 0, 0, thumbW, thumbH, false)
                                                                         PdfThumbnailCache.put(thumbPageId, bmp)
                                                                         thumb = bmp
+                                                                    }
+                                                                    if (excludeImages && p is PdfPageWrapper) {
+                                                                        imageRects = p.extractNativePageOverlays(
+                                                                            bitmapWidthPx = thumbW,
+                                                                            bitmapHeightPx = thumbH,
+                                                                            pageRotation = p.getPageRotation(),
+                                                                            pageIndex = pageIdx,
+                                                                            linkAnnotationSubtype = 2,
+                                                                        ).imageScreenRects
+                                                                    } else if (!excludeImages) {
+                                                                        imageRects = emptyList()
                                                                     }
                                                                 }
                                                             } catch (_: Exception) { }
@@ -911,11 +928,36 @@ internal fun PdfNavigationDrawerContent(
                                                     }
                                                 }
 
-                                                if (thumb != null) {
+                                                val rgbColorFilter = remember(reverseColorMode) {
+                                                    if (reverseColorMode == PdfReverseColorMode.RGB) {
+                                                        ColorFilter.colorMatrix(
+                                                            ColorMatrix(
+                                                                floatArrayOf(
+                                                                    -1f, 0f, 0f, 0f, 255f,
+                                                                    0f, -1f, 0f, 0f, 255f,
+                                                                    0f, 0f, -1f, 0f, 255f,
+                                                                    0f, 0f, 0f, 1f, 0f,
+                                                                )
+                                                            )
+                                                        )
+                                                    } else null
+                                                }
+                                                val forceThumbnailBitmapTransform =
+                                                    reverseColorMode == PdfReverseColorMode.RGB && excludeImages && imageRects.isNotEmpty()
+                                                val renderedThumb = rememberPdfReverseBitmap(
+                                                    bitmap = thumb,
+                                                    mode = reverseColorMode,
+                                                    protectedRects = if (excludeImages) imageRects else emptyList(),
+                                                    targetWidth = thumb?.width ?: 0,
+                                                    targetHeight = thumb?.height ?: 0,
+                                                    forceBitmapTransform = forceThumbnailBitmapTransform,
+                                                )
+                                                if (renderedThumb != null) {
                                                     Image(
-                                                        bitmap = thumb!!.asImageBitmap(),
+                                                        bitmap = renderedThumb.asImageBitmap(),
                                                         contentDescription = stringResource(R.string.pdf_page_short, pageIdx + 1),
-                                                        modifier = Modifier.fillMaxSize()
+                                                        modifier = Modifier.fillMaxSize(),
+                                                        colorFilter = if (forceThumbnailBitmapTransform) null else rgbColorFilter,
                                                     )
                                                 }
 

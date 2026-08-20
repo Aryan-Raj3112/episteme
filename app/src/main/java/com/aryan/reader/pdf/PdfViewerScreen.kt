@@ -281,6 +281,7 @@ import com.aryan.reader.scaledToCanvasLimit
 import com.aryan.reader.shared.ReaderTtsReplacementPreferences
 import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.pdf.PdfSpreadLayout
+import com.aryan.reader.shared.pdf.PdfReverseColorMode
 import com.aryan.reader.shared.pdf.PDF_MAX_ZOOM_SCALE
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationSessionAction
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationSessionState
@@ -388,6 +389,7 @@ fun PdfViewerScreen(
     var showThemePanel by remember { mutableStateOf(false) }
     var currentThemeId by remember { mutableStateOf(loadPdfThemeId(context)) }
     var excludeImages by remember { mutableStateOf(com.aryan.reader.loadExcludeImages(context)) }
+    var reverseColorMode by remember { mutableStateOf(com.aryan.reader.loadPdfReverseColorMode(context)) }
     var customThemes by remember { mutableStateOf(loadCustomThemes(context)) }
     var globalTextureTransparency by remember { mutableFloatStateOf(loadGlobalTextureTransparency(context)) }
     val documentCache = remember { DocumentCache(3) }
@@ -579,6 +581,7 @@ fun PdfViewerScreen(
             documentCache = documentCache,
             drawerState = drawerState,
             excludeImages = pdfViewerMutableValue({ excludeImages }, { excludeImages = it }),
+            reverseColorMode = pdfViewerMutableValue({ reverseColorMode }, { reverseColorMode = it }),
             executeWithOcrCheck = executeWithOcrCheck,
             focusManager = focusManager,
             focusRequester = focusRequester,
@@ -663,6 +666,7 @@ private class PdfViewerScreenContentInputs(
     val documentCache: DocumentCache,
     val drawerState: DrawerState,
     val excludeImages: PdfViewerMutableValue<Boolean>,
+    val reverseColorMode: PdfViewerMutableValue<PdfReverseColorMode>,
     val executeWithOcrCheck: ((() -> Unit) -> Unit),
     val focusManager: androidx.compose.ui.focus.FocusManager,
     val focusRequester: FocusRequester,
@@ -749,6 +753,7 @@ private fun PdfViewerScreenContent(
     val documentCache = inputs.documentCache
     val drawerState = inputs.drawerState
     var excludeImages by inputs.excludeImages
+    var reverseColorMode by inputs.reverseColorMode
     val executeWithOcrCheck = inputs.executeWithOcrCheck
     val focusManager = inputs.focusManager
     val focusRequester = inputs.focusRequester
@@ -4002,6 +4007,7 @@ private fun PdfViewerScreenContent(
         surfaceState.pageAspectRatios = pdfViewerMutableValue({ pageAspectRatios }, { pageAspectRatios = it })
         surfaceState.globalTextureTransparency = pdfViewerMutableValue({ globalTextureTransparency }, { globalTextureTransparency = it })
         surfaceState.excludeImages = pdfViewerMutableValue({ excludeImages }, { excludeImages = it })
+        surfaceState.reverseColorMode = pdfViewerMutableValue({ reverseColorMode }, { reverseColorMode = it })
         surfaceState.ttsDisplayPageIndex = pdfViewerMutableValue({ ttsDisplayPageIndex }, { ttsDisplayPageIndex = it })
         surfaceState.ttsHighlightData = pdfViewerMutableValue({ ttsHighlightData }, { ttsHighlightData = it })
 
@@ -4217,6 +4223,7 @@ private fun PdfViewerScreenOverlays(surfaceState: PdfViewerSurfaceState) {
     var bookmarks by surfaceState.bookmarks
     var globalTextureTransparency by surfaceState.globalTextureTransparency
     var excludeImages by surfaceState.excludeImages
+    var reverseColorMode by surfaceState.reverseColorMode
     var customHighlightColors by surfaceState.customHighlightColors
     var showPageNumberOverlay by surfaceState.showPageNumberOverlay
     var useOnlineDictionary by surfaceState.useOnlineDictionary
@@ -4321,6 +4328,8 @@ private fun PdfViewerScreenOverlays(surfaceState: PdfViewerSurfaceState) {
                     activeTabBookId = activeTabBookId,
                     usePdfFileNameAsDisplayName = uiState.usePdfFileNameAsDisplayName,
                     isTopTabStripVisible = showTopTabStrip,
+                    reverseColorMode = if (activeTheme.id == "reverse") reverseColorMode else PdfReverseColorMode.RGB,
+                    excludeImages = excludeImages,
                     customHighlightColors = customHighlightColors,
                     onPageSelected = { targetPage ->
                         coroutineScope.launch {
@@ -4949,10 +4958,16 @@ private fun PdfViewerScreenOverlays(surfaceState: PdfViewerSurfaceState) {
             isVisible = true,
             currentThemeId = currentThemeId,
             excludeImages = excludeImages,
+            reverseColorMode = reverseColorMode,
             onExcludeImagesChange = {
                 excludeImages = it
                 com.aryan.reader.saveExcludeImages(context, it)
             },
+            onReverseColorModeChange = {
+                reverseColorMode = it
+                com.aryan.reader.savePdfReverseColorMode(context, it)
+            },
+            showReverseColorOption = true,
             showExcludeImagesOption = true,
             builtInThemes = PdfBuiltInThemes,
             globalTextureTransparency = globalTextureTransparency,
@@ -6359,6 +6374,7 @@ private class PdfViewerSurfaceState {
     lateinit var virtualPages: PdfViewerMutableValue<List<VirtualPage>>
     lateinit var globalTextureTransparency: PdfViewerMutableValue<Float>
     lateinit var excludeImages: PdfViewerMutableValue<Boolean>
+    lateinit var reverseColorMode: PdfViewerMutableValue<PdfReverseColorMode>
     lateinit var customHighlightColors: PdfViewerMutableValue<Map<PdfHighlightColor, Color>>
     lateinit var ttsDisplayPageIndex: PdfViewerMutableValue<Int?>
     lateinit var ttsHighlightData: PdfViewerMutableValue<TtsHighlightData?>
@@ -6706,6 +6722,7 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
     var virtualPages by surfaceState.virtualPages
     var globalTextureTransparency by surfaceState.globalTextureTransparency
     var excludeImages by surfaceState.excludeImages
+    var reverseColorMode by surfaceState.reverseColorMode
     var customHighlightColors by surfaceState.customHighlightColors
     var ttsDisplayPageIndex by surfaceState.ttsDisplayPageIndex
     var ttsHighlightData by surfaceState.ttsHighlightData
@@ -6997,6 +7014,7 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                                 activeTheme = activeTheme,
                                 activeTextureAlpha = 1f - globalTextureTransparency,
                                 excludeImages = excludeImages,
+                                reverseColorMode = reverseColorMode,
                                 isScrollLocked = isScrollLocked,
                                 customHighlightColors = customHighlightColors,
                                 onPaletteClick = { showHighlightColorPicker = true },
@@ -9378,6 +9396,7 @@ private fun PdfViewerPaginationPage(
     var virtualPages by surfaceState.virtualPages
     var globalTextureTransparency by surfaceState.globalTextureTransparency
     var excludeImages by surfaceState.excludeImages
+    var reverseColorMode by surfaceState.reverseColorMode
     var customHighlightColors by surfaceState.customHighlightColors
     var ttsDisplayPageIndex by surfaceState.ttsDisplayPageIndex
     var ttsHighlightData by surfaceState.ttsHighlightData
@@ -10047,6 +10066,7 @@ private fun PdfViewerPaginationPage(
         activeTheme = activeTheme,
         activeTextureAlpha = 1f - globalTextureTransparency,
         excludeImages = excludeImages,
+        reverseColorMode = reverseColorMode,
         isScrollLocked = if (useSharedSpreadZoom) false else isScrollLocked,
         customHighlightColors = customHighlightColors,
         externalScale = if (useSharedSpreadZoom) currentActiveScale else 1f,

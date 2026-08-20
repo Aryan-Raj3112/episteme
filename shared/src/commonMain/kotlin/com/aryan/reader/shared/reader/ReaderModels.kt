@@ -4,6 +4,7 @@ import com.aryan.reader.paginatedreader.SemanticBlock
 import com.aryan.reader.shared.PageInfoMode
 import com.aryan.reader.shared.PageInfoPosition
 import com.aryan.reader.shared.SystemUiMode
+import com.aryan.reader.shared.pdf.PdfReverseColorMode
 
 data class SharedEpubBook(
     val id: String,
@@ -109,6 +110,9 @@ data class ReaderSettings(
     val pdfVerticalPageGapVisible: Boolean = true,
     val pdfPageNumberOverlayVisible: Boolean = true,
     val pdfFirstPageStandaloneInSpread: Boolean = false,
+    /** Okular-compatible colour transform used by the PDF reverse theme. */
+    val pdfReverseColorMode: PdfReverseColorMode = PdfReverseColorMode.RGB,
+    val pdfPreserveImageColors: Boolean = false,
     val seamlessChapterNavigation: Boolean = true,
     val chapterTurnDragMultiplier: Float = 1.0f,
     val hideImages: Boolean = false
@@ -141,7 +145,8 @@ data class ReaderAppearanceSignature(
     val textureId: String?,
     val textureAlpha: Float,
     val backgroundColorArgb: Long?,
-    val textColorArgb: Long?
+    val textColorArgb: Long?,
+    val pdfReverseColorMode: PdfReverseColorMode = PdfReverseColorMode.RGB,
 )
 
 fun ReaderSettings.layoutSignature(): ReaderLayoutSignature {
@@ -171,7 +176,8 @@ fun ReaderSettings.appearanceSignature(): ReaderAppearanceSignature {
         textureId = textureId,
         textureAlpha = textureAlpha,
         backgroundColorArgb = backgroundColorArgb,
-        textColorArgb = textColorArgb
+        textColorArgb = textColorArgb,
+        pdfReverseColorMode = pdfReverseColorMode
     )
 }
 

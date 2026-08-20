@@ -27,7 +27,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -87,11 +89,33 @@ import com.aryan.reader.shared.ui.SharedSelectionMenuSize
 import com.aryan.reader.shared.ui.SharedSelectionMenuViewport
 import com.aryan.reader.shared.ui.SharedPdfRichTextLayer
 import com.aryan.reader.shared.ui.sharedSelectionMenuPlacement
+import com.aryan.reader.shared.pdf.PdfReverseColorMode
+import com.aryan.reader.shared.pdf.PdfReverseColorRect
+import com.aryan.reader.shared.pdf.invertPdfArgbIfUnprotected
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import timber.log.Timber
+import java.util.IdentityHashMap
+import android.os.SystemClock
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 import android.graphics.Paint as NativePaint
+
+// Nonlinear conversion is intentionally serialized. A fling can invalidate
+// several page/tile jobs in one frame; allowing every cancelled job to copy a
+// multi-megapixel bitmap concurrently causes a native-memory spike and blocks
+// the renderer long enough to produce jank. Row-level cancellation below lets
+// the newest visible job take over quickly.
+private val pdfReverseTransformMutex = Mutex()
+private const val MAX_REVERSE_TILE_CACHE_ENTRIES = 16
+private const val MAX_REVERSE_TILE_CACHE_BYTES = 32L * 1024L * 1024L
 
 
 @Composable
@@ -122,8 +146,8 @@ internal fun OcrProcessingIndicator(position: Offset) {
 
 @Composable
 internal fun PdfBitmapLayer(
-    bitmapState: Bitmap?,
-    tiles: List<PdfTile>,
+    renderedBitmap: Bitmap?,
+    renderedTiles: List<PdfTile>,
     shouldDrawHighResTiles: Boolean,
     effectiveScale: Float,
     centeringOffsetX: Float,
@@ -135,28 +159,31 @@ internal fun PdfBitmapLayer(
     colorFilter: ColorFilter? = null,
     isDarkMode: Boolean = false,
     excludeImages: Boolean = false,
+    reverseColorMode: PdfReverseColorMode = PdfReverseColorMode.RGB,
     imageRects: List<android.graphics.Rect> = emptyList(),
     textureBitmap: ImageBitmap? = null,
     textureAlpha: Float = 0f,
     textureBlendMode: BlendMode = BlendMode.Multiply
 ) {
+    val renderBitmap = renderedBitmap
+    val renderTiles = renderedTiles
     Canvas(modifier = Modifier.fillMaxSize().graphicsLayer()) {
         translate(left = centeringOffsetX, top = centeringOffsetY) {
             clipRect(left = 0f, top = 0f, right = targetWidth.toFloat(), bottom = targetHeight.toFloat()) {
                 if (
-                    bitmapState != null &&
-                    bitmapState.isCanvasSafeBitmap(
+                    renderBitmap != null &&
+                    renderBitmap.isCanvasSafeBitmap(
                         maxBytes = PDF_MAX_DRAW_BITMAP_BYTES,
                         maxDimension = PDF_MAX_DRAW_BITMAP_DIMENSION_PX
                     )
                 ) {
-                    val dstW = if (targetWidth > 0) targetWidth else bitmapState.width
-                    val dstH = if (targetHeight > 0) targetHeight else bitmapState.height
-                    val srcSize = IntSize(bitmapState.width, bitmapState.height)
+                    val dstW = if (targetWidth > 0) targetWidth else renderBitmap.width
+                    val dstH = if (targetHeight > 0) targetHeight else renderBitmap.height
+                    val srcSize = IntSize(renderBitmap.width, renderBitmap.height)
                     val dstSize = IntSize(dstW, dstH)
 
                     drawImage(
-                        image = bitmapState.asImageBitmap(),
+                        image = renderBitmap.asImageBitmap(),
                         srcOffset = IntOffset.Zero,
                         srcSize = srcSize,
                         dstOffset = IntOffset.Zero,
@@ -167,19 +194,19 @@ internal fun PdfBitmapLayer(
 
                     if (excludeImages && colorFilter != null && imageRects.isNotEmpty()) {
                         imageRects.forEach { rect ->
-                            val scaleX = bitmapState.width.toFloat() / dstW.toFloat()
-                            val scaleY = bitmapState.height.toFloat() / dstH.toFloat()
+                            val scaleX = renderBitmap.width.toFloat() / dstW.toFloat()
+                            val scaleY = renderBitmap.height.toFloat() / dstH.toFloat()
 
                             val srcRectLeft = (rect.left * scaleX).roundToInt().coerceAtLeast(0)
                             val srcRectTop = (rect.top * scaleY).roundToInt().coerceAtLeast(0)
-                            val srcRectRight = (rect.right * scaleX).roundToInt().coerceAtMost(bitmapState.width)
-                            val srcRectBottom = (rect.bottom * scaleY).roundToInt().coerceAtMost(bitmapState.height)
+                            val srcRectRight = (rect.right * scaleX).roundToInt().coerceAtMost(renderBitmap.width)
+                            val srcRectBottom = (rect.bottom * scaleY).roundToInt().coerceAtMost(renderBitmap.height)
 
                             val w = srcRectRight - srcRectLeft
                             val h = srcRectBottom - srcRectTop
                             if (w > 0 && h > 0) {
                                 drawImage(
-                                    image = bitmapState.asImageBitmap(),
+                                    image = renderBitmap.asImageBitmap(),
                                     srcOffset = IntOffset(srcRectLeft, srcRectTop),
                                     srcSize = IntSize(w, h),
                                     dstOffset = IntOffset(rect.left, rect.top),
@@ -192,7 +219,7 @@ internal fun PdfBitmapLayer(
                     }
 
                     if (shouldDrawHighResTiles) {
-                        tiles.forEach { tile ->
+                        renderedTiles.forEach { tile ->
                             if (
                                 tile.bitmap.isCanvasSafeBitmap(
                                     maxBytes = PDF_MAX_DRAW_BITMAP_BYTES,
@@ -259,6 +286,302 @@ internal fun PdfBitmapLayer(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+internal fun rememberPdfReverseBitmap(
+    bitmap: Bitmap?,
+    mode: PdfReverseColorMode,
+    protectedRects: List<Rect> = emptyList(),
+    targetWidth: Int = bitmap?.width ?: 0,
+    targetHeight: Int = bitmap?.height ?: 0,
+    targetOriginX: Int = 0,
+    targetOriginY: Int = 0,
+    forceBitmapTransform: Boolean = false,
+    transformGeneration: Long? = null,
+): Bitmap? {
+    return produceState<Bitmap?>(
+        initialValue = if (mode == PdfReverseColorMode.RGB && !forceBitmapTransform) bitmap else null,
+        bitmap,
+        mode,
+        protectedRects,
+        targetWidth,
+        targetHeight,
+        targetOriginX,
+        targetOriginY,
+        forceBitmapTransform,
+    ) {
+        val source = bitmap
+        if (source == null || (mode == PdfReverseColorMode.RGB && !forceBitmapTransform)) {
+            value = source
+            return@produceState
+        }
+        val activeTransformGeneration = transformGeneration
+            ?: PdfReverseTransformGeneration.begin(mode)
+        var transformed: Bitmap? = null
+        try {
+            transformed = withContext(Dispatchers.Default) {
+                source.copyWithPdfReverseColor(
+                    mode = mode,
+                    protectedRects = protectedRects,
+                    targetWidth = targetWidth,
+                    targetHeight = targetHeight,
+                    targetOriginX = targetOriginX,
+                    targetOriginY = targetOriginY,
+                    forceBitmapTransform = forceBitmapTransform,
+                    transformGeneration = activeTransformGeneration,
+                )
+            }
+            value = transformed
+            // Bitmap.recycle() is process-fatal when HWUI still has a reference
+            // to the image from a previous frame. Retire it after Compose has
+            // dropped this producer and HWUI has crossed several frames.
+            awaitCancellation()
+        } finally {
+            transformed
+                ?.takeUnless { it === source }
+                ?.let { PdfReverseBitmapRetirement.schedule(it, "bitmap-producer-dispose") }
+        }
+    }.value
+}
+
+@Composable
+internal fun rememberPdfReverseTiles(
+    tiles: List<PdfTile>,
+    mode: PdfReverseColorMode,
+    protectedRects: List<Rect> = emptyList(),
+    forceBitmapTransform: Boolean = false,
+    transformGeneration: Long? = null,
+): List<PdfTile> {
+    // Tile state is appended/replaced incrementally while a zoom settles. Keep
+    // transformed copies by source identity so adding one tile does not copy
+    // and walk every already-visible tile again (the old map() implementation
+    // made a 12-tile viewport perform roughly 78 full conversions).
+    val transformedCache = remember(mode, forceBitmapTransform, protectedRects) {
+        IdentityHashMap<Bitmap, PdfTile>()
+    }
+    DisposableEffect(transformedCache) {
+        onDispose {
+            val retired = synchronized(transformedCache) {
+                val values = transformedCache.entries
+                    .filter { (source, transformed) -> source !== transformed.bitmap }
+                    .map { it.value }
+                transformedCache.clear()
+                values
+            }
+            retired.forEach { tile ->
+                PdfReverseBitmapRetirement.schedule(tile.bitmap, "tile-cache-dispose")
+            }
+        }
+    }
+    return produceState(
+        initialValue = if (mode == PdfReverseColorMode.RGB && !forceBitmapTransform) tiles else emptyList(),
+        tiles,
+        mode,
+        protectedRects,
+        forceBitmapTransform,
+    ) {
+        if (mode == PdfReverseColorMode.RGB && !forceBitmapTransform) {
+            value = tiles
+            return@produceState
+        }
+        val activeTransformGeneration = transformGeneration
+            ?: PdfReverseTransformGeneration.begin(mode)
+        var latestTransformed: List<PdfTile>? = null
+        try {
+            val transformed = withContext(Dispatchers.Default) {
+            val activeSources = tiles.mapTo(HashSet()) { it.bitmap }
+            val removed = mutableListOf<PdfTile>()
+            synchronized(transformedCache) {
+                val iterator = transformedCache.entries.iterator()
+                while (iterator.hasNext()) {
+                    val entry = iterator.next()
+                    if (entry.key !in activeSources) {
+                        removed += entry.value
+                        iterator.remove()
+                    }
+                }
+            }
+            removed.forEach { PdfReverseBitmapRetirement.schedule(it.bitmap, "tile-source-removed") }
+            tiles.map { tile ->
+                var staleCached: PdfTile? = null
+                val cached = synchronized(transformedCache) {
+                    val candidate = transformedCache[tile.bitmap]
+                    if (
+                        candidate != null &&
+                        candidate.tileId == tile.tileId &&
+                        candidate.renderScale == tile.renderScale &&
+                        candidate.renderRect == tile.renderRect
+                    ) {
+                        PdfReverseBitmapRetirement.retain(candidate.bitmap)
+                        candidate
+                    } else {
+                        staleCached = candidate
+                        transformedCache.remove(tile.bitmap)
+                        null
+                    }
+                }
+                staleCached
+                    ?.takeUnless { it.bitmap === tile.bitmap }
+                    ?.let { PdfReverseBitmapRetirement.schedule(it.bitmap, "tile-cache-stale") }
+                cached?.let { return@map it }
+                val tileProtectedRects = protectedRects.mapNotNull { rect ->
+                    val left = max(rect.left, tile.renderRect.left)
+                    val top = max(rect.top, tile.renderRect.top)
+                    val right = min(rect.right, tile.renderRect.right)
+                    val bottom = min(rect.bottom, tile.renderRect.bottom)
+                    if (right <= left || bottom <= top) return@mapNotNull null
+                    Rect(left, top, right, bottom)
+                }
+                var convertedBitmap: Bitmap? = null
+                try {
+                    convertedBitmap = tile.bitmap.copyWithPdfReverseColor(
+                        mode = mode,
+                        protectedRects = tileProtectedRects,
+                        targetWidth = tile.renderRect.width(),
+                        targetHeight = tile.renderRect.height(),
+                        targetOriginX = tile.renderRect.left,
+                        targetOriginY = tile.renderRect.top,
+                        forceBitmapTransform = forceBitmapTransform,
+                        transformGeneration = activeTransformGeneration,
+                    )
+                    currentCoroutineContext().ensureActive()
+                    val outputBitmap = convertedBitmap
+                    val converted = tile.copy(bitmap = outputBitmap)
+                    convertedBitmap = null
+                    PdfReverseBitmapRetirement.retain(converted.bitmap)
+                    val cacheIt = synchronized(transformedCache) {
+                        val existing = transformedCache[tile.bitmap]
+                        val currentBytes = transformedCache.values.sumOf { cachedTile ->
+                            cachedTile.bitmap.allocationByteCount.toLong().coerceAtLeast(0L)
+                        } - (existing?.bitmap?.allocationByteCount?.toLong() ?: 0L)
+                        if (
+                            transformedCache.size < MAX_REVERSE_TILE_CACHE_ENTRIES &&
+                            currentBytes + converted.bitmap.allocationByteCount <= MAX_REVERSE_TILE_CACHE_BYTES
+                        ) {
+                            transformedCache[tile.bitmap] = converted
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    if (!cacheIt) {
+                        // The current produceState value owns this output until
+                        // the next generation; its finally block retires it if
+                        // it was intentionally left outside the bounded cache.
+                    }
+                    converted
+                } finally {
+                    convertedBitmap
+                        ?.takeUnless { it === tile.bitmap }
+                        ?.let { PdfReverseBitmapRetirement.schedule(it, "tile-transform-cancelled") }
+                }
+            }
+            }
+            latestTransformed = transformed
+            value = transformed
+            awaitCancellation()
+        } finally {
+            latestTransformed?.forEach { tile ->
+                val isCached = synchronized(transformedCache) {
+                    transformedCache.values.any { cached -> cached.bitmap === tile.bitmap }
+                }
+                if (!isCached && tile.bitmap !== tiles.firstOrNull { it.bitmap === tile.bitmap }?.bitmap) {
+                    PdfReverseBitmapRetirement.schedule(tile.bitmap, "tile-producer-dispose")
+                }
+            }
+        }
+    }.value
+}
+
+/**
+ * Applies the Okular-compatible nonlinear reverse transform once to a bitmap copy.
+ * [protectedRects] are in the target/page coordinate space; those pixels are copied
+ * unchanged for the Preserve Image Colors policy.
+ */
+private suspend fun Bitmap.copyWithPdfReverseColor(
+    mode: PdfReverseColorMode,
+    protectedRects: List<Rect>,
+    targetWidth: Int,
+    targetHeight: Int,
+    targetOriginX: Int = 0,
+    targetOriginY: Int = 0,
+    forceBitmapTransform: Boolean = false,
+    transformGeneration: Long,
+): Bitmap {
+    if (mode == PdfReverseColorMode.RGB && !forceBitmapTransform) return this
+    currentCoroutineContext().ensureActive()
+    val transformStartedAt = SystemClock.uptimeMillis()
+    Timber.tag("PdfReversePerf").d(
+        "transform-start mode=${mode.id} generation=$transformGeneration " +
+            "source=${width}x$height protected=${protectedRects.size}"
+    )
+
+    val safeTargetWidth = targetWidth.coerceAtLeast(1)
+    val safeTargetHeight = targetHeight.coerceAtLeast(1)
+    val protectedSourceRects = protectedRects.mapNotNull { rect ->
+        val left = (((rect.left - targetOriginX).toFloat() / safeTargetWidth) * width)
+            .toInt().coerceIn(0, width)
+        val top = (((rect.top - targetOriginY).toFloat() / safeTargetHeight) * height)
+            .toInt().coerceIn(0, height)
+        val right = (((rect.right - targetOriginX).toFloat() / safeTargetWidth) * width)
+            .toInt().coerceIn(0, width)
+        val bottom = (((rect.bottom - targetOriginY).toFloat() / safeTargetHeight) * height)
+            .toInt().coerceIn(0, height)
+        Rect(left, top, right, bottom)
+            .takeIf { it.width() > 0 && it.height() > 0 }
+            ?.let { PdfReverseColorRect(it.left, it.top, it.right, it.bottom) }
+    }
+
+    return pdfReverseTransformMutex.withLock {
+        currentCoroutineContext().ensureActive()
+        if (!PdfReverseTransformGeneration.isCurrent(transformGeneration)) {
+            throw CancellationException("stale reverse-color transform generation")
+        }
+        // Lease the source only for the native copy. All pixel iteration below
+        // is performed on the independent result, so a page/tile can be
+        // returned to the pool as soon as this snapshot has been made.
+        val result = PdfBitmapUseRegistry.withLease(this@copyWithPdfReverseColor) {
+            copy(config ?: Bitmap.Config.ARGB_8888, true)
+        } ?: throw CancellationException("source bitmap unavailable")
+        if (width <= 0 || height <= 0) return@withLock result
+
+        try {
+            val pixels = IntArray(width)
+            for (y in 0 until height) {
+                currentCoroutineContext().ensureActive()
+                if (!PdfReverseTransformGeneration.isCurrent(transformGeneration)) {
+                    throw CancellationException("stale reverse-color transform generation")
+                }
+                result.getPixels(pixels, 0, width, 0, y, width, 1)
+                for (x in 0 until width) {
+                    pixels[x] = invertPdfArgbIfUnprotected(pixels[x], x, y, mode, protectedSourceRects)
+                }
+                result.setPixels(pixels, 0, width, 0, y, width, 1)
+                }
+            Timber.tag("PdfReversePerf").d(
+                "transform-complete mode=${mode.id} generation=$transformGeneration " +
+                    "size=${width}x$height bytes=${result.allocationByteCount} " +
+                    "duration=${SystemClock.uptimeMillis() - transformStartedAt}ms"
+            )
+            result
+        } catch (error: Throwable) {
+            // A cancelled transform has not been handed to Compose/HWUI yet,
+            // so dispose its private copy immediately instead of retaining a
+            // multi-megapixel bitmap until the next GC cycle.
+            safeRecyclePdfBitmap(result)
+            if (error is CancellationException) {
+                Timber.tag("PdfReversePerf").d(
+                    "transform-cancel mode=${mode.id} generation=$transformGeneration " +
+                        "size=${width}x$height duration=${SystemClock.uptimeMillis() - transformStartedAt}ms"
+                )
+            } else {
+                Timber.tag("PdfReversePerf").e(error, "transform-failed mode=${mode.id}")
+            }
+            if (error is CancellationException) throw error
+            throw error
         }
     }
 }
@@ -648,10 +971,14 @@ internal fun PdfAnnotationLayer(
 }
 
 @Composable
-internal fun PdfPageStaticLayer(data: PageStaticData) {
+internal fun PdfPageStaticLayer(
+    data: PageStaticData,
+    renderedBitmap: Bitmap?,
+    renderedTiles: List<PdfTile>,
+) {
     PdfBitmapLayer(
-        bitmapState = data.bitmap.item,
-        tiles = data.tiles.item,
+        renderedBitmap = renderedBitmap,
+        renderedTiles = renderedTiles,
         shouldDrawHighResTiles = data.shouldDrawHighResTiles,
         effectiveScale = data.effectiveScale,
         centeringOffsetX = data.centeringOffsetX,
@@ -663,6 +990,7 @@ internal fun PdfPageStaticLayer(data: PageStaticData) {
         colorFilter = data.colorFilter.item,
         isDarkMode = data.isDarkMode,
         excludeImages = data.excludeImages,
+        reverseColorMode = data.reverseColorMode,
         imageRects = data.imageRects.item,
         textureBitmap = data.textureBitmap.item,
         textureAlpha = data.textureAlpha,
@@ -802,6 +1130,81 @@ internal fun PdfPageRenderer(
     bubbleExpansionProgress: Float = 0f,
     expandedBubbleRender: ExpandedBubbleRender? = null
 ) {
+    val mainProtectedRects = if (staticData.excludeImages) {
+        staticData.imageRects.item
+    } else {
+        emptyList()
+    }
+    // One generation represents the visible page mode. Every base/tile/popup
+    // request for this page shares it, so an auxiliary RGB copy for Preserve
+    // Images cannot cancel the main nonlinear transform accidentally.
+    val pageTransformGeneration = PdfReverseTransformGeneration.begin(
+        staticData.reverseColorMode
+    )
+    // Do not transform stale high-resolution tiles while motion has disabled
+    // their draw path. The base bitmap remains available immediately and the
+    // current generation will transform only tiles that can be displayed.
+    val mainTilesForTransform = if (staticData.shouldDrawHighResTiles) {
+        staticData.tiles.item
+    } else {
+        emptyList()
+    }
+    val renderedMainBitmap = rememberPdfReverseBitmap(
+        bitmap = staticData.bitmap.item,
+        mode = staticData.reverseColorMode,
+        protectedRects = mainProtectedRects,
+        targetWidth = staticData.targetWidth,
+        targetHeight = staticData.targetHeight,
+        transformGeneration = pageTransformGeneration,
+    )
+    val renderedMainTiles = rememberPdfReverseTiles(
+        tiles = mainTilesForTransform,
+        mode = staticData.reverseColorMode,
+        protectedRects = mainProtectedRects,
+        transformGeneration = pageTransformGeneration,
+    )
+
+    val popupMode = if (
+        showMagnifier || (isBubbleZoomModeActive && bubbleExpansionProgress > 0f)
+    ) staticData.reverseColorMode else PdfReverseColorMode.RGB
+    // Magnifier rendering has one source bitmap/filter for the whole sample, so
+    // Preserve Image Colors must be baked into its base/tile copies instead of
+    // relying on the main page's draw-time restoration pass.
+    val popupProtectedRects = if (staticData.excludeImages) staticData.imageRects.item else emptyList()
+    val popupNeedsBakedRgb = popupMode == PdfReverseColorMode.RGB && popupProtectedRects.isNotEmpty()
+    val popupSharesMainTransform =
+        popupMode == staticData.reverseColorMode &&
+            popupNeedsBakedRgb.not() &&
+            popupProtectedRects == mainProtectedRects
+    val popupBitmap = if (popupSharesMainTransform) {
+        renderedMainBitmap
+    } else {
+        rememberPdfReverseBitmap(
+            bitmap = staticData.bitmap.item,
+            mode = popupMode,
+            protectedRects = popupProtectedRects,
+            targetWidth = staticData.targetWidth,
+            targetHeight = staticData.targetHeight,
+            forceBitmapTransform = popupNeedsBakedRgb,
+            transformGeneration = pageTransformGeneration,
+        )
+    }
+    val popupTiles = if (popupSharesMainTransform) {
+        if (showMagnifier) renderedMainTiles else emptyList()
+    } else {
+        rememberPdfReverseTiles(
+            tiles = if (showMagnifier) staticData.tiles.item else emptyList(),
+            mode = popupMode,
+            protectedRects = popupProtectedRects,
+            forceBitmapTransform = popupNeedsBakedRgb,
+            transformGeneration = pageTransformGeneration,
+        )
+    }
+    val popupExpandedBubbleBitmap = rememberPdfReverseBitmap(
+        bitmap = expandedBubbleRender?.bitmap,
+        mode = popupMode,
+        transformGeneration = pageTransformGeneration,
+    )
     Box(modifier = Modifier.fillMaxSize()) {
         Box(
             modifier = Modifier
@@ -815,7 +1218,11 @@ internal fun PdfPageRenderer(
 
             // Layer 1: The Heavy Bitmap
             Box(modifier = Modifier.fillMaxSize().graphicsLayer()) {
-                PdfPageStaticLayer(data = staticData)
+                PdfPageStaticLayer(
+                    data = staticData,
+                    renderedBitmap = renderedMainBitmap,
+                    renderedTiles = renderedMainTiles,
+                )
             }
 
             // Layer 2: The Lightweight Highlights
@@ -1119,8 +1526,10 @@ internal fun PdfPageRenderer(
                     )
                 ) {
                     MagnifierComposable(
-                        sourceBitmap = staticData.bitmap.item.asImageBitmap(),
-                        tiles = if (staticData.shouldDrawHighResTiles) staticData.tiles.item else emptyList(),
+                        sourceBitmap = (popupBitmap ?: requireNotNull(staticData.bitmap.item)).asImageBitmap(),
+                        tiles = if (staticData.shouldDrawHighResTiles) {
+                            if (staticData.reverseColorMode == PdfReverseColorMode.RGB) staticData.tiles.item else popupTiles
+                        } else emptyList(),
                         currentScale = effectiveScale,
                         magnifierCenterOnBitmap = magnifierCenterTarget,
                         contentWidthPx = staticData.targetWidth,
@@ -1130,7 +1539,11 @@ internal fun PdfPageRenderer(
                         zoomFactor = effectiveZoomFactor,
                         selectionRectsInContentCoords = selectionData.mergedSelectionRects.item,
                         highlightColor = Color(0x6633B5E5),
-                        colorFilter = staticData.colorFilter.item,
+                        colorFilter = if (popupNeedsBakedRgb || staticData.reverseColorMode != PdfReverseColorMode.RGB) {
+                            null
+                        } else {
+                            staticData.colorFilter.item
+                        },
                         modifier = Modifier
                     )
                 }
@@ -1299,7 +1712,7 @@ internal fun PdfPageRenderer(
                     }
 
                     if (animatingBubbleIndex in detectedBubbles.indices && staticData.bitmap.item != null && bubbleExpansionProgress > 0f) {
-                        val baseBitmap = staticData.bitmap.item ?: return@Canvas
+                        val baseBitmap = popupBitmap ?: requireNotNull(staticData.bitmap.item)
                         if (
                             !baseBitmap.isCanvasSafeBitmap(
                                 maxBytes = PDF_MAX_DRAW_BITMAP_BYTES,
@@ -1313,6 +1726,9 @@ internal fun PdfPageRenderer(
                                 maxBytes = PDF_MAX_DRAW_BITMAP_BYTES,
                                 maxDimension = PDF_MAX_DRAW_BITMAP_DIMENSION_PX
                             )
+                        }
+                        val expandedBitmap = safeExpandedBubbleRender?.let {
+                            popupExpandedBubbleBitmap ?: it.bitmap
                         }
                         val bubble = detectedBubbles[animatingBubbleIndex]
                         val left = bubble.bounds.left + staticData.centeringOffsetX
@@ -1372,15 +1788,9 @@ internal fun PdfPageRenderer(
                                 )
                                 drawContext.canvas.saveLayer(rect, androidx.compose.ui.graphics.Paint())
                                 drawImage(
-                                    image = (safeExpandedBubbleRender?.bitmap ?: baseBitmap).asImageBitmap(),
-                                    srcOffset = if (safeExpandedBubbleRender != null) IntOffset.Zero else srcOffset,
-                                    srcSize = if (safeExpandedBubbleRender != null) {
-                                        IntSize(
-                                            safeExpandedBubbleRender.bitmap.width,
-                                            safeExpandedBubbleRender.bitmap.height)
-                                    } else {
-                                        srcSize
-                                    },
+                                    image = (expandedBitmap ?: baseBitmap).asImageBitmap(),
+                                    srcOffset = if (expandedBitmap != null) IntOffset.Zero else srcOffset,
+                                    srcSize = expandedBitmap?.let { IntSize(it.width, it.height) } ?: srcSize,
                                     dstOffset = dstOffset,
                                     dstSize = dstSize,
                                     filterQuality = androidx.compose.ui.graphics.FilterQuality.High
@@ -1396,15 +1806,9 @@ internal fun PdfPageRenderer(
                             } else {
                                 clipRect(left, top, left + logicalWidth, top + logicalHeight) {
                                     drawImage(
-                                        image = (safeExpandedBubbleRender?.bitmap ?: baseBitmap).asImageBitmap(),
-                                        srcOffset = if (safeExpandedBubbleRender != null) IntOffset.Zero else srcOffset,
-                                        srcSize = if (safeExpandedBubbleRender != null) {
-                                            IntSize(
-                                                safeExpandedBubbleRender.bitmap.width,
-                                                safeExpandedBubbleRender.bitmap.height)
-                                        } else {
-                                            srcSize
-                                        },
+                                        image = (expandedBitmap ?: baseBitmap).asImageBitmap(),
+                                        srcOffset = if (expandedBitmap != null) IntOffset.Zero else srcOffset,
+                                        srcSize = expandedBitmap?.let { IntSize(it.width, it.height) } ?: srcSize,
                                         dstOffset = dstOffset,
                                         dstSize = dstSize
                                     )

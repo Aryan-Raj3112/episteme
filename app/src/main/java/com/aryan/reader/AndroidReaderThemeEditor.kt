@@ -75,6 +75,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.edit
 import androidx.media3.common.util.UnstableApi
 import com.aryan.reader.pdf.PdfHighlightColor
+import com.aryan.reader.shared.pdf.PdfReverseColorMode
 import com.aryan.reader.shared.ReaderTextureFilePrefix
 import com.aryan.reader.shared.ui.SharedHsvColor
 import com.aryan.reader.shared.ui.toSharedHsvColor
@@ -91,6 +92,9 @@ fun ReaderThemePanel(
     excludeImages: Boolean = false,
     onExcludeImagesChange: (Boolean) -> Unit = {},
     showExcludeImagesOption: Boolean = false,
+    reverseColorMode: PdfReverseColorMode = PdfReverseColorMode.RGB,
+    onReverseColorModeChange: (PdfReverseColorMode) -> Unit = {},
+    showReverseColorOption: Boolean = false,
     customThemes: List<ReaderTheme>,
     builtInThemes: List<ReaderTheme> = BuiltInThemes,
     globalTextureTransparency: Float,
@@ -106,6 +110,9 @@ fun ReaderThemePanel(
         excludeImages = excludeImages,
         onExcludeImagesChange = onExcludeImagesChange,
         showExcludeImagesOption = showExcludeImagesOption,
+        reverseColorMode = reverseColorMode,
+        onReverseColorModeChange = onReverseColorModeChange,
+        showReverseColorOption = showReverseColorOption,
         customThemes = customThemes,
         builtInThemes = builtInThemes,
         globalTextureTransparency = globalTextureTransparency,
@@ -127,6 +134,12 @@ fun ReaderThemePanel(
             edit = stringResource(R.string.action_edit),
             delete = stringResource(R.string.action_delete),
             preview = stringResource(R.string.label_aa_preview),
+            reverseColors = stringResource(R.string.pdf_reverse_colors),
+            reverseColorsDescription = stringResource(R.string.pdf_reverse_colors_desc),
+            reverseRgb = stringResource(R.string.pdf_reverse_rgb),
+            reverseLightness = stringResource(R.string.pdf_reverse_lightness),
+            reverseLumaSrgb = stringResource(R.string.pdf_reverse_luma_srgb),
+            reverseLumaSymmetric = stringResource(R.string.pdf_reverse_luma_symmetric),
         ),
         texturePreview = { textureId, alpha, modifier ->
             val bitmap = remember(textureId) { loadReaderTextureBitmap(context, textureId) }
