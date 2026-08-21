@@ -97,6 +97,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
@@ -155,6 +156,7 @@ import com.aryan.reader.shared.FileType
 import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.PdfDisplayMode
 import com.aryan.reader.shared.PdfReaderTool
+import com.aryan.reader.shared.pdf.SharedPdfOcrLanguage
 import com.aryan.reader.shared.PdfToolbarPreferences
 import com.aryan.reader.shared.isPdfReaderToolEnabledDuringTts
 import com.aryan.reader.shared.PdfTocEntry
@@ -261,6 +263,8 @@ fun SharedMobilePdfReaderScreen(
     knownTags: List<Tag> = emptyList(),
     pdfToolbarPreferences: PdfToolbarPreferences = PdfToolbarPreferences(),
     onPdfToolbarPreferencesChange: (PdfToolbarPreferences) -> Unit = {},
+    ocrLanguage: SharedPdfOcrLanguage = SharedPdfOcrLanguage.LATIN,
+    onOcrLanguageChange: (SharedPdfOcrLanguage) -> Unit = {},
     readerBrightness: Float? = null,
     readerCustomBrightness: Float = com.aryan.reader.shared.DefaultReaderCustomBrightness,
     onReaderBrightnessChange: (Float?) -> Unit = {},
@@ -310,6 +314,8 @@ fun SharedMobilePdfReaderScreen(
         knownTags = knownTags,
         pdfToolbarPreferences = pdfToolbarPreferences,
         onPdfToolbarPreferencesChange = onPdfToolbarPreferencesChange,
+        ocrLanguage = ocrLanguage,
+        onOcrLanguageChange = onOcrLanguageChange,
         readerBrightness = readerBrightness,
         readerCustomBrightness = readerCustomBrightness,
         onReaderBrightnessChange = onReaderBrightnessChange,
@@ -370,6 +376,8 @@ fun SharedMobilePdfReaderHost(
     knownTags: List<Tag> = emptyList(),
     pdfToolbarPreferences: PdfToolbarPreferences = PdfToolbarPreferences(),
     onPdfToolbarPreferencesChange: (PdfToolbarPreferences) -> Unit = {},
+    ocrLanguage: SharedPdfOcrLanguage = SharedPdfOcrLanguage.LATIN,
+    onOcrLanguageChange: (SharedPdfOcrLanguage) -> Unit = {},
     readerBrightness: Float? = null,
     readerCustomBrightness: Float = com.aryan.reader.shared.DefaultReaderCustomBrightness,
     onReaderBrightnessChange: (Float?) -> Unit = {},
@@ -431,6 +439,7 @@ fun SharedMobilePdfReaderHost(
     var showFileInformation by remember(readerSessionKey) { mutableStateOf(false) }
     var showBrightnessSheet by remember(readerSessionKey) { mutableStateOf(false) }
     var showScreenOrientationSheet by remember(readerSessionKey) { mutableStateOf(false) }
+    var showOcrLanguageDialog by remember(readerSessionKey) { mutableStateOf(false) }
     var showToolbarCustomization by remember(readerSessionKey) { mutableStateOf(false) }
     var showTtsSettingsSheet by remember(readerSessionKey) { mutableStateOf(false) }
     var showTtsReplacementsSheet by remember(readerSessionKey) { mutableStateOf(false) }
@@ -614,6 +623,7 @@ fun SharedMobilePdfReaderHost(
             showFileInformation = false
             showBrightnessSheet = false
             showScreenOrientationSheet = false
+            showOcrLanguageDialog = false
             showToolbarCustomization = false
             showTtsSettingsSheet = false
             showTtsReplacementsSheet = false
@@ -1279,6 +1289,8 @@ fun SharedMobilePdfReaderHost(
                                     }
                                 }
                             },
+                            ocrLanguage = ocrLanguage,
+                            onOcrLanguage = { if (ownsGlobalModal) showOcrLanguageDialog = true },
                             isCurrentPageBlank = isCurrentPageBlank,
                             onInsertBlankPage = ::insertBlankPageAtCurrentPosition,
                             onDeleteBlankPage = ::deleteBlankPageAtCurrentPosition,
@@ -1983,6 +1995,42 @@ fun SharedMobilePdfReaderHost(
             onDismiss = { showScreenOrientationSheet = false },
         )
     }
+    if (showOcrLanguageDialog) {
+        AlertDialog(
+            onDismissRequest = { showOcrLanguageDialog = false },
+            title = { Text("OCR language") },
+            text = {
+                Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                    SharedPdfOcrLanguage.entries.forEach { language ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    onOcrLanguageChange(language)
+                                    showOcrLanguageDialog = false
+                                }
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            RadioButton(
+                                selected = language == ocrLanguage,
+                                onClick = {
+                                    onOcrLanguageChange(language)
+                                    showOcrLanguageDialog = false
+                                },
+                            )
+                            Text(language.displayName)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showOcrLanguageDialog = false }) {
+                    Text("Cancel")
+                }
+            },
+        )
+    }
     if (showToolbarCustomization) {
         SharedMobilePdfToolbarCustomizationSheet(
             preferences = sanitizedPdfToolbarPreferences,
@@ -2159,6 +2207,8 @@ private fun SharedMobilePdfReaderTopBar(
     onVoiceSettings: () -> Unit,
     onWordReplacements: () -> Unit,
     onNativeAction: (SharedMobilePdfNativeAction) -> Unit,
+    ocrLanguage: SharedPdfOcrLanguage,
+    onOcrLanguage: () -> Unit,
     isCurrentPageBlank: Boolean = false,
     onInsertBlankPage: () -> Unit = {},
     onDeleteBlankPage: () -> Unit = {},
@@ -2326,6 +2376,10 @@ private fun SharedMobilePdfReaderTopBar(
                         }
                     }
                 }
+                if (toolbarPreferences.isVisible(PdfReaderTool.OCR_LANGUAGE)) SharedMobilePdfOverflowItem(
+                    "OCR Language: ${ocrLanguage.displayName}",
+                    onClick = { showMoreMenu = false; onOcrLanguage() }
+                )
                 if (toolbarPreferences.isVisible(PdfReaderTool.VISUAL_OPTIONS)) SharedMobilePdfOverflowItem(
                     "Visual Options",
                     leadingIcon = { Icon(Icons.Default.Visibility, contentDescription = null) },
@@ -2512,6 +2566,7 @@ private val SharedMobilePdfAvailableTools = setOf(
     PdfReaderTool.HIGHLIGHT_ALL,
     PdfReaderTool.EDIT_MODE,
     PdfReaderTool.TTS_CONTROLS,
+    PdfReaderTool.OCR_LANGUAGE,
     PdfReaderTool.TTS_SETTINGS,
     PdfReaderTool.TTS_REPLACEMENTS,
     PdfReaderTool.READING_MODE,

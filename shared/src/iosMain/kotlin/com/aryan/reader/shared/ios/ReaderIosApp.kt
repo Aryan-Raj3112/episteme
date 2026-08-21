@@ -154,6 +154,11 @@ import com.aryan.reader.shared.opds.opdsStreamBooksForCatalog
 import com.aryan.reader.shared.pdf.SharedPdfReaderState
 import com.aryan.reader.shared.pdf.SharedPdfExportSnapshot
 import com.aryan.reader.shared.pdf.SharedPdfReaderStateSerializer
+import com.aryan.reader.shared.pdf.SharedPdfCloudSidecarCodec
+import com.aryan.reader.shared.pdf.SharedPdfCloudSidecarSnapshot
+import com.aryan.reader.shared.pdf.IosPdfCloudSidecarStore
+import com.aryan.reader.shared.pdf.loadIosPdfOcrLanguage
+import com.aryan.reader.shared.pdf.persistIosPdfOcrLanguage
 import com.aryan.reader.shared.pdf.SharedPdfReaderHostConfig
 import com.aryan.reader.shared.pdf.SharedPdfReaderGlobalResource
 import com.aryan.reader.shared.pdf.SharedPdfReaderSessionKey
@@ -197,6 +202,7 @@ import com.aryan.reader.shared.PdfSplitWorkspaceState
 import com.aryan.reader.shared.samePdfDocument
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.cinterop.addressOf
@@ -922,6 +928,7 @@ private const val IosImportsRelativePrefix = "Imports/"
 private const val IosDocumentsRelativePrefix = "Documents/"
 private const val IosCoversRelativePrefix = "Covers/"
 private const val IosPdfReaderStateDefaultsPrefix = "reader_ios_pdf_state_v1_"
+private const val IosPdfReaderSidecarTimestampDefaultsPrefix = "reader_ios_pdf_sidecar_timestamp_v1_"
 private const val IosPdfPageSliderVisibleDefaultsPrefix = "reader_ios_pdf_slider_visible_v1_"
 private const val IosEpubPageSliderVisibleDefaultsPrefix = "reader_ios_epub_slider_visible_v1_"
 private const val IosEpubReaderStateDefaultsPrefix = "reader_ios_epub_state_v1_"
@@ -1398,11 +1405,35 @@ private fun iosImportsDirectoryPath(): String? {
 }
 
 private fun loadPersistedIosPdfReaderState(book: BookItem): SharedPdfReaderState? {
+    loadPersistedIosPdfReaderStateFromDefaults(book)?.let { return it }
+    val sidecar = IosPdfCloudSidecarStore.readPayload(
+        bookId = book.id,
+        fallbackPageCount = 1,
+        fallbackPageIndex = book.lastPageIndex ?: 0,
+    ) ?: return null
+    val restored = sidecar.readerState ?: SharedPdfReaderState.initial(
+        pageCount = 1,
+        initialPageIndex = book.lastPageIndex ?: 0,
+    ).copy(
+        annotations = sidecar.annotations,
+        richTextDocumentJson = sidecar.richTextDocumentJson.orEmpty(),
+    )
+    persistIosPdfReaderState(book, restored)
+    sidecar.modifiedTimestamp.takeIf { it > 0L }?.let { timestamp ->
+        NSUserDefaults.standardUserDefaults.setInteger(
+            value = timestamp,
+            forKey = book.iosPdfSidecarTimestampKey(),
+        )
+    }
+    return restored
+}
+
+private fun loadPersistedIosPdfReaderStateFromDefaults(book: BookItem): SharedPdfReaderState? {
     val encoded = NSUserDefaults.standardUserDefaults.stringForKey(book.iosPdfReaderStateKey()) ?: return null
     return SharedPdfReaderStateSerializer.decode(
         raw = encoded,
         fallbackPageCount = 1,
-        fallbackPageIndex = book.lastPageIndex ?: 0
+        fallbackPageIndex = book.lastPageIndex ?: 0,
     )
 }
 
@@ -1413,6 +1444,60 @@ private fun persistIosPdfReaderState(book: BookItem, state: SharedPdfReaderState
 
 private fun BookItem.iosPdfReaderStateKey(): String {
     return IosPdfReaderStateDefaultsPrefix + (path ?: id).normalizedId()
+}
+
+private fun BookItem.iosPdfSidecarTimestampKey(): String {
+    return IosPdfReaderSidecarTimestampDefaultsPrefix + id.normalizedId()
+}
+
+private fun BookItem.iosPdfSourceFingerprint(): String {
+    return "${fileSize.coerceAtLeast(0L)}:${fileContentModifiedTimestamp.coerceAtLeast(0L)}"
+}
+
+/**
+ * Adds portable PDF sidecars to the ordinary library snapshot.  The library
+ * record remains the source of truth for book metadata; the sidecar carries
+ * the PDF document state that is too rich for that record (annotations,
+ * inserted pages, and rich text).
+ */
+private fun SharedReaderScreenState.toIosCloudSnapshot(): SharedLibrarySnapshot {
+    val snapshot = toSharedMobileLibrarySnapshot()
+    val sidecars = rawLibraryBooks.asSequence()
+        .filter { it.type == FileType.PDF }
+        .mapNotNull { book ->
+            val existingData = IosPdfCloudSidecarStore.read(book.id)
+            val existingPayload = SharedPdfCloudSidecarCodec.decode(
+                rawDataJson = existingData,
+                fallbackPageCount = 1,
+                fallbackPageIndex = book.lastPageIndex ?: 0,
+            )
+            val persistedState = loadPersistedIosPdfReaderStateFromDefaults(book)
+                ?: existingPayload?.readerState
+            if (persistedState == null && existingData.isNullOrBlank()) return@mapNotNull null
+            val timestamp = maxOf(
+                NSUserDefaults.standardUserDefaults.integerForKey(book.iosPdfSidecarTimestampKey()),
+                existingPayload?.modifiedTimestamp ?: 0L,
+                book.readingPositionModifiedTimestamp,
+                book.timestamp,
+                1L,
+            )
+            val data = persistedState?.let { state ->
+                SharedPdfCloudSidecarCodec.encode(
+                    bookId = book.id,
+                    state = state,
+                    sourceFingerprint = book.iosPdfSourceFingerprint(),
+                    modifiedTimestamp = timestamp,
+                    existingDataJson = existingData,
+                )
+            } ?: existingData ?: return@mapNotNull null
+            SharedPdfCloudSidecarSnapshot(
+                bookId = book.id,
+                timestamp = timestamp,
+                data = data,
+            )
+        }
+        .toList()
+    return snapshot.copy(pdfSidecars = sidecars)
 }
 
 private fun loadPersistedIosEpubBookState(book: BookItem): BookItem {
@@ -1717,6 +1802,7 @@ private fun ReaderIosApp(
     var readerBrightness by remember { mutableStateOf(loadIosReaderBrightness()) }
     var readerCustomBrightness by remember { mutableStateOf(loadIosReaderCustomBrightness()) }
     var pdfToolbarPreferences by remember { mutableStateOf(loadIosPdfToolbarPreferences()) }
+    var pdfOcrLanguage by remember { mutableStateOf(loadIosPdfOcrLanguage()) }
     var pdfTopTabStripVisible by remember { mutableStateOf(loadIosPdfTopTabStripVisible()) }
     var readerAutoScrollProfile by remember { mutableStateOf(loadIosReaderAutoScrollProfile()) }
     var readerAutoScrollUseSlider by remember { mutableStateOf(loadIosReaderAutoScrollUseSlider()) }
@@ -1743,6 +1829,7 @@ private fun ReaderIosApp(
     var opdsState by remember { mutableStateOf(opdsController.state) }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
+    val pdfSidecarWriteJobs = remember { mutableMapOf<String, Job>() }
 
     fun selectMainPage(page: SharedMobileMainDestination) {
         selectedPage = page
@@ -1845,7 +1932,7 @@ private fun ReaderIosApp(
                 pendingUnavailableBookId = book.id
                 bridge.requestCloudSync(
                     SharedLibrarySnapshotJson.encode(
-                        state.toSharedMobileLibrarySnapshot().withStableIosBookPaths()
+                        state.toIosCloudSnapshot().withStableIosBookPaths()
                     )
                 )
                 showMessage("Downloading ${book.displayName}")
@@ -2135,7 +2222,7 @@ private fun ReaderIosApp(
         if (!cloudSyncEligible()) return
         bridge.requestCloudSync(
             SharedLibrarySnapshotJson.encode(
-                state.toSharedMobileLibrarySnapshot()
+                state.toIosCloudSnapshot()
                     .withStableIosBookPaths()
                     .withStableIosAudiobookPaths()
             )
@@ -2260,13 +2347,45 @@ private fun ReaderIosApp(
 
     LaunchedEffect(bridge.pendingCloudSync) {
         val pending = bridge.pendingCloudSync ?: return@LaunchedEffect
-        val localSnapshot = state.toSharedMobileLibrarySnapshot()
+        val localSnapshot = state.toIosCloudSnapshot()
         val remoteSnapshot = SharedLibrarySnapshotJson.decodeOrEmpty(pending.remoteSnapshotJson)
         val mergedSnapshot = mergeCloudLibrarySnapshotWithDownloadedBooks(
             local = localSnapshot,
             remote = remoteSnapshot,
             downloadedBookPaths = pending.downloadedBookPaths,
         )
+        mergedSnapshot.pdfSidecars.forEach { sidecar ->
+            val book = mergedSnapshot.books.firstOrNull { it.id == sidecar.bookId } ?: return@forEach
+            val payload = SharedPdfCloudSidecarCodec.decode(
+                rawDataJson = sidecar.data,
+                fallbackPageCount = 1,
+                fallbackPageIndex = book.lastPageIndex ?: 0,
+            )
+            val restored = payload?.readerState ?: payload?.let {
+                SharedPdfReaderState.initial(
+                    pageCount = 1,
+                    initialPageIndex = book.lastPageIndex ?: 0,
+                ).copy(
+                    annotations = it.annotations,
+                    richTextDocumentJson = it.richTextDocumentJson.orEmpty(),
+                )
+            }
+            if (restored != null) {
+                persistIosPdfReaderState(book, restored)
+                NSUserDefaults.standardUserDefaults.setInteger(
+                    value = maxOf(sidecar.timestamp, payload?.modifiedTimestamp ?: 0L),
+                    forKey = book.iosPdfSidecarTimestampKey(),
+                )
+            }
+        }
+        val mergedPdfSidecars = mergedSnapshot.pdfSidecars
+        if (mergedPdfSidecars.isNotEmpty()) {
+            scope.launch(Dispatchers.Default) {
+                mergedPdfSidecars.forEach { sidecar ->
+                    IosPdfCloudSidecarStore.write(sidecar.bookId, sidecar.data)
+                }
+            }
+        }
         state = mergedSnapshot
             .withResolvedIosBookPaths()
             .withResolvedIosAudiobookPaths()
@@ -2618,6 +2737,12 @@ private fun ReaderIosApp(
                 pdfToolbarPreferences = preferences
                 persistIosPdfToolbarPreferences(preferences)
             },
+            ocrLanguage = pdfOcrLanguage,
+            onOcrLanguageChange = { language ->
+                if (!acceptsCurrentHostCallback()) return@SharedMobilePdfReaderHost
+                pdfOcrLanguage = language
+                persistIosPdfOcrLanguage(language)
+            },
             readerBrightness = readerBrightness,
             readerCustomBrightness = readerCustomBrightness,
             onReaderBrightnessChange = { brightness ->
@@ -2675,6 +2800,48 @@ private fun ReaderIosApp(
                 }
                 val currentBook = state.rawLibraryBooks.firstOrNull { it.id == paneBook.id } ?: paneBook
                 persistIosPdfReaderState(currentBook, pdfState)
+                pdfSidecarWriteJobs[currentBook.id]?.cancel()
+                pdfSidecarWriteJobs[currentBook.id] = scope.launch {
+                    delay(300L)
+                    val bookForWrite = currentBook
+                    withContext(Dispatchers.Default) {
+                        val existingData = IosPdfCloudSidecarStore.read(bookForWrite.id)
+                        val existingTimestamp = SharedPdfCloudSidecarCodec.decode(
+                            rawDataJson = existingData,
+                            fallbackPageCount = 1,
+                            fallbackPageIndex = bookForWrite.lastPageIndex ?: 0,
+                        )?.modifiedTimestamp ?: 0L
+                        val previousTimestamp = NSUserDefaults.standardUserDefaults.integerForKey(
+                            bookForWrite.iosPdfSidecarTimestampKey()
+                        )
+                        val modifiedTimestamp = maxOf(
+                            currentTimestamp(),
+                            existingTimestamp + 1L,
+                            previousTimestamp + 1L,
+                        )
+                        val localData = SharedPdfCloudSidecarCodec.encode(
+                            bookId = bookForWrite.id,
+                            state = pdfState,
+                            sourceFingerprint = bookForWrite.iosPdfSourceFingerprint(),
+                            modifiedTimestamp = modifiedTimestamp,
+                            existingDataJson = existingData,
+                        )
+                        val mergedData = existingData?.let { existing ->
+                            SharedPdfCloudSidecarCodec.merge(
+                                localDataJson = localData,
+                                remoteDataJson = existing,
+                                preferRemoteOnConflict = false,
+                                fallbackPageCount = 1,
+                                fallbackPageIndex = bookForWrite.lastPageIndex ?: 0,
+                            )
+                        } ?: localData
+                        IosPdfCloudSidecarStore.write(bookForWrite.id, mergedData)
+                        NSUserDefaults.standardUserDefaults.setInteger(
+                            value = modifiedTimestamp,
+                            forKey = bookForWrite.iosPdfSidecarTimestampKey(),
+                        )
+                    }
+                }
                 val updatedBook = currentBook.withIosPdfReaderProgress(pdfState)
                 if (updatedBook != currentBook) {
                     state = state.withUpdatedIosBook(updatedBook)
