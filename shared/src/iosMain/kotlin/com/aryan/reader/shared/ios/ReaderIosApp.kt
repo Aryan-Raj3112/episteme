@@ -4347,10 +4347,28 @@ private fun IosAccountScreen(
                 modifier = Modifier.padding(vertical = 12.dp),
             )
             TextButton(onClick = { onAuthenticate("APPLE") }) {
-                Text(if (AccountAuthProvider.APPLE in account.providers) "Apple linked" else "Continue with Apple")
+                Text(
+                    when {
+                        AccountAuthProvider.APPLE in account.providers -> "Apple linked"
+                        account.uid != null -> "Link Apple sign-in"
+                        else -> "Continue with Apple"
+                    }
+                )
             }
             TextButton(onClick = { onAuthenticate("GOOGLE") }) {
-                Text(if (AccountAuthProvider.GOOGLE in account.providers) "Google linked" else "Continue with Google")
+                Text(
+                    when {
+                        AccountAuthProvider.GOOGLE in account.providers -> "Google linked"
+                        account.uid != null -> "Link Google sign-in"
+                        else -> "Continue with Google"
+                    }
+                )
+            }
+            if (account.uid != null && account.providers.size == 1) {
+                Text(
+                    "Linking adds another way to sign in to this Episteme account. It does not create or purchase a separate account.",
+                    modifier = Modifier.padding(bottom = 12.dp),
+                )
             }
             Text(
                 when {
@@ -4385,9 +4403,9 @@ private fun IosLocalStoreKitScreen(
             Text("Pro and Credits")
             Text(
                 if (store.available) {
-                    "Local StoreKit testing is active. These DEBUG purchases do not grant production entitlements."
+                    "Purchases are securely linked to your Episteme account and can be restored after reinstalling."
                 } else {
-                    "StoreKit local testing is unavailable in this build."
+                    "App Store products are currently unavailable."
                 },
                 modifier = Modifier.padding(vertical = 12.dp),
             )
