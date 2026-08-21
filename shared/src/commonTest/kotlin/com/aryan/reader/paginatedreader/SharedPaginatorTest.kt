@@ -73,7 +73,7 @@ class SharedPaginatorTest {
                     total
                 }
                 else -> {
-                    childMeasurements[block.blockIndex] = childMeasurements.getOrDefault(block.blockIndex, 0) + 1
+                    childMeasurements[block.blockIndex] = (childMeasurements[block.blockIndex] ?: 0) + 1
                     10
                 }
             }
