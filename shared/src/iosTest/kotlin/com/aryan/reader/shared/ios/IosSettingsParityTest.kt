@@ -71,7 +71,7 @@ class IosSettingsParityTest {
 
     @Test
     fun iosDebugAccountOperationsDoNotExposeAndroidOnlyMlActions() {
-        val actions = sharedSettingsHubModel(
+        val items = sharedSettingsHubModel(
             SharedSettingsHubInput(
                 platform = SharedSettingsPlatform.IOS,
                 isDebugBuild = true,
@@ -80,8 +80,10 @@ class IosSettingsParityTest {
                 syncAvailable = true,
                 cloudSyncEligible = true,
                 includeCloudLocalDataClear = true,
+                includeHideReaderAi = true,
             )
-        ).sections.flatMap { it.items }.map { it.action }.toSet()
+        ).sections.flatMap { it.items }
+        val actions = items.map { it.action }.toSet()
 
         assertTrue(SharedSettingsAction.DEVICE_MANAGEMENT in actions)
         assertTrue(SharedSettingsAction.CLEAR_CLOUD_LOCAL_DATA in actions)
@@ -89,6 +91,10 @@ class IosSettingsParityTest {
         assertEquals(
             1,
             items.count { it.action == SharedSettingsAction.DEVICE_MANAGEMENT },
+        )
+        assertEquals(
+            1,
+            items.count { it.action == SharedSettingsAction.HIDE_READER_AI },
         )
         assertFalse(SharedSettingsAction.TEST_PANEL_DETECTION in actions)
         assertFalse(SharedSettingsAction.TEST_SPEECH_BUBBLE_DETECTION in actions)

@@ -3640,7 +3640,7 @@ private fun ReaderIosApp(
                                 includeScreenCaptureProtection = false,
                                 includeCloudLocalDataClear = true,
                                 includeDiagnosticLogExport = true,
-                                includeHideReaderAi = false,
+                                includeHideReaderAi = true,
                                 supportProjectAvailable = true,
                                 isTabsEnabled = state.isTabsEnabled,
                                 isSyncEnabled = state.isSyncEnabled,
