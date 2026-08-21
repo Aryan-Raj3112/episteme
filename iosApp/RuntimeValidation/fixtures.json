@@ -1,0 +1,96 @@
+{
+  "schema": 1,
+  "fixtures": [
+    {
+      "id": "pdf.sample",
+      "source": "app/src/main/assets/sample.pdf",
+      "kind": "pdf",
+      "ownership": "repository-owned",
+      "use": ["open", "zoom", "search", "split", "diagnostic-performance"]
+    },
+    {
+      "id": "epub.reader-test-book",
+      "source": "app/src/androidTest/assets/epub/reader_test_book.epub",
+      "kind": "epub",
+      "ownership": "repository-owned-test-fixture",
+      "markers": [
+        "POSITION_TARGET_ALPHA",
+        "HIGHLIGHT_TARGET_BRAVO",
+        "CFI_TARGET_CHARLIE",
+        "SEARCH_TARGET_DELTA",
+        "BOOKMARK_TARGET_ECHO",
+        "POSITION_TARGET_FOXTROT",
+        "ANNOTATION_TARGET_GOLF",
+        "CFI_TARGET_HOTEL"
+      ],
+      "use": ["open", "position-restore", "search", "tts", "diagnostic-performance"]
+    },
+    {
+      "id": "pptx.user-owned",
+      "source": null,
+      "kind": "pptx",
+      "ownership": "manual-or-separately-licensed",
+      "note": "Use a small deck with text, shapes, images, tables, charts, SmartArt, and hyperlinks. Do not commit a binary fixture.",
+      "use": ["open", "slide-navigation", "visual-rendering", "diagnostic-performance"]
+    }
+  ],
+  "flows": [
+    {
+      "id": "launch",
+      "surface": "library",
+      "expected": [
+        "App reaches the library without a crash or blank Compose host.",
+        "Previously persisted library and reader state are restored or an explicit empty state is shown.",
+        "Safe-area and status-bar treatment match the Android intent for the selected reader/library state."
+      ]
+    },
+    {
+      "id": "settings-account-gating",
+      "surface": "settings",
+      "expected": [
+        "Settings root reaches Account, AI, reader, diagnostics, and device-management destinations.",
+        "Signed-out account actions explain sign-in requirements and do not expose a false Pro entitlement.",
+        "Signed-in account state, Pro, credits, Apple/Google linking, and StoreKit restore/purchase states match Android eligibility rules.",
+        "Keyboard avoids fields and the back gesture/button returns to the same settings destination."
+      ]
+    },
+    {
+      "id": "diagnostic-export",
+      "surface": "settings-diagnostics",
+      "expected": [
+        "Export is visible only where the iOS capability gate allows it.",
+        "Export produces a non-empty file or share/save presentation and does not expose secrets or full document text.",
+        "The exported data contains bounded reader, EPUB/PDF/OCR/TTS, account, and StoreKit status entries when those flows ran."
+      ]
+    },
+    {
+      "id": "document-open",
+      "surface": "reader",
+      "expected": [
+        "PDF, EPUB, and PPTX open through the iOS importer and reach a usable first page/slide/chapter.",
+        "Close and reopen preserve the same Android-benchmark reading position contract.",
+        "Unsupported/corrupt/import-cancelled cases report an actionable state and do not strand the app in loading."
+      ]
+    },
+    {
+      "id": "pdf-split",
+      "surface": "pdf-split-reader",
+      "expected": [
+        "Two PDF panes accept focus, scrolling, zoom, toolbar taps, and selection independently.",
+        "Divider drag, orientation change, swap, close-pane, back, and close-workspace preserve valid state.",
+        "Background/foreground restores both documents or records the same explicit recovery message as Android.",
+        "No pane interaction blocks the other pane or the system back action."
+      ]
+    },
+    {
+      "id": "performance",
+      "surface": "reader-and-library",
+      "expected": [
+        "Record p50/p95/max frame time for scroll, zoom, split divider drag, and toolbar toggles.",
+        "Record document-open, page/tile render, OCR, search, TTS interruption/resume, and sync/import latency.",
+        "Record peak memory and resident growth after repeated open/close; investigate monotonic growth.",
+        "Compare the same fixture and operation with Android measurements before accepting a parity result."
+      ]
+    }
+  ]
+}
