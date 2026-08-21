@@ -6,6 +6,13 @@ import com.aryan.reader.shared.SharedSettingsAction
  * iOS parity scope for every action exposed by the shared settings model.
  *
  * Keep this exhaustive: adding a shared setting must require an explicit iOS parity decision.
+ *
+ * Comic panel and speech-bubble diagnostics intentionally remain DEBUG_ONLY on
+ * iOS. Android's panel path loads `best_float16.tflite` from its external-files
+ * directory in debug builds, while the paid bubble path loads the separately
+ * downloaded `manga_speech_bubble_v3.ort` through ONNX Runtime. Neither model
+ * nor an iOS/Core ML runtime adapter is checked into this repository, so
+ * exposing these actions on iOS would claim a capability that cannot execute.
  */
 internal enum class IosSettingsActionDisposition {
     SHARED_NAVIGATION,
