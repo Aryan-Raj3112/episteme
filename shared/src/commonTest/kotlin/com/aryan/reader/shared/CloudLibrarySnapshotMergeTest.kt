@@ -233,4 +233,69 @@ class CloudLibrarySnapshotMergeTest {
         assertEquals(listOf(local), merged.books)
         assertEquals(emptyList(), merged.bookTombstones)
     }
+
+    @Test
+    fun `cloud merge keeps newer shelf tombstones and newest membership clocks`() {
+        val localBook = BookItem(
+            id = "book",
+            path = "/local/book.epub",
+            type = FileType.EPUB,
+            displayName = "book.epub",
+            timestamp = 1L,
+        )
+        val merged = mergeCloudLibrarySnapshotWithDownloadedBooks(
+            local = SharedLibrarySnapshot(
+                books = listOf(localBook),
+                shelfRecords = listOf(
+                    ShelfRecord("keep", "Local", modifiedAt = 10L),
+                    ShelfRecord("delete", "Local delete", modifiedAt = 30L, isDeleted = true),
+                ),
+                shelfRefs = listOf(BookShelfRef("book", "keep", addedAt = 10L)),
+            ),
+            remote = SharedLibrarySnapshot(
+                shelfRecords = listOf(
+                    ShelfRecord("keep", "Remote", modifiedAt = 20L),
+                    ShelfRecord("delete", "Remote delete", modifiedAt = 20L),
+                ),
+                shelfRefs = listOf(
+                    BookShelfRef("book", "keep", addedAt = 40L),
+                    BookShelfRef("missing", "keep", addedAt = 50L),
+                ),
+            ),
+            downloadedBookPaths = emptyMap(),
+        )
+
+        assertEquals(listOf("keep"), merged.shelfRecords.map(ShelfRecord::id))
+        assertEquals("Remote", merged.shelfRecords.single().name)
+        assertEquals(listOf(40L), merged.shelfRefs.map(BookShelfRef::addedAt))
+    }
+
+    @Test
+    fun `cloud merge selects newest custom font and preserves existing folder grants`() {
+        val localFolder = SyncedFolder("file:///local", "Local", lastScanTime = 20L)
+        val merged = mergeCloudLibrarySnapshotWithDownloadedBooks(
+            local = SharedLibrarySnapshot(
+                syncedFolders = listOf(localFolder),
+                customFonts = listOf(
+                    CustomFontItem("font", "Local", "local.ttf", "ttf", "/local.ttf", 10L),
+                ),
+            ),
+            remote = SharedLibrarySnapshot(
+                syncedFolders = listOf(
+                    SyncedFolder("file:///local", "Remote", lastScanTime = 30L),
+                    SyncedFolder("file:///remote", "Remote-only", lastScanTime = 40L),
+                ),
+                customFonts = listOf(
+                    CustomFontItem("font", "Remote", "remote.ttf", "ttf", "/remote.ttf", 20L),
+                    CustomFontItem("font2", "Remote 2", "remote2.ttf", "ttf", "/remote2.ttf", 30L),
+                ),
+            ),
+            downloadedBookPaths = emptyMap(),
+            downloadedFontPaths = mapOf("font" to "/remote.ttf", "font2" to "/remote2.ttf"),
+        )
+
+        assertEquals("Remote", merged.customFonts.first { it.id == "font" }.displayName)
+        assertEquals(setOf("font", "font2"), merged.customFonts.mapTo(mutableSetOf(), CustomFontItem::id))
+        assertEquals(listOf(localFolder.uriString), merged.syncedFolders.map(SyncedFolder::uriString))
+    }
 }

@@ -139,6 +139,7 @@ data class Shelf(
     val sortKey: String = name.lowercase(),
     val smartRulesJson: String? = null,
     val directBookAddedAt: Map<String, Long> = emptyMap(),
+    val modifiedAt: Long = 0L,
 ) {
     val bookCount: Int get() = books.size
     val topBook: BookItem? get() = books.maxByOrNull { it.timestamp }

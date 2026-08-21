@@ -4,7 +4,11 @@ data class ShelfRecord(
     val id: String,
     val name: String,
     val isSmart: Boolean = false,
-    val smartRulesJson: String? = null
+    val smartRulesJson: String? = null,
+    /** Android's Room shelf.updatedAt clock, optional for legacy snapshots. */
+    val modifiedAt: Long = 0L,
+    /** Tombstones are retained only for cloud merge and never projected locally. */
+    val isDeleted: Boolean = false,
 )
 
 data class BookShelfRef(
@@ -130,7 +134,7 @@ class SharedLibraryStateProjector(
         shelfRecords
             // "unshelved" is a synthetic shelf added below. Older persisted
             // snapshots may contain a manual record with the same reserved ID.
-            .filterNot { it.id == "unshelved" }
+            .filterNot { it.id == "unshelved" || it.isDeleted }
             .forEach { shelf ->
             if (shelf.isSmart && shelf.smartRulesJson != null) {
                 val definition = SmartCollectionEngine.fromJson(shelf.smartRulesJson)
@@ -143,6 +147,7 @@ class SharedLibraryStateProjector(
                             type = ShelfType.SMART,
                             books = sortBooks(matchingBooks, sortOrder),
                             smartRulesJson = shelf.smartRulesJson,
+                            modifiedAt = shelf.modifiedAt,
                         )
                     )
                     shelvedBookIds.addAll(matchingBooks.map { it.id })
@@ -160,6 +165,7 @@ class SharedLibraryStateProjector(
                         type = ShelfType.MANUAL,
                         books = sortBooks(books, sortOrder),
                         directBooks = books,
+                        modifiedAt = shelf.modifiedAt,
                         directBookAddedAt = shelfRefs
                             .filter { it.shelfId == shelf.id && it.bookId in booksById }
                             .associate { it.bookId to it.addedAt },

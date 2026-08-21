@@ -370,7 +370,9 @@ private fun JsonElement.asShelfRecordOrNull(): ShelfRecord? {
         id = obj.string("id") ?: return null,
         name = obj.string("name") ?: return null,
         isSmart = obj.boolean("isSmart", false),
-        smartRulesJson = obj.string("smartRulesJson")
+        smartRulesJson = obj.string("smartRulesJson"),
+        modifiedAt = obj.long("modifiedAt", obj.long("lastModifiedTimestamp")),
+        isDeleted = obj.boolean("isDeleted", false),
     )
 }
 
@@ -540,7 +542,9 @@ private fun ShelfRecord.toJsonObject(): JsonObject {
             "id" to JsonPrimitive(id),
             "name" to JsonPrimitive(name),
             "isSmart" to JsonPrimitive(isSmart),
-            "smartRulesJson" to smartRulesJson.asJson()
+            "smartRulesJson" to smartRulesJson.asJson(),
+            "modifiedAt" to JsonPrimitive(modifiedAt),
+            "isDeleted" to JsonPrimitive(isDeleted),
         )
     )
 }

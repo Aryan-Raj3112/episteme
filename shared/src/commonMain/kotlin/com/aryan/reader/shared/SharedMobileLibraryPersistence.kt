@@ -102,6 +102,7 @@ fun SharedReaderScreenState.toSharedMobileLibrarySnapshot(): SharedLibrarySnapsh
             name = shelf.name,
             isSmart = shelf.type == ShelfType.SMART,
             smartRulesJson = shelf.smartRulesJson,
+            modifiedAt = shelf.modifiedAt,
         )
     }
     val shelfRefs = persistentShelves.filter { it.type == ShelfType.MANUAL }.flatMap { shelf ->
