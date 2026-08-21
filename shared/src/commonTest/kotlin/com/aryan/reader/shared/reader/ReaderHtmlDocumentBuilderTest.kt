@@ -713,7 +713,7 @@ class ReaderHtmlDocumentBuilderTest {
     }
 
     @Test
-    fun `hide images setting toggles css variable, image rule and appearance update script`() {
+    fun hideImagesSettingTogglesCssVariableAndImageRuleAndAppearanceUpdateScript() {
         val hiddenHtml = ReaderHtmlDocumentBuilder.verticalDocument(
             book = repeatedWordBook("alpha beta"),
             settings = ReaderSettings(hideImages = true),

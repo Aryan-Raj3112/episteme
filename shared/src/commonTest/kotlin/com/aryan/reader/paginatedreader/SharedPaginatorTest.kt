@@ -65,7 +65,13 @@ class SharedPaginatorTest {
         }
         val incrementalProvider = object : BlockMeasurementProvider {
             override suspend fun measure(block: ContentBlock): Int = when (block) {
-                is FlexContainerBlock -> block.children.sumOf { measure(it) }
+                is FlexContainerBlock -> {
+                    var total = 0
+                    for (child in block.children) {
+                        total += measure(child)
+                    }
+                    total
+                }
                 else -> {
                     childMeasurements[block.blockIndex] = childMeasurements.getOrDefault(block.blockIndex, 0) + 1
                     10
