@@ -302,6 +302,7 @@ internal fun SharedMobilePdfZoomViewport(
     }
 
     fun updateCamera(next: PdfZoomCamera) {
+        recordSharedPdfCameraUpdate()
         onCameraChanged(next)
         onZoomChanged(next.scale)
     }
@@ -338,6 +339,7 @@ internal fun SharedMobilePdfZoomViewport(
     fun flingCamera(velocityX: Float, velocityY: Float) {
         val speed = kotlin.math.sqrt(velocityX * velocityX + velocityY * velocityY)
         if (speed < 600f || viewport.width <= 0 || viewport.height <= 0) return
+        recordSharedPdfFling()
         cameraAnimationJob?.cancel()
         val start = latestCamera
         val directionX = velocityX / speed
@@ -373,6 +375,7 @@ internal fun SharedMobilePdfZoomViewport(
                 if (!zoomEnabled) return@pointerInput
                 awaitEachGesture {
                     val firstDown = awaitFirstDown(requireUnconsumed = false)
+                    recordSharedPdfInteraction()
                     cameraAnimationJob?.cancel()
                     val velocityTracker = VelocityTracker()
                     velocityTracker.addPosition(firstDown.uptimeMillis, firstDown.position)
@@ -643,6 +646,7 @@ internal fun SharedMobilePdfVerticalPages(
             val deltaSeconds = (frame - previousFrame) / 1_000_000_000f
             previousFrame = frame
             if (deltaSeconds <= 0f || deltaSeconds > 0.1f) continue
+            recordSharedPdfFrame((deltaSeconds * 1_000f).toLong())
             listState.scrollBy(pdfAutoScrollPixelsPerSecond(autoScrollSpeed) * deltaSeconds)
         }
     }

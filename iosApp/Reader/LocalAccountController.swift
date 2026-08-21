@@ -488,19 +488,27 @@ final class LocalAccountController: NSObject, ObservableObject {
 
     private func scheduleCloudSyncRetryIfNeeded() {
         cloudSyncRetryTask?.cancel()
-        guard let item = loadCloudSyncOutbox() else { return }
+        guard loadCloudSyncOutbox() != nil else { return }
         cloudSyncRetryTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            let delay = max(0, item.nextAttemptAt.timeIntervalSinceNow)
-            if delay > 0 {
-                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-            }
-            guard !Task.isCancelled else { return }
-            switch item.operation {
-            case .pull:
-                await self.syncCloudSnapshot(localJSON: item.snapshotJSON)
-            case .push:
-                await self.uploadMergedCloudSnapshot(item.snapshotJSON)
+            while !Task.isCancelled {
+                // The outbox can be replaced while this task is asleep (for example, a
+                // newer local edit arriving during an in-flight sync). Always reload it
+                // before dispatching so a stale snapshot is never replayed.
+                guard let item = self.loadCloudSyncOutbox() else { return }
+                let delay = max(0, item.nextAttemptAt.timeIntervalSinceNow)
+                if delay > 0 {
+                    try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                    continue
+                }
+                guard !Task.isCancelled else { return }
+                switch item.operation {
+                case .pull:
+                    await self.syncCloudSnapshot(localJSON: item.snapshotJSON)
+                case .push:
+                    await self.uploadMergedCloudSnapshot(item.snapshotJSON)
+                }
+                return
             }
         }
     }
@@ -1699,6 +1707,7 @@ final class LocalAccountController: NSObject, ObservableObject {
 
     private struct DriveFileList: Decodable {
         let files: [DriveFile]
+        let nextPageToken: String?
     }
 
     private struct CloudBook {
@@ -1772,19 +1781,37 @@ final class LocalAccountController: NSObject, ObservableObject {
     }
 
     private func listDriveFiles(accessToken: String) async throws -> [DriveFile] {
-        var components = URLComponents(string: "https://www.googleapis.com/drive/v3/files")!
-        components.queryItems = [
-            URLQueryItem(name: "spaces", value: "appDataFolder"),
-            URLQueryItem(name: "q", value: "trashed = false"),
-            URLQueryItem(name: "fields", value: "files(id,name,modifiedTime)"),
-            URLQueryItem(name: "pageSize", value: "1000"),
-        ]
-        let data = try await driveRequest(
-            url: components.url!,
-            method: "GET",
-            accessToken: accessToken
-        )
-        return try JSONDecoder().decode(DriveFileList.self, from: data).files
+        var files: [DriveFile] = []
+        var pageToken: String?
+        var seenPageTokens = Set<String>()
+        repeat {
+            var components = URLComponents(string: "https://www.googleapis.com/drive/v3/files")!
+            components.queryItems = [
+                URLQueryItem(name: "spaces", value: "appDataFolder"),
+                URLQueryItem(name: "q", value: "trashed = false"),
+                URLQueryItem(name: "fields", value: "nextPageToken,files(id,name,modifiedTime)"),
+                URLQueryItem(name: "pageSize", value: "1000"),
+            ]
+            if let pageToken {
+                components.queryItems?.append(URLQueryItem(name: "pageToken", value: pageToken))
+            }
+            let data = try await driveRequest(
+                url: components.url!,
+                method: "GET",
+                accessToken: accessToken
+            )
+            let page = try JSONDecoder().decode(DriveFileList.self, from: data)
+            files.append(contentsOf: page.files)
+            guard let next = page.nextPageToken?.trimmingCharacters(in: .whitespacesAndNewlines), !next.isEmpty else {
+                pageToken = nil
+                break
+            }
+            guard seenPageTokens.insert(next).inserted else {
+                throw CloudSyncError.invalidDrivePageToken
+            }
+            pageToken = next
+        } while pageToken != nil
+        return files
     }
 
     private func parseCloudBooks(_ snapshotJSON: String) throws -> [CloudBook] {
@@ -2439,6 +2466,7 @@ final class LocalAccountController: NSObject, ObservableObject {
         case firebaseAccountRequired
         case firestoreUnavailable
         case invalidSnapshot
+        case invalidDrivePageToken
         case requestFailed(Int)
         case sidecarPersistenceFailed(String)
 
@@ -2452,6 +2480,8 @@ final class LocalAccountController: NSObject, ObservableObject {
                 return "Firestore is unavailable in this build."
             case .invalidSnapshot:
                 return "The cloud snapshot is invalid."
+            case .invalidDrivePageToken:
+                return "Google Drive returned a repeated page token."
             case .requestFailed(let status):
                 return "Google Drive returned HTTP \(status)."
             case .sidecarPersistenceFailed(let bookId):

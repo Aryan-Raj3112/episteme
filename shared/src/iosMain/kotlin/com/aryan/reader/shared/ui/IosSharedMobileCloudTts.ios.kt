@@ -16,6 +16,10 @@ import com.aryan.reader.shared.ReaderCloudTtsState
 import com.aryan.reader.shared.ReaderTtsCacheSummary
 import com.aryan.reader.shared.ReaderTtsChunk
 import com.aryan.reader.shared.ReaderTtsProgress
+import com.aryan.reader.shared.LocalTtsInterruptionAction
+import com.aryan.reader.shared.LocalTtsInterruptionEvent
+import com.aryan.reader.shared.LocalTtsInterruptionState
+import com.aryan.reader.shared.reduce
 import com.aryan.reader.shared.sha256
 import com.aryan.reader.shared.ios.IosTtsAudioInterruption
 import com.aryan.reader.shared.ios.IosTtsAudioInterruptionMonitor
@@ -60,6 +64,8 @@ import platform.Foundation.NSData
 import platform.Foundation.NSDate
 import platform.Foundation.NSFileManager
 import platform.Foundation.NSCachesDirectory
+import platform.Foundation.NSFileModificationDate
+import platform.Foundation.NSFileSize
 import platform.Foundation.NSRange
 import platform.Foundation.NSSearchPathForDirectoriesInDomains
 import platform.Foundation.NSString
@@ -74,6 +80,7 @@ import platform.Foundation.NSUTF8StringEncoding
 import platform.Foundation.create
 import platform.Foundation.dataWithContentsOfFile
 import platform.Foundation.dataWithLength
+import platform.Foundation.timeIntervalSince1970
 import platform.Foundation.writeToFile
 import platform.darwin.NSObject
 
@@ -93,8 +100,8 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
     private val cacheRoot: String = iosCloudTtsCacheRoot()
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
     private val audioDelegate = IosCloudAudioDelegate(
-        onFinished = { success -> onAudioFinished(success) },
-        onDecodeError = { onAudioDecodeError() },
+        onFinished = { callbackPlayer, success -> onAudioFinished(callbackPlayer, success) },
+        onDecodeError = { callbackPlayer -> onAudioDecodeError(callbackPlayer) },
     )
     private val interruptionMonitor = IosTtsAudioInterruptionMonitor(::handleAudioInterruption)
 
@@ -113,6 +120,7 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
     private var currentChunkIndex = -1
     private var sessionId = 0L
     private var wantsPlayback = true
+    private var interruptionState = LocalTtsInterruptionState()
     private var playbackContinuation: CompletableDeferred<Boolean>? = null
     private var player: AVAudioPlayer? = null
     private var playJob: Job? = null
@@ -209,6 +217,12 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
 
     override fun pause() {
         if (!hasActiveSession()) return
+        interruptionState = LocalTtsInterruptionState()
+        pauseInternal()
+    }
+
+    private fun pauseInternal() {
+        if (!hasActiveSession()) return
         wantsPlayback = false
         player?.pause()
         state = state.copy(isPlaying = false, isPaused = true, isLoading = state.isLoading)
@@ -216,6 +230,13 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
 
     override fun resume() {
         if (!hasActiveSession()) return
+        interruptionState = LocalTtsInterruptionState()
+        resumeInternal()
+    }
+
+    private fun resumeInternal() {
+        if (!hasActiveSession()) return
+        ensureAudioSession()
         wantsPlayback = true
         player?.play()
         state = state.copy(isPlaying = player != null, isPaused = player == null && !state.isLoading)
@@ -239,16 +260,19 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
     }
 
     override fun clearCache() {
+        stop()
         scope.launch(Dispatchers.Default) {
-            if (fileManager.fileExistsAtPath(cacheRoot)) {
-                fileManager.removeItemAtPath(cacheRoot, error = null)
+            generationMutex.withLock {
+                if (fileManager.fileExistsAtPath(cacheRoot)) {
+                    fileManager.removeItemAtPath(cacheRoot, error = null)
+                }
+                fileManager.createDirectoryAtPath(
+                    cacheRoot,
+                    withIntermediateDirectories = true,
+                    attributes = null,
+                    error = null,
+                )
             }
-            fileManager.createDirectoryAtPath(
-                cacheRoot,
-                withIntermediateDirectories = true,
-                attributes = null,
-                error = null,
-            )
             refreshCacheSummary()
         }
     }
@@ -263,6 +287,7 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
         playJob = null
         playbackContinuation?.cancel()
         playbackContinuation = null
+        interruptionState = LocalTtsInterruptionState()
         player?.stop()
         player = null
         chunks = emptyList()
@@ -369,7 +394,10 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
             return null
         }
         val wav = buildWav(bytes)
-        withContext(Dispatchers.Default) { writeFileAtomically(file, wav) }
+        withContext(Dispatchers.Default) {
+            writeFileAtomically(file, wav)
+            pruneCacheIfNeeded()
+        }
         refreshCacheSummary()
         return wav
     }
@@ -408,14 +436,17 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
         }
     }
 
-    private fun onAudioFinished(success: Boolean) {
+    private fun onAudioFinished(callbackPlayer: AVAudioPlayer, success: Boolean) {
+        if (player !== callbackPlayer) return
         val continuation = playbackContinuation ?: return
         scope.launch {
+            if (player !== callbackPlayer) return@launch
             if (continuation.isActive) continuation.complete(success)
         }
     }
 
-    private fun onAudioDecodeError() {
+    private fun onAudioDecodeError(callbackPlayer: AVAudioPlayer) {
+        if (player !== callbackPlayer) return
         playbackContinuation?.let { continuation ->
             if (continuation.isActive) continuation.complete(false)
         }
@@ -423,16 +454,24 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
     }
 
     private fun handleAudioInterruption(interruption: IosTtsAudioInterruption) {
-        when (interruption) {
-            IosTtsAudioInterruption.Began -> {
-                if (state.isPlaying) pause()
-            }
-            is IosTtsAudioInterruption.Ended -> {
-                if (interruption.systemAllowsResume && state.isPaused) resume()
-            }
-            IosTtsAudioInterruption.OutputBecameUnavailable -> {
-                if (hasActiveSession()) stop()
-            }
+        val event = when (interruption) {
+            IosTtsAudioInterruption.Began -> LocalTtsInterruptionEvent.Began(
+                playbackWasActive = state.isPlaying || state.isLoading
+            )
+            is IosTtsAudioInterruption.Ended -> LocalTtsInterruptionEvent.Ended(
+                systemAllowsResume = interruption.systemAllowsResume
+            )
+            IosTtsAudioInterruption.OutputBecameUnavailable ->
+                LocalTtsInterruptionEvent.OutputBecameNoisy(
+                    playbackWasActive = state.isPlaying || state.isLoading
+                )
+        }
+        val transition = interruptionState.reduce(event)
+        interruptionState = transition.state
+        when (transition.action) {
+            LocalTtsInterruptionAction.NONE -> Unit
+            LocalTtsInterruptionAction.PAUSE -> pauseInternal()
+            LocalTtsInterruptionAction.RESUME -> resumeInternal()
         }
     }
 
@@ -442,8 +481,10 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
         playJob?.cancel()
         playJob = null
         playbackContinuation?.cancel()
+        playbackContinuation = null
         player?.stop()
         player = null
+        interruptionState = LocalTtsInterruptionState()
         currentChunkIndex = target.coerceIn(0, chunks.lastIndex)
         val requestedSession = sessionId
         wantsPlayback = true
@@ -596,6 +637,7 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
         )
         player?.stop()
         playbackContinuation?.let { if (it.isActive) it.complete(false) }
+        closeWebSocket()
     }
 
     private fun startGateError(): String? {
@@ -701,6 +743,37 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
         fileManager.moveItemAtPath(temp, toPath = path, error = null)
     }
 
+    private fun pruneCacheIfNeeded() {
+        val files = mutableListOf<CacheFile>()
+        fun collect(path: String) {
+            fileManager.contentsOfDirectoryAtPath(path, error = null).orEmpty()
+                .mapNotNull { it as? String }
+                .forEach { name ->
+                    val child = "$path/$name"
+                    if (name.endsWith(".wav", ignoreCase = true)) {
+                        val attributes = fileManager.attributesOfItemAtPath(child, error = null).orEmpty()
+                        files += CacheFile(
+                            path = child,
+                            bytes = (attributes[NSFileSize] as? Number)?.toLong().orZero(),
+                            modifiedAt = (attributes[NSFileModificationDate] as? NSDate)?.timeIntervalSince1970 ?: 0.0,
+                        )
+                    } else if (fileManager.fileExistsAtPath(child)) {
+                        collect(child)
+                    }
+                }
+        }
+        collect(cacheRoot)
+        var totalBytes = files.sumOf { it.bytes }
+        files.sortWith(compareBy<CacheFile> { it.modifiedAt }.thenBy { it.path })
+        while (files.size > MAX_CACHE_FILES || totalBytes > MAX_CACHE_BYTES) {
+            if (files.isEmpty()) break
+            val evicted = files.removeAt(0)
+            if (fileManager.removeItemAtPath(evicted.path, error = null)) {
+                totalBytes = (totalBytes - evicted.bytes).coerceAtLeast(0L)
+            }
+        }
+    }
+
     private fun NSData.toByteArray(): ByteArray {
         val output = ByteArray(length.toInt())
         if (output.isNotEmpty()) {
@@ -785,6 +858,9 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
         private var size = 0
         fun append(value: ByteArray) {
             if (value.isEmpty()) return
+            if (value.size > MAX_AUDIO_PCM_BYTES - size) {
+                throw IllegalStateException("Cloud TTS audio chunk is too large")
+            }
             chunks += value
             size += value.size
         }
@@ -805,21 +881,30 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
     private companion object {
         const val WAV_HEADER_SIZE = 44
         const val CLOUD_TTS_TIMEOUT_MILLIS = 30_000L
+        const val MAX_AUDIO_PCM_BYTES = 32 * 1024 * 1024
+        const val MAX_CACHE_FILES = 512
+        const val MAX_CACHE_BYTES = 256L * 1024L * 1024L
     }
+
+    private data class CacheFile(
+        val path: String,
+        val bytes: Long,
+        val modifiedAt: Double,
+    )
 }
 
 private class IosCloudAudioDelegate(
-    private val onFinished: (Boolean) -> Unit,
-    private val onDecodeError: () -> Unit,
+    private val onFinished: (AVAudioPlayer, Boolean) -> Unit,
+    private val onDecodeError: (AVAudioPlayer) -> Unit,
 ) : NSObject(), AVAudioPlayerDelegateProtocol {
     @ObjCSignatureOverride
     override fun audioPlayerDidFinishPlaying(player: AVAudioPlayer, successfully: Boolean) {
-        onFinished(successfully)
+        onFinished(player, successfully)
     }
 
     @ObjCSignatureOverride
     override fun audioPlayerDecodeErrorDidOccur(player: AVAudioPlayer, error: platform.Foundation.NSError?) {
-        onDecodeError()
+        onDecodeError(player)
     }
 }
 

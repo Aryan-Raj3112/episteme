@@ -2,6 +2,7 @@ package com.aryan.reader.shared.ios
 
 import com.aryan.reader.shared.SharedDiagnosticLogBuffer
 import com.aryan.reader.shared.currentTimestamp
+import com.aryan.reader.shared.pdf.IosPdfOcrMetrics
 import platform.Foundation.NSLock
 
 /**
@@ -27,11 +28,30 @@ internal object IosDiagnosticLogStore {
 
     fun snapshot(): List<String> {
         lock.lock()
-        return try {
-            buffer.snapshot()
+        val entries = try {
+            buffer.snapshot().toMutableList()
         } finally {
             lock.unlock()
         }
+        val pdf = IosPdfPerformanceMetrics.snapshot()
+        val ocr = IosPdfOcrMetrics.snapshot()
+        if (pdf.hasData()) {
+            entries += "${currentTimestamp()} [PdfPerformance] " +
+                "interactions=${pdf.interactionCount} cameraUpdates=${pdf.cameraUpdateCount} " +
+                "flings=${pdf.flingCount} frames=${pdf.frameCount} slowFrames=${pdf.slowFrameCount} " +
+                "lastFrameMs=${pdf.lastFrameDurationMillis} maxFrameMs=${pdf.maxFrameDurationMillis} " +
+                "renders=${pdf.renderCount} tileRenders=${pdf.tileRenderCount} " +
+                "slowRenders=${pdf.slowRenderCount} " +
+                "lastRender=${pdf.lastRenderWidthPx}x${pdf.lastRenderHeightPx} " +
+                "lastRenderMs=${pdf.lastRenderDurationMillis} maxRenderMs=${pdf.maxRenderDurationMillis} " +
+                "lastRenderBytes=${pdf.lastRenderBytes} peakRenderBytes=${pdf.peakRenderBytes}"
+        }
+        if (ocr.recognitionCount > 0 || ocr.cacheHits > 0) {
+            entries += "${currentTimestamp()} [PdfOcr] cacheHits=${ocr.cacheHits} " +
+                "recognitions=${ocr.recognitionCount} lastRecognitionMs=${ocr.lastRecognitionDurationMillis} " +
+                "maxRecognitionMs=${ocr.maxRecognitionDurationMillis}"
+        }
+        return entries
     }
 
     fun clear() {
@@ -41,5 +61,10 @@ internal object IosDiagnosticLogStore {
         } finally {
             lock.unlock()
         }
+        IosPdfPerformanceMetrics.reset()
+        IosPdfOcrMetrics.reset()
     }
+
+    private fun IosPdfPerformanceSnapshot.hasData(): Boolean =
+        interactionCount > 0 || cameraUpdateCount > 0 || flingCount > 0 || frameCount > 0 || renderCount > 0
 }

@@ -35,6 +35,7 @@ import platform.CoreGraphics.CGImageRef
 import platform.CoreGraphics.kCGBitmapByteOrder32Little
 import platform.Foundation.NSFileManager
 import platform.Foundation.NSFileModificationDate
+import platform.Foundation.NSLock
 import platform.Foundation.NSFileSize
 import platform.Foundation.NSNumber
 import platform.Foundation.NSURL
@@ -62,11 +63,7 @@ internal suspend fun recognizeIosPdfPageWords(
     recognitionLanguages: List<String>,
 ): List<IosPdfOcrWord> = withContext(Dispatchers.Default) {
     val rawPath = path?.trim()?.takeIf { it.isNotBlank() } ?: return@withContext emptyList()
-    val resolvedPath = if (rawPath.startsWith("file://")) {
-        NSURL.URLWithString(rawPath)?.path ?: rawPath.removePrefix("file://")
-    } else {
-        rawPath
-    }
+    val resolvedPath = resolveIosPdfPath(rawPath)
     if (!NSFileManager.defaultManager.fileExistsAtPath(resolvedPath)) return@withContext emptyList()
 
     IosPdfiumRuntime.mutex.withLock {
@@ -130,9 +127,10 @@ internal object IosPdfOcrPageCache {
         languages: List<String>,
     ): List<IosPdfOcrWord> {
         val rawPath = path?.trim()?.takeIf { it.isNotBlank() } ?: return emptyList()
+        val resolvedPath = resolveIosPdfPath(rawPath)
         val key = IosPdfOcrCacheKey(
-            path = rawPath,
-            fileRevision = iosPdfFileRevision(rawPath),
+            path = resolvedPath,
+            fileRevision = iosPdfFileRevision(resolvedPath),
             pageIndex = pageIndex,
             passwordHash = password?.hashCode() ?: 0,
             languages = languages.distinct(),
@@ -144,7 +142,7 @@ internal object IosPdfOcrPageCache {
             }
         }
         val startedAt = kotlin.time.TimeSource.Monotonic.markNow()
-        val recognized = recognizeIosPdfPageWords(rawPath, pageIndex, password, languages)
+        val recognized = recognizeIosPdfPageWords(resolvedPath, pageIndex, password, languages)
         IosPdfOcrMetrics.recordRecognition(startedAt.elapsedNow().inWholeMilliseconds)
         mutex.withLock {
             entries[key] = recognized
@@ -158,32 +156,61 @@ internal object IosPdfOcrPageCache {
 
 /** Lightweight diagnostics for simulator/device profiling without per-frame log spam. */
 internal object IosPdfOcrMetrics {
-    var cacheHits: Int = 0
-        private set
-    var recognitionCount: Int = 0
-        private set
-    var lastRecognitionDurationMillis: Long = 0L
-        private set
-    var maxRecognitionDurationMillis: Long = 0L
-        private set
+    private val lock = NSLock()
+    private var cacheHitsValue: Int = 0
+    private var recognitionCountValue: Int = 0
+    private var lastRecognitionDurationMillisValue: Long = 0L
+    private var maxRecognitionDurationMillisValue: Long = 0L
 
-    fun recordRecognition(durationMillis: Long) {
-        recognitionCount += 1
-        lastRecognitionDurationMillis = durationMillis.coerceAtLeast(0L)
-        maxRecognitionDurationMillis = maxOf(maxRecognitionDurationMillis, lastRecognitionDurationMillis)
+    val cacheHits: Int
+        get() = lock.withLock { cacheHitsValue }
+    val recognitionCount: Int
+        get() = lock.withLock { recognitionCountValue }
+    val lastRecognitionDurationMillis: Long
+        get() = lock.withLock { lastRecognitionDurationMillisValue }
+    val maxRecognitionDurationMillis: Long
+        get() = lock.withLock { maxRecognitionDurationMillisValue }
+
+    fun recordRecognition(durationMillis: Long) = lock.withLock {
+        recognitionCountValue += 1
+        lastRecognitionDurationMillisValue = durationMillis.coerceAtLeast(0L)
+        maxRecognitionDurationMillisValue = maxOf(maxRecognitionDurationMillisValue, lastRecognitionDurationMillisValue)
     }
 
-    fun recordCacheHit() {
-        cacheHits += 1
+    fun recordCacheHit() = lock.withLock { cacheHitsValue += 1 }
+
+    fun snapshot(): IosPdfOcrMetricsSnapshot = lock.withLock {
+        IosPdfOcrMetricsSnapshot(
+            cacheHits = cacheHitsValue,
+            recognitionCount = recognitionCountValue,
+            lastRecognitionDurationMillis = lastRecognitionDurationMillisValue,
+            maxRecognitionDurationMillis = maxRecognitionDurationMillisValue,
+        )
     }
 
-    fun reset() {
-        cacheHits = 0
-        recognitionCount = 0
-        lastRecognitionDurationMillis = 0L
-        maxRecognitionDurationMillis = 0L
+    fun reset() = lock.withLock {
+        cacheHitsValue = 0
+        recognitionCountValue = 0
+        lastRecognitionDurationMillisValue = 0L
+        maxRecognitionDurationMillisValue = 0L
+    }
+
+    private inline fun <T> NSLock.withLock(block: () -> T): T {
+        lock()
+        return try {
+            block()
+        } finally {
+            unlock()
+        }
     }
 }
+
+internal data class IosPdfOcrMetricsSnapshot(
+    val cacheHits: Int,
+    val recognitionCount: Int,
+    val lastRecognitionDurationMillis: Long,
+    val maxRecognitionDurationMillis: Long,
+)
 
 private fun ByteArray.toVisionImage(width: Int, height: Int, stride: Int): CGImageRef? {
     val uBytes = toUByteArray()
@@ -264,8 +291,13 @@ internal fun persistIosPdfOcrLanguage(language: SharedPdfOcrLanguage) {
     IosPdfOcrLanguagePreferences.setLanguage(language)
 }
 
+private fun resolveIosPdfPath(path: String): String {
+    if (!path.startsWith("file://")) return path
+    return NSURL.URLWithString(path)?.path ?: path.removePrefix("file://")
+}
+
 private fun iosPdfFileRevision(path: String): String {
-    val attributes = NSFileManager.defaultManager.attributesOfItemAtPath(path, error = null)
+    val attributes = NSFileManager.defaultManager.attributesOfItemAtPath(resolveIosPdfPath(path), error = null)
     val size = (attributes?.get(NSFileSize) as? NSNumber)?.longLongValue ?: 0L
     val modified = attributes?.get(NSFileModificationDate)?.toString().orEmpty()
     return "$size:$modified"
