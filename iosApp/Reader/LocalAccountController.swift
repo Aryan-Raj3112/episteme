@@ -1087,6 +1087,17 @@ final class LocalAccountController: NSObject, ObservableObject {
 #endif
     }
 
+    /// The stable installation identifier is also needed by the settings
+    /// bridge when Firebase modules are unavailable in a target.
+    private func cloudSyncDeviceID() -> String {
+        if let existing = UserDefaults.standard.string(forKey: Self.syncDeviceIDKey) {
+            return existing
+        }
+        let value = "ios-\(UUID().uuidString.lowercased())"
+        UserDefaults.standard.set(value, forKey: Self.syncDeviceIDKey)
+        return value
+    }
+
 #if canImport(FirebaseFirestore) && canImport(FirebaseAuth)
     private func syncFirestoreBookMetadata(localJSON: String) async throws -> String {
         guard let uid = Auth.auth().currentUser?.uid else {
@@ -1557,15 +1568,6 @@ final class LocalAccountController: NSObject, ObservableObject {
 
     private func optionalInt(_ value: Any?) -> Int? {
         (value as? NSNumber)?.intValue
-    }
-
-    private func cloudSyncDeviceID() -> String {
-        if let existing = UserDefaults.standard.string(forKey: Self.syncDeviceIDKey) {
-            return existing
-        }
-        let value = "ios-\(UUID().uuidString.lowercased())"
-        UserDefaults.standard.set(value, forKey: Self.syncDeviceIDKey)
-        return value
     }
 
     private func registerCurrentDevice(uid: String) async throws {
