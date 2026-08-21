@@ -3,6 +3,11 @@
 package com.aryan.reader.shared.ui
 
 import com.aryan.reader.shared.BookItem
+import com.aryan.reader.shared.pdf.IosPdfOcrLanguagePreferences
+import com.aryan.reader.shared.pdf.IosPdfOcrTextPage
+import com.aryan.reader.shared.pdf.boundsForRange
+import com.aryan.reader.shared.pdf.buildIosPdfOcrTextPage
+import com.aryan.reader.shared.pdf.IosPdfOcrPageCache
 import com.aryan.reader.shared.pdf.SharedPdfSearchResult
 import com.aryan.reader.shared.pdf.IosPdfiumRuntime
 import com.aryan.reader.shared.pdfium.c.FPDF_CloseDocument
@@ -41,6 +46,7 @@ private data class IosPdfSearchCacheKey(
 
 private var iosPdfSearchCacheKey: IosPdfSearchCacheKey? = null
 private var iosPdfSearchIndex: com.aryan.reader.shared.pdf.SharedPdfSearchIndex? = null
+private var iosPdfSearchOcrPages: Map<Int, IosPdfOcrTextPage> = emptyMap()
 
 internal actual suspend fun searchSharedMobilePdf(
     book: BookItem,
@@ -52,67 +58,98 @@ internal actual suspend fun searchSharedMobilePdf(
         return@withContext emptyList()
     }
 
-    IosPdfiumRuntime.mutex.withLock {
+    val cacheKey = IosPdfSearchCacheKey(
+        path = resolvedPath,
+        fileSize = book.fileSize,
+        modifiedAt = book.fileContentModifiedTimestamp,
+        passwordHash = password?.hashCode() ?: 0,
+    )
+    if (iosPdfSearchCacheKey == cacheKey) {
+        val cachedResults = iosPdfSearchIndex?.search(query).orEmpty()
+        return@withContext cachedResults.withIosPdfOcrBounds(iosPdfSearchOcrPages)
+    }
+
+    val indexed = IosPdfiumRuntime.mutex.withLock {
         IosPdfiumRuntime.ensureInitialized()
-        val cacheKey = IosPdfSearchCacheKey(
-            path = resolvedPath,
-            fileSize = book.fileSize,
-            modifiedAt = book.fileContentModifiedTimestamp,
-            passwordHash = password?.hashCode() ?: 0,
-        )
-        if (iosPdfSearchCacheKey == cacheKey) {
-            iosPdfSearchIndex?.let { return@withLock it.search(query) }
-        }
-
-        val document = FPDF_LoadDocument(resolvedPath, password) ?: return@withLock emptyList()
+        val document = FPDF_LoadDocument(resolvedPath, password) ?: return@withLock null
         try {
-        val pageCount = FPDF_GetPageCount(document)
-        val index = com.aryan.reader.shared.pdf.SharedPdfSearchIndex(pageCount)
+            val pageCount = FPDF_GetPageCount(document)
+            val index = com.aryan.reader.shared.pdf.SharedPdfSearchIndex(pageCount)
+            val ocrCandidates = mutableListOf<Int>()
 
-        for (pageIndex in 0 until pageCount) {
-            currentCoroutineContext().ensureActive()
-            val page = FPDF_LoadPage(document, pageIndex)
-            if (page == null) {
-                index.putPage(pageIndex, "")
-                continue
-            }
-            try {
-                val textPage = FPDFText_LoadPage(page)
-                if (textPage == null) {
+            for (pageIndex in 0 until pageCount) {
+                currentCoroutineContext().ensureActive()
+                val page = FPDF_LoadPage(document, pageIndex)
+                if (page == null) {
                     index.putPage(pageIndex, "")
+                    ocrCandidates += pageIndex
                     continue
                 }
                 try {
-                    val charCount = FPDFText_CountChars(textPage)
-                    if (charCount > 0) {
-                        memScoped {
-                            val buffer = allocArray<UShortVar>(charCount + 1)
-                            val written = FPDFText_GetText(textPage, 0, charCount, buffer)
-                            if (written > 0) {
-                                val chars = CharArray(written) { index ->
-                                    buffer[index].toInt().toChar()
-                                }
-                                index.putPage(pageIndex, chars.concatToString().trimEnd('\u0000'))
-                            } else {
-                                index.putPage(pageIndex, "")
-                            }
-                        }
-                    } else {
+                    val textPage = FPDFText_LoadPage(page)
+                    if (textPage == null) {
                         index.putPage(pageIndex, "")
+                        ocrCandidates += pageIndex
+                        continue
+                    }
+                    try {
+                        val charCount = FPDFText_CountChars(textPage)
+                        val pageText = if (charCount > 0) {
+                            memScoped {
+                                val buffer = allocArray<UShortVar>(charCount + 1)
+                                val written = FPDFText_GetText(textPage, 0, charCount, buffer)
+                                if (written > 0) {
+                                    CharArray(written) { index -> buffer[index].toInt().toChar() }
+                                        .concatToString()
+                                        .trimEnd('\u0000')
+                                } else {
+                                    ""
+                                }
+                            }
+                        } else ""
+                        index.putPage(pageIndex, pageText)
+                        if (pageText.isBlank()) ocrCandidates += pageIndex
+                    } finally {
+                        FPDFText_ClosePage(textPage)
                     }
                 } finally {
-                    FPDFText_ClosePage(textPage)
+                    FPDF_ClosePage(page)
                 }
-            } finally {
-                FPDF_ClosePage(page)
             }
-        }
-
-            iosPdfSearchCacheKey = cacheKey
-            iosPdfSearchIndex = index
-            index.search(query)
+            index to ocrCandidates
         } finally {
             FPDF_CloseDocument(document)
         }
     }
+    val (index, ocrCandidates) = indexed ?: return@withContext emptyList()
+
+    val ocrPages = buildMap {
+        ocrCandidates.forEach { pageIndex ->
+            currentCoroutineContext().ensureActive()
+            val words = IosPdfOcrPageCache.getOrRecognize(
+                resolvedPath,
+                pageIndex,
+                password,
+                IosPdfOcrLanguagePreferences.languages,
+            )
+            val page = buildIosPdfOcrTextPage(words)
+            if (page.text.isNotBlank()) {
+                index.putPage(pageIndex, page.text)
+                put(pageIndex, page)
+            }
+        }
+    }
+    iosPdfSearchCacheKey = cacheKey
+    iosPdfSearchIndex = index
+    iosPdfSearchOcrPages = ocrPages
+    index.search(query).withIosPdfOcrBounds(ocrPages)
+}
+
+private fun List<SharedPdfSearchResult>.withIosPdfOcrBounds(
+    ocrPages: Map<Int, IosPdfOcrTextPage>,
+): List<SharedPdfSearchResult> = map { result ->
+    val page = ocrPages[result.pageIndex]
+    if (page == null) result else result.copy(
+        boundsList = page.boundsForRange(result.matchIndex, result.matchLength),
+    )
 }

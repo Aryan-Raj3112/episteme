@@ -28,12 +28,15 @@ import com.aryan.reader.shared.pdfium.c.FPDF_ANNOT_TEXT
 import com.aryan.reader.shared.pdfium.c.FPDF_ANNOT_UNDERLINE
 import com.aryan.reader.shared.pdfium.c.FPDF_CloseDocument
 import com.aryan.reader.shared.pdfium.c.FPDF_ClosePage
+import com.aryan.reader.shared.pdfium.c.FPDF_CreateNewDocument
 import com.aryan.reader.shared.pdfium.c.FPDF_FILEWRITE
 import com.aryan.reader.shared.pdfium.c.FPDF_GetPageCount
 import com.aryan.reader.shared.pdfium.c.FPDF_GetPageHeightF
 import com.aryan.reader.shared.pdfium.c.FPDF_GetPageWidthF
 import com.aryan.reader.shared.pdfium.c.FPDF_LoadDocument
 import com.aryan.reader.shared.pdfium.c.FPDF_LoadPage
+import com.aryan.reader.shared.pdfium.c.FPDFPage_New
+import com.aryan.reader.shared.pdfium.c.FPDF_ImportPagesByIndex
 import com.aryan.reader.shared.pdfium.c.FPDF_NO_INCREMENTAL
 import com.aryan.reader.shared.pdfium.c.FPDF_SaveAsCopy
 import com.aryan.reader.shared.pdfium.c.FS_POINTF
@@ -67,9 +70,48 @@ internal suspend fun exportIosPdfAnnotations(
 ): Boolean = withContext(Dispatchers.Default) {
     IosPdfiumRuntime.mutex.withLock {
         IosPdfiumRuntime.ensureInitialized()
-        val document = FPDF_LoadDocument(sourcePath, password) ?: return@withLock false
+        val sourceDocument = FPDF_LoadDocument(sourcePath, password) ?: return@withLock false
+        var destinationDocument: com.aryan.reader.shared.pdfium.c.FPDF_DOCUMENT? = null
         try {
-            val pageCount = FPDF_GetPageCount(document).coerceAtLeast(0)
+            val pageCount = FPDF_GetPageCount(sourceDocument).coerceAtLeast(0)
+            val virtualLayout = buildSharedPdfVirtualPageLayout(
+                pageCount = pageCount,
+                insertions = snapshot.state.blankPageInsertions,
+            )
+            val document = if (snapshot.state.blankPageInsertions.isEmpty()) {
+                sourceDocument
+            } else {
+                val importedDocument = FPDF_CreateNewDocument() ?: return@withLock false
+                destinationDocument = importedDocument
+                var imported = true
+                virtualLayout.forEachIndexed { outputIndex, virtualPage ->
+                    if (!imported) return@forEachIndexed
+                    when (virtualPage) {
+                        is SharedPdfVirtualPage.PdfPage -> {
+                            val sourceIndex = intArrayOf(virtualPage.pdfIndex)
+                            imported = FPDF_ImportPagesByIndex(
+                                importedDocument,
+                                sourceDocument,
+                                sourceIndex.usePinned { it.addressOf(0) },
+                                1u,
+                                outputIndex,
+                            ) != 0
+                        }
+                        is SharedPdfVirtualPage.BlankPage -> {
+                            val page = FPDFPage_New(
+                                importedDocument,
+                                outputIndex,
+                                virtualPage.insertion.widthPx.toDouble().coerceAtLeast(1.0),
+                                virtualPage.insertion.heightPx.toDouble().coerceAtLeast(1.0),
+                            )
+                            page?.let { FPDF_ClosePage(it) }
+                            imported = page != null
+                        }
+                    }
+                }
+                if (!imported) return@withLock false
+                importedDocument
+            }
             val payload = SharedPdfAnnotationExportMapper.build(snapshot.state.annotations)
             val inkByPage = payload.inkAnnotations.groupBy { it.pageIndex }
             val highlightsByPage = payload.highlightAnnotations.groupBy { it.pageIndex }
@@ -80,8 +122,9 @@ internal suspend fun exportIosPdfAnnotations(
                 .filter { it.visibleText.any { char -> !char.isWhitespace() } }
                 .mapTo(mutableSetOf(), SharedPdfRichPageLayout::pageIndex)
             var annotationsWritten = true
+            val outputPageCount = FPDF_GetPageCount(document).coerceAtLeast(0)
             (inkByPage.keys + highlightsByPage.keys + textPageIndices + richTextPageIndices).forEach { pageIndex ->
-                if (pageIndex !in 0 until pageCount) {
+                if (pageIndex !in 0 until outputPageCount) {
                     annotationsWritten = false
                     return@forEach
                 }
@@ -119,7 +162,8 @@ internal suspend fun exportIosPdfAnnotations(
             }
             annotationsWritten && saveIosPdfDocument(document, destinationPath)
         } finally {
-            FPDF_CloseDocument(document)
+            destinationDocument?.let { FPDF_CloseDocument(it) } ?: FPDF_CloseDocument(sourceDocument)
+            if (destinationDocument != null) FPDF_CloseDocument(sourceDocument)
         }
     }
 }
