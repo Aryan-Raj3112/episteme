@@ -55,13 +55,16 @@ import kotlinx.cinterop.toKString
 import kotlinx.cinterop.value
 import kotlinx.cinterop.CPointerVarOf
 import kotlinx.cinterop.IntVar
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.withLock
 import platform.Foundation.NSFileManager
+import platform.Foundation.NSLock
 import platform.Foundation.NSURL
 
 /**
  * Lifecycle-managed handle to a PDF document together with the loaded text
- * page for one specific page. The owner is responsible for calling [close]
- * exactly once.
+ * page for one specific page. Calling [close] is idempotent so disposal can safely race the
+ * final selection or link operation.
  *
  * All PDF coordinates returned by this class are in PDF user space (origin
  * bottom-left), exactly as PDFium emits them. The Composable layer is
@@ -76,15 +79,26 @@ internal class IosPdfTextPage internal constructor(
     private val pageHeight: Float
 ) : PdfTextPageSession, AutoCloseable {
 
-    override val pageCharCount: Int by lazy {
-        val page = textPage ?: return@lazy 0
-        FPDFText_CountChars(page)
-    }
+    /**
+     * PDFium page/text handles are not safe to use concurrently with each other or with
+     * closing. Compose can ask for selection geometry while a render coroutine is loading a
+     * neighboring page, and disposal can race the last pointer event. Keep every operation,
+     * including close, behind both the process-wide PDFium gate and this handle's lifetime lock.
+     */
+    private val handleLock = NSLock()
+    private var closed = false
+    private var cachedPageCharCount: Int? = null
 
-    override fun charAt(index: Int): Char {
-        val page = textPage ?: return 0.toChar()
-        if (index < 0) return 0.toChar()
-        return FPDFText_GetUnicode(page, index).toInt().toChar()
+    override val pageCharCount: Int
+        get() = withLockedHandle(0) {
+            val page = textPage ?: return@withLockedHandle 0
+            cachedPageCharCount ?: FPDFText_CountChars(page).also { cachedPageCharCount = it }
+        }
+
+    override fun charAt(index: Int): Char = withLockedHandle(0.toChar()) {
+        val page = textPage ?: return@withLockedHandle 0.toChar()
+        if (index < 0) return@withLockedHandle 0.toChar()
+        FPDFText_GetUnicode(page, index).toInt().toChar()
     }
 
     override fun charIndexAtNormalized(
@@ -92,24 +106,24 @@ internal class IosPdfTextPage internal constructor(
         normY: Float,
         xTolerance: Double,
         yTolerance: Double
-    ): Int {
-        val page = textPage ?: return -1
+    ): Int = withLockedHandle(-1) {
+        val page = textPage ?: return@withLockedHandle -1
         val pdfX = (normX * pageWidth).toDouble()
         // Normalised Y has top-left origin, pdfium expects bottom-left origin.
         val pdfY = (pageHeight - normY * pageHeight).toDouble()
-        return FPDFText_GetCharIndexAtPos(page, pdfX, pdfY, xTolerance, yTolerance)
+        FPDFText_GetCharIndexAtPos(page, pdfX, pdfY, xTolerance, yTolerance)
     }
 
-    override fun linkAtNormalized(normX: Float, normY: Float): PdfLinkTarget? {
-        val doc = document ?: return null
-        val pagePtr = page ?: return null
+    override fun linkAtNormalized(normX: Float, normY: Float): PdfLinkTarget? = withLockedHandle(null) {
+        val document = document ?: return@withLockedHandle null
+        val page = page ?: return@withLockedHandle null
         val pdfX = (normX * pageWidth).toDouble()
         val pdfY = (pageHeight - normY * pageHeight).toDouble()
-        val link = FPDFLink_GetLinkAtPoint(pagePtr, pdfX, pdfY)
+        val link = FPDFLink_GetLinkAtPoint(page, pdfX, pdfY)
         if (link == null) {
             val webTarget = webLinkAtPdfPoint(pdfX, pdfY)
             pdfLinkLog { "native-hit annotation=false pdf=$pdfX,$pdfY webTarget=$webTarget" }
-            return webTarget
+            return@withLockedHandle webTarget
         }
         // Try the action first (URI / GoTo / RemoteGoTo / Launch).
         val action = FPDFLink_GetAction(link)
@@ -118,35 +132,36 @@ internal class IosPdfTextPage internal constructor(
             pdfLinkLog { "native-hit annotation=true pdf=$pdfX,$pdfY actionType=${type.toInt()}" }
             when (type.toInt()) {
                 PDFACTION_URI -> {
-                    val uri = readUriPath(doc, action)
-                    if (uri != null) return PdfLinkTarget.ExternalUrl(uri)
+                    val uri = readUriPath(document, action)
+                    if (uri != null) return@withLockedHandle PdfLinkTarget.ExternalUrl(uri)
                 }
                 PDFACTION_GOTO -> {
-                    val dest = FPDFAction_GetDest(doc, action) ?: return null
-                    val pageIndex = FPDFDest_GetDestPageIndex(doc, dest)
-                    if (pageIndex >= 0) return PdfLinkTarget.InternalPage(pageIndex)
+                    val dest = FPDFAction_GetDest(document, action) ?: return@withLockedHandle null
+                    val pageIndex = FPDFDest_GetDestPageIndex(document, dest)
+                    if (pageIndex >= 0) return@withLockedHandle PdfLinkTarget.InternalPage(pageIndex)
                 }
                 PDFACTION_REMOTEGOTO, PDFACTION_LAUNCH -> {
                     val path = readFilePath(action)
-                    if (path != null) return PdfLinkTarget.ExternalUrl(path)
+                    if (path != null) return@withLockedHandle PdfLinkTarget.ExternalUrl(path)
                 }
             }
         }
         // Fallback: link has a direct dest (no action).
-        val dest = FPDFLink_GetDest(doc, link) ?: return null
-        val pageIndex = FPDFDest_GetDestPageIndex(doc, dest)
-        if (pageIndex >= 0) return PdfLinkTarget.InternalPage(pageIndex)
-        return webLinkAtPdfPoint(pdfX, pdfY)
+        val dest = FPDFLink_GetDest(document, link) ?: return@withLockedHandle null
+        val pageIndex = FPDFDest_GetDestPageIndex(document, dest)
+        if (pageIndex >= 0) return@withLockedHandle PdfLinkTarget.InternalPage(pageIndex)
+        return@withLockedHandle webLinkAtPdfPoint(pdfX, pdfY)
     }
 
-    override fun linkBoundsNormalized(): List<PdfPageBounds> {
-        val pagePtr = page ?: return emptyList()
+    override fun linkBoundsNormalized(): List<PdfPageBounds> = withLockedHandle(emptyList()) {
+        val page = page ?: return@withLockedHandle emptyList()
+        val textPage = textPage ?: return@withLockedHandle emptyList()
         val result = mutableListOf<PdfPageBounds>()
         memScoped {
             val startPosition = alloc<IntVar>().also { it.value = 0 }
             val linkVar = alloc<FPDF_LINKVar>()
             val rect = alloc<FS_RECTF>()
-            while (FPDFLink_Enumerate(pagePtr, startPosition.ptr, linkVar.ptr) != 0) {
+            while (FPDFLink_Enumerate(page, startPosition.ptr, linkVar.ptr) != 0) {
                 val link = linkVar.value ?: continue
                 if (FPDFLink_GetAnnotRect(link, rect.ptr) != 0) {
                     result += pdfRectToNormalized(
@@ -158,29 +173,26 @@ internal class IosPdfTextPage internal constructor(
                 }
             }
         }
-        val text = textPage
-        if (text != null) {
-            val webLinks = FPDFLink_LoadWebLinks(text)
-            if (webLinks != null) try {
-                memScoped {
-                    val left = alloc<DoubleVar>()
-                    val top = alloc<DoubleVar>()
-                    val right = alloc<DoubleVar>()
-                    val bottom = alloc<DoubleVar>()
-                    for (linkIndex in 0 until FPDFLink_CountWebLinks(webLinks)) {
-                        for (rectIndex in 0 until FPDFLink_CountRects(webLinks, linkIndex)) {
-                            if (FPDFLink_GetRect(webLinks, linkIndex, rectIndex, left.ptr, top.ptr, right.ptr, bottom.ptr) != 0) {
-                                result += pdfRectToNormalized(left.value, top.value, right.value, bottom.value)
-                            }
+        val webLinks = FPDFLink_LoadWebLinks(textPage)
+        if (webLinks != null) try {
+            memScoped {
+                val left = alloc<DoubleVar>()
+                val top = alloc<DoubleVar>()
+                val right = alloc<DoubleVar>()
+                val bottom = alloc<DoubleVar>()
+                for (linkIndex in 0 until FPDFLink_CountWebLinks(webLinks)) {
+                    for (rectIndex in 0 until FPDFLink_CountRects(webLinks, linkIndex)) {
+                        if (FPDFLink_GetRect(webLinks, linkIndex, rectIndex, left.ptr, top.ptr, right.ptr, bottom.ptr) != 0) {
+                            result += pdfRectToNormalized(left.value, top.value, right.value, bottom.value)
                         }
                     }
                 }
-            } finally {
-                FPDFLink_CloseWebLinks(webLinks)
             }
+        } finally {
+            FPDFLink_CloseWebLinks(webLinks)
         }
         pdfLinkLog { "bounds annotation-and-web count=${result.size}" }
-        return result.distinct()
+        result.distinct()
     }
 
     private fun pdfRectToNormalized(left: Double, top: Double, right: Double, bottom: Double): PdfPageBounds {
@@ -262,9 +274,9 @@ internal class IosPdfTextPage internal constructor(
         }
     }
 
-    override fun charBoxNormalized(index: Int): PdfPageBounds? {
-        val page = textPage ?: return null
-        return memScoped {
+    override fun charBoxNormalized(index: Int): PdfPageBounds? = withLockedHandle(null) {
+        val page = textPage ?: return@withLockedHandle null
+        memScoped {
             val left = alloc<DoubleVar>()
             val right = alloc<DoubleVar>()
             val bottom = alloc<DoubleVar>()
@@ -293,40 +305,41 @@ internal class IosPdfTextPage internal constructor(
      * `textPageGetRectsForRanges` output. Returns normalised page coords with
      * top-left origin.
      */
-    override fun rectsForRangeNormalized(startIndex: Int, length: Int): List<PdfPageBounds> {
-        val page = textPage ?: return emptyList()
-        if (length <= 0) return emptyList()
-        val rectCount = FPDFText_CountRects(page, startIndex, length)
-        if (rectCount <= 0) return emptyList()
-        val result = ArrayList<PdfPageBounds>(rectCount)
-        memScoped {
-            val left = alloc<DoubleVar>()
-            val top = alloc<DoubleVar>()
-            val right = alloc<DoubleVar>()
-            val bottom = alloc<DoubleVar>()
-            for (rectIndex in 0 until rectCount) {
-                val ok = FPDFText_GetRect(page, rectIndex, left.ptr, top.ptr, right.ptr, bottom.ptr)
-                if (ok == 0) continue
-                val normLeft = (left.value / pageWidth).toFloat().coerceIn(0f, 1f)
-                val normRight = (right.value / pageWidth).toFloat().coerceIn(0f, 1f)
-                val normTop = (1f - (top.value / pageHeight).toFloat()).coerceIn(0f, 1f)
-                val normBottom = (1f - (bottom.value / pageHeight).toFloat()).coerceIn(0f, 1f)
-                result += PdfPageBounds(
-                    left = minOf(normLeft, normRight),
-                    top = minOf(normTop, normBottom),
-                    right = maxOf(normLeft, normRight),
-                    bottom = maxOf(normTop, normBottom)
-                )
+    override fun rectsForRangeNormalized(startIndex: Int, length: Int): List<PdfPageBounds> =
+        withLockedHandle(emptyList()) {
+            val page = textPage ?: return@withLockedHandle emptyList()
+            if (length <= 0) return@withLockedHandle emptyList()
+            val rectCount = FPDFText_CountRects(page, startIndex, length)
+            if (rectCount <= 0) return@withLockedHandle emptyList()
+            val result = ArrayList<PdfPageBounds>(rectCount)
+            memScoped {
+                val left = alloc<DoubleVar>()
+                val top = alloc<DoubleVar>()
+                val right = alloc<DoubleVar>()
+                val bottom = alloc<DoubleVar>()
+                for (rectIndex in 0 until rectCount) {
+                    val ok = FPDFText_GetRect(page, rectIndex, left.ptr, top.ptr, right.ptr, bottom.ptr)
+                    if (ok == 0) continue
+                    val normLeft = (left.value / pageWidth).toFloat().coerceIn(0f, 1f)
+                    val normRight = (right.value / pageWidth).toFloat().coerceIn(0f, 1f)
+                    val normTop = (1f - (top.value / pageHeight).toFloat()).coerceIn(0f, 1f)
+                    val normBottom = (1f - (bottom.value / pageHeight).toFloat()).coerceIn(0f, 1f)
+                    result += PdfPageBounds(
+                        left = minOf(normLeft, normRight),
+                        top = minOf(normTop, normBottom),
+                        right = maxOf(normLeft, normRight),
+                        bottom = maxOf(normTop, normBottom)
+                    )
+                }
             }
+            result
         }
-        return result
-    }
 
     /** UTF-16 text for `[startIndex, startIndex + length)`, or `null` on failure. */
-    override fun textForRange(startIndex: Int, length: Int): String? {
-        val page = textPage ?: return null
-        if (length <= 0) return null
-        return memScoped {
+    override fun textForRange(startIndex: Int, length: Int): String? = withLockedHandle(null) {
+        val page = textPage ?: return@withLockedHandle null
+        if (length <= 0) return@withLockedHandle null
+        memScoped {
             val buffer = allocArray<UShortVar>(length + 1)
             val written = FPDFText_GetText(page, startIndex, length, buffer)
             if (written <= 0) return@memScoped null
@@ -336,9 +349,27 @@ internal class IosPdfTextPage internal constructor(
     }
 
     override fun close() {
-        textPage?.let { FPDFText_ClosePage(it) }
-        page?.let { FPDF_ClosePage(it) }
-        document?.let { FPDF_CloseDocument(it) }
+        runBlocking {
+            IosPdfiumRuntime.mutex.withLock {
+                handleLock.withLock {
+                    if (closed) return@withLock
+                    closed = true
+                    textPage?.let(::FPDFText_ClosePage)
+                    page?.let(::FPDF_ClosePage)
+                    document?.let(::FPDF_CloseDocument)
+                }
+            }
+        }
+    }
+
+    private fun <T> withLockedHandle(default: T, block: () -> T): T {
+        return runBlocking {
+            IosPdfiumRuntime.mutex.withLock {
+                handleLock.withLock {
+                    if (closed) default else block()
+                }
+            }
+        }
     }
 
     companion object {
@@ -385,5 +416,14 @@ internal class IosPdfTextPage internal constructor(
             if (!value.startsWith("file://")) return value
             return NSURL.URLWithString(value)?.path ?: value.removePrefix("file://")
         }
+    }
+}
+
+private inline fun <T> NSLock.withLock(block: () -> T): T {
+    lock()
+    return try {
+        block()
+    } finally {
+        unlock()
     }
 }

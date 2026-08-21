@@ -26,6 +26,7 @@ import kotlinx.cinterop.get
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import platform.Foundation.NSFileManager
@@ -45,18 +46,38 @@ private data class IosPdfSearchCacheKey(
     val languages: List<String>,
 )
 
-private var iosPdfSearchCacheKey: IosPdfSearchCacheKey? = null
-private var iosPdfSearchIndex: com.aryan.reader.shared.pdf.SharedPdfSearchIndex? = null
-private var iosPdfSearchOcrPages: Map<Int, IosPdfOcrTextPage> = emptyMap()
+private data class IosPdfSearchCacheEntry(
+    val key: IosPdfSearchCacheKey,
+    val index: com.aryan.reader.shared.pdf.SharedPdfSearchIndex,
+    val ocrPages: Map<Int, IosPdfOcrTextPage>,
+)
+
+/**
+ * Search requests can overlap (for example, a debounced query and highlight-all). Keep the
+ * bounded one-document cache as one atomic entry and serialize index construction so callers
+ * never observe a key/index/OCR-pages mismatch or duplicate a full-document scan.
+ */
+private val iosPdfSearchCacheMutex = Mutex()
+private var iosPdfSearchCacheEntry: IosPdfSearchCacheEntry? = null
 
 internal actual suspend fun searchSharedMobilePdf(
     book: BookItem,
     query: String,
     password: String?,
 ): List<SharedPdfSearchResult> = withContext(Dispatchers.Default) {
-    val resolvedPath = book.path.resolvedIosPdfPath() ?: return@withContext emptyList()
+    iosPdfSearchCacheMutex.withLock {
+        searchIosPdfLocked(book, query, password)
+    }
+}
+
+private suspend fun searchIosPdfLocked(
+    book: BookItem,
+    query: String,
+    password: String?,
+): List<SharedPdfSearchResult> {
+    val resolvedPath = book.path.resolvedIosPdfPath() ?: return emptyList()
     if (!NSFileManager.defaultManager.fileExistsAtPath(resolvedPath)) {
-        return@withContext emptyList()
+        return emptyList()
     }
 
     val cacheKey = IosPdfSearchCacheKey(
@@ -66,9 +87,8 @@ internal actual suspend fun searchSharedMobilePdf(
         passwordHash = password?.hashCode() ?: 0,
         languages = IosPdfOcrLanguagePreferences.languages,
     )
-    if (iosPdfSearchCacheKey == cacheKey) {
-        val cachedResults = iosPdfSearchIndex?.search(query).orEmpty()
-        return@withContext cachedResults.withIosPdfOcrBounds(iosPdfSearchOcrPages)
+    iosPdfSearchCacheEntry?.takeIf { it.key == cacheKey }?.let { cached ->
+        return cached.index.search(query).withIosPdfOcrBounds(cached.ocrPages)
     }
 
     val indexed = IosPdfiumRuntime.mutex.withLock {
@@ -123,7 +143,7 @@ internal actual suspend fun searchSharedMobilePdf(
             FPDF_CloseDocument(document)
         }
     }
-    val (index, ocrCandidates) = indexed ?: return@withContext emptyList()
+    val (index, ocrCandidates) = indexed ?: return emptyList()
 
     val ocrPages = buildMap {
         ocrCandidates.forEach { pageIndex ->
@@ -141,10 +161,8 @@ internal actual suspend fun searchSharedMobilePdf(
             }
         }
     }
-    iosPdfSearchCacheKey = cacheKey
-    iosPdfSearchIndex = index
-    iosPdfSearchOcrPages = ocrPages
-    index.search(query).withIosPdfOcrBounds(ocrPages)
+    iosPdfSearchCacheEntry = IosPdfSearchCacheEntry(cacheKey, index, ocrPages)
+    return index.search(query).withIosPdfOcrBounds(ocrPages)
 }
 
 private fun List<SharedPdfSearchResult>.withIosPdfOcrBounds(

@@ -43,16 +43,33 @@ internal fun loadIosPptxBook(book: BookItem): SharedEpubBook {
     val path = book.path.resolveIosEpubSourcePath() ?: error("PPTX path is unavailable")
     val startedAt = currentTimestamp()
     val archive = IosZipEpubArchive(path)
-    val deck = IosPptxParser(archive).parse()
-    val elementCount = deck.slides.sumOf { it.elements.size }
-    val imageBytes = deck.slides
-        .asSequence()
-        .flatMap { it.elements.asSequence() }
-        .filterIsInstance<SharedPptxImageElement>()
-        .sumOf { it.bytes.size.toLong() }
+    var slideCount = 0
+    var elementCount = 0
+    var imageBytes = 0L
+    var peakSlideImageBytes = 0L
+    val chapters = buildList {
+        IosPptxParser(archive).forEachSlide { index, slide ->
+            slideCount++
+            elementCount += slide.elements.size
+            val slideImageBytes = slide.elements
+                .asSequence()
+                .filterIsInstance<SharedPptxImageElement>()
+                .sumOf { it.bytes.size.toLong() }
+            imageBytes += slideImageBytes
+            peakSlideImageBytes = max(peakSlideImageBytes, slideImageBytes)
+            add(
+                SharedEpubChapter(
+                    id = "${book.id}-slide-${index + 1}",
+                    title = "Slide ${index + 1}",
+                    plainText = slide.text,
+                    htmlContent = IosPptxHtmlRenderer.render(slide, index + 1),
+                )
+            )
+        }
+    }
     iosEpubLoadLog {
-        "PPTX visual loader finished id=${book.id} slides=${deck.slides.size} " +
-            "elements=$elementCount imageBytes=$imageBytes " +
+        "PPTX visual loader finished id=${book.id} slides=$slideCount " +
+            "elements=$elementCount imageBytes=$imageBytes peakSlideImageBytes=$peakSlideImageBytes " +
             "elapsed=${currentTimestamp() - startedAt}ms"
     }
     val title = book.title?.takeIf { it.isNotBlank() }
@@ -62,19 +79,28 @@ internal fun loadIosPptxBook(book: BookItem): SharedEpubBook {
         fileName = book.displayName,
         title = title,
         author = book.author,
-        chapters = deck.slides.mapIndexed { index, slide ->
-            SharedEpubChapter(
-                id = "${book.id}-slide-${index + 1}",
-                title = "Slide ${index + 1}",
-                plainText = slide.text,
-                htmlContent = IosPptxHtmlRenderer.render(slide, index + 1),
-            )
-        },
+        chapters = chapters,
     )
 }
 
 internal class IosPptxParser(private val archive: IosZipEpubArchive) {
     fun parse(): SharedPptxDeck {
+        val slides = mutableListOf<SharedPptxSlide>()
+        val summary = forEachSlide { _, slide -> slides += slide }
+        return SharedPptxDeck(
+            widthPoint = summary.width,
+            heightPoint = summary.height,
+            slides = slides,
+        )
+    }
+
+    /**
+     * Parses one slide at a time. The old deck-first path retained every embedded image byte
+     * array while also creating base64 HTML for every slide. Streaming the callback keeps only
+     * the current slide's decoded image bytes alive during rendering, which materially lowers
+     * peak memory for image-heavy presentations while preserving the same slide model.
+     */
+    fun forEachSlide(onSlide: (index: Int, slide: SharedPptxSlide) -> Unit): IosPptxParseSummary {
         val presentationPath = "ppt/presentation.xml"
         val presentation = archive.readText(presentationPath)?.let(IosPptxXml::parse)
             ?: error("ppt/presentation.xml not found in PPTX archive")
@@ -91,18 +117,20 @@ internal class IosPptxParser(private val archive: IosZipEpubArchive) {
                     .filter { it.matches(Regex("ppt/slides/slide\\d+\\.xml", RegexOption.IGNORE_CASE)) }
                     .sortedWith(naturalPathComparator)
             }
-        val slides = slidePaths.mapNotNull { path ->
+        var slideCount = 0
+        slidePaths.forEach { path ->
             runCatching { parseSlide(presentation, path, width, height) }
                 .onFailure { error -> iosEpubLoadLog { "PPTX slide parse failed path=$path error=${error.message}" } }
                 .getOrNull()
+                ?.let { slide ->
+                    onSlide(slideCount++, slide)
+                }
         }
-        return SharedPptxDeck(
-            widthPoint = width,
-            heightPoint = height,
-            slides = slides.ifEmpty {
-                listOf(SharedPptxSlide(width, height, SharedPptxColor.WHITE, emptyList(), "", emptyList()))
-            },
-        )
+        if (slideCount == 0) {
+            onSlide(0, SharedPptxSlide(width, height, SharedPptxColor.WHITE, emptyList(), "", emptyList()))
+            slideCount = 1
+        }
+        return IosPptxParseSummary(width, height, slideCount)
     }
 
     private fun parseSlide(
@@ -578,6 +606,12 @@ internal class IosPptxParser(private val archive: IosZipEpubArchive) {
         }.toMap()
     }
 }
+
+internal data class IosPptxParseSummary(
+    val width: Int,
+    val height: Int,
+    val slideCount: Int,
+)
 
 private data class ParsedIosPart(val backgroundColor: Int? = null, val elements: List<SharedPptxElement> = emptyList())
 

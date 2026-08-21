@@ -354,7 +354,11 @@ private fun String.normalizeIosZipPathSegments(): String {
 internal fun loadIosEpubBook(book: BookItem): SharedEpubBook {
     val startedAt = currentTimestamp()
     iosEpubLoadLog { "Load started id=${book.id} type=${book.type} name=${book.displayName} path=${book.path ?: "<null>"}" }
-    val cacheKey = book.iosBookLoadCacheKey()
+    // PPTX chapters embed slide images as HTML data URIs. Keeping those chapters in the
+    // cross-book memory/disk cache duplicates the already-large base64 payload and can retain
+    // an entire image-heavy deck after the reader closes it. Reparse PPTX on demand; the
+    // streaming loader keeps only one slide's decoded bytes alive while doing so.
+    val cacheKey = book.iosBookLoadCacheKey().takeUnless { book.type == FileType.PPTX }
     if (cacheKey != null) {
         iosBookLoadMemoryGet(cacheKey.cacheId)?.let { cached ->
             iosEpubLoadLog { "Load memory cache hit cacheId=${cacheKey.cacheId} elapsed=${currentTimestamp() - startedAt}ms" }

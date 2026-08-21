@@ -71,10 +71,10 @@ struct ContentView: View {
             case .success(let urls):
                 if importKind == .folder, let folderURL = urls.first {
                     let folderName = rememberImportedFolder(folderURL, bridge: bridge)
-                    recordImportedFolderScan(
+                    scheduleImportedFolderScan(
                         bridge: bridge,
                         folderName: folderName,
-                        scan: copyImportedFolderToAppSupport(folderURL, folderName: folderName)
+                        sourceURL: folderURL
                     )
                     return
                 }
@@ -249,6 +249,12 @@ struct ContentView: View {
 
 private let importedFolderBookmarksKey = "reader.ios.importedFolderBookmarks.v1"
 
+@MainActor
+private var importedFolderScanTasks: [String: Task<Void, Never>] = [:]
+
+@MainActor
+private var importedFolderScanGenerations: [String: Int] = [:]
+
 @discardableResult
 private func rememberImportedFolder(_ url: URL, bridge: ReaderIosBridge) -> String {
     let baseName = url.lastPathComponent
@@ -326,31 +332,71 @@ private func refreshImportedFolders(bridge: ReaderIosBridge) {
         if isStale {
             updateImportedFolderBookmark(folderURL, folderName: folderName)
         }
-        recordImportedFolderScan(
+        scheduleImportedFolderScan(
             bridge: bridge,
             folderName: folderName,
-            scan: copyImportedFolderToAppSupport(folderURL, folderName: folderName)
+            sourceURL: folderURL
         )
     }
 }
 
-private func removeImportedFolder(named folderName: String) {
-    var bookmarks = UserDefaults.standard.dictionary(forKey: importedFolderBookmarksKey) as? [String: Data] ?? [:]
-    bookmarks.removeValue(forKey: folderName)
-    UserDefaults.standard.set(bookmarks, forKey: importedFolderBookmarksKey)
-    guard let appSupport = try? FileManager.default.url(
-        for: .applicationSupportDirectory,
-        in: .userDomainMask,
-        appropriateFor: nil,
-        create: true
-    ) else {
-        return
+/// Folder enumeration, copying, and hashing can be arbitrarily expensive. Keep it off the
+/// main actor, while serializing scans for the same folder so an app-activation refresh cannot
+/// replace a user-triggered import halfway through. Only the newest completed scan is applied.
+@MainActor
+private func scheduleImportedFolderScan(
+    bridge: ReaderIosBridge,
+    folderName: String,
+    sourceURL: URL
+) {
+    let generation = (importedFolderScanGenerations[folderName] ?? 0) &+ 1
+    importedFolderScanGenerations[folderName] = generation
+    let previousTask = importedFolderScanTasks[folderName]
+    let task = Task { @MainActor in
+        if let previousTask {
+            _ = await previousTask.value
+        }
+        guard importedFolderScanGenerations[folderName] == generation else { return }
+        let scan = await Task.detached(priority: .userInitiated) {
+            copyImportedFolderToAppSupport(sourceURL, folderName: folderName)
+        }.value
+        guard importedFolderScanGenerations[folderName] == generation else { return }
+        recordImportedFolderScan(bridge: bridge, folderName: folderName, scan: scan)
+        importedFolderScanTasks.removeValue(forKey: folderName)
     }
-    let managedFolder = appSupport
-        .appendingPathComponent("LocalFolders", isDirectory: true)
-        .appendingPathComponent(safeLocalFolderName(folderName), isDirectory: true)
-    if FileManager.default.fileExists(atPath: managedFolder.path) {
-        try? FileManager.default.removeItem(at: managedFolder)
+    importedFolderScanTasks[folderName] = task
+}
+
+@MainActor
+private func removeImportedFolder(named folderName: String) {
+    let pendingTask = importedFolderScanTasks[folderName]
+    importedFolderScanGenerations[folderName] = (importedFolderScanGenerations[folderName] ?? 0) &+ 1
+    pendingTask?.cancel()
+
+    // Do not remove the managed copy until an in-flight detached scan has finished. Otherwise
+    // that scan can atomically replace the folder after the user just deleted it.
+    Task { @MainActor in
+        if let pendingTask {
+            _ = await pendingTask.value
+        }
+        importedFolderScanTasks.removeValue(forKey: folderName)
+        var bookmarks = UserDefaults.standard.dictionary(forKey: importedFolderBookmarksKey) as? [String: Data] ?? [:]
+        bookmarks.removeValue(forKey: folderName)
+        UserDefaults.standard.set(bookmarks, forKey: importedFolderBookmarksKey)
+        guard let appSupport = try? FileManager.default.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        ) else {
+            return
+        }
+        let managedFolder = appSupport
+            .appendingPathComponent("LocalFolders", isDirectory: true)
+            .appendingPathComponent(safeLocalFolderName(folderName), isDirectory: true)
+        if FileManager.default.fileExists(atPath: managedFolder.path) {
+            try? FileManager.default.removeItem(at: managedFolder)
+        }
     }
 }
 
@@ -523,7 +569,7 @@ private func replaceImportedFolderFile(folderName: String, managedPath: String) 
     }
 }
 
-private struct ImportedFolderScan {
+private struct ImportedFolderScan: Sendable {
     let files: [ImportedReaderFile]
     let succeeded: Bool
 }
@@ -545,7 +591,7 @@ private func recordImportedFolderScan(
     )
 }
 
-private func copyImportedFolderToAppSupport(_ sourceURL: URL, folderName: String? = nil) -> ImportedFolderScan {
+nonisolated private func copyImportedFolderToAppSupport(_ sourceURL: URL, folderName: String? = nil) -> ImportedFolderScan {
     let didStartAccessing = sourceURL.startAccessingSecurityScopedResource()
     defer {
         if didStartAccessing {
@@ -646,12 +692,12 @@ private func copyImportedFolderToAppSupport(_ sourceURL: URL, folderName: String
     }
 }
 
-private func safeLocalFolderName(_ name: String) -> String {
+nonisolated private func safeLocalFolderName(_ name: String) -> String {
     let cleaned = name.replacingOccurrences(of: "/", with: "_").trimmingCharacters(in: .whitespacesAndNewlines)
     return cleaned.isEmpty ? "Imported Folder" : cleaned
 }
 
-private struct ImportedReaderFile {
+private struct ImportedReaderFile: Sendable {
     let name: String
     let path: String
     let contentId: String
@@ -660,7 +706,7 @@ private struct ImportedReaderFile {
     let lastModifiedTimestamp: Int64
 }
 
-private func sha256FileId(_ url: URL) -> String? {
+nonisolated private func sha256FileId(_ url: URL) -> String? {
     guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
     defer { try? handle.close() }
     var hasher = SHA256()
