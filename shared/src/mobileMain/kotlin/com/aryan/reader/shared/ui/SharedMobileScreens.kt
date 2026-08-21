@@ -37,6 +37,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.aryan.reader.shared.UserData
@@ -124,7 +125,7 @@ fun SharedMobileAppDrawerContent(
                     label = { Text(readerString("drawer_sign_in", "Sign in with Google")) },
                     selected = false,
                     onClick = onSignInClick,
-                    modifier = Modifier.padding(horizontal = 12.dp)
+                    modifier = Modifier.padding(horizontal = 12.dp).testTag("MobileDrawerSignIn")
                 )
                 Text(
                     text = if (isStandardEdition) {
@@ -159,7 +160,7 @@ fun SharedMobileAppDrawerContent(
                 },
                 selected = false,
                 onClick = onProClick,
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp).testTag("MobileDrawerPro")
             )
 
             // Android only exposes cloud sync after account sign-in. Keep the
@@ -196,7 +197,7 @@ fun SharedMobileAppDrawerContent(
                             )
                         }
                     },
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp).testTag("MobileDrawerSync")
                 )
             }
 
@@ -216,7 +217,7 @@ fun SharedMobileAppDrawerContent(
                     selected = false,
                     onClick = { onFolderSyncToggle(!isFolderSyncEnabled) },
                     badge = { Switch(checked = isFolderSyncEnabled, onCheckedChange = onFolderSyncToggle) },
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp).testTag("MobileDrawerFolderSync")
                 )
             }
 
@@ -227,21 +228,21 @@ fun SharedMobileAppDrawerContent(
                 label = { Text(readerString("settings", "Settings")) },
                 selected = false,
                 onClick = onSettingsClick,
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp).testTag("MobileDrawerSettings")
             )
             NavigationDrawerItem(
                 icon = { Icon(Icons.Default.Palette, contentDescription = null) },
                 label = { Text(readerString("app_theme_title", "App theme")) },
                 selected = false,
                 onClick = onAppThemeClick,
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp).testTag("MobileDrawerTheme")
             )
             NavigationDrawerItem(
                 icon = { Icon(Icons.Default.Fonts, contentDescription = null) },
                 label = { Text(readerString("drawer_custom_fonts", "Custom fonts")) },
                 selected = false,
                 onClick = onFontsClick,
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp).testTag("MobileDrawerFonts")
             )
             if (aiSettingsAvailable) {
                 NavigationDrawerItem(
@@ -249,7 +250,7 @@ fun SharedMobileAppDrawerContent(
                     label = { Text(readerString("ai_settings_title", "AI settings")) },
                     selected = false,
                     onClick = onAiSettingsClick,
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp).testTag("MobileDrawerAiSettings")
                 )
             }
             NavigationDrawerItem(
@@ -257,7 +258,7 @@ fun SharedMobileAppDrawerContent(
                 label = { Text(readerString("drawer_help_feedback", "Help & Feedback")) },
                 selected = false,
                 onClick = onFeedbackClick,
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp).testTag("MobileDrawerFeedback")
             )
 
             if (currentUser != null) {
@@ -266,7 +267,7 @@ fun SharedMobileAppDrawerContent(
                     label = { Text(readerString("drawer_sign_out", "Sign out")) },
                     selected = false,
                     onClick = onSignOutClick,
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp).testTag("MobileDrawerSignOut")
                 )
             }
 

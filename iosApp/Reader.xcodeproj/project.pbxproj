@@ -10,16 +10,27 @@
 		A11CE1012FFE500000000001 /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = A11CE1052FFE500000000001 /* FirebaseAuth */; };
 		A11CE1022FFE500000000001 /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = A11CE1062FFE500000000001 /* GoogleSignIn */; };
 		A11CE1072FFE500000000001 /* FirebaseFirestore in Frameworks */ = {isa = PBXBuildFile; productRef = A11CE1082FFE500000000001 /* FirebaseFirestore */; };
+		F10000012FFE500000000001 /* ReaderUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10000032FFE500000000001 /* ReaderUITests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		9284F59D2FFE342F0088D5CA /* Reader.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Reader.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		F10000022FFE500000000001 /* ReaderUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ReaderUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		F10000032FFE500000000001 /* ReaderUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderUITests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		9284F59F2FFE342F0088D5CA /* Reader */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = Reader;
+			sourceTree = "<group>";
+		};
+		F10000042FFE500000000001 /* ReaderUITests */ = {
+			isa = PBXGroup;
+			children = (
+				F10000032FFE500000000001 /* ReaderUITests.swift */,
+			);
+			path = ReaderUITests;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -35,6 +46,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		F10000082FFE500000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -42,6 +60,7 @@
 			isa = PBXGroup;
 			children = (
 				9284F59F2FFE342F0088D5CA /* Reader */,
+				F10000042FFE500000000001 /* ReaderUITests */,
 				9284F59E2FFE342F0088D5CA /* Products */,
 			);
 			sourceTree = "<group>";
@@ -50,6 +69,7 @@
 			isa = PBXGroup;
 			children = (
 				9284F59D2FFE342F0088D5CA /* Reader.app */,
+				F10000022FFE500000000001 /* ReaderUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -85,6 +105,24 @@
 			productReference = 9284F59D2FFE342F0088D5CA /* Reader.app */;
 			productType = "com.apple.product-type.application";
 		};
+		F10000052FFE500000000001 /* ReaderUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = F100000B2FFE500000000001 /* Build configuration list for PBXNativeTarget "ReaderUITests" */;
+			buildPhases = (
+				F10000062FFE500000000001 /* Sources */,
+				F10000082FFE500000000001 /* Frameworks */,
+				F10000072FFE500000000001 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				F10000092FFE500000000001 /* PBXTargetDependency */,
+			);
+			name = ReaderUITests;
+			productName = ReaderUITests;
+			productReference = F10000022FFE500000000001 /* ReaderUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -105,6 +143,10 @@
 								enabled = 1;
 							};
 						};
+					};
+					F10000052FFE500000000001 = {
+						CreatedOnToolsVersion = 26.6;
+						TestTargetID = 9284F59C2FFE342F0088D5CA;
 					};
 				};
 			};
@@ -127,12 +169,38 @@
 			projectRoot = "";
 			targets = (
 				9284F59C2FFE342F0088D5CA /* Reader */,
+				F10000052FFE500000000001 /* ReaderUITests */,
 			);
 		};
 /* End PBXProject section */
 
+/* Begin PBXContainerItemProxy section */
+		F100000A2FFE500000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 9284F5952FFE342F0088D5CA /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 9284F59C2FFE342F0088D5CA;
+			remoteInfo = Reader;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXTargetDependency section */
+		F10000092FFE500000000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 9284F59C2FFE342F0088D5CA /* Reader */;
+			targetProxy = F100000A2FFE500000000001 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
 /* Begin PBXResourcesBuildPhase section */
 		9284F59B2FFE342F0088D5CA /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F10000072FFE500000000001 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -206,6 +274,14 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F10000062FFE500000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F10000012FFE500000000001 /* ReaderUITests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -431,6 +507,50 @@
 			};
 			name = Release;
 		};
+		F100000C2FFE500000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 9RA349538L;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "Episteme UI Tests";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.aryan.episteme.ReaderUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = Reader;
+			};
+			name = Debug;
+		};
+		F100000D2FFE500000000001 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 9RA349538L;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "Episteme UI Tests";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.aryan.episteme.ReaderUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = Reader;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -448,6 +568,15 @@
 			buildConfigurations = (
 				9284F5A92FFE34300088D5CA /* Debug */,
 				9284F5AA2FFE34300088D5CA /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		F100000B2FFE500000000001 /* Build configuration list for PBXNativeTarget "ReaderUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F100000C2FFE500000000001 /* Debug */,
+				F100000D2FFE500000000001 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

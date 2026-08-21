@@ -11,6 +11,8 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 
 /**
  * Android's source-of-truth bottom navigation shell, shared by both phone
@@ -55,7 +57,14 @@ fun SharedMobileMainScaffold(
                         selected = selectedDestination == destination,
                         onClick = { onDestinationSelected(destination) },
                         icon = { destinationIcon(destination) },
-                        label = { destinationLabel(destination) }
+                        label = { destinationLabel(destination) },
+                        modifier = Modifier.testTag(
+                            when (destination) {
+                                SharedMobileMainDestination.HOME -> "MobileNavHome"
+                                SharedMobileMainDestination.LIBRARY -> "MobileNavLibrary"
+                                SharedMobileMainDestination.UNIFIED_LIBRARY -> "MobileNavUnifiedLibrary"
+                            }
+                        ),
                     )
                 }
             }

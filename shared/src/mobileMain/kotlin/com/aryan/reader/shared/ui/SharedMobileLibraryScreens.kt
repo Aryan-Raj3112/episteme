@@ -88,6 +88,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -2360,25 +2361,25 @@ private fun SharedMobileHomeTopBar(
     CenterAlignedTopAppBar(
         title = {},
         navigationIcon = {
-            IconButton(onClick = onDrawerClick) {
+            IconButton(onClick = onDrawerClick, modifier = Modifier.testTag("MobileHomeMenu")) {
                 Icon(Icons.Default.Menu, contentDescription = "Menu")
             }
         },
         actions = {
-            IconButton(onClick = onSettingsClick) {
+            IconButton(onClick = onSettingsClick, modifier = Modifier.testTag("MobileHomeSettings")) {
                 Icon(Icons.Default.Settings, contentDescription = "Settings")
             }
-            IconButton(onClick = onAppThemeClick) {
+            IconButton(onClick = onAppThemeClick, modifier = Modifier.testTag("MobileHomeTheme")) {
                 Icon(Icons.Default.Palette, contentDescription = readerString("app_theme", "App theme"))
             }
-            IconButton(onClick = onRecentLimitClick) {
+            IconButton(onClick = onRecentLimitClick, modifier = Modifier.testTag("MobileHomeRecentLimit")) {
                 Icon(
                     Icons.Default.FormatListNumbered,
                     contentDescription = readerString("options_recent_limit", "Recent files limit"),
                 )
             }
             Box {
-                IconButton(onClick = { showOptionsMenu = true }) {
+                IconButton(onClick = { showOptionsMenu = true }, modifier = Modifier.testTag("MobileHomeMore")) {
                     Icon(Icons.Default.MoreVert, contentDescription = "More actions")
                 }
                 DropdownMenu(
@@ -2473,7 +2474,7 @@ private fun SharedMobileLibraryTopBar(
         title = { Text(readerString("library_title", "Library")) },
         actions = {
             if (selectedTab == SharedMobileLibraryTab.BOOKS) {
-                IconButton(onClick = onFilterClick) {
+                IconButton(onClick = onFilterClick, modifier = Modifier.testTag("MobileLibraryFilter")) {
                     Icon(
                         Icons.Default.FilterList,
                         contentDescription = readerString("content_desc_filter", "Filter"),
@@ -2493,14 +2494,13 @@ private fun SharedMobileLibraryTopBar(
                         )
                     },
                 )
-                IconButton(onClick = onSearchClick) {
+                IconButton(onClick = onSearchClick, modifier = Modifier.testTag("MobileLibrarySearch")) {
                     Icon(Icons.Default.Search, contentDescription = readerString("action_search", "Search"))
                 }
             }
-            IconButton(onClick = onSettingsClick) {
+            IconButton(onClick = onSettingsClick, modifier = Modifier.testTag("MobileLibrarySettings")) {
                 Icon(Icons.Default.Settings, contentDescription = readerString("settings", "Settings"))
             }
         }
     )
 }
-
