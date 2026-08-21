@@ -62,6 +62,7 @@ final class LocalAccountController: NSObject, ObservableObject {
     private weak var bridge: ReaderIosBridge?
     private var appleNonce: String?
     private var googleDriveAuthorized = false
+    private var lastRegisteredDeviceRows: [[String: Any]] = []
 
 #if canImport(FirebaseAuth)
     private var authStateHandle: AuthStateDidChangeListenerHandle?
@@ -138,6 +139,7 @@ final class LocalAccountController: NSObject, ObservableObject {
                 Task { @MainActor in
                     guard let self, let bridge else { return }
                     let devices = await self.registeredDevices()
+                    self.lastRegisteredDeviceRows = devices
                     let ids = devices.compactMap { $0["deviceId"] as? String }
                     let names = devices.map { $0["deviceName"] as? String ?? "" }
                     let lastSeen = devices.map {
@@ -155,11 +157,12 @@ final class LocalAccountController: NSObject, ObservableObject {
                 Task { @MainActor in
                     guard let self, let bridge else { return }
                     if deviceID == currentDeviceID {
+                        let devices = self.lastRegisteredDeviceRows
                         bridge.updateRegisteredDevices(
-                            deviceIds: bridge.registeredDevices.map(\.deviceId),
-                            deviceNames: bridge.registeredDevices.map(\.deviceName),
-                            lastSeenEpochMillis: bridge.registeredDevices.map {
-                                String($0.lastSeenEpochMillis ?? 0)
+                            deviceIds: devices.compactMap { $0["deviceId"] as? String },
+                            deviceNames: devices.map { $0["deviceName"] as? String ?? "" },
+                            lastSeenEpochMillis: devices.map {
+                                String(Int64(($0["lastSeenEpochMillis"] as? NSNumber)?.doubleValue ?? 0))
                             },
                             status: "device_active"
                         )
@@ -168,6 +171,7 @@ final class LocalAccountController: NSObject, ObservableObject {
                     let revoked = await self.revokeDevice(deviceID: deviceID)
                     if revoked {
                         let devices = await self.registeredDevices()
+                        self.lastRegisteredDeviceRows = devices
                         bridge.updateRegisteredDevices(
                             deviceIds: devices.compactMap { $0["deviceId"] as? String },
                             deviceNames: devices.map { $0["deviceName"] as? String ?? "" },
@@ -177,11 +181,12 @@ final class LocalAccountController: NSObject, ObservableObject {
                             status: "device_revoked"
                         )
                     } else {
+                        let devices = self.lastRegisteredDeviceRows
                         bridge.updateRegisteredDevices(
-                            deviceIds: bridge.registeredDevices.map(\.deviceId),
-                            deviceNames: bridge.registeredDevices.map(\.deviceName),
-                            lastSeenEpochMillis: bridge.registeredDevices.map {
-                                String($0.lastSeenEpochMillis ?? 0)
+                            deviceIds: devices.compactMap { $0["deviceId"] as? String },
+                            deviceNames: devices.map { $0["deviceName"] as? String ?? "" },
+                            lastSeenEpochMillis: devices.map {
+                                String(Int64(($0["lastSeenEpochMillis"] as? NSNumber)?.doubleValue ?? 0))
                             },
                             status: "device_revoke_failed"
                         )
