@@ -56,8 +56,24 @@ IOS_RUNTIME_AUTHORIZED=1 \
 
 It performs the compile-only gate, installs the resulting app, launches bundle
 `com.aryan.episteme` with deterministic diagnostics and English locale arguments, captures a launch
-screenshot, and collects the recent Reader log stream. The launch command uses `--console` so
-startup output is retained in `launch.log`.
+screenshot, and collects the recent Reader log stream. Launch is deliberately detached from the
+console so `simctl` returns after handing the app to the simulator; its PID/status output is
+retained in `launch.log`. Launch is bounded to 15 seconds by default and is a required step. Log
+collection is a separate best-effort command bounded to 10 seconds by default, so a stalled or
+empty simulator log stream cannot hold the runner open. Override either bound with positive
+integer-second values:
+
+```sh
+IOS_RUNTIME_LAUNCH_TIMEOUT_SECONDS=30 \
+IOS_RUNTIME_LOG_TIMEOUT_SECONDS=20 \
+IOS_RUNTIME_AUTHORIZED=1 \
+  ./iosApp/RuntimeValidation/validate_ios_runtime.sh <booted-simulator-udid>
+```
+
+If launch reaches its bound, the runner exits non-zero and retains the bounded command output. If
+log collection reaches its bound (or returns no rows), the runner prints a warning, retains the
+partial `reader-log.txt`, and still returns the launch result. The runner never treats a completed
+launch as proof that the app reached a usable UI; follow the manifest below.
 Evidence is written outside the repository under `/tmp` by default. Override the locations when a
 run needs to be retained:
 
@@ -84,6 +100,18 @@ If the native picker does not expose the copied container on a particular simula
 fixture from the Files app and use “Open in Reader”/the share sheet. Label that evidence
 `external-open-fallback`; it is not proof of the native `fileImporter` path, and the check must
 also verify that a temporary external document is not silently persisted into the library.
+
+### Shell-level harness validation
+
+The harness contract can be checked without a simulator. This uses stub `xcodebuild`/`xcrun`
+commands to verify the authorization gate, detached launch arguments, diagnostics and locale
+arguments, screenshot evidence, and both launch/log timeout paths:
+
+```sh
+./iosApp/RuntimeValidation/test_validate_ios_runtime.sh
+```
+
+This test does not install, boot, reset, or launch an app on any simulator.
 
 The runner is intentionally not a UI automation substitute. After launch, follow the manifest in
 `fixtures.json` on both an iPhone-class and iPad-class simulator. Keep the evidence directory and
@@ -114,10 +142,10 @@ user-owned or separately licensed deck and record its source and slide count in 
 ## Scheme, credentials, and capability limits
 
 The `Reader Local StoreKit` scheme contains an Xcode StoreKit configuration for an Xcode-managed
-launch. A direct `simctl launch` does not attach that scheme configuration, even when the runner is
-given `IOS_RUNTIME_SCHEME='Reader Local StoreKit'`; the runner prints a warning in that case. Use
-Xcode’s Run action with that scheme for local purchase/restore assertions and label a plain `simctl`
-launch as **StoreKit configuration unavailable**.
+launch. A direct detached `simctl launch` does not attach that scheme configuration, even when the
+runner is given `IOS_RUNTIME_SCHEME='Reader Local StoreKit'`; the runner prints a warning in that
+case. Use Xcode’s Run action with that scheme for local purchase/restore assertions and label a
+plain `simctl` launch as **StoreKit configuration unavailable**.
 
 Do not put Firebase, Google, Apple, Drive, Gemini, or other credentials in the repository or in
 captured screenshots/logs. Cloud sync, account linking, paid AI, and destructive clear-data flows

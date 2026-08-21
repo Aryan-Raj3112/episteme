@@ -20,6 +20,60 @@ DERIVED_DATA_PATH="${IOS_RUNTIME_DERIVED_DATA:-$(mktemp -d /tmp/reader-ios-deriv
 EVIDENCE_DIR="${IOS_RUNTIME_EVIDENCE_DIR:-$(mktemp -d /tmp/reader-ios-evidence.XXXXXX)}"
 COPY_FIXTURES="${IOS_RUNTIME_COPY_FIXTURES:-1}"
 SECOND_PDF_PATH="${IOS_RUNTIME_SECOND_PDF:-}"
+LAUNCH_TIMEOUT_SECONDS="${IOS_RUNTIME_LAUNCH_TIMEOUT_SECONDS:-15}"
+LOG_TIMEOUT_SECONDS="${IOS_RUNTIME_LOG_TIMEOUT_SECONDS:-10}"
+
+validate_timeout_seconds() {
+  local name="$1"
+  local value="$2"
+  if [[ ! "$value" =~ ^[1-9][0-9]*$ ]]; then
+    echo "$name must be a positive integer number of seconds: $value" >&2
+    exit 64
+  fi
+}
+
+validate_timeout_seconds IOS_RUNTIME_LAUNCH_TIMEOUT_SECONDS "$LAUNCH_TIMEOUT_SECONDS"
+validate_timeout_seconds IOS_RUNTIME_LOG_TIMEOUT_SECONDS "$LOG_TIMEOUT_SECONDS"
+
+# A console-attached simctl launch stays attached to the launched process. Keep launch and
+# log collection in separate, bounded commands so a startup failure cannot stall the runner.
+run_bounded_command() {
+  local timeout_seconds="$1"
+  local output_path="$2"
+  local description="$3"
+  shift 3
+
+  local timeout_marker="${output_path}.timeout"
+  rm -f "$timeout_marker"
+
+  "$@" >"$output_path" 2>&1 &
+  local command_pid=$!
+  (
+    sleep "$timeout_seconds"
+    if kill -0 "$command_pid" 2>/dev/null; then
+      printf '%s timed out after %ss; terminated the command.\n' \
+        "$description" "$timeout_seconds" >>"$output_path"
+      : >"$timeout_marker"
+      kill "$command_pid" 2>/dev/null || true
+    fi
+  ) &
+  local watchdog_pid=$!
+
+  local command_status=0
+  if wait "$command_pid"; then
+    command_status=0
+  else
+    command_status=$?
+  fi
+  kill "$watchdog_pid" 2>/dev/null || true
+  wait "$watchdog_pid" 2>/dev/null || true
+
+  if [[ -e "$timeout_marker" ]]; then
+    rm -f "$timeout_marker"
+    return 124
+  fi
+  return "$command_status"
+}
 
 mkdir -p "$EVIDENCE_DIR"
 
@@ -78,19 +132,40 @@ if [[ "$SCHEME_NAME" == "Reader Local StoreKit" ]]; then
   echo "Warning: direct simctl launch does not attach the Xcode StoreKit configuration; use Xcode Run for purchase assertions." >&2
 fi
 
-xcrun simctl launch --console "$DEVICE_ID" "$BUNDLE_ID" \
-  -episteme.desktop.diagnostics YES \
-  -AppleLanguages '(en)' \
-  -AppleLocale en_US \
-  >"$EVIDENCE_DIR/launch.log" 2>&1
+if run_bounded_command "$LAUNCH_TIMEOUT_SECONDS" "$EVIDENCE_DIR/launch.log" \
+  "simctl launch" \
+  xcrun simctl launch "$DEVICE_ID" "$BUNDLE_ID" \
+    -episteme.desktop.diagnostics YES \
+    -AppleLanguages '(en)' \
+    -AppleLocale en_US; then
+  :
+else
+  LAUNCH_STATUS=$?
+  if [[ "$LAUNCH_STATUS" -eq 124 ]]; then
+    echo "simctl launch timed out after ${LAUNCH_TIMEOUT_SECONDS}s; see $EVIDENCE_DIR/launch.log" >&2
+  else
+    echo "simctl launch failed with status $LAUNCH_STATUS; see $EVIDENCE_DIR/launch.log" >&2
+  fi
+  exit 1
+fi
 xcrun simctl io "$DEVICE_ID" screenshot "$EVIDENCE_DIR/launch.png"
 
 # The log command can return no rows on a fresh simulator. Keep the launch evidence in that case.
-xcrun simctl spawn "$DEVICE_ID" log show \
-  --last 2m \
-  --style compact \
-  --predicate 'process == "Reader"' \
-  >"$EVIDENCE_DIR/reader-log.txt" 2>&1 || true
+if run_bounded_command "$LOG_TIMEOUT_SECONDS" "$EVIDENCE_DIR/reader-log.txt" \
+  "simctl log collection" \
+  xcrun simctl spawn "$DEVICE_ID" log show \
+    --last 2m \
+    --style compact \
+    --predicate 'process == "Reader"'; then
+  :
+else
+  LOG_STATUS=$?
+  if [[ "$LOG_STATUS" -eq 124 ]]; then
+    echo "Warning: Reader log collection timed out after ${LOG_TIMEOUT_SECONDS}s; launch evidence is retained." >&2
+  else
+    echo "Warning: Reader log collection failed with status $LOG_STATUS; launch evidence is retained." >&2
+  fi
+fi
 
 cat <<EOF
 Runtime launch completed.
