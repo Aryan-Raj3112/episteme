@@ -1,5 +1,8 @@
 package com.aryan.reader.shared
 
+import com.aryan.reader.shared.pdf.SharedPdfCloudSidecarCodec
+import com.aryan.reader.shared.pdf.SharedPdfCloudSidecarSnapshot
+
 data class CloudBookTombstone(
     val bookId: String,
     val type: String? = null,
@@ -148,7 +151,41 @@ fun mergeCloudLibrarySnapshotWithDownloadedBooks(
         // same provider identity; otherwise keep the local grant instead of
         // creating an unusable folder card.
         syncedFolders = mergeCloudSyncedFolders(local.syncedFolders, remote.syncedFolders),
+        pdfSidecars = mergeCloudPdfSidecars(
+            local = local.pdfSidecars,
+            remote = remote.pdfSidecars,
+            deletedBookIds = deletedIds,
+        ),
     )
+}
+
+private fun mergeCloudPdfSidecars(
+    local: List<SharedPdfCloudSidecarSnapshot>,
+    remote: List<SharedPdfCloudSidecarSnapshot>,
+    deletedBookIds: Set<String>,
+): List<SharedPdfCloudSidecarSnapshot> {
+    val localByBookId = local.associateBy(SharedPdfCloudSidecarSnapshot::bookId)
+    val remoteByBookId = remote.associateBy(SharedPdfCloudSidecarSnapshot::bookId)
+    return (localByBookId.keys + remoteByBookId.keys)
+        .sorted()
+        .mapNotNull { bookId ->
+            if (bookId in deletedBookIds) return@mapNotNull null
+            val localSidecar = localByBookId[bookId]
+            val remoteSidecar = remoteByBookId[bookId]
+            when {
+                localSidecar == null -> remoteSidecar
+                remoteSidecar == null -> localSidecar
+                else -> SharedPdfCloudSidecarSnapshot(
+                    bookId = bookId,
+                    timestamp = maxOf(localSidecar.timestamp, remoteSidecar.timestamp),
+                    data = SharedPdfCloudSidecarCodec.merge(
+                        localDataJson = localSidecar.data,
+                        remoteDataJson = remoteSidecar.data,
+                        preferRemoteOnConflict = remoteSidecar.timestamp >= localSidecar.timestamp,
+                    ),
+                )
+            }
+        }
 }
 
 private fun mergeCloudShelfRecords(
@@ -222,13 +259,21 @@ private fun mergeCloudCustomFonts(
         .mapNotNull { id ->
             val localFont = localById[id]
             val remoteFont = remoteById[id]
+            val remoteContentAvailable = remoteFont?.path?.isNotBlank() == true ||
+                downloadedPaths.containsKey(id)
             when {
-                localFont == null -> remoteFont?.takeIf { downloadedPaths.containsKey(it.id) }
+                localFont == null -> remoteFont?.takeIf { remoteContentAvailable }
                 remoteFont == null -> localFont
-                remoteFont.timestamp > localFont.timestamp -> remoteFont.takeIf { downloadedPaths.containsKey(it.id) }
+                remoteFont.timestamp > localFont.timestamp -> remoteFont.takeIf { remoteContentAvailable }
                     ?: localFont
                 remoteFont.timestamp < localFont.timestamp -> localFont
-                else -> remoteFont
+                else -> {
+                    // A metadata-only cloud read intentionally has no local
+                    // font path. Preserve the installed local file when the
+                    // clocks tie; otherwise a no-op sync can hide the font
+                    // until it is downloaded again.
+                    if (remoteContentAvailable || localFont.path.isBlank()) remoteFont else localFont
+                }
             }
         }
         .map { font ->
