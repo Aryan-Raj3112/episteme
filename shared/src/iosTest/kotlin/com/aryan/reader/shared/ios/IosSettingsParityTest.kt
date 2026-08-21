@@ -1,8 +1,12 @@
 package com.aryan.reader.shared.ios
 
 import com.aryan.reader.shared.SharedSettingsAction
+import com.aryan.reader.shared.SharedSettingsHubInput
+import com.aryan.reader.shared.SharedSettingsPlatform
+import com.aryan.reader.shared.sharedSettingsHubModel
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class IosSettingsParityTest {
@@ -27,5 +31,41 @@ class IosSettingsParityTest {
                 .filter { it.iosDisposition() == IosSettingsActionDisposition.INTENTIONAL_PLATFORM_DIFFERENCE }
                 .toSet(),
         )
+    }
+
+    @Test
+    fun iosDiagnosticsExposeLogExportWithoutAndroidOnlyMlActions() {
+        val actions = sharedSettingsHubModel(
+            SharedSettingsHubInput(
+                platform = SharedSettingsPlatform.IOS,
+                includeDiagnosticLogExport = true,
+                isDebugBuild = false,
+            )
+        ).sections.flatMap { it.items }.map { it.action }.toSet()
+
+        assertTrue(SharedSettingsAction.EXPORT_LOGS in actions)
+        assertTrue(SharedSettingsAction.TEST_PANEL_DETECTION !in actions)
+        assertTrue(SharedSettingsAction.TEST_SPEECH_BUBBLE_DETECTION !in actions)
+    }
+
+    @Test
+    fun iosDebugAccountOperationsDoNotExposeAndroidOnlyMlActions() {
+        val actions = sharedSettingsHubModel(
+            SharedSettingsHubInput(
+                platform = SharedSettingsPlatform.IOS,
+                isDebugBuild = true,
+                isSignedIn = true,
+                isProUser = true,
+                syncAvailable = true,
+                cloudSyncEligible = true,
+                includeCloudLocalDataClear = true,
+            )
+        ).sections.flatMap { it.items }.map { it.action }.toSet()
+
+        assertTrue(SharedSettingsAction.DEVICE_MANAGEMENT in actions)
+        assertTrue(SharedSettingsAction.CLEAR_CLOUD_LOCAL_DATA in actions)
+        assertTrue(SharedSettingsAction.EXPORT_LOGS in actions)
+        assertFalse(SharedSettingsAction.TEST_PANEL_DETECTION in actions)
+        assertFalse(SharedSettingsAction.TEST_SPEECH_BUBBLE_DETECTION in actions)
     }
 }

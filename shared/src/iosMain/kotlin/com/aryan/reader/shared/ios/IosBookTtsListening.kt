@@ -83,13 +83,17 @@ import platform.Foundation.NSUserDefaults
 internal const val IOS_TTS_LISTEN_TAG = "ReaderBookTtsIOS"
 
 internal fun iosTtsListenLog(message: String) {
+    IosDiagnosticLogStore.record(IOS_TTS_LISTEN_TAG, message)
     println("[$IOS_TTS_LISTEN_TAG] $message")
 }
 
 internal fun iosTtsListenLogError(message: String, error: Throwable?) {
+    IosDiagnosticLogStore.record(IOS_TTS_LISTEN_TAG, message)
     println("[$IOS_TTS_LISTEN_TAG] $message")
     error?.let {
-        println("[$IOS_TTS_LISTEN_TAG]   ${it::class.simpleName}: ${it.message}")
+        val detail = "  ${it::class.simpleName}: ${it.message}"
+        IosDiagnosticLogStore.record(IOS_TTS_LISTEN_TAG, detail)
+        println("[$IOS_TTS_LISTEN_TAG]$detail")
         it.printStackTrace()
     }
 }

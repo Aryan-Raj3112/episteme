@@ -108,13 +108,17 @@ import platform.zlib.z_stream
 internal const val IOS_MOBI_LOG_TAG = "ReaderMobiIOS"
 
 internal inline fun iosMobiLog(message: () -> String) {
-    println("[$IOS_MOBI_LOG_TAG] ${message()}")
+    val value = message()
+    IosDiagnosticLogStore.record(IOS_MOBI_LOG_TAG, value)
+    println("[$IOS_MOBI_LOG_TAG] $value")
 }
 
 internal const val IOS_EPUB_LOAD_LOG_TAG = "ReaderIosEpub"
 
 internal inline fun iosEpubLoadLog(message: () -> String) {
-    println("[$IOS_EPUB_LOAD_LOG_TAG] ${message()}")
+    val value = message()
+    IosDiagnosticLogStore.record(IOS_EPUB_LOAD_LOG_TAG, value)
+    println("[$IOS_EPUB_LOAD_LOG_TAG] $value")
 }
 
 internal data class IosBookPresentation(
