@@ -18,6 +18,8 @@ import com.aryan.reader.shared.pdf.PDF_ZOOM_TILE_CACHE_MAX_BYTES
 import com.aryan.reader.shared.pdf.PdfTileLruCache
 import com.aryan.reader.shared.pdf.planPdfZoomTiles
 import com.aryan.reader.shared.pdf.IosPdfiumRuntime
+import com.aryan.reader.shared.pdf.IosPdfOcrLanguagePreferences
+import com.aryan.reader.shared.pdf.IosPdfOcrPageCache
 import com.aryan.reader.shared.pdfium.c.FPDFBitmap_Create
 import com.aryan.reader.shared.pdfium.c.FPDFBitmap_Destroy
 import com.aryan.reader.shared.pdfium.c.FPDFBitmap_FillRect
@@ -35,7 +37,6 @@ import com.aryan.reader.shared.pdfium.c.FPDF_RenderPageBitmap
 import cnames.structs.fpdf_page_t__
 import kotlinx.cinterop.allocArray
 import kotlinx.cinterop.addressOf
-import kotlinx.cinterop.autoreleasepool
 import kotlinx.cinterop.convert
 import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.get
@@ -49,22 +50,8 @@ import org.jetbrains.skia.ColorAlphaType
 import org.jetbrains.skia.ColorType
 import org.jetbrains.skia.Image
 import org.jetbrains.skia.ImageInfo
-import platform.CoreFoundation.CFDataCreate
-import platform.CoreFoundation.kCFAllocatorDefault
-import platform.CoreGraphics.CGColorRenderingIntent
-import platform.CoreGraphics.CGColorSpaceCreateDeviceRGB
-import platform.CoreGraphics.CGDataProviderCreateWithCFData
-import platform.CoreGraphics.CGImageAlphaInfo
-import platform.CoreGraphics.CGImageCreate
-import platform.CoreGraphics.CGImageRef
-import platform.CoreGraphics.kCGBitmapByteOrder32Little
 import platform.Foundation.NSFileManager
 import platform.Foundation.NSURL
-import platform.Vision.VNImageRequestHandler
-import platform.Vision.VNRecognizedTextObservation
-import platform.Vision.VNRecognizeTextRequest
-import platform.Vision.VNRequest
-import platform.Vision.VNRequestTextRecognitionLevelAccurate
 import platform.posix.memcpy
 import kotlin.math.roundToInt
 import kotlin.coroutines.coroutineContext
@@ -505,63 +492,12 @@ internal actual suspend fun sharedMobilePdfOcrTextBounds(
     pageIndex: Int,
     password: String?,
 ): List<PdfPageBounds> {
-    val render = IosPdfiumRenderer.render(book.path, pageIndex, 1f, password)
-    val bitmap = render.bitmap ?: return emptyList()
-    val width = bitmap.width
-    val height = bitmap.height
-    if (width <= 0 || height <= 0) return emptyList()
-    val pixels = IntArray(width * height)
-    bitmap.readPixels(pixels)
-    val cgImage = autoreleasepool { bgraPixelsToCgImage(pixels, width, height) } ?: return emptyList()
-    return autoreleasepool { recognizeTextLineBounds(cgImage) }
-}
-
-private fun bgraPixelsToCgImage(pixels: IntArray, width: Int, height: Int): CGImageRef? {
-    val bytesPerRow = width * 4
-    val uBytes = ByteArray(pixels.size * 4).toUByteArray()
-    pixels.usePinned { intPinned ->
-        uBytes.usePinned { bytePinned ->
-            memcpy(bytePinned.addressOf(0), intPinned.addressOf(0), uBytes.size.toULong())
-        }
-    }
-    val data = uBytes.usePinned { pinned ->
-        CFDataCreate(kCFAllocatorDefault, pinned.addressOf(0), uBytes.size.toLong())
-    } ?: return null
-    val provider = CGDataProviderCreateWithCFData(data) ?: return null
-    val colorSpace = CGColorSpaceCreateDeviceRGB() ?: return null
-    val bitmapInfo = CGImageAlphaInfo.kCGImageAlphaNoneSkipLast.value or kCGBitmapByteOrder32Little
-    return CGImageCreate(
-        width = width.toULong(),
-        height = height.toULong(),
-        bitsPerComponent = 8u,
-        bitsPerPixel = 32u,
-        bytesPerRow = bytesPerRow.toULong(),
-        space = colorSpace,
-        bitmapInfo = bitmapInfo,
-        provider = provider,
-        decode = null,
-        shouldInterpolate = true,
-        intent = CGColorRenderingIntent.kCGRenderingIntentDefault,
-    )
-}
-
-private fun recognizeTextLineBounds(image: CGImageRef): List<PdfPageBounds> {
-    val request = VNRecognizeTextRequest(null)
-    request.recognitionLevel = VNRequestTextRecognitionLevelAccurate
-    val handler = VNImageRequestHandler(image, emptyMap<Any?, Any>())
-    handler.performRequests(listOf<VNRequest>(request), null)
-    val results = request.results ?: return emptyList()
-    return results.mapNotNull { observation ->
-        val textObservation = observation as? VNRecognizedTextObservation ?: return@mapNotNull null
-        textObservation.boundingBox.useContents {
-            PdfPageBounds(
-                left = origin.x.toFloat().coerceIn(0f, 1f),
-                top = (1.0 - origin.y - size.height).toFloat().coerceIn(0f, 1f),
-                right = (origin.x + size.width).toFloat().coerceIn(0f, 1f),
-                bottom = (1.0 - origin.y).toFloat().coerceIn(0f, 1f),
-            )
-        }
-    }
+    return IosPdfOcrPageCache.getOrRecognize(
+        path = book.path,
+        pageIndex = pageIndex,
+        password = password,
+        languages = IosPdfOcrLanguagePreferences.languages,
+    ).map { it.bounds }
 }
 
 private const val MaxRenderedPageHeightPx = 2048f

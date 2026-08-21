@@ -33,6 +33,13 @@ data class SharedPdfCloudSidecarPayload(
     val richTextDocumentJson: String?
 )
 
+/** Raw sidecar carried alongside a library snapshot while cloud transport runs. */
+data class SharedPdfCloudSidecarSnapshot(
+    val bookId: String,
+    val timestamp: Long,
+    val data: String
+)
+
 object SharedPdfCloudSidecarCodec {
     /** Android's current bundle is version 2; version 3 adds reader state. */
     const val CURRENT_VERSION = 3

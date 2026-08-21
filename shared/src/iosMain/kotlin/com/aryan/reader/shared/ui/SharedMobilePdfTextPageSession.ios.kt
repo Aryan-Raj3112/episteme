@@ -12,6 +12,7 @@ import androidx.compose.runtime.setValue
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.pdf.IosPdfiumRuntime
 import com.aryan.reader.shared.pdf.IosPdfOcrTextPageSession
+import com.aryan.reader.shared.pdf.IosPdfOcrLanguagePreferences
 import com.aryan.reader.shared.pdf.IosPdfTextPage
 import com.aryan.reader.shared.pdf.PdfTextPageSession
 import kotlinx.coroutines.Dispatchers
@@ -24,9 +25,10 @@ actual fun rememberPdfTextPageSession(
     pageIndex: Int,
     password: String?,
 ): PdfTextPageSession? {
-    var session by remember(book.path, pageIndex, password) { mutableStateOf<PdfTextPageSession?>(null) }
+    val ocrLanguages = IosPdfOcrLanguagePreferences.languages
+    var session by remember(book.path, pageIndex, password, ocrLanguages) { mutableStateOf<PdfTextPageSession?>(null) }
 
-    LaunchedEffect(book.path, pageIndex, password) {
+    LaunchedEffect(book.path, pageIndex, password, ocrLanguages) {
         session = withContext(Dispatchers.Default) {
             val nativeSession = IosPdfiumRuntime.mutex.withLock {
                 IosPdfTextPage.open(book.path, pageIndex, password)
@@ -38,12 +40,12 @@ actual fun rememberPdfTextPageSession(
                 // Scanned/image-only pages have no PDFium text page. Vision supplies the same
                 // character/geometry contract so selection, copy, search highlights, and TTS
                 // can continue through the shared reader path.
-                IosPdfOcrTextPageSession.open(book.path, pageIndex, password)
+                IosPdfOcrTextPageSession.open(book.path, pageIndex, password, ocrLanguages)
             }
         }
     }
 
-    DisposableEffect(book.path, pageIndex, password) {
+    DisposableEffect(book.path, pageIndex, password, ocrLanguages) {
         onDispose {
             session?.close()
             session = null

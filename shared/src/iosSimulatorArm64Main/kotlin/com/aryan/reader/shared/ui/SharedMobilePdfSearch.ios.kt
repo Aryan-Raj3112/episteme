@@ -42,6 +42,7 @@ private data class IosPdfSearchCacheKey(
     val fileSize: Long,
     val modifiedAt: Long,
     val passwordHash: Int,
+    val languages: List<String>,
 )
 
 private var iosPdfSearchCacheKey: IosPdfSearchCacheKey? = null
@@ -63,6 +64,7 @@ internal actual suspend fun searchSharedMobilePdf(
         fileSize = book.fileSize,
         modifiedAt = book.fileContentModifiedTimestamp,
         passwordHash = password?.hashCode() ?: 0,
+        languages = IosPdfOcrLanguagePreferences.languages,
     )
     if (iosPdfSearchCacheKey == cacheKey) {
         val cachedResults = iosPdfSearchIndex?.search(query).orEmpty()

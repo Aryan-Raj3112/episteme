@@ -17,6 +17,7 @@ import kotlinx.serialization.json.longOrNull
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import com.aryan.reader.shared.pdf.SharedPdfHighlighterPalette
+import com.aryan.reader.shared.pdf.SharedPdfCloudSidecarSnapshot
 import com.aryan.reader.shared.pdf.SharedPdfReaderViewport
 import com.aryan.reader.shared.pdf.PdfReverseColorMode
 import com.aryan.reader.shared.reader.ReaderBookmark
@@ -65,7 +66,9 @@ data class SharedLibrarySnapshot(
     val readerHighlightPalette: ReaderHighlightPalette = ReaderHighlightPalette(),
     val pdfHighlighterPalette: SharedPdfHighlighterPalette = SharedPdfHighlighterPalette(),
     val readerTtsReplacementPreferences: ReaderTtsReplacementPreferences = ReaderTtsReplacementPreferences(),
-    val readerBookReplacementPreferences: ReaderBookReplacementPreferences = ReaderBookReplacementPreferences()
+    val readerBookReplacementPreferences: ReaderBookReplacementPreferences = ReaderBookReplacementPreferences(),
+    /** Raw PDF sidecars transported alongside the library snapshot. */
+    val pdfSidecars: List<SharedPdfCloudSidecarSnapshot> = emptyList()
 )
 
 object SharedLibrarySnapshotJson {
@@ -171,7 +174,9 @@ object SharedLibrarySnapshotJson {
             readerBookReplacementPreferences = root["readerBookReplacementPreferences"]
                 ?.takeUnless { it is JsonNull }
                 ?.let { ReaderBookReplacementPreferencesJson.decodeOrEmpty(it.toString()) }
-                ?: ReaderBookReplacementPreferences()
+                ?: ReaderBookReplacementPreferences(),
+            pdfSidecars = root.array("pdfSidecars")
+                .mapNotNull { it.asSharedPdfCloudSidecarSnapshotOrNull() }
         )
     }
 
@@ -227,7 +232,8 @@ object SharedLibrarySnapshotJson {
                 ),
                 "readerBookReplacementPreferences" to json.parseToJsonElement(
                     ReaderBookReplacementPreferencesJson.encode(snapshot.readerBookReplacementPreferences)
-                )
+                ),
+                "pdfSidecars" to JsonArray(snapshot.pdfSidecars.map { it.toJsonObject() })
             )
         )
         return json.encodeToString(JsonElement.serializer(), root)
@@ -385,6 +391,17 @@ private fun JsonElement.asCloudBookTombstoneOrNull(): CloudBookTombstone? {
     )
 }
 
+private fun JsonElement.asSharedPdfCloudSidecarSnapshotOrNull(): SharedPdfCloudSidecarSnapshot? {
+    val obj = runCatching { jsonObject }.getOrNull() ?: return null
+    val bookId = obj.string("bookId")?.takeIf { it.isNotBlank() } ?: return null
+    val data = obj.string("data")?.takeIf { it.isNotBlank() } ?: return null
+    return SharedPdfCloudSidecarSnapshot(
+        bookId = bookId,
+        timestamp = obj.long("timestamp"),
+        data = data,
+    )
+}
+
 private fun JsonElement.asSharedAudiobookOrNull(): SharedAudiobook? {
     val obj = runCatching { jsonObject }.getOrNull() ?: return null
     val bookId = obj.string("bookId") ?: return null
@@ -484,6 +501,16 @@ private fun JsonElement.asAppFontPreferenceOrNull(): AppFontPreference? {
         kind = kind,
         customFontId = obj.string("customFontId")
     ).sanitized()
+}
+
+private fun SharedPdfCloudSidecarSnapshot.toJsonObject(): JsonObject {
+    return JsonObject(
+        mapOf(
+            "bookId" to JsonPrimitive(bookId),
+            "timestamp" to JsonPrimitive(timestamp.coerceAtLeast(0L)),
+            "data" to JsonPrimitive(data),
+        )
+    )
 }
 
 private fun BookItem.toJsonObject(): JsonObject {

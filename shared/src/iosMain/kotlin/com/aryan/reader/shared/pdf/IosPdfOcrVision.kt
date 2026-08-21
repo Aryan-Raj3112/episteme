@@ -34,7 +34,11 @@ import platform.CoreGraphics.CGImageCreate
 import platform.CoreGraphics.CGImageRef
 import platform.CoreGraphics.kCGBitmapByteOrder32Little
 import platform.Foundation.NSFileManager
+import platform.Foundation.NSFileModificationDate
+import platform.Foundation.NSFileSize
+import platform.Foundation.NSNumber
 import platform.Foundation.NSURL
+import platform.Foundation.NSUserDefaults
 import platform.Vision.VNImageRequestHandler
 import platform.Vision.VNRecognizedTextObservation
 import platform.Vision.VNRecognizedText
@@ -107,6 +111,7 @@ internal suspend fun recognizeIosPdfPageWords(
 
 private data class IosPdfOcrCacheKey(
     val path: String,
+    val fileRevision: String,
     val pageIndex: Int,
     val passwordHash: Int,
     val languages: List<String>,
@@ -125,7 +130,13 @@ internal object IosPdfOcrPageCache {
         languages: List<String>,
     ): List<IosPdfOcrWord> {
         val rawPath = path?.trim()?.takeIf { it.isNotBlank() } ?: return emptyList()
-        val key = IosPdfOcrCacheKey(rawPath, pageIndex, password?.hashCode() ?: 0, languages.distinct())
+        val key = IosPdfOcrCacheKey(
+            path = rawPath,
+            fileRevision = iosPdfFileRevision(rawPath),
+            pageIndex = pageIndex,
+            passwordHash = password?.hashCode() ?: 0,
+            languages = languages.distinct(),
+        )
         mutex.withLock {
             entries[key]?.let {
                 IosPdfOcrMetrics.recordCacheHit()
@@ -223,18 +234,41 @@ private fun recognizeIosPdfWords(
 }
 
 /**
- * The language preference is deliberately kept outside the PDF session so that a future iOS
- * settings sheet can update it without changing the reader/session contract. Vision accepts BCP
- * 47 language identifiers (for example `en-US`, `ja-JP`, and `zh-Hans`).
+ * The language preference is kept outside the PDF session so that all OCR
+ * consumers (search, selection, highlight-all, and TTS) use the same choice.
+ * Vision accepts BCP 47 language identifiers (for example `en-US`, `ja-JP`,
+ * and `zh-Hans`).
  */
 internal object IosPdfOcrLanguagePreferences {
-    private const val DefaultLanguage = "en-US"
+    private const val DefaultsKey = "reader_ios_pdf_ocr_language_v1"
 
-    var languages: List<String> = defaultLanguages()
+    var language: SharedPdfOcrLanguage
+        get() = SharedPdfOcrLanguage.fromId(
+            NSUserDefaults.standardUserDefaults.stringForKey(DefaultsKey)
+        )
+        private set(value) {
+            NSUserDefaults.standardUserDefaults.setObject(value.id, forKey = DefaultsKey)
+        }
 
-    private fun defaultLanguages(): List<String> {
-        return listOf(DefaultLanguage)
+    val languages: List<String>
+        get() = language.visionLanguageCodes
+
+    fun setLanguage(value: SharedPdfOcrLanguage) {
+        language = value
     }
+}
+
+internal fun loadIosPdfOcrLanguage(): SharedPdfOcrLanguage = IosPdfOcrLanguagePreferences.language
+
+internal fun persistIosPdfOcrLanguage(language: SharedPdfOcrLanguage) {
+    IosPdfOcrLanguagePreferences.setLanguage(language)
+}
+
+private fun iosPdfFileRevision(path: String): String {
+    val attributes = NSFileManager.defaultManager.attributesOfItemAtPath(path, error = null)
+    val size = (attributes?.get(NSFileSize) as? NSNumber)?.longLongValue ?: 0L
+    val modified = attributes?.get(NSFileModificationDate)?.toString().orEmpty()
+    return "$size:$modified"
 }
 
 /**
