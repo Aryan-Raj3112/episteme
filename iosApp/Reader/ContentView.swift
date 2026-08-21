@@ -838,7 +838,7 @@ private final class ReaderStatusBarHostController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        ReaderSharedIosPencilShortcutKt.resetIosPencilEraserOverride()
+        IosPencilShortcutKt.resetIosPencilEraserOverride()
         contentInterfaceStyle = traitCollection.userInterfaceStyle
         contentController.overrideUserInterfaceStyle = contentInterfaceStyle
         addChild(contentController)
@@ -954,7 +954,7 @@ private final class ReaderStatusBarHostController: UIViewController {
 extension ReaderStatusBarHostController: UIPencilInteractionDelegate {
     func pencilInteractionDidTap(_ interaction: UIPencilInteraction) {
         guard UIPencilInteraction.preferredTapAction == .switchEraser else { return }
-        _ = ReaderSharedIosPencilShortcutKt.toggleIosPencilEraserOverride()
+        _ = IosPencilShortcutKt.toggleIosPencilEraserOverride()
     }
 
     @available(iOS 17.5, *)
@@ -964,7 +964,7 @@ extension ReaderStatusBarHostController: UIPencilInteractionDelegate {
     ) {
         guard squeeze.phase == .ended,
               UIPencilInteraction.preferredSqueezeAction == .switchEraser else { return }
-        _ = ReaderSharedIosPencilShortcutKt.toggleIosPencilEraserOverride()
+        _ = IosPencilShortcutKt.toggleIosPencilEraserOverride()
     }
 }
 
