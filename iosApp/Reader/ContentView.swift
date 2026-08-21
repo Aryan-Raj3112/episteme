@@ -814,6 +814,7 @@ private final class ReaderStatusBarHostController: UIViewController {
     private var readerOrientationMode: Int32 = 0
     private let statusBarBackdrop = UIView()
     private let navigationBarBackdrop = UIView()
+    private var pencilInteraction: UIPencilInteraction?
     private var contentTopToSafeAreaConstraint: NSLayoutConstraint?
     private var contentBottomToSafeAreaConstraint: NSLayoutConstraint?
     private var contentTopToEdgeConstraint: NSLayoutConstraint?
@@ -831,6 +832,7 @@ private final class ReaderStatusBarHostController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        ReaderSharedIosPencilShortcutKt.resetIosPencilEraserOverride()
         contentInterfaceStyle = traitCollection.userInterfaceStyle
         contentController.overrideUserInterfaceStyle = contentInterfaceStyle
         addChild(contentController)
@@ -868,6 +870,14 @@ private final class ReaderStatusBarHostController: UIViewController {
             navigationBarBackdrop.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             navigationBarBackdrop.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor)
         ])
+
+        // UIPencilInteraction is the public UIKit surface for Pencil side
+        // gestures. Installing it on the stable host (instead of the Compose
+        // view) keeps it alive across reader navigation and split panes.
+        let interaction = UIPencilInteraction()
+        interaction.delegate = self
+        view.addInteraction(interaction)
+        pencilInteraction = interaction
     }
 
     override var prefersStatusBarHidden: Bool { hidesStatusBar }
@@ -932,6 +942,23 @@ private final class ReaderStatusBarHostController: UIViewController {
             setNeedsStatusBarAppearanceUpdate()
             setNeedsUpdateOfHomeIndicatorAutoHidden()
         }
+    }
+}
+
+extension ReaderStatusBarHostController: UIPencilInteractionDelegate {
+    func pencilInteractionDidTap(_ interaction: UIPencilInteraction) {
+        guard UIPencilInteraction.preferredTapAction == .switchEraser else { return }
+        _ = ReaderSharedIosPencilShortcutKt.toggleIosPencilEraserOverride()
+    }
+
+    @available(iOS 17.5, *)
+    func pencilInteraction(
+        _ interaction: UIPencilInteraction,
+        didReceiveSqueeze squeeze: UIPencilInteractionSqueeze
+    ) {
+        guard squeeze.phase == .ended,
+              UIPencilInteraction.preferredSqueezeAction == .switchEraser else { return }
+        _ = ReaderSharedIosPencilShortcutKt.toggleIosPencilEraserOverride()
     }
 }
 

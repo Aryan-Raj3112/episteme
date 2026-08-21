@@ -91,6 +91,11 @@ import com.aryan.reader.shared.SyncedFolder
 import com.aryan.reader.shared.UserData
 import com.aryan.reader.shared.ReaderPlatform
 import com.aryan.reader.shared.ReaderAutoScrollProfile
+import com.aryan.reader.shared.ReaderAiByokSettings
+import com.aryan.reader.shared.ReaderAiFeature
+import com.aryan.reader.shared.SummarizationResult
+import com.aryan.reader.shared.AiDefinitionResult
+import com.aryan.reader.shared.RecapResult
 import com.aryan.reader.shared.ReaderExternalLookupService
 import com.aryan.reader.shared.ui.IosReaderLookupServices
 import com.aryan.reader.shared.migrateLegacyIosReaderAutoScrollSpeed
@@ -175,6 +180,9 @@ import com.aryan.reader.shared.ui.SharedMobileReaderTtsSettingsSheet
 import com.aryan.reader.shared.ui.SharedMobilePdfReaderHost
 import com.aryan.reader.shared.ui.SharedMobilePdfReflowUiState
 import com.aryan.reader.shared.ui.SharedMobileDictionarySettingsSheet
+import com.aryan.reader.shared.ui.SharedAiSettingsScreen
+import com.aryan.reader.shared.ui.SharedAiSettingsStrings
+import com.aryan.reader.shared.ui.IosSharedMobileCloudTts
 import com.aryan.reader.shared.ui.SharedMobileHomeScreen
 import com.aryan.reader.shared.ui.SharedMobileHomeActions
 import com.aryan.reader.shared.ui.SharedMobileLibraryScreen
@@ -816,6 +824,7 @@ class ReaderIosBridge internal constructor(
         googleLinked: Boolean,
         googleDriveAuthorized: Boolean,
         status: String?,
+        authToken: String? = null,
     ) {
         accountState = IosAccountState(
             uid = uid,
@@ -827,8 +836,18 @@ class ReaderIosBridge internal constructor(
             },
             googleDriveAuthorized = googleDriveAuthorized,
             status = status,
+            authToken = authToken,
             hasLoaded = true,
         )
+    }
+
+    /** Refreshable Firebase ID tokens stay on the native auth boundary. */
+    fun updateAccountAuthToken(authToken: String?, expectedUid: String? = null) {
+        // Firebase can finish a token request after a sign-out or account switch.
+        // Keep that stale callback from re-enabling server-backed features for the
+        // account that is no longer active.
+        if (expectedUid != null && accountState.uid != expectedUid) return
+        accountState = accountState.copy(authToken = authToken)
     }
 }
 
@@ -855,6 +874,7 @@ internal data class IosAccountState(
     val providers: Set<AccountAuthProvider> = emptySet(),
     val googleDriveAuthorized: Boolean = false,
     val status: String? = null,
+    val authToken: String? = null,
     val hasLoaded: Boolean = false,
 ) {
     val canSync: Boolean
@@ -873,6 +893,7 @@ private enum class IosUtilityScreen {
     ACCOUNT,
     PRO,
     SETTINGS,
+    AI_SETTINGS,
     LANGUAGE,
     FONTS,
     FEEDBACK,
@@ -1654,6 +1675,73 @@ private fun ReaderIosApp(
     var state by remember {
         mutableStateOf(initialReaderBook?.let(navigatedState::withRestoredMobileReaderSession) ?: navigatedState)
     }
+    val readerAiSettingsStore = remember { IosReaderAiSettingsStore() }
+    var readerAiSettings by remember { mutableStateOf(readerAiSettingsStore.load()) }
+    val effectiveReaderAiSettings = readerAiSettings.copy(
+        hideReaderAiFeatures = readerAiSettings.hideReaderAiFeatures || state.hideReaderAi,
+        serverBackedReaderAiFeatures = bridge.accountState.uid != null,
+        serverBackedCloudTts = bridge.accountState.uid != null,
+    ).sanitized()
+    val readerAiAdapter = remember(
+        bridge,
+        effectiveReaderAiSettings,
+        bridge.accountState.uid,
+        bridge.accountState.authToken,
+        state.isProUser,
+        state.credits,
+    ) {
+        IosReaderAiAdapter(
+            settingsProvider = { effectiveReaderAiSettings },
+            accountStateProvider = {
+                IosReaderAiAccountState(
+                    isSignedIn = bridge.accountState.uid != null,
+                    isProUser = state.isProUser,
+                    credits = state.credits,
+                )
+            },
+            authTokenProvider = { bridge.accountState.authToken },
+            onUsageReported = { usage ->
+                usage.freeRemaining?.let { remaining ->
+                    state = state.copy(credits = remaining.coerceAtLeast(0))
+                }
+            },
+        )
+    }
+    val readerCloudTts = remember { IosSharedMobileCloudTts() }
+    DisposableEffect(readerCloudTts) {
+        onDispose { readerCloudTts.release() }
+    }
+    fun updateCloudTtsMode(enabled: Boolean) {
+        val updated = readerAiSettings.copy(
+            ttsModel = if (enabled) com.aryan.reader.shared.GEMINI_CLOUD_TTS_MODEL_ID else "",
+        ).sanitized()
+        readerAiSettings = updated
+        readerAiSettingsStore.save(updated)
+    }
+    fun updateCloudTtsVoice(identifier: String) {
+        val updated = readerAiSettings.copy(ttsSpeakerId = identifier).sanitized()
+        readerAiSettings = updated
+        readerAiSettingsStore.save(updated)
+    }
+    LaunchedEffect(
+        effectiveReaderAiSettings,
+        bridge.accountState.uid,
+        bridge.accountState.authToken,
+        state.isProUser,
+        state.credits,
+    ) {
+        readerCloudTts.configure(
+            settings = effectiveReaderAiSettings,
+            isSignedIn = bridge.accountState.uid != null,
+            isProUser = state.isProUser,
+            credits = state.credits,
+            authToken = bridge.accountState.authToken,
+            workerUrl = IOS_READER_AI_WORKER_URL,
+        )
+    }
+    var readerExtrasState by remember { mutableStateOf(com.aryan.reader.shared.ReaderExtrasState()) }
+    var readerAiJob by remember { mutableStateOf<Job?>(null) }
+    val readerAiAvailable = readerAiAdapter.isAvailable
     LaunchedEffect(state) {
         persistIosLibrarySnapshot(state)
     }
@@ -1844,6 +1932,77 @@ private fun ReaderIosApp(
     fun showMessage(message: String) {
         state = state.withMessage(message)
         bridge.recordNativeEvent(message)
+    }
+
+    fun dismissReaderAiResult() {
+        readerAiJob?.cancel()
+        readerAiJob = null
+        readerExtrasState = readerExtrasState.copy(
+            aiResult = com.aryan.reader.shared.ReaderAiResultState()
+        )
+    }
+
+    fun runReaderAiAction(feature: ReaderAiFeature, text: String) {
+        readerAiJob?.cancel()
+        readerAiJob = null
+        val input = text.trim()
+        if (input.isBlank()) {
+            readerExtrasState = readerExtrasState.copy(
+                aiResult = com.aryan.reader.shared.ReaderAiResultState(
+                    title = feature.displayName,
+                    errorMessage = "There is no reading context for this action.",
+                )
+            )
+            return
+        }
+        readerExtrasState = readerExtrasState.copy(
+            aiResult = com.aryan.reader.shared.ReaderAiResultState(
+                title = feature.displayName,
+                isLoading = true,
+            )
+        )
+        readerAiJob = scope.launch {
+            val result = when (feature) {
+                ReaderAiFeature.DEFINE -> readerAiAdapter.defineStreaming(input, onUpdate = { chunk ->
+                            readerExtrasState = readerExtrasState.copy(
+                        aiResult = readerExtrasState.aiResult.copy(text = readerExtrasState.aiResult.text + chunk)
+                    )
+                }).let { result ->
+                    AiDefinitionResult(definition = result.definition, error = result.error)
+                }
+                ReaderAiFeature.SUMMARIZE -> readerAiAdapter.summarizeStreaming(
+                    input,
+                    onUsageReceived = { _, freeRemaining ->
+                        freeRemaining?.let { state = state.copy(credits = it.coerceAtLeast(0)) }
+                    },
+                    onUpdate = { chunk ->
+                        readerExtrasState = readerExtrasState.copy(
+                            aiResult = readerExtrasState.aiResult.copy(text = readerExtrasState.aiResult.text + chunk)
+                        )
+                    },
+                )
+                ReaderAiFeature.RECAP -> readerAiAdapter.recap(input)
+            }
+            val textResult = when (result) {
+                is AiDefinitionResult -> result.definition.orEmpty()
+                is SummarizationResult -> result.summary.orEmpty()
+                is RecapResult -> result.recap.orEmpty()
+                else -> ""
+            }
+            val error = when (result) {
+                is AiDefinitionResult -> result.error
+                is SummarizationResult -> result.error
+                is RecapResult -> result.error
+                else -> "AI request failed."
+            }
+            readerExtrasState = readerExtrasState.copy(
+                aiResult = readerExtrasState.aiResult.copy(
+                    text = if (readerExtrasState.aiResult.text.isNotBlank()) readerExtrasState.aiResult.text else textResult,
+                    isLoading = false,
+                    errorMessage = error,
+                )
+            )
+        }
     }
 
     LaunchedEffect(splitRecoveryMessagePending) {
@@ -2637,6 +2796,19 @@ private fun ReaderIosApp(
         SharedMobilePdfReaderHost(
             book = paneBook,
             onBack = onBack,
+            readerAiAvailable = readerAiAvailable,
+            readerExtrasState = readerExtrasState.copy(cloudTts = readerCloudTts.state),
+            cloudTts = readerCloudTts,
+            cloudTtsModeEnabled = effectiveReaderAiSettings.ttsModel == com.aryan.reader.shared.GEMINI_CLOUD_TTS_MODEL_ID,
+            onCloudTtsModeChange = ::updateCloudTtsMode,
+            cloudTtsVoiceId = effectiveReaderAiSettings.ttsSpeakerId,
+            onCloudTtsVoiceChange = ::updateCloudTtsVoice,
+            onClearCloudTtsCache = readerCloudTts::clearCache,
+            onAiAction = ::runReaderAiAction,
+            onAiResultDismiss = {
+                dismissReaderAiResult()
+            },
+            onOpenAiHub = { utilityScreen = IosUtilityScreen.AI_SETTINGS },
             pdfReflowUiState = SharedMobilePdfReflowUiState(
                 isGenerating = pdfReflowProgress != null,
                 progress = pdfReflowProgress ?: 0f,
@@ -3116,6 +3288,19 @@ private fun ReaderIosApp(
                                 state = state.reduce(AppAction.ReaderBookReplacementPreferencesChanged(preferences))
                             },
                             onOpenDictionarySettings = { showDictionarySettingsSheet = true },
+                            readerAiAvailable = readerAiAvailable,
+                            readerExtrasState = readerExtrasState.copy(cloudTts = readerCloudTts.state),
+                            cloudTts = readerCloudTts,
+                            cloudTtsModeEnabled = effectiveReaderAiSettings.ttsModel == com.aryan.reader.shared.GEMINI_CLOUD_TTS_MODEL_ID,
+                            onCloudTtsModeChange = ::updateCloudTtsMode,
+                            cloudTtsVoiceId = effectiveReaderAiSettings.ttsSpeakerId,
+                            onCloudTtsVoiceChange = ::updateCloudTtsVoice,
+                            onClearCloudTtsCache = readerCloudTts::clearCache,
+                            onAiAction = ::runReaderAiAction,
+                            onAiResultDismiss = {
+                                dismissReaderAiResult()
+                            },
+                            onOpenAiHub = {},
                             readerBrightness = readerBrightness,
                             readerCustomBrightness = readerCustomBrightness,
                             readerBrightnessSupported = true,
@@ -3224,14 +3409,14 @@ private fun ReaderIosApp(
                                 syncAvailable = true,
                                 cloudSyncEligible = bridge.accountState.canSync,
                                 folderSyncAvailable = true,
-                                aiSettingsAvailable = false,
+                                aiSettingsAvailable = true,
                                 ttsSettingsAvailable = true,
                                 bookCacheMaintenanceAvailable = false,
                                 reflowCacheMaintenanceAvailable = true,
                                 includeLanguage = true,
                                 includeScreenCaptureProtection = false,
                                 includeCloudLocalDataClear = false,
-                                includeHideReaderAi = true,
+                                includeHideReaderAi = false,
                                 supportProjectAvailable = true,
                                 isTabsEnabled = state.isTabsEnabled,
                                 isSyncEnabled = state.isSyncEnabled,
@@ -3333,6 +3518,7 @@ private fun ReaderIosApp(
                                     SharedSettingsAction.HELP_FEEDBACK -> utilityScreen = IosUtilityScreen.FEEDBACK
                                     SharedSettingsAction.SUPPORT -> utilityScreen = IosUtilityScreen.SUPPORT
                                     SharedSettingsAction.ABOUT -> utilityScreen = IosUtilityScreen.ABOUT
+                                    SharedSettingsAction.AI_SETTINGS -> utilityScreen = IosUtilityScreen.AI_SETTINGS
                                     SharedSettingsAction.RECENT_LIMIT -> showRecentLimitDialog = true
                                     SharedSettingsAction.EXTERNAL_FILE_BEHAVIOR -> {
                                         showExternalFileBehaviorDialog = true
@@ -3356,7 +3542,6 @@ private fun ReaderIosApp(
                                     SharedSettingsAction.SCREEN_CAPTURE_PROTECTION,
                                     SharedSettingsAction.CLEAR_BOOK_CACHE,
                                     SharedSettingsAction.DEVICE_MANAGEMENT,
-                                    SharedSettingsAction.AI_SETTINGS,
                                     SharedSettingsAction.CLEAR_CLOUD_LOCAL_DATA,
                                     SharedSettingsAction.TEST_PANEL_DETECTION,
                                     SharedSettingsAction.TEST_SPEECH_BUBBLE_DETECTION,
@@ -3389,6 +3574,59 @@ private fun ReaderIosApp(
                             modifier = Modifier.fillMaxSize(),
                         )
                     }
+                    IosUtilityScreen.AI_SETTINGS -> SharedAiSettingsScreen(
+                        settings = effectiveReaderAiSettings,
+                        maskedKeys = readerAiSettingsStore.maskedKeys(),
+                        strings = SharedAiSettingsStrings(
+                            title = "AI and cloud TTS",
+                            backDescription = "Back",
+                            savedKeys = "Saved API keys",
+                            noKeySaved = "No key saved",
+                            addOrReplaceKey = "Add or replace a key",
+                            providerLabel = "Provider",
+                            apiKeyLabel = "API key",
+                            saveKey = "Save key",
+                            useOneModel = "Use one model for all AI features",
+                            useOneModelDescription = "Use the same model for definitions, summaries, and recaps.",
+                            allFeatures = "All AI features",
+                            allFeaturesDescription = "Choose the default text model.",
+                            smartDictionary = "Smart dictionary",
+                            smartDictionaryDescription = "Define selected words and passages.",
+                            summaries = "Summaries",
+                            summariesDescription = "Generate concise summaries.",
+                            recaps = "Recaps",
+                            recapsDescription = "Catch up from earlier reading context.",
+                            cloudTts = "Cloud TTS",
+                            cloudTtsDescription = "Use Gemini Live for natural reading aloud when signed in or using your own Gemini key.",
+                            modelLabel = "Model",
+                            noModelSelected = "No model selected",
+                            saveDialogDescription = "The key is stored securely in the iOS Keychain.",
+                            deleteDialogDescription = "This removes the saved key from this device.",
+                            saveAction = "Save",
+                            deleteAction = "Delete",
+                            cancelAction = "Cancel",
+                            providerLabels = mapOf("gemini" to "Gemini", "groq" to "Groq"),
+                            saveDialogTitle = { provider -> "Save $provider key?" },
+                            deleteDialogTitle = { provider -> "Delete $provider key?" },
+                            deleteKeyDescription = { provider -> "Delete saved $provider key" },
+                        ),
+                        onBackClick = { utilityScreen = null },
+                        onSaveKey = { provider, key ->
+                            readerAiSettingsStore.saveKey(provider, key)
+                            readerAiSettings = readerAiSettingsStore.load()
+                        },
+                        onDeleteKey = { provider ->
+                            readerAiSettingsStore.deleteKey(provider)
+                            readerAiSettings = readerAiSettingsStore.load()
+                        },
+                        onSettingsChange = { updated ->
+                            readerAiSettings = updated.sanitized()
+                            readerAiSettingsStore.save(readerAiSettings)
+                        },
+                        cloudCacheSummary = readerCloudTts.state.cacheSummary,
+                        onClearCloudTtsCache = readerCloudTts::clearCache,
+                        modifier = Modifier.fillMaxSize(),
+                    )
                     IosUtilityScreen.LANGUAGE -> IosUtilityPage(onBack = { utilityScreen = languageReturnScreen }) {
                         LazyColumn(modifier = Modifier.fillMaxSize()) {
                             items(sharedAppLanguages, key = { it.tag ?: "system" }) { language ->
@@ -3466,7 +3704,7 @@ private fun ReaderIosApp(
                         currentUser = state.currentUser,
                         isProUser = state.isProUser,
                         isStandardEdition = !bridge.localStoreKitState.available,
-                        aiSettingsAvailable = false,
+                        aiSettingsAvailable = true,
                         credits = state.credits,
                         isSyncEnabled = state.isSyncEnabled,
                         isFolderSyncEnabled = state.isFolderSyncEnabled,
@@ -3492,7 +3730,7 @@ private fun ReaderIosApp(
                         },
                         onProClick = { runDrawerAction { utilityScreen = IosUtilityScreen.PRO } },
                         onFontsClick = { runDrawerAction { utilityScreen = IosUtilityScreen.FONTS } },
-                        onAiSettingsClick = { runDrawerAction { showMessage("AI settings bridge is next for iOS") } },
+                        onAiSettingsClick = { runDrawerAction { utilityScreen = IosUtilityScreen.AI_SETTINGS } },
                         onSettingsClick = { runDrawerAction { utilityScreen = IosUtilityScreen.SETTINGS } },
                         onAppThemeClick = { runDrawerAction { showAppThemePanel = true } },
                         onFeedbackClick = { runDrawerAction { utilityScreen = IosUtilityScreen.FEEDBACK } },

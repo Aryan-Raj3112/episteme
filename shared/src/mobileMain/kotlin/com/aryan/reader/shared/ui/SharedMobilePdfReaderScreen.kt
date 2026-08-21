@@ -53,6 +53,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.NavigateBefore
 import androidx.compose.material.icons.automirrored.filled.NavigateNext
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Ai
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
@@ -151,6 +152,9 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import com.aryan.reader.shared.BookItem
+import com.aryan.reader.shared.ReaderAiFeature
+import com.aryan.reader.shared.ReaderAiResultState
+import com.aryan.reader.shared.ReaderExtrasState
 import com.aryan.reader.shared.BuiltInPdfReaderThemes
 import com.aryan.reader.shared.FileType
 import com.aryan.reader.shared.HighlightStyle
@@ -273,6 +277,17 @@ fun SharedMobilePdfReaderScreen(
     onApplyReaderScreenOrientation: (ReaderScreenOrientationMode) -> Unit = {},
     readerTtsReplacementPreferences: ReaderTtsReplacementPreferences = ReaderTtsReplacementPreferences(),
     onReaderTtsReplacementPreferencesChange: (ReaderTtsReplacementPreferences) -> Unit = {},
+    readerAiAvailable: Boolean = false,
+    readerExtrasState: ReaderExtrasState = ReaderExtrasState(),
+    cloudTts: SharedMobileEpubCloudTts? = null,
+    cloudTtsModeEnabled: Boolean = false,
+    onCloudTtsModeChange: (Boolean) -> Unit = {},
+    cloudTtsVoiceId: String = com.aryan.reader.shared.DEFAULT_CLOUD_TTS_SPEAKER_ID,
+    onCloudTtsVoiceChange: (String) -> Unit = {},
+    onClearCloudTtsCache: () -> Unit = {},
+    onAiAction: (ReaderAiFeature, String) -> Unit = { _, _ -> },
+    onAiResultDismiss: () -> Unit = {},
+    onOpenAiHub: () -> Unit = {},
     onTtsError: ((String) -> Unit)? = null,
     initialReaderState: SharedPdfReaderState? = null,
     readerDefaultSettings: ReaderSettings = ReaderSettings(themeId = "no_theme"),
@@ -324,6 +339,17 @@ fun SharedMobilePdfReaderScreen(
         onApplyReaderScreenOrientation = onApplyReaderScreenOrientation,
         readerTtsReplacementPreferences = readerTtsReplacementPreferences,
         onReaderTtsReplacementPreferencesChange = onReaderTtsReplacementPreferencesChange,
+        readerAiAvailable = readerAiAvailable,
+        readerExtrasState = readerExtrasState,
+        cloudTts = cloudTts,
+        cloudTtsModeEnabled = cloudTtsModeEnabled,
+        onCloudTtsModeChange = onCloudTtsModeChange,
+        cloudTtsVoiceId = cloudTtsVoiceId,
+        onCloudTtsVoiceChange = onCloudTtsVoiceChange,
+        onClearCloudTtsCache = onClearCloudTtsCache,
+        onAiAction = onAiAction,
+        onAiResultDismiss = onAiResultDismiss,
+        onOpenAiHub = onOpenAiHub,
         onTtsError = onTtsError,
         initialReaderState = initialReaderState,
         readerDefaultSettings = readerDefaultSettings,
@@ -386,6 +412,17 @@ fun SharedMobilePdfReaderHost(
     onApplyReaderScreenOrientation: (ReaderScreenOrientationMode) -> Unit = {},
     readerTtsReplacementPreferences: ReaderTtsReplacementPreferences = ReaderTtsReplacementPreferences(),
     onReaderTtsReplacementPreferencesChange: (ReaderTtsReplacementPreferences) -> Unit = {},
+    readerAiAvailable: Boolean = false,
+    readerExtrasState: ReaderExtrasState = ReaderExtrasState(),
+    cloudTts: SharedMobileEpubCloudTts? = null,
+    cloudTtsModeEnabled: Boolean = false,
+    onCloudTtsModeChange: (Boolean) -> Unit = {},
+    cloudTtsVoiceId: String = com.aryan.reader.shared.DEFAULT_CLOUD_TTS_SPEAKER_ID,
+    onCloudTtsVoiceChange: (String) -> Unit = {},
+    onClearCloudTtsCache: () -> Unit = {},
+    onAiAction: (ReaderAiFeature, String) -> Unit = { _, _ -> },
+    onAiResultDismiss: () -> Unit = {},
+    onOpenAiHub: () -> Unit = {},
     onTtsError: ((String) -> Unit)? = null,
     initialReaderState: SharedPdfReaderState? = null,
     readerDefaultSettings: ReaderSettings = ReaderSettings(themeId = "no_theme"),
@@ -508,7 +545,9 @@ fun SharedMobilePdfReaderHost(
         }
     }
     val sanitizedPdfToolbarPreferences = pdfToolbarPreferences.sanitized(SharedMobilePdfAvailableTools)
-    val visiblePdfTools = sanitizedPdfToolbarPreferences.toolOrder.filter(sanitizedPdfToolbarPreferences::isVisible)
+    val visiblePdfTools = sanitizedPdfToolbarPreferences.toolOrder
+        .filter(sanitizedPdfToolbarPreferences::isVisible)
+        .filter { it != PdfReaderTool.AI_FEATURES || readerAiAvailable }
     val pdfTopTools = visiblePdfTools.filter { it.supportsToolbarPlacement && !sanitizedPdfToolbarPreferences.isBottom(it) }
     val pdfBottomTools = visiblePdfTools.filter { it.supportsToolbarPlacement && sanitizedPdfToolbarPreferences.isBottom(it) }
 
@@ -586,6 +625,9 @@ fun SharedMobilePdfReaderHost(
     var navigationReason by remember(readerSessionKey) { mutableStateOf(PdfNavigationReason.INITIAL) }
     var jumpHistory by remember(readerSessionKey) { mutableStateOf(SharedPdfJumpHistory()) }
     val pdfTts = rememberSharedMobileEpubLocalTts()
+    val cloudTtsState = cloudTts?.state ?: readerExtrasState.cloudTts
+    val cloudTtsAvailable = cloudTts != null && cloudTtsState.isAvailable &&
+        pdfTts.state == SharedMobileEpubLocalTtsState.IDLE
     LaunchedEffect(pdfTts.errorMessage, ownsTts) {
         if (ownsTts) pdfTts.errorMessage?.let { message -> onTtsError?.invoke(message) }
     }
@@ -603,6 +645,7 @@ fun SharedMobilePdfReaderHost(
             // A pane that loses focus must not keep driving the process-global
             // speech engine after another pane becomes the owner.
             pdfTts.stop()
+            cloudTts?.stop()
             hasOwnedTts = false
             pendingTtsStart = null
             pendingTtsStartAtLastChunk = false
@@ -728,7 +771,8 @@ fun SharedMobilePdfReaderHost(
     val pdfBottomChromePadding = 56.dp + effectiveBottomSystemInset
     val isJumpHistoryVisible = showChrome && !readerState.isSearchActive && jumpHistory.hasJumpTargets
     val isPdfTtsPlayingOrLoading =
-        pdfTts.state == SharedMobileEpubLocalTtsState.SPEAKING || pendingTtsStart != null
+        pdfTts.state == SharedMobileEpubLocalTtsState.SPEAKING || pendingTtsStart != null ||
+            cloudTtsState.isLoading || cloudTtsState.isPlaying || cloudTtsState.isPaused
     val pdfSliderBottomPadding = pdfBottomChromePadding + if (isJumpHistoryVisible) 40.dp else 0.dp
     val latestSystemUiAppearanceChange = rememberUpdatedState(onSystemUiAppearanceChange)
     LaunchedEffect(readerSessionKey, hideSystemUi, systemBarColor, edgeToEdgeSystemUi, ownsSystemUi) {
@@ -759,6 +803,7 @@ fun SharedMobilePdfReaderHost(
     }
     fun stopPdfTtsSession() {
         if (ownsTts) pdfTts.stop()
+        if (ownsTts) cloudTts?.stop()
         pendingTtsStart = null
         pendingTtsStartAtLastChunk = false
         ttsHighlightBounds = emptyList()
@@ -799,6 +844,7 @@ fun SharedMobilePdfReaderHost(
         playWhenReady: Boolean = true
     ) {
         if (!ownsTts) return
+        cloudTts?.stop()
         val target = pageIndex.coerceIn(0, (displayPageCount - 1).coerceAtLeast(0))
         pdfTts.prepare()
         ttsPageIndex = sharedPdfPdfPageIndexAt(virtualLayout, target)
@@ -808,6 +854,24 @@ fun SharedMobilePdfReaderHost(
         pendingTtsStartAtLastChunk = startAtLastChunk
         pendingTtsPlayWhenReady = playWhenReady
         navigateToPage(target, recordHistory = false, reason = PdfNavigationReason.TTS)
+    }
+
+    fun toggleCloudTts() {
+        val controller = cloudTts ?: return
+        if (!ownsTts) return
+        when {
+            cloudTtsState.isPlaying || cloudTtsState.isLoading -> controller.pause()
+            cloudTtsState.isPaused -> controller.resume()
+            else -> {
+                val session = ttsTextSession ?: return
+                pdfTts.stop()
+                val source = session.textForRange(0, session.pageCharCount).orEmpty()
+                val planned = PdfTtsSessionPlanner.page(ttsPageIndex, source, 0)
+                if (planned.chunks.isNotEmpty()) {
+                    controller.start(planned.chunks, pdfCardTitle, book.id)
+                }
+            }
+        }
     }
 
     fun stopPdfTtsForManualPagination() {
@@ -1260,7 +1324,9 @@ fun SharedMobilePdfReaderHost(
                                 onPageSliderVisibilityPreferenceChange(showPageSlider)
                             },
                             onToggleTts = {
-                                if (ownsTts) when (pdfTts.state) {
+                                if (cloudTtsAvailable) {
+                                    toggleCloudTts()
+                                } else if (ownsTts) when (pdfTts.state) {
                                     SharedMobileEpubLocalTtsState.IDLE -> requestTts()
                                     SharedMobileEpubLocalTtsState.SPEAKING -> pdfTts.pause()
                                     SharedMobileEpubLocalTtsState.PAUSED -> pdfTts.resume()
@@ -1289,6 +1355,9 @@ fun SharedMobilePdfReaderHost(
                                     }
                                 }
                             },
+                            onAiAction = { feature, text -> onAiAction(feature, text) },
+                            onOpenAiHub = onOpenAiHub,
+                            aiAvailable = readerAiAvailable,
                             ocrLanguage = ocrLanguage,
                             onOcrLanguage = { if (ownsGlobalModal) showOcrLanguageDialog = true },
                             isCurrentPageBlank = isCurrentPageBlank,
@@ -1341,10 +1410,16 @@ fun SharedMobilePdfReaderHost(
                         onClearPage = { dispatch(SharedPdfReaderAction.ClearPageAnnotations(readerState.pageIndex)) },
                         isStylusOnlyMode = isStylusOnlyMode,
                         onToggleStylusOnlyMode = { isStylusOnlyMode = !isStylusOnlyMode },
-                        ttsState = pdfTts.state,
+                        ttsState = if (cloudTtsAvailable) {
+                            if (cloudTtsState.isPlaying) SharedMobileEpubLocalTtsState.SPEAKING
+                            else if (cloudTtsState.isPaused || cloudTtsState.isLoading) SharedMobileEpubLocalTtsState.PAUSED
+                            else SharedMobileEpubLocalTtsState.IDLE
+                        } else pdfTts.state,
                         isTtsPlayingOrLoading = isPdfTtsPlayingOrLoading,
                         onToggleTts = {
-                            if (ownsTts) when (pdfTts.state) {
+                            if (cloudTtsAvailable) {
+                                toggleCloudTts()
+                            } else if (ownsTts) when (pdfTts.state) {
                                 SharedMobileEpubLocalTtsState.IDLE -> requestTts()
                                 SharedMobileEpubLocalTtsState.SPEAKING -> pdfTts.pause()
                                 SharedMobileEpubLocalTtsState.PAUSED -> pdfTts.resume()
@@ -1364,6 +1439,8 @@ fun SharedMobilePdfReaderHost(
                         },
                         onScreenOrientation = { if (ownsGlobalModal) showScreenOrientationSheet = true },
                         onDictionary = { dispatchNativePdfAction(SharedMobilePdfNativeAction.DICTIONARY_SETTINGS, SharedPdfExportSnapshot(readerState)) },
+                        onOpenAiHub = onOpenAiHub,
+                        aiAvailable = readerAiAvailable,
                         showAllTextHighlights = showAllTextHighlights,
                         isAllTextHighlightLoading = isAllTextHighlightLoading,
                         onToggleHighlights = ::toggleAllTextHighlights,
@@ -1449,6 +1526,9 @@ fun SharedMobilePdfReaderHost(
                         onInternalLink = { navigateToPage(sharedPdfDisplayIndexFor(virtualLayout, it), reason = PdfNavigationReason.INTERNAL_LINK) },
                         onExistingHighlightTap = { noteAnnotationId = it.id },
                         onHighlight = { page, range, text, bounds, color, style, note -> addTextHighlight(page, range, text, bounds, color, style, note) },
+                        onAiDefine = if (readerAiAvailable) {
+                            { text -> onAiAction(ReaderAiFeature.DEFINE, text) }
+                        } else null,
                         onReadAloud = { page, charIndex -> requestTts(sharedPdfDisplayIndexFor(virtualLayout, page), charIndex) },
                         userScrollEnabled = !readerState.isScrollLocked,
                         isScrollLocked = readerState.isScrollLocked,
@@ -1496,6 +1576,9 @@ fun SharedMobilePdfReaderHost(
                         onInternalLink = { navigateToPage(sharedPdfDisplayIndexFor(virtualLayout, it), reason = PdfNavigationReason.INTERNAL_LINK) },
                         onExistingHighlightTap = { noteAnnotationId = it.id },
                         onHighlight = { page, range, text, bounds, color, style, note -> addTextHighlight(page, range, text, bounds, color, style, note) },
+                        onAiDefine = if (readerAiAvailable) {
+                            { text -> onAiAction(ReaderAiFeature.DEFINE, text) }
+                        } else null,
                         onReadAloud = { page, charIndex -> requestTts(sharedPdfDisplayIndexFor(virtualLayout, page), charIndex) },
                         userScrollEnabled = !readerState.isScrollLocked,
                         isScrollLocked = readerState.isScrollLocked,
@@ -1636,6 +1719,28 @@ fun SharedMobilePdfReaderHost(
                         },
                         modifier = Modifier.padding(bottom = ttsBottomPadding)
                     )
+                }
+                if (cloudTts != null) {
+                    AnimatedVisibility(
+                        visible = cloudTtsState.isLoading || cloudTtsState.isPlaying || cloudTtsState.isPaused,
+                        enter = slideInVertically(tween(PdfChromeMotionDurationMillis)) { it } + fadeIn(tween(PdfChromeMotionDurationMillis)),
+                        exit = slideOutVertically(tween(PdfChromeMotionDurationMillis)) { it } + fadeOut(tween(PdfChromeMotionDurationMillis)),
+                        modifier = Modifier.align(Alignment.BottomCenter),
+                    ) {
+                        SharedMobileEpubCloudTtsControls(
+                            tts = cloudTts,
+                            onLocate = {
+                                cloudTtsState.progress.currentChunk?.pageIndex?.let { page ->
+                                    navigateToPage(
+                                        sharedPdfDisplayIndexFor(virtualLayout, page),
+                                        recordHistory = false,
+                                        reason = PdfNavigationReason.TTS,
+                                    )
+                                }
+                            },
+                            modifier = Modifier.padding(bottom = ttsBottomPadding),
+                        )
+                    }
                 }
                 AnimatedVisibility(
                     visible = autoScrollModeActive && readerState.displayMode == PdfDisplayMode.VERTICAL_SCROLL,
@@ -1864,6 +1969,12 @@ fun SharedMobilePdfReaderHost(
                 onDismiss = { showReaderOptions = false }
             )
         }
+        if (readerExtrasState.aiResult.hasContent) {
+            SharedReaderAiResultSheet(
+                result = readerExtrasState.aiResult,
+                onDismiss = onAiResultDismiss,
+            )
+        }
     }
 
     noteAnnotationId?.let { annotationId ->
@@ -2057,6 +2168,12 @@ fun SharedMobilePdfReaderHost(
         SharedMobileReaderTtsSettingsSheet(
             tts = pdfTts,
             onDismiss = { showTtsSettingsSheet = false },
+            cloudTts = cloudTts,
+            cloudTtsModeEnabled = cloudTtsModeEnabled,
+            onCloudTtsModeChange = onCloudTtsModeChange,
+            cloudTtsVoiceId = cloudTtsVoiceId,
+            onCloudTtsVoiceChange = onCloudTtsVoiceChange,
+            onClearCloudTtsCache = onClearCloudTtsCache,
         )
     }
     if (showNewPdfTabSheet) {
@@ -2207,6 +2324,9 @@ private fun SharedMobilePdfReaderTopBar(
     onVoiceSettings: () -> Unit,
     onWordReplacements: () -> Unit,
     onNativeAction: (SharedMobilePdfNativeAction) -> Unit,
+    onAiAction: (ReaderAiFeature, String) -> Unit = { _, _ -> },
+    onOpenAiHub: () -> Unit = {},
+    aiAvailable: Boolean = false,
     ocrLanguage: SharedPdfOcrLanguage,
     onOcrLanguage: () -> Unit,
     isCurrentPageBlank: Boolean = false,
@@ -2302,6 +2422,7 @@ private fun SharedMobilePdfReaderTopBar(
                             PdfReaderTool.EDIT_MODE -> SharedMobilePdfTopToolButton("Edit Mode", onEditMode) { Icon(Icons.Default.Edit, contentDescription = null) }
                             PdfReaderTool.TTS_CONTROLS -> SharedMobilePdfTopToolButton(if (isTtsPlayingOrLoading) "Stop Reading" else "Read Aloud", onToggleTts, isActive = isTtsPlayingOrLoading) { Icon(if (isTtsPlayingOrLoading) Icons.Default.Close else SharedReaderIcons.TextToSpeech, contentDescription = null) }
                             PdfReaderTool.SCREEN_ORIENTATION -> SharedMobilePdfTopToolButton("Screen Orientation", onScreenOrientation) { Icon(SharedReaderIcons.ScreenRotation, contentDescription = null) }
+                            PdfReaderTool.AI_FEATURES -> if (aiAvailable) SharedMobilePdfTopToolButton("AI features", onOpenAiHub) { Icon(Icons.Default.Ai, contentDescription = null) }
                             else -> Unit
                         }
                     }
@@ -2372,6 +2493,7 @@ private fun SharedMobilePdfReaderTopBar(
                             PdfReaderTool.EDIT_MODE -> SharedMobilePdfOverflowItem("Edit Mode", onClick = { closeMenuAndRun(onEditMode) })
                             PdfReaderTool.TTS_CONTROLS -> SharedMobilePdfOverflowItem("TTS Controls", onClick = { closeMenuAndRun(onToggleTts) })
                             PdfReaderTool.SCREEN_ORIENTATION -> SharedMobilePdfOverflowItem("Screen Orientation", leadingIcon = { Icon(SharedReaderIcons.ScreenRotation, contentDescription = null) }, onClick = { closeMenuAndRun(onScreenOrientation) })
+                            PdfReaderTool.AI_FEATURES -> if (aiAvailable) SharedMobilePdfOverflowItem("AI features", leadingIcon = { Icon(Icons.Default.Ai, contentDescription = null) }, onClick = { closeMenuAndRun(onOpenAiHub) })
                             else -> Unit
                         }
                     }
@@ -2579,6 +2701,7 @@ private val SharedMobilePdfAvailableTools = setOf(
     PdfReaderTool.SAVE_COPY,
     PdfReaderTool.PRINT,
     PdfReaderTool.REFLOW,
+    PdfReaderTool.AI_FEATURES,
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -2941,8 +3064,10 @@ private fun SharedMobilePdfReaderBottomBar(
             onTheme: () -> Unit,
             onBrightness: () -> Unit,
             onToggleScrollLock: () -> Unit,
-            onScreenOrientation: () -> Unit,
-            onDictionary: () -> Unit,
+    onScreenOrientation: () -> Unit,
+    onDictionary: () -> Unit,
+    onOpenAiHub: () -> Unit = {},
+    aiAvailable: Boolean = false,
             showAllTextHighlights: Boolean = false,
             isAllTextHighlightLoading: Boolean = false,
             onToggleHighlights: () -> Unit = {},
@@ -3003,6 +3128,7 @@ private fun SharedMobilePdfReaderBottomBar(
                         PdfReaderTool.BRIGHTNESS -> SharedMobilePdfBottomToolButton(onClick = onBrightness) { Icon(SharedReaderIcons.Contrast, contentDescription = "Brightness") }
                         PdfReaderTool.LOCK_PANNING -> SharedMobilePdfBottomToolButton(onClick = onToggleScrollLock) { Icon(if (state.isScrollLocked) Icons.Default.Lock else Icons.Default.LockOpen, contentDescription = if (state.isScrollLocked) "Unlock panning" else "Lock panning") }
                         PdfReaderTool.SCREEN_ORIENTATION -> SharedMobilePdfBottomToolButton(onClick = onScreenOrientation) { Icon(SharedReaderIcons.ScreenRotation, contentDescription = "Screen orientation") }
+                        PdfReaderTool.AI_FEATURES -> if (aiAvailable) SharedMobilePdfBottomToolButton(onClick = onOpenAiHub) { Icon(Icons.Default.Ai, contentDescription = "AI features") }
                         else -> Unit
                     }
                 }

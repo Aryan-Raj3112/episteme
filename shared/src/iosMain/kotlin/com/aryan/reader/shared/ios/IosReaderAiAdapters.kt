@@ -34,6 +34,7 @@ import platform.CoreFoundation.CFDictionaryRef
 import platform.CoreFoundation.CFDataGetBytePtr
 import platform.CoreFoundation.CFDataGetLength
 import platform.CoreFoundation.CFDataRef
+import platform.CoreFoundation.CFRelease
 import platform.CoreFoundation.CFTypeRefVar
 import platform.Foundation.NSData
 import platform.Foundation.NSError
@@ -180,14 +181,18 @@ internal object IosReaderAiKeychain {
             if (status != errSecSuccess) return@memScoped ""
             val dataPointer = result.value ?: return@memScoped ""
             val dataRef = dataPointer as CFDataRef
-            val length = CFDataGetLength(dataRef).toInt()
-            if (length <= 0) return@memScoped ""
-            val bytes = CFDataGetBytePtr(dataRef) ?: return@memScoped ""
-            val output = ByteArray(length)
-            output.usePinned { pinned ->
-                memcpy(pinned.addressOf(0), bytes, length.toULong())
+            try {
+                val length = CFDataGetLength(dataRef).toInt()
+                if (length <= 0) return@memScoped ""
+                val bytes = CFDataGetBytePtr(dataRef) ?: return@memScoped ""
+                val output = ByteArray(length)
+                output.usePinned { pinned ->
+                    memcpy(pinned.addressOf(0), bytes, length.toULong())
+                }
+                output.decodeToString()
+            } finally {
+                CFRelease(dataPointer)
             }
-            output.decodeToString()
         }
     }
 
@@ -245,7 +250,7 @@ internal class IosReaderAiAdapter(
         get() {
             val settings = settingsProvider().sanitized()
             return networkAccess() && !settings.hideReaderAiFeatures &&
-                (settings.hasAnyAiKey || accountStateProvider().isSignedIn)
+                (settings.hasAnyAiKey || (accountStateProvider().isSignedIn && workerUrlProvider().isNotBlank()))
         }
 
     override suspend fun define(text: String, context: String?): AiDefinitionResult {
@@ -295,11 +300,25 @@ internal class IosReaderAiAdapter(
     }
 
     override suspend fun recap(textBeforeCurrentLocation: String): RecapResult {
-        val trimmed = textBeforeCurrentLocation.trim()
+        return recapWithContext(emptyList(), textBeforeCurrentLocation)
+    }
+
+    internal suspend fun recapWithContext(
+        pastSummaries: List<String>,
+        currentText: String,
+    ): RecapResult {
+        val trimmed = currentText.trim()
         if (trimmed.isBlank()) return RecapResult(error = "There is no reading context for a recap.")
         val gate = paidGenerationGate(freeProSummaryAllowed = false, feature = ReaderAiFeature.RECAP)
         if (gate != null) return RecapResult(error = gate)
-        val result = textRequest(ReaderAiFeature.RECAP, trimmed, null, {}, { _, _ -> })
+        val result = textRequest(
+            feature = ReaderAiFeature.RECAP,
+            text = trimmed,
+            context = null,
+            onUpdate = {},
+            onUsageReceived = { _, _ -> },
+            pastSummaries = pastSummaries.filter { it.isNotBlank() },
+        )
         return RecapResult(
             recap = result.text,
             error = result.error,
@@ -333,12 +352,14 @@ internal class IosReaderAiAdapter(
         context: String?,
         onUpdate: (String) -> Unit,
         onUsageReceived: (cost: Double?, freeRemaining: Int?) -> Unit = { _, _ -> },
+        pastSummaries: List<String> = emptyList(),
     ): IosReaderAiTextResult {
         val settings = settingsProvider().sanitized()
         val account = accountStateProvider()
-        val useWorker = account.isSignedIn && workerUrlProvider().isNotBlank() && !hasByokModel(feature)
+        val useWorker = workerUrlProvider().isNotBlank() && !hasByokModel(feature) &&
+            (feature == ReaderAiFeature.DEFINE || account.isSignedIn)
         return if (useWorker) {
-            callWorker(feature, text, context, onUpdate, onUsageReceived)
+            callWorker(feature, text, context, onUpdate, onUsageReceived, pastSummaries)
         } else {
             when (val request = ReaderByokTextRequests.build(settings, feature, text, context)) {
                 ReaderByokTextRequestResult.Hidden -> IosReaderAiTextResult(error = "Reader AI features are hidden.")
@@ -355,9 +376,13 @@ internal class IosReaderAiAdapter(
         context: String?,
         onUpdate: (String) -> Unit,
         onUsageReceived: (cost: Double?, freeRemaining: Int?) -> Unit,
+        pastSummaries: List<String>,
     ): IosReaderAiTextResult {
+        val authRequired = feature != ReaderAiFeature.DEFINE
         val token = authTokenProvider()
-            ?: return IosReaderAiTextResult(error = "Sign in again to use this AI feature.")
+        if (authRequired && token.isNullOrBlank()) {
+            return IosReaderAiTextResult(error = "Sign in again to use this AI feature.")
+        }
         val body = when (feature) {
             ReaderAiFeature.DEFINE -> buildJsonObject { put("text", JsonPrimitive(text)) }
             ReaderAiFeature.SUMMARIZE -> buildJsonObject {
@@ -365,7 +390,9 @@ internal class IosReaderAiAdapter(
                 put("data", JsonPrimitive(text))
             }
             ReaderAiFeature.RECAP -> buildJsonObject {
-                put("past_summaries", buildJsonArray {})
+                put("past_summaries", buildJsonArray {
+                    pastSummaries.forEach { add(JsonPrimitive(it)) }
+                })
                 put("current_text", JsonPrimitive(text))
             }
         }.toString()
@@ -377,16 +404,18 @@ internal class IosReaderAiAdapter(
                     ReaderAiFeature.RECAP -> "/recap"
                 },
                 body = body,
-                headers = mapOf("Authorization" to "Bearer $token"),
+                headers = token?.let { mapOf("Authorization" to "Bearer $it") }.orEmpty(),
             )
         }.getOrElse { error -> return IosReaderAiTextResult(error = error.message ?: "AI request failed.") }
         if (response.statusCode == 401) return IosReaderAiTextResult(error = "Sign in again to use this AI feature.")
+        val workerError = workerErrorMessage(response.body)
         if (response.statusCode == 402 || response.body.contains("INSUFFICIENT_CREDITS", ignoreCase = true)) {
             onUsageReported(IosReaderAiUsage())
-            return IosReaderAiTextResult(error = "Out of credits.")
+            return IosReaderAiTextResult(error = workerError ?: "Out of credits.")
         }
         if (response.statusCode !in 200..299) {
-            return IosReaderAiTextResult(error = "AI request failed: HTTP ${response.statusCode}")
+            if (response.statusCode == 401) return IosReaderAiTextResult(error = "Sign in again to use this AI feature.")
+            return IosReaderAiTextResult(error = workerError ?: "AI request failed: HTTP ${response.statusCode}")
         }
         return parseWorkerStream(response.body, onUpdate, onUsageReceived)
     }
@@ -507,6 +536,38 @@ internal class IosReaderAiAdapter(
 
     private fun parseGroqStream(body: String, onUpdate: (String) -> Unit): IosReaderAiTextResult {
         val output = StringBuilder()
+        var inThink = false
+        var thinkBuffer = ""
+
+        fun cleanChunk(text: String): String {
+            thinkBuffer += text
+            val visible = StringBuilder()
+            while (true) {
+                if (inThink) {
+                    val end = thinkBuffer.indexOf("</think>")
+                    if (end == -1) {
+                        if (thinkBuffer.length > 7) thinkBuffer = thinkBuffer.takeLast(7)
+                        break
+                    }
+                    inThink = false
+                    thinkBuffer = thinkBuffer.substring(end + "</think>".length)
+                } else {
+                    val start = thinkBuffer.indexOf("<think>")
+                    if (start == -1) {
+                        if (thinkBuffer.length > 6) {
+                            visible.append(thinkBuffer.dropLast(6))
+                            thinkBuffer = thinkBuffer.takeLast(6)
+                        }
+                        break
+                    }
+                    visible.append(thinkBuffer.substring(0, start))
+                    inThink = true
+                    thinkBuffer = thinkBuffer.substring(start + "<think>".length)
+                }
+            }
+            return visible.toString()
+        }
+
         body.lineSequence().forEach { raw ->
             val line = raw.trim().removePrefix("data:").trim()
             if (line.isBlank() || line == "[DONE]") return@forEach
@@ -514,10 +575,15 @@ internal class IosReaderAiAdapter(
                 IosReaderAiJson.parseToJsonElement(line).jsonObject["choices"]?.jsonArray?.firstOrNull()
                     ?.jsonObject?.get("delta")?.jsonObject?.get("content")?.jsonPrimitive?.contentOrNull
             }.getOrNull().orEmpty()
-            if (chunk.isNotEmpty()) {
-                output.append(chunk)
-                onUpdate(chunk)
+            val visible = cleanChunk(chunk)
+            if (visible.isNotEmpty()) {
+                output.append(visible)
+                onUpdate(visible)
             }
+        }
+        if (!inThink && thinkBuffer.isNotBlank()) {
+            output.append(thinkBuffer)
+            onUpdate(thinkBuffer)
         }
         return if (output.isBlank()) IosReaderAiTextResult(error = "The AI provider returned an empty response.")
         else IosReaderAiTextResult(text = output.toString())
@@ -533,6 +599,23 @@ private data class IosReaderAiTextResult(
 )
 
 private val IosReaderAiJson = Json { ignoreUnknownKeys = true; isLenient = true }
+
+private fun workerErrorMessage(body: String): String? {
+    val normalized = body.lowercase()
+    return when {
+        "insufficient_credits" in normalized -> "Out of credits."
+        "summary_limit" in normalized || ("free summar" in normalized && "limit" in normalized) ->
+            "Free summaries are used up for today. More summaries need credits."
+        "multi_word_requires_pro" in normalized -> "Multi-word smart dictionary requires Pro."
+        "authentication required" in normalized || "unauthorized" in normalized ->
+            "Sign in again to use this AI feature."
+        else -> runCatching {
+            val json = IosReaderAiJson.parseToJsonElement(body).jsonObject
+            json["error"]?.jsonPrimitive?.contentOrNull
+                ?: json["detail"]?.jsonPrimitive?.contentOrNull
+        }.getOrNull()
+    }
+}
 
 /** Gemini's stream endpoint may return adjacent JSON objects rather than NDJSON. */
 private fun parseConcatenatedJsonObjects(body: String): List<JsonObject> {

@@ -3,6 +3,8 @@ package com.aryan.reader.shared.ui
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import com.aryan.reader.shared.BookItem
+import com.aryan.reader.shared.ReaderAiByokSettings
+import com.aryan.reader.shared.ReaderCloudTtsState
 import com.aryan.reader.shared.ReaderTtsChunk
 import com.aryan.reader.shared.ReaderTtsProgress
 import com.aryan.reader.shared.ReaderExternalLookupAction
@@ -32,7 +34,7 @@ internal expect fun openSharedMobileEpubExternalLink(url: String): Boolean
 internal expect fun openSharedMobileEpubLookup(action: ReaderExternalLookupAction, text: String): Boolean
 internal expect fun shareSharedMobileEpubImage(bytes: ByteArray, fileName: String): Boolean
 
-/** iOS currently exposes device speech only; cloud TTS stays out of the shared mobile reader. */
+/** Platform-backed device speech remains separate from shared cloud TTS. */
 enum class SharedMobileEpubLocalTtsState { IDLE, SPEAKING, PAUSED }
 
 data class SharedMobileEpubVoice(
@@ -77,3 +79,41 @@ interface SharedMobileEpubLocalTts {
 
 @Composable
 internal expect fun rememberSharedMobileEpubLocalTts(): SharedMobileEpubLocalTts
+
+/**
+ * Platform audio boundary for Gemini Live cloud reading on mobile.
+ *
+ * The reader planner, gates, settings model, and controls stay shared. The
+ * platform owns the WebSocket, PCM/WAV cache, audio session, and player. A
+ * nullable value keeps Android's existing MediaSession-backed adapter intact
+ * while iOS supplies its native implementation.
+ */
+interface SharedMobileEpubCloudTts {
+    val state: ReaderCloudTtsState
+
+    fun configure(
+        settings: ReaderAiByokSettings,
+        isSignedIn: Boolean,
+        isProUser: Boolean,
+        credits: Int,
+        authToken: String?,
+        workerUrl: String,
+    )
+
+    fun start(
+        chunks: List<ReaderTtsChunk>,
+        bookTitle: String,
+        bookId: String? = null,
+        startChunkIndex: Int = 0,
+        playWhenReady: Boolean = true,
+    )
+
+    fun pause()
+    fun resume()
+    fun skipPrevious()
+    fun skipNext()
+    fun setVoice(identifier: String)
+    fun clearCache()
+    fun stop()
+    fun release()
+}

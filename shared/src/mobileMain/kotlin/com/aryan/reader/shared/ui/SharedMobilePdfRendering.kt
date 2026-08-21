@@ -606,6 +606,7 @@ internal fun SharedMobilePdfVerticalPages(
     onExistingHighlightTap: (SharedPdfAnnotation) -> Unit,
     onHighlight: (Int, com.aryan.reader.shared.pdf.PdfTextSelectionRange, String, List<PdfPageBounds>, Int, HighlightStyle, Boolean) -> Unit,
     onReadAloud: (Int, Int) -> Unit,
+    onAiDefine: ((String) -> Unit)? = null,
     userScrollEnabled: Boolean,
     isScrollLocked: Boolean,
     zoomCamera: PdfZoomCamera,
@@ -762,6 +763,7 @@ internal fun SharedMobilePdfVerticalPages(
                         onExistingHighlightTap = onExistingHighlightTap,
                         onHighlight = onHighlight,
                         onReadAloud = onReadAloud,
+                        onAiDefine = onAiDefine,
                         onCanvasSizeChanged = onCanvasSizeChanged,
                         onFinishInkStroke = onFinishInkStroke,
                             showAllTextHighlights = showAllTextHighlights,
@@ -911,6 +913,7 @@ internal fun SharedMobilePdfPaginatedPages(
     onExistingHighlightTap: (SharedPdfAnnotation) -> Unit,
     onHighlight: (Int, com.aryan.reader.shared.pdf.PdfTextSelectionRange, String, List<PdfPageBounds>, Int, HighlightStyle, Boolean) -> Unit,
     onReadAloud: (Int, Int) -> Unit,
+    onAiDefine: ((String) -> Unit)? = null,
     userScrollEnabled: Boolean,
     isScrollLocked: Boolean,
     zoomCamera: PdfZoomCamera,
@@ -1189,6 +1192,7 @@ internal fun SharedMobilePdfPaginatedPages(
                                     onExistingHighlightTap = onExistingHighlightTap,
                                     onHighlight = onHighlight,
                                     onReadAloud = onReadAloud,
+                                    onAiDefine = onAiDefine,
                                     onCanvasSizeChanged = onCanvasSizeChanged,
                                     onFinishInkStroke = onFinishInkStroke,
                                     showAllTextHighlights = showAllTextHighlights,
@@ -1930,6 +1934,7 @@ internal fun SharedMobilePdfPageSurface(
     onExistingHighlightTap: (SharedPdfAnnotation) -> Unit,
     onHighlight: (Int, com.aryan.reader.shared.pdf.PdfTextSelectionRange, String, List<PdfPageBounds>, Int, HighlightStyle, Boolean) -> Unit,
     onReadAloud: (Int, Int) -> Unit,
+    onAiDefine: ((String) -> Unit)? = null,
     onCanvasSizeChanged: (IntSize) -> Unit,
     onFinishInkStroke: (Int, Boolean) -> Unit,
     showAllTextHighlights: Boolean = false,
@@ -2285,6 +2290,7 @@ internal fun SharedMobilePdfPageSurface(
                 onExistingHighlightTap = onExistingHighlightTap,
                 onHighlight = { range, text, bounds, color, style, note -> onHighlight(pageIndex, range, text, bounds, color, style, note) },
                 onReadAloud = { charIndex -> onReadAloud(pageIndex, charIndex) },
+                onAiDefine = onAiDefine,
                 modifier = Modifier.fillMaxSize()
             )
             if (showPageNumberOverlay) {

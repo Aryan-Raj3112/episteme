@@ -64,6 +64,9 @@ import androidx.compose.ui.unit.dp
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.CustomFontItem
 import com.aryan.reader.shared.ReaderLocator
+import com.aryan.reader.shared.ReaderAiFeature
+import com.aryan.reader.shared.ReaderAiResultState
+import com.aryan.reader.shared.ReaderExtrasState
 import com.aryan.reader.shared.ReaderTheme
 import com.aryan.reader.shared.ReaderTtsPlanner
 import com.aryan.reader.shared.ReaderTtsChunk
@@ -163,6 +166,17 @@ fun SharedMobileEpubReaderScreen(
     readerBookReplacementPreferences: ReaderBookReplacementPreferences = ReaderBookReplacementPreferences(),
     onReaderBookReplacementPreferencesChange: (ReaderBookReplacementPreferences) -> Unit = {},
     onOpenDictionarySettings: () -> Unit = {},
+    readerAiAvailable: Boolean = false,
+    readerExtrasState: ReaderExtrasState = ReaderExtrasState(),
+    cloudTts: SharedMobileEpubCloudTts? = null,
+    cloudTtsModeEnabled: Boolean = false,
+    onCloudTtsModeChange: (Boolean) -> Unit = {},
+    cloudTtsVoiceId: String = com.aryan.reader.shared.DEFAULT_CLOUD_TTS_SPEAKER_ID,
+    onCloudTtsVoiceChange: (String) -> Unit = {},
+    onClearCloudTtsCache: () -> Unit = {},
+    onAiAction: (ReaderAiFeature, String) -> Unit = { _, _ -> },
+    onAiResultDismiss: () -> Unit = {},
+    onOpenAiHub: () -> Unit = {},
     readerBrightness: Float? = null,
     readerCustomBrightness: Float = com.aryan.reader.shared.DefaultReaderCustomBrightness,
     readerBrightnessSupported: Boolean = false,
@@ -205,6 +219,8 @@ fun SharedMobileEpubReaderScreen(
         )
     }
     val localTts = rememberSharedMobileEpubLocalTts()
+    val cloudTtsState = cloudTts?.state ?: readerExtrasState.cloudTts
+    val cloudTtsAvailable = cloudTts != null && cloudTtsState.isAvailable && !localTts.isSessionActive
     LaunchedEffect(localTts.errorMessage) {
         localTts.errorMessage?.let { message -> onTtsError?.invoke(message) }
     }
@@ -229,6 +245,32 @@ fun SharedMobileEpubReaderScreen(
     var currentChapterIndex by remember(book.id) {
         mutableIntStateOf(book.readerPosition?.chapterIndex?.coerceAtLeast(0) ?: 0)
     }
+    val activeCloudTtsChunk = cloudTtsState.progress.currentChunk
+
+    fun planReaderTtsChunks(epub: com.aryan.reader.shared.reader.SharedEpubBook): List<ReaderTtsChunk> {
+        val session = ReaderEngine().createSession(
+            book = epub,
+            settings = settings,
+            initialPageIndex = currentPageIndex,
+            initialLocator = currentLocator,
+        )
+        return ReaderTtsPlanner.chunksFromCurrentLocation(session)
+            .ifEmpty { ReaderTtsPlanner.chunksForCurrentChapter(session) }
+            .withTtsReplacements(readerTtsReplacementPreferences, book.id)
+    }
+
+    fun toggleCloudTts() {
+        val controller = cloudTts ?: return
+        when {
+            cloudTtsState.isPlaying || cloudTtsState.isLoading -> controller.pause()
+            cloudTtsState.isPaused -> controller.resume()
+            else -> loadedBook?.let { epub ->
+                localTts.stop()
+                val planned = planReaderTtsChunks(epub)
+                controller.start(planned, epub.title, book.id)
+            }
+        }
+    }
     var bookmarks by remember(book.id) { mutableStateOf(book.readerBookmarks) }
     var highlights by remember(book.id) { mutableStateOf(book.readerHighlights) }
     var jumpHistory by remember(book.id) { mutableStateOf(ReaderJumpHistory()) }
@@ -250,6 +292,7 @@ fun SharedMobileEpubReaderScreen(
     var pullProgress by remember(book.id) { mutableStateOf(0f) }
     var showSlider by remember(book.id) { mutableStateOf(initialPageSliderVisible) }
     var showMore by remember(book.id) { mutableStateOf(false) }
+    var showAiHub by remember(book.id) { mutableStateOf(false) }
     var showFileInfo by remember(book.id) { mutableStateOf(false) }
     var showCustomizeToolsSheet by remember(book.id) { mutableStateOf(false) }
     var showScreenOrientationSheet by remember(book.id) { mutableStateOf(false) }
@@ -324,7 +367,9 @@ fun SharedMobileEpubReaderScreen(
     val focusManager = LocalFocusManager.current
     val clipboard = LocalClipboardManager.current
     val sanitizedToolbarPreferences = readerToolbarPreferences.sanitized()
-    val visibleToolbarTools = sanitizedToolbarPreferences.orderedVisibleTools().filter { it in SharedMobileEpubCustomizableTools }
+    val visibleToolbarTools = sanitizedToolbarPreferences.orderedVisibleTools().filter {
+        it in SharedMobileEpubCustomizableTools && (it != ReaderTool.AI_FEATURES || readerAiAvailable)
+    }
     val mobileBottomToolIds = if (readerToolbarPreferences.bottomToolIds == ReaderToolbarPreferences.defaultBottomToolIds) {
         readerToolbarPreferences.bottomToolIds + ReaderTool.TTS_CONTROLS.id
     } else {
@@ -685,6 +730,14 @@ fun SharedMobileEpubReaderScreen(
         navigate(chunk.toLocator(), detachFromTts = false)
     }
 
+    LaunchedEffect(activeCloudTtsChunk?.index, activeCloudTtsChunk?.chapterIndex, activeCloudTtsChunk?.pageIndex) {
+        val chunk = activeCloudTtsChunk
+        if (chunk == null || loadedBook == null) return@LaunchedEffect
+        if (!shouldFollowReaderTtsChunk(detachedTtsChunkIndex, chunk.index)) return@LaunchedEffect
+        detachedTtsChunkIndex = null
+        navigate(chunk.toLocator(), detachFromTts = false)
+    }
+
     fun navigateSearchResult(result: SharedMobileEpubSearchResult) {
         val epub = loadedBook ?: return
         val chapter = epub.chapters.getOrNull(result.chapterIndex) ?: return
@@ -983,6 +1036,7 @@ fun SharedMobileEpubReaderScreen(
                                     val selectionLocator = locator ?: currentLocator ?: return@SharedNativePaginatedReader
                                     val lookupAction = action.externalLookupActionOrNull()
                                     when {
+                                        action == SharedNativeReaderSelectionAction.DEFINE && readerAiAvailable -> onAiAction(ReaderAiFeature.DEFINE, text)
                                         lookupAction != null -> openSharedMobileEpubLookup(lookupAction, text)
                                         action == SharedNativeReaderSelectionAction.SPEAK -> speakSelectedText(text, selectionLocator)
                                         action == SharedNativeReaderSelectionAction.NOTE -> createNoteForSelection(text, selectionLocator)
@@ -1073,13 +1127,14 @@ fun SharedMobileEpubReaderScreen(
                             onHighlightSelected = { id ->
                                 editingHighlight = highlights.firstOrNull { it.id == id }
                             },
-                            enabledSelectionActions = SharedNativeReaderSelectionAction.entries.toSet(),
+                                enabledSelectionActions = SharedNativeReaderSelectionAction.entries.toSet(),
                             onCopyText = { text -> clipboard.setText(AnnotatedString(text)) },
                             onSelectionAction = { action, text, locator ->
                                 val selectionLocator = locator ?: currentLocator ?: return@SharedNativeVerticalReader
                                 val lookupAction = action.externalLookupActionOrNull()
                                 when {
-                                    lookupAction != null -> openSharedMobileEpubLookup(lookupAction, text)
+                                        action == SharedNativeReaderSelectionAction.DEFINE && readerAiAvailable -> onAiAction(ReaderAiFeature.DEFINE, text)
+                                        lookupAction != null -> openSharedMobileEpubLookup(lookupAction, text)
                                     action == SharedNativeReaderSelectionAction.SPEAK -> speakSelectedText(text, selectionLocator)
                                     action == SharedNativeReaderSelectionAction.NOTE -> createNoteForSelection(text, selectionLocator)
                                     else -> Unit
@@ -1147,7 +1202,7 @@ fun SharedMobileEpubReaderScreen(
                                 navigationLocator = currentLocator,
                                 pages = pages,
                                 highlightActionsEnabled = true,
-                                readerAiFeaturesEnabled = false,
+                                readerAiFeaturesEnabled = readerAiAvailable,
                                 // This flag controls the selection-menu Speak action. iOS handles
                                 // it with local device speech rather than the paid cloud service.
                                 cloudTtsEnabled = true,
@@ -1255,6 +1310,7 @@ fun SharedMobileEpubReaderScreen(
                                     "readerSelectionAction" -> payload.sharedMobileEpubSelectionActionOrNull()?.let { selection ->
                                         val lookupAction = readerExternalLookupActionForSelectionId(selection.action)
                                         when {
+                                            selection.action == "define" && readerAiAvailable -> onAiAction(ReaderAiFeature.DEFINE, selection.text)
                                             lookupAction != null -> openSharedMobileEpubLookup(lookupAction, selection.text)
                                             selection.action == "speak" -> {
                                                 val locator = selection.locator ?: currentLocator ?: return@let
@@ -1335,6 +1391,8 @@ fun SharedMobileEpubReaderScreen(
                         onTtsSettings = { showTtsSettingsSheet = true },
                         onBookReplacements = { showBookReplacementsSheet = true },
                         onOpenDictionarySettings = onOpenDictionarySettings,
+                        onOpenAiHub = { showAiHub = true; onOpenAiHub() },
+                        aiAvailable = readerAiAvailable,
                         readingMode = settings.readingMode,
                         rightToLeftPagination = settings.rightToLeftPagination,
                         useNativeVerticalRenderer = useNativeVerticalRenderer,
@@ -1362,6 +1420,7 @@ fun SharedMobileEpubReaderScreen(
                         onLocalTtsToggle = {
                             when (localTts.state) {
                                 SharedMobileEpubLocalTtsState.IDLE -> loadedBook?.let { epub ->
+                                    cloudTts?.stop()
                                     val session = ReaderEngine().createSession(
                                         book = epub,
                                         settings = settings,
@@ -1381,6 +1440,10 @@ fun SharedMobileEpubReaderScreen(
                             }
                         },
                         onLocalTtsStop = localTts::stop,
+                        cloudTtsState = cloudTtsState,
+                        cloudTtsAvailable = cloudTtsAvailable,
+                        onCloudTtsToggle = ::toggleCloudTts,
+                        onCloudTtsStop = cloudTts?.let { controller -> { controller.stop() } } ?: {},
                         keepScreenOn = keepScreenOn,
                         onKeepScreenOnChange = {
                             keepScreenOn = it
@@ -1414,10 +1477,13 @@ fun SharedMobileEpubReaderScreen(
                             onVisualOptions = { showVisualOptionsSheet = true },
                             onOpenSlider = { showSlider = !showSlider },
                             onDictionary = onOpenDictionarySettings,
+                            onOpenAiHub = { showAiHub = true; onOpenAiHub() },
+                            aiAvailable = readerAiAvailable,
                             localTtsState = localTts.state,
                             onLocalTtsToggle = {
                                 when (localTts.state) {
                                     SharedMobileEpubLocalTtsState.IDLE -> loadedBook?.let { epub ->
+                                        cloudTts?.stop()
                                         val session = ReaderEngine().createSession(
                                             book = epub,
                                             settings = settings,
@@ -1436,6 +1502,9 @@ fun SharedMobileEpubReaderScreen(
                                     SharedMobileEpubLocalTtsState.PAUSED -> localTts.resume()
                                 }
                             },
+                            cloudTtsState = cloudTtsState,
+                            cloudTtsAvailable = cloudTtsAvailable,
+                            onCloudTtsToggle = ::toggleCloudTts,
                             modifier = Modifier
                                 .align(Alignment.BottomCenter)
                                 .then(
@@ -1460,6 +1529,22 @@ fun SharedMobileEpubReaderScreen(
                             .align(Alignment.BottomCenter)
                             .padding(horizontal = 12.dp)
                             .offset(y = if (showChrome) (-52).dp else (-12).dp)
+                    )
+                }
+                if (
+                    cloudTts != null &&
+                    (cloudTtsState.isLoading || cloudTtsState.isPlaying || cloudTtsState.isPaused)
+                ) {
+                    SharedMobileEpubCloudTtsControls(
+                        tts = cloudTts,
+                        onLocate = {
+                            detachedTtsChunkIndex = null
+                            activeCloudTtsChunk?.let { navigate(it.toLocator(), detachFromTts = false) }
+                        },
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(horizontal = 12.dp)
+                            .offset(y = if (showChrome) (-52).dp else (-12).dp),
                     )
                 }
                 if (autoScrollModeActive && settings.readingMode == ReaderReadingMode.VERTICAL) {
@@ -1718,10 +1803,53 @@ fun SharedMobileEpubReaderScreen(
             }
         }
     }
+    if (readerExtrasState.aiResult.hasContent) {
+        SharedReaderAiResultSheet(
+            result = readerExtrasState.aiResult,
+            onDismiss = onAiResultDismiss,
+        )
+    }
+    if (showAiHub) {
+        ModalBottomSheet(onDismissRequest = { showAiHub = false }) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text("AI features", style = MaterialTheme.typography.titleLarge)
+                TextButton(
+                    onClick = {
+                        showAiHub = false
+                        loadedBook?.chapters?.getOrNull(currentChapterIndex)?.plainText
+                            ?.takeIf { it.isNotBlank() }
+                            ?.let { onAiAction(ReaderAiFeature.SUMMARIZE, it.take(24_000)) }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Summarize current chapter") }
+                TextButton(
+                    onClick = {
+                        showAiHub = false
+                        loadedBook?.let { epub ->
+                            val recapText = epub.chapters.take(currentChapterIndex + 1)
+                                .joinToString("\n\n") { chapter -> chapter.plainText }
+                                .take(24_000)
+                            onAiAction(ReaderAiFeature.RECAP, recapText)
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Recap up to here") }
+            }
+        }
+    }
     if (showTtsSettingsSheet) {
         SharedMobileReaderTtsSettingsSheet(
             tts = localTts,
-            onDismiss = { showTtsSettingsSheet = false }
+            onDismiss = { showTtsSettingsSheet = false },
+            cloudTts = cloudTts,
+            cloudTtsModeEnabled = cloudTtsModeEnabled,
+            onCloudTtsModeChange = onCloudTtsModeChange,
+            cloudTtsVoiceId = cloudTtsVoiceId,
+            onCloudTtsVoiceChange = onCloudTtsVoiceChange,
+            onClearCloudTtsCache = onClearCloudTtsCache,
         )
     }
     if (showBookReplacementsSheet) {

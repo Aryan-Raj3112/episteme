@@ -35,6 +35,8 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Ai
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.GraphicEq
@@ -70,7 +72,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.aryan.reader.shared.ReaderTool
 import com.aryan.reader.shared.ReaderToolbarPreferences
+import com.aryan.reader.shared.ReaderCloudTtsState
+import com.aryan.reader.shared.DEFAULT_CLOUD_TTS_SPEAKER_ID
 import com.aryan.reader.shared.ReaderBookReplacementPreferences
+import com.aryan.reader.shared.ReaderCloudTtsVoices
 import com.aryan.reader.shared.ReaderWordReplacementEngine
 import com.aryan.reader.shared.ReaderWordReplacementRule
 import com.aryan.reader.shared.currentTimestamp
@@ -126,6 +131,8 @@ internal fun SharedMobileEpubTopBar(
     onTtsReplacements: () -> Unit,
     onBookReplacements: () -> Unit,
     onOpenDictionarySettings: () -> Unit,
+    onOpenAiHub: () -> Unit = {},
+    aiAvailable: Boolean = false,
     readingMode: ReaderReadingMode,
     rightToLeftPagination: Boolean,
     useNativeVerticalRenderer: Boolean,
@@ -140,6 +147,10 @@ internal fun SharedMobileEpubTopBar(
     localTtsState: SharedMobileEpubLocalTtsState,
     onLocalTtsToggle: () -> Unit,
     onLocalTtsStop: () -> Unit,
+    cloudTtsState: ReaderCloudTtsState = ReaderCloudTtsState(),
+    cloudTtsAvailable: Boolean = false,
+    onCloudTtsToggle: () -> Unit = {},
+    onCloudTtsStop: () -> Unit = {},
     keepScreenOn: Boolean,
     onKeepScreenOnChange: (Boolean) -> Unit,
     autoScroll: Boolean,
@@ -148,6 +159,12 @@ internal fun SharedMobileEpubTopBar(
 ) {
     var showReadingModeExpanded by remember { mutableStateOf(false) }
     var showHiddenToolsExpanded by remember { mutableStateOf(false) }
+    val ttsBusy = localTtsState != SharedMobileEpubLocalTtsState.IDLE ||
+        cloudTtsState.isLoading || cloudTtsState.isPlaying || cloudTtsState.isPaused
+    val onReadAloudToggle = if (cloudTtsAvailable) onCloudTtsToggle else onLocalTtsToggle
+    val onReadAloudStop = if (cloudTtsAvailable) onCloudTtsStop else onLocalTtsStop
+    val readAloudIcon = if (cloudTtsAvailable) cloudTtsState.icon() else localTtsState.icon()
+    val readAloudLabel = if (cloudTtsAvailable) cloudTtsState.menuLabel() else localTtsState.menuLabel()
     Surface(modifier = modifier, tonalElevation = 4.dp) {
         Row(
             Modifier.fillMaxWidth().height(55.dp).padding(horizontal = 4.dp),
@@ -172,8 +189,8 @@ internal fun SharedMobileEpubTopBar(
                     ReaderTool.SLIDER -> IconButton(onClick = onOpenSlider) {
                         Icon(SharedReaderIcons.Slider, contentDescription = "Navigation slider")
                     }
-                    ReaderTool.TTS_CONTROLS -> IconButton(onClick = onLocalTtsToggle) {
-                        Icon(localTtsState.icon(), contentDescription = localTtsState.menuLabel())
+                    ReaderTool.TTS_CONTROLS -> IconButton(onClick = onReadAloudToggle) {
+                        Icon(readAloudIcon, contentDescription = readAloudLabel)
                     }
                     ReaderTool.BRIGHTNESS -> IconButton(onClick = onBrightness) {
                         Icon(SharedReaderIcons.Contrast, contentDescription = "Brightness")
@@ -183,6 +200,9 @@ internal fun SharedMobileEpubTopBar(
                     }
                     ReaderTool.DICTIONARY -> IconButton(onClick = onOpenDictionarySettings) {
                         Icon(SharedReaderIcons.Dictionary, contentDescription = "Dictionary")
+                    }
+                    ReaderTool.AI_FEATURES -> if (aiAvailable) IconButton(onClick = onOpenAiHub) {
+                        Icon(Icons.Default.Ai, contentDescription = "AI features")
                     }
                     else -> Unit
                 }
@@ -220,6 +240,7 @@ internal fun SharedMobileEpubTopBar(
                                             ReaderTool.BRIGHTNESS -> onBrightness()
                                             ReaderTool.SCREEN_ORIENTATION -> onScreenOrientation()
                                             ReaderTool.DICTIONARY -> onOpenDictionarySettings()
+                                            ReaderTool.AI_FEATURES -> onOpenAiHub()
                                             else -> Unit
                                         }
                                         showHiddenToolsExpanded = false
@@ -241,7 +262,7 @@ internal fun SharedMobileEpubTopBar(
                                 if (showReadingModeExpanded) {
                                     DropdownMenuItem(
                                         text = { Text("Vertical (WebView)") },
-                                        enabled = localTtsState == SharedMobileEpubLocalTtsState.IDLE,
+                                        enabled = !ttsBusy,
                                         onClick = {
                                             onUseNativeVerticalRendererChange(false)
                                             onReadingModeChange(ReaderReadingMode.VERTICAL)
@@ -254,7 +275,7 @@ internal fun SharedMobileEpubTopBar(
                                     )
                                     DropdownMenuItem(
                                         text = { Text("Vertical (Native Beta)") },
-                                        enabled = localTtsState == SharedMobileEpubLocalTtsState.IDLE,
+                                        enabled = !ttsBusy,
                                         onClick = {
                                             onUseNativeVerticalRendererChange(true)
                                             onReadingModeChange(ReaderReadingMode.VERTICAL)
@@ -267,7 +288,7 @@ internal fun SharedMobileEpubTopBar(
                                     )
                                     DropdownMenuItem(
                                         text = { Text("Paginated (left-to-right)") },
-                                        enabled = localTtsState == SharedMobileEpubLocalTtsState.IDLE,
+                                        enabled = !ttsBusy,
                                         onClick = {
                                             onRightToLeftPaginationChange(false)
                                             onReadingModeChange(ReaderReadingMode.PAGINATED)
@@ -278,7 +299,7 @@ internal fun SharedMobileEpubTopBar(
                                     )
                                     DropdownMenuItem(
                                         text = { Text("Right-to-left pagination") },
-                                        enabled = localTtsState == SharedMobileEpubLocalTtsState.IDLE,
+                                        enabled = !ttsBusy,
                                         onClick = {
                                             onRightToLeftPaginationChange(true)
                                             onReadingModeChange(ReaderReadingMode.PAGINATED)
@@ -326,7 +347,7 @@ internal fun SharedMobileEpubTopBar(
                                 leadingIcon = { Icon(SharedReaderIcons.Slider, contentDescription = null) }
                             )
                             ReaderTool.TTS_CONTROLS -> DropdownMenuItem(
-                                text = { Text(localTtsState.menuLabel()) }, onClick = { onLocalTtsToggle(); onShowMoreChange(false) }
+                                text = { Text(readAloudLabel) }, onClick = { onReadAloudToggle(); onShowMoreChange(false) }
                             )
                             ReaderTool.TTS_REPLACEMENTS -> DropdownMenuItem(
                                 text = { Text("TTS Word Replacements") },
@@ -347,7 +368,7 @@ internal fun SharedMobileEpubTopBar(
                             ReaderTool.AUTO_SCROLL -> DropdownMenuItem(
                                 text = { Text(if (autoScroll) "Stop Auto Scroll" else "Auto Scroll") },
                                 enabled = readingMode == ReaderReadingMode.VERTICAL &&
-                                    localTtsState == SharedMobileEpubLocalTtsState.IDLE,
+                                    !ttsBusy,
                                 onClick = { onAutoScrollChange(!autoScroll); onShowMoreChange(false) }
                             )
                             ReaderTool.BRIGHTNESS -> DropdownMenuItem(
@@ -357,6 +378,11 @@ internal fun SharedMobileEpubTopBar(
                                 text = { Text("Screen Orientation") }, onClick = { onScreenOrientation(); onShowMoreChange(false) },
                                 leadingIcon = { Icon(SharedReaderIcons.ScreenRotation, contentDescription = null) }
                             )
+                            ReaderTool.AI_FEATURES -> if (aiAvailable) DropdownMenuItem(
+                                text = { Text("AI features") },
+                                onClick = { onOpenAiHub(); onShowMoreChange(false) },
+                                leadingIcon = { Icon(Icons.Default.Ai, contentDescription = null) }
+                            )
                             ReaderTool.FILE_INFO -> DropdownMenuItem(
                                 text = { Text("File Information") }, onClick = { onFileInfo(); onShowMoreChange(false) },
                                 leadingIcon = { Icon(Icons.Default.Info, contentDescription = null) }
@@ -365,10 +391,10 @@ internal fun SharedMobileEpubTopBar(
                             else -> Unit
                         }
                     }
-                    if (ReaderTool.TTS_CONTROLS in overflowTools && localTtsState != SharedMobileEpubLocalTtsState.IDLE) {
+                    if (ReaderTool.TTS_CONTROLS in overflowTools && ttsBusy) {
                         DropdownMenuItem(
                             text = { Text("Stop reading") },
-                            onClick = { onLocalTtsStop(); onShowMoreChange(false) }
+                            onClick = { onReadAloudStop(); onShowMoreChange(false) }
                         )
                     }
                 }
@@ -386,7 +412,8 @@ internal val SharedMobileEpubToolbarTools = setOf(
     ReaderTool.TTS_CONTROLS,
     ReaderTool.BRIGHTNESS,
     ReaderTool.SCREEN_ORIENTATION,
-    ReaderTool.DICTIONARY
+    ReaderTool.DICTIONARY,
+    ReaderTool.AI_FEATURES
 )
 
 internal val SharedMobileEpubCustomizableTools = SharedMobileEpubToolbarTools + setOf(
@@ -400,7 +427,8 @@ internal val SharedMobileEpubCustomizableTools = SharedMobileEpubToolbarTools + 
     ReaderTool.TTS_SETTINGS,
     ReaderTool.TTS_REPLACEMENTS,
     ReaderTool.BOOK_REPLACEMENTS,
-    ReaderTool.FILE_INFO
+    ReaderTool.FILE_INFO,
+    ReaderTool.AI_FEATURES
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -531,10 +559,18 @@ internal fun SharedMobileEpubBottomBar(
     onVisualOptions: () -> Unit,
     onOpenSlider: () -> Unit,
     onDictionary: () -> Unit,
+    onOpenAiHub: () -> Unit = {},
+    aiAvailable: Boolean = false,
     localTtsState: SharedMobileEpubLocalTtsState,
     onLocalTtsToggle: () -> Unit,
+    cloudTtsState: ReaderCloudTtsState = ReaderCloudTtsState(),
+    cloudTtsAvailable: Boolean = false,
+    onCloudTtsToggle: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    val onReadAloudToggle = if (cloudTtsAvailable) onCloudTtsToggle else onLocalTtsToggle
+    val readAloudIcon = if (cloudTtsAvailable) cloudTtsState.icon() else localTtsState.icon()
+    val readAloudLabel = if (cloudTtsAvailable) cloudTtsState.menuLabel() else localTtsState.menuLabel()
     Surface(modifier = modifier, tonalElevation = 4.dp) {
         Column(Modifier.fillMaxWidth()) {
             Row(
@@ -557,8 +593,9 @@ internal fun SharedMobileEpubBottomBar(
                         ReaderTool.VISUAL_OPTIONS -> IconButton(onClick = onVisualOptions) { Icon(Icons.Default.Settings, contentDescription = "Visual options") }
                         ReaderTool.SLIDER -> IconButton(onClick = onOpenSlider) { Icon(SharedReaderIcons.Slider, contentDescription = "Navigation slider") }
                         ReaderTool.DICTIONARY -> IconButton(onClick = onDictionary) { Icon(SharedReaderIcons.Dictionary, contentDescription = "Dictionary") }
-                        ReaderTool.TTS_CONTROLS -> IconButton(onClick = onLocalTtsToggle) {
-                            Icon(localTtsState.icon(), contentDescription = localTtsState.menuLabel())
+                        ReaderTool.AI_FEATURES -> if (aiAvailable) IconButton(onClick = onOpenAiHub) { Icon(Icons.Default.Ai, contentDescription = "AI features") }
+                        ReaderTool.TTS_CONTROLS -> IconButton(onClick = onReadAloudToggle) {
+                            Icon(readAloudIcon, contentDescription = readAloudLabel)
                         }
                         else -> Unit
                     }
@@ -578,6 +615,19 @@ internal fun SharedMobileEpubLocalTtsState.icon() = when (this) {
     SharedMobileEpubLocalTtsState.IDLE -> SharedReaderIcons.TextToSpeech
     SharedMobileEpubLocalTtsState.SPEAKING -> Icons.Default.Pause
     SharedMobileEpubLocalTtsState.PAUSED -> Icons.Default.PlayArrow
+}
+
+internal fun ReaderCloudTtsState.menuLabel(): String = when {
+    isLoading -> "Preparing cloud reading"
+    isPlaying -> "Pause cloud reading"
+    isPaused -> "Resume cloud reading"
+    else -> "Read aloud with Cloud AI"
+}
+
+internal fun ReaderCloudTtsState.icon() = when {
+    isPlaying -> Icons.Default.Pause
+    isPaused -> Icons.Default.PlayArrow
+    else -> Icons.Default.GraphicEq
 }
 
 @Composable
@@ -645,15 +695,81 @@ internal fun SharedMobileEpubTtsControls(
     }
 }
 
+@Composable
+internal fun SharedMobileEpubCloudTtsControls(
+    tts: SharedMobileEpubCloudTts,
+    onLocate: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val cloudState = tts.state
+    val progress = cloudState.progress
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(24.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        tonalElevation = 6.dp,
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Column(Modifier.weight(1f).padding(horizontal = 8.dp)) {
+                Text(
+                    progress.currentChunk?.chapterTitle?.ifBlank { "Cloud read aloud" } ?: "Preparing cloud audio…",
+                    style = MaterialTheme.typography.labelLarge,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    cloudState.errorMessage ?: progress.currentPositionLabel ?: "Cloud AI · ${cloudState.cacheSummary.currentVoiceLabel}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (cloudState.errorMessage != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            IconButton(onClick = tts::skipPrevious, enabled = progress.currentChunkIndex > 0 && !cloudState.isLoading) {
+                Icon(Icons.Default.SkipPrevious, contentDescription = "Previous cloud reading part")
+            }
+            IconButton(
+                onClick = { if (cloudState.isPlaying) tts.pause() else tts.resume() },
+                enabled = cloudState.isLoading || cloudState.isPlaying || cloudState.isPaused,
+            ) {
+                Icon(
+                    if (cloudState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                    contentDescription = if (cloudState.isPlaying) "Pause cloud reading" else "Resume cloud reading",
+                )
+            }
+            IconButton(onClick = tts::skipNext, enabled = progress.currentChunkIndex in 0 until progress.chunks.lastIndex && !cloudState.isLoading) {
+                Icon(Icons.Default.SkipNext, contentDescription = "Next cloud reading part")
+            }
+            IconButton(onClick = onLocate, enabled = progress.currentChunk != null) {
+                Icon(SharedReaderIcons.PinDrop, contentDescription = "Locate cloud reading part")
+            }
+            IconButton(onClick = tts::stop) {
+                Icon(Icons.Default.Close, contentDescription = "Stop cloud reading", tint = MaterialTheme.colorScheme.error)
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun SharedMobileReaderTtsSettingsSheet(
     tts: SharedMobileEpubLocalTts,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    cloudTts: SharedMobileEpubCloudTts? = null,
+    cloudTtsModeEnabled: Boolean = false,
+    onCloudTtsModeChange: (Boolean) -> Unit = {},
+    cloudTtsVoiceId: String = DEFAULT_CLOUD_TTS_SPEAKER_ID,
+    onCloudTtsVoiceChange: (String) -> Unit = {},
+    onClearCloudTtsCache: () -> Unit = {},
 ) {
     var rate by remember(tts.speechRate) { mutableStateOf(tts.speechRate) }
     var pitch by remember(tts.speechPitch) { mutableStateOf(tts.speechPitch) }
     var showVoices by remember { mutableStateOf(false) }
+    var showCloudVoices by remember { mutableStateOf(false) }
     val selectedVoice = tts.availableVoices.firstOrNull { it.identifier == tts.selectedVoiceIdentifier }
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
@@ -661,6 +777,93 @@ internal fun SharedMobileReaderTtsSettingsSheet(
             verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
             Text("TTS Voice Settings", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            cloudTts?.let { cloud ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Cloud AI reading", fontWeight = FontWeight.SemiBold)
+                        Text(
+                            if (cloudTtsModeEnabled) "Gemini Live · ${cloud.state.cacheSummary.currentVoiceLabel}"
+                            else "Use device speech",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(
+                        checked = cloudTtsModeEnabled,
+                        enabled = !tts.isSessionActive && !cloud.state.isLoading && !cloud.state.isPlaying,
+                        onCheckedChange = onCloudTtsModeChange,
+                    )
+                }
+                if (cloudTtsModeEnabled) {
+                    Box {
+                        val selectedCloudVoice = ReaderCloudTtsVoices.firstOrNull { it.id == cloudTtsVoiceId }
+                            ?: ReaderCloudTtsVoices.firstOrNull()
+                        Surface(
+                            modifier = Modifier.fillMaxWidth().clickable { showCloudVoices = true },
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        ) {
+                            Row(
+                                Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(selectedCloudVoice?.name ?: cloudTtsVoiceId, fontWeight = FontWeight.SemiBold)
+                                    Text(
+                                        selectedCloudVoice?.description ?: "Gemini Live voice",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                Icon(Icons.Default.ArrowDropDown, contentDescription = "Choose cloud voice")
+                            }
+                        }
+                        DropdownMenu(
+                            expanded = showCloudVoices,
+                            onDismissRequest = { showCloudVoices = false },
+                            modifier = Modifier.heightIn(max = 360.dp),
+                        ) {
+                            ReaderCloudTtsVoices.forEach { voice ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Column {
+                                            Text(voice.name)
+                                            Text(voice.description, style = MaterialTheme.typography.bodySmall)
+                                        }
+                                    },
+                                    onClick = {
+                                        cloud.setVoice(voice.id)
+                                        onCloudTtsVoiceChange(voice.id)
+                                        showCloudVoices = false
+                                    },
+                                    trailingIcon = if (voice.id == cloudTtsVoiceId) {
+                                        { Icon(Icons.Default.Check, contentDescription = null) }
+                                    } else null,
+                                )
+                            }
+                        }
+                    }
+                    val cache = cloud.state.cacheSummary
+                    Text(
+                        if (cache.hasCachedAudio) {
+                            "Cached cloud audio: ${cache.cachedChunkCount} chunks · ${cache.currentVoiceLabel}"
+                        } else {
+                            "No cached cloud audio"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (cache.hasCachedAudio) {
+                        TextButton(onClick = onClearCloudTtsCache) { Text("Clear cached cloud audio") }
+                    }
+                }
+                HorizontalDivider()
+            }
             Box {
                 Surface(
                     modifier = Modifier.fillMaxWidth().clickable { showVoices = true },

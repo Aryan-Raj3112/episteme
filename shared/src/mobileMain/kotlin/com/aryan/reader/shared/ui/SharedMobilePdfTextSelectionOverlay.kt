@@ -28,6 +28,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Book
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Ai
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
@@ -127,6 +128,7 @@ internal fun SharedMobilePdfTextSelectionOverlay(
     onExistingHighlightTap: (SharedPdfAnnotation) -> Unit,
     onHighlight: (PdfTextSelectionRange, String, List<PdfPageBounds>, Int, HighlightStyle, Boolean) -> Unit,
     onReadAloud: (Int) -> Unit,
+    onAiDefine: ((String) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     if (canvasSize.width <= 0 || canvasSize.height <= 0) return
@@ -523,6 +525,7 @@ internal fun SharedMobilePdfTextSelectionOverlay(
                     state.range?.let { onReadAloud(it.start) }
                     applyRangeUpdate(null, emptyList(), null)
                 },
+                onAiDefine = onAiDefine,
                 onSelectAll = {
                     val s = session ?: return@SharedMobilePdfSelectionMenu
                     scope.launch { computeAndApply(PdfTextSelectionRange(0, s.pageCharCount)) }
@@ -711,6 +714,7 @@ private fun SharedMobilePdfSelectionMenu(
     onTranslate: (String) -> Unit,
     onSearch: (String) -> Unit,
     onReadAloud: () -> Unit,
+    onAiDefine: ((String) -> Unit)?,
     onSelectAll: () -> Unit
 ) {
     var selectedStyle by remember { mutableStateOf(HighlightStyle.BACKGROUND) }
@@ -772,6 +776,9 @@ private fun SharedMobilePdfSelectionMenu(
                 add(SharedMobilePdfMenuAction(Res.drawable.copy, "Copy") { onCopy(selectedText) })
                 add(SharedMobilePdfMenuAction(imageVector = Icons.AutoMirrored.Filled.VolumeUp, label = "Read aloud") { onReadAloud() })
                 if (readerExternalLookupActionsAvailable(selectedText.length)) {
+                    onAiDefine?.let { define ->
+                        add(SharedMobilePdfMenuAction(imageVector = Icons.Default.Ai, label = "AI define") { define(selectedText) })
+                    }
                     add(SharedMobilePdfMenuAction(imageVector = Icons.Default.Book, label = "Define") { onDefine(selectedText) })
                     add(SharedMobilePdfMenuAction(Res.drawable.translate, "Translate") { onTranslate(selectedText) })
                     add(SharedMobilePdfMenuAction(imageVector = Icons.Default.Search, label = "Search") { onSearch(selectedText) })

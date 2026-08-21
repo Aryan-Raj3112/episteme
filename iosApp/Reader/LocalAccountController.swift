@@ -2371,14 +2371,14 @@ final class LocalAccountController: NSObject, ObservableObject {
             appleLinked: providerIDs.contains("apple.com"),
             googleLinked: providerIDs.contains("google.com"),
             googleDriveAuthorized: providerIDs.contains("google.com") && googleDriveAuthorized,
-            status: status
+            status: status,
+            authToken: nil
         )
         let publishedUID = user?.uid
         user?.getIDTokenForcingRefresh(false) { [weak self] token, _ in
             Task { @MainActor in
-                guard let self, let bridge = self.bridge else { return }
-                guard bridge.accountState.uid == publishedUID else { return }
-                bridge.updateAccountAuthToken(authToken: token)
+                guard let bridge = self?.bridge else { return }
+                bridge.updateAccountAuthToken(authToken: token, expectedUid: publishedUID)
             }
         }
 #else
@@ -2394,7 +2394,8 @@ final class LocalAccountController: NSObject, ObservableObject {
             appleLinked: false,
             googleLinked: false,
             googleDriveAuthorized: false,
-            status: status
+            status: status,
+            authToken: nil
         )
     }
 
