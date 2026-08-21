@@ -55,7 +55,9 @@ IOS_RUNTIME_AUTHORIZED=1 \
 ```
 
 It performs the compile-only gate, installs the resulting app, launches bundle
-`com.aryan.episteme`, captures a launch screenshot, and collects the recent Reader log stream.
+`com.aryan.episteme` with deterministic diagnostics and English locale arguments, captures a launch
+screenshot, and collects the recent Reader log stream. The launch command uses `--console` so
+startup output is retained in `launch.log`.
 Evidence is written outside the repository under `/tmp` by default. Override the locations when a
 run needs to be retained:
 
@@ -65,6 +67,23 @@ IOS_RUNTIME_EVIDENCE_DIR="$PWD/runtime-evidence/iphone" \
 IOS_RUNTIME_DERIVED_DATA="/tmp/reader-ios-derived" \
   ./iosApp/RuntimeValidation/validate_ios_runtime.sh <booted-simulator-udid>
 ```
+
+The runner copies the repository PDF and EPUB into the installed app's Documents container under
+`RuntimeFixtures`, so they can be selected through the native file importer from
+`On My iPhone > Reader > RuntimeFixtures`. Set `IOS_RUNTIME_COPY_FIXTURES=0` to skip that copy.
+For split-reader coverage, provide a second, distinct PDF; the runner rejects a byte-identical
+second file:
+
+```sh
+IOS_RUNTIME_AUTHORIZED=1 \
+IOS_RUNTIME_SECOND_PDF="/absolute/path/to/a-small-second-pdf.pdf" \
+  ./iosApp/RuntimeValidation/validate_ios_runtime.sh <booted-simulator-udid>
+```
+
+If the native picker does not expose the copied container on a particular simulator, open the
+fixture from the Files app and use “Open in Reader”/the share sheet. Label that evidence
+`external-open-fallback`; it is not proof of the native `fileImporter` path, and the check must
+also verify that a temporary external document is not silently persisted into the library.
 
 The runner is intentionally not a UI automation substitute. After launch, follow the manifest in
 `fixtures.json` on both an iPhone-class and iPad-class simulator. Keep the evidence directory and
@@ -78,7 +97,8 @@ Run these flows in order so a failure leaves a useful boundary:
 1. Launch and library restoration.
 2. Settings navigation and safe-area/keyboard behavior.
 3. Account, Apple/Google sign-in state, Pro/credits gating, and local StoreKit restore/purchase
-   behavior using the Local StoreKit scheme only.
+   behavior. Use the Local StoreKit scheme only from Xcode for StoreKit assertions; see the
+   limitation below.
 4. Diagnostic log export and the resulting share/save surface.
 5. Import/open one PDF, one EPUB, and one PPTX; verify close/reopen and saved position.
 6. PDF split reader with two documents: focus each pane, scroll/zoom, move the divider, swap, close
@@ -86,9 +106,30 @@ Run these flows in order so a failure leaves a useful boundary:
 7. EPUB navigation/search/TTS interruption and resume.
 8. Performance sampling and memory/thermal observation while repeating the heaviest flow.
 
-Use the small repository-owned PDF and EPUB sources named in `fixtures.json`. Do not add a binary
-PPTX solely for testing; use a user-owned or separately licensed deck and record its source and
-slide count in the evidence notes.
+Use the small repository-owned PDF and EPUB sources named in `fixtures.json`. The split flow needs
+two distinct PDFs; do not open the same bytes in both panes. Use the optional second-PDF input or a
+small user-owned/separately licensed file. Do not add a binary PPTX solely for testing; use a
+user-owned or separately licensed deck and record its source and slide count in the evidence notes.
+
+## Scheme, credentials, and capability limits
+
+The `Reader Local StoreKit` scheme contains an Xcode StoreKit configuration for an Xcode-managed
+launch. A direct `simctl launch` does not attach that scheme configuration, even when the runner is
+given `IOS_RUNTIME_SCHEME='Reader Local StoreKit'`; the runner prints a warning in that case. Use
+Xcode’s Run action with that scheme for local purchase/restore assertions and label a plain `simctl`
+launch as **StoreKit configuration unavailable**.
+
+Do not put Firebase, Google, Apple, Drive, Gemini, or other credentials in the repository or in
+captured screenshots/logs. Cloud sync, account linking, paid AI, and destructive clear-data flows
+require a disposable authorized account and explicit confirmation; otherwise mark them
+`credential-gated` rather than treating signed-out UI as a successful cloud test. Redact account
+IDs and tokens from retained evidence.
+
+The simulator cannot prove Apple Pencil hover/barrel/squeeze behavior, real audio-route changes,
+Control Center/lock-screen audio behavior, or device-only permission prompts. Mark those cases
+`hardware-gated` and run them on the appropriate physical iPad/iPhone. The repository PDF is a
+text fixture and does not prove the scanned-PDF Vision OCR path; use a separately supplied scanned
+PDF and label that run `scanned-pdf-gated`.
 
 ## Performance evidence
 
@@ -102,10 +143,13 @@ Capture both the user-visible result and the corresponding app evidence:
 - memory peak, resident growth after close, and whether memory returns after repeated open/close;
 - sync/import duration and payload size where an account is available.
 
-Export the in-app diagnostic log after the run. It includes the bounded iOS reader/EPUB/PDF/OCR/TTS
-events and performance snapshots. For frame and memory evidence, also use Instruments (Time
-Profiler + Allocations) on the same fixture and viewport. Compare the observations with the Android
-benchmark run; do not invent a pass threshold when Android has no corresponding measurement.
+Export the in-app diagnostic log after the run. It includes bounded iOS reader/EPUB/PDF/OCR/TTS
+events and performance snapshots (counters, last values, and selected peaks). It does not expose a
+full frame-time histogram or calculate p50/p95. Derive p50/p95/max from repeated timestamp samples
+or Instruments; do not report those percentiles from the in-app snapshot alone. For frame and
+memory evidence, use Instruments (Time Profiler + Allocations) on the same fixture and viewport.
+Compare the observations with the Android benchmark run; do not invent a pass threshold when
+Android has no corresponding measurement.
 
 ## Current limitation
 

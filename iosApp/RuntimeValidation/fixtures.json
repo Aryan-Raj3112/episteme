@@ -26,6 +26,22 @@
       "use": ["open", "position-restore", "search", "tts", "diagnostic-performance"]
     },
     {
+      "id": "pdf.split-secondary",
+      "source": null,
+      "kind": "pdf",
+      "ownership": "manual-or-separately-licensed",
+      "note": "Required for split-reader coverage. It must be byte-distinct from pdf.sample; do not duplicate the primary fixture.",
+      "use": ["split", "diagnostic-performance"]
+    },
+    {
+      "id": "pdf.scanned",
+      "source": null,
+      "kind": "pdf",
+      "ownership": "manual-or-separately-licensed",
+      "note": "Required to exercise Vision OCR. pdf.sample is text-based and cannot prove the scanned-PDF path.",
+      "use": ["ocr", "search", "selection", "tts", "diagnostic-performance"]
+    },
+    {
       "id": "pptx.user-owned",
       "source": null,
       "kind": "pptx",
@@ -51,6 +67,7 @@
         "Settings root reaches Account, AI, reader, diagnostics, and device-management destinations.",
         "Signed-out account actions explain sign-in requirements and do not expose a false Pro entitlement.",
         "Signed-in account state, Pro, credits, Apple/Google linking, and StoreKit restore/purchase states match Android eligibility rules.",
+        "Credential-dependent cloud/paid cases are explicitly marked credential-gated when no disposable authorized account is available.",
         "Keyboard avoids fields and the back gesture/button returns to the same settings destination."
       ]
     },
@@ -67,7 +84,7 @@
       "id": "document-open",
       "surface": "reader",
       "expected": [
-        "PDF, EPUB, and PPTX open through the iOS importer and reach a usable first page/slide/chapter.",
+        "PDF, EPUB, and PPTX open through the iOS importer and reach a usable first page/slide/chapter; external-open fallback is labeled separately.",
         "Close and reopen preserve the same Android-benchmark reading position contract.",
         "Unsupported/corrupt/import-cancelled cases report an actionable state and do not strand the app in loading."
       ]
@@ -76,7 +93,7 @@
       "id": "pdf-split",
       "surface": "pdf-split-reader",
       "expected": [
-        "Two PDF panes accept focus, scrolling, zoom, toolbar taps, and selection independently.",
+        "Two distinct PDF panes accept focus, scrolling, zoom, toolbar taps, and selection independently.",
         "Divider drag, orientation change, swap, close-pane, back, and close-workspace preserve valid state.",
         "Background/foreground restores both documents or records the same explicit recovery message as Android.",
         "No pane interaction blocks the other pane or the system back action."
@@ -86,11 +103,38 @@
       "id": "performance",
       "surface": "reader-and-library",
       "expected": [
-        "Record p50/p95/max frame time for scroll, zoom, split divider drag, and toolbar toggles.",
+        "Record p50/p95/max frame time for scroll, zoom, split divider drag, and toolbar toggles using Instruments or repeated samples; the in-app snapshot does not provide percentiles.",
         "Record document-open, page/tile render, OCR, search, TTS interruption/resume, and sync/import latency.",
         "Record peak memory and resident growth after repeated open/close; investigate monotonic growth.",
         "Compare the same fixture and operation with Android measurements before accepting a parity result."
       ]
     }
-  ]
+  ],
+  "gates": [
+    {
+      "id": "storekit",
+      "status": "xcode-scheme-only",
+      "note": "Reader Local StoreKit configuration is not attached by direct simctl launch."
+    },
+    {
+      "id": "credentials",
+      "status": "disposable-account-required",
+      "note": "Never capture or commit real credentials, tokens, or unredacted account identifiers."
+    },
+    {
+      "id": "pencil-and-audio-route",
+      "status": "hardware-gated",
+      "note": "Simulator cannot prove Pencil gestures or physical audio-route/lock-screen behavior."
+    },
+    {
+      "id": "scanned-pdf-ocr",
+      "status": "fixture-required",
+      "note": "Use pdf.scanned; the repository text PDF is not an OCR fixture."
+    }
+  ],
+  "telemetry": {
+    "inAppProvides": ["counters", "last-values", "selected-peaks", "bounded-events"],
+    "inAppDoesNotProvide": ["full-frame-histogram", "p50", "p95"],
+    "externalEvidenceRequired": ["Instruments Time Profiler", "Instruments Allocations", "repeated timestamp samples"]
+  }
 }
