@@ -842,6 +842,9 @@ private fun String.escapeIosReaderHtmlAttribute(): String = buildString(length) 
 }
 
 private fun loadIosZipDocumentBook(book: BookItem): SharedEpubBook {
+    if (book.type == FileType.PPTX) {
+        return loadIosPptxBook(book)
+    }
     val path = book.path.resolveIosEpubSourcePath() ?: error("${book.type.name} path is unavailable")
     val archive = IosZipEpubArchive(path)
     val contentPaths = when (book.type) {
