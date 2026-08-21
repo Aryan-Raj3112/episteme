@@ -9,6 +9,19 @@ import kotlin.test.assertTrue
 
 class IosReaderAiAdaptersTest {
     @Test
+    fun keychainRoundTripReadsDataReturnedBySecurityFramework() {
+        val account = "ios-reader-ai-regression"
+        val expected = "keychain-regression-value"
+        IosReaderAiKeychain.delete(account)
+        try {
+            IosReaderAiKeychain.write(account, expected)
+            assertEquals(expected, IosReaderAiKeychain.read(account))
+        } finally {
+            IosReaderAiKeychain.delete(account)
+        }
+    }
+
+    @Test
     fun availabilityRequiresNetworkAndVisibleConfiguredAccess() {
         var settings = ReaderAiByokSettings(geminiKey = "test-key")
         var account = IosReaderAiAccountState()

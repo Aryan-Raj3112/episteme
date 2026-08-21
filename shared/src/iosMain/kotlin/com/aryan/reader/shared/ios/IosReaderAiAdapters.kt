@@ -14,7 +14,9 @@ import com.aryan.reader.shared.SummarizationResult
 import com.aryan.reader.shared.maskedReaderAiKey
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.alloc
+import kotlinx.cinterop.interpretCPointer
 import kotlinx.cinterop.memScoped
+import kotlinx.cinterop.objcPtr
 import kotlinx.cinterop.ptr
 import kotlinx.cinterop.reinterpret
 import kotlinx.cinterop.addressOf
@@ -68,8 +70,6 @@ import platform.Security.SecItemDelete
 import platform.Security.SecItemUpdate
 import platform.Security.errSecDuplicateItem
 import platform.Security.errSecSuccess
-import platform.Security.kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-import platform.Security.kSecClassGenericPassword
 
 /**
  * iOS uses the same shared model IDs and prompt contract as Android. The
@@ -177,10 +177,11 @@ internal object IosReaderAiKeychain {
         }
         return memScoped {
             val result = alloc<CFTypeRefVar>()
-            val status = SecItemCopyMatching(query.toNSDictionary() as CFDictionaryRef, result.ptr)
+            val queryDictionary = query.toNSDictionary()
+            val status = SecItemCopyMatching(queryDictionary.toCFDictionary(), result.ptr)
             if (status != errSecSuccess) return@memScoped ""
             val dataPointer = result.value ?: return@memScoped ""
-            val dataRef = dataPointer as CFDataRef
+            val dataRef: CFDataRef = dataPointer.reinterpret()
             try {
                 val length = CFDataGetLength(dataRef).toInt()
                 if (length <= 0) return@memScoped ""
@@ -205,20 +206,24 @@ internal object IosReaderAiKeychain {
         val query = baseQuery(account)
         val attributes = mapOf(
             "v_Data" to data,
-            "pdmn" to kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+            "pdmn" to "cku",
         )
-        val addStatus = SecItemAdd((query + attributes).toNSDictionary() as CFDictionaryRef, null)
+        val addDictionary = (query + attributes).toNSDictionary()
+        val addStatus = SecItemAdd(addDictionary.toCFDictionary(), null)
         if (addStatus == errSecDuplicateItem) {
-            SecItemUpdate(query.toNSDictionary() as CFDictionaryRef, attributes.toNSDictionary() as CFDictionaryRef)
+            val queryDictionary = query.toNSDictionary()
+            val attributesDictionary = attributes.toNSDictionary()
+            SecItemUpdate(queryDictionary.toCFDictionary(), attributesDictionary.toCFDictionary())
         }
     }
 
     fun delete(account: String) {
-        SecItemDelete(baseQuery(account).toNSDictionary() as CFDictionaryRef)
+        val queryDictionary = baseQuery(account).toNSDictionary()
+        SecItemDelete(queryDictionary.toCFDictionary())
     }
 
     private fun baseQuery(account: String): Map<Any?, Any?> = mapOf(
-        "class" to kSecClassGenericPassword,
+        "class" to "genp",
         "svce" to SERVICE,
         "acct" to account,
     )
@@ -230,6 +235,9 @@ internal object IosReaderAiKeychain {
             }
         }
     }
+
+    private fun NSMutableDictionary.toCFDictionary(): CFDictionaryRef =
+        interpretCPointer(objcPtr())!!
 
 }
 
