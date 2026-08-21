@@ -132,6 +132,7 @@ final class LocalAccountController: NSObject, ObservableObject {
                 Task { @MainActor in await self?.uploadMergedCloudSnapshot(snapshotJSON) }
             }
         )
+        let currentDeviceID = cloudSyncDeviceID()
         bridge.setDeviceManagementHandlers(
             refresh: { [weak self, weak bridge] in
                 Task { @MainActor in
@@ -153,7 +154,7 @@ final class LocalAccountController: NSObject, ObservableObject {
             revoke: { [weak self, weak bridge] deviceID in
                 Task { @MainActor in
                     guard let self, let bridge else { return }
-                    if deviceID == self.cloudSyncDeviceID() {
+                    if deviceID == currentDeviceID {
                         bridge.updateRegisteredDevices(
                             deviceIds: bridge.registeredDevices.map(\.deviceId),
                             deviceNames: bridge.registeredDevices.map(\.deviceName),
