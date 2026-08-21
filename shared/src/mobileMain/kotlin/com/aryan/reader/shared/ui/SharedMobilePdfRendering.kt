@@ -125,6 +125,7 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.changedToDown
 import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.PointerEventTimeoutCancellationException
@@ -2033,7 +2034,7 @@ internal fun SharedMobilePdfPageSurface(
                         if (!sharedPdfIsInkDownAllowed(isStylusOnlyMode, down.type)) {
                             return@awaitEachGesture
                         }
-                        val eraserOverride = sharedPdfIsEraserOverride(down.type, sharedPdfStylusBarrelPressed(currentEvent))
+                        var eraserOverride = sharedPdfIsEraserOverride(down.type, false)
                         val touchSlop = viewConfiguration.touchSlop
                         var dragStarted = false
                         var committed = false
@@ -2046,6 +2047,20 @@ internal fun SharedMobilePdfPageSurface(
                         try {
                             while (true) {
                                 val event = awaitPointerEvent()
+                                // Android exposes the stylus barrel button on
+                                // the pointer event, while iOS exposes the
+                                // equivalent Pencil shortcut as shared state.
+                                // Check the first in-scope event without adding
+                                // a second await before the gesture starts.
+                                if (!eraserOverride && down.type == PointerType.Stylus &&
+                                    sharedPdfStylusBarrelPressed(event)
+                                ) {
+                                    eraserOverride = true
+                                    if (localCanvasSize.width > 0 && localCanvasSize.height > 0) {
+                                        eraserOverridePosition = down.position
+                                        isEraserOverrideActive = true
+                                    }
+                                }
                                 if (event.changes.size > 1) {
                                     (activeStroke as? MutableList<PdfPagePoint>)?.clear()
                                     return@awaitEachGesture
