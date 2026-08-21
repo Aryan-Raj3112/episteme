@@ -77,12 +77,14 @@ fun SharedMobileAppDrawerContent(
                 ) {
                     Icon(
                         imageVector = Icons.Default.AccountCircle,
-                        contentDescription = "Profile",
+                        contentDescription = readerString("content_desc_profile", "Profile"),
                         modifier = Modifier.size(80.dp),
                         tint = MaterialTheme.colorScheme.primary
                     )
                     Text(
-                        text = currentUser.displayName ?: currentUser.email ?: "Signed in",
+                        text = currentUser.displayName
+                            ?: currentUser.email
+                            ?: readerString("desktop_signed_in", "Signed in"),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold
                     )
@@ -105,7 +107,11 @@ fun SharedMobileAppDrawerContent(
                         ) {
                             Icon(Icons.Default.VerifiedUser, contentDescription = null, modifier = Modifier.size(16.dp))
                             Text(
-                                if (isStandardEdition) "Standard version" else "$credits credits",
+                                if (isStandardEdition) {
+                                    readerString("drawer_standard_version", "Standard version")
+                                } else {
+                                    readerString("credits_count", "%1\$d Credits", credits)
+                                },
                                 style = MaterialTheme.typography.labelMedium
                             )
                         }
@@ -115,13 +121,23 @@ fun SharedMobileAppDrawerContent(
                 Spacer(Modifier.height(8.dp))
                 NavigationDrawerItem(
                     icon = { Icon(Icons.Default.AccountCircle, contentDescription = null) },
-                    label = { Text("Sign in with Google") },
+                    label = { Text(readerString("drawer_sign_in", "Sign in with Google")) },
                     selected = false,
                     onClick = onSignInClick,
                     modifier = Modifier.padding(horizontal = 12.dp)
                 )
                 Text(
-                    text = if (isStandardEdition) "Sync account and app settings." else "Sync account, Pro features, and credits.",
+                    text = if (isStandardEdition) {
+                        readerString(
+                            "drawer_signed_out_standard_desc",
+                            "Sync account and app settings.",
+                        )
+                    } else {
+                        readerString(
+                            "drawer_signed_out_desc",
+                            "Sync account, Pro features, and credits.",
+                        )
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 28.dp, vertical = 10.dp)
@@ -135,9 +151,9 @@ fun SharedMobileAppDrawerContent(
                 label = {
                     Text(
                         when {
-                            isStandardEdition -> "Standard version"
-                            isProUser -> "Pro unlocked"
-                            else -> "Upgrade to Pro"
+                            isStandardEdition -> readerString("drawer_standard_version", "Standard version")
+                            isProUser -> readerString("drawer_pro_unlocked", "Pro unlocked")
+                            else -> readerString("drawer_upgrade_pro", "Upgrade to Pro")
                         }
                     )
                 },
@@ -146,23 +162,52 @@ fun SharedMobileAppDrawerContent(
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
             )
 
-            NavigationDrawerItem(
-                icon = { Icon(Icons.Default.Sync, contentDescription = null) },
-                label = { Text("Sync library") },
-                selected = false,
-                onClick = { onSyncToggle(!isSyncEnabled) },
-                badge = { Switch(checked = isSyncEnabled, onCheckedChange = onSyncToggle) },
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
-            )
+            // Android only exposes cloud sync after account sign-in. Keep the
+            // same gate here so signed-out users do not see a control that
+            // cannot be enabled, and make the Pro prerequisite visible in
+            // the control state instead of accepting a no-op tap.
+            if (currentUser != null) {
+                NavigationDrawerItem(
+                    icon = { Icon(Icons.Default.Sync, contentDescription = null) },
+                    label = { Text(readerString("drawer_sync_library", "Sync library")) },
+                    selected = false,
+                    onClick = {
+                        if (isProUser) onSyncToggle(!isSyncEnabled) else onProClick()
+                    },
+                    badge = {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            if (!isProUser) {
+                                Icon(
+                                    imageVector = Icons.Default.VerifiedUser,
+                                    contentDescription = readerString("content_desc_pro_feature", "Pro feature"),
+                                    modifier = Modifier.size(20.dp),
+                                    tint = MaterialTheme.colorScheme.primary,
+                                )
+                            }
+                            Switch(
+                                checked = isSyncEnabled,
+                                enabled = isProUser,
+                                onCheckedChange = { enabled ->
+                                    if (isProUser) onSyncToggle(enabled) else onProClick()
+                                },
+                            )
+                        }
+                    },
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                )
+            }
 
-            if (isSyncEnabled) {
+            if (currentUser != null && isSyncEnabled) {
                 NavigationDrawerItem(
                     icon = { Icon(Icons.Default.FolderSpecial, contentDescription = null) },
                     label = {
                         Column {
-                            Text("Backup local folders")
+                            Text(readerString("drawer_backup_local_folders", "Backup local folders"))
                             Text(
-                                "Keep folder metadata synced.",
+                                readerString("drawer_backup_desc", "Keep folder metadata synced."),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -179,21 +224,21 @@ fun SharedMobileAppDrawerContent(
 
             NavigationDrawerItem(
                 icon = { Icon(Icons.Default.Settings, contentDescription = null) },
-                label = { Text("Settings") },
+                label = { Text(readerString("settings", "Settings")) },
                 selected = false,
                 onClick = onSettingsClick,
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
             )
             NavigationDrawerItem(
                 icon = { Icon(Icons.Default.Palette, contentDescription = null) },
-                label = { Text("App theme") },
+                label = { Text(readerString("app_theme_title", "App theme")) },
                 selected = false,
                 onClick = onAppThemeClick,
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
             )
             NavigationDrawerItem(
                 icon = { Icon(Icons.Default.Fonts, contentDescription = null) },
-                label = { Text("Custom fonts") },
+                label = { Text(readerString("drawer_custom_fonts", "Custom fonts")) },
                 selected = false,
                 onClick = onFontsClick,
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
@@ -201,7 +246,7 @@ fun SharedMobileAppDrawerContent(
             if (aiSettingsAvailable) {
                 NavigationDrawerItem(
                     icon = { Icon(Icons.Default.Ai, contentDescription = null) },
-                    label = { Text("AI settings") },
+                    label = { Text(readerString("ai_settings_title", "AI settings")) },
                     selected = false,
                     onClick = onAiSettingsClick,
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
@@ -209,7 +254,7 @@ fun SharedMobileAppDrawerContent(
             }
             NavigationDrawerItem(
                 icon = { Icon(Icons.Default.Feedback, contentDescription = null) },
-                label = { Text("Help & Feedback") },
+                label = { Text(readerString("drawer_help_feedback", "Help & Feedback")) },
                 selected = false,
                 onClick = onFeedbackClick,
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
@@ -218,7 +263,7 @@ fun SharedMobileAppDrawerContent(
             if (currentUser != null) {
                 NavigationDrawerItem(
                     icon = { Icon(Icons.Default.Logout, contentDescription = null) },
-                    label = { Text("Sign out") },
+                    label = { Text(readerString("drawer_sign_out", "Sign out")) },
                     selected = false,
                     onClick = onSignOutClick,
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)

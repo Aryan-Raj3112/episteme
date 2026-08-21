@@ -3810,37 +3810,59 @@ private fun ReaderIosApp(
                         settings = effectiveReaderAiSettings,
                         maskedKeys = readerAiSettingsStore.maskedKeys(),
                         strings = SharedAiSettingsStrings(
-                            title = "AI and cloud TTS",
-                            backDescription = "Back",
-                            savedKeys = "Saved API keys",
-                            noKeySaved = "No key saved",
-                            addOrReplaceKey = "Add or replace a key",
-                            providerLabel = "Provider",
-                            apiKeyLabel = "API key",
-                            saveKey = "Save key",
-                            useOneModel = "Use one model for all AI features",
-                            useOneModelDescription = "Use the same model for definitions, summaries, and recaps.",
-                            allFeatures = "All AI features",
-                            allFeaturesDescription = "Choose the default text model.",
-                            smartDictionary = "Smart dictionary",
-                            smartDictionaryDescription = "Define selected words and passages.",
-                            summaries = "Summaries",
-                            summariesDescription = "Generate concise summaries.",
-                            recaps = "Recaps",
-                            recapsDescription = "Catch up from earlier reading context.",
-                            cloudTts = "Cloud TTS",
-                            cloudTtsDescription = "Use Gemini Live for natural reading aloud when signed in or using your own Gemini key.",
-                            modelLabel = "Model",
-                            noModelSelected = "No model selected",
-                            saveDialogDescription = "The key is stored securely in the iOS Keychain.",
-                            deleteDialogDescription = "This removes the saved key from this device.",
-                            saveAction = "Save",
-                            deleteAction = "Delete",
-                            cancelAction = "Cancel",
+                            title = readerString("ai_settings_title", "AI and cloud TTS"),
+                            backDescription = readerString("action_back", "Back"),
+                            savedKeys = readerString("ai_settings_saved_keys", "Saved API keys"),
+                            noKeySaved = readerString("ai_settings_no_key_saved", "No key saved"),
+                            addOrReplaceKey = readerString("ai_settings_add_or_replace_key", "Add or replace a key"),
+                            providerLabel = readerString("label_provider", "Provider"),
+                            apiKeyLabel = readerString("label_api_key", "API key"),
+                            saveKey = readerString("ai_settings_save_key", "Save key"),
+                            useOneModel = readerString("ai_settings_use_one_model", "Use one model for all AI features"),
+                            useOneModelDescription = readerString(
+                                "ai_settings_use_one_model_desc",
+                                "Use the same model for definitions, summaries, and recaps.",
+                            ),
+                            allFeatures = readerString("ai_settings_all_features", "All AI features"),
+                            allFeaturesDescription = readerString("ai_settings_all_features_desc", "Choose the default text model."),
+                            smartDictionary = readerString("ai_settings_smart_dictionary", "Smart dictionary"),
+                            smartDictionaryDescription = readerString(
+                                "ai_settings_smart_dictionary_desc",
+                                "Define selected words and passages.",
+                            ),
+                            summaries = readerString("ai_settings_summaries", "Summaries"),
+                            summariesDescription = readerString("ai_settings_summaries_desc", "Generate concise summaries."),
+                            recaps = readerString("ai_settings_recaps", "Recaps"),
+                            recapsDescription = readerString("ai_settings_recaps_desc", "Catch up from earlier reading context."),
+                            cloudTts = readerString("credits_cloud_tts_title", "Cloud TTS"),
+                            cloudTtsDescription = readerString(
+                                "ai_settings_cloud_tts_desc",
+                                "Use %1\$s for natural reading aloud when signed in or using your own Gemini key.",
+                                com.aryan.reader.shared.GEMINI_CLOUD_TTS_MODEL,
+                            ),
+                            modelLabel = readerString("label_model", "Model"),
+                            noModelSelected = readerString("ai_settings_no_model_selected", "No model selected"),
+                            saveDialogDescription = readerString(
+                                "dialog_save_key_desc",
+                                "The key is stored securely in the iOS Keychain.",
+                            ),
+                            deleteDialogDescription = readerString(
+                                "dialog_delete_key_desc",
+                                "This removes the saved key from this device.",
+                            ),
+                            saveAction = readerString("action_save", "Save"),
+                            deleteAction = readerString("action_delete", "Delete"),
+                            cancelAction = readerString("action_cancel", "Cancel"),
                             providerLabels = mapOf("gemini" to "Gemini", "groq" to "Groq"),
-                            saveDialogTitle = { provider -> "Save $provider key?" },
-                            deleteDialogTitle = { provider -> "Delete $provider key?" },
-                            deleteKeyDescription = { provider -> "Delete saved $provider key" },
+                            saveDialogTitle = { provider ->
+                                stringResolver.string("dialog_save_provider_key", "Save %1\$s key?", provider)
+                            },
+                            deleteDialogTitle = { provider ->
+                                stringResolver.string("dialog_delete_provider_key", "Delete %1\$s key?", provider)
+                            },
+                            deleteKeyDescription = { provider ->
+                                stringResolver.string("content_desc_delete_provider_key", "Delete saved %1\$s key", provider)
+                            },
                         ),
                         onBackClick = { utilityScreen = null },
                         onSaveKey = { provider, key ->
@@ -3906,7 +3928,7 @@ private fun ReaderIosApp(
                         SharedAboutScreen(
                             versionName = iosAppVersionName(),
                             buildLabel = iosAppBuildLabel(),
-                            subtitle = "iOS reader",
+                            subtitle = readerString("ios_reader_subtitle", "iOS reader"),
                             onOpenSource = {
                                 openSharedMobileExternalUrl("https://github.com/Aryan-Raj3112/episteme")
                             },
@@ -4633,25 +4655,29 @@ private fun ReaderIosApp(
     annotationExportBook?.let { book ->
         AlertDialog(
             onDismissRequest = { annotationExportBook = null },
-            title = { Text("Export Annotations") },
+            title = { Text(readerString("dialog_export_annotations_title", "Export annotations")) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     TextButton(onClick = {
                         annotationExportBook = null
                         if (!bridge.exportAnnotations(book, AnnotationExportFormat.MARKDOWN)) {
-                            showMessage("This book has no annotations to export")
+                            showMessage(stringResolver.string("banner_no_annotations_to_export", "This book has no annotations to export"))
                         }
-                    }) { Text("Markdown") }
+                    }) { Text(readerString("export_annotations_markdown", "Markdown")) }
                     TextButton(onClick = {
                         annotationExportBook = null
                         if (!bridge.exportAnnotations(book, AnnotationExportFormat.TEXT)) {
-                            showMessage("This book has no annotations to export")
+                            showMessage(stringResolver.string("banner_no_annotations_to_export", "This book has no annotations to export"))
                         }
-                    }) { Text("Text") }
+                    }) { Text(readerString("export_annotations_text", "Text")) }
                 }
             },
             confirmButton = {},
-            dismissButton = { TextButton(onClick = { annotationExportBook = null }) { Text("Cancel") } }
+            dismissButton = {
+                TextButton(onClick = { annotationExportBook = null }) {
+                    Text(readerString("action_cancel", "Cancel"))
+                }
+            }
         )
     }
     if (showExternalFileBehaviorDialog) {
@@ -5317,7 +5343,7 @@ private fun IosUtilityPage(
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
         TextButton(onClick = onBack, modifier = Modifier.padding(horizontal = 8.dp)) {
-            Text("Back")
+            Text(readerString("action_back", "Back"))
         }
         androidx.compose.foundation.layout.Box(
             modifier = Modifier

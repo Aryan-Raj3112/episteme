@@ -23,17 +23,17 @@ fun SharedMobileMainScaffold(
     destinationLabel: @Composable (SharedMobileMainDestination) -> Unit = { destination ->
         Text(
             when (destination) {
-                SharedMobileMainDestination.HOME -> "Home"
-                SharedMobileMainDestination.LIBRARY -> "Library"
-                SharedMobileMainDestination.UNIFIED_LIBRARY -> "Library Beta"
+                SharedMobileMainDestination.HOME -> readerString("nav_home", "Home")
+                SharedMobileMainDestination.LIBRARY -> readerString("nav_library", "Library")
+                SharedMobileMainDestination.UNIFIED_LIBRARY -> readerString("nav_unified_library", "Library Beta")
             }
         )
     },
     destinationIcon: @Composable (SharedMobileMainDestination) -> Unit = { destination ->
         val label = when (destination) {
-            SharedMobileMainDestination.HOME -> "Home"
-            SharedMobileMainDestination.LIBRARY -> "Library"
-            SharedMobileMainDestination.UNIFIED_LIBRARY -> "Library Beta"
+            SharedMobileMainDestination.HOME -> readerString("nav_home", "Home")
+            SharedMobileMainDestination.LIBRARY -> readerString("nav_library", "Library")
+            SharedMobileMainDestination.UNIFIED_LIBRARY -> readerString("nav_unified_library", "Library Beta")
         }
         Icon(
             imageVector = when (destination) {
