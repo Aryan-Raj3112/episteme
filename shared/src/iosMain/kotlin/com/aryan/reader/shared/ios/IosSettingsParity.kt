@@ -44,6 +44,7 @@ internal fun SharedSettingsAction.iosDisposition(): IosSettingsActionDisposition
     SharedSettingsAction.TTS_SETTINGS,
     SharedSettingsAction.HIDE_READER_AI,
     SharedSettingsAction.CLEAR_REFLOW_CACHE,
+    SharedSettingsAction.EXPORT_LOGS,
     SharedSettingsAction.HELP_FEEDBACK,
     SharedSettingsAction.SUPPORT,
     SharedSettingsAction.ABOUT -> IosSettingsActionDisposition.IMPLEMENTED_ON_IOS
@@ -51,13 +52,14 @@ internal fun SharedSettingsAction.iosDisposition(): IosSettingsActionDisposition
     SharedSettingsAction.SCREEN_CAPTURE_PROTECTION,
     SharedSettingsAction.CLEAR_BOOK_CACHE -> IosSettingsActionDisposition.INTENTIONAL_PLATFORM_DIFFERENCE
 
-    SharedSettingsAction.CLOUD_SYNC,
+    SharedSettingsAction.AI_SETTINGS -> IosSettingsActionDisposition.IMPLEMENTED_ON_IOS
+
+    SharedSettingsAction.CLOUD_SYNC -> IosSettingsActionDisposition.IMPLEMENTED_ON_IOS
+
     SharedSettingsAction.DEVICE_MANAGEMENT,
-    SharedSettingsAction.AI_SETTINGS,
-    SharedSettingsAction.CLEAR_CLOUD_LOCAL_DATA -> IosSettingsActionDisposition.DEFERRED_CLOUD_OR_PAID
+    SharedSettingsAction.CLEAR_CLOUD_LOCAL_DATA -> IosSettingsActionDisposition.IMPLEMENTED_ON_IOS
 
     SharedSettingsAction.TEST_PANEL_DETECTION,
     SharedSettingsAction.TEST_SPEECH_BUBBLE_DETECTION,
-    SharedSettingsAction.EXPORT_LOGS,
     SharedSettingsAction.DEBUG_ACTIONS -> IosSettingsActionDisposition.DEBUG_ONLY
 }

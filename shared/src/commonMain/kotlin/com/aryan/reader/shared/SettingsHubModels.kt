@@ -571,7 +571,8 @@ data class SharedSettingsHubModel(
             SharedSettingsAction.SIGN_IN,
             SharedSettingsAction.SIGN_OUT,
             SharedSettingsAction.CLOUD_SYNC,
-            SharedSettingsAction.FOLDER_SYNC
+            SharedSettingsAction.FOLDER_SYNC,
+            SharedSettingsAction.DEVICE_MANAGEMENT
         )
     }
 
@@ -590,7 +591,6 @@ data class SharedSettingsHubModel(
             SharedSettingsAction.TEST_PANEL_DETECTION,
             SharedSettingsAction.TEST_SPEECH_BUBBLE_DETECTION,
             SharedSettingsAction.EXPORT_LOGS,
-            SharedSettingsAction.DEVICE_MANAGEMENT,
             SharedSettingsAction.HELP_FEEDBACK,
             SharedSettingsAction.SUPPORT,
             SharedSettingsAction.ABOUT
@@ -667,6 +667,8 @@ data class SharedSettingsHubInput(
     val includeReaderTabs: Boolean = true,
     val includeHideReaderAi: Boolean = true,
     val includeCloudLocalDataClear: Boolean = false,
+    /** Exposes the platform's safe, app-owned recent-log export. */
+    val includeDiagnosticLogExport: Boolean = false,
     val supportProjectAvailable: Boolean = true,
     val languageTitle: String = "Language",
     val languageSummary: String = "Choose the app language",
@@ -872,7 +874,7 @@ fun sharedSettingsHubModel(input: SharedSettingsHubInput): SharedSettingsHubMode
                         )
                     )
                 }
-                if (input.isDebugBuild) {
+                if (input.isDebugBuild && input.platform == SharedSettingsPlatform.ANDROID) {
                     add(
                         SharedSettingsItemModel(
                             action = SharedSettingsAction.TEST_PANEL_DETECTION,
@@ -887,6 +889,8 @@ fun sharedSettingsHubModel(input: SharedSettingsHubInput): SharedSettingsHubMode
                             summary = "Run the local speech-bubble detection diagnostic"
                         )
                     )
+                }
+                if (input.isDebugBuild) {
                     add(
                         SharedSettingsItemModel(
                             action = SharedSettingsAction.EXPORT_LOGS,
@@ -905,6 +909,16 @@ fun sharedSettingsHubModel(input: SharedSettingsHubInput): SharedSettingsHubMode
                             )
                         )
                     }
+                }
+                if (input.includeDiagnosticLogExport && !input.isDebugBuild) {
+                    add(
+                        SharedSettingsItemModel(
+                            action = SharedSettingsAction.EXPORT_LOGS,
+                            title = "Export logs",
+                            summary = "Share recent diagnostic logs collected by the app",
+                            kind = SharedSettingsItemKind.NAVIGATION
+                        )
+                    )
                 }
             }
         ),

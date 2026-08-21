@@ -132,6 +132,102 @@ final class LocalAccountController: NSObject, ObservableObject {
                 Task { @MainActor in await self?.uploadMergedCloudSnapshot(snapshotJSON) }
             }
         )
+        bridge.setDeviceManagementHandlers(
+            refresh: { [weak self, weak bridge] in
+                Task { @MainActor in
+                    guard let self, let bridge else { return }
+                    let devices = await self.registeredDevices()
+                    let ids = devices.compactMap { $0["deviceId"] as? String }
+                    let names = devices.map { $0["deviceName"] as? String ?? "" }
+                    let lastSeen = devices.map {
+                        String(Int64(($0["lastSeenEpochMillis"] as? NSNumber)?.doubleValue ?? 0))
+                    }
+                    bridge.updateRegisteredDevices(
+                        deviceIds: ids,
+                        deviceNames: names,
+                        lastSeenEpochMillis: lastSeen,
+                        status: devices.isEmpty ? "device_empty" : nil
+                    )
+                }
+            },
+            revoke: { [weak self, weak bridge] deviceID in
+                Task { @MainActor in
+                    guard let self, let bridge else { return }
+                    if deviceID == self.cloudSyncDeviceID() {
+                        bridge.updateRegisteredDevices(
+                            deviceIds: bridge.registeredDevices.map(\.deviceId),
+                            deviceNames: bridge.registeredDevices.map(\.deviceName),
+                            lastSeenEpochMillis: bridge.registeredDevices.map {
+                                String($0.lastSeenEpochMillis ?? 0)
+                            },
+                            status: "device_active"
+                        )
+                        return
+                    }
+                    let revoked = await self.revokeDevice(deviceID: deviceID)
+                    if revoked {
+                        let devices = await self.registeredDevices()
+                        bridge.updateRegisteredDevices(
+                            deviceIds: devices.compactMap { $0["deviceId"] as? String },
+                            deviceNames: devices.map { $0["deviceName"] as? String ?? "" },
+                            lastSeenEpochMillis: devices.map {
+                                String(Int64(($0["lastSeenEpochMillis"] as? NSNumber)?.doubleValue ?? 0))
+                            },
+                            status: "device_revoked"
+                        )
+                    } else {
+                        bridge.updateRegisteredDevices(
+                            deviceIds: bridge.registeredDevices.map(\.deviceId),
+                            deviceNames: bridge.registeredDevices.map(\.deviceName),
+                            lastSeenEpochMillis: bridge.registeredDevices.map {
+                                String($0.lastSeenEpochMillis ?? 0)
+                            },
+                            status: "device_revoke_failed"
+                        )
+                    }
+                }
+            }
+        )
+        bridge.setCloudLocalDataClearHandler { [weak self, weak bridge] in
+            Task { @MainActor in
+                guard let self, let bridge else { return }
+                let result = await self.clearCloudAndLocalData(confirmedByUser: true)
+                switch result {
+                case .confirmationRequired:
+                    bridge.completeCloudLocalDataClear(
+                        success: false,
+                        message: "clear_confirmation_required"
+                    )
+                case .authorizationRequired:
+                    bridge.completeCloudLocalDataClear(
+                        success: false,
+                        message: "clear_authorization_required"
+                    )
+                case .inProgress:
+                    bridge.completeCloudLocalDataClear(
+                        success: false,
+                        message: "clear_in_progress"
+                    )
+                case .unavailable:
+                    bridge.completeCloudLocalDataClear(
+                        success: false,
+                        message: "clear_unavailable"
+                    )
+                case .cleared(let deletedDriveFileCount, let localCleanupInvoked):
+                    bridge.completeCloudLocalDataClear(
+                        success: localCleanupInvoked,
+                        message: localCleanupInvoked
+                            ? "clear_cleared|\(deletedDriveFileCount)"
+                            : "clear_local_cleanup_unavailable"
+                    )
+                case .failed(let message):
+                    bridge.completeCloudLocalDataClear(
+                        success: false,
+                        message: "clear_failed|\(message)"
+                    )
+                }
+            }
+        }
         observeAccount()
         if !cloudSyncInFlight {
             scheduleCloudSyncRetryIfNeeded()

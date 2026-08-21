@@ -26,6 +26,7 @@ import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalNavigationDrawer
@@ -195,9 +196,11 @@ import com.aryan.reader.shared.ui.SharedMobileMainScaffold
 import com.aryan.reader.shared.ui.SharedSettingsHub
 import com.aryan.reader.shared.ui.LocalSharedStringResolver
 import com.aryan.reader.shared.ui.SharedStringResolver
+import com.aryan.reader.shared.ui.formatSharedMobileDateTime
 import com.aryan.reader.shared.ui.SharedSupportProjectScreen
 import com.aryan.reader.shared.ui.mobileRecentBooks
 import com.aryan.reader.shared.ui.readerBannerMessage
+import com.aryan.reader.shared.ui.readerLiteral
 import com.aryan.reader.shared.ui.readerString
 import com.aryan.reader.shared.ui.openSharedMobileExternalUrl
 import com.aryan.reader.shared.ui.rememberSharedMobileEpubLocalTts
@@ -285,6 +288,20 @@ class ReaderIosBridge internal constructor(
         private set
     internal var accountState by mutableStateOf(IosAccountState())
         private set
+    internal var registeredDevices by mutableStateOf<List<com.aryan.reader.shared.DeviceItem>>(emptyList())
+        private set
+    internal var isDeviceManagementLoading by mutableStateOf(false)
+        private set
+    internal var deviceManagementStatus by mutableStateOf<String?>(null)
+        private set
+    internal var isCloudLocalDataClearLoading by mutableStateOf(false)
+        private set
+    internal var cloudLocalDataClearStatus by mutableStateOf<String?>(null)
+        private set
+    internal var localCloudDataClearEvent by mutableStateOf(0)
+        private set
+    internal var isDebugBuild by mutableStateOf(false)
+        private set
     internal var appLifecycleState by mutableStateOf(IosAppLifecycleState())
         private set
     private var purchaseHandler: ((String) -> Unit)? = null
@@ -293,6 +310,9 @@ class ReaderIosBridge internal constructor(
     private var signOutHandler: (() -> Unit)? = null
     private var cloudSyncHandler: ((String) -> Unit)? = null
     private var cloudUploadHandler: ((String) -> Unit)? = null
+    private var deviceManagementRefreshHandler: (() -> Unit)? = null
+    private var deviceRevokeHandler: ((String) -> Unit)? = null
+    private var cloudLocalDataClearHandler: (() -> Unit)? = null
     private var folderFileDeletionHandler: ((String, List<String>) -> Unit)? = null
     private var folderFileReplacementHandler: ((String, String) -> String?)? = null
     private var folderFileAdditionHandler: ((String, String, String) -> String?)? = null
@@ -659,6 +679,33 @@ class ReaderIosBridge internal constructor(
         return presentIosShareSheet(NSURL.fileURLWithPath(path))
     }
 
+    /**
+     * Shares the bounded, app-owned iOS diagnostic stream. Android can dump
+     * logcat; iOS cannot safely read the system log, so this export contains
+     * recent reader/native events collected in-process.
+     */
+    fun exportDiagnosticLogs(): Boolean {
+        val entries = IosDiagnosticLogStore.snapshot()
+        val content = buildString {
+            appendLine("Episteme iOS diagnostics")
+            appendLine("Generated at: ${currentTimestamp()}")
+            appendLine("Entries: ${entries.size}")
+            appendLine()
+            if (entries.isEmpty()) {
+                appendLine("No in-process diagnostic events have been collected yet.")
+            } else {
+                entries.forEach(::appendLine)
+            }
+        }
+        val path = NSTemporaryDirectory() + "episteme-diagnostics-${currentTimestamp()}.txt"
+        if (!writeIosUtf8File(path, content)) {
+            recordNativeEvent("Diagnostic log export failed: could not write temporary file")
+            return false
+        }
+        recordNativeEvent("Diagnostic log export prepared entries=${entries.size}")
+        return presentIosShareSheet(NSURL.fileURLWithPath(path))
+    }
+
     fun setKeepScreenOn(enabled: Boolean) {
         readerSystemEffects.setKeepScreenOn(enabled)
     }
@@ -757,6 +804,7 @@ class ReaderIosBridge internal constructor(
             ).filterValues { it != null }.mapValues { it.value!! },
             status = status,
         )
+        status?.let { IosDiagnosticLogStore.record("StoreKit", it) }
     }
 
     fun setAuthHandlers(
@@ -773,6 +821,125 @@ class ReaderIosBridge internal constructor(
 
     fun requestSignOut() {
         signOutHandler?.invoke()
+    }
+
+    /**
+     * Native account-owned device management keeps Firebase out of the shared
+     * settings UI. The handler refreshes the active device list, while this
+     * bridge owns observable loading/status state for Compose.
+     */
+    fun setDeviceManagementHandlers(
+        refresh: () -> Unit,
+        revoke: (String) -> Unit,
+    ) {
+        deviceManagementRefreshHandler = refresh
+        deviceRevokeHandler = revoke
+    }
+
+    fun requestDeviceManagement() {
+        isDeviceManagementLoading = true
+        deviceManagementStatus = null
+        deviceManagementRefreshHandler?.invoke()
+            ?: run {
+                isDeviceManagementLoading = false
+                deviceManagementStatus = "device_unavailable"
+            }
+    }
+
+    fun requestDeviceRevoke(deviceId: String) {
+        if (deviceId.isBlank()) return
+        isDeviceManagementLoading = true
+        deviceManagementStatus = null
+        deviceRevokeHandler?.invoke(deviceId)
+            ?: run {
+                isDeviceManagementLoading = false
+                deviceManagementStatus = "device_unavailable"
+            }
+    }
+
+    fun updateRegisteredDevices(
+        deviceIds: List<String>,
+        deviceNames: List<String>,
+        lastSeenEpochMillis: List<String>,
+        status: String?,
+    ) {
+        registeredDevices = deviceIds.mapIndexed { index, deviceId ->
+            com.aryan.reader.shared.DeviceItem(
+                deviceId = deviceId,
+                deviceName = deviceNames.getOrNull(index)?.ifBlank { deviceId } ?: deviceId,
+                lastSeenEpochMillis = lastSeenEpochMillis.getOrNull(index)?.toLongOrNull()?.takeIf { it > 0L },
+            )
+        }.sortedByDescending { it.lastSeenEpochMillis ?: 0L }
+        isDeviceManagementLoading = false
+        deviceManagementStatus = status
+    }
+
+    fun setCloudLocalDataClearHandler(handler: () -> Unit) {
+        cloudLocalDataClearHandler = handler
+    }
+
+    fun requestCloudLocalDataClear() {
+        isCloudLocalDataClearLoading = true
+        cloudLocalDataClearStatus = null
+        cloudLocalDataClearHandler?.invoke()
+            ?: completeCloudLocalDataClear(
+                success = false,
+                message = "clear_unavailable",
+            )
+    }
+
+    fun completeCloudLocalDataClear(success: Boolean, message: String) {
+        isCloudLocalDataClearLoading = false
+        cloudLocalDataClearStatus = message
+    }
+
+    fun setDebugBuild(enabled: Boolean) {
+        isDebugBuild = enabled
+    }
+
+    /** Invoked by the native clear-data completion hook after cloud deletion. */
+    fun clearLocalCloudData() {
+        val fileManager = NSFileManager.defaultManager
+        importedFiles.map { it.path.resolvedIosImportedFilePath() }
+            .filter(String::isNotBlank)
+            .forEach { path -> fileManager.removeItemAtPath(path, error = null) }
+        val appSupportPath = (
+            fileManager.URLsForDirectory(
+                directory = NSApplicationSupportDirectory,
+                inDomains = NSUserDomainMask,
+            ).firstOrNull() as? NSURL
+            )?.path
+        listOf("Imports", "Documents", "Covers", "Fonts", "LocalFolders", "PdfSidecars", "MetadataBackups")
+            .mapNotNull { directoryName -> appSupportPath?.let { "$it/$directoryName" } }
+            .forEach { path -> fileManager.removeItemAtPath(path, error = null) }
+
+        importedFiles = emptyList()
+        importedFonts = emptyList()
+        pendingImportBatches = emptyList()
+        pendingFolderScans = emptyList()
+        pendingExternalOpen = null
+        pendingCloudSync = null
+        persistImportedFiles(emptyList())
+        clearPendingIosExternalFileRemoval()
+        val defaults = NSUserDefaults.standardUserDefaults
+        listOf(
+            "reader_ios_library_snapshot_v1",
+            "reader_ios_reader_preferences_v1",
+            IosSyncEnabledDefaultsKey,
+        ).forEach(defaults::removeObjectForKey)
+        val perBookPrefixes = listOf(
+            IosPdfReaderStateDefaultsPrefix,
+            IosPdfReaderSidecarTimestampDefaultsPrefix,
+            IosPdfPageSliderVisibleDefaultsPrefix,
+            IosEpubPageSliderVisibleDefaultsPrefix,
+            IosEpubReaderStateDefaultsPrefix,
+        )
+        defaults.dictionaryRepresentation().keys
+            .mapNotNull { it as? String }
+            .filter { key -> perBookPrefixes.any(key::startsWith) }
+            .forEach(defaults::removeObjectForKey)
+        localCloudDataClearEvent += 1
+        latestNativeEvent = "Cloud and local library data cleared"
     }
 
     fun setCloudSyncHandlers(
@@ -810,6 +977,7 @@ class ReaderIosBridge internal constructor(
             }
         cloudSyncStatus = status
         latestNativeEvent = status
+        IosDiagnosticLogStore.record("CloudSync", status)
     }
 
     internal fun consumeCloudSnapshot() {
@@ -839,6 +1007,7 @@ class ReaderIosBridge internal constructor(
             authToken = authToken,
             hasLoaded = true,
         )
+        status?.let { IosDiagnosticLogStore.record("Account", it) }
     }
 
     /** Refreshable Firebase ID tokens stay on the native auth boundary. */
@@ -893,6 +1062,7 @@ private enum class IosUtilityScreen {
     ACCOUNT,
     PRO,
     SETTINGS,
+    DEVICES,
     AI_SETTINGS,
     LANGUAGE,
     FONTS,
@@ -1751,6 +1921,38 @@ private fun ReaderIosApp(
             it.isOpen && !restoredPdfSplitWorkspace.isOpen && !restoredPdfSplitRecovery.hasMissingPanes
         })
     }
+    LaunchedEffect(bridge.localCloudDataClearEvent) {
+        if (bridge.localCloudDataClearEvent <= 0) return@LaunchedEffect
+        clearIosReaderSession()
+        pdfSplitWorkspace = PdfSplitWorkspaceState()
+        pendingPdfSplitWorkspaceRestore = null
+        state = state.copy(
+            selectedBookId = null,
+            selectedUriString = null,
+            selectedFileType = null,
+            audiobooks = emptyList(),
+            shelves = emptyList(),
+            syncedFolders = emptyList(),
+            isSyncEnabled = false,
+            isFolderSyncEnabled = false,
+            selectedBookIds = emptySet(),
+            selectedShelfIds = emptySet(),
+            booksAvailableForAdding = emptyList(),
+            downloadingBookIds = emptySet(),
+            uploadingBookIds = emptySet(),
+            recentBooks = emptyList(),
+            libraryBooks = emptyList(),
+            rawLibraryBooks = emptyList(),
+            cloudBookTombstones = emptyList(),
+            pinnedHomeBookIds = emptySet(),
+            pinnedLibraryBookIds = emptySet(),
+            openTabIds = emptyList(),
+            openTabs = emptyList(),
+            activeTabBookId = null,
+            customFonts = emptyList(),
+            allTags = emptyList(),
+        )
+    }
     var splitRecoveryMessagePending by remember {
         mutableStateOf(restoredPdfSplitRecovery.hasMissingPanes)
     }
@@ -1846,6 +2048,7 @@ private fun ReaderIosApp(
     var showExternalFileBehaviorDialog by remember { mutableStateOf(false) }
     var showStrictFilterConfirmation by remember { mutableStateOf(false) }
     var showClearReflowCacheConfirmation by remember { mutableStateOf(false) }
+    var showClearCloudLocalDataConfirmation by remember { mutableStateOf(false) }
     var showSignOutConfirmation by remember { mutableStateOf(false) }
     var showTtsSettings by remember { mutableStateOf(false) }
     val settingsTts = rememberSharedMobileEpubLocalTts()
@@ -1932,6 +2135,16 @@ private fun ReaderIosApp(
     fun showMessage(message: String) {
         state = state.withMessage(message)
         bridge.recordNativeEvent(message)
+    }
+
+    val cloudLocalDataClearStatus = bridge.cloudLocalDataClearStatus
+    val localizedCloudLocalDataClearStatus = if (cloudLocalDataClearStatus == null) {
+        null
+    } else {
+        iosOperationStatusText(cloudLocalDataClearStatus)
+    }
+    LaunchedEffect(bridge.cloudLocalDataClearStatus) {
+        localizedCloudLocalDataClearStatus?.let(::showMessage)
     }
 
     fun dismissReaderAiResult() {
@@ -3398,10 +3611,19 @@ private fun ReaderIosApp(
                         onPurchase = bridge::requestLocalStoreKitPurchase,
                         onRestore = bridge::requestLocalStoreKitRestore,
                     )
+                    IosUtilityScreen.DEVICES -> IosDeviceManagementScreen(
+                        devices = bridge.registeredDevices,
+                        isLoading = bridge.isDeviceManagementLoading,
+                        status = bridge.deviceManagementStatus,
+                        onBack = { utilityScreen = null },
+                        onRefresh = bridge::requestDeviceManagement,
+                        onRevoke = bridge::requestDeviceRevoke,
+                    )
                     IosUtilityScreen.SETTINGS -> {
                         val settingsModel = sharedSettingsHubModel(
                             SharedSettingsHubInput(
                                 platform = SharedSettingsPlatform.IOS,
+                                isDebugBuild = bridge.isDebugBuild,
                                 isSignedIn = bridge.accountState.uid != null,
                                 isProUser = state.isProUser,
                                 accountAvailable = true,
@@ -3415,7 +3637,8 @@ private fun ReaderIosApp(
                                 reflowCacheMaintenanceAvailable = true,
                                 includeLanguage = true,
                                 includeScreenCaptureProtection = false,
-                                includeCloudLocalDataClear = false,
+                                includeCloudLocalDataClear = true,
+                                includeDiagnosticLogExport = true,
                                 includeHideReaderAi = false,
                                 supportProjectAvailable = true,
                                 isTabsEnabled = state.isTabsEnabled,
@@ -3519,6 +3742,7 @@ private fun ReaderIosApp(
                                     SharedSettingsAction.SUPPORT -> utilityScreen = IosUtilityScreen.SUPPORT
                                     SharedSettingsAction.ABOUT -> utilityScreen = IosUtilityScreen.ABOUT
                                     SharedSettingsAction.AI_SETTINGS -> utilityScreen = IosUtilityScreen.AI_SETTINGS
+                                    SharedSettingsAction.DEVICE_MANAGEMENT -> utilityScreen = IosUtilityScreen.DEVICES
                                     SharedSettingsAction.RECENT_LIMIT -> showRecentLimitDialog = true
                                     SharedSettingsAction.EXTERNAL_FILE_BEHAVIOR -> {
                                         showExternalFileBehaviorDialog = true
@@ -3540,14 +3764,21 @@ private fun ReaderIosApp(
                                     SharedSettingsAction.HIDE_READER_AI,
                                     SharedSettingsAction.FOLDER_SYNC -> Unit
                                     SharedSettingsAction.SCREEN_CAPTURE_PROTECTION,
-                                    SharedSettingsAction.CLEAR_BOOK_CACHE,
-                                    SharedSettingsAction.DEVICE_MANAGEMENT,
-                                    SharedSettingsAction.CLEAR_CLOUD_LOCAL_DATA,
+                                    SharedSettingsAction.CLEAR_BOOK_CACHE -> {
+                                        showMessage("${action.name.lowercase().replace('_', ' ')} is not available on iOS")
+                                    }
+                                    SharedSettingsAction.CLEAR_CLOUD_LOCAL_DATA -> {
+                                        showClearCloudLocalDataConfirmation = true
+                                    }
                                     SharedSettingsAction.TEST_PANEL_DETECTION,
                                     SharedSettingsAction.TEST_SPEECH_BUBBLE_DETECTION,
-                                    SharedSettingsAction.EXPORT_LOGS,
                                     SharedSettingsAction.DEBUG_ACTIONS -> {
                                         showMessage("${action.name.lowercase().replace('_', ' ')} is not available on iOS")
+                                    }
+                                    SharedSettingsAction.EXPORT_LOGS -> {
+                                        if (!bridge.exportDiagnosticLogs()) {
+                                            showMessage("Unable to export diagnostic logs")
+                                        }
                                     }
                                 }
                             },
@@ -4500,7 +4731,22 @@ private fun ReaderIosApp(
             onDismiss = { showSignOutConfirmation = false },
         )
     }
-        LaunchedEffect(state.bannerMessage) {
+    if (showClearCloudLocalDataConfirmation) {
+        IosConfirmationDialog(
+            title = readerString("settings_clear_cloud_local_title", "Clear cloud and local data?"),
+            message = readerString(
+                "settings_clear_cloud_local_desc",
+                "This permanently deletes your synced books, shelves, fonts, PDF sidecars, and matching local library files. Your account and purchases remain. This action cannot be undone.",
+            ),
+            confirmLabel = readerString("action_delete", "Delete"),
+            onConfirm = {
+                showClearCloudLocalDataConfirmation = false
+                bridge.requestCloudLocalDataClear()
+            },
+            onDismiss = { showClearCloudLocalDataConfirmation = false },
+        )
+    }
+    LaunchedEffect(state.bannerMessage) {
             val banner = state.bannerMessage ?: return@LaunchedEffect
             if (banner.isPersistent) return@LaunchedEffect
             delay(3_000L)
@@ -4663,6 +4909,171 @@ private fun IosExternalFileBehaviorDialog(
             }
         },
     )
+}
+
+@Composable
+private fun IosDeviceManagementScreen(
+    devices: List<com.aryan.reader.shared.DeviceItem>,
+    isLoading: Boolean,
+    status: String?,
+    onBack: () -> Unit,
+    onRefresh: () -> Unit,
+    onRevoke: (String) -> Unit,
+) {
+    var pendingRevoke by remember { mutableStateOf<com.aryan.reader.shared.DeviceItem?>(null) }
+    LaunchedEffect(Unit) { onRefresh() }
+    IosUtilityPage(onBack = onBack) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(24.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(
+                readerString("settings_device_management_title", "Device management"),
+                style = MaterialTheme.typography.headlineSmall,
+            )
+            Text(
+                readerString(
+                    "settings_device_management_desc",
+                    "Review devices signed in to this account. Revoking a device stops it from participating in account sync.",
+                ),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            TextButton(
+                onClick = onRefresh,
+                enabled = !isLoading,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(readerString("settings_device_management_refresh", "Refresh devices"))
+            }
+            status?.let {
+                Text(
+                    iosOperationStatusText(it),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (isLoading && devices.isEmpty()) {
+                CircularProgressIndicator()
+            } else if (devices.isEmpty()) {
+                Text(readerString("settings_device_management_empty", "No active devices are registered for this account."))
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxWidth().weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    items(devices, key = { it.deviceId }) { device ->
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = MaterialTheme.shapes.medium,
+                            tonalElevation = 2.dp,
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(device.deviceName, fontWeight = FontWeight.SemiBold)
+                                    device.lastSeenEpochMillis?.let { lastSeen ->
+                                        Text(
+                                            readerString(
+                                                "settings_device_management_last_seen",
+                                                "Last seen %1\$s",
+                                                formatSharedMobileDateTime(lastSeen),
+                                            ),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                }
+                                TextButton(onClick = { pendingRevoke = device }) {
+                                    Text(readerString("settings_device_management_revoke", "Revoke"))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    pendingRevoke?.let { device ->
+        IosConfirmationDialog(
+            title = readerString("settings_device_management_revoke_title", "Revoke device?"),
+            message = readerString(
+                "settings_device_management_revoke_desc",
+                "%1\$s will no longer be allowed to participate in account sync.",
+                device.deviceName,
+            ),
+            confirmLabel = readerString("settings_device_management_revoke", "Revoke"),
+            onConfirm = {
+                pendingRevoke = null
+                onRevoke(device.deviceId)
+            },
+            onDismiss = { pendingRevoke = null },
+        )
+    }
+}
+
+@Composable
+private fun iosOperationStatusText(status: String): String {
+    val parts = status.split('|', limit = 2)
+    return when (parts.firstOrNull()) {
+        "device_empty" -> readerString(
+            "settings_device_status_no_active",
+            "No active devices are registered for this account.",
+        )
+        "device_active" -> readerString(
+            "settings_device_status_cannot_revoke_active",
+            "This device cannot be revoked while it is active.",
+        )
+        "device_revoked" -> readerString(
+            "settings_device_status_revoked",
+            "Device revoked.",
+        )
+        "device_revoke_failed" -> readerString(
+            "settings_device_status_revoke_failed",
+            "Unable to revoke the selected device.",
+        )
+        "device_unavailable" -> readerString(
+            "settings_device_status_unavailable",
+            "Device management is unavailable.",
+        )
+        "clear_confirmation_required" -> readerString(
+            "settings_clear_cloud_local_confirmation_required",
+            "Confirmation is required before clearing cloud and local data.",
+        )
+        "clear_authorization_required" -> readerString(
+            "settings_clear_cloud_local_authorization_required",
+            "Sign in and authorize Google Drive before clearing cloud and local data.",
+        )
+        "clear_in_progress" -> readerString(
+            "settings_clear_cloud_local_in_progress",
+            "Cloud sync is busy. Try clearing cloud and local data again shortly.",
+        )
+        "clear_unavailable" -> readerString(
+            "settings_clear_cloud_local_unavailable",
+            "Cloud and local data clearing is unavailable in this build.",
+        )
+        "clear_cleared" -> readerString(
+            "settings_clear_cloud_local_success",
+            "Cloud and local data cleared (removed %1\$d cloud file(s)).",
+            parts.getOrNull(1)?.toIntOrNull() ?: 0,
+        )
+        "clear_local_cleanup_unavailable" -> readerString(
+            "settings_clear_cloud_local_cleanup_missing",
+            "Cloud data cleared, but local cleanup was not available.",
+        )
+        "clear_failed" -> readerString(
+            "settings_clear_cloud_local_failed",
+            "Unable to clear cloud and local data: %1\$s",
+            parts.getOrNull(1).orEmpty(),
+        )
+        else -> readerLiteral(status)
+    }
 }
 
 @Composable

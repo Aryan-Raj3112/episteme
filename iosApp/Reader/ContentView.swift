@@ -135,8 +135,14 @@ struct ContentView: View {
             }
         }
         .task {
+#if DEBUG
+            bridge.setDebugBuild(enabled: true)
+#endif
             localStoreKit.attach(to: bridge)
             localAccount.attach(to: bridge)
+            localAccount.setLocalCloudDataClearHandler {
+                bridge.clearLocalCloudData()
+            }
             let legacyPaths = bridge.importedFilePathsMissingContentId()
             let legacyContentIds = legacyPaths.map {
                 sha256FileId(URL(fileURLWithPath: $0)) ?? ""
@@ -954,7 +960,7 @@ extension ReaderStatusBarHostController: UIPencilInteractionDelegate {
     @available(iOS 17.5, *)
     func pencilInteraction(
         _ interaction: UIPencilInteraction,
-        didReceiveSqueeze squeeze: UIPencilInteractionSqueeze
+        didReceiveSqueeze squeeze: UIPencilInteraction.Squeeze
     ) {
         guard squeeze.phase == .ended,
               UIPencilInteraction.preferredSqueezeAction == .switchEraser else { return }
