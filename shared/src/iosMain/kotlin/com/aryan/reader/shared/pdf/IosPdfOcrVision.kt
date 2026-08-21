@@ -128,7 +128,7 @@ internal object IosPdfOcrPageCache {
         val key = IosPdfOcrCacheKey(rawPath, pageIndex, password?.hashCode() ?: 0, languages.distinct())
         mutex.withLock {
             entries[key]?.let {
-                IosPdfOcrMetrics.cacheHits += 1
+                IosPdfOcrMetrics.recordCacheHit()
                 return it
             }
         }
@@ -160,6 +160,10 @@ internal object IosPdfOcrMetrics {
         recognitionCount += 1
         lastRecognitionDurationMillis = durationMillis.coerceAtLeast(0L)
         maxRecognitionDurationMillis = maxOf(maxRecognitionDurationMillis, lastRecognitionDurationMillis)
+    }
+
+    fun recordCacheHit() {
+        cacheHits += 1
     }
 
     fun reset() {
