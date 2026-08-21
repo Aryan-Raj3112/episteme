@@ -504,6 +504,7 @@ class ReaderIosBridge internal constructor(
 
     fun recordNativeEvent(message: String) {
         latestNativeEvent = message
+        IosDiagnosticLogStore.record("ReaderIosNative", message)
     }
 
     fun externalFileBehavior(): String = loadIosLibrarySnapshot().externalFileBehavior
@@ -5157,49 +5158,73 @@ private fun IosAccountScreen(
 ) {
     IosUtilityPage(onBack = onBack) {
         Column(modifier = Modifier.fillMaxSize().padding(24.dp)) {
-            Text("Episteme Account")
+            Text(readerString("account_title", "Episteme Account"))
             Text(
-                account.displayName ?: account.email ?: if (account.uid == null) "Not signed in" else "Signed in",
+                account.displayName ?: account.email ?: if (account.uid == null) {
+                    readerString("unified_library_signed_out", "Not signed in")
+                } else {
+                    readerString("desktop_signed_in", "Signed in")
+                },
                 modifier = Modifier.padding(vertical = 12.dp),
             )
             TextButton(onClick = { onAuthenticate("APPLE") }) {
                 Text(
                     when {
-                        AccountAuthProvider.APPLE in account.providers -> "Apple linked"
-                        account.uid != null -> "Link Apple sign-in"
-                        else -> "Continue with Apple"
+                        AccountAuthProvider.APPLE in account.providers ->
+                            readerString("account_apple_linked", "Apple linked")
+                        account.uid != null ->
+                            readerString("account_link_apple", "Link Apple sign-in")
+                        else -> readerString("account_continue_apple", "Continue with Apple")
                     }
                 )
             }
             TextButton(onClick = { onAuthenticate("GOOGLE") }) {
                 Text(
                     when {
-                        AccountAuthProvider.GOOGLE in account.providers -> "Google linked"
-                        account.uid != null -> "Link Google sign-in"
-                        else -> "Continue with Google"
+                        AccountAuthProvider.GOOGLE in account.providers ->
+                            readerString("account_google_linked", "Google linked")
+                        account.uid != null ->
+                            readerString("account_link_google", "Link Google sign-in")
+                        else -> readerString("drawer_sign_in", "Continue with Google")
                     }
                 )
             }
             if (account.uid != null && account.providers.size == 1) {
                 Text(
-                    "Linking adds another way to sign in to this Episteme account. It does not create or purchase a separate account.",
+                    readerString(
+                        "account_linking_desc",
+                        "Linking adds another way to sign in to this Episteme account. It does not create or purchase a separate account.",
+                    ),
                     modifier = Modifier.padding(bottom = 12.dp),
                 )
             }
             Text(
                 when {
-                    account.canSync -> "Google Drive sync is available."
+                    account.canSync -> readerString(
+                        "account_google_drive_sync_available",
+                        "Google Drive sync is available.",
+                    )
                     AccountAuthProvider.GOOGLE in account.providers ->
-                        "Authorize Google Drive to enable full library sync."
+                        readerString(
+                            "account_authorize_google_drive",
+                            "Authorize Google Drive to enable full library sync.",
+                        )
                     else ->
-                        "Sync requires Google. Apple-only accounts can use Pro and credits but cannot sync."
+                        readerString(
+                            "account_google_required_for_sync",
+                            "Sync requires Google. Apple-only accounts can use Pro and credits but cannot sync.",
+                        )
                 },
                 modifier = Modifier.padding(vertical = 12.dp),
             )
             if (account.uid != null) {
-                TextButton(onClick = onSignOut) { Text("Sign out") }
+                TextButton(onClick = onSignOut) {
+                    Text(readerString("drawer_sign_out", "Sign out"))
+                }
             }
-            account.status?.let { Text(it, modifier = Modifier.padding(top = 12.dp)) }
+            account.status?.let {
+                Text(readerLiteral(it), modifier = Modifier.padding(top = 12.dp))
+            }
         }
     }
 }
@@ -5216,20 +5241,38 @@ private fun IosLocalStoreKitScreen(
         Column(
             modifier = Modifier.fillMaxSize().padding(24.dp),
         ) {
-            Text("Pro and Credits")
+            Text(readerString("storekit_title", "Pro and Credits"))
             Text(
                 if (store.available) {
-                    "Purchases are securely linked to your Episteme account and can be restored after reinstalling."
+                    readerString(
+                        "storekit_available_desc",
+                        "Purchases are securely linked to your Episteme account and can be restored after reinstalling.",
+                    )
                 } else {
-                    "App Store products are currently unavailable."
+                    readerString(
+                        "storekit_unavailable",
+                        "App Store products are currently unavailable.",
+                    )
                 },
                 modifier = Modifier.padding(vertical = 12.dp),
             )
-            Text(if (store.proUnlocked) "Pro unlocked" else "Pro not unlocked")
-            Text("${store.credits} credits", modifier = Modifier.padding(bottom = 12.dp))
+            Text(
+                if (store.proUnlocked) {
+                    readerString("pro_unlocked", "Pro unlocked")
+                } else {
+                    readerString("storekit_pro_not_unlocked", "Pro not unlocked")
+                },
+            )
+            Text(
+                readerString("desktop_credits_available_format", "%1\$d credits", store.credits),
+                modifier = Modifier.padding(bottom = 12.dp),
+            )
             if (account.uid == null) {
                 Text(
-                    "Sign in with Apple or Google before purchasing or restoring.",
+                    readerString(
+                        "storekit_sign_in_before_purchase",
+                        "Sign in with Apple or Google before purchasing or restoring.",
+                    ),
                     modifier = Modifier.padding(bottom = 12.dp),
                 )
             }
@@ -5237,7 +5280,10 @@ private fun IosLocalStoreKitScreen(
                 enabled = store.available && account.uid != null && !store.proUnlocked,
                 onClick = { onPurchase(IosStoreKitProductIds.PRO_LIFETIME) },
             ) {
-                Text("Buy Pro lifetime${store.proPrice?.let { " — $it" }.orEmpty()}")
+                Text(
+                    readerString("storekit_buy_pro", "Buy Pro lifetime") +
+                        store.proPrice?.let { " — $it" }.orEmpty(),
+                )
             }
             listOf(
                 IosStoreKitProductIds.CREDITS_100 to 100,
@@ -5248,13 +5294,18 @@ private fun IosLocalStoreKitScreen(
                     enabled = store.available && account.uid != null,
                     onClick = { onPurchase(productId) },
                 ) {
-                    Text("Add $amount credits${store.creditPrices[productId]?.let { " — $it" }.orEmpty()}")
+                    Text(
+                        readerString("storekit_add_credits", "Add %1\$d credits", amount) +
+                            store.creditPrices[productId]?.let { " — $it" }.orEmpty(),
+                    )
                 }
             }
             TextButton(enabled = store.available && account.uid != null, onClick = onRestore) {
-                Text("Restore purchases")
+                Text(readerString("storekit_restore_purchases", "Restore purchases"))
             }
-            store.status?.let { Text(it, modifier = Modifier.padding(top = 12.dp)) }
+            store.status?.let {
+                Text(readerLiteral(it), modifier = Modifier.padding(top = 12.dp))
+            }
         }
     }
 }

@@ -34,14 +34,35 @@ class IosSettingsParityTest {
     }
 
     @Test
+    fun cloudAccountAndAiSettingsAreImplementedOnIos() {
+        assertEquals(
+            IosSettingsActionDisposition.IMPLEMENTED_ON_IOS,
+            SharedSettingsAction.AI_SETTINGS.iosDisposition(),
+        )
+        assertEquals(
+            IosSettingsActionDisposition.IMPLEMENTED_ON_IOS,
+            SharedSettingsAction.CLOUD_SYNC.iosDisposition(),
+        )
+        assertEquals(
+            IosSettingsActionDisposition.IMPLEMENTED_ON_IOS,
+            SharedSettingsAction.DEVICE_MANAGEMENT.iosDisposition(),
+        )
+        assertEquals(
+            IosSettingsActionDisposition.IMPLEMENTED_ON_IOS,
+            SharedSettingsAction.CLEAR_CLOUD_LOCAL_DATA.iosDisposition(),
+        )
+    }
+
+    @Test
     fun iosDiagnosticsExposeLogExportWithoutAndroidOnlyMlActions() {
-        val actions = sharedSettingsHubModel(
+        val items = sharedSettingsHubModel(
             SharedSettingsHubInput(
                 platform = SharedSettingsPlatform.IOS,
                 includeDiagnosticLogExport = true,
                 isDebugBuild = false,
             )
-        ).sections.flatMap { it.items }.map { it.action }.toSet()
+        ).sections.flatMap { it.items }
+        val actions = items.map { it.action }.toSet()
 
         assertTrue(SharedSettingsAction.EXPORT_LOGS in actions)
         assertTrue(SharedSettingsAction.TEST_PANEL_DETECTION !in actions)
@@ -65,6 +86,10 @@ class IosSettingsParityTest {
         assertTrue(SharedSettingsAction.DEVICE_MANAGEMENT in actions)
         assertTrue(SharedSettingsAction.CLEAR_CLOUD_LOCAL_DATA in actions)
         assertTrue(SharedSettingsAction.EXPORT_LOGS in actions)
+        assertEquals(
+            1,
+            items.count { it.action == SharedSettingsAction.DEVICE_MANAGEMENT },
+        )
         assertFalse(SharedSettingsAction.TEST_PANEL_DETECTION in actions)
         assertFalse(SharedSettingsAction.TEST_SPEECH_BUBBLE_DETECTION in actions)
     }
