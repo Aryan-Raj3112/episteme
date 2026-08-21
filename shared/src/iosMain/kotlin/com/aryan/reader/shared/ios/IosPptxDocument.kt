@@ -29,6 +29,7 @@ import com.aryan.reader.shared.pptx.SharedPptxTextAlign
 import com.aryan.reader.shared.pptx.SharedPptxTextInsets
 import com.aryan.reader.shared.pptx.SharedPptxTextRun
 import com.aryan.reader.shared.pptx.SharedPptxVerticalAnchor
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 
@@ -211,7 +212,7 @@ internal class IosPptxParser(private val archive: IosZipEpubArchive) {
                     tableStyles,
                 )
             }
-            "graphicFrame" -> parseTable(element, theme, tableStyles)?.let { output += transform.apply(it) }
+            "graphicFrame" -> parseGraphicFrame(element, relationships, theme, tableStyles)?.let { output += transform.apply(it) }
         }
     }
 
@@ -232,14 +233,19 @@ internal class IosPptxParser(private val archive: IosZipEpubArchive) {
         val preset = spPr?.first("prstGeom")?.attr("prst")
             ?: if (element.localName.equals("cxnSp", true)) "line" else "rect"
         val line = spPr?.first("ln")
+        val style = element.first("style")
+        val usesBackgroundFill = element.attr("useBgFill")?.let { it == "1" || it.equals("true", true) } == true
         val fill = when {
+            usesBackgroundFill -> null
             spPr?.first("noFill") != null -> null
             else -> spPr?.first("solidFill")?.let { solidColor(it, theme) }
+                ?: style?.first("fillRef")?.let { solidColor(it, theme) }
         }
         val gradient = spPr?.first("gradFill")?.let { gradientColor(it, theme) }
         val lineColor = when {
             line?.first("noFill") != null -> null
             else -> line?.first("solidFill")?.let { solidColor(it, theme) }
+                ?: style?.first("lnRef")?.let { solidColor(it, theme) }
         }
         val hyperlink = element.descendant("hlinkClick")?.attr("r:id")?.let { relationships[it] }
             ?.let { if (it.targetMode.equals("External", true)) it.target else it.resolvedTarget }
@@ -251,7 +257,9 @@ internal class IosPptxParser(private val archive: IosZipEpubArchive) {
             fillColor = fill,
             gradientFill = gradient,
             lineColor = lineColor,
-            lineWidthPoint = line?.floatAttr("w")?.emuToPoint() ?: 0.75f,
+            lineWidthPoint = line?.floatAttr("w")?.emuToPoint()
+                ?: style?.first("lnRef")?.floatAttr("w")?.emuToPoint()
+                ?: 0.75f,
             paragraphs = paragraphs,
             hyperlink = hyperlink,
             placeholderKey = placeholder,
@@ -342,6 +350,46 @@ internal class IosPptxParser(private val archive: IosZipEpubArchive) {
             )
         }
         return rows.takeIf { it.isNotEmpty() }?.let { SharedPptxTableElement(bounds, it, element.first("xfrm")?.floatAttr("rot")?.div(60_000f) ?: 0f) }
+    }
+
+    private fun parseGraphicFrame(
+        element: IosPptxXml,
+        relationships: Map<String, IosPptxRelationship>,
+        theme: IosPptxTheme,
+        tableStyles: Map<String, IosPptxTableStyle>,
+    ): SharedPptxElement? {
+        element.descendant("tbl")?.let { return parseTable(element, theme, tableStyles) }
+        val bounds = element.descendant("xfrm")?.rectFromTransform() ?: return null
+        val chartRel = element.descendant("chart")?.attr("r:id")
+        val diagramRel = element.descendant("relIds")?.attr("r:dm")
+        val mediaRel = element.descendant("videoFile")?.attr("r:link")
+            ?: element.descendant("audioFile")?.attr("r:link")
+        val relationId = chartRel ?: diagramRel ?: mediaRel
+        val label = when {
+            chartRel != null -> "Chart"
+            diagramRel != null -> "SmartArt"
+            mediaRel != null -> "Media"
+            else -> return null
+        }
+        val target = relationId?.let { relationships[it]?.resolvedTarget }
+        return SharedPptxShapeElement(
+            bounds = bounds,
+            preset = "rect",
+            fillColor = SharedPptxColor.rgb(245, 246, 248),
+            gradientFill = null,
+            lineColor = theme.colors["tx1"] ?: SharedPptxColor.GRAY,
+            lineWidthPoint = 0.75f,
+            paragraphs = listOf(
+                SharedPptxParagraph(
+                    runs = listOf(SharedPptxTextRun(target?.let { "$label: ${it.substringAfterLast('/')}" } ?: label)),
+                    alignment = SharedPptxTextAlign.CENTER,
+                ),
+            ),
+            hyperlink = null,
+            placeholderKey = null,
+            textInsets = SharedPptxTextInsets(left = 8f, top = 8f, right = 8f, bottom = 8f),
+            verticalAnchor = SharedPptxVerticalAnchor.MIDDLE,
+        )
     }
 
     private fun parseTextBody(body: IosPptxXml?, theme: IosPptxTheme): List<SharedPptxParagraph> {
@@ -561,6 +609,7 @@ private data class IosPptxTransform(
         return when (element) {
             is SharedPptxShapeElement -> element.copy(
                 bounds = mapped,
+                lineWidthPoint = element.lineWidthPoint * ((abs(scaleX) + abs(scaleY)) / 2f),
                 rotationDegrees = element.rotationDegrees + rotationDegrees,
             )
             is SharedPptxImageElement -> element.copy(
@@ -930,7 +979,7 @@ internal object IosPptxHtmlRenderer {
         append("display:block;position:relative;overflow:hidden;width:100%;height:auto;aspect-ratio:")
             .append(slide.widthPoint).append('/').append(slide.heightPoint).append(';')
         append("container-type:inline-size;background:").append(cssColor(slide.backgroundColor ?: SharedPptxColor.WHITE)).append(";page-break-after:always;\">")
-        append("<pptx-canvas style=\"display:block;position:absolute;left:0;top:0;width:${slide.widthPoint}pt;height:${slide.heightPoint}pt;transform:scale(min(1,calc(100cqw / ${slide.widthPoint}pt)));transform-origin:top left;\">")
+        append("<pptx-canvas style=\"display:block;position:absolute;left:0;top:0;width:${slide.widthPoint}pt;height:${slide.heightPoint}pt;max-width:none!important;max-height:none!important;transform:scale(min(1,calc(100cqw / ${slide.widthPoint}pt)));transform-origin:top left;\">")
         slide.elements.forEach { element -> append(renderElement(element)) }
         append("</pptx-canvas></pptx-slide>")
     }
@@ -965,7 +1014,7 @@ internal object IosPptxHtmlRenderer {
         val content = geometry ?: text
         val linkPrefix = shape.hyperlink?.takeIf { it.isNotBlank() }?.let { "<a href=\"${escapeHtml(it)}\" style=\"display:block;position:absolute;inset:0;\">" }.orEmpty()
         val linkSuffix = if (linkPrefix.isNotEmpty()) "</a>" else ""
-        return "<pptx-shape class=\"pptx-shape\" style=\"display:block;position:absolute;left:${b.left}pt;top:${b.top}pt;width:${b.width()}pt;height:${b.height()}pt;box-sizing:border-box;$fill$border$radius$clip$rotation\">$linkPrefix$content$linkSuffix</pptx-shape>"
+        return "<pptx-shape class=\"pptx-shape\" style=\"display:block;position:absolute;left:${b.left}pt;top:${b.top}pt;width:${b.width()}pt;height:${b.height()}pt;max-width:none!important;max-height:none!important;box-sizing:border-box;$fill$border$radius$clip$rotation\">$linkPrefix$content$linkSuffix</pptx-shape>"
     }
 
     private fun renderText(shape: SharedPptxShapeElement): String {
@@ -1016,13 +1065,13 @@ internal object IosPptxHtmlRenderer {
         } else {
             "background-size:${100f / visibleWidth}% ${100f / visibleHeight}%;background-position:${-crop.left / visibleWidth * 100f}% ${-crop.top / visibleHeight * 100f}%;"
         }
-        return "<pptx-image class=\"pptx-image\" style=\"display:block;position:absolute;left:${b.left}pt;top:${b.top}pt;width:${b.width()}pt;height:${b.height()}pt;overflow:hidden;opacity:${image.opacity.coerceIn(0f, 1f)};$rotation;background-image:url('$source');background-repeat:no-repeat;$cropStyle\"></pptx-image>"
+        return "<pptx-image class=\"pptx-image\" style=\"display:block;position:absolute;left:${b.left}pt;top:${b.top}pt;width:${b.width()}pt;height:${b.height()}pt;max-width:none!important;max-height:none!important;overflow:hidden;opacity:${image.opacity.coerceIn(0f, 1f)};$rotation;background-image:url('$source');background-repeat:no-repeat;$cropStyle\"></pptx-image>"
     }
 
     private fun renderTable(table: SharedPptxTableElement): String {
         val b = table.bounds
         var y = 0f
-        return "<pptx-table class=\"pptx-table\" style=\"display:flex;position:absolute;left:${b.left}pt;top:${b.top}pt;width:${b.width()}pt;height:${b.height()}pt;flex-direction:column;transform:rotate(${table.rotationDegrees}deg);\">" +
+        return "<pptx-table class=\"pptx-table\" style=\"display:flex;position:absolute;left:${b.left}pt;top:${b.top}pt;width:${b.width()}pt;height:${b.height()}pt;max-width:none!important;max-height:none!important;flex-direction:column;transform:rotate(${table.rotationDegrees}deg);\">" +
             table.rows.joinToString("") { row ->
                 val height = row.heightPoint ?: (b.height() / table.rows.size.coerceAtLeast(1))
                 y += height
@@ -1067,7 +1116,7 @@ internal object IosPptxHtmlRenderer {
         val fill = fillColor?.let(::cssColor) ?: "none"
         val stroke = lineColor?.let(::cssColor) ?: "none"
         val strokeWidth = max(lineWidthPoint, 0.25f)
-        return "<svg viewBox=\"0 0 ${geometry.width} ${geometry.height}\" preserveAspectRatio=\"none\" style=\"position:absolute;inset:0;width:100%!important;height:100%!important;max-width:none!important;\"><path d=\"$path\" fill=\"$fill\" stroke=\"$stroke\" stroke-width=\"$strokeWidth\" vector-effect=\"non-scaling-stroke\"/></svg>"
+        return "<svg viewBox=\"0 0 ${geometry.width} ${geometry.height}\" preserveAspectRatio=\"none\" style=\"position:absolute;inset:0;width:100%!important;height:100%!important;max-width:none!important;max-height:none!important;\"><path d=\"$path\" fill=\"$fill\" stroke=\"$stroke\" stroke-width=\"$strokeWidth\" vector-effect=\"non-scaling-stroke\"/></svg>"
     }
 
     private fun cssColor(color: Int): String = "rgba(${SharedPptxColor.red(color)},${SharedPptxColor.green(color)},${SharedPptxColor.blue(color)},${SharedPptxColor.alpha(color) / 255f})"
