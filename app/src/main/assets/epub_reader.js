@@ -17,6 +17,24 @@
 
         viewport.setAttribute("content", "width=device-width, initial-scale=1.0, maximum-scale=1.5, user-scalable=yes");
 
+        // Some Android WebViews resolve percentage heights on <html> against a zero-height
+        // initial containing block (observed with file-based loadDataWithBaseURL documents),
+        // collapsing the page to a zero-pixel scroll container that clips all content and
+        // pins window.scrollY to 0. Pin the root to a concrete pixel height derived from the
+        // real viewport and re-apply it on resize so scrolling and position tracking work
+        // regardless of publication CSS height traps (e.g. body { height: calc(100% - 40px) }).
+        var applyReaderViewportHeight = function () {
+            try {
+                var height = Math.max(window.innerHeight || 0, document.documentElement.clientHeight || 0);
+                if (height <= 0) return;
+                document.documentElement.style.height = height + "px";
+                if (document.body) document.body.style.height = "auto";
+            } catch (e) { }
+        };
+        window.__applyReaderViewportHeight = applyReaderViewportHeight;
+        window.addEventListener("resize", applyReaderViewportHeight);
+        applyReaderViewportHeight();
+
         var style = document.getElementById("customMobileStyle");
 
         if (!style) {

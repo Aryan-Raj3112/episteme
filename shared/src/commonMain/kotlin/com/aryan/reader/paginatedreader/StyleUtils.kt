@@ -26,32 +26,45 @@ import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 
 
+/**
+ * Converts a CSS length to a Compose [TextUnit].
+ *
+ * CSS `px` values are density-independent, matching how a WebView renders them, so they map
+ * 1:1 onto `sp`/`dp` — Compose applies display density and font scale at draw time. Never
+ * divide by device density here; doing so shrinks every absolutely-sized book style on
+ * high-density screens.
+ *
+ * [containerWidthPx] must be expressed in physical pixels and is only used for `%` lengths
+ * when [baseFontSizeSp] is unavailable. For font-relative properties pass [baseFontSizeSp]
+ * so that `%` resolves against the parent font size per the CSS spec.
+ */
 fun parseCssDimensionToTextUnit(
     value: String,
     containerWidthPx: Int,
-    density: Float
+    density: Float,
+    baseFontSizeSp: Float? = null
 ): TextUnit {
-    if (density <= 0) return TextUnit.Unspecified
     val sanitizedValue = value.trim().lowercase()
     return when {
         sanitizedValue.endsWith("rem") -> sanitizedValue.removeSuffix("rem").toFloatOrNull()?.em ?: TextUnit.Unspecified
         sanitizedValue.endsWith("em") -> sanitizedValue.removeSuffix("em").toFloatOrNull()?.em ?: TextUnit.Unspecified
         sanitizedValue.endsWith("px") -> {
             val px = sanitizedValue.removeSuffix("px").toFloatOrNull() ?: 0f
-            (px / density).sp
+            px.sp
         }
         sanitizedValue.endsWith("pt") -> {
             val pt = sanitizedValue.removeSuffix("pt").toFloatOrNull() ?: 0f
-            val px = pt * (4f / 3f)
-            (px / density).sp
+            (pt * (4f / 3f)).sp
         }
         sanitizedValue.endsWith("%") -> {
-            val percentage = sanitizedValue.removeSuffix("%").toFloatOrNull() ?: 0f
-            if (containerWidthPx > 0) {
-                val px = (percentage / 100f) * containerWidthPx
-                (px / density).sp
-            } else {
-                TextUnit.Unspecified
+            val percentage = sanitizedValue.removeSuffix("%").toFloatOrNull() ?: return TextUnit.Unspecified
+            when {
+                baseFontSizeSp != null && baseFontSizeSp > 0f -> (percentage / 100f * baseFontSizeSp).sp
+                containerWidthPx > 0 && density > 0 -> {
+                    val px = (percentage / 100f) * containerWidthPx
+                    (px / density).sp
+                }
+                else -> TextUnit.Unspecified
             }
         }
         else -> TextUnit.Unspecified
@@ -64,13 +77,12 @@ fun parseCssSizeToDp(
     density: Float,
     containerWidthPx: Int
 ): Dp {
-    if (density <= 0) return 0.dp
     val sanitizedValue = value.trim().lowercase()
 
     return when {
         sanitizedValue.endsWith("px") -> {
             val px = sanitizedValue.removeSuffix("px").toFloatOrNull() ?: 0f
-            (px / density).dp
+            px.dp
         }
         sanitizedValue.endsWith("rem") -> {
             val rem = sanitizedValue.removeSuffix("rem").toFloatOrNull() ?: 0f
@@ -82,12 +94,11 @@ fun parseCssSizeToDp(
         }
         sanitizedValue.endsWith("pt") -> {
             val pt = sanitizedValue.removeSuffix("pt").toFloatOrNull() ?: 0f
-            val px = pt * (4f / 3f)
-            (px / density).dp
+            (pt * (4f / 3f)).dp
         }
         sanitizedValue.endsWith("%") -> {
             val percentage = sanitizedValue.removeSuffix("%").toFloatOrNull() ?: 0f
-            if (containerWidthPx > 0) {
+            if (containerWidthPx > 0 && density > 0) {
                 val px = (percentage / 100f) * containerWidthPx
                 (px / density).dp
             } else {

@@ -51,6 +51,26 @@ class ReaderHtmlDocumentBuilderTest {
     }
 
     @Test
+    fun `reader documents neutralize publication root height rules in both reading modes`() {
+        val verticalHtml = ReaderHtmlDocumentBuilder.verticalDocument(
+            book = repeatedWordBook("alpha beta"),
+            settings = ReaderSettings(readingMode = ReaderReadingMode.VERTICAL),
+        )
+        val paginatedHtml = ReaderHtmlDocumentBuilder.pageDocument(
+            book = repeatedWordBook("alpha beta"),
+            page = ReaderPage(0, 0, "One", "alpha beta", 0, 10),
+            settings = ReaderSettings(readingMode = ReaderReadingMode.PAGINATED)
+        )
+
+        val expectedSelectors = listOf("html.reader-vertical-root,", "html.reader-paginated-root {")
+        listOf(verticalHtml, paginatedHtml).forEach { html ->
+            expectedSelectors.forEach { selector -> assertTrue(html.contains(selector)) }
+            assertTrue(html.contains("height: auto !important;"))
+        }
+        assertTrue(verticalHtml.contains("body.reader-vertical {"))
+    }
+
+    @Test
     fun `plain text fallback preserves txt line breaks and spacing`() {
         val text = """
             [ID]          72694621
@@ -622,6 +642,7 @@ class ReaderHtmlDocumentBuilderTest {
             "body\\.reader-vertical \\{\\s*" +
                 "width: 100%;\\s*" +
                 "max-width: 100%;\\s*" +
+                "height: auto !important;\\s*" +
                 "min-height: 100vh;\\s*" +
                 "min-height: 100dvh;\\s*" +
                 "min-width: 0;\\s*" +

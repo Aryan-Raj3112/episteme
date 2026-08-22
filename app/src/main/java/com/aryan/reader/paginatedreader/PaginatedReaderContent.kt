@@ -2984,12 +2984,12 @@ internal fun RenderFlexChildBlock(
         is FlexContainerBlock -> {
             val content: @Composable () -> Unit = {
                 childBlock.children.forEach { nested ->
-                                                                RenderFlexChildBlock(
-                                                                            childBlock = childBlock,
-                                                                            textStyle = textStyle,
-                                                                            imageSizeMultiplier = imageSizeMultiplier,
-                                                                            hideImages = hideImages,
-                                                                            searchQuery = searchQuery,
+                    RenderFlexChildBlock(
+                        childBlock = nested,
+                        textStyle = textStyle,
+                        imageSizeMultiplier = imageSizeMultiplier,
+                        hideImages = hideImages,
+                        searchQuery = searchQuery,
                         searchHighlightColor = searchHighlightColor,
                         ttsHighlightInfo = ttsHighlightInfo,
                         ttsHighlightColor = ttsHighlightColor,

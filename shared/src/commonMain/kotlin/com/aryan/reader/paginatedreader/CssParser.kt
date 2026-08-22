@@ -1021,7 +1021,7 @@ object CssParser {
                                 TextUnit.Unspecified
                             }
                         } else {
-                            parseCssDimensionToTextUnit(value, containerWidthPx, density)
+                            parseCssDimensionToTextUnit(value, containerWidthPx, density, baseFontSizeSp)
                         }
                     }
                     "font-weight" -> {
@@ -1612,14 +1612,14 @@ object CssParser {
         }
 
         return when {
-            trimmed.endsWith("px") -> trimmed.removeSuffix("px").toFloatOrNull()?.let { (it / density).dp } ?: Dp.Unspecified
+            trimmed.endsWith("px") -> trimmed.removeSuffix("px").toFloatOrNull()?.dp ?: Dp.Unspecified
             trimmed.endsWith("dp") -> trimmed.removeSuffix("dp").toFloatOrNull()?.dp ?: Dp.Unspecified
             trimmed.endsWith("em") -> trimmed.removeSuffix("em").toFloatOrNull()?.let { (it * baseFontSizeSp).dp } ?: Dp.Unspecified
             trimmed.endsWith("rem") -> trimmed.removeSuffix("rem").toFloatOrNull()?.let { (it * baseFontSizeSp).dp } ?: Dp.Unspecified
             trimmed.endsWith("pt") -> trimmed.removeSuffix("pt").toFloatOrNull()?.let { (it * 1.33f).dp } ?: Dp.Unspecified
             trimmed.endsWith("%") -> {
                 val percent = trimmed.removeSuffix("%").toFloatOrNull()
-                if (percent != null) {
+                if (percent != null && density > 0) {
                     ((percent / 100f) * containerWidthPx / density).dp
                 } else {
                     Dp.Unspecified
@@ -1627,14 +1627,14 @@ object CssParser {
             }
             trimmed.endsWith("vw") -> {
                 val percent = trimmed.removeSuffix("vw").toFloatOrNull()
-                if (percent != null) {
+                if (percent != null && density > 0) {
                     ((percent / 100f) * containerWidthPx / density).dp
                 } else {
                     Dp.Unspecified
                 }
             }
             trimmed.endsWith("vh") -> Dp.Unspecified
-            trimmed.toFloatOrNull() != null -> (trimmed.toFloat() / density).dp
+            trimmed.toFloatOrNull() != null -> trimmed.toFloat().dp
             else -> Dp.Unspecified
         }
     }
@@ -1654,8 +1654,10 @@ object CssParser {
         var index = 0
         var parseExpression: (() -> Float?)? = null
         fun parseNumber(token: String): Float? {
+            // The expression evaluator works in physical pixel space (the result is converted
+            // to dp by the caller), so density-independent units are scaled up here.
             return when {
-                token.endsWith("px") -> token.removeSuffix("px").toFloatOrNull()
+                token.endsWith("px") -> token.removeSuffix("px").toFloatOrNull()?.let { it * density }
                 token.endsWith("dp") -> token.removeSuffix("dp").toFloatOrNull()?.let { it * density }
                 token.endsWith("em") -> token.removeSuffix("em").toFloatOrNull()?.let { it * baseFontSizeSp * density }
                 token.endsWith("rem") -> token.removeSuffix("rem").toFloatOrNull()?.let { it * baseFontSizeSp * density }
