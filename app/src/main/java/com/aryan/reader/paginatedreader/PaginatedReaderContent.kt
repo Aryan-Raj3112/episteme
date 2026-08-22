@@ -892,7 +892,11 @@ internal fun PaginatedReaderContent(
                                                         }
                                                     }.then(marginModifier).then(styleModifier)
 
-                                                Box(modifier = diagnosticModifier.androidEpubNaturalHeight()) {
+                                                Box(
+                                                    modifier = diagnosticModifier
+                                                        .androidEpubNaturalHeight()
+                                                        .readerRelativeOffset(block.style)
+                                                ) {
                                                     val paddingModifier = Modifier.padding(
                                                         start = block.style.padding.left.coerceAtLeast(
                                                             0.dp

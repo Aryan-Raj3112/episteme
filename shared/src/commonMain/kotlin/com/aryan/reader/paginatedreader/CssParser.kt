@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.isSpecified
+import androidx.compose.ui.unit.sp
 import kotlin.math.roundToInt
 
 private const val IMPORTANT_SPECIFICITY_BOOST = 10_000
@@ -80,7 +81,7 @@ object CssParser {
     private val CLASS_ATTRIBUTE_SELECTOR_REGEX by lazy(LazyThreadSafetyMode.PUBLICATION) { Regex("""\.[^\s,]+|\[[^]]+]|:(?!:)[^\s,]+""") }
     private val TYPE_PSEUDO_ELEMENT_SELECTOR_REGEX by lazy(LazyThreadSafetyMode.PUBLICATION) { Regex("""(?<![.#\[])\b[a-zA-Z-]+|::[a-zA-Z-]+""") }
     private val TRANSIENT_PSEUDO_CLASSES = setOf("link", "visited", "hover", "active", "focus")
-    private val UNSUPPORTED_PSEUDO_ELEMENTS = setOf("first-letter", "first-line", "marker", "selection")
+    private val UNSUPPORTED_PSEUDO_ELEMENTS = setOf("first-line", "marker", "selection")
     private data class FontSource(val url: String, val format: String?)
 
     private fun parseFontSources(srcString: String): List<FontSource> =
@@ -635,7 +636,7 @@ object CssParser {
 
                 val name = selector.substring(nameStart, nameEnd).lowercase()
                 when {
-                    name == "before" || name == "after" -> {
+                    name == "before" || name == "after" || name == "first-letter" -> {
                         if (pseudoElement == null) pseudoElement = name
                         index = nameEnd
                     }
@@ -826,7 +827,7 @@ object CssParser {
                 resolveCssRelativePath(cssPath, rawSrc)
             } catch (e: Exception) {
                 ReaderCssLog.e(e, "Could not resolve font path for src '$rawSrc' in css '$cssPath'")
-                rawSrc // Fallback to the raw path on error
+                rawSrc
             }
         } else {
             rawSrc
@@ -876,7 +877,6 @@ object CssParser {
         var maxHeight: Dp = Dp.Unspecified
         var backgroundColor: Color = Color.Unspecified
 
-        // Changed: Track the max width found to prioritize visible borders
         var maxBorderWidthFound: Dp = 0.dp
         var finalBorderColor: Color? = null
         var finalBorderStyle: String? = null
@@ -1078,9 +1078,20 @@ object CssParser {
                         }
                     }
                     "text-indent" -> {
-                        val indent = parseCssDimensionToTextUnit(value, containerWidthPx, density)
-                        if (indent != TextUnit.Unspecified) {
-                            paragraphStyle = paragraphStyle.copy(textIndent = TextIndent(firstLine = indent))
+                        val tokens = value.trim().lowercase().split(Regex("\\s+")).filter { it.isNotBlank() }
+                        val isHanging = "hanging" in tokens
+                        val lengthToken = tokens.firstOrNull { it != "hanging" && it != "each-line" }
+                        val indentValue = lengthToken
+                            ?.let { parseCssDimensionToTextUnit(it, containerWidthPx, density, baseFontSizeSp) }
+                            ?: TextUnit.Unspecified
+                        if (indentValue != TextUnit.Unspecified) {
+                            paragraphStyle = paragraphStyle.copy(
+                                textIndent = if (isHanging) {
+                                    TextIndent(firstLine = 0f.sp, restLine = indentValue)
+                                } else {
+                                    TextIndent(firstLine = indentValue, restLine = 0f.sp)
+                                }
+                            )
                         }
                     }
                     "text-decoration" -> {

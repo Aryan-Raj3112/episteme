@@ -12,6 +12,7 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.isSpecified
 import com.aryan.reader.shared.reader.resolvePaginatedReaderTextAlign
+import kotlin.math.abs
 
 class SharedContentStyler(
     private val baseTextStyle: TextStyle,
@@ -22,12 +23,17 @@ class SharedContentStyler(
     private val themeTextColor: Color,
     private val userTextAlign: TextAlign?,
     private val paragraphGapMultiplier: Float,
+    private val userLineHeightMultiplier: Float = 1f,
     private val adaptThemeColors: Boolean = true,
     private val applyThemeToSvg: (String) -> String,
     private val embedImagesInSvg: (String) -> String,
     private val onUnsupportedBlock: (SemanticBlock) -> Unit = {},
     private val onStyledText: (SemanticTextBlock, AnnotatedString) -> Unit = { _, _ -> }
 ) {
+
+    // Publication line-height wins unless the reader moved away from the default
+    // multiplier, mirroring how the WebView engine gates its line-height override.
+    private val honorUserLineHeight = abs(userLineHeightMultiplier - 1f) > 0.001f
 
     fun style(semanticBlocks: List<SemanticBlock>): List<ContentBlock> {
         return groupReaderFloatingBlocks(semanticBlocks.mapNotNull { styleBlock(it) })
@@ -176,7 +182,8 @@ class SharedContentStyler(
                 baseTextStyle = baseTextStyle,
                 cssStyle = blockStyle,
                 isParagraph = isParagraph,
-                userTextAlign = userTextAlign
+                userTextAlign = userTextAlign,
+                honorUserLineHeight = honorUserLineHeight
             )
 
             val effectiveBlockFontFamily = resolveReaderBlockFontFamily(rootFontFamily, baseTextStyle.fontFamily)

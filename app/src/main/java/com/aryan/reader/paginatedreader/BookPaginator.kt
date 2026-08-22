@@ -182,6 +182,7 @@ class BookPaginator(
     private val mathMLRenderer: MathMLRenderer,
     private val userTextAlign: TextAlign?,
     private val paragraphGapMultiplier: Float,
+    private val userLineHeightMultiplier: Float,
     private val imageSizeMultiplier: Float,
     private val hideImages: Boolean = false,
     private val verticalMarginMultiplier: Float,
@@ -944,6 +945,7 @@ class BookPaginator(
             extractionBasePath = extractionBasePath,
             userTextAlign = userTextAlign,
             paragraphGapMultiplier = paragraphGapMultiplier,
+            userLineHeightMultiplier = userLineHeightMultiplier,
             adaptThemeColors = false
         )
 

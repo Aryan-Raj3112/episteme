@@ -1095,12 +1095,20 @@
             `;
         }
 
-        var typographyOverrideCss = `
+        var typographyDeclarations = [];
+        if (newFontWeight > 0) {
+            typographyDeclarations.push(`font-weight: ${newFontWeight} !important;`);
+        }
+        if (Math.abs(newLetterSpacing) > 0.0001) {
+            // Only override when the reader moved away from the default; otherwise
+            // publication letter-spacing must survive (parity with pagination engine).
+            typographyDeclarations.push(`letter-spacing: ${newLetterSpacing}em !important;`);
+        }
+        var typographyOverrideCss = typographyDeclarations.length > 0 ? `
             body, p, div, span, li, a, h1, h2, h3, h4, h5, h6, blockquote, td, th {
-                ${newFontWeight > 0 ? `font-weight: ${newFontWeight} !important;` : ""}
-                letter-spacing: ${newLetterSpacing}em !important;
+                ${typographyDeclarations.join("\n                ")}
             }
-        `;
+        ` : "";
 
         var horizontalPaddingPx = Math.max(0, 16 * newHorizontalMargin);
         var verticalPaddingPx = Math.max(0, 16 * newVerticalMargin);

@@ -438,6 +438,7 @@ fun NativeVerticalReaderScreen(
                 mathMLRenderer = mathMLRenderer,
                 userTextAlign = userTextAlign,
                 paragraphGapMultiplier = paragraphGapMultiplier,
+                userLineHeightMultiplier = lineHeightMultiplier,
                 imageSizeMultiplier = imageSizeMultiplier,
                 hideImages = hideImages,
                 verticalMarginMultiplier = verticalMarginMultiplier,

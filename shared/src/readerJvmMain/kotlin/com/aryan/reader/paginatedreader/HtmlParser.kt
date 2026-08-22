@@ -240,9 +240,7 @@ private fun OptimizedCssRules.sortedForMatching(): SortedCssRuleBuckets {
 
 private fun String.hasUnsupportedPseudoElement(): Boolean {
     val lower = lowercase()
-    return lower.contains(":first-letter") ||
-        lower.contains("::first-letter") ||
-        lower.contains(":first-line") ||
+    return lower.contains(":first-line") ||
         lower.contains("::first-line") ||
         lower.contains(":marker") ||
         lower.contains("::marker") ||
@@ -870,13 +868,58 @@ private class SemanticHtmlParser(
         inheritedLinkHref: String? = null,
         excludedNodes: Set<Node> = emptySet()
     ): Pair<String, List<SemanticSpan>> {
-        return buildSemanticTextAndSpansFromNodes(
+        val (text, spans) = buildSemanticTextAndSpansFromNodes(
             rootElement.childNodes(),
             rootStyle,
             rootElement,
             inheritedLinkHref,
             excludedNodes
         )
+        return text to applyFirstLetterPseudoStyle(rootElement, rootStyle, text, spans)
+    }
+
+    /**
+     * Applies `::first-letter` pseudo-element styling to the first non-whitespace grapheme.
+     * CSS applies the pseudo element to the first letter including any preceding punctuation;
+     * leading whitespace is skipped, matching the common browser behavior for indented text.
+     */
+    private fun applyFirstLetterPseudoStyle(
+        element: Element?,
+        inheritedStyle: CssStyle,
+        text: String,
+        spans: List<SemanticSpan>
+    ): List<SemanticSpan> {
+        if (element == null || text.isEmpty()) return spans
+        if (rulesForElement(element, "first-letter").isEmpty()) return spans
+        val styleStart = text.indexOfFirst { !it.isWhitespace() }
+        if (styleStart < 0 || styleStart + 1 > text.length) return spans
+        val firstLetterStyle = getPseudoElementStyle(element, "first-letter", inheritedStyle)
+
+        val result = spans.toMutableList()
+        val coveringIndex = result.indexOfFirst { it.start <= styleStart && it.end >= styleStart + 1 }
+        if (coveringIndex >= 0) {
+            val covering = result[coveringIndex]
+            result[coveringIndex] = if (covering.end > styleStart + 1) {
+                val head = covering.copy(
+                    end = styleStart + 1,
+                    style = covering.style.merge(firstLetterStyle)
+                )
+                val tail = covering.copy(start = styleStart + 1)
+                result.add(coveringIndex + 1, tail)
+                head
+            } else {
+                covering.copy(style = covering.style.merge(firstLetterStyle))
+            }
+        } else {
+            result += SemanticSpan(
+                start = styleStart,
+                end = styleStart + 1,
+                style = firstLetterStyle,
+                tag = "::first-letter",
+                elementId = element.id().ifBlank { null }
+            )
+        }
+        return result
     }
 
     private fun buildSemanticTextAndSpansFromNodes(

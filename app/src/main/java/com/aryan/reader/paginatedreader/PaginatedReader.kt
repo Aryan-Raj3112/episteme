@@ -415,7 +415,7 @@ fun PaginatedReaderScreen(
             }
         }
 
-        val paginator = remember(book, bookId, textConstraints, layoutTextStyle, userTextAlign, debouncedParagraphGapMult, debouncedImageSizeMult, debouncedHideImages, debouncedVerticalMarginMult, debouncedBookReplacementSignature, debouncedBookReplacementFileId) {
+        val paginator = remember(book, bookId, textConstraints, layoutTextStyle, userTextAlign, debouncedLineHeightMult, debouncedParagraphGapMult, debouncedImageSizeMult, debouncedHideImages, debouncedVerticalMarginMult, debouncedBookReplacementSignature, debouncedBookReplacementFileId) {
         val userAgentStylesheet = UserAgentStylesheet.default
             var allRules = OptimizedCssRules()
             val allFontFaces = mutableListOf<FontFaceInfo>()
@@ -480,6 +480,7 @@ fun PaginatedReaderScreen(
                 mathMLRenderer = mathMLRenderer,
                 userTextAlign = userTextAlign,
                 paragraphGapMultiplier = debouncedParagraphGapMult,
+                userLineHeightMultiplier = debouncedLineHeightMult,
                 imageSizeMultiplier = debouncedImageSizeMult,
                 hideImages = debouncedHideImages,
                 verticalMarginMultiplier = debouncedVerticalMarginMult,
