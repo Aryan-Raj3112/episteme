@@ -153,4 +153,8 @@
     <string name="tooltip_search_desc">هر واژه یا عبارتی را در این کتاب پیدا کنید.</string>
     <string name="tooltip_tts_start_desc">بلند خواندن کتاب با موتور متن به گفتار دستگاهتان</string>
     <string name="clear_cloud_data_desc">آیا مطمئنید که می‌خواهید همهٔ داده‌های کتاب‌های خود را برای همیشه از فضای ابری حذف کنید؟ این کار کتابخانهٔ محلی شما را هم پاک می‌کند تا دوباره همگام‌سازی نشود. این عمل قابل بازگشت نیست.</string>
+    <string name="nav_unified_library">کتابخانه بتا</string>
+    <string name="unified_library_grid_view">نمای شبکه‌ای</string>
+    <string name="unified_library_list_view">نمای فهرست</string>
+    <string name="unified_library_manage_account">حساب کاربری و همگام‌سازی</string>
 </resources>
