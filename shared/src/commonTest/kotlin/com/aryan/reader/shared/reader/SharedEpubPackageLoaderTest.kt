@@ -334,6 +334,32 @@ class SharedEpubPackageLoaderTest {
     }
 
     @Test
+    fun `metadata adapter resolves epub3 collection series like Calibre`() {
+        val archive = MapEpubArchive(
+            mapOf(
+                "META-INF/container.xml" to "<container><rootfiles><rootfile full-path=\"book.opf\"/></rootfiles></container>".encodeToByteArray(),
+                "book.opf" to """
+                    <package version="3.0"><metadata>
+                      <dc:title>EPUB3 Title</dc:title>
+                      <dc:creator>Arthur Conan Doyle</dc:creator>
+                      <meta property="dcterms:modified">2026-07-12T00:00:00Z</meta>
+                      <meta id="c1" property="belongs-to-collection">Sherlock Holmes</meta>
+                      <meta refines="#c1" property="collection-type">series</meta>
+                      <meta refines="#c1" property="group-position">2.0</meta>
+                      <meta name="calibre:series" content="Legacy ignored"/>
+                    </metadata><manifest/><spine/></package>
+                """.trimIndent().encodeToByteArray()
+            )
+        )
+
+        val book = SharedEpubPackageLoader.load(archive, "epub3-series", "epub3.epub")
+
+        assertEquals("EPUB3 Title", book.title)
+        assertEquals("Sherlock Holmes", book.seriesName)
+        assertEquals(2.0, book.seriesIndex)
+    }
+
+    @Test
     fun `manifest attributes retain Android whitespace and case semantics`() {
         val archive = MapEpubArchive(
             mapOf(

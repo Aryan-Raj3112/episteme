@@ -62,6 +62,78 @@ class EmbeddedEbookMetadataExtractorTest {
     }
 
     @Test
+    fun `epub extracts epub3 belongs-to-collection series metadata`() {
+        val epubBytes = zipBytes(
+            "META-INF/container.xml" to """
+                <container>
+                    <rootfiles>
+                        <rootfile full-path="OEBPS/content.opf"/>
+                    </rootfiles>
+                </container>
+            """.trimIndent().toByteArray(Charsets.UTF_8),
+            "OEBPS/content.opf" to """
+                <package xmlns:dc="http://purl.org/dc/elements/1.1/" version="3.0">
+                    <metadata>
+                        <dc:title>The Adventures of Sherlock Holmes</dc:title>
+                        <dc:creator>Arthur Conan Doyle</dc:creator>
+                        <meta property="dcterms:modified">2026-07-12T00:00:00Z</meta>
+                        <meta id="c1" property="belongs-to-collection">Sherlock Holmes</meta>
+                        <meta refines="#c1" property="collection-type">series</meta>
+                        <meta refines="#c1" property="group-position">3</meta>
+                    </metadata>
+                    <manifest/>
+                </package>
+            """.trimIndent().toByteArray(Charsets.UTF_8)
+        )
+
+        val metadata = EmbeddedEbookMetadataExtractor.extract(
+            type = FileType.EPUB,
+            displayName = "adventures.epub",
+            openStream = { ByteArrayInputStream(epubBytes) }
+        )
+
+        assertEquals("The Adventures of Sherlock Holmes", metadata.title)
+        assertEquals("Arthur Conan Doyle", metadata.author)
+        assertEquals("Sherlock Holmes", metadata.seriesName)
+        assertEquals(3.0, metadata.seriesIndex)
+    }
+
+    @Test
+    fun `epub prefers epub3 collection series over legacy calibre metas`() {
+        val epubBytes = zipBytes(
+            "META-INF/container.xml" to """
+                <container>
+                    <rootfiles>
+                        <rootfile full-path="content.opf"/>
+                    </rootfiles>
+                </container>
+            """.trimIndent().toByteArray(Charsets.UTF_8),
+            "content.opf" to """
+                <package version="3.0">
+                    <metadata>
+                        <title>Collection wins</title>
+                        <meta name="calibre:series" content="Legacy Series"/>
+                        <meta name="calibre:series_index" content="9"/>
+                        <meta id="c1" property="belongs-to-collection">Collection Series</meta>
+                        <meta refines="#c1" property="collection-type">series</meta>
+                        <meta refines="#c1" property="group-position">2.5</meta>
+                    </metadata>
+                    <manifest/>
+                </package>
+            """.trimIndent().toByteArray(Charsets.UTF_8)
+        )
+
+        val metadata = EmbeddedEbookMetadataExtractor.extract(
+            type = FileType.EPUB,
+            displayName = "collection.epub",
+            openStream = { ByteArrayInputStream(epubBytes) }
+        )
+
+        assertEquals("Collection Series", metadata.seriesName)
+        assertEquals(2.5, metadata.seriesIndex)
+    }
+
+    @Test
     fun `fb2 extracts coverpage binary without parsing book body`() {
         val coverBytes = onePixelPngBytes()
         val fb2 = """
@@ -120,6 +192,28 @@ class EmbeddedEbookMetadataExtractorTest {
         assertArrayEquals(coverBytes, cover.bytes)
     }
 
+    @Test
+    fun `mobi extracts EXTH series records written by Calibre`() {
+        val mobiBytes = minimalMobiBytes(
+            title = "Folder MOBI",
+            author = "N K Jemisin",
+            coverBytes = onePixelPngBytes(),
+            extraRecords = listOf(
+                exthStringRecord(508, "The Broken Earth"),
+                exthStringRecord(509, "2.0")
+            )
+        )
+
+        val metadata = EmbeddedEbookMetadataExtractor.extract(
+            type = FileType.MOBI,
+            displayName = "folder.mobi",
+            openStream = { ByteArrayInputStream(mobiBytes) }
+        )
+
+        assertEquals("The Broken Earth", metadata.seriesName)
+        assertEquals(2.0, metadata.seriesIndex)
+    }
+
     private fun zipBytes(vararg entries: Pair<String, ByteArray>): ByteArray {
         val out = ByteArrayOutputStream()
         ZipOutputStream(out).use { zip ->
@@ -132,12 +226,17 @@ class EmbeddedEbookMetadataExtractorTest {
         return out.toByteArray()
     }
 
-    private fun minimalMobiBytes(title: String, author: String, coverBytes: ByteArray): ByteArray {
+    private fun minimalMobiBytes(
+        title: String,
+        author: String,
+        coverBytes: ByteArray,
+        extraRecords: List<ByteArray> = emptyList()
+    ): ByteArray {
         val exthRecords = listOf(
             exthStringRecord(99, title),
             exthStringRecord(100, author),
             exthIntRecord(201, 0)
-        )
+        ) + extraRecords
         val exthSize = 12 + exthRecords.sumOf { it.size }
         val mobiHeaderLength = 232
         val record0 = ByteArray(16 + mobiHeaderLength + exthSize)

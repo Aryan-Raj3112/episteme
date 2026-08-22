@@ -1,6 +1,8 @@
 package com.aryan.reader
 
 import android.util.Xml
+import com.aryan.reader.shared.reader.MobileEpubMetaElement
+import com.aryan.reader.shared.reader.resolveMobileEpubSeries
 import org.xmlpull.v1.XmlPullParser
 import java.io.InputStream
 import java.net.URLDecoder
@@ -29,6 +31,13 @@ internal object EmbeddedEbookMetadataExtractor {
     private const val MAX_MOBI_RECORDS = 65_535
     private const val MAX_MOBI_EXTH_RECORDS = 10_000
     private const val MOBI_NOT_SET = -1
+
+    // Calibre Kindle formats carry series in EXTH records 508 (series) and 509 (series index).
+    private const val MOBI_EXTH_SERIES_RECORD_TYPE = 508
+    private const val MOBI_EXTH_SERIES_INDEX_RECORD_TYPE = 509
+
+    private val META_CLOSE_TAG_REGEX = Regex("""</\s*meta\s*>""", RegexOption.IGNORE_CASE)
+    private val TAG_REGEX = Regex("<[^>]*>")
 
     private val ebookCoverTypes = setOf(FileType.EPUB, FileType.MOBI, FileType.FB2)
     private val rasterCoverExtensions = setOf("jpg", "jpeg", "png", "gif", "webp", "bmp")
@@ -97,14 +106,47 @@ internal object EmbeddedEbookMetadataExtractor {
             null
         }
 
+        val series = resolveMobileEpubSeries(parseOpfMetaElements(opf))
         return EmbeddedEbookMetadata(
             title = opf.tagText("title"),
             author = opf.tagText("creator"),
             description = opf.tagInnerContent("description"),
-            seriesName = opf.metaContent("calibre:series"),
-            seriesIndex = opf.metaContent("calibre:series_index")?.toDoubleOrNull(),
+            seriesName = series?.name,
+            seriesIndex = series?.index,
             cover = cover
         )
+    }
+
+    /**
+     * Extracts every OPF `<meta>` element so the shared resolver can read both the legacy
+     * Calibre name/content form and the EPUB 3 belongs-to-collection/refines form.
+     */
+    private fun parseOpfMetaElements(opf: String): List<MobileEpubMetaElement> {
+        return Regex("""<meta\s+[^>]*>""", RegexOption.IGNORE_CASE)
+            .findAll(opf)
+            .mapNotNull { match ->
+                val openTag = match.value
+                val text = if (openTag.endsWith("/>")) {
+                    null
+                } else {
+                    META_CLOSE_TAG_REGEX.find(opf, startIndex = match.range.last + 1)?.let { close ->
+                        opf.substring(match.range.last + 1, close.range.first)
+                            .replace(TAG_REGEX, " ")
+                            .decodeEntities()
+                            .trim()
+                            .takeIf { it.isNotEmpty() }
+                    }
+                }
+                MobileEpubMetaElement(
+                    id = openTag.attr("id").decodedAttrValue(),
+                    name = openTag.attr("name").decodedAttrValue(),
+                    property = openTag.attr("property").decodedAttrValue(),
+                    content = openTag.attr("content").decodedAttrValue(),
+                    text = text,
+                    refines = openTag.attr("refines").decodedAttrValue()
+                )
+            }
+            .toList()
     }
 
     private fun readFirstZipTextEntry(
@@ -346,6 +388,8 @@ internal object EmbeddedEbookMetadataExtractor {
         return EmbeddedEbookMetadata(
             title = exth.title,
             author = exth.author,
+            seriesName = exth.seriesName,
+            seriesIndex = exth.seriesIndex,
             cover = cover
         )
     }
@@ -441,6 +485,8 @@ internal object EmbeddedEbookMetadataExtractor {
         var exthTitle: String? = null
         var author: String? = null
         var coverOffset: Int? = null
+        var seriesName: String? = null
+        var seriesIndexValue: String? = null
         val exthOffsetLong = 16L + mobiHeaderLength
         if (mobiHeaderLength <= 0 || exthOffsetLong > Int.MAX_VALUE - 12L) {
             return MobiExthMetadata(title = fullName.takeUnlessBlank())
@@ -462,6 +508,10 @@ internal object EmbeddedEbookMetadataExtractor {
                     100 -> author = author ?: header.safeString(dataOffset, dataSize, charset)
                     201 -> coverOffset = coverOffset ?: header.u32(dataOffset).toInt().takeIf { dataSize >= 4 }
                     503 -> exthTitle = exthTitle ?: header.safeString(dataOffset, dataSize, charset)
+                    MOBI_EXTH_SERIES_RECORD_TYPE ->
+                        seriesName = seriesName ?: header.safeString(dataOffset, dataSize, charset)
+                    MOBI_EXTH_SERIES_INDEX_RECORD_TYPE ->
+                        seriesIndexValue = seriesIndexValue ?: header.safeString(dataOffset, dataSize, charset)
                 }
                 offset += size
             }
@@ -470,7 +520,9 @@ internal object EmbeddedEbookMetadataExtractor {
         return MobiExthMetadata(
             title = exthTitle.takeUnlessBlank() ?: fullName.takeUnlessBlank(),
             author = author.takeUnlessBlank(),
-            coverOffset = coverOffset
+            coverOffset = coverOffset,
+            seriesName = seriesName.takeUnlessBlank(),
+            seriesIndex = seriesIndexValue?.trim()?.toDoubleOrNull()
         )
     }
 
@@ -585,16 +637,7 @@ internal object EmbeddedEbookMetadataExtractor {
             ?.takeIf { it.isNotBlank() }
     }
 
-    private fun String.metaContent(name: String): String? {
-        return Regex("""<meta\s+[^>]*>""", RegexOption.IGNORE_CASE)
-            .findAll(this)
-            .firstOrNull { it.value.attr("name").equals(name, ignoreCase = true) }
-            ?.value
-            ?.attr("content")
-            ?.decodeEntities()
-            ?.trim()
-            ?.takeIf { it.isNotBlank() }
-    }
+    private fun String.decodedAttrValue(): String? = decodeEntities().trim().takeIf { it.isNotEmpty() }
 
     private fun String.decodeEntities(): String {
         return replace("&nbsp;", " ")
@@ -726,6 +769,8 @@ internal object EmbeddedEbookMetadataExtractor {
     private data class MobiExthMetadata(
         val title: String? = null,
         val author: String? = null,
-        val coverOffset: Int? = null
+        val coverOffset: Int? = null,
+        val seriesName: String? = null,
+        val seriesIndex: Double? = null
     )
 }

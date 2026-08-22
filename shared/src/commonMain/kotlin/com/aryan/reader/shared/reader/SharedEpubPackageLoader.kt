@@ -123,8 +123,8 @@ object SharedEpubPackageLoader {
             author = metadata.firstChildNamed("dc:creator")?.textContent()?.decodeEpubEntities(),
             language = metadata.firstChildNamed("dc:language")?.textContent()?.decodeEpubEntities(),
             description = metadata.firstChildNamed("dc:description")?.textContent()?.decodeEpubEntities(),
-            metaEntries = metadata.androidMetadataChildren("meta", "opf:meta")
-                .map { it.attribute("name") to it.attribute("content") }
+            metaElements = metadata.androidMetadataChildren("meta", "opf:meta")
+                .map(SharedEpubXmlNode::toMobileEpubMetaElement)
         )
         val metadataCoverId = metadata.androidMetadataChildren("meta", "opf:meta")
             .firstOrNull { it.attribute("name") == "cover" }
@@ -546,6 +546,15 @@ private data class SharedEpubXmlNode(
 
     fun androidMetadataChildren(primaryName: String, fallbackName: String): List<SharedEpubXmlNode> =
         children.filter { it.name == primaryName }.ifEmpty { children.filter { it.name == fallbackName } }
+
+    fun toMobileEpubMetaElement(): MobileEpubMetaElement = MobileEpubMetaElement(
+        id = attribute("id")?.decodeEpubEntities(),
+        name = attribute("name")?.decodeEpubEntities(),
+        property = attribute("property")?.decodeEpubEntities(),
+        content = attribute("content")?.decodeEpubEntities(),
+        text = textContent().takeIf(String::isNotBlank)?.decodeEpubEntities(),
+        refines = attribute("refines")
+    )
 
     fun appendText(value: String) {
         if (value.isEmpty()) return

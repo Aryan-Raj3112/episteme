@@ -89,6 +89,42 @@ class DesktopFolderMetadataExtractorTest {
         assertTrue(enriched.folderTextMetadataParsed)
         assertTrue(File(assertNotNull(enriched.coverImagePath)).isFile)
     }
+
+    @Test
+    fun `direct imported epub reads epub3 belongs-to-collection series`() = withCoverCacheDir { tempDir ->
+        val epub = File(tempDir, "epub3-series.epub")
+        writeEpub(
+            target = epub,
+            opf = """
+                <package xmlns:dc="http://purl.org/dc/elements/1.1/" version="3.0">
+                  <metadata>
+                    <dc:title>EPUB3 Series EPUB</dc:title>
+                    <dc:creator>Arthur Conan Doyle</dc:creator>
+                    <meta property="dcterms:modified">2026-07-12T00:00:00Z</meta>
+                    <meta id="c1" property="belongs-to-collection">Sherlock Holmes</meta>
+                    <meta refines="#c1" property="collection-type">series</meta>
+                    <meta refines="#c1" property="group-position">3</meta>
+                  </metadata>
+                  <manifest/>
+                </package>
+            """.trimIndent()
+        )
+        val book = bookFor(epub, FileType.EPUB)
+
+        val result = DesktopFolderMetadataExtractor.enrichImportedBooks(
+            books = listOf(book),
+            importedBookIds = setOf(book.id)
+        )
+
+        val enriched = result.books.single()
+        assertEquals("EPUB3 Series EPUB", enriched.title)
+        assertEquals("Sherlock Holmes", enriched.seriesName)
+        assertEquals(3.0, enriched.seriesIndex)
+        assertEquals("Sherlock Holmes", enriched.originalSeriesName)
+        assertEquals(3.0, enriched.originalSeriesIndex)
+        assertTrue(enriched.folderTextMetadataParsed)
+    }
+
     @Test
     fun `opened epub preserves existing file cover path`() = withCoverCacheDir { tempDir ->
         val epub = File(tempDir, "existing-cover.epub")

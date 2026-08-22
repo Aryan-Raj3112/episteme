@@ -91,7 +91,7 @@ import com.aryan.reader.shared.reader.SharedEpubCoverUpdate
 import com.aryan.reader.shared.reader.SharedEpubMetadataEditor
 import com.aryan.reader.shared.reader.SharedEpubMetadataUpdate
 import com.aryan.reader.shared.reader.SharedEpubPaginationCache
-import com.aryan.reader.shared.reader.SharedJvmBookLoadSemanticMode
+import com.aryan.reader.shared.reader.SharedBookLoadSemanticMode
 import com.aryan.reader.shared.reader.SharedJvmBookLoader
 import com.aryan.reader.shared.readerCloudTtsControlsModel
 import com.aryan.reader.shared.cardTitle
@@ -3554,7 +3554,7 @@ internal fun EpistemeDesktopApp(
                             val settingsStartedAt = System.nanoTime()
                             val restoredSettings = resolvedDesktopReaderSettings(book, readerDefaultSettings)
                             val semanticMode = desktopEpubBookLoadSemanticMode(restoredSettings)
-                            val preparedHtmlChapterRange = if (semanticMode == SharedJvmBookLoadSemanticMode.SKIP) {
+                            val preparedHtmlChapterRange = if (semanticMode == SharedBookLoadSemanticMode.SKIP) {
                                 val initialChapter = book.readerPosition?.chapterIndex?.takeIf { it >= 0 } ?: 0
                                 (initialChapter - DesktopVerticalInitialPreparedHtmlChapterRadius).coerceAtLeast(0)..
                                     (initialChapter + DesktopVerticalInitialPreparedHtmlChapterRadius)

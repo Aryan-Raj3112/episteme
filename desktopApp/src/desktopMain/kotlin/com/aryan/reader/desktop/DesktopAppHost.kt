@@ -40,7 +40,7 @@ import com.aryan.reader.shared.AppContrastOption
 import com.aryan.reader.shared.AppThemeMode
 import com.aryan.reader.shared.reader.ReaderReadingMode
 import com.aryan.reader.shared.reader.ReaderSettings
-import com.aryan.reader.shared.reader.SharedJvmBookLoadSemanticMode
+import com.aryan.reader.shared.reader.SharedBookLoadSemanticMode
 import com.aryan.reader.shared.ui.SharedAppTheme
 import com.aryan.reader.shared.ui.readerString
 import kotlinx.coroutines.Dispatchers
@@ -642,14 +642,14 @@ internal fun desktopShouldUseNativeVerticalEpubReader(
 internal fun desktopEpubBookLoadSemanticMode(
     settings: ReaderSettings,
     platform: DesktopPlatform = currentDesktopPlatform()
-): SharedJvmBookLoadSemanticMode {
+): SharedBookLoadSemanticMode {
     return if (
         settings.readingMode == ReaderReadingMode.VERTICAL &&
         !desktopShouldUseNativeVerticalEpubReader(platform)
     ) {
-        SharedJvmBookLoadSemanticMode.SKIP
+        SharedBookLoadSemanticMode.SKIP
     } else {
-        SharedJvmBookLoadSemanticMode.FULL
+        SharedBookLoadSemanticMode.FULL
     }
 }
 

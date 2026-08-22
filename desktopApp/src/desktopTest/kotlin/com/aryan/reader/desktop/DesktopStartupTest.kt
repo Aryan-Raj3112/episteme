@@ -3,7 +3,7 @@ package com.aryan.reader.desktop
 import com.aryan.reader.shared.SharedReaderScreenState
 import com.aryan.reader.shared.reader.ReaderReadingMode
 import com.aryan.reader.shared.reader.ReaderSettings
-import com.aryan.reader.shared.reader.SharedJvmBookLoadSemanticMode
+import com.aryan.reader.shared.reader.SharedBookLoadSemanticMode
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -83,10 +83,10 @@ class DesktopStartupTest {
         val verticalSettings = ReaderSettings(readingMode = ReaderReadingMode.VERTICAL)
         val paginatedSettings = ReaderSettings(readingMode = ReaderReadingMode.PAGINATED)
 
-        assertEquals(SharedJvmBookLoadSemanticMode.FULL, desktopEpubBookLoadSemanticMode(verticalSettings, linux))
-        assertEquals(SharedJvmBookLoadSemanticMode.SKIP, desktopEpubBookLoadSemanticMode(verticalSettings, windows))
-        assertEquals(SharedJvmBookLoadSemanticMode.SKIP, desktopEpubBookLoadSemanticMode(verticalSettings, macos))
-        assertEquals(SharedJvmBookLoadSemanticMode.FULL, desktopEpubBookLoadSemanticMode(paginatedSettings, windows))
+        assertEquals(SharedBookLoadSemanticMode.FULL, desktopEpubBookLoadSemanticMode(verticalSettings, linux))
+        assertEquals(SharedBookLoadSemanticMode.SKIP, desktopEpubBookLoadSemanticMode(verticalSettings, windows))
+        assertEquals(SharedBookLoadSemanticMode.SKIP, desktopEpubBookLoadSemanticMode(verticalSettings, macos))
+        assertEquals(SharedBookLoadSemanticMode.FULL, desktopEpubBookLoadSemanticMode(paginatedSettings, windows))
     }
 
     @Test

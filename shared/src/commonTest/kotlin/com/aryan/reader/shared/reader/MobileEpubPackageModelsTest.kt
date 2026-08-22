@@ -5,6 +5,7 @@ import kotlinx.serialization.json.Json
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class MobileEpubPackageModelsTest {
@@ -341,11 +342,11 @@ class MobileEpubPackageModelsTest {
             author = null,
             language = null,
             description = "Description",
-            metaEntries = listOf(
-                "calibre:series" to "Old",
-                "calibre:series_index" to "invalid",
-                "calibre:series" to "Final",
-                "calibre:series_index" to "2.5"
+            metaElements = listOf(
+                MobileEpubMetaElement(name = "calibre:series", content = "Old"),
+                MobileEpubMetaElement(name = "calibre:series_index", content = "invalid"),
+                MobileEpubMetaElement(name = "calibre:series", content = "Final"),
+                MobileEpubMetaElement(name = "calibre:series_index", content = "2.5")
             )
         )
 
@@ -356,6 +357,130 @@ class MobileEpubPackageModelsTest {
         assertEquals("Final", metadata.seriesName)
         assertEquals(2.5, metadata.seriesIndex)
         assertEquals("Description", metadata.description)
+    }
+
+    @Test
+    fun seriesResolutionPrefersEpub3CollectionFormOverLegacyCalibreMetas() {
+        val series = resolveMobileEpubSeries(
+            listOf(
+                MobileEpubMetaElement(name = "calibre:series", content = "Legacy Series"),
+                MobileEpubMetaElement(name = "calibre:series_index", content = "9"),
+                MobileEpubMetaElement(
+                    id = "c1",
+                    property = "belongs-to-collection",
+                    text = "Sherlock Holmes"
+                ),
+                MobileEpubMetaElement(property = "collection-type", text = "series", refines = "#c1"),
+                MobileEpubMetaElement(property = "group-position", text = "3.5", refines = "#c1")
+            )
+        )
+
+        assertEquals("Sherlock Holmes", series?.name)
+        assertEquals(3.5, series?.index)
+    }
+
+    @Test
+    fun seriesResolutionIgnoresNonSeriesCollectionsAndFallsBackToLegacy() {
+        val series = resolveMobileEpubSeries(
+            listOf(
+                MobileEpubMetaElement(id = "set1", property = "belongs-to-collection", text = "Boxed Sets"),
+                MobileEpubMetaElement(property = "collection-type", text = "set", refines = "set1"),
+                MobileEpubMetaElement(name = "calibre:series", content = "Legacy Series"),
+                MobileEpubMetaElement(name = "calibre:series_index", content = "7")
+            )
+        )
+
+        assertEquals("Legacy Series", series?.name)
+        assertEquals(7.0, series?.index)
+    }
+
+    @Test
+    fun seriesResolutionHandlesMissingAndInvalidGroupPositions() {
+        val missing = resolveMobileEpubSeries(
+            listOf(
+                MobileEpubMetaElement(id = "c1", property = "belongs-to-collection", text = "Sherlock Holmes"),
+                MobileEpubMetaElement(property = "collection-type", text = "series", refines = "#c1")
+            )
+        )
+        assertEquals("Sherlock Holmes", missing?.name)
+        assertNull(missing?.index)
+
+        val invalid = resolveMobileEpubSeries(
+            listOf(
+                MobileEpubMetaElement(id = "c2", property = "belongs-to-collection", text = "Sherlock Holmes"),
+                MobileEpubMetaElement(property = "collection-type", text = "series", refines = "#c2"),
+                MobileEpubMetaElement(property = "group-position", text = "not-a-number", refines = "#c2")
+            )
+        )
+        assertEquals("Sherlock Holmes", invalid?.name)
+        assertNull(invalid?.index)
+    }
+
+    @Test
+    fun seriesResolutionRequiresIdRefinesAndSeriesType() {
+        assertNull(
+            resolveMobileEpubSeries(
+                listOf(MobileEpubMetaElement(property = "belongs-to-collection", text = "No id"))
+            )
+        )
+        assertNull(
+            resolveMobileEpubSeries(
+                listOf(
+                    MobileEpubMetaElement(id = "c", property = "belongs-to-collection", text = "Untyped"),
+                    MobileEpubMetaElement(property = "collection-type", text = "periodical", refines = "#c")
+                )
+            )
+        )
+        assertNull(
+            resolveMobileEpubSeries(
+                listOf(
+                    MobileEpubMetaElement(id = "c", property = "belongs-to-collection", text = "   "),
+                    MobileEpubMetaElement(property = "collection-type", text = "series", refines = "#c")
+                )
+            )
+        )
+    }
+
+    @Test
+    fun seriesResolutionKeepsFirstSeriesCollectionAndNormalizesWhitespace() {
+        val series = resolveMobileEpubSeries(
+            listOf(
+                MobileEpubMetaElement(
+                    id = "c1",
+                    property = "belongs-to-collection",
+                    text = "  Sherlock\n  Holmes  "
+                ),
+                MobileEpubMetaElement(property = "collection-type", text = "series", refines = "#c1"),
+                MobileEpubMetaElement(property = "group-position", text = "1", refines = "#c1"),
+                MobileEpubMetaElement(id = "c2", property = "belongs-to-collection", text = "Second"),
+                MobileEpubMetaElement(property = "collection-type", text = "series", refines = "#c2"),
+                MobileEpubMetaElement(property = "group-position", text = "2", refines = "#c2")
+            )
+        )
+
+        assertEquals("Sherlock Holmes", series?.name)
+        assertEquals(1.0, series?.index)
+    }
+
+    @Test
+    fun metadataResolutionReadsEpub3CollectionSeries() {
+        val metadata = resolveMobileEpubMetadata(
+            sourceFileName = "adventures.epub",
+            title = null,
+            author = "Arthur Conan Doyle",
+            language = "en",
+            description = null,
+            metaElements = listOf(
+                MobileEpubMetaElement(property = "dcterms:modified", text = "2026-07-12T00:00:00Z"),
+                MobileEpubMetaElement(id = "c1", property = "belongs-to-collection", text = "Sherlock Holmes"),
+                MobileEpubMetaElement(property = "collection-type", text = "series", refines = "#c1"),
+                MobileEpubMetaElement(property = "group-position", text = "3", refines = "#c1")
+            )
+        )
+
+        assertEquals("adventures", metadata.title)
+        assertEquals("Sherlock Holmes", metadata.seriesName)
+        assertEquals(3.0, metadata.seriesIndex)
     }
 
     @Test
