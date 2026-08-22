@@ -55,8 +55,10 @@ import kotlinx.cinterop.toKString
 import kotlinx.cinterop.value
 import kotlinx.cinterop.CPointerVarOf
 import kotlinx.cinterop.IntVar
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import platform.Foundation.NSFileManager
 import platform.Foundation.NSLock
 import platform.Foundation.NSURL
@@ -350,13 +352,15 @@ internal class IosPdfTextPage internal constructor(
 
     override fun close() {
         runBlocking {
-            IosPdfiumRuntime.mutex.withLock {
-                handleLock.withLock {
-                    if (closed) return@withLock
-                    closed = true
-                    textPage?.let(::FPDFText_ClosePage)
-                    page?.let(::FPDF_ClosePage)
-                    document?.let(::FPDF_CloseDocument)
+            withContext(Dispatchers.Default) {
+                IosPdfiumRuntime.mutex.withLock {
+                    handleLock.withLock {
+                        if (closed) return@withLock
+                        closed = true
+                        textPage?.let(::FPDFText_ClosePage)
+                        page?.let(::FPDF_ClosePage)
+                        document?.let(::FPDF_CloseDocument)
+                    }
                 }
             }
         }
@@ -364,9 +368,11 @@ internal class IosPdfTextPage internal constructor(
 
     private fun <T> withLockedHandle(default: T, block: () -> T): T {
         return runBlocking {
-            IosPdfiumRuntime.mutex.withLock {
-                handleLock.withLock {
-                    if (closed) default else block()
+            withContext(Dispatchers.Default) {
+                IosPdfiumRuntime.mutex.withLock {
+                    handleLock.withLock {
+                        if (closed) default else block()
+                    }
                 }
             }
         }

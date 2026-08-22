@@ -91,9 +91,8 @@ private suspend fun searchIosPdfLocked(
         return cached.index.search(query).withIosPdfOcrBounds(cached.ocrPages)
     }
 
-    val indexed = IosPdfiumRuntime.mutex.withLock {
-        IosPdfiumRuntime.ensureInitialized()
-        val document = FPDF_LoadDocument(resolvedPath, password) ?: return@withLock null
+    val indexed = IosPdfiumRuntime.withPdfium {
+        val document = FPDF_LoadDocument(resolvedPath, password) ?: return@withPdfium null
         try {
             val pageCount = FPDF_GetPageCount(document)
             val index = com.aryan.reader.shared.pdf.SharedPdfSearchIndex(pageCount)

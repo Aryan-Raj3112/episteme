@@ -5,6 +5,10 @@ package com.aryan.reader.shared.ios
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.FileType
 import com.aryan.reader.shared.currentTimestamp
+import com.aryan.reader.shared.docparse.SharedDocxDocumentParser
+import com.aryan.reader.shared.docparse.SharedFb2DocumentParser
+import com.aryan.reader.shared.docparse.SharedMarkdownConverter
+import com.aryan.reader.shared.docparse.SharedOdtDocumentParser
 import com.aryan.reader.shared.sharedDocumentMetadataArchivePath
 import com.aryan.reader.shared.mobi.MOBI_ENCRYPTION_NONE
 import com.aryan.reader.shared.mobi.MOBI_SUCCESS
@@ -466,39 +470,167 @@ private fun loadIosSingleDocumentBook(book: BookItem): SharedEpubBook {
     val source = path.readIosFileBytes().decodeEpubText()
     val title = book.title?.takeIf { it.isNotBlank() }
         ?: book.displayName.substringBeforeLast('.').ifBlank { book.displayName }
-    val html = when (book.type) {
-        FileType.HTML -> source
-        FileType.FB2 -> source
-            .replace(Regex("""<\?xml[^>]*>""", RegexOption.IGNORE_CASE), "")
-            .replace(Regex("""</?FictionBook[^>]*>""", RegexOption.IGNORE_CASE), "")
-        FileType.FODT -> source
-        FileType.MD -> "<pre class=\"reader-markdown\">${source.escapeIosReaderHtml()}</pre>"
-        else -> "<pre>${source.escapeIosReaderHtml()}</pre>"
+    val chapters: List<SharedEpubChapter> = when (book.type) {
+        FileType.HTML -> listOf(singleIosDocumentChapter(book, path, title, source))
+        FileType.FB2 -> loadIosFb2Chapters(book, source, fallbackTitle = title)
+        FileType.FODT -> loadIosFodtChapters(book, source, fallbackTitle = title)
+        FileType.MD -> loadIosMarkdownChapters(book, source, fallbackTitle = title)
+        else -> listOf(
+            singleIosDocumentChapter(
+                book,
+                path,
+                title,
+                "<pre>${source.escapeIosReaderHtml()}</pre>",
+            )
+        )
     }
-    val plainText = source
-        .replace(Regex("""<script\b[^>]*>[\s\S]*?</script>""", RegexOption.IGNORE_CASE), " ")
-        .replace(Regex("""<style\b[^>]*>[\s\S]*?</style>""", RegexOption.IGNORE_CASE), " ")
-        .replace(Regex("""<[^>]+>"""), " ")
-        .replace(Regex("""[ \t]+"""), " ")
-        .replace(Regex("""\n\s*\n\s*\n+"""), "\n\n")
-        .trim()
-        .ifBlank { source.trim() }
     return SharedEpubBook(
         id = book.id,
         fileName = book.displayName.ifBlank { path.substringAfterLast('/') },
         title = title,
         author = book.author,
-        chapters = listOf(
-            SharedEpubChapter(
-                id = "${book.id}-document",
-                title = title,
-                plainText = plainText,
-                htmlContent = html,
-                baseHref = NSURL.fileURLWithPath(path).absoluteString,
-            )
-        ),
+        chapters = chapters,
     )
 }
+
+private fun singleIosDocumentChapter(
+    book: BookItem,
+    path: String,
+    title: String,
+    htmlContent: String,
+): SharedEpubChapter {
+    val plainText = htmlContent.iosReaderPlainText()
+    return SharedEpubChapter(
+        id = "${book.id}-document",
+        title = title,
+        plainText = plainText,
+        htmlContent = htmlContent,
+        baseHref = NSURL.fileURLWithPath(path).absoluteString,
+    )
+}
+
+/**
+ * Structured FB2 rendering matching Android's Fb2Parser output: one chapter per
+ * section, section titles as chapter names, and binary images embedded as data
+ * URIs (the platform equivalent of Android's extracted image files).
+ */
+private fun loadIosFb2Chapters(book: BookItem, source: String, fallbackTitle: String): List<SharedEpubChapter> {
+    val parsed = SharedFb2DocumentParser.parse(source, fallbackTitle)
+        ?: error("No valid content found in FB2 file.")
+    val binarySrcById = parsed.binariesById.mapValues { (_, binary) ->
+        val mime = binary.contentType?.substringBefore(';')?.trim()?.takeIf(String::isNotBlank)
+            ?: "image/png"
+        "data:$mime;base64,${binary.base64}"
+    }
+    val imageSrcRegex = Regex("""<img src="([^"]+)"[ ]*/>""")
+    return parsed.chapters.mapIndexed { index, chapter ->
+        val html = chapter.html.replace(imageSrcRegex) { match ->
+            val src = match.groupValues[1]
+            val resolved = binarySrcById[src] ?: src
+            """<img src="${resolved.escapeIosReaderHtmlAttribute()}" />"""
+        }
+        SharedEpubChapter(
+            id = "${book.id}-chapter-${index + 1}",
+            title = chapter.title.ifBlank { fallbackTitle },
+            plainText = html.iosReaderPlainText(),
+            htmlContent = "<style>$IosFb2CssStyle</style>\n${html.trim()}",
+        )
+    }
+}
+
+/** Flat-ODT rendering; images arrive from the parser already as data URIs. */
+private fun loadIosFodtChapters(book: BookItem, source: String, fallbackTitle: String): List<SharedEpubChapter> =
+    loadIosOdtResultChapters(
+        book = book,
+        result = SharedOdtDocumentParser.parse(source, stylesXml = null, isFlat = true, fileNameHint = fallbackTitle),
+        resolveImageSrc = null,
+    )
+
+private fun loadIosMarkdownChapters(book: BookItem, source: String, fallbackTitle: String): List<SharedEpubChapter> {
+    val sections = SharedMarkdownConverter.convert(source)
+    require(sections.isNotEmpty()) { "No valid content found in Markdown file." }
+    return sections.mapIndexed { index, section ->
+        val pageTitle = section.title ?: "Page ${index + 1}"
+        SharedEpubChapter(
+            id = "${book.id}-page-${index + 1}",
+            title = pageTitle,
+            plainText = section.html.iosReaderPlainText(),
+            htmlContent = "<style>$IosMarkdownCssStyle</style>\n${section.html.trim()}",
+        )
+    }
+}
+
+private fun loadIosOdtResultChapters(
+    book: BookItem,
+    result: SharedOdtDocumentParser.Result?,
+    resolveImageSrc: ((String) -> String?)?,
+): List<SharedEpubChapter> {
+    val parsed = result ?: error("No valid content found in ODT file.")
+    val imageSrcRegex = Regex("""<img src="([^"]+)"[ ]*/>""")
+    return parsed.chapters.mapIndexed { index, chapter ->
+        val html = if (resolveImageSrc != null) {
+            chapter.html.replace(imageSrcRegex) { match ->
+                val src = match.groupValues[1]
+                val resolved = resolveImageSrc(src) ?: src
+                """<img src="${resolved.escapeIosReaderHtmlAttribute()}" />"""
+            }
+        } else {
+            chapter.html
+        }
+        SharedEpubChapter(
+            id = "${book.id}-part-${index + 1}",
+            title = chapter.title,
+            plainText = html.iosReaderPlainText(),
+            htmlContent = "<style>$IosOdtCssStyle</style>\n${html.trim()}",
+        )
+    }
+}
+
+private fun String.iosReaderPlainText(): String {
+    return replace(Regex("""<script\b[^>]*>[\s\S]*?</script>""", RegexOption.IGNORE_CASE), " ")
+        .replace(Regex("""<style\b[^>]*>[\s\S]*?</style>""", RegexOption.IGNORE_CASE), " ")
+        .replace(Regex("""<[^>]+>"""), " ")
+        .replace(Regex("""&amp;"""), "&")
+        .replace(Regex("""&lt;"""), "<")
+        .replace(Regex("""&gt;"""), ">")
+        .replace(Regex("""&quot;"""), "\"")
+        .replace(Regex("""[ \t]+"""), " ")
+        .replace(Regex("""\n\s*\n\s*\n+"""), "\n\n")
+        .trim()
+}
+
+private const val IosFb2CssStyle = """
+    body { font-family: sans-serif; line-height: 1.6; padding: 1em; max-width: 800px; margin: 0 auto; }
+    p { margin-bottom: 1em; text-indent: 1.5em; text-align: justify; }
+    h1, h2, h3, h4 { text-align: center; margin-top: 1.5em; margin-bottom: 1em; }
+    .empty-line { height: 1.5em; }
+    img { max-width: 100%; height: auto; display: block; margin: 1em auto; }
+    .epigraph { margin-left: 2em; font-style: italic; margin-bottom: 1.5em; }
+    .cite { border-left: 4px solid currentColor; padding-left: 1em; margin-left: 0; opacity: 0.8; font-style: italic; }
+    .poem { margin: 1.5em 0; padding-left: 2em; }
+    .stanza { margin-bottom: 1em; }
+"""
+
+private const val IosOdtCssStyle = """
+    body { font-family: sans-serif; line-height: 1.6; padding: 1em; max-width: 800px; margin: 0 auto; }
+    p { margin-bottom: 1em; text-align: justify; }
+    h1, h2, h3, h4, h5, h6 { text-align: center; margin-top: 1.5em; margin-bottom: 1em; }
+    ul, ol { margin-bottom: 1em; padding-left: 2em; }
+    img { max-width: 100%; height: auto; display: block; margin: 1em auto; }
+    table { border-collapse: collapse; width: 100%; margin-bottom: 1em; }
+    th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
+    .footnote { font-size: 0.85em; background-color: #f9f9f9; padding: 0 4px; border: 1px solid #ddd; border-radius: 3px; }
+"""
+
+private const val IosMarkdownCssStyle = """
+    body { font-family: sans-serif; line-height: 1.6; padding: 1em; max-width: 800px; margin: 0 auto; }
+    table { border-collapse: collapse; width: 100%; margin: 1em 0; }
+    th, td { border: 1px solid currentColor; padding: 0.5em; text-align: left; }
+    blockquote { border-left: 4px solid currentColor; padding-left: 1em; margin-left: 0; opacity: 0.8; }
+    pre { overflow-x: auto; background: rgba(127,127,127,0.1); padding: 1em; border-radius: 4px; }
+    img { max-width: 100%; height: auto; }
+    hr { border: 0; border-top: 1px solid #ccc; margin: 2em 0; }
+"""
 
 private fun loadIosCbzBook(book: BookItem): SharedEpubBook {
     SharedOpdsStreamUri.parse(book.path)?.let { stream ->
@@ -855,33 +987,12 @@ private fun loadIosZipDocumentBook(book: BookItem): SharedEpubBook {
     }
     val path = book.path.resolveIosEpubSourcePath() ?: error("${book.type.name} path is unavailable")
     val archive = IosZipEpubArchive(path)
-    val contentPaths = when (book.type) {
-        FileType.DOCX -> listOf("word/document.xml")
-        FileType.ODT -> listOf("content.xml")
-        FileType.PPTX -> archive.entryPaths
-            .filter { it.matches(Regex("""ppt/slides/slide\d+\.xml""", RegexOption.IGNORE_CASE)) }
-            .sorted()
-        else -> emptyList()
-    }
     val title = book.title?.takeIf { it.isNotBlank() }
         ?: book.displayName.substringBeforeLast('.').ifBlank { book.displayName }
-    val chapters = contentPaths.mapIndexedNotNull { index, contentPath ->
-        val source = archive.readText(contentPath) ?: return@mapIndexedNotNull null
-        val text = source
-            .replace(Regex("""</(?:w:p|text:p|text:h|a:p)>""", RegexOption.IGNORE_CASE), "\n")
-            .replace(Regex("""<w:tab[^>]*/>""", RegexOption.IGNORE_CASE), "\t")
-            .replace(Regex("""<[^>]+>"""), "")
-            .decodeIosXmlEntities()
-            .replace(Regex("""[ \t]+\n"""), "\n")
-            .replace(Regex("""\n{3,}"""), "\n\n")
-            .trim()
-        if (text.isBlank()) return@mapIndexedNotNull null
-        SharedEpubChapter(
-            id = "${book.id}-part-${index + 1}",
-            title = if (contentPaths.size == 1) title else "Slide ${index + 1}",
-            plainText = text,
-            htmlContent = "<pre>${text.escapeIosReaderHtml()}</pre>",
-        )
+    val chapters = when (book.type) {
+        FileType.DOCX -> loadIosDocxChapters(book, archive, title)
+        FileType.ODT -> loadIosOdtZipChapters(book, archive, title)
+        else -> error("Unsupported zip document type ${book.type.name}")
     }
     require(chapters.isNotEmpty()) { "No readable text was found in this ${book.type.name} file" }
     return SharedEpubBook(
@@ -891,6 +1002,79 @@ private fun loadIosZipDocumentBook(book: BookItem): SharedEpubBook {
         author = book.author,
         chapters = chapters,
     )
+}
+
+/**
+ * Structured DOCX rendering (headings become chapters, formatting is preserved,
+ * media embeds as data URIs) matching Android's mammoth-based import fidelity.
+ */
+private fun loadIosDocxChapters(
+    book: BookItem,
+    archive: IosZipEpubArchive,
+    title: String,
+): List<SharedEpubChapter> {
+    val documentXml = archive.readText("word/document.xml")
+        ?: error("No readable text was found in this DOCX file")
+    val relsXml = archive.readText("word/_rels/document.xml.rels")
+    val hyperlinkTargets = relsXml?.let(SharedDocxDocumentParser::parseHyperlinkTargets).orEmpty()
+    val mediaTargets = relsXml?.let(SharedDocxDocumentParser::parseMediaTargets).orEmpty()
+    val numberingXml = archive.readText("word/numbering.xml")
+    val mediaSrcCache = mutableMapOf<String, String?>()
+    val parsed = SharedDocxDocumentParser.parse(
+        documentXml = documentXml,
+        numberingXml = numberingXml,
+        hyperlinkTargets = hyperlinkTargets,
+        mediaSrcResolver = { relationshipId ->
+            mediaSrcCache.getOrPut(relationshipId) {
+                mediaTargets[relationshipId]?.let { target ->
+                    archive.readBytes("word/${target.removePrefix("./")}")?.toIosDataUri(target)
+                }
+            }
+        },
+    ) ?: error("No readable text was found in this DOCX file")
+    return parsed.chapters.mapIndexed { index, chapter ->
+        val chapterTitle = chapter.title
+            ?: if (parsed.chapters.size == 1) title else "Part ${index + 1}"
+        SharedEpubChapter(
+            id = "${book.id}-part-${index + 1}",
+            title = chapterTitle,
+            plainText = chapter.html.iosReaderPlainText(),
+            htmlContent = chapter.html.trim(),
+        )
+    }
+}
+
+private fun loadIosOdtZipChapters(
+    book: BookItem,
+    archive: IosZipEpubArchive,
+    title: String,
+): List<SharedEpubChapter> {
+    val contentXml = archive.readText("content.xml")
+        ?: error("content.xml not found in ODT archive.")
+    val stylesXml = archive.readText("styles.xml")
+    val result = SharedOdtDocumentParser.parse(
+        contentXml = contentXml,
+        stylesXml = stylesXml,
+        isFlat = false,
+        fileNameHint = title,
+    )
+    return loadIosOdtResultChapters(book, result) { href ->
+        val cleanPath = href.removePrefix("./")
+        archive.readBytes(cleanPath)?.toIosDataUri(cleanPath)
+    }
+}
+
+private fun ByteArray.toIosDataUri(name: String): String {
+    val extension = name.substringAfterLast('.', "").lowercase()
+    val mime = when (extension) {
+        "jpg", "jpeg" -> "image/jpeg"
+        "gif" -> "image/gif"
+        "webp" -> "image/webp"
+        "bmp" -> "image/bmp"
+        "svg" -> "image/svg+xml"
+        else -> "image/png"
+    }
+    return "data:$mime;base64,${toIosBase64()}"
 }
 
 private fun String.decodeIosXmlEntities(): String {

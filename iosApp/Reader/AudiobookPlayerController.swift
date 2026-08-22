@@ -10,6 +10,7 @@
 
 import AVFoundation
 import Foundation
+import MediaPlayer
 
 class AudiobookPlayerController {
     private var player: AVPlayer?
@@ -23,6 +24,8 @@ class AudiobookPlayerController {
     private var pendingSeekMs: Double?
     private var isLoading = false
     private var currentSpeed: Float = 1
+    private var nowPlayingTitle: String = ""
+    private var nowPlayingSubtitle: String?
 
     /// Invoked from the main thread on every playback state change (tick,
     /// pause, resume, seek, sleep-timer tick, end or error updates).
@@ -51,7 +54,18 @@ class AudiobookPlayerController {
         isLoading = true
         pendingSeekMs = positionMs > 0 ? positionMs : nil
         currentSpeed = Float(speed) > 0 ? Float(speed) : 1
+        nowPlayingTitle = url.lastPathComponent
+        nowPlayingSubtitle = nil
+        installRemoteCommands()
         installObservers(for: item)
+        refreshNowPlayingInfo()
+        // Embedded metadata (title/artist/album) replaces the filename once known,
+        // matching the library card presentation.
+        extractMetadata(filePath: filePath, fallbackTitle: url.lastPathComponent) { [weak self] title, author, album, _ in
+            self?.nowPlayingTitle = title
+            self?.nowPlayingSubtitle = author ?? album
+            self?.refreshNowPlayingInfo()
+        }
         if positionMs > 0 {
             newPlayer.seek(to: CMTime(seconds: positionMs / 1000.0, preferredTimescale: 1000))
         }
@@ -156,6 +170,89 @@ class AudiobookPlayerController {
         player = nil
         isLoading = false
         pendingSeekMs = nil
+        removeRemoteCommands()
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+    }
+
+    // MARK: - Now Playing / remote commands (Android's media-notification contract)
+
+    private func installRemoteCommands() {
+        let commands = MPRemoteCommandCenter.shared()
+        commands.playCommand.addTarget(handler:) { [weak self] _ in
+            self?.resume(speed: self?.currentSpeed ?? 1)
+            return .success
+        }
+        commands.pauseCommand.addTarget(handler:) { [weak self] _ in
+            self?.pause()
+            return .success
+        }
+        commands.togglePlayPauseCommand.addTarget(handler:) { [weak self] _ in
+            guard let self = self else { return .commandFailed }
+            if self.player?.timeControlStatus == .playing {
+                self.pause()
+            } else {
+                self.resume(speed: self.currentSpeed)
+            }
+            return .success
+        }
+        commands.changePlaybackPositionCommand.addTarget(handler:) { [weak self] event in
+            guard let positionEvent = event as? MPChangePlaybackPositionCommandEvent else {
+                return .commandFailed
+            }
+            self?.seek(to: positionEvent.positionTime * 1000)
+            return .success
+        }
+        for (command, interval) in [
+            (commands.skipForwardCommand, 15.0),
+            (commands.skipBackwardCommand, -15.0),
+        ] {
+            command.preferredIntervals = [NSNumber(value: abs(interval))]
+            command.addTarget(handler:) { [weak self] _ in
+                guard let self = self, let player = self.player else { return .commandFailed }
+                let current = player.currentTime().seconds
+                let target = max(current + interval, 0)
+                self.seek(to: target * 1000)
+                return .success
+            }
+        }
+    }
+
+    private func removeRemoteCommands() {
+        let commands = MPRemoteCommandCenter.shared()
+        for command in [
+            commands.playCommand,
+            commands.pauseCommand,
+            commands.togglePlayPauseCommand,
+            commands.changePlaybackPositionCommand,
+            commands.skipForwardCommand,
+            commands.skipBackwardCommand,
+        ] {
+            command.removeTarget(nil)
+        }
+    }
+
+    private func refreshNowPlayingInfo() {
+        let center = MPNowPlayingInfoCenter.default()
+        guard player != nil else {
+            center.nowPlayingInfo = nil
+            return
+        }
+        var info: [String: Any] = [
+            MPMediaItemPropertyTitle: nowPlayingTitle,
+            MPNowPlayingInfoPropertyPlaybackRate: (player?.timeControlStatus == .playing) ? Double(currentSpeed) : 0.0,
+        ]
+        if let subtitle = nowPlayingSubtitle, !subtitle.isEmpty {
+            info[MPMediaItemPropertyArtist] = subtitle
+        }
+        let durationSeconds = player?.currentItem?.duration.seconds ?? 0
+        if durationSeconds.isFinite && durationSeconds > 0 {
+            info[MPMediaItemPropertyPlaybackDuration] = durationSeconds
+        }
+        let elapsedSeconds = player?.currentTime().seconds ?? 0
+        if elapsedSeconds.isFinite && elapsedSeconds >= 0 {
+            info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = elapsedSeconds
+        }
+        center.nowPlayingInfo = info
     }
 
     private func installObservers(for item: AVPlayerItem) {
@@ -219,6 +316,7 @@ class AudiobookPlayerController {
         let duration = itemDurationMs
         let speed = currentSpeed
         let sleepRemainingMs = sleepRemainingSeconds > 0 ? sleepRemainingSeconds * 1000 : 0
+        refreshNowPlayingInfo()
         onPlaybackUpdate?(isPlaying, isLoading, position, duration, Float(speed), sleepRemainingMs, error)
     }
 

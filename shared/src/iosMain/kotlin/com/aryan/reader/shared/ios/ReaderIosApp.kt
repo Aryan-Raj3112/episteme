@@ -61,6 +61,7 @@ import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.CloudBookTombstone
 import com.aryan.reader.shared.CustomFontItem
 import com.aryan.reader.shared.FileType
+import com.aryan.reader.shared.pdf.IosPdfiumRuntime
 import com.aryan.reader.shared.ImportedBookFile
 import com.aryan.reader.shared.LibraryAction
 import com.aryan.reader.shared.LibraryFilters
@@ -85,6 +86,7 @@ import com.aryan.reader.shared.Shelf
 import com.aryan.reader.shared.ShelfType
 import com.aryan.reader.shared.SharedAudiobook
 import com.aryan.reader.shared.SharedAudiobookFormats
+import com.aryan.reader.shared.splitFilesByAudiobookDecodability
 import com.aryan.reader.shared.SharedAudiobookPlaybackRequest
 import com.aryan.reader.shared.SharedAudiobookPlaybackState
 import com.aryan.reader.shared.sharedAudiobookResumePosition
@@ -216,6 +218,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.withLock
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.usePinned
 import platform.Foundation.NSApplicationSupportDirectory
@@ -447,7 +450,9 @@ class ReaderIosBridge internal constructor(
                 path = file.path,
                 sourceFolder = folderName,
                 relativePath = file.relativePath.ifBlank { file.name },
-                type = file.name.fileTypeFromExtension(),
+                // Android resolves types through the shared capabilities table (MOBI aliases,
+                // xhtml, fb2.zip, ...). iOS must not keep a diverging extension map.
+                type = SharedFileCapabilities.fileTypeForName(file.name),
                 size = file.fileSize,
                 lastModified = file.lastModifiedTimestamp,
             )
@@ -2550,8 +2555,17 @@ private fun ReaderIosApp(
     }
 
     fun importIosAudiobooks(files: List<IosImportedFile>) {
-        val candidates = files
-            .filter { SharedAudiobookFormats.supportsFileName(it.name) }
+        val split = splitFilesByAudiobookDecodability(
+            files.filter { SharedAudiobookFormats.supportsFileName(it.name) },
+            IosImportedFile::name,
+        )
+        if (split.unsupported.isNotEmpty()) {
+            showMessage(
+                "Skipped ${split.unsupported.joinToString { it.name }}: " +
+                    "this device cannot decode these audiobook formats"
+            )
+        }
+        val candidates = split.decodable
             .filter { file ->
                 val id = file.contentId.takeIf { it.isNotBlank() }
                     ?: "ios_audio_${file.path.stableIosImportedFilePath().normalizedId()}"
@@ -2815,7 +2829,17 @@ private fun ReaderIosApp(
 
     LaunchedEffect(bridge.importedFiles, bridge.pendingImportBatches, bridge.pendingFolderScans) {
         bridge.pendingImportBatches.firstOrNull()?.let { batch ->
-            val audioFiles = batch.files.filter { SharedAudiobookFormats.supportsFileName(it.name) }
+            val audioSplit = splitFilesByAudiobookDecodability(
+                batch.files.filter { SharedAudiobookFormats.supportsFileName(it.name) },
+                IosImportedFile::name,
+            )
+            val audioFiles = audioSplit.decodable
+            if (audioSplit.unsupported.isNotEmpty()) {
+                showMessage(
+                    "Skipped ${audioSplit.unsupported.joinToString { it.name }}: " +
+                        "this device cannot decode these audiobook formats"
+                )
+            }
             val bookFiles = batch.files.filterNot { SharedAudiobookFormats.supportsFileName(it.name) }
             val existingBooks = state.rawLibraryBooks
             val outcome = planMobileImportBatch(
@@ -2957,7 +2981,15 @@ private fun ReaderIosApp(
                 )
         }
         presentationCandidates.forEach { book ->
-            val presentation = extractIosBookPresentation(book)
+            // PDF cover/metadata extraction rasterizes a page through PDFium; keep it off the
+            // UI thread and serialized with the shared reader pipeline (Android parity).
+            val presentation = withContext(Dispatchers.Default) {
+                if (book.type == FileType.PDF) {
+                    IosPdfiumRuntime.mutex.withLock { extractIosBookPresentation(book) }
+                } else {
+                    extractIosBookPresentation(book)
+                }
+            }
             val coverPath = presentation.coverBytes
                 ?.takeIf { it.isNotEmpty() }
                 ?.let { bytes -> persistIosGeneratedCover(book, bytes) }
@@ -5745,27 +5777,6 @@ private fun OpdsEntry.toIosStreamBook(catalogId: String?): BookItem {
         sourceFolder = "OPDS Stream",
         progressPercentage = 0f
     )
-}
-
-private fun String.fileTypeFromExtension(): FileType {
-    return when (substringAfterLast('.', "").lowercase()) {
-        "pdf" -> FileType.PDF
-        "epub" -> FileType.EPUB
-        "mobi" -> FileType.MOBI
-        "md", "markdown" -> FileType.MD
-        "txt" -> FileType.TXT
-        "html", "htm" -> FileType.HTML
-        "fb2" -> FileType.FB2
-        "cbz" -> FileType.CBZ
-        "cbr" -> FileType.CBR
-        "cb7" -> FileType.CB7
-        "cbt" -> FileType.CBT
-        "docx" -> FileType.DOCX
-        "odt" -> FileType.ODT
-        "fodt" -> FileType.FODT
-        "pptx" -> FileType.PPTX
-        else -> FileType.UNKNOWN
-    }
 }
 
 private fun String.normalizedId(): String {

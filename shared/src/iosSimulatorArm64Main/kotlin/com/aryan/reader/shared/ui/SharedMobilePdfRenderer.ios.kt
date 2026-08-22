@@ -44,7 +44,6 @@ import kotlinx.cinterop.get
 import kotlinx.cinterop.plus
 import kotlinx.cinterop.useContents
 import kotlinx.cinterop.usePinned
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import org.jetbrains.skia.ColorAlphaType
@@ -232,14 +231,14 @@ private object IosPdfiumRenderer {
         password: String?,
         reverseColorMode: PdfReverseColorMode = PdfReverseColorMode.RGB,
         preserveImageColors: Boolean = false,
-    ): List<SharedMobilePdfTileRender> = IosPdfiumRuntime.mutex.withLock {
-        val resolvedPath = path.resolvedIosPdfPath() ?: return@withLock emptyList()
-        if (!NSFileManager.defaultManager.fileExistsAtPath(resolvedPath)) return@withLock emptyList()
-        IosPdfiumRuntime.ensureInitialized()
-        val document = FPDF_LoadDocument(resolvedPath, password) ?: return@withLock emptyList()
+    ): List<SharedMobilePdfTileRender> = IosPdfiumRuntime.withPdfium {
+        val resolvedPath = path.resolvedIosPdfPath() ?: return@withPdfium emptyList()
+        if (!NSFileManager.defaultManager.fileExistsAtPath(resolvedPath)) return@withPdfium emptyList()
+        val document = FPDF_LoadDocument(resolvedPath, password) ?: return@withPdfium emptyList()
         try {
-            val count = FPDF_GetPageCount(document).coerceAtLeast(1)
-            val page = FPDF_LoadPage(document, pageIndex.coerceIn(0, count - 1)) ?: return@withLock emptyList()
+            val count = FPDF_GetPageCount(document)
+            if (count <= 0) return@withPdfium emptyList()
+            val page = FPDF_LoadPage(document, pageIndex.coerceIn(0, count - 1)) ?: return@withPdfium emptyList()
             try {
                 val pageWidth = FPDF_GetPageWidthF(page).coerceAtLeast(1f)
                 val pageHeight = FPDF_GetPageHeightF(page).coerceAtLeast(1f)
@@ -326,27 +325,31 @@ private object IosPdfiumRenderer {
         reverseColorMode: PdfReverseColorMode = PdfReverseColorMode.RGB,
         preserveImageColors: Boolean = false,
     ): SharedMobilePdfPageRender =
-        IosPdfiumRuntime.mutex.withLock {
+        IosPdfiumRuntime.withPdfium {
         val resolvedPath = path.resolvedIosPdfPath()
         if (resolvedPath.isNullOrBlank()) {
-            return SharedMobilePdfPageRender(errorMessage = "PDF path is unavailable")
+            return@withPdfium SharedMobilePdfPageRender(errorMessage = "PDF path is unavailable")
         }
         if (!NSFileManager.defaultManager.fileExistsAtPath(resolvedPath)) {
-            return SharedMobilePdfPageRender(errorMessage = "PDF file is missing: $resolvedPath")
+            return@withPdfium SharedMobilePdfPageRender(errorMessage = "PDF file is missing: $resolvedPath")
         }
 
-        IosPdfiumRuntime.ensureInitialized()
-
         val document = FPDF_LoadDocument(resolvedPath, password)
-            ?: return SharedMobilePdfPageRender(
+            ?: return@withPdfium SharedMobilePdfPageRender(
                 errorMessage = "Pdfium could not open this PDF",
                 openError = sharedMobilePdfOpenErrorForPdfiumCode(FPDF_GetLastError().toLong()),
             )
-        return try {
-                val pageCount = FPDF_GetPageCount(document).coerceAtLeast(1)
+        try {
+                val pageCount = FPDF_GetPageCount(document)
+                if (pageCount <= 0) {
+                    return@withPdfium SharedMobilePdfPageRender(
+                        errorMessage = "Pdfium could not read pages from this document",
+                        openError = SharedMobilePdfOpenError.INVALID_DOCUMENT,
+                    )
+                }
                 val safePageIndex = pageIndex.coerceIn(0, pageCount - 1)
                 val page = FPDF_LoadPage(document, safePageIndex)
-                    ?: return SharedMobilePdfPageRender(
+                    ?: return@withPdfium SharedMobilePdfPageRender(
                         pageCount = pageCount,
                         errorMessage = "Pdfium could not load page ${safePageIndex + 1}"
                     )
@@ -360,7 +363,7 @@ private object IosPdfiumRenderer {
                     val bitmapWidth = (pageWidth * scale).roundToInt().coerceAtLeast(1)
                     val bitmapHeight = targetHeight.roundToInt().coerceAtLeast(1)
                     val bitmap = FPDFBitmap_Create(bitmapWidth, bitmapHeight, 1)
-                        ?: return SharedMobilePdfPageRender(
+                        ?: return@withPdfium SharedMobilePdfPageRender(
                             pageCount = pageCount,
                             errorMessage = "Pdfium could not allocate a page bitmap"
                         )
@@ -378,7 +381,7 @@ private object IosPdfiumRenderer {
                         )
 
                         val buffer = FPDFBitmap_GetBuffer(bitmap)
-                            ?: return SharedMobilePdfPageRender(
+                            ?: return@withPdfium SharedMobilePdfPageRender(
                                 pageCount = pageCount,
                                 errorMessage = "Pdfium returned an empty page buffer"
                             )
@@ -447,14 +450,14 @@ private object IosPdfiumRenderer {
         reverseColorMode: PdfReverseColorMode = PdfReverseColorMode.RGB,
         preserveImageColors: Boolean = false,
     ): SharedMobilePdfPageThumbnail? =
-        IosPdfiumRuntime.mutex.withLock {
-            val resolvedPath = path.resolvedIosPdfPath() ?: return@withLock null
-            if (!NSFileManager.defaultManager.fileExistsAtPath(resolvedPath)) return@withLock null
-            IosPdfiumRuntime.ensureInitialized()
-            val document = FPDF_LoadDocument(resolvedPath, password) ?: return@withLock null
+        IosPdfiumRuntime.withPdfium {
+            val resolvedPath = path.resolvedIosPdfPath() ?: return@withPdfium null
+            if (!NSFileManager.defaultManager.fileExistsAtPath(resolvedPath)) return@withPdfium null
+            val document = FPDF_LoadDocument(resolvedPath, password) ?: return@withPdfium null
             try {
-                val count = FPDF_GetPageCount(document).coerceAtLeast(1)
-                val page = FPDF_LoadPage(document, pageIndex.coerceIn(0, count - 1)) ?: return@withLock null
+                val count = FPDF_GetPageCount(document)
+                if (count <= 0) return@withPdfium null
+                val page = FPDF_LoadPage(document, pageIndex.coerceIn(0, count - 1)) ?: return@withPdfium null
                 try {
                     val pageWidth = FPDF_GetPageWidthF(page).coerceAtLeast(1f)
                     val pageHeight = FPDF_GetPageHeightF(page).coerceAtLeast(1f)
@@ -463,11 +466,11 @@ private object IosPdfiumRenderer {
                     val scale = ThumbnailTargetWidthPx / pageWidth
                     val bitmapWidth = (pageWidth * scale).roundToInt().coerceAtLeast(1)
                     val bitmapHeight = (pageHeight * scale).roundToInt().coerceAtLeast(1)
-                    val bitmap = FPDFBitmap_Create(bitmapWidth, bitmapHeight, 1) ?: return@withLock null
+                    val bitmap = FPDFBitmap_Create(bitmapWidth, bitmapHeight, 1) ?: return@withPdfium null
                     try {
                         FPDFBitmap_FillRect(bitmap, 0, 0, bitmapWidth, bitmapHeight, 0xFFFFFFFFu)
                         FPDF_RenderPageBitmap(bitmap, page, 0, 0, bitmapWidth, bitmapHeight, 0, 0)
-                        val buffer = FPDFBitmap_GetBuffer(bitmap) ?: return@withLock null
+                        val buffer = FPDFBitmap_GetBuffer(bitmap) ?: return@withPdfium null
                         val stride = FPDFBitmap_GetStride(bitmap).coerceAtLeast(bitmapWidth * 4)
                         val byteCount = stride * bitmapHeight
                         val bytes = ByteArray(byteCount)

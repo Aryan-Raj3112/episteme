@@ -16,7 +16,6 @@ import com.aryan.reader.shared.pdf.IosPdfOcrLanguagePreferences
 import com.aryan.reader.shared.pdf.IosPdfTextPage
 import com.aryan.reader.shared.pdf.PdfTextPageSession
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 @Composable
@@ -30,7 +29,7 @@ actual fun rememberPdfTextPageSession(
 
     LaunchedEffect(book.path, pageIndex, password, ocrLanguages) {
         session = withContext(Dispatchers.Default) {
-            val nativeSession = IosPdfiumRuntime.mutex.withLock {
+            val nativeSession = IosPdfiumRuntime.withPdfium {
                 IosPdfTextPage.open(book.path, pageIndex, password)
             }
             if (nativeSession?.pageCharCount ?: 0 > 0) {
