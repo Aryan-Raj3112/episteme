@@ -23,6 +23,7 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.sp
 import com.aryan.reader.paginatedreader.CssStyle
+import com.aryan.reader.paginatedreader.PaginationStackFragmentationPlan
 import com.aryan.reader.paginatedreader.SemanticBlock
 import com.aryan.reader.paginatedreader.SemanticFlexContainer
 import com.aryan.reader.paginatedreader.SemanticHeader
@@ -33,8 +34,10 @@ import com.aryan.reader.paginatedreader.SemanticMath
 import com.aryan.reader.paginatedreader.SemanticParagraph
 import com.aryan.reader.paginatedreader.SemanticSpacer
 import com.aryan.reader.paginatedreader.SemanticTable
+import com.aryan.reader.paginatedreader.SemanticTableCell
 import com.aryan.reader.paginatedreader.SemanticTextBlock
 import com.aryan.reader.paginatedreader.SemanticWrappingBlock
+import com.aryan.reader.paginatedreader.planPaginationStackFragmentation
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -637,9 +640,78 @@ class SharedMeasuredEpubPaginator(
         return when (block) {
             is SemanticTextBlock -> splitTextBlock(block, availableHeight, geometry, baseStyle, settings)
             is SemanticList -> splitList(block, availableHeight, geometry, baseStyle, settings)
+            is SemanticTable -> splitTable(block, availableHeight, geometry, baseStyle, settings)
             is SemanticFlexContainer -> splitFlex(block, availableHeight, geometry, baseStyle, settings)
             is SemanticWrappingBlock -> splitWrapping(block, availableHeight, geometry, baseStyle, settings)
             else -> null
+        }
+    }
+
+    /**
+     * Fragments a vertically stacked list of semantic blocks into (head, tail) under a height
+     * budget, mirroring the Android engine's splitVerticalContentList. Whole children are
+     * placed while they fit; the first overflowing child is fragmented in place when possible.
+     *
+     * Returns null when no progress is possible or when every child fits; a null second value
+     * means the whole list fits within the budget.
+     */
+    private suspend fun splitSemanticStack(
+        blocks: List<SemanticBlock>,
+        availableHeightPx: Int,
+        geometry: MeasuredPageGeometry,
+        baseStyle: TextStyle,
+        settings: ReaderSettings
+    ): Pair<List<SemanticBlock>, List<SemanticBlock>?>? {
+        currentCoroutineContext().ensureActive()
+        if (blocks.isEmpty() || availableHeightPx <= 0) return null
+
+        val contentHeights = ArrayList<Int>(blocks.size)
+        val collapsedGaps = ArrayList<Int>(blocks.size)
+        val trailingBottomMargins = ArrayList<Int>(blocks.size)
+        var previousBottom: Int? = null
+        for (block in blocks) {
+            val topMargin = block.effectiveTopMarginPx()
+            contentHeights += measureBlock(block, geometry, baseStyle, settings)
+            collapsedGaps += previousBottom?.let { maxOf(it, topMargin) } ?: topMargin
+            val bottomMargin = block.effectiveBottomMarginPx(settings)
+            trailingBottomMargins += bottomMargin
+            previousBottom = bottomMargin
+        }
+
+        val fragmentResults = arrayOfNulls<Pair<SemanticBlock, SemanticBlock>>(blocks.size)
+        val plan = planPaginationStackFragmentation(
+            contentHeightsPx = contentHeights,
+            collapsedGapsPx = collapsedGaps,
+            trailingBottomMarginsPx = trailingBottomMargins,
+            availableHeightPx = availableHeightPx,
+            childCanFragment = { true },
+            childFragmentHeadFits = { index, leftoverPx ->
+                val fragments = splitBlock(blocks[index], leftoverPx, geometry, baseStyle, settings)
+                if (fragments != null && fragments.first.hasReadableContent()) {
+                    fragmentResults[index] = fragments
+                    true
+                } else {
+                    false
+                }
+            }
+        )
+
+        return when (plan) {
+            PaginationStackFragmentationPlan.FitsEntirely -> blocks to null
+            PaginationStackFragmentationPlan.NothingFits -> null
+            is PaginationStackFragmentationPlan.Fragmented -> {
+                val head = ArrayList<SemanticBlock>(blocks.take(plan.headCount))
+                val tail = mutableListOf<SemanticBlock>()
+                if (plan.splitChildIndex != null) {
+                    val fragments = fragmentResults[plan.splitChildIndex] ?: return null
+                    head += fragments.first
+                    if (fragments.second.hasReadableContent()) tail += fragments.second
+                    tail += blocks.drop(plan.splitChildIndex + 1)
+                } else {
+                    tail += blocks.drop(plan.headCount)
+                }
+                head to tail
+            }
         }
     }
 
@@ -652,7 +724,6 @@ class SharedMeasuredEpubPaginator(
     ): Pair<SemanticBlock, SemanticBlock>? {
         val text = block.text
         if (text.isBlank()) return null
-        if (block.style.blockStyle.pageBreakInsideAvoid) return null
 
         val style = block.textStyle(baseStyle, settings)
         val contentWidth = block.measuredTextContentWidthPx(geometry)
@@ -665,6 +736,14 @@ class SharedMeasuredEpubPaginator(
             widthPx = contentWidth
         )
         if (layoutResult.size.height <= availableTextHeight) return null
+        // break-inside:avoid is best-effort; a block taller than a full page can never be
+        // placed readably, so the hint is dropped and the text is fragmented like any other
+        // oversized block.
+        if (block.style.blockStyle.pageBreakInsideAvoid &&
+            layoutResult.size.height + block.splitDecorationPx() <= geometry.pageHeightPx
+        ) {
+            return null
+        }
         if (layoutResult.lineCount <= 1 || layoutResult.getLineBottom(0) > availableTextHeight) return null
 
         var lastVisibleLine = layoutResult
@@ -721,14 +800,87 @@ class SharedMeasuredEpubPaginator(
     ): Pair<SemanticBlock, SemanticBlock>? {
         val availableContentHeight = availableHeight - block.splitDecorationPx()
         if (availableContentHeight <= 0) return null
-        val items = block.children.toPaginationStackItems(geometry, baseStyle, settings)
-        val prefixCount = paginationStackPrefixCountThatFits(
-            items = items,
+        val outcome = splitSemanticStack(
+            blocks = block.children,
             availableHeightPx = availableContentHeight,
-            includeTrailingBottomMargin = true
-        )
-        if (prefixCount <= 0 || prefixCount >= block.children.size) return null
-        return block.copy(children = block.children.take(prefixCount)) to block.copy(children = block.children.drop(prefixCount))
+            geometry = geometry,
+            baseStyle = baseStyle,
+            settings = settings
+        ) ?: return null
+        val tail = outcome.second ?: return null
+        if (outcome.first.isEmpty() || tail.isEmpty()) return null
+        return block.copy(children = outcome.first) to block.copy(children = tail)
+    }
+
+    /**
+     * Splits a table between rows; a single row taller than the remaining space is itself
+     * fragmented by splitting each cell's content stack at the same vertical budget so
+     * layout tables (publisher callout boxes) span pages instead of overflowing them.
+     */
+    private suspend fun splitTable(
+        block: SemanticTable,
+        availableHeight: Int,
+        geometry: MeasuredPageGeometry,
+        baseStyle: TextStyle,
+        settings: ReaderSettings
+    ): Pair<SemanticBlock, SemanticBlock>? {
+        currentCoroutineContext().ensureActive()
+        val availableContentHeight = availableHeight - block.splitDecorationPx()
+        if (availableContentHeight <= 0 || block.rows.isEmpty()) return null
+
+        var usedHeight = 0
+        for ((index, row) in block.rows.withIndex()) {
+            val rowHeight = row.maxOfOrNull { cell ->
+                measureBlockStack(
+                    blocks = cell.content,
+                    geometry = geometry,
+                    baseStyle = baseStyle,
+                    settings = settings,
+                    includeTrailingBottomMargin = true
+                )
+            } ?: 1
+
+            if (usedHeight + rowHeight <= availableContentHeight) {
+                usedHeight += rowHeight
+                continue
+            }
+
+            val availableForRow = (availableContentHeight - usedHeight).coerceAtLeast(0)
+            splitTableRowCells(row, availableForRow, geometry, baseStyle, settings)?.let { (headRow, tailRow) ->
+                return block.copy(rows = block.rows.take(index) + listOf(headRow)) to
+                    block.copy(rows = listOf(tailRow) + block.rows.drop(index + 1))
+            }
+            if (index <= 0) return null
+            return block.copy(rows = block.rows.take(index)) to block.copy(rows = block.rows.drop(index))
+        }
+        return null
+    }
+
+    private suspend fun splitTableRowCells(
+        row: List<SemanticTableCell>,
+        availableHeightPx: Int,
+        geometry: MeasuredPageGeometry,
+        baseStyle: TextStyle,
+        settings: ReaderSettings
+    ): Pair<List<SemanticTableCell>, List<SemanticTableCell>>? {
+        currentCoroutineContext().ensureActive()
+        if (row.isEmpty() || availableHeightPx <= 0) return null
+        // Every cell shares the same budget so column alignment survives the break; a cell
+        // whose content places nothing aborts the fragmentation.
+        val cellOutcomes = row.map { cell ->
+            splitSemanticStack(cell.content, availableHeightPx, geometry, baseStyle, settings)
+                ?: return null
+        }
+        var anyHeadContent = false
+        var anyTailContent = false
+        for (outcome in cellOutcomes) {
+            anyHeadContent = anyHeadContent || outcome.first.any { it.hasReadableContent() }
+            anyTailContent = anyTailContent || outcome.second.orEmpty().any { it.hasReadableContent() }
+        }
+        if (!anyHeadContent || !anyTailContent) return null
+        val headCells = row.mapIndexed { index, cell -> cell.copy(content = cellOutcomes[index].first) }
+        val tailCells = row.mapIndexed { index, cell -> cell.copy(content = cellOutcomes[index].second.orEmpty()) }
+        return headCells to tailCells
     }
 
     private suspend fun splitWrapping(

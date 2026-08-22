@@ -51,6 +51,12 @@ private const val AndroidEpubCutoffLogTag = "EpistemeEpubCutoff"
 private const val AndroidEpubPageGapDiagLogTag = "EpistemePageGapDiag"
 private const val JustifiedSplitGapProbeMinFraction = 0.18f
 
+/**
+ * Minimum remaining space (px) below which vertical fragmentation is refused, mirroring the
+ * paginator's heightForSplitting threshold.
+ */
+private const val MinVerticalFragmentSpacePx = 50
+
 private fun TextLayoutResult.paginationMeasuredHeightPx(): Int {
     val lastLineBottomPx = if (lineCount > 0) getLineBottom(lineCount - 1) else 0f
     return measuredTextHeightForPagination(size.height, lastLineBottomPx)
@@ -148,6 +154,153 @@ class SuspendingAndroidBlockMeasurementProvider(
         result = 31 * result + imageSizeMultiplier.hashCode()
         result = 31 * result + hideImages.hashCode()
         return result
+    }
+
+    /**
+     * Fragments a vertically stacked list of blocks into (head, tail) under a height budget.
+     *
+     * Whole children are placed while they fit; the first overflowing child is fragmented in
+     * place when possible (text mid-split, or recursion into nested flex/table/chant blocks).
+     * Returns null when nothing fits and the first child cannot be fragmented, or when the
+     * list fits entirely (no fragmentation needed).
+     *
+     * [contentConstraints] must be the measuring constraints of the container's CONTENT area
+     * (container width minus its own horizontal padding/borders/margins) so children are
+     * measured and line-split at exactly the width they render.
+     */
+    private suspend fun splitVerticalContentList(
+        children: List<ContentBlock>,
+        availableContentHeight: Int,
+        contentConstraints: Constraints
+    ): Pair<List<ContentBlock>, List<ContentBlock>>? {
+        coroutineContext.ensureActive()
+        if (children.isEmpty() || availableContentHeight <= 0) return null
+
+        val contentHeights = ArrayList<Int>(children.size)
+        val collapsedGaps = ArrayList<Int>(children.size)
+        val trailingBottomMargins = ArrayList<Int>(children.size)
+        var previousBottomMarginPx: Float? = null
+        for (child in children) {
+            contentHeights += measureChildForSplit(child, contentConstraints)
+            val gap = with(density) {
+                collapsedVerticalMarginPxForPagination(previousBottomMarginPx, child.style.margin.top.toPx())
+            }
+            collapsedGaps += gap
+            trailingBottomMargins += with(density) { child.style.margin.bottom.toPx().coerceAtLeast(0f).roundToInt() }
+            previousBottomMarginPx = with(density) { child.style.margin.bottom.toPx() }
+        }
+
+        val fragmentResults = arrayOfNulls<Pair<ContentBlock, List<ContentBlock>>>(children.size)
+        val plan = planPaginationStackFragmentation(
+            contentHeightsPx = contentHeights,
+            collapsedGapsPx = collapsedGaps,
+            trailingBottomMarginsPx = trailingBottomMargins,
+            availableHeightPx = availableContentHeight,
+            childCanFragment = { index -> isVerticallyFragmentable(children[index]) },
+            childFragmentHeadFits = { index, leftoverPx ->
+                val fragments = midSplitVerticalChild(children[index], leftoverPx, contentConstraints)
+                if (fragments != null) {
+                    fragmentResults[index] = fragments
+                    true
+                } else {
+                    false
+                }
+            }
+        )
+
+        return when (plan) {
+            PaginationStackFragmentationPlan.FitsEntirely,
+            PaginationStackFragmentationPlan.NothingFits -> null
+            is PaginationStackFragmentationPlan.Fragmented -> {
+                val headCount = plan.headCount
+                val splitChildIndex = plan.splitChildIndex
+                val head = ArrayList<ContentBlock>(children.take(headCount))
+                val tail = mutableListOf<ContentBlock>()
+                if (splitChildIndex != null) {
+                    val fragments = fragmentResults[splitChildIndex] ?: return null
+                    head += fragments.first
+                    tail += fragments.second
+                    tail += children.drop(splitChildIndex + 1)
+                } else {
+                    tail += children.drop(headCount)
+                }
+                if (head.isEmpty() || tail.isEmpty()) null else head to tail
+            }
+        }
+    }
+
+    /**
+     * Measures a child at its container's content constraints. Unlike [measure], this cannot
+     * use the provider-wide cache because the width differs per container.
+     */
+    private suspend fun measureChildForSplit(child: ContentBlock, contentConstraints: Constraints): Int {
+        return measureBlockHeight(
+            block = child,
+            textMeasurer = textMeasurer,
+            constraints = contentConstraints,
+            defaultStyle = textStyle,
+            headerStyle = textStyle.copy(fontWeight = FontWeight.Bold),
+            density = density,
+            imageSizeMultiplier = imageSizeMultiplier,
+            hideImages = hideImages
+        )
+    }
+
+    private fun isVerticallyFragmentable(child: ContentBlock): Boolean = when (child) {
+        is TextContentBlock -> true
+        is FlexContainerBlock -> true
+        is TableBlock -> true
+        is ChantScoreBlock -> true
+        else -> false
+    }
+
+    /**
+     * Attempts an in-place fragmentation of a single child against leftover space.
+     *
+     * break-inside:avoid hints are honored unless the child alone is taller than a full page,
+     * in which case fragmenting is the only readable placement.
+     */
+    private suspend fun midSplitVerticalChild(
+        child: ContentBlock,
+        availableHeightPx: Int,
+        contentConstraints: Constraints
+    ): Pair<ContentBlock, List<ContentBlock>>? {
+        coroutineContext.ensureActive()
+        if (availableHeightPx <= MinVerticalFragmentSpacePx) return null
+        if (child.style.avoidsReaderPageBreakInside() &&
+            measureChildForSplit(child, contentConstraints) <= this.constraints.maxHeight
+        ) {
+            return null
+        }
+        return when (child) {
+            is TextContentBlock -> {
+                // Mirror the measurement width exactly: list items are measured with their
+                // marker area reserved, so their line breaks must be chosen with the same
+                // narrowed width or fragments re-wrap taller than budgeted.
+                val textConstraints = if (child is ListItemBlock) {
+                    val markerWidthPx = with(density) { 32.dp.toPx() }.toInt()
+                    contentConstraints.copy(
+                        maxWidth = (contentConstraints.maxWidth - markerWidthPx).coerceAtLeast(0)
+                    )
+                } else {
+                    contentConstraints
+                }
+                splitTextContentBlock(
+                    block = child,
+                    textMeasurer = textMeasurer,
+                    constraints = textConstraints,
+                    textStyle = if (child is HeaderBlock) textStyle.copy(fontWeight = FontWeight.Bold) else textStyle,
+                    availableHeight = availableHeightPx,
+                    density = density
+                )?.let { it.first to listOf(it.second) }
+            }
+            is FlexContainerBlock -> splitFlexContainerAt(contentConstraints, child, availableHeightPx)
+                ?.let { it.first to listOf(it.second) }
+            is TableBlock -> splitTableAt(contentConstraints, child, availableHeightPx)
+                ?.let { it.first to listOf(it.second) }
+            is ChantScoreBlock -> split(child, availableHeightPx)?.let { it.first to listOf(it.second) }
+            else -> null
+        }
     }
 
     override suspend fun split(block: ParagraphBlock, availableHeight: Int): Pair<ParagraphBlock, ParagraphBlock>? {
@@ -363,6 +516,20 @@ class SuspendingAndroidBlockMeasurementProvider(
     }
 
     override suspend fun split(block: TableBlock, availableHeight: Int): Pair<TableBlock, TableBlock>? {
+        return splitTableAt(contentConstraints = constraints, block = block, availableHeight = availableHeight)
+    }
+
+    /**
+     * Row-walking table fragmentation against [contentConstraints], the width budget the table
+     * lives in. Nested tables (a table inside a callout box) must derive cell widths from the
+     * containing box's content area, not from the full page, or fragments render taller than
+     * they were measured.
+     */
+    private suspend fun splitTableAt(
+        contentConstraints: Constraints,
+        block: TableBlock,
+        availableHeight: Int
+    ): Pair<TableBlock, TableBlock>? {
         coroutineContext.ensureActive()
         var currentHeight = 0
         var splitRowIndex = -1
@@ -387,7 +554,7 @@ class SuspendingAndroidBlockMeasurementProvider(
             val rowHeight = measureTableRowHeight(
                 row = rowsForSplit[i],
                 textMeasurer = textMeasurer,
-                constraints = constraints,
+                constraints = contentConstraints,
                 defaultStyle = textStyle,
                 headerStyle = textStyle.copy(fontWeight = FontWeight.Bold),
                 density = density,
@@ -399,40 +566,48 @@ class SuspendingAndroidBlockMeasurementProvider(
                 if (DEBUG_PAGINATION_LOGS) {
                     Timber.tag("PAGINATION_DEBUG").d("SplitTable: Breaking at row $i. currentH=$currentHeight, rowH=$rowHeight stacked=$stackRows")
                 }
+                val availableForRow = (availableHeight - currentHeight - decorationBottom).coerceAtLeast(0)
                 if (stackRows) {
-                    val rowsBeforeSplit = rowsForSplit.take(i)
-                    splitStackedTableRow(
-                        row = rowsForSplit[i],
-                        availableHeight = (availableHeight - currentHeight - decorationBottom).coerceAtLeast(0),
-                        textMeasurer = textMeasurer,
-                        constraints = constraints,
-                        defaultStyle = textStyle,
-                        headerStyle = textStyle.copy(fontWeight = FontWeight.Bold),
-                        density = density,
-                        imageSizeMultiplier = imageSizeMultiplier,
-                        hideImages = hideImages
-                    )?.let { (part1Row, part2Row) ->
-                        logAndroidEpubCutoff(
-                            "cutoff_probe layer=android_stacked_table_split_success block=${block.blockIndex} " +
-                                "rowIndex=$i rowsBefore=${rowsBeforeSplit.size} rowsAfter=${rowsForSplit.size - i - 1} " +
-                                "availableHeightPx=${(availableHeight - currentHeight - decorationBottom).coerceAtLeast(0)} " +
-                                "rowHeightPx=$rowHeight textChars=${rowsForSplit[i].sumOf { cell -> cell.content.sumOf { it.paginationTextCharCount() } }}"
-                        )
-                        val part1 = block.copy(
-                            rows = rowsBeforeSplit + listOf(part1Row),
-                            style = block.style.copy(margin = block.style.margin.copy(bottom = 0.dp))
-                        )
-                        val part2 = block.copy(
-                            rows = listOf(part2Row) + rowsForSplit.drop(i + 1),
-                            style = block.style.copy(margin = block.style.margin.copy(top = 0.dp))
-                        )
-                        return part1 to part2
+                    if (availableForRow > 0) {
+                        splitStackedTableRow(
+                            row = rowsForSplit[i],
+                            availableHeight = availableForRow,
+                            textMeasurer = textMeasurer,
+                            constraints = contentConstraints,
+                            defaultStyle = textStyle,
+                            headerStyle = textStyle.copy(fontWeight = FontWeight.Bold),
+                            density = density,
+                            imageSizeMultiplier = imageSizeMultiplier,
+                            hideImages = hideImages
+                        )?.let { (part1Row, part2Row) ->
+                            logAndroidEpubCutoff(
+                                "cutoff_probe layer=android_stacked_table_split_success block=${block.blockIndex} " +
+                                    "rowIndex=$i rowsBefore=${rowsForSplit.take(i).size} rowsAfter=${rowsForSplit.size - i - 1} " +
+                                    "availableHeightPx=$availableForRow " +
+                                    "rowHeightPx=$rowHeight textChars=${rowsForSplit[i].sumOf { cell -> cell.content.sumOf { it.paginationTextCharCount() } }}"
+                            )
+                            return tableSplitAtRow(block, rowsForSplit, i, part1Row, part2Row)
+                        }
                     }
                     logAndroidEpubCutoff(
                         "cutoff_probe layer=android_stacked_table_split_miss block=${block.blockIndex} " +
-                            "rowIndex=$i rowsBefore=${rowsBeforeSplit.size} availableHeightPx=${(availableHeight - currentHeight - decorationBottom).coerceAtLeast(0)} " +
+                            "rowIndex=$i rowsBefore=${rowsForSplit.take(i).size} availableHeightPx=$availableForRow " +
                             "rowHeightPx=$rowHeight rowCells=${rowsForSplit[i].size} " +
                             "rowTextChars=${rowsForSplit[i].sumOf { cell -> cell.content.sumOf { it.paginationTextCharCount() } }}"
+                    )
+                } else if (availableForRow > 0) {
+                    // Fragment the overflowing row itself so layout tables (publisher callout
+                    // boxes with a single tall cell) span pages instead of overflowing them.
+                    splitTableRowCells(row = rowsForSplit[i], availableHeight = availableForRow, contentConstraints = contentConstraints)?.let { (part1Row, part2Row) ->
+                        logAndroidEpubCutoff(
+                            "cutoff_probe layer=android_table_row_fragmentation_success block=${block.blockIndex} " +
+                                "rowIndex=$i availableForRowPx=$availableForRow rowCells=${part1Row.size}"
+                        )
+                        return tableSplitAtRow(block, rowsForSplit, i, part1Row, part2Row)
+                    }
+                    logAndroidEpubCutoff(
+                        "cutoff_probe layer=android_table_row_fragmentation_miss block=${block.blockIndex} " +
+                            "rowIndex=$i availableForRowPx=$availableForRow rowHeightPx=$rowHeight rowCells=${rowsForSplit[i].size}"
                     )
                 }
                 splitRowIndex = i
@@ -452,10 +627,86 @@ class SuspendingAndroidBlockMeasurementProvider(
         return part1 to part2
     }
 
+    private fun tableSplitAtRow(
+        block: TableBlock,
+        rowsForSplit: List<List<TableCell>>,
+        rowIndex: Int,
+        headRowFragments: List<TableCell>,
+        tailRowFragments: List<TableCell>
+    ): Pair<TableBlock, TableBlock> {
+        val part1 = block.copy(
+            rows = rowsForSplit.take(rowIndex) + listOf(headRowFragments),
+            style = block.style.copy(margin = block.style.margin.copy(bottom = 0.dp))
+        )
+        val part2 = block.copy(
+            rows = listOf(tailRowFragments) + rowsForSplit.drop(rowIndex + 1),
+            style = block.style.copy(margin = block.style.margin.copy(top = 0.dp))
+        )
+        return part1 to part2
+    }
+
+    /**
+     * Fragments a single overflowing table row by splitting every cell's content stack at the
+     * same vertical budget. Cells fragment independently but share the budget, so the row's
+     * column alignment is preserved across the page break.
+     */
+    private suspend fun splitTableRowCells(
+        row: List<TableCell>,
+        availableHeight: Int,
+        contentConstraints: Constraints
+    ): Pair<List<TableCell>, List<TableCell>>? {
+        coroutineContext.ensureActive()
+        if (row.isEmpty() || availableHeight <= 0) return null
+        val totalColspan = row.sumOf { it.colspan }.toFloat().coerceAtLeast(1f)
+        var anyHeadContent = false
+        var anyTailContent = false
+        val heads = mutableListOf<TableCell>()
+        val tails = mutableListOf<TableCell>()
+        for (cell in row) {
+            coroutineContext.ensureActive()
+            val cellBlockStyle = cell.style.blockStyle
+            val cellMaxWidth = when {
+                cellBlockStyle.width.isSpecified -> with(density) { cellBlockStyle.width.toPx().roundToInt() }
+                else -> (contentConstraints.maxWidth * (cell.colspan.toFloat() / totalColspan)).roundToInt()
+            }
+            val cellConstraints = contentConstraints.copy(maxWidth = cellMaxWidth.coerceAtLeast(0))
+            val cellDecorationHeight = tableCellVerticalDecorationHeightPx(
+                cell = cell,
+                density = density,
+                stackCellsVertically = false
+            )
+            val outcome = splitVerticalContentList(
+                children = cell.content,
+                availableContentHeight = (availableHeight - cellDecorationHeight).coerceAtLeast(0),
+                contentConstraints = cellConstraints
+            ) ?: return null
+            anyHeadContent = anyHeadContent || outcome.first.isNotEmpty()
+            anyTailContent = anyTailContent || outcome.second.isNotEmpty()
+            heads += cell.copy(content = outcome.first)
+            tails += cell.copy(content = outcome.second)
+        }
+        if (!anyHeadContent || !anyTailContent) return null
+        return heads to tails
+    }
+
     override suspend fun split(block: FlexContainerBlock, availableHeight: Int): Pair<FlexContainerBlock, FlexContainerBlock>? {
+        return splitFlexContainerAt(contentConstraints = constraints, block = block, availableHeight = availableHeight)
+    }
+
+    /**
+     * Column-flow container fragmentation against [contentConstraints], the width budget the
+     * container lives in. Nested containers (a list flex inside a callout box flex) must derive
+     * their content width from the containing box's content area, not from the full page, or
+     * fragments measure shorter than they render.
+     */
+    private suspend fun splitFlexContainerAt(
+        contentConstraints: Constraints,
+        block: FlexContainerBlock,
+        availableHeight: Int
+    ): Pair<FlexContainerBlock, FlexContainerBlock>? {
         coroutineContext.ensureActive()
         if (block.style.display == "reader-chant-flow") {
-            val maxWidth = constraints.maxWidth.coerceAtLeast(1)
+            val maxWidth = contentConstraints.maxWidth.coerceAtLeast(1)
             var rowWidth = 0
             var rowHeight = 0
             var usedHeight = 0
@@ -481,9 +732,7 @@ class SuspendingAndroidBlockMeasurementProvider(
         }
         if (block.style.flexDirection == "row") return null
 
-        var currentHeight = 0
-        var splitChildIndex = -1
-
+        val boxMetrics = computeBlockBoxMetrics(block, contentConstraints, density)
         val decorationTop = with(density) {
             block.style.padding.top.toPx() + (block.style.borderTop?.width?.toPx() ?: 0f)
         }.roundToInt()
@@ -492,29 +741,28 @@ class SuspendingAndroidBlockMeasurementProvider(
             block.style.padding.bottom.toPx() + (block.style.borderBottom?.width?.toPx() ?: 0f)
         }.roundToInt()
 
-        currentHeight += decorationTop
+        val availableContentHeight = (availableHeight - decorationTop - decorationBottom).coerceAtLeast(0)
+        if (availableContentHeight <= 0) return null
 
-        val childrenForSplit = block.childrenForFlexPaginationMeasurement()
-        for (i in childrenForSplit.indices) {
-            coroutineContext.ensureActive()
-            val child = childrenForSplit[i]
-            val childHeight = measure(child)
+        // Children are measured margin-free for flex pagination, so the walker sees zero gaps.
+        // The walker fragments an overflowing child in place when possible, which also allows
+        // a split at child index 0 (a box whose first paragraph alone exceeds the page).
+        // Children must be measured and split at the container's CONTENT width so fragment
+        // heights match how they render inside the box.
+        val (headChildren, tailChildren) = splitVerticalContentList(
+            children = block.childrenForFlexPaginationMeasurement(),
+            availableContentHeight = availableContentHeight,
+            contentConstraints = boxMetrics.contentConstraints
+        ) ?: return null
 
-            if (currentHeight + childHeight + decorationBottom > availableHeight) {
-                splitChildIndex = i
-                break
-            }
-            currentHeight += childHeight
-        }
-
-        if (splitChildIndex <= 0) return null
-
-        val part1Children = childrenForSplit.subList(0, splitChildIndex)
-        val part2Children = childrenForSplit.subList(splitChildIndex, childrenForSplit.size)
-
-        val part1 = block.copy(children = part1Children, style = block.style.copy(margin = block.style.margin.copy(bottom = 0.dp)))
-        val part2 = block.copy(children = part2Children, style = block.style.copy(margin = block.style.margin.copy(top = 0.dp)))
-
+        val part1 = block.copy(
+            children = headChildren,
+            style = block.style.copy(margin = block.style.margin.copy(bottom = 0.dp))
+        )
+        val part2 = block.copy(
+            children = tailChildren,
+            style = block.style.copy(margin = block.style.margin.copy(top = 0.dp))
+        )
         return part1 to part2
     }
 

@@ -367,6 +367,7 @@ class LibraryScreenContentTest {
                     onOpdsBookDownloaded = { _, _ -> },
                     onStreamOpdsBook = { _, _ -> },
                     onDeleteCatalogStreams = {},
+                    onShowBanner = {},
                     onSettingsClick = {},
                     usePdfFileNameAsDisplayName = false
                 )

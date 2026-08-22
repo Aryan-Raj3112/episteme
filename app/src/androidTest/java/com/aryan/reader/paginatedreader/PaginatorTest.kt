@@ -15,7 +15,9 @@ import org.junit.runner.RunWith
 class FakeSplittableMeasurementProvider(
     private val heights: Map<ContentBlock, Int>,
     private val splittableParagraphs: Map<ParagraphBlock, Pair<ParagraphBlock, ParagraphBlock>> = emptyMap(),
-    private val splittableWrappers: Map<WrappingContentBlock, Pair<WrappingContentBlock, List<ContentBlock>>> = emptyMap()
+    private val splittableWrappers: Map<WrappingContentBlock, Pair<WrappingContentBlock, List<ContentBlock>>> = emptyMap(),
+    private val splittableTables: Map<TableBlock, Pair<TableBlock, TableBlock>> = emptyMap(),
+    private val splittableFlexContainers: Map<FlexContainerBlock, Pair<FlexContainerBlock, FlexContainerBlock>> = emptyMap()
 ) : BlockMeasurementProvider {
     override suspend fun measure(block: ContentBlock): Int {
         // Provide a more helpful error message if a block's height is not defined.
@@ -45,9 +47,17 @@ class FakeSplittableMeasurementProvider(
         return null
     }
 
-    override suspend fun split(block: TableBlock, availableHeight: Int): Pair<TableBlock, TableBlock>? = null
+    override suspend fun split(block: TableBlock, availableHeight: Int): Pair<TableBlock, TableBlock>? {
+        val splitPair = splittableTables[block] ?: return null
+        val part1Height = heights[splitPair.first] ?: 0
+        return splitPair.takeIf { part1Height <= availableHeight }
+    }
 
-    override suspend fun split(block: FlexContainerBlock, availableHeight: Int): Pair<FlexContainerBlock, FlexContainerBlock>? = null
+    override suspend fun split(block: FlexContainerBlock, availableHeight: Int): Pair<FlexContainerBlock, FlexContainerBlock>? {
+        val splitPair = splittableFlexContainers[block] ?: return null
+        val part1Height = heights[splitPair.first] ?: 0
+        return splitPair.takeIf { part1Height <= availableHeight }
+    }
 
     override suspend fun split(block: ChantScoreBlock, availableHeight: Int): Pair<ChantScoreBlock, ChantScoreBlock>? = null
 }
@@ -163,9 +173,10 @@ class PaginatorTest {
         val part1 = block1.copy(content = AnnotatedString("Keep"))
         val part2 = block1.copy(content = AnnotatedString("together"))
 
+        // The block fits a full page, so the avoid hint is honored even though a split exists.
         val pages = paginate(
             listOf(block1),
-            pageHeight = 400,
+            pageHeight = 1000,
             measurementProvider = FakeSplittableMeasurementProvider(
                 heights = mapOf(block1 to 800, part1 to 300, part2 to 500),
                 splittableParagraphs = mapOf(block1 to (part1 to part2))
@@ -361,5 +372,103 @@ class PaginatorTest {
         assertThat(pages).hasSize(1)
         // Empty split heads are skipped so pagination keeps only the remaining content.
         assertThat(pages[0].content.withoutMeasuredHeights()).containsExactly(part2)
+    }
+
+    @Test
+    fun paginate_boxedFlexContainerWithSingleOversizedChildSpansPages() = runTest {
+        // A publisher callout box: one bordered container holding a single long paragraph.
+        val child = ParagraphBlock(content = AnnotatedString("Only child"), blockIndex = 1)
+        val box = FlexContainerBlock(children = listOf(child), blockIndex = 2)
+        val headChild = ParagraphBlock(content = AnnotatedString("Only"), blockIndex = 1)
+        val tailChild = ParagraphBlock(content = AnnotatedString("child"), blockIndex = 1)
+        val head = box.copy(children = listOf(headChild))
+        val tail = box.copy(children = listOf(tailChild))
+
+        val pages = paginate(
+            listOf(box),
+            pageHeight,
+            FakeSplittableMeasurementProvider(
+                heights = mapOf(box to 1500, head to 900, tail to 600),
+                splittableFlexContainers = mapOf(box to (head to tail))
+            ),
+            testDensity
+        )
+
+        assertThat(pages).hasSize(2)
+        assertThat(pages[0].content.withoutMeasuredHeights()).containsExactly(head)
+        assertThat(pages[1].content.withoutMeasuredHeights()).containsExactly(tail)
+    }
+
+    @Test
+    fun paginate_singleRowTableTallerThanPageSplitsInsideRow() = runTest {
+        // Layout tables wrap callouts in a single tall cell; the row itself must fragment.
+        val table = TableBlock(
+            rows = listOf(listOf(TableCell(content = listOf(ParagraphBlock(AnnotatedString("cell text"), blockIndex = 1))))),
+            blockIndex = 2
+        )
+        val part1 = table.copy(rows = listOf(listOf(TableCell(content = listOf(ParagraphBlock(AnnotatedString("cell"), blockIndex = 1))))))
+        val part2 = table.copy(rows = listOf(listOf(TableCell(content = listOf(ParagraphBlock(AnnotatedString("text"), blockIndex = 1))))))
+
+        val pages = paginate(
+            listOf(table),
+            pageHeight,
+            FakeSplittableMeasurementProvider(
+                heights = mapOf(table to 1500, part1 to 900, part2 to 600),
+                splittableTables = mapOf(table to (part1 to part2))
+            ),
+            testDensity
+        )
+
+        assertThat(pages).hasSize(2)
+        assertThat(pages[0].content.withoutMeasuredHeights()).containsExactly(part1)
+        assertThat(pages[1].content.withoutMeasuredHeights()).containsExactly(part2)
+    }
+
+    @Test
+    fun paginate_breakInsideAvoidTableTallerThanPageStillSplits() = runTest {
+        val table = TableBlock(
+            rows = listOf(listOf(TableCell(content = listOf(ParagraphBlock(AnnotatedString("boxed"), blockIndex = 1))))),
+            style = BlockStyle(breakInside = "avoid"),
+            blockIndex = 2
+        )
+        val part1 = table.copy(rows = listOf(listOf(TableCell(content = listOf(ParagraphBlock(AnnotatedString("box"), blockIndex = 1))))))
+        val part2 = table.copy(rows = listOf(listOf(TableCell(content = listOf(ParagraphBlock(AnnotatedString("ed"), blockIndex = 1))))))
+
+        val pages = paginate(
+            listOf(table),
+            pageHeight,
+            FakeSplittableMeasurementProvider(
+                heights = mapOf(table to 1500, part1 to 700, part2 to 800),
+                splittableTables = mapOf(table to (part1 to part2))
+            ),
+            testDensity
+        )
+
+        assertThat(pages).hasSize(2)
+        assertThat(pages[0].content.withoutMeasuredHeights()).containsExactly(part1)
+        assertThat(pages[1].content.withoutMeasuredHeights()).containsExactly(part2)
+    }
+
+    @Test
+    fun paginate_breakInsideAvoidFlexShorterThanPageKeepsWholeWhenPushed() = runTest {
+        val block1 = ParagraphBlock(content = AnnotatedString("First block"), blockIndex = 0)
+        val boxed = FlexContainerBlock(
+            children = listOf(ParagraphBlock(AnnotatedString("note"), blockIndex = 2)),
+            style = BlockStyle(breakInside = "avoid"),
+            blockIndex = 3
+        )
+
+        val pages = paginate(
+            listOf(block1, boxed),
+            pageHeight,
+            FakeSplittableMeasurementProvider(
+                heights = mapOf(block1 to 900, boxed to 300)
+            ),
+            testDensity
+        )
+
+        assertThat(pages).hasSize(2)
+        assertThat(pages[0].content.withoutMeasuredHeights()).containsExactly(block1)
+        assertThat(pages[1].content.withoutMeasuredHeights()).containsExactly(boxed)
     }
 }
