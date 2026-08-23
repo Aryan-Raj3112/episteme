@@ -57,15 +57,65 @@
 				<string>public.html</string>
 				<string>com.adobe.pdf</string>
 				<string>org.idpf.epub-container</string>
+				<string>net.daringfireball.markdown</string>
+				<string>org.oasis.opendocument.text</string>
+				<string>org.openxmlformats.wordprocessingml.document</string>
+				<string>com.microsoft.powerpoint.pptx</string>
+				<string>com.aryan.reader.fb2</string>
+				<string>com.aryan.reader.mobi</string>
 			</array>
+		</dict>
+	</array>
+	<key>UTImportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.aryan.reader.fb2</string>
+			<key>UTTypeDescription</key>
+			<string>FictionBook 2 document</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.xml</string>
+				<string>public.text</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>fb2</string>
+					<string>fb2.zip</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.aryan.reader.mobi</string>
+			<key>UTTypeDescription</key>
+			<string>Mobipocket electronic book</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>mobi</string>
+					<string>azw</string>
+					<string>azw3</string>
+					<string>prc</string>
+				</array>
+			</dict>
 		</dict>
 	</array>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
+	<key>UIFileSharingEnabled</key>
+	<true/>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
-		<true/>
+		<false/>
 		<key>UISceneConfigurations</key>
 		<dict/>
 	</dict>

@@ -8,14 +8,17 @@ import platform.Foundation.NSLock
 /**
  * In-process diagnostics retained for the iOS "Export logs" action.
  *
- * iOS does not provide an app-readable equivalent of Android's `logcat -d`.
- * Keeping a bounded, app-owned stream gives support a useful recent trace
- * without requesting private logging entitlements or retaining unbounded
- * reader output in memory.
+ * Android exports `logcat -d`; the closest app-readable equivalent on iOS is
+ * the process-scoped unified log ([OSLogStore]) plus the app-owned event
+ * buffer. The unified log adds framework/os_log output the ring buffer never
+ * sees, so exports include both, each bounded to keep the file shareable.
  */
 internal object IosDiagnosticLogStore {
     private val buffer = SharedDiagnosticLogBuffer()
     private val lock = NSLock()
+
+    /** Matches Android's bounded `logcat -d -t 5000` export size. */
+    private const val MaxUnifiedLogEntries = 5_000
 
     fun record(tag: String, message: String) {
         lock.lock()
@@ -52,6 +55,22 @@ internal object IosDiagnosticLogStore {
                 "maxRecognitionMs=${ocr.maxRecognitionDurationMillis}"
         }
         return entries
+    }
+
+    /**
+     * Recent process unified-log entries, oldest first; empty when unavailable.
+     * The unified log is captured natively (OSLogStore) and handed to Kotlin
+     * through the bridge's [ReaderIosBridge.unifiedDiagnosticsProvider].
+     */
+    fun unifiedLogSnapshot(provider: (() -> String?)?): List<String> {
+        val captured = provider?.invoke().orEmpty()
+        if (captured.isBlank()) return emptyList()
+        val lines = captured.lines().filter(String::isNotBlank)
+        return if (lines.size <= MaxUnifiedLogEntries) {
+            lines
+        } else {
+            lines.subList(lines.size - MaxUnifiedLogEntries, lines.size)
+        }
     }
 
     fun clear() {

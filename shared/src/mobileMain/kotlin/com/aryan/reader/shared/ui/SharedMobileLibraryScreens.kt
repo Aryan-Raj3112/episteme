@@ -156,6 +156,8 @@ fun SharedMobileUnifiedLibraryScreen(
     catalogContent: @Composable (Modifier) -> Unit,
     initialSection: Int = 0,
     onSectionChange: (Int) -> Unit = {},
+    useListView: Boolean = false,
+    onListViewChange: (Boolean) -> Unit = {},
     audiobooks: List<SharedAudiobook> = emptyList(),
     audiobookPlayback: SharedAudiobookPlaybackState = SharedAudiobookPlaybackState(),
     onPlayAudiobook: (SharedAudiobook) -> Unit = {},
@@ -333,6 +335,16 @@ fun SharedMobileUnifiedLibraryScreen(
                             contentDescription = readerString("unified_library_search_books", "Search your books"),
                         )
                     }
+                    if (section == MobileUnifiedLibrarySection.HOME) IconButton(onClick = { onListViewChange(!useListView) }) {
+                        Icon(
+                            if (useListView) Icons.AutoMirrored.Filled.LibraryBooks else Icons.Default.FormatListNumbered,
+                            contentDescription = if (useListView) {
+                                readerString("unified_library_grid_view", "Grid view")
+                            } else {
+                                readerString("unified_library_list_view", "List view")
+                            },
+                        )
+                    }
                 },
             )
         },
@@ -499,6 +511,21 @@ fun SharedMobileUnifiedLibraryScreen(
                     Box(Modifier.fillMaxWidth().padding(vertical = 64.dp), contentAlignment = Alignment.Center) {
                         Text(readerString("unified_library_no_books", "No books in this view"), color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
+                }
+            } else if (useListView) {
+                items(visibleBooks, key = { it.id }) { book ->
+                    SharedMobileLibraryListItem(
+                        book = book,
+                        selected = book.id in state.selectedBookIds,
+                        pinned = book.id in state.pinnedLibraryBookIds,
+                        downloading = book.id in state.downloadingBookIds,
+                        onClick = {
+                            if (state.selectedBookIds.isEmpty()) onOpenBook(book) else onLongPressBook(book)
+                        },
+                        onLongClick = { onLongPressBook(book) },
+                        onTogglePinned = { onTogglePinned(book) },
+                        onShowBookInfo = { infoBook = book },
+                    )
                 }
             } else {
                 item {

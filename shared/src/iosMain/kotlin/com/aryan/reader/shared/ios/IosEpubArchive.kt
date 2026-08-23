@@ -15,6 +15,8 @@ import com.aryan.reader.shared.mobi.MOBI_SUCCESS
 import com.aryan.reader.shared.mobi.MOBIFiletype
 import com.aryan.reader.shared.mobi.mobi_free
 import com.aryan.reader.shared.mobi.mobi_free_rawml
+import com.aryan.reader.shared.mobi.mobi_decode_exthstring
+import com.aryan.reader.shared.mobi.mobi_decode_exthvalue
 import com.aryan.reader.shared.mobi.mobi_init
 import com.aryan.reader.shared.mobi.mobi_init_rawml
 import com.aryan.reader.shared.mobi.mobi_load_file
@@ -129,6 +131,8 @@ internal data class IosBookPresentation(
     val title: String? = null,
     val author: String? = null,
     val coverBytes: ByteArray? = null,
+    val seriesName: String? = null,
+    val seriesIndex: Double? = null,
 )
 
 internal data class IosEpubMetadataWriteResult(
@@ -286,6 +290,8 @@ private fun extractIosEpubPresentation(book: BookItem): IosBookPresentation {
         title = title,
         author = author,
         coverBytes = coverPath?.let(archive::readBytes),
+        seriesName = opf.iosMetaContent("calibre:series"),
+        seriesIndex = opf.iosMetaContent("calibre:series_index")?.toDoubleOrNull(),
     )
 }
 
@@ -317,10 +323,23 @@ private fun extractIosMobiPresentation(book: BookItem): IosBookPresentation {
         } else {
             null
         }
+        // Calibre Kindle formats carry series in EXTH records 508/509 (same
+        // byte-level contract Android's EmbeddedEbookMetadataExtractor reads).
+        val exthRecords = generateSequence(mobi.pointed.eh) { it.pointed.next }.map { it.pointed }
+        fun exthString(tag: UInt): String? = exthRecords
+            .firstOrNull { it.tag == tag }
+            ?.takeIf { it.size > 0u && it.data != null }
+            ?.let { header -> ownedText(mobi_decode_exthstring(mobi, header.data!!.reinterpret(), header.size.convert())) }
+        fun exthValue(tag: UInt): Double? = exthRecords
+            .firstOrNull { it.tag == tag }
+            ?.takeIf { it.size >= 4u && it.data != null }
+            ?.let { header -> mobi_decode_exthvalue(header.data!!.reinterpret(), header.size.convert()).toDouble() }
         return IosBookPresentation(
             title = ownedText(mobi_meta_get_title(mobi)),
             author = ownedText(mobi_meta_get_author(mobi)),
             coverBytes = cover,
+            seriesName = exthString(508u),
+            seriesIndex = exthValue(509u),
         )
     } finally {
         fclose(file)

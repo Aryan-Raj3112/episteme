@@ -9,6 +9,7 @@ import SwiftUI
 import ReaderShared
 import UniformTypeIdentifiers
 import CryptoKit
+import OSLog
 
 struct ContentView: View {
     private enum ImportKind { case books, folder, fonts, cover }
@@ -207,6 +208,7 @@ struct ContentView: View {
                     completion(title, author, album, KotlinLong(longLong: durationMs))
                 }
             }
+            bridge.setUnifiedDiagnosticsProvider { captureUnifiedLogEntries() }
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
@@ -310,6 +312,29 @@ private func updateImportedFolderBookmark(_ url: URL, folderName: String) {
     var bookmarks = UserDefaults.standard.dictionary(forKey: importedFolderBookmarksKey) as? [String: Data] ?? [:]
     bookmarks[folderName] = bookmark
     UserDefaults.standard.set(bookmarks, forKey: importedFolderBookmarksKey)
+}
+
+/// Captures the process unified log (os_log/NSLog included) for diagnostics
+/// export — the app-readable counterpart of Android's `logcat -d -t 5000`.
+/// Bounded to the last 24 hours; Kotlin clamps the line count.
+private func captureUnifiedLogEntries() -> String? {
+    if #available(iOS 15.0, *) {
+        return autoreleasepool { () -> String? in
+            guard let store = try? OSLogStore(scope: .currentProcessIdentifier) else { return nil }
+            // Reverse order yields newest first; cap at Android's logcat export size.
+            guard let entries = try? store.getEntries(with: .reverse) else { return nil }
+            var lines: [String] = []
+            let cutoff = Date().addingTimeInterval(-60 * 60 * 24)
+            for case let entry as any OSLogEntry & OSLogEntryWithPayload in entries {
+                if entry.date < cutoff { break }
+                if lines.count >= 5_000 { break }
+                lines.append(entry.composedMessage)
+            }
+            lines.reverse()
+            return lines.isEmpty ? nil : lines.joined(separator: "\n")
+        }
+    }
+    return nil
 }
 
 private func refreshImportedFolders(bridge: ReaderIosBridge) {

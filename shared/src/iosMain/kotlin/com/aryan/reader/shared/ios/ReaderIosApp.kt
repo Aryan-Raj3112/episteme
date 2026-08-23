@@ -287,6 +287,10 @@ class ReaderIosBridge internal constructor(
         private set
     internal var importedCoverPath by mutableStateOf<String?>(null)
         private set
+
+    /** Android-parity unified library grid/list toggle, persisted per device. */
+    internal var iosUnifiedLibraryListView by mutableStateOf(loadIosUnifiedLibraryListView())
+
     internal var localStoreKitState by mutableStateOf(IosLocalStoreKitState())
         private set
     internal var accountState by mutableStateOf(IosAccountState())
@@ -328,6 +332,13 @@ class ReaderIosBridge internal constructor(
     internal var audiobookCancelSleepHandler: (() -> Unit)? = null
     internal var audiobookStopHandler: (() -> Unit)? = null
     internal var audiobookMetadataHandler: ((String, String, (String, String?, String?, Long) -> Unit) -> Unit)? = null
+
+    /**
+     * Native capture of the process unified log for diagnostics export. Swift owns
+     * OSLogStore (not exposed to Kotlin/Native platform libraries); Android parity
+     * target is `logcat -d -t 5000`.
+     */
+    internal var unifiedDiagnosticsProvider: (() -> String?)? = null
     internal var audiobookPlaybackSnapshot by mutableStateOf(SharedAudiobookPlaybackState())
         private set
     internal var pendingCloudSync by mutableStateOf<IosPendingCloudSync?>(null)
@@ -603,6 +614,10 @@ class ReaderIosBridge internal constructor(
         return folderFileAdditionHandler?.invoke(folderName, sourcePath, fileName)
     }
 
+    fun setUnifiedDiagnosticsProvider(handler: (() -> String?)?) {
+        unifiedDiagnosticsProvider = handler
+    }
+
     fun setAudiobookPlayHandler(handler: (filePath: String, positionMs: Double, speed: Double) -> Unit) {
         audiobookPlayHandler = handler
     }
@@ -692,6 +707,7 @@ class ReaderIosBridge internal constructor(
      */
     fun exportDiagnosticLogs(): Boolean {
         val entries = IosDiagnosticLogStore.snapshot()
+        val unifiedEntries = IosDiagnosticLogStore.unifiedLogSnapshot(unifiedDiagnosticsProvider)
         val content = buildString {
             appendLine("Episteme iOS diagnostics")
             appendLine("Generated at: ${currentTimestamp()}")
@@ -702,13 +718,22 @@ class ReaderIosBridge internal constructor(
             } else {
                 entries.forEach(::appendLine)
             }
+            appendLine()
+            appendLine("=== Unified log (last 24h, process scope) ===")
+            if (unifiedEntries.isEmpty()) {
+                appendLine("Unified log capture unavailable or empty.")
+            } else {
+                unifiedEntries.forEach(::appendLine)
+            }
         }
         val path = NSTemporaryDirectory() + "episteme-diagnostics-${currentTimestamp()}.txt"
         if (!writeIosUtf8File(path, content)) {
             recordNativeEvent("Diagnostic log export failed: could not write temporary file")
             return false
         }
-        recordNativeEvent("Diagnostic log export prepared entries=${entries.size}")
+        recordNativeEvent(
+            "Diagnostic log export prepared entries=${entries.size} unifiedEntries=${unifiedEntries.size}",
+        )
         return presentIosShareSheet(NSURL.fileURLWithPath(path))
     }
 
@@ -1207,6 +1232,15 @@ private fun loadIosUnifiedLibrarySection(): Int =
 
 private fun persistIosUnifiedLibrarySection(section: Int) {
     NSUserDefaults.standardUserDefaults.setInteger(section.toLong(), forKey = IosUnifiedLibrarySectionDefaultsKey)
+}
+
+private const val IosUnifiedLibraryListViewDefaultsKey = "reader_ios_unified_library_list_view_v1"
+
+private fun loadIosUnifiedLibraryListView(): Boolean =
+    NSUserDefaults.standardUserDefaults.boolForKey(IosUnifiedLibraryListViewDefaultsKey)
+
+private fun persistIosUnifiedLibraryListView(useListView: Boolean) {
+    NSUserDefaults.standardUserDefaults.setBool(useListView, forKey = IosUnifiedLibraryListViewDefaultsKey)
 }
 
 private fun loadIosSyncEnabled(): Boolean {
@@ -2977,7 +3011,8 @@ private fun ReaderIosApp(
                 (
                     book.coverImagePath.isNullOrBlank() ||
                         book.title.isNullOrBlank() ||
-                        book.title == book.displayName.substringBeforeLast('.', book.displayName)
+                        book.title == book.displayName.substringBeforeLast('.', book.displayName) ||
+                        book.seriesName.isNullOrBlank()
                 )
         }
         presentationCandidates.forEach { book ->
@@ -2993,12 +3028,21 @@ private fun ReaderIosApp(
             val coverPath = presentation.coverBytes
                 ?.takeIf { it.isNotEmpty() }
                 ?.let { bytes -> persistIosGeneratedCover(book, bytes) }
-            if (presentation.title != null || presentation.author != null || coverPath != null) {
+            if (
+                presentation.title != null ||
+                presentation.author != null ||
+                presentation.seriesName != null ||
+                coverPath != null
+            ) {
                 state = state.withUpdatedIosBook(
                     book.copy(
                         title = presentation.title ?: book.title,
                         author = presentation.author ?: book.author,
                         coverImagePath = coverPath ?: book.coverImagePath,
+                        seriesName = presentation.seriesName?.takeIf { book.seriesName.isNullOrBlank() }
+                            ?: book.seriesName,
+                        seriesIndex = presentation.seriesIndex?.takeIf { book.seriesIndex == null }
+                            ?: book.seriesIndex,
                     ),
                 )
             }
@@ -4604,6 +4648,11 @@ private fun ReaderIosApp(
                                 },
                                 initialSection = loadIosUnifiedLibrarySection(),
                                 onSectionChange = ::persistIosUnifiedLibrarySection,
+                                useListView = bridge.iosUnifiedLibraryListView,
+                                onListViewChange = { useList ->
+                                    bridge.iosUnifiedLibraryListView = useList
+                                    persistIosUnifiedLibraryListView(useList)
+                                },
                                 audiobooks = state.audiobooks,
                                 audiobookPlayback = audiobookPlaybackSnapshot,
                                 onPlayAudiobook = { audiobook ->

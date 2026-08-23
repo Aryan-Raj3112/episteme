@@ -97,6 +97,126 @@ final class ReaderUITests: XCTestCase {
         capture("pdf-toolbar-search-scroll", app: app)
     }
 
+    /// Walks the primary surfaces and attaches named screenshots for the
+    /// visual-parity matrix (compared against Android captures).
+    func testVisualParityWalkthrough() throws {
+        let app = launchReader()
+
+        // Home (populated or empty state)
+        capture("ios-home", app: app)
+
+        try require("Library Beta", in: app).tap()
+        capture("ios-library-beta-grid", app: app)
+        if waitForAny(["List view"], in: app, timeout: 4) != nil {
+            try require("List view", in: app).tap()
+            capture("ios-library-beta-list", app: app)
+            try require("Grid view", in: app).tapIfPresent()
+        }
+
+        try require("Library", in: app, timeout: 6).tap()
+        capture("ios-library-classic", app: app)
+
+        try require("Home", in: app, timeout: 6).tap()
+
+        // Drawer + settings last: returning from settings can leave the drawer open.
+        try require("Menu", in: app).tap()
+        capture("ios-drawer", app: app)
+        try requireAny(["MobileDrawerSettings", "Settings"], in: app).tap()
+        capture("ios-settings-root", app: app)
+    }
+
+    func testUnifiedLibraryGridListTogglePersistsAcrossLaunches() throws {
+        let app = launchReader()
+        try require("Library Beta", in: app).tap()
+        // Default benchmark state is grid ("List view" action available).
+        let toggle = try require("List view", in: app, timeout: 20)
+        toggle.tap()
+        XCTAssertTrue(try require("Grid view", in: app, timeout: 10).exists)
+        capture("unified-library-list-view", app: app)
+
+        // Relaunch WITHOUT the state-reset argument: the choice must persist.
+        let persisted = XCUIApplication(bundleIdentifier: appBundleIdentifier)
+        persisted.launchArguments += ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        persisted.launch()
+        XCTAssertTrue(persisted.wait(for: .runningForeground, timeout: 30))
+        try require("Library Beta", in: persisted).tap()
+        XCTAssertTrue(try require("Grid view", in: persisted, timeout: 20).exists)
+        try require("Grid view", in: persisted).tap()
+        XCTAssertTrue(try require("List view", in: persisted, timeout: 10).exists)
+        capture("unified-library-grid-restore", app: persisted)
+    }
+
+    func testGeneratedDocumentParsersRenderFormattedChapters() throws {
+        let app = launchReader()
+
+        guard selectFixture(named: "parity_notes.md", in: app) else {
+            throw XCTSkip("Requires RuntimeFixtures/parity_notes.md")
+        }
+        XCTAssertTrue(waitForAny(["Parity Guide"], in: app, timeout: 30) != nil)
+        XCTAssertNotNil(waitForAny(["Parser Matrix"], in: app, timeout: 15), "Markdown heading sections should become chapters")
+        capture("parser-md-sections", app: app)
+
+        guard selectFixture(named: "fb2_probe.fb2", in: app) else {
+            throw XCTSkip("Requires RuntimeFixtures/fb2_probe.fb2")
+        }
+        XCTAssertTrue(waitForAny(["Aurora Section"], in: app, timeout: 30) != nil)
+        XCTAssertNotNil(
+            waitForAny(["Hello from bold fb2 and italic fb2."], in: app, timeout: 15),
+            "FB2 inline markup should render as formatted text",
+        )
+        capture("parser-fb2-chapters", app: app)
+
+        guard selectFixture(named: "odt_probe.odt", in: app) else {
+            throw XCTSkip("Requires RuntimeFixtures/odt_probe.odt")
+        }
+        XCTAssertTrue(waitForAny(["ODT Probe Heading"], in: app, timeout: 30) != nil)
+        XCTAssertNotNil(waitForAny(["alpha item"], in: app, timeout: 15), "ODT lists should render as list items")
+        capture("parser-odt-content", app: app)
+
+        guard selectFixture(named: "docx_probe.docx", in: app) else {
+            throw XCTSkip("Requires RuntimeFixtures/docx_probe.docx")
+        }
+        XCTAssertTrue(waitForAny(["DOCX Probe Book"], in: app, timeout: 30) != nil)
+        XCTAssertNotNil(waitForAny(["Zenith Chapter"], in: app, timeout: 15), "DOCX headings should split into chapters")
+        capture("parser-docx-headings", app: app)
+    }
+
+    func testSeriesEpubBackfillsSeriesMetadata() throws {
+        let app = launchReader()
+        guard selectFixture(named: "series_probe.epub", in: app) else {
+            throw XCTSkip("Requires RuntimeFixtures/series_probe.epub")
+        }
+        XCTAssertTrue(waitForAny(["Stacked Opening"], in: app, timeout: 25) != nil)
+        try require("Back", in: app, timeout: 20).tap()
+
+        // The generated presentation backfills blank series fields at import.
+        let details = waitForAny(["Book details"], in: app, timeout: 10)
+        if let details {
+            details.tap()
+            XCTAssertNotNil(waitForAny(["Probe Saga"], in: app, timeout: 10), "Series name should surface in book info")
+            capture("series-backfill-info-dialog", app: app)
+        } else {
+            capture("series-backfill-library", app: app)
+        }
+    }
+
+    func testPdfPageRendersContentAfterThreadingFix() throws {
+        let app = launchReader()
+        guard selectFixture(named: "sample.pdf", in: app) else {
+            throw XCTSkip("Requires RuntimeFixtures/sample.pdf")
+        }
+        // The page surface exposes the document name once a bitmap renders;
+        // blank-page placeholders never produce this hittable image content.
+        let deadline = Date().addingTimeInterval(30)
+        var rendered = false
+        while Date() < deadline, !rendered {
+            rendered = waitForAny(["sample.pdf"], in: app, timeout: 3) != nil
+        }
+        XCTAssertTrue(rendered, "PDF page bitmap should render without Main-thread stalls")
+        app.swipeUp()
+        capture("pdf-threading-page-render", app: app)
+    }
+
     func testSplitReaderWithDistinctPdfsWhenFixturesAreAvailable() throws {
         let app = launchReader()
         guard selectFixture(named: "sample.pdf", in: app),
@@ -258,11 +378,16 @@ final class ReaderUITests: XCTestCase {
         select.tap()
         let picker = XCUIApplication(bundleIdentifier: "com.apple.DocumentsApp")
         guard picker.wait(for: .runningForeground, timeout: 12) else { return false }
+        picker.tabBars.buttons["Browse"].tapIfPresent()
+        // Climb out of any open folder (e.g. Downloads) to the Browse root.
+        for _ in 0..<3 where waitForAny(["RuntimeFixtures", "On My iPhone"], in: picker, timeout: 1) == nil {
+            picker.navigationBars.buttons.firstMatch.tapIfPresent()
+        }
 
         // The fixture copy performed by validate_ios_runtime.sh appears at
         // On My iPhone > Reader > RuntimeFixtures. If Files changes its
         // provider layout, the test remains an explicit, reviewable skip.
-        for location in ["On My iPhone", "Reader", "RuntimeFixtures"] {
+        for location in ["On My iPhone", "Episteme", "RuntimeFixtures"] {
             if let item = waitForAny([location], in: picker, timeout: 3) {
                 item.tap()
             }
