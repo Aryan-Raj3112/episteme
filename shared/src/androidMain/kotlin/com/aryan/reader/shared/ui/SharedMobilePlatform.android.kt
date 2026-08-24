@@ -123,11 +123,16 @@ internal actual fun SharedMobileEpubWebView(
     navigationScript: String?,
     navigationRequestId: Long,
     onBridgeMessage: (method: String, payload: String) -> Unit,
+    positionController: SharedMobileEpubWebViewController?,
     modifier: Modifier,
 ) {
     rememberAndroidSharedMobileContext()
     val coordinator = remember { AndroidEpubWebViewCoordinator(onBridgeMessage) }
     coordinator.onBridgeMessage = onBridgeMessage
+    DisposableEffect(positionController, coordinator) {
+        positionController?.attach { callback -> coordinator.captureCurrentLocator(callback) }
+        onDispose { positionController?.detach() }
+    }
     AndroidView(
         modifier = modifier,
         factory = coordinator::createWebView,
@@ -237,6 +242,19 @@ private class AndroidEpubWebViewCoordinator(
             return
         }
         onBridgeMessage(method, payload)
+    }
+
+    fun captureCurrentLocator(callback: (String?) -> Unit) {
+        val webView = activeWebView
+        if (webView == null) {
+            callback(null)
+            return
+        }
+        webView.post {
+            webView.evaluateJavascript(SharedMobileEpubCaptureCurrentPositionScript) { raw ->
+                callback(decodeSharedMobileJavascriptResult(raw))
+            }
+        }
     }
 
     fun release(webView: WebView) {

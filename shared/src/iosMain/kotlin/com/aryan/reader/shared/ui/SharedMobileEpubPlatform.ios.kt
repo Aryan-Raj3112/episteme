@@ -107,6 +107,7 @@ internal actual fun SharedMobileEpubWebView(
     navigationScript: String?,
     navigationRequestId: Long,
     onBridgeMessage: (method: String, payload: String) -> Unit,
+    positionController: SharedMobileEpubWebViewController?,
     modifier: Modifier
 ) {
     val latestBridgeMessage by rememberUpdatedState(onBridgeMessage)
@@ -114,6 +115,10 @@ internal actual fun SharedMobileEpubWebView(
         IosEpubWebViewCoordinator { method, payload -> latestBridgeMessage(method, payload) }
     }
     coordinator.onBridgeMessage = { method, payload -> latestBridgeMessage(method, payload) }
+    DisposableEffect(positionController, coordinator) {
+        positionController?.attach { callback -> coordinator.captureCurrentLocator(callback) }
+        onDispose { positionController?.detach() }
+    }
     UIKitView(
         factory = coordinator::createWebView,
         modifier = modifier,
@@ -745,6 +750,20 @@ private class IosEpubWebViewCoordinator(
             return
         }
         onBridgeMessage(method, payload)
+    }
+
+    fun captureCurrentLocator(callback: (String?) -> Unit) {
+        val webView = activeWebView
+        if (webView == null) {
+            callback(null)
+            return
+        }
+        webView.evaluateJavaScript(
+            SharedMobileEpubCaptureCurrentPositionScript,
+            completionHandler = { result, _ ->
+                callback(decodeSharedMobileJavascriptResult(result?.toString()))
+            }
+        )
     }
 
     fun release(webView: WKWebView) {

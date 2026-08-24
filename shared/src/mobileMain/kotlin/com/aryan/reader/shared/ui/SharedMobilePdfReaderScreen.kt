@@ -185,6 +185,7 @@ import com.aryan.reader.shared.pdf.shouldStopPdfTtsForNavigation
 import com.aryan.reader.shared.pdf.PdfAutoScrollProfile
 import com.aryan.reader.shared.pdf.PdfPageBounds
 import com.aryan.reader.shared.pdf.PdfPagePoint
+import com.aryan.reader.shared.pdf.PdfSpreadLayout
 import com.aryan.reader.shared.pdf.initialSharedPdfReaderState
 import com.aryan.reader.shared.pdf.PdfNavigationReason
 import com.aryan.reader.shared.pdf.pdfDrawerSections
@@ -223,6 +224,8 @@ import com.aryan.reader.shared.pdf.SharedPdfKeyboardNavigationAction
 import com.aryan.reader.shared.pdf.sharedPdfKeyboardNavigationAction
 import com.aryan.reader.shared.reader.ReaderPageSpreadMode
 import com.aryan.reader.shared.reader.ReaderSettings
+import com.aryan.reader.shared.reader.captureCurrentPdfHistoryPage
+import com.aryan.reader.shared.reader.capturePdfJumpHistoryOrigin
 import com.aryan.reader.shared.SystemUiMode
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
@@ -684,6 +687,9 @@ fun SharedMobilePdfReaderHost(
     }
     val pdfReaderFocusRequester = remember(readerSessionKey) { FocusRequester() }
     val pdfVerticalScrollController = remember(readerSessionKey) { SharedMobilePdfVerticalScrollController() }
+    val pdfPaginationPositionController = remember(readerSessionKey) {
+        SharedMobilePdfPaginationPositionController()
+    }
     LaunchedEffect(readerSessionKey) {
         runCatching { pdfReaderFocusRequester.requestFocus() }
     }
@@ -821,6 +827,39 @@ fun SharedMobilePdfReaderHost(
         if (ownsNativeAction) onNativePdfAction(book, action, pdfPassword, snapshot)
     }
 
+    fun normalizedPdfHistoryPage(pageIndex: Int): Int {
+        if (readerState.displayMode != PdfDisplayMode.PAGINATION) return pageIndex
+        return PdfSpreadLayout.normalizePageIndex(
+            pageIndex = pageIndex,
+            pageCount = displayPageCount,
+            settings = ReaderSettings(
+                pageSpreadMode = if (useTwoPageSpread) ReaderPageSpreadMode.TWO_PAGE else ReaderPageSpreadMode.SINGLE,
+                pdfFirstPageStandaloneInSpread = firstPageStandaloneInSpread,
+            ),
+        )
+    }
+
+    /**
+     * Captures the rendered viewport synchronously for jump history.
+     *
+     * The normal page callbacks are collected asynchronously. Reading the
+     * renderer controller here avoids recording the previous callback value
+     * when a manual scroll is followed immediately by a jump.
+     */
+    fun currentPdfHistoryPage(): Int {
+        val rendered = if (readerState.displayMode == PdfDisplayMode.PAGINATION) {
+            pdfPaginationPositionController.currentPageIndex()
+        } else {
+            pdfVerticalScrollController.currentPageIndex()
+        }
+        return captureCurrentPdfHistoryPage(
+            renderedCurrentPage = rendered,
+            fallbackCurrentPage = readerState.pageIndex,
+            pageCount = displayPageCount,
+            normalizePage = ::normalizedPdfHistoryPage,
+        ) ?: 0
+    }
+
     fun navigateToPage(
         pageIndex: Int,
         recordHistory: Boolean = true,
@@ -834,7 +873,26 @@ fun SharedMobilePdfReaderHost(
             )) {
             stopPdfTtsSession()
         }
-        if (recordHistory) jumpHistory = jumpHistory.record(readerState.pageIndex, target, displayPageCount)
+        if (recordHistory) {
+            capturePdfJumpHistoryOrigin(
+                renderedCurrentPage = if (readerState.displayMode == PdfDisplayMode.PAGINATION) {
+                    pdfPaginationPositionController.currentPageIndex()
+                } else {
+                    pdfVerticalScrollController.currentPageIndex()
+                },
+                fallbackCurrentPage = readerState.pageIndex,
+                targetPage = target,
+                pageCount = displayPageCount,
+                normalizeCurrent = ::normalizedPdfHistoryPage,
+                normalizeTarget = ::normalizedPdfHistoryPage,
+            )?.let { origin ->
+                jumpHistory = jumpHistory.record(
+                    origin.currentPageIndex,
+                    origin.targetPageIndex,
+                    displayPageCount,
+                )
+            }
+        }
         dispatch(SharedPdfReaderAction.GoToPage(target))
         navigationRequestPage = target
         navigationCenterFraction = centerFraction.coerceIn(0f, 1f)
@@ -1577,6 +1635,7 @@ fun SharedMobilePdfReaderHost(
                         activeStroke = activeStroke,
                         isStylusOnlyMode = isStylusOnlyMode,
                         tapToTurnPages = tapToTurnPages,
+                        positionController = pdfPaginationPositionController,
                         onExternalLink = { url -> if (ownsGlobalModal) pendingExternalLink = url },
                         onInternalLink = { navigateToPage(sharedPdfDisplayIndexFor(virtualLayout, it), reason = PdfNavigationReason.INTERNAL_LINK) },
                         onExistingHighlightTap = { noteAnnotationId = it.id },
@@ -1649,16 +1708,22 @@ fun SharedMobilePdfReaderHost(
                     SharedMobilePdfJumpHistoryBar(
                         history = jumpHistory,
                         onBack = {
-                            jumpHistory.backPage?.let { target ->
-                                jumpHistory = jumpHistory.stepBack()
-                                navigateToPage(target, recordHistory = false, reason = PdfNavigationReason.JUMP_HISTORY)
-                            }
+                            val refreshedHistory = jumpHistory.updateCurrentLocation(
+                                currentPageIndex = currentPdfHistoryPage(),
+                                pageCount = displayPageCount,
+                            )
+                            val target = refreshedHistory.backPage ?: return@SharedMobilePdfJumpHistoryBar
+                            jumpHistory = refreshedHistory.stepBack()
+                            navigateToPage(target, recordHistory = false, reason = PdfNavigationReason.JUMP_HISTORY)
                         },
                         onForward = {
-                            jumpHistory.forwardPage?.let { target ->
-                                jumpHistory = jumpHistory.stepForward()
-                                navigateToPage(target, recordHistory = false, reason = PdfNavigationReason.JUMP_HISTORY)
-                            }
+                            val refreshedHistory = jumpHistory.updateCurrentLocation(
+                                currentPageIndex = currentPdfHistoryPage(),
+                                pageCount = displayPageCount,
+                            )
+                            val target = refreshedHistory.forwardPage ?: return@SharedMobilePdfJumpHistoryBar
+                            jumpHistory = refreshedHistory.stepForward()
+                            navigateToPage(target, recordHistory = false, reason = PdfNavigationReason.JUMP_HISTORY)
                         },
                         onClear = { jumpHistory = jumpHistory.clear() },
                         modifier = Modifier.padding(bottom = pdfBottomChromePadding)

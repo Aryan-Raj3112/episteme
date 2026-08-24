@@ -49,6 +49,7 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.Image
@@ -558,13 +559,35 @@ internal fun SharedMobilePdfZoomViewport(
 /** Lets the reader screen drive the vertical-scroll list (hardware arrow keys) from outside it. */
 class SharedMobilePdfVerticalScrollController {
     private var lazyListState: LazyListState? = null
+    private var pageCount: Int = 0
 
-    internal fun attach(state: LazyListState) {
+    internal fun attach(state: LazyListState, pageCount: Int) {
         lazyListState = state
+        this.pageCount = pageCount
     }
 
     internal fun detach() {
         lazyListState = null
+        pageCount = 0
+    }
+
+    /**
+     * Reads the rendered list synchronously at the point a jump is requested.
+     *
+     * The snapshotFlow below is intentionally still used for normal UI state
+     * updates, but it is asynchronous. Jump history must not depend on that
+     * callback having run before the user taps a navigation action.
+     */
+    fun currentPageIndex(): Int? {
+        val state = lazyListState ?: return null
+        val info = state.layoutInfo
+        val center = (info.viewportStartOffset + info.viewportEndOffset) / 2
+        val item = info.visibleItemsInfo.minByOrNull { visible ->
+            kotlin.math.abs((visible.offset + visible.size / 2) - center)
+        }
+        return (item?.index ?: state.firstVisibleItemIndex)
+            .takeIf { pageCount > 0 }
+            ?.coerceIn(0, pageCount - 1)
     }
 
     suspend fun scrollByViewportFraction(fraction: Float) {
@@ -572,6 +595,39 @@ class SharedMobilePdfVerticalScrollController {
         val viewportHeightPx = state.layoutInfo.viewportEndOffset - state.layoutInfo.viewportStartOffset
         if (viewportHeightPx <= 0) return
         state.scrollBy(viewportHeightPx * fraction)
+    }
+}
+
+/**
+ * Synchronous position boundary for the paginated PDF renderer.
+ *
+ * Pager callbacks are delivered from a coroutine collecting settledPage. This
+ * controller reads the pager itself so a jump can capture the visible spread
+ * even when that callback has not recomposed the screen yet.
+ */
+class SharedMobilePdfPaginationPositionController {
+    private var pagerState: PagerState? = null
+    private var spreadStarts: List<Int> = emptyList()
+
+    internal fun attach(state: PagerState, spreadStarts: List<Int>) {
+        pagerState = state
+        this.spreadStarts = spreadStarts
+    }
+
+    internal fun detach() {
+        pagerState = null
+        spreadStarts = emptyList()
+    }
+
+    fun currentPageIndex(): Int? {
+        val state = pagerState ?: return null
+        val starts = spreadStarts
+        if (starts.isEmpty()) return null
+        // Match Android's pagination semantics: while a gesture/animation is
+        // in flight, history uses the last settled spread; otherwise it uses
+        // the current spread.
+        val pagerPage = if (state.isScrollInProgress) state.settledPage else state.currentPage
+        return starts.getOrNull(pagerPage.coerceIn(0, starts.lastIndex))
     }
 }
 
@@ -628,8 +684,8 @@ internal fun SharedMobilePdfVerticalPages(
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = state.pageIndex.coerceIn(0, pageCount - 1))
     val scope = rememberCoroutineScope()
     val isListDragged by listState.interactionSource.collectIsDraggedAsState()
-    DisposableEffect(verticalScrollController, listState) {
-        verticalScrollController?.attach(listState)
+    DisposableEffect(verticalScrollController, listState, pageCount) {
+        verticalScrollController?.attach(listState, pageCount)
         onDispose { verticalScrollController?.detach() }
     }
     var viewportSize by remember(book.id) { mutableStateOf(IntSize.Zero) }
@@ -913,6 +969,7 @@ internal fun SharedMobilePdfPaginatedPages(
     activeStroke: List<PdfPagePoint>,
     isStylusOnlyMode: Boolean = false,
     tapToTurnPages: Boolean,
+    positionController: SharedMobilePdfPaginationPositionController? = null,
     onExternalLink: (String) -> Unit,
     onInternalLink: (Int) -> Unit,
     onExistingHighlightTap: (SharedPdfAnnotation) -> Unit,
@@ -953,6 +1010,10 @@ internal fun SharedMobilePdfPaginatedPages(
         initialPage = pagerIndexForPage(state.pageIndex),
         pageCount = { spreadStarts.size.coerceAtLeast(1) }
     )
+    DisposableEffect(positionController, pagerState, spreadStarts) {
+        positionController?.attach(pagerState, spreadStarts)
+        onDispose { positionController?.detach() }
+    }
     val isPagerDragged by pagerState.interactionSource.collectIsDraggedAsState()
     LaunchedEffect(isPagerDragged) {
         if (isPagerDragged) onManualPageTurnStarted()

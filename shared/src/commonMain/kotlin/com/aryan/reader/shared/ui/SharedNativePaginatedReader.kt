@@ -133,6 +133,21 @@ data class SharedNativeReaderLinkClick(
     val text: String?
 )
 
+/** Reads the currently rendered EPUB spread without waiting for a callback. */
+class SharedNativePaginatedPositionController {
+    private var visibleLocatorProvider: (() -> ReaderLocator?)? = null
+
+    internal fun attach(provider: () -> ReaderLocator?) {
+        visibleLocatorProvider = provider
+    }
+
+    internal fun detach() {
+        visibleLocatorProvider = null
+    }
+
+    fun currentLocator(): ReaderLocator? = visibleLocatorProvider?.invoke()
+}
+
 internal enum class SharedNativeVerticalFlowItemKind {
     CHAPTER_GAP,
     BLOCK,
@@ -269,11 +284,16 @@ fun SharedNativePaginatedReader(
     onLinkClicked: (SharedNativeReaderLinkClick) -> Unit = {},
     onReaderTap: () -> Unit = {},
     onReaderHorizontalTap: ((Float) -> Unit)? = null,
-    imageContent: (@Composable (SemanticImage, Modifier) -> Unit)? = null
+    imageContent: (@Composable (SemanticImage, Modifier) -> Unit)? = null,
+    positionController: SharedNativePaginatedPositionController? = null
 ) {
     val visiblePages = renderPlan.visiblePages
     val logicalFirstPage = remember(visiblePages) {
         visiblePages.minByOrNull { it.pageIndex }
+    }
+    DisposableEffect(positionController, logicalFirstPage) {
+        positionController?.attach { logicalFirstPage?.toNativeReaderLocator() }
+        onDispose { positionController?.detach() }
     }
     var activeSelection by remember(renderPlan.navigationTarget.requestId) {
         mutableStateOf<SharedNativeReaderTextSelection?>(null)
@@ -538,14 +558,20 @@ fun SharedNativePaginatedReader(
 /** Lets the host screen drive the native vertical EPUB list from outside it (auto-scroll, musician gestures). */
 class SharedNativeVerticalScrollController {
     private var listState: LazyListState? = null
+    private var visibleLocatorProvider: (() -> ReaderLocator?)? = null
 
-    internal fun attach(state: LazyListState) {
+    internal fun attach(state: LazyListState, visibleLocatorProvider: () -> ReaderLocator?) {
         listState = state
+        this.visibleLocatorProvider = visibleLocatorProvider
     }
 
     internal fun detach() {
         listState = null
+        visibleLocatorProvider = null
     }
+
+    /** Reads the currently rendered item synchronously for jump-history capture. */
+    fun currentLocator(): ReaderLocator? = visibleLocatorProvider?.invoke()
 
     suspend fun scrollByPixels(deltaPx: Float) {
         listState?.scrollBy(deltaPx)
@@ -595,8 +621,15 @@ fun SharedNativeVerticalReader(
         )
     }
     val listState = rememberLazyListState()
-    DisposableEffect(verticalScrollController, listState) {
-        verticalScrollController?.attach(listState)
+    DisposableEffect(verticalScrollController, listState, flowItems) {
+        verticalScrollController?.attach(listState) {
+            val info = listState.layoutInfo
+            val center = (info.viewportStartOffset + info.viewportEndOffset) / 2
+            val itemIndex = info.visibleItemsInfo.minByOrNull { visible ->
+                abs((visible.offset + visible.size / 2) - center)
+            }?.index ?: listState.firstVisibleItemIndex
+            flowItems.getOrNull(itemIndex)?.toNativeVerticalLocator()
+        }
         onDispose { verticalScrollController?.detach() }
     }
     var activeSelection by remember(renderPlan.navigationTarget.requestId) {

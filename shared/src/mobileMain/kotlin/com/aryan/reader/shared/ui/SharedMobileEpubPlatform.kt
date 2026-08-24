@@ -9,12 +9,52 @@ import com.aryan.reader.shared.ReaderTtsChunk
 import com.aryan.reader.shared.ReaderTtsProgress
 import com.aryan.reader.shared.ReaderExternalLookupAction
 import com.aryan.reader.shared.reader.SharedEpubBook
+import com.aryan.reader.shared.ReaderLocator
 
 internal data class SharedMobileEpubLoadState(
     val isLoading: Boolean = true,
     val book: SharedEpubBook? = null,
     val errorMessage: String? = null
 )
+
+/**
+ * Position boundary for the platform WebView reader.
+ *
+ * Normal scroll reports travel through the JavaScript bridge and therefore
+ * cannot be assumed to have reached Compose when a jump control is tapped.
+ * The platform may provide a direct JavaScript query; the last observed
+ * locator remains a safe fallback while the document is loading or being
+ * released.
+ */
+class SharedMobileEpubWebViewController {
+    private var requestCurrentPosition: (((String?) -> Unit) -> Unit)? = null
+    private var latestObservedLocator: ReaderLocator? = null
+
+    internal fun attach(requester: ((String?) -> Unit) -> Unit) {
+        requestCurrentPosition = requester
+    }
+
+    internal fun detach() {
+        requestCurrentPosition = null
+    }
+
+    internal fun updateObservedLocator(locator: ReaderLocator) {
+        latestObservedLocator = locator
+    }
+
+    fun captureCurrentLocator(onResult: (ReaderLocator?) -> Unit) {
+        val requester = requestCurrentPosition
+        if (requester == null) {
+            onResult(latestObservedLocator)
+            return
+        }
+        requester { rawPayload ->
+            val queried = rawPayload?.sharedMobileEpubLocatorOrNull()
+            if (queried != null) latestObservedLocator = queried
+            onResult(queried ?: latestObservedLocator)
+        }
+    }
+}
 
 @Composable
 internal expect fun rememberSharedMobileEpubLoadState(book: BookItem): SharedMobileEpubLoadState
@@ -27,6 +67,7 @@ internal expect fun SharedMobileEpubWebView(
     navigationScript: String?,
     navigationRequestId: Long,
     onBridgeMessage: (method: String, payload: String) -> Unit,
+    positionController: SharedMobileEpubWebViewController? = null,
     modifier: Modifier = Modifier
 )
 

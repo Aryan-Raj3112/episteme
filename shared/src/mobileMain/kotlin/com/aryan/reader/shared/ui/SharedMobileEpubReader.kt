@@ -101,6 +101,7 @@ import com.aryan.reader.shared.withReaderFormatFrom
 import com.aryan.reader.shared.reader.ReaderBookmark
 import com.aryan.reader.shared.reader.ReaderEngine
 import com.aryan.reader.shared.reader.ReaderJumpHistory
+import com.aryan.reader.shared.reader.captureReaderJumpHistoryOrigin
 import com.aryan.reader.shared.reader.ReaderHtmlDocumentBuilder
 import com.aryan.reader.shared.reader.ReaderPage
 import com.aryan.reader.shared.reader.sharedReaderPageInfo
@@ -312,6 +313,10 @@ fun SharedMobileEpubReaderScreen(
     var autoScrollIsLocal by remember(book.id) { mutableStateOf(book.readerAutoScrollIsLocal) }
     var useNativeVerticalRenderer by remember(book.id) { mutableStateOf(initialUseNativeVerticalRenderer) }
     val nativeVerticalScrollController = remember(book.id) { SharedNativeVerticalScrollController() }
+    val nativePaginatedPositionController = remember(book.id) {
+        SharedNativePaginatedPositionController()
+    }
+    val webViewPositionController = remember(book.id) { SharedMobileEpubWebViewController() }
     var autoScrollLocalProfile by remember(book.id) {
         mutableStateOf(
             book.readerAutoScrollLocalSpeed?.let { speed ->
@@ -623,14 +628,65 @@ fun SharedMobileEpubReaderScreen(
         locator.pageIndex?.let { currentPageIndex = it.coerceIn(0, pageCount - 1) }
     }
 
+    fun publishCapturedEpubLocator(locator: ReaderLocator?) {
+        if (locator == null) return
+        currentLocator = locator
+        locator.chapterIndex?.let { chapterIndex ->
+            currentChapterIndex = chapterIndex.coerceIn(0, loadedBook?.chapters?.lastIndex ?: 0)
+        }
+        locator.pageIndex?.let { pageIndex ->
+            currentPageIndex = pageIndex.coerceIn(0, pageCount - 1)
+        }
+    }
+
+    /**
+     * Captures the rendered origin before any explicit jump is recorded.
+     * Native vertical rendering reads LazyListState.layoutInfo directly;
+     * WebView rendering asks the DOM for its current visible locator and falls
+     * back to the latest bridge observation while the page is unavailable.
+     */
+    fun captureCurrentEpubLocator(onCaptured: (ReaderLocator?) -> Unit) {
+        val chapterCount = loadedBook?.chapters?.size ?: 0
+        val nativeLocator = if (
+            settings.readingMode == ReaderReadingMode.VERTICAL && useNativeVerticalRenderer
+        ) {
+            nativeVerticalScrollController.currentLocator()
+        } else if (settings.readingMode == ReaderReadingMode.PAGINATED) {
+            nativePaginatedPositionController.currentLocator()
+        } else {
+            null
+        }
+        if (nativeLocator != null) {
+            val captured = captureReaderJumpHistoryOrigin(
+                renderedCurrentLocator = nativeLocator,
+                fallbackCurrentLocator = currentLocator,
+                chapterCount = chapterCount,
+            )
+            publishCapturedEpubLocator(captured)
+            onCaptured(captured)
+            return
+        }
+        webViewPositionController.captureCurrentLocator { locator ->
+            val captured = captureReaderJumpHistoryOrigin(
+                renderedCurrentLocator = locator,
+                fallbackCurrentLocator = currentLocator,
+                chapterCount = chapterCount,
+            )
+            publishCapturedEpubLocator(captured)
+            onCaptured(captured)
+        }
+    }
+
     fun recordJumpAndNavigate(locator: ReaderLocator, fragment: String? = null) {
         val chapterCount = loadedBook?.chapters?.size ?: return
-        jumpHistory = jumpHistory.record(
-            currentLocator = currentLocator,
-            targetLocator = locator,
-            chapterCount = chapterCount,
-        )
-        navigate(locator, fragment)
+        captureCurrentEpubLocator { current ->
+            jumpHistory = jumpHistory.record(
+                currentLocator = current,
+                targetLocator = locator,
+                chapterCount = chapterCount,
+            )
+            navigate(locator, fragment)
+        }
     }
 
     fun navigateChapter(direction: Int) {
@@ -742,39 +798,49 @@ fun SharedMobileEpubReaderScreen(
         val epub = loadedBook ?: return
         val chapter = epub.chapters.getOrNull(result.chapterIndex) ?: return
         detachVerticalReaderFromTts()
-        jumpHistory = jumpHistory.record(
-            currentLocator = currentLocator,
-            targetLocator = result.locator,
-            chapterCount = epub.chapters.size,
-        )
-        val chunks = ReaderHtmlDocumentBuilder.verticalChapterChunks(epub, result.chapterIndex)
-        currentChapterIndex = result.chapterIndex
-        currentLocator = result.locator
-        result.locator.pageIndex?.let { currentPageIndex = it.coerceIn(0, pageCount - 1) }
-        explicitNavigationLocator = result.locator.takeIf {
-            settings.readingMode == ReaderReadingMode.PAGINATED || useNativeVerticalRenderer
+        captureCurrentEpubLocator { current ->
+            jumpHistory = jumpHistory.record(
+                currentLocator = current,
+                targetLocator = result.locator,
+                chapterCount = epub.chapters.size,
+            )
+            val chunks = ReaderHtmlDocumentBuilder.verticalChapterChunks(epub, result.chapterIndex)
+            currentChapterIndex = result.chapterIndex
+            currentLocator = result.locator
+            result.locator.pageIndex?.let { currentPageIndex = it.coerceIn(0, pageCount - 1) }
+            explicitNavigationLocator = result.locator.takeIf {
+                settings.readingMode == ReaderReadingMode.PAGINATED || useNativeVerticalRenderer
+            }
+            explicitNavigationChunkIndex = result.chunkIndex
+            explicitNavigationChunkHtml = chunks.getOrNull(result.chunkIndex)
+            commandScript = if (settings.readingMode == ReaderReadingMode.VERTICAL && !useNativeVerticalRenderer) {
+                sharedMobileEpubSearchNavigationScript(result, searchQuery, chunks.getOrNull(result.chunkIndex))
+            } else {
+                null
+            }
+            navigationRequestId++
+            showSearchResultsPanel = false
         }
-        explicitNavigationChunkIndex = result.chunkIndex
-        explicitNavigationChunkHtml = chunks.getOrNull(result.chunkIndex)
-        commandScript = if (settings.readingMode == ReaderReadingMode.VERTICAL && !useNativeVerticalRenderer) {
-            sharedMobileEpubSearchNavigationScript(result, searchQuery, chunks.getOrNull(result.chunkIndex))
-        } else {
-            null
-        }
-        navigationRequestId++
-        showSearchResultsPanel = false
     }
 
     fun goBackInJumpHistory() {
-        val target = jumpHistory.backLocator ?: return
-        jumpHistory = jumpHistory.stepBack()
-        navigate(target)
+        val chapterCount = loadedBook?.chapters?.size ?: return
+        captureCurrentEpubLocator { current ->
+            val refreshedHistory = jumpHistory.updateCurrentLocation(current, chapterCount)
+            val target = refreshedHistory.backLocator ?: return@captureCurrentEpubLocator
+            jumpHistory = refreshedHistory.stepBack()
+            navigate(target)
+        }
     }
 
     fun goForwardInJumpHistory() {
-        val target = jumpHistory.forwardLocator ?: return
-        jumpHistory = jumpHistory.stepForward()
-        navigate(target)
+        val chapterCount = loadedBook?.chapters?.size ?: return
+        captureCurrentEpubLocator { current ->
+            val refreshedHistory = jumpHistory.updateCurrentLocation(current, chapterCount)
+            val target = refreshedHistory.forwardLocator ?: return@captureCurrentEpubLocator
+            jumpHistory = refreshedHistory.stepForward()
+            navigate(target)
+        }
     }
 
     fun speakSelectedText(text: String, locator: ReaderLocator) {
@@ -1064,7 +1130,8 @@ fun SharedMobileEpubReaderScreen(
                                         SharedPaginatedTapAction.TOGGLE_CHROME -> showChrome = !showChrome
                                     }
                                 },
-                                modifier = Modifier.fillMaxSize()
+                                modifier = Modifier.fillMaxSize(),
+                                positionController = nativePaginatedPositionController,
                             )
                             }
                         } else if (useNativeVerticalRenderer) {
@@ -1245,6 +1312,7 @@ fun SharedMobileEpubReaderScreen(
                             appearanceScript = appearanceScript,
                             navigationScript = navigationScript,
                             navigationRequestId = navigationRequestId,
+                            positionController = webViewPositionController,
                             onBridgeMessage = { method, payload ->
                                 when (method) {
                                     "readerPointerActivity" -> {
@@ -1252,6 +1320,7 @@ fun SharedMobileEpubReaderScreen(
                                     }
                                     "readerDragActivity" -> temporarilyPauseAutoScroll(300L)
                                     "readerPositionChanged" -> payload.sharedMobileEpubLocatorOrNull()?.let { position ->
+                                        webViewPositionController.updateObservedLocator(position)
                                         val reportedChapter = position.chapterIndex
                                         if (reportedChapter == null || reportedChapter == currentChapterIndex) {
                                             currentLocator = position
@@ -1705,14 +1774,18 @@ fun SharedMobileEpubReaderScreen(
                     )
                 }
                 if (showChrome && showSlider && !showSearch && pages.isNotEmpty()) {
-                    SharedMobileEpubSlider(
-                        pageIndex = currentPageIndex,
-                        pageCount = pageCount,
-                        settings = settings,
-                        onPageSelected = { index -> pages.getOrNull(index)?.let { navigate(it.toMobileEpubLocator(loadedBook)) } },
-                        modifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .padding(bottom = 60.dp, start = 16.dp, end = 16.dp)
+                        SharedMobileEpubSlider(
+                            pageIndex = currentPageIndex,
+                            pageCount = pageCount,
+                            settings = settings,
+                            onPageSelected = { index ->
+                                pages.getOrNull(index)?.let {
+                                    recordJumpAndNavigate(it.toMobileEpubLocator(loadedBook))
+                                }
+                            },
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .padding(bottom = 60.dp, start = 16.dp, end = 16.dp)
                     )
                 }
             }

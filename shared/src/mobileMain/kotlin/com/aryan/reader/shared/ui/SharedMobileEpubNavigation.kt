@@ -245,6 +245,18 @@ internal data class SharedMobileEpubSelectionAction(val action: String, val text
 
 internal val SharedMobileEpubJson = Json { ignoreUnknownKeys = true }
 
+internal const val SharedMobileEpubCaptureCurrentPositionScript =
+    "window.readerCaptureCurrentPosition ? window.readerCaptureCurrentPosition() : null"
+
+/** Normalizes the quoted result returned by Android/iOS WebView JavaScript evaluation. */
+internal fun decodeSharedMobileJavascriptResult(raw: String?): String? {
+    val value = raw?.trim()?.takeIf { it.isNotEmpty() && it != "null" } ?: return null
+    val parsed = runCatching { Json.parseToJsonElement(value) }.getOrNull()
+    return parsed?.let { element ->
+        runCatching { element.jsonPrimitive.contentOrNull }.getOrNull()
+    }?.takeIf(String::isNotBlank) ?: value
+}
+
 internal fun String.sharedMobileEpubLocatorOrNull(): ReaderLocator? {
     val objectValue = runCatching { SharedMobileEpubJson.parseToJsonElement(this).jsonObject }.getOrNull() ?: return null
     return objectValue.toMobileEpubLocator()
