@@ -111,6 +111,7 @@
                 <data android:scheme="content" />
                 <data android:scheme="file" />
                 <data android:mimeType="application/x-fictionbook+xml" />
+                <data android:mimeType="application/x-zip-compressed-fb2" />
                 <data android:mimeType="application/x-fictionbook" />
                 <data android:mimeType="application/x-fb2" />
             </intent-filter>
@@ -137,6 +138,17 @@
                 <data android:mimeType="text/x-markdown" />
             </intent-filter>
 
+            <!-- HTML / XHTML -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:mimeType="text/html" />
+                <data android:mimeType="application/xhtml+xml" />
+            </intent-filter>
+
             <!-- CBZ known MIME types -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
@@ -146,6 +158,7 @@
                 <data android:scheme="file" />
                 <data android:mimeType="application/x-cbz" />
                 <data android:mimeType="application/vnd.comicbook+zip" />
+                <data android:mimeType="application/zip" />
             </intent-filter>
 
             <!-- CBR known MIME types -->
@@ -157,6 +170,7 @@
                 <data android:scheme="file" />
                 <data android:mimeType="application/x-cbr" />
                 <data android:mimeType="application/vnd.comicbook-rar" />
+                <data android:mimeType="application/x-rar-compressed" />
             </intent-filter>
 
             <!-- CB7 known MIME types -->
@@ -167,6 +181,7 @@
                 <data android:scheme="content" />
                 <data android:scheme="file" />
                 <data android:mimeType="application/x-cb7" />
+                <data android:mimeType="application/x-7z-compressed" />
             </intent-filter>
 
             <!-- CBT known MIME types -->
@@ -254,6 +269,62 @@
                 <data android:mimeType="text/x-ruby" />
                 <data android:mimeType="text/x-go" />
                 <data android:mimeType="text/x-log" />
+            </intent-filter>
+
+            <!-- Shared-document handoffs carry URI data in EXTRA_STREAM or
+                 ClipData; do not constrain them to a URI scheme. -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/pdf" />
+                <data android:mimeType="application/epub+zip" />
+                <data android:mimeType="application/x-mobipocket-ebook" />
+                <data android:mimeType="application/vnd.amazon.ebook" />
+                <data android:mimeType="application/vnd.amazon.mobi8-ebook" />
+                <data android:mimeType="text/markdown" />
+                <data android:mimeType="text/x-markdown" />
+                <data android:mimeType="text/plain" />
+                <data android:mimeType="text/html" />
+                <data android:mimeType="application/xhtml+xml" />
+                <data android:mimeType="application/x-fictionbook+xml" />
+                <data android:mimeType="application/x-zip-compressed-fb2" />
+                <data android:mimeType="application/zip" />
+                <data android:mimeType="application/vnd.comicbook+zip" />
+                <data android:mimeType="application/x-cbz" />
+                <data android:mimeType="application/vnd.comicbook-rar" />
+                <data android:mimeType="application/x-cbr" />
+                <data android:mimeType="application/x-rar-compressed" />
+                <data android:mimeType="application/x-cb7" />
+                <data android:mimeType="application/x-7z-compressed" />
+                <data android:mimeType="application/vnd.comicbook+tar" />
+                <data android:mimeType="application/x-cbt" />
+                <data android:mimeType="application/x-tar" />
+                <data android:mimeType="application/tar" />
+                <data android:mimeType="application/vnd.openxmlformats-officedocument.wordprocessingml.document" />
+                <data android:mimeType="application/vnd.openxmlformats-officedocument.presentationml.presentation" />
+                <data android:mimeType="application/vnd.oasis.opendocument.text" />
+                <data android:mimeType="application/x-vnd.oasis.opendocument.text-flat-xml" />
+                <data android:mimeType="text/csv" />
+                <data android:mimeType="text/comma-separated-values" />
+                <data android:mimeType="text/tab-separated-values" />
+                <data android:mimeType="application/json" />
+                <data android:mimeType="application/xml" />
+                <data android:mimeType="text/xml" />
+                <data android:mimeType="text/x-java-source" />
+                <data android:mimeType="text/x-python" />
+                <data android:mimeType="text/x-kotlin" />
+                <data android:mimeType="text/javascript" />
+                <data android:mimeType="application/javascript" />
+                <data android:mimeType="text/x-c" />
+                <data android:mimeType="text/x-c++" />
+                <data android:mimeType="text/x-csharp" />
+                <data android:mimeType="text/x-ruby" />
+                <data android:mimeType="text/x-go" />
+                <data android:mimeType="text/x-log" />
+                <data android:mimeType="application/x-fictionbook" />
+                <data android:mimeType="application/x-fb2" />
+                <data android:mimeType="application/octet-stream" />
             </intent-filter>
 
         </activity>

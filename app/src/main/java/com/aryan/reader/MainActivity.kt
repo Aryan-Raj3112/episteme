@@ -20,6 +20,7 @@
 package com.aryan.reader
 
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
@@ -57,6 +58,8 @@ import com.aryan.reader.tts.EXTRA_TTS_PAGE_INDEX
 import com.aryan.reader.tts.EXTRA_TTS_SOURCE_CFI
 import com.aryan.reader.tts.EXTRA_TTS_START_OFFSET
 import com.aryan.reader.tts.toMobileTtsHandoffRequest
+import com.aryan.reader.shared.ExternalDocumentIntakeRequest
+import com.aryan.reader.shared.ExternalDocumentOpenMode
 
 @UnstableApi
 open class MainActivity : AppCompatActivity() {
@@ -167,15 +170,52 @@ open class MainActivity : AppCompatActivity() {
             return
         }
 
-        if (intent?.action == Intent.ACTION_VIEW && intent.data != null) {
-            Timber.d("Received VIEW intent with URI: ${intent.data}")
-            val uri = intent.data!!
+        val sourceIntent = intent ?: return
+        if (sourceIntent.action == Intent.ACTION_VIEW) {
+            val request = ExternalDocumentIntentMapper.map(sourceIntent, this)?.request
+            if (request != null) {
+                handleExternalDocumentRequest(request)
+                return
+            }
+
+            // Preserve the established VIEW behavior for providers whose
+            // metadata cannot be normalized by the shared capability model.
+            val uri = sourceIntent.data ?: return
+            Timber.d("Received VIEW intent with unclassified URI; using direct fallback: $uri")
             viewModel.onFileSelected(
                 uri,
                 isFromRecent = false,
                 isExternalIntent = true,
-                isTemporaryExternalIntent = isTemporaryExternalOpen
+                isTemporaryExternalIntent = isTemporaryExternalOpen,
             )
+            return
+        }
+
+        if (sourceIntent.action == Intent.ACTION_SEND || sourceIntent.action == Intent.ACTION_SEND_MULTIPLE) {
+            val request = ExternalDocumentIntentMapper.map(sourceIntent, this)?.request ?: return
+            handleExternalDocumentRequest(request)
+        }
+    }
+
+    private fun handleExternalDocumentRequest(
+        request: ExternalDocumentIntakeRequest,
+    ) {
+        val uris = request.documents.map { Uri.parse(it.uri) }
+        if (uris.isEmpty()) return
+
+        if (request.openMode == ExternalDocumentOpenMode.OPEN_SINGLE) {
+            Timber.d("Received single external document handoff with URI: ${uris.single()}")
+            viewModel.onFileSelected(
+                uris.single(),
+                isFromRecent = false,
+                isExternalIntent = true,
+                isTemporaryExternalIntent = isTemporaryExternalOpen,
+            )
+        } else {
+            Timber.d("Received external document batch handoff with ${uris.size} URIs")
+            // The existing batch importer intentionally imports in order
+            // and does not auto-open an arbitrary item.
+            viewModel.onFilesSelected(uris)
         }
     }
 }
