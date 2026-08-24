@@ -15,6 +15,14 @@ data class SharedOpdsDownloadLocation(
 ) {
     val isAppStorage: Boolean
         get() = folderUriString.isNullOrBlank()
+
+    /**
+     * Folder identity is URI based.  Display names are not unique and must not
+     * be used to redirect a persisted download to a different folder.
+     */
+    fun matchesFolderUri(candidateUri: String?): Boolean {
+        return !folderUriString.isNullOrBlank() && folderUriString == candidateUri
+    }
 }
 
 object SharedOpdsDownloadLocationCodec {
@@ -163,6 +171,16 @@ data class SharedOpdsDownloadState(
     val isDownloading: Boolean,
     val progress: Float? = null
 )
+
+data class SharedOpdsTransferProgress(
+    val bytesReceived: Long,
+    val totalBytes: Long?
+) {
+    val fraction: Float?
+        get() = totalBytes
+            ?.takeIf { it > 0L }
+            ?.let { (bytesReceived.toFloat() / it.toFloat()).coerceIn(0f, 1f) }
+}
 
 data class SharedOpdsScreenState(
     val catalogs: List<OpdsCatalog> = emptyList(),

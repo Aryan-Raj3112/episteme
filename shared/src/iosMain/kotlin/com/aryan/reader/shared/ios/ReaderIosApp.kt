@@ -164,6 +164,7 @@ import com.aryan.reader.shared.opds.OpdsStreamReference
 import com.aryan.reader.shared.opds.SharedOpdsController
 import com.aryan.reader.shared.opds.SharedOpdsDownloadLocation
 import com.aryan.reader.shared.opds.SharedOpdsDownloadState
+import com.aryan.reader.shared.opds.SharedOpdsTransferProgress
 import com.aryan.reader.shared.opds.SharedOpdsStreamUri
 import com.aryan.reader.shared.opds.opdsStreamBooksForCatalog
 import com.aryan.reader.shared.pdf.SharedPdfReaderState
@@ -4722,14 +4723,14 @@ private fun ReaderIosApp(
                                     scope.launch {
                                         opdsState = opdsController.updateDownloadState(
                                             entry.id,
-                                            SharedOpdsDownloadState(isDownloading = true, progress = null)
+                                            SharedOpdsDownloadState(isDownloading = true, progress = 0f)
                                         )
                                         val catalog = opdsState.currentCatalog
                                         val destinationFolder = opdsState.downloadLocation
                                             ?.takeIf { it.folderUriString != null }
                                             ?.let { location ->
                                                 state.syncedFolders.firstOrNull {
-                                                    it.uriString == location.folderUriString || it.name == location.folderName
+                                                    location.matchesFolderUri(it.uriString)
                                                 }
                                             }
                                         opdsRepository.downloadBook(
@@ -4737,7 +4738,19 @@ private fun ReaderIosApp(
                                             acquisition,
                                             catalog?.username,
                                             catalog?.password,
-                                            destinationFolder
+                                            destinationFolder,
+                                            onProgress = { transfer: SharedOpdsTransferProgress ->
+                                                transfer.fraction?.let { progress ->
+                                                    scope.launch(Dispatchers.Main) {
+                                                        if (opdsState.downloadingState[entry.id]?.isDownloading == true) {
+                                                            opdsState = opdsController.updateDownloadState(
+                                                                entry.id,
+                                                                SharedOpdsDownloadState(isDownloading = true, progress = progress),
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                            },
                                         ).onSuccess { result ->
                                             val folderName = result.folderName
                                             if (folderName == null) {
@@ -4880,14 +4893,14 @@ private fun ReaderIosApp(
                                             scope.launch {
                                                 opdsState = opdsController.updateDownloadState(
                                                     entry.id,
-                                                    SharedOpdsDownloadState(isDownloading = true, progress = null),
+                                                    SharedOpdsDownloadState(isDownloading = true, progress = 0f),
                                                 )
                                                 val catalog = opdsState.currentCatalog
                                                 val destinationFolder = opdsState.downloadLocation
                                                     ?.takeIf { it.folderUriString != null }
                                                     ?.let { location ->
                                                         state.syncedFolders.firstOrNull {
-                                                            it.uriString == location.folderUriString || it.name == location.folderName
+                                                            location.matchesFolderUri(it.uriString)
                                                         }
                                                     }
                                                 opdsRepository.downloadBook(
@@ -4896,6 +4909,18 @@ private fun ReaderIosApp(
                                                     catalog?.username,
                                                     catalog?.password,
                                                     destinationFolder,
+                                                    onProgress = { transfer: SharedOpdsTransferProgress ->
+                                                        transfer.fraction?.let { progress ->
+                                                            scope.launch(Dispatchers.Main) {
+                                                                if (opdsState.downloadingState[entry.id]?.isDownloading == true) {
+                                                                    opdsState = opdsController.updateDownloadState(
+                                                                        entry.id,
+                                                                        SharedOpdsDownloadState(isDownloading = true, progress = progress),
+                                                                    )
+                                                                }
+                                                            }
+                                                        }
+                                                    },
                                                 ).onSuccess { result ->
                                                     val folderName = result.folderName
                                                     if (folderName == null) {

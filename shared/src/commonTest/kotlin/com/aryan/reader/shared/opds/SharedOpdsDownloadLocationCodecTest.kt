@@ -31,4 +31,23 @@ class SharedOpdsDownloadLocationCodecTest {
         assertNull(SharedOpdsDownloadLocationCodec.decode(""))
         assertNull(SharedOpdsDownloadLocationCodec.decode("not json"))
     }
+
+    @Test
+    fun `folder matching uses the persisted uri instead of the display name`() {
+        val location = SharedOpdsDownloadLocation(
+            folderUriString = "folder://books-a",
+            folderName = "Books",
+        )
+
+        assertEquals(true, location.matchesFolderUri("folder://books-a"))
+        assertEquals(false, location.matchesFolderUri("folder://books-b"))
+        assertEquals(false, location.matchesFolderUri(null))
+    }
+
+    @Test
+    fun `transfer progress clamps to a valid fraction and handles unknown length`() {
+        assertEquals(0.5f, SharedOpdsTransferProgress(50L, 100L).fraction)
+        assertEquals(1f, SharedOpdsTransferProgress(150L, 100L).fraction)
+        assertEquals(null, SharedOpdsTransferProgress(50L, null).fraction)
+    }
 }
