@@ -92,6 +92,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.focus.FocusRequester
@@ -124,6 +125,7 @@ import com.aryan.reader.shared.SortOrder
 import com.aryan.reader.shared.SyncedFolder
 import com.aryan.reader.shared.Tag
 import com.aryan.reader.shared.SharedFileCapabilities
+import com.aryan.reader.shared.cardAuthor
 import com.aryan.reader.shared.cardTitle
 import com.aryan.reader.shared.canExportOriginalFile
 import com.aryan.reader.shared.booksAvailableForShelfAddition
@@ -235,7 +237,7 @@ fun SharedMobileUnifiedLibraryScreen(
 ) {
     var filter by remember { mutableStateOf(MobileUnifiedLibraryFilter.ALL) }
     var query by remember { mutableStateOf("") }
-    var searchVisible by remember { mutableStateOf(false) }
+    var showLibraryControls by remember { mutableStateOf(false) }
     var showFilters by remember { mutableStateOf(false) }
     var infoBook by remember { mutableStateOf<BookItem?>(null) }
     var section by remember(initialSection) {
@@ -275,6 +277,28 @@ fun SharedMobileUnifiedLibraryScreen(
     }
     val continueReading = remember(state.rawLibraryBooks) {
         mobileUnifiedContinueReadingBook(state.rawLibraryBooks)
+    }
+    val unifiedLibraryModel = remember(
+        section,
+        selectedShelfId,
+        filter,
+        query,
+        useListView,
+        visibleBooks,
+        continueReading,
+    ) {
+        mobileUnifiedLibraryModel(
+            viewState = MobileUnifiedLibraryViewState(
+                section = section,
+                selectedShelfId = selectedShelfId,
+                filter = filter,
+                query = query,
+                searchActive = query.isNotBlank(),
+                useListView = useListView,
+            ),
+            visibleBooks = visibleBooks,
+            continueReading = continueReading,
+        )
     }
     val ttsItems = remember(state.rawLibraryBooks, ttsProgress) {
         buildSharedTtsListenItems(state.rawLibraryBooks, ttsProgress)
@@ -355,145 +379,68 @@ fun SharedMobileUnifiedLibraryScreen(
             }
         },
     ) {
-    Scaffold(
-        modifier = modifier,
+        SharedAndroidUnifiedScaffold(
+        section = section,
+        showingShelf = selectedShelfId != null,
+        importDescription = readerString("unified_library_import", "Import files"),
+        addAudiobookDescription = readerString("audiobooks_add", "Add audiobook"),
+        newShelfLabel = readerString("fab_new_shelf", "New shelf"),
+        onImport = onImportBooks,
+        onAddAudiobook = { showAudiobookAddSheet = true },
+        onNewShelf = { showCreateShelf = true },
+        showFloatingActionButton = !isContextualMode,
         topBar = {
             if (isContextualMode) {
                 val actions = requireNotNull(contextualActions)
                 SharedMobileContextualTopBar(
-                        selectedCount = selectedIds.size,
-                        onClose = actions::clearSelection,
-                        onSelectAll = if (selectionCapabilities.selectAll) {
-                            {
-                                actions.selectAll(visibleBooks.mapTo(linkedSetOf()) { it.id })
-                            }
-                        } else {
-                            null
-                        },
-                        onPin = if (selectionCapabilities.pin) actions::toggleSelectedPins else null,
-                        onAddToShelf = if (selectionCapabilities.addToShelf) {
-                            { showAddToShelf = true }
-                        } else {
-                            null
-                        },
-                        onTag = if (selectionCapabilities.tag) {
-                            { showTagDialog = true }
-                        } else {
-                            null
-                        },
-                        onInfo = if (selectionCapabilities.info) {
-                            selectedBook?.let { book -> { infoBook = book } }
-                        } else {
-                            null
-                        },
-                        onSave = if (selectionCapabilities.save) {
-                            selectedBook
-                                ?.takeIf { it.canExportOriginalFile() }
-                                ?.let { book -> { actions.saveBook(book) } }
-                        } else {
-                            null
-                        },
-                        onShare = if (selectionCapabilities.share) {
-                            selectedBook
-                                ?.takeIf { it.canExportOriginalFile() }
-                                ?.let { book -> { actions.shareBook(book) } }
-                        } else {
-                            null
-                        },
-                        onExportAnnotations = if (selectionCapabilities.exportAnnotations) {
-                            selectedBook?.let { book -> { actions.exportAnnotations(book) } }
-                        } else {
-                            null
-                        },
-                        onDelete = if (selectionCapabilities.delete) {
-                            { showDeleteBooks = true }
-                        } else {
-                            null
-                        },
+                    selectedCount = selectedIds.size,
+                    onClose = actions::clearSelection,
+                    onSelectAll = if (selectionCapabilities.selectAll) {
+                        { actions.selectAll(visibleBooks.mapTo(linkedSetOf()) { it.id }) }
+                    } else null,
+                    onPin = if (selectionCapabilities.pin) actions::toggleSelectedPins else null,
+                    onAddToShelf = if (selectionCapabilities.addToShelf) {
+                        { showAddToShelf = true }
+                    } else null,
+                    onTag = if (selectionCapabilities.tag) {
+                        { showTagDialog = true }
+                    } else null,
+                    onInfo = if (selectionCapabilities.info) selectedBook?.let { book -> { infoBook = book } } else null,
+                    onSave = if (selectionCapabilities.save) {
+                        selectedBook?.takeIf { it.canExportOriginalFile() }?.let { book -> { actions.saveBook(book) } }
+                    } else null,
+                    onShare = if (selectionCapabilities.share) {
+                        selectedBook?.takeIf { it.canExportOriginalFile() }?.let { book -> { actions.shareBook(book) } }
+                    } else null,
+                    onExportAnnotations = if (selectionCapabilities.exportAnnotations) {
+                        selectedBook?.let { book -> { actions.exportAnnotations(book) } }
+                    } else null,
+                    onDelete = if (selectionCapabilities.delete) {
+                        { showDeleteBooks = true }
+                    } else null,
                 )
             } else {
-                TopAppBar(
-                    title = {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                selectedShelfId?.let { id -> state.shelves.firstOrNull { it.id == id }?.name }
-                                    ?: when (section) {
-                                        MobileUnifiedLibrarySection.HOME -> readerString("nav_unified_library", "Library Beta")
-                                        MobileUnifiedLibrarySection.SHELVES -> readerString("tab_shelves", "Shelves")
-                                        MobileUnifiedLibrarySection.FOLDERS -> readerString("tab_folders", "Folders")
-                                        MobileUnifiedLibrarySection.CATALOGS -> readerString("tab_catalogs", "Catalogs")
-                                        MobileUnifiedLibrarySection.AUDIOBOOKS -> readerString("audiobooks_title", "Audiobooks")
-                                    }
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            if (section == MobileUnifiedLibrarySection.HOME) Surface(
-                                shape = RoundedCornerShape(6.dp),
-                                color = MaterialTheme.colorScheme.primaryContainer,
-                            ) {
-                                Text(
-                                    readerString("unified_library_beta", "BETA"),
-                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                                    style = MaterialTheme.typography.labelSmall,
-                                )
-                            }
-                        }
-                    },
-                    navigationIcon = {
-                        IconButton(onClick = {
-                            if (selectedShelfId != null) selectedShelfId = null
-                            else unifiedScope.launch { unifiedDrawerState.open() }
-                        }) {
-                            Icon(
-                                if (selectedShelfId != null) Icons.AutoMirrored.Filled.ArrowBack else Icons.Default.Menu,
-                                contentDescription = if (selectedShelfId != null) readerString("unified_library_back_to_shelves", "All shelves") else readerString("unified_library_drawer_title", "Your library"),
-                            )
-                        }
-                    },
-                    actions = {
-                        if (section == MobileUnifiedLibrarySection.HOME) IconButton(onClick = { searchVisible = !searchVisible; if (!searchVisible) query = "" }) {
-                            Icon(
-                                if (searchVisible) Icons.Default.Close else Icons.Default.Search,
-                                contentDescription = readerString("unified_library_search_books", "Search your books"),
-                            )
-                        }
-                        if (section == MobileUnifiedLibrarySection.HOME) IconButton(onClick = { onListViewChange(!useListView) }) {
-                            Icon(
-                                if (useListView) Icons.AutoMirrored.Filled.LibraryBooks else Icons.Default.FormatListNumbered,
-                                contentDescription = if (useListView) {
-                                    readerString("unified_library_grid_view", "Grid view")
-                                } else {
-                                    readerString("unified_library_list_view", "List view")
-                                },
-                            )
-                        }
-                        IconButton(
-                            onClick = onOpenAccountDrawer,
-                            modifier = Modifier.testTag("UnifiedLibraryProfile"),
-                        ) {
-                            accountAvatar()
-                        }
-                    },
-                )
-            }
-        },
-        floatingActionButton = {
-            if (!isContextualMode) when {
-                section == MobileUnifiedLibrarySection.HOME -> ExtendedFloatingActionButton(
-                    onClick = onImportBooks,
-                    icon = { Icon(Icons.Default.Add, contentDescription = null) },
-                    text = { Text(readerString("unified_library_import", "Import files")) },
-                )
-                section == MobileUnifiedLibrarySection.SHELVES && selectedShelfId == null -> ExtendedFloatingActionButton(
-                    onClick = { showCreateShelf = true },
-                    icon = { Icon(Icons.Default.Add, contentDescription = null) },
-                    text = { Text(readerString("fab_new_shelf", "New shelf")) },
-                )
-                section == MobileUnifiedLibrarySection.FOLDERS -> Unit
-                section == MobileUnifiedLibrarySection.CATALOGS -> Unit
-                section == MobileUnifiedLibrarySection.AUDIOBOOKS -> ExtendedFloatingActionButton(
-                    onClick = { showAudiobookAddSheet = true },
-                    icon = { Icon(Icons.Default.Add, contentDescription = null) },
-                    text = { Text(readerString("audiobooks_add", "Add audiobook")) },
+                SharedAndroidUnifiedTopBar(
+                    title = selectedShelfId?.let { id -> state.shelves.firstOrNull { it.id == id }?.name }
+                        ?: when (section) {
+                            MobileUnifiedLibrarySection.HOME -> null
+                            MobileUnifiedLibrarySection.SHELVES -> readerString("tab_shelves", "Shelves")
+                            MobileUnifiedLibrarySection.FOLDERS -> readerString("tab_folders", "Folders")
+                            MobileUnifiedLibrarySection.CATALOGS -> readerString("tab_catalogs", "Catalogs")
+                            MobileUnifiedLibrarySection.AUDIOBOOKS -> readerString("listen_title", "Listen")
+                        },
+                    showingShelf = selectedShelfId != null,
+                    drawerDescription = readerString("unified_library_drawer_title", "Your library"),
+                    backToShelvesDescription = readerString("unified_library_back_to_shelves", "All shelves"),
+                    onMenu = { unifiedScope.launch { unifiedDrawerState.open() } },
+                    onBackFromShelf = { selectedShelfId = null },
+                    onAccount = onOpenAccountDrawer,
+                    accountAvatar = accountAvatar,
+                    searchQuery = query.takeIf { section == MobileUnifiedLibrarySection.HOME },
+                    searchPlaceholder = readerString("unified_library_search_books", "Search your books"),
+                    clearSearchDescription = readerString("content_desc_clear_query", "Clear search"),
+                    onSearchQueryChange = { query = it },
+                    autoFocusSearch = section == MobileUnifiedLibrarySection.HOME,
                 )
             }
         },
@@ -505,10 +452,7 @@ fun SharedMobileUnifiedLibraryScreen(
                     audiobook = activeAudiobook,
                     playback = audiobookPlayback,
                     onTogglePlayback = onToggleAudiobookPlayback,
-                    onExpand = {
-                        playerBook = activeAudiobook
-                        showPlayerSheet = true
-                    },
+                    onExpand = { playerBook = activeAudiobook; showPlayerSheet = true },
                     onStopPlayback = onStopAudiobookPlayback,
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
                 )
@@ -516,200 +460,211 @@ fun SharedMobileUnifiedLibraryScreen(
                     item = activeTts,
                     playback = ttsListenState,
                     onTogglePlayback = onToggleTtsPlayback,
-                    onExpand = {
-                        ttsPlayerItem = activeTts
-                        showTtsPlayerSheet = true
-                    },
+                    onExpand = { ttsPlayerItem = activeTts; showTtsPlayerSheet = true },
                     onStopPlayback = onStopTtsPlayback,
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
                 )
             }
         },
-    ) { padding ->
-        if (section == MobileUnifiedLibrarySection.SHELVES) {
-            SharedMobileUnifiedShelvesSection(
-                shelves = state.shelves,
-                selectedShelfId = selectedShelfId,
-                selectedBookIds = state.selectedBookIds,
-                pinnedBookIds = state.pinnedLibraryBookIds,
-                downloadingBookIds = state.downloadingBookIds,
-                onShelfSelected = { selectedShelfId = it.id },
-                onOpenBook = onOpenBook,
-                onLongPressBook = onLongPressBook,
-                onTogglePinned = onTogglePinned,
-                onShowBookInfo = { infoBook = it },
-                modifier = Modifier.fillMaxSize().padding(padding),
-            )
-            return@Scaffold
-        }
-        if (section == MobileUnifiedLibrarySection.FOLDERS) {
-            SharedMobileFolderSyncScreen(
-                folders = state.syncedFolders,
-                books = state.rawLibraryBooks,
-                isLoading = state.isRefreshing,
-                onAddFolder = onAddFolder,
-                onScanAll = onScanFolders,
-                onSyncMetadata = onSyncFolderMetadata,
-                onLocalSyncChange = onFolderLocalSyncChange,
-                onFileTypesChange = onFolderFileTypesChange,
-                onRemoveFolder = onRemoveFolder,
-                modifier = Modifier.fillMaxSize().padding(padding),
-            )
-            return@Scaffold
-        }
-        if (section == MobileUnifiedLibrarySection.CATALOGS) {
-            catalogContent(Modifier.fillMaxSize().padding(padding))
-            return@Scaffold
-        }
-        if (section == MobileUnifiedLibrarySection.AUDIOBOOKS) {
-            SharedMobileAudiobooksSection(
-                audiobooks = audiobooks,
-                playback = audiobookPlayback,
-                ttsItems = ttsItems,
-                ttsPlayback = ttsListenState,
-                onAddAudiobook = { showAudiobookAddSheet = true },
-                onOpenPlayer = { book ->
-                    if (audiobookPlayback.bookId != book.bookId) {
-                        onPlayAudiobook(book)
-                    }
-                    playerBook = book
-                    showPlayerSheet = true
-                },
-                onOpenTtsPlayer = { item, autoStart ->
-                    if (autoStart) {
-                        onStartTtsListen(item.book, SharedTtsListenStartPolicy.RESUME, null)
-                    }
-                    ttsPlayerItem = item
-                    showTtsPlayerSheet = true
-                },
-                modifier = Modifier.fillMaxSize().padding(padding),
-            )
-            return@Scaffold
-        }
-        LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(padding),
-            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 104.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            if (searchVisible) {
-                item {
-                    OutlinedTextField(
-                        value = query,
-                        onValueChange = { query = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        placeholder = { Text(readerString("unified_library_search_books", "Search your books")) },
-                    )
-                }
-            } else {
-                continueReading?.let { book ->
-                    item {
-                        Surface(
-                            modifier = Modifier.fillMaxWidth().clickable { onOpenBook(book) },
-                            shape = RoundedCornerShape(20.dp),
-                            color = MaterialTheme.colorScheme.primaryContainer,
-                        ) {
-                            Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Text(readerString("unified_library_continue_reading", "Continue reading").uppercase(), style = MaterialTheme.typography.labelLarge)
-                                Text(book.cardTitle(), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                                book.author?.takeIf(String::isNotBlank)?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                                Text(readerString("progress_complete", "%1\$d%% complete", (book.progressPercentage ?: 0f).roundToInt()))
-                            }
-                        }
-                    }
-                }
-            }
-            item {
-                Text(readerString("unified_library_your_books", "Your books"), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                Text(readerQuantityString("book_count", visibleBooks.size, "%1\$d book", "%1\$d books", visibleBooks.size), color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            item {
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                    MobileUnifiedLibraryFilter.entries.forEach { option ->
-                        FilterChip(
-                            selected = filter == option,
-                            onClick = { filter = option },
-                            label = { Text(readerString(option.stringKey, option.fallbackLabel)) },
+        sectionContent = { displayedSection, padding ->
+            when (displayedSection) {
+                MobileUnifiedLibrarySection.HOME -> {
+                    if (unifiedLibraryModel.showSearchResults) {
+                        SharedAndroidUnifiedLibrarySearch(
+                            books = unifiedLibraryModel.visibleBooks,
+                            query = query,
+                            searchPlaceholder = readerString("unified_library_search_books", "Search your books"),
+                            clearDescription = readerString("content_desc_clear_query", "Clear search"),
+                            closeDescription = readerString("action_close", "Close"),
+                            resultLabel = readerQuantityString("unified_library_search_results", visibleBooks.size, "%1\$d result", "%1\$d results", visibleBooks.size),
+                            noResultsLabel = readerString("no_results_found", "No results found for %1\$s", query),
+                            showSearchField = false,
+                            itemKey = { it.id },
+                            onQueryChange = { query = it },
+                            onClose = { query = "" },
+                            bookCard = { book ->
+                                SharedMobileBookCard(
+                                    book = book,
+                                    selected = book.id in selectedIds,
+                                    pinned = book.id in state.pinnedLibraryBookIds,
+                                    downloading = book.id in state.downloadingBookIds,
+                                    onClick = { if (selectedIds.isEmpty()) onOpenBook(book) else onLongPressBook(book) },
+                                    onLongClick = { if (shouldSelectBookOnLongPress(book.id, selectedIds)) onLongPressBook(book) },
+                                    onTogglePinned = { onTogglePinned(book) },
+                                    onShowBookInfo = { infoBook = book },
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                            },
+                            modifier = Modifier.padding(padding),
+                        )
+                    } else {
+                        SharedAndroidUnifiedLibraryHome(
+                            books = unifiedLibraryModel.visibleBooks,
+                            continueReading = unifiedLibraryModel.continueReading.takeIf { unifiedLibraryModel.showContinueReading },
+                            filter = filter,
+                            sortLabel = state.sortOrder.sharedMobileLabel(),
+                            advancedFilterCount = advancedFilterCount,
+                            useListView = useListView,
+                            strings = SharedAndroidUnifiedHomeStrings(
+                                noBooks = readerString("unified_library_no_books", "No books in this view"),
+                                filterBooks = readerString("content_desc_filter", "Filter"),
+                                gridView = readerString("unified_library_grid_view", "Grid view"),
+                                listView = readerString("unified_library_list_view", "List view"),
+                                filterLabels = MobileUnifiedLibraryFilter.entries.associateWith { option -> readerString(option.stringKey, option.fallbackLabel) },
+                            ),
+                            itemKey = { it.id },
+                            onFilterChange = { filter = it },
+                            onControls = { showLibraryControls = true },
+                            onAdvancedFilters = {
+                                showLibraryControls = false
+                                showFilters = true
+                            },
+                            onListViewChange = onListViewChange,
+                            continueCard = { book, cardModifier ->
+                                val progress = (book.progressPercentage ?: 0f).coerceIn(0f, 100f)
+                                SharedAndroidUnifiedContinueCard(
+                                    sectionLabel = readerString("unified_library_continue_reading", "Continue reading"),
+                                    title = book.cardTitle(),
+                                    author = book.cardAuthor(),
+                                    progressPercent = progress,
+                                    progressLabel = readerString("progress_complete", "%1\$d%% complete", progress.roundToInt()),
+                                    sourceLabel = book.sourceFolder?.let { readerString("source_local_folder", "· Local folder") },
+                                    coverTone = sharedMobileFileTypeColor(book.type),
+                                    cardLayoutDirection = LocalLayoutDirection.current,
+                                    onClick = { onOpenBook(book) },
+                                    cover = { coverModifier ->
+                                        SharedMobileBookCover(
+                                            book = book,
+                                            selected = false,
+                                            pinned = book.id in state.pinnedLibraryBookIds,
+                                            onTogglePinned = { onTogglePinned(book) },
+                                            modifier = coverModifier.size(94.dp, 146.dp),
+                                            compact = true,
+                                        )
+                                    },
+                                    fileTypeBadge = {
+                                        SharedMobileCoverTextBadge(
+                                            text = book.type.name,
+                                            containerColor = Color.Black.copy(alpha = 0.62f),
+                                            contentColor = Color.White,
+                                        )
+                                    },
+                                    modifier = cardModifier,
+                                )
+                            },
+                            bookCard = { book ->
+                                SharedMobileBookCard(
+                                    book = book,
+                                    selected = book.id in selectedIds,
+                                    pinned = book.id in state.pinnedLibraryBookIds,
+                                    downloading = book.id in state.downloadingBookIds,
+                                    onClick = { if (selectedIds.isEmpty()) onOpenBook(book) else onLongPressBook(book) },
+                                    onLongClick = { if (shouldSelectBookOnLongPress(book.id, selectedIds)) onLongPressBook(book) },
+                                    onTogglePinned = { onTogglePinned(book) },
+                                    onShowBookInfo = { infoBook = book },
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                            },
+                            bookListItem = { book ->
+                                SharedMobileLibraryListItem(
+                                    book = book,
+                                    selected = book.id in selectedIds,
+                                    pinned = book.id in state.pinnedLibraryBookIds,
+                                    downloading = book.id in state.downloadingBookIds,
+                                    onClick = { if (selectedIds.isEmpty()) onOpenBook(book) else onLongPressBook(book) },
+                                    onLongClick = { if (shouldSelectBookOnLongPress(book.id, selectedIds)) onLongPressBook(book) },
+                                    onTogglePinned = { onTogglePinned(book) },
+                                    onShowBookInfo = { infoBook = book },
+                                )
+                            },
+                            modifier = Modifier.padding(padding),
                         )
                     }
-                    SharedMobileLibrarySortControl(
-                        sortOrder = state.sortOrder,
-                        labels = SortOrder.entries.associateWith { it.sharedMobileLabel() },
-                        selectedContentDescription = readerString("content_desc_selected", "Selected"),
-                        onSortOrderChange = onSortOrderChange,
-                        modifier = Modifier.testTag("UnifiedLibrarySortButton"),
-                        icon = {
-                            Icon(
-                                Icons.Default.Sort,
-                                contentDescription = readerString("content_desc_sort", "Sort"),
-                                modifier = Modifier.size(20.dp),
+                }
+                MobileUnifiedLibrarySection.SHELVES -> {
+                    val selectedShelf = selectedShelfId?.let { id -> state.shelves.firstOrNull { it.id == id } }
+                    SharedAndroidUnifiedShelves(
+                        visibleShelves = state.shelves.filter { it.type != ShelfType.TAG && it.parentShelfId == null },
+                        selectedShelf = selectedShelf,
+                        selectedBooks = selectedShelf?.directBooks.orEmpty(),
+                        noShelvesLabel = readerString("unified_library_no_shelves", "No shelves yet"),
+                        shelfKey = { it.id },
+                        shelfName = { it.name },
+                        shelfBookCountLabel = { shelf -> readerQuantityString("book_count", shelf.bookCount, "%1\$d book", "%1\$d books", shelf.bookCount) },
+                        bookKey = { it.id },
+                        onShelfSelected = { selectedShelfId = it.id },
+                        bookCard = { book ->
+                            SharedMobileBookCard(
+                                book = book,
+                                selected = book.id in selectedIds,
+                                pinned = book.id in state.pinnedLibraryBookIds,
+                                downloading = book.id in state.downloadingBookIds,
+                                onClick = { if (selectedIds.isEmpty()) onOpenBook(book) else onLongPressBook(book) },
+                                onLongClick = { if (shouldSelectBookOnLongPress(book.id, selectedIds)) onLongPressBook(book) },
+                                onTogglePinned = { onTogglePinned(book) },
+                                onShowBookInfo = { infoBook = book },
+                                modifier = Modifier.fillMaxWidth(),
                             )
                         },
+                        modifier = Modifier.padding(padding),
                     )
-                    BadgedBox(
-                        badge = {
-                            if (advancedFilterCount > 0) {
-                                Badge { Text(advancedFilterCount.toString()) }
-                            }
-                        },
-                    ) {
-                        IconButton(
-                            onClick = { showFilters = true },
-                            modifier = Modifier.testTag("UnifiedLibraryFilter"),
-                        ) {
-                            Icon(
-                                Icons.Default.FilterList,
-                                contentDescription = readerString("content_desc_filter", "Filter"),
-                                tint = if (advancedFilterCount > 0) {
-                                    MaterialTheme.colorScheme.primary
-                                } else {
-                                    MaterialTheme.colorScheme.onSurfaceVariant
-                                },
-                            )
-                        }
-                    }
                 }
+                MobileUnifiedLibrarySection.FOLDERS -> SharedMobileFolderSyncScreen(
+                    folders = state.syncedFolders,
+                    books = state.rawLibraryBooks,
+                    isLoading = state.isRefreshing,
+                    onAddFolder = onAddFolder,
+                    onScanAll = onScanFolders,
+                    onSyncMetadata = onSyncFolderMetadata,
+                    onLocalSyncChange = onFolderLocalSyncChange,
+                    onFileTypesChange = onFolderFileTypesChange,
+                    onRemoveFolder = onRemoveFolder,
+                    modifier = Modifier.fillMaxSize().padding(padding),
+                )
+                MobileUnifiedLibrarySection.CATALOGS -> catalogContent(Modifier.fillMaxSize().padding(padding))
+                MobileUnifiedLibrarySection.AUDIOBOOKS -> SharedMobileAudiobooksSection(
+                    audiobooks = audiobooks,
+                    playback = audiobookPlayback,
+                    ttsItems = ttsItems,
+                    ttsPlayback = ttsListenState,
+                    onAddAudiobook = { showAudiobookAddSheet = true },
+                    onOpenPlayer = { book ->
+                        if (audiobookPlayback.bookId != book.bookId) onPlayAudiobook(book)
+                        playerBook = book
+                        showPlayerSheet = true
+                    },
+                    onOpenTtsPlayer = { item, autoStart ->
+                        if (autoStart) onStartTtsListen(item.book, SharedTtsListenStartPolicy.RESUME, null)
+                        ttsPlayerItem = item
+                        showTtsPlayerSheet = true
+                    },
+                    modifier = Modifier.fillMaxSize().padding(padding),
+                )
             }
-            if (visibleBooks.isEmpty()) {
-                item {
-                    Box(Modifier.fillMaxWidth().padding(vertical = 64.dp), contentAlignment = Alignment.Center) {
-                        Text(readerString("unified_library_no_books", "No books in this view"), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                }
-            } else if (useListView) {
-                items(visibleBooks, key = { it.id }) { book ->
-                    SharedMobileLibraryListItem(
-                        book = book,
-                        selected = book.id in state.selectedBookIds,
-                        pinned = book.id in state.pinnedLibraryBookIds,
-                        downloading = book.id in state.downloadingBookIds,
-                        onClick = {
-                            if (state.selectedBookIds.isEmpty()) onOpenBook(book) else onLongPressBook(book)
-                        },
-                        onLongClick = { onLongPressBook(book) },
-                        onTogglePinned = { onTogglePinned(book) },
-                        onShowBookInfo = { infoBook = book },
-                    )
-                }
-            } else {
-                item {
-                    SharedMobileBookGridSection(
-                        title = "",
-                        books = visibleBooks,
-                        selectedBookIds = state.selectedBookIds,
-                        pinnedBookIds = state.pinnedLibraryBookIds,
-                        downloadingBookIds = state.downloadingBookIds,
-                        onOpenBook = { book ->
-                            if (state.selectedBookIds.isEmpty()) onOpenBook(book) else onLongPressBook(book)
-                        },
-                        onLongPressBook = onLongPressBook,
-                        onTogglePinned = onTogglePinned,
-                        onShowBookInfo = { infoBook = it },
-                    )
-                }
-            }
-        }
+        },
+        modifier = modifier,
+        )
     }
+    if (showLibraryControls) {
+        SharedAndroidUnifiedLibraryControlsSheet(
+            currentFilter = filter,
+            currentSortOrder = state.sortOrder,
+            strings = SharedAndroidUnifiedControlsStrings(
+                title = readerString("unified_library_sort_filter", "Sort and filter"),
+                readStatus = readerString("filter_read_status", "Read status"),
+                sort = readerString("content_desc_sort", "Sort"),
+                advancedFilters = readerString("filter_library", "Advanced filters"),
+                filterLabels = MobileUnifiedLibraryFilter.entries.associateWith { option -> readerString(option.stringKey, option.fallbackLabel) },
+                sortLabels = SortOrder.entries.associateWith { it.sharedMobileLabel() },
+            ),
+            onFilterChanged = { filter = it },
+            onSortChanged = onSortOrderChange,
+            onAdvancedFilters = {
+                showLibraryControls = false
+                showFilters = true
+            },
+            onDismiss = { showLibraryControls = false },
+        )
     }
     if (showFilters) {
         SharedMobileLibraryFilterDialog(

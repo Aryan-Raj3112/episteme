@@ -23,6 +23,60 @@ import kotlin.test.assertTrue
 class NonReaderLayoutModelsTest {
 
     @Test
+    fun `unified library model only exposes continue reading on unfiltered home`() {
+        val book = book(id = "reading", progress = 42f)
+
+        assertTrue(
+            mobileUnifiedLibraryModel(
+                viewState = MobileUnifiedLibraryViewState(
+                    filter = MobileUnifiedLibraryFilter.ALL,
+                    query = "",
+                    searchActive = false,
+                ),
+                visibleBooks = listOf(book),
+                continueReading = book,
+            ).showContinueReading,
+        )
+        assertFalse(
+            mobileUnifiedLibraryModel(
+                viewState = MobileUnifiedLibraryViewState(
+                    filter = MobileUnifiedLibraryFilter.READING,
+                    query = "",
+                    searchActive = false,
+                ),
+                visibleBooks = listOf(book),
+                continueReading = book,
+            ).showContinueReading,
+        )
+        assertFalse(
+            mobileUnifiedLibraryModel(
+                viewState = MobileUnifiedLibraryViewState(
+                    filter = MobileUnifiedLibraryFilter.ALL,
+                    query = "reading",
+                    searchActive = true,
+                ),
+                visibleBooks = listOf(book),
+                continueReading = book,
+            ).showContinueReading,
+        )
+    }
+
+    @Test
+    fun `unified library model marks active home search as results mode`() {
+        val model = mobileUnifiedLibraryModel(
+            viewState = MobileUnifiedLibraryViewState(
+                query = "missing",
+                searchActive = true,
+            ),
+            visibleBooks = emptyList(),
+            continueReading = null,
+        )
+
+        assertTrue(model.showSearchResults)
+        assertFalse(model.showContinueReading)
+    }
+
+    @Test
     fun `unified library filtering matches Android progress and text rules`() {
         val unread = book(id = "unread", displayName = "Alpha.epub", progress = 0f)
         val reading = book(id = "reading", displayName = "Beta.pdf", progress = 42f, author = "Ada")

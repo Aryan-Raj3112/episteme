@@ -131,6 +131,7 @@ fun <T> SharedAndroidUnifiedLibrarySearch(
     closeDescription: String,
     resultLabel: String,
     noResultsLabel: String,
+    showSearchField: Boolean = true,
     itemKey: (T) -> String,
     onQueryChange: (String) -> Unit,
     onClose: () -> Unit,
@@ -138,21 +139,25 @@ fun <T> SharedAndroidUnifiedLibrarySearch(
     modifier: Modifier = Modifier,
 ) {
     val focusRequester = androidx.compose.runtime.remember { FocusRequester() }
-    LaunchedEffect(Unit) { focusRequester.requestFocus() }
+    if (showSearchField) {
+        LaunchedEffect(Unit) { focusRequester.requestFocus() }
+    }
     Column(modifier.fillMaxSize().padding(horizontal = 20.dp)) {
-        Row(Modifier.fillMaxWidth().padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(
-                value = query,
-                onValueChange = onQueryChange,
-                modifier = Modifier.weight(1f).focusRequester(focusRequester).testTag("UnifiedLibrarySearch"),
-                placeholder = { Text(searchPlaceholder) },
-                leadingIcon = { Icon(Icons.Default.Search, null) },
-                trailingIcon = {
-                    if (query.isNotEmpty()) IconButton(onClick = { onQueryChange("") }) { Icon(Icons.Default.Close, clearDescription) }
-                },
-                singleLine = true,
-            )
-            IconButton(onClick = onClose) { Icon(Icons.Default.Close, closeDescription) }
+        if (showSearchField) {
+            Row(Modifier.fillMaxWidth().padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = onQueryChange,
+                    modifier = Modifier.weight(1f).focusRequester(focusRequester).testTag("UnifiedLibrarySearch"),
+                    placeholder = { Text(searchPlaceholder) },
+                    leadingIcon = { Icon(Icons.Default.Search, null) },
+                    trailingIcon = {
+                        if (query.isNotEmpty()) IconButton(onClick = { onQueryChange("") }) { Icon(Icons.Default.Close, clearDescription) }
+                    },
+                    singleLine = true,
+                )
+                IconButton(onClick = onClose) { Icon(Icons.Default.Close, closeDescription) }
+            }
         }
         Text(resultLabel, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 12.dp, bottom = 8.dp))
         if (books.isEmpty() && query.isNotBlank()) {

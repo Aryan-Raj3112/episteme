@@ -21,12 +21,15 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
@@ -49,10 +52,17 @@ fun SharedAndroidUnifiedTopBar(
     searchPlaceholder: String = "",
     clearSearchDescription: String = "",
     onSearchQueryChange: (String) -> Unit = {},
+    autoFocusSearch: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val focusManager = LocalFocusManager.current
+    val focusRequester = remember { FocusRequester() }
     var searchFocused by remember { mutableStateOf(false) }
+    LaunchedEffect(autoFocusSearch, searchQuery != null, showingShelf) {
+        if (autoFocusSearch && searchQuery != null && !showingShelf) {
+            focusRequester.requestFocus()
+        }
+    }
     Surface(shadowElevation = 1.dp, modifier = modifier.fillMaxWidth()) {
         Row(
             Modifier.fillMaxWidth().statusBarsPadding().height(64.dp).padding(horizontal = 8.dp),
@@ -68,6 +78,7 @@ fun SharedAndroidUnifiedTopBar(
                     value = searchQuery,
                     onValueChange = onSearchQueryChange,
                     modifier = Modifier.weight(1f).padding(horizontal = 4.dp)
+                        .focusRequester(focusRequester)
                         .onFocusChanged { searchFocused = it.isFocused }
                         .testTag("UnifiedLibrarySearch"),
                     shape = CircleShape,
