@@ -48,6 +48,9 @@ class IosAudiobookPlayback(private val bridge: ReaderIosBridge) {
 
     fun stop() {
         bridge.audiobookStopHandler?.invoke()
+        // The native controller publishes its final AVPlayer position during
+        // stop. Persist that snapshot before clearing the bridge session.
+        bridge.persistCurrentAudiobookPosition()
         bridge.markAudiobookStopped()
     }
 

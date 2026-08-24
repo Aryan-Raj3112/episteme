@@ -223,6 +223,11 @@ fun SharedMobileUnifiedLibraryScreen(
     onTtsSpeedChange: (Float) -> Unit = {},
     onTtsSleepTimer: (Int?) -> Unit = {},
     onStopTtsPlayback: () -> Unit = {},
+    /** Dedicated Listen import actions. Null keeps the legacy generic import fallback. */
+    onAddAudiobookFile: (() -> Unit)? = null,
+    onAddAudiobookMultiple: (() -> Unit)? = null,
+    onAddAudiobookFolder: (() -> Unit)? = null,
+    onChooseTtsBook: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     var filter by remember { mutableStateOf(MobileUnifiedLibraryFilter.ALL) }
@@ -239,6 +244,7 @@ fun SharedMobileUnifiedLibraryScreen(
     var showPlayerSheet by remember { mutableStateOf(false) }
     var ttsPlayerItem by remember { mutableStateOf<SharedTtsListenItem?>(null) }
     var showTtsPlayerSheet by remember { mutableStateOf(false) }
+    var showAudiobookAddSheet by remember { mutableStateOf(false) }
     val unifiedDrawerState = rememberDrawerState(DrawerValue.Closed)
     val unifiedScope = rememberCoroutineScope()
     val drawerModel = remember(drawerCapabilities) {
@@ -417,7 +423,7 @@ fun SharedMobileUnifiedLibraryScreen(
                 section == MobileUnifiedLibrarySection.FOLDERS -> Unit
                 section == MobileUnifiedLibrarySection.CATALOGS -> Unit
                 section == MobileUnifiedLibrarySection.AUDIOBOOKS -> ExtendedFloatingActionButton(
-                    onClick = onImportBooks,
+                    onClick = { showAudiobookAddSheet = true },
                     icon = { Icon(Icons.Default.Add, contentDescription = null) },
                     text = { Text(readerString("audiobooks_add", "Add audiobook")) },
                 )
@@ -493,7 +499,7 @@ fun SharedMobileUnifiedLibraryScreen(
                 playback = audiobookPlayback,
                 ttsItems = ttsItems,
                 ttsPlayback = ttsListenState,
-                onAddAudiobook = onImportBooks,
+                onAddAudiobook = { showAudiobookAddSheet = true },
                 onOpenPlayer = { book ->
                     if (audiobookPlayback.bookId != book.bookId) {
                         onPlayAudiobook(book)
@@ -666,6 +672,29 @@ fun SharedMobileUnifiedLibraryScreen(
             title = readerString("fab_new_shelf", "New shelf"),
             onDismiss = { showCreateShelf = false },
             onCreate = { name -> onCreateShelf(name); showCreateShelf = false },
+        )
+    }
+    if (showAudiobookAddSheet) {
+        SharedMobileAudiobookAddSheet(
+            onChooseFile = {
+                showAudiobookAddSheet = false
+                (onAddAudiobookFile ?: onImportBooks)()
+            },
+            onChooseMultiple = {
+                showAudiobookAddSheet = false
+                (onAddAudiobookMultiple ?: onImportBooks)()
+            },
+            onChooseFolder = {
+                showAudiobookAddSheet = false
+                (onAddAudiobookFolder ?: onImportBooks)()
+            },
+            onChooseTtsBook = onChooseTtsBook?.let { choose ->
+                {
+                    showAudiobookAddSheet = false
+                    choose()
+                }
+            },
+            onDismiss = { showAudiobookAddSheet = false },
         )
     }
     if (showPlayerSheet) {

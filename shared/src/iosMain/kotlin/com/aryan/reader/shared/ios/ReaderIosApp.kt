@@ -85,10 +85,14 @@ import com.aryan.reader.shared.SharedSettingsPlatform
 import com.aryan.reader.shared.Shelf
 import com.aryan.reader.shared.ShelfType
 import com.aryan.reader.shared.SharedAudiobook
+import com.aryan.reader.shared.SharedAudiobookImportMetadata
+import com.aryan.reader.shared.SharedAudiobookImportRequest
+import com.aryan.reader.shared.SharedAudiobookImportStatus
 import com.aryan.reader.shared.SharedAudiobookFormats
 import com.aryan.reader.shared.splitFilesByAudiobookDecodability
 import com.aryan.reader.shared.SharedAudiobookPlaybackRequest
 import com.aryan.reader.shared.SharedAudiobookPlaybackState
+import com.aryan.reader.shared.SharedTtsListenStartPolicy
 import com.aryan.reader.shared.sharedAudiobookResumePosition
 import com.aryan.reader.shared.SyncedFolder
 import com.aryan.reader.shared.UserData
@@ -136,6 +140,7 @@ import com.aryan.reader.shared.withoutMobileReaderSession
 import com.aryan.reader.shared.withMobileImportedBooks
 import com.aryan.reader.shared.withMigratedMobileBookIdentity
 import com.aryan.reader.shared.withAudiobookImported
+import com.aryan.reader.shared.withAudiobookImportedToLibrary
 import com.aryan.reader.shared.withAudiobookPosition
 import com.aryan.reader.shared.withLoadedMetadata
 import com.aryan.reader.shared.withUserEditedMetadata
@@ -197,6 +202,8 @@ import com.aryan.reader.shared.ui.SharedMobileHomeActions
 import com.aryan.reader.shared.ui.SharedMobileHomeOverflowCapabilities
 import com.aryan.reader.shared.ui.SharedMobileLibraryScreen
 import com.aryan.reader.shared.ui.SharedMobileUnifiedLibraryScreen
+import com.aryan.reader.shared.ui.SharedMobileTtsBookPickerSheet
+import com.aryan.reader.shared.ui.SharedMobileBookCover
 import com.aryan.reader.shared.ui.MobileAppDrawerCapabilities
 import com.aryan.reader.shared.ui.MobileUnifiedLibraryDrawerCapabilities
 import com.aryan.reader.shared.ui.SharedOpdsScreen
@@ -347,6 +354,7 @@ class ReaderIosBridge internal constructor(
     internal var audiobookCancelSleepHandler: (() -> Unit)? = null
     internal var audiobookStopHandler: (() -> Unit)? = null
     internal var audiobookMetadataHandler: ((String, String, (String, String?, String?, Long) -> Unit) -> Unit)? = null
+    private var audiobookPositionPersistenceHandler: ((SharedAudiobookPlaybackState) -> Unit)? = null
 
     /**
      * Native capture of the process unified log for diagnostics export. Swift owns
@@ -402,6 +410,23 @@ class ReaderIosBridge internal constructor(
             sleepTimerRemainingMs = 0L,
             error = null,
         )
+    }
+
+    /** Installs the app-state writer used for synchronous stop/expiry flushes. */
+    fun setAudiobookPositionPersistenceHandler(
+        handler: ((SharedAudiobookPlaybackState) -> Unit)?,
+    ) {
+        audiobookPositionPersistenceHandler = handler
+    }
+
+    /** Flushes the latest native snapshot, then clears the active session. */
+    fun notifyAudiobookSessionEnded() {
+        audiobookPositionPersistenceHandler?.invoke(audiobookPlaybackSnapshot)
+        markAudiobookStopped()
+    }
+
+    internal fun persistCurrentAudiobookPosition() {
+        audiobookPositionPersistenceHandler?.invoke(audiobookPlaybackSnapshot)
     }
 
     fun recordImportedFiles(
@@ -1905,6 +1930,9 @@ private fun String.splitEscapedTab(): List<String> {
 fun readerComposeViewController(
     bridge: ReaderIosBridge,
     onImportBooks: () -> Unit,
+    onImportAudiobookFile: () -> Unit,
+    onImportAudiobookMultiple: () -> Unit,
+    onImportAudiobookFolder: () -> Unit,
     onImportFolder: () -> Unit,
     onRefreshFolders: () -> Unit,
     onImportFonts: () -> Unit,
@@ -1914,6 +1942,9 @@ fun readerComposeViewController(
     ReaderIosApp(
         bridge = bridge,
         onImportBooks = onImportBooks,
+        onImportAudiobookFile = onImportAudiobookFile,
+        onImportAudiobookMultiple = onImportAudiobookMultiple,
+        onImportAudiobookFolder = onImportAudiobookFolder,
         onImportFolder = onImportFolder,
         onRefreshFolders = onRefreshFolders,
         onImportFonts = onImportFonts,
@@ -1926,6 +1957,9 @@ fun readerComposeViewController(
 private fun ReaderIosApp(
     bridge: ReaderIosBridge,
     onImportBooks: () -> Unit,
+    onImportAudiobookFile: () -> Unit,
+    onImportAudiobookMultiple: () -> Unit,
+    onImportAudiobookFolder: () -> Unit,
     onImportFolder: () -> Unit,
     onRefreshFolders: () -> Unit,
     onImportFonts: () -> Unit,
@@ -2110,6 +2144,21 @@ private fun ReaderIosApp(
         persistIosMobileLibraryNavigation(state)
     }
     val audiobookPlayer = remember { IosAudiobookPlayback(bridge) }
+    DisposableEffect(audiobookPlayer) {
+        bridge.setAudiobookPositionPersistenceHandler { snapshot ->
+            val bookId = snapshot.bookId ?: return@setAudiobookPositionPersistenceHandler
+            state = state.withAudiobookPosition(
+                bookId = bookId,
+                positionMs = snapshot.positionMs,
+                durationMs = snapshot.durationMs,
+                speed = snapshot.speed,
+                lastListenedAt = currentTimestamp(),
+            )
+        }
+        onDispose {
+            bridge.setAudiobookPositionPersistenceHandler(null)
+        }
+    }
     val ttsListenController = remember { IosBookTtsListeningController() }
     DisposableEffect(ttsListenController) { onDispose(ttsListenController::release) }
     val audiobookPlaybackSnapshot = bridge.audiobookPlaybackSnapshot
@@ -2190,6 +2239,7 @@ private fun ReaderIosApp(
     var showClearCloudLocalDataConfirmation by remember { mutableStateOf(false) }
     var showSignOutConfirmation by remember { mutableStateOf(false) }
     var showTtsSettings by remember { mutableStateOf(false) }
+    var showIosTtsBookPicker by remember { mutableStateOf(false) }
     val settingsTts = rememberSharedMobileEpubLocalTts()
     var showDictionarySettingsSheet by remember { mutableStateOf(false) }
     val initialLookupServices = remember {
@@ -2698,16 +2748,15 @@ private fun ReaderIosApp(
                     "this device cannot decode these audiobook formats"
             )
         }
-        val candidates = split.decodable
-            .filter { file ->
-                val id = file.contentId.takeIf { it.isNotBlank() }
-                    ?: "ios_audio_${file.path.stableIosImportedFilePath().normalizedId()}"
-                state.audiobooks.none { it.bookId == id }
-            }
-            .distinctBy { it.path }
+        // Keep duplicates in the candidate list so the shared projection can
+        // return Android-equivalent duplicate feedback instead of silently
+        // dropping a second selection before it reaches state.
+        val candidates = split.decodable.distinctBy { it.path }
         if (candidates.isEmpty()) return
         val pending = candidates.withIndex().toMutableList()
         val total = candidates.size
+        var addedCount = 0
+        var duplicateCount = 0
         candidates.forEach { file ->
             val id = file.contentId.takeIf { it.isNotBlank() }
                 ?: "ios_audio_${file.path.stableIosImportedFilePath().normalizedId()}"
@@ -2715,24 +2764,49 @@ private fun ReaderIosApp(
                 filePath = file.path,
                 fallbackTitle = file.name.substringBeforeLast('.').ifBlank { file.name },
             ) { title, author, album, durationMs ->
-                state = state.withAudiobookImported(
-                    SharedAudiobook(
+                val result = state.withAudiobookImportedToLibrary(
+                    SharedAudiobookImportRequest(
                         bookId = id,
                         filePath = file.path.stableIosImportedFilePath(),
-                        format = file.name.substringAfterLast('.', "").lowercase(),
-                        title = title,
-                        author = author,
-                        album = album,
-                        durationMs = durationMs,
-                        positionMs = 0L,
-                        playbackSpeed = 1f,
+                        displayName = file.name,
+                        format = file.name.substringAfterLast('.', "").uppercase(),
+                        metadata = SharedAudiobookImportMetadata(
+                            title = title,
+                            author = author,
+                            album = album,
+                            // Android stores narrator metadata independently;
+                            // iOS currently exposes artist/author only, so use
+                            // the same value as the safe narrator fallback.
+                            narrator = author,
+                            durationMs = durationMs,
+                        ),
                         addedAt = currentTimestamp(),
+                        fileSize = file.fileSize,
+                        isAvailable = NSFileManager.defaultManager.fileExistsAtPath(file.path),
                     )
                 )
+                state = result.state
+                when (result.status) {
+                    SharedAudiobookImportStatus.ADDED -> addedCount += 1
+                    SharedAudiobookImportStatus.DUPLICATE -> duplicateCount += 1
+                    SharedAudiobookImportStatus.INVALID,
+                    SharedAudiobookImportStatus.FAILED -> Unit
+                }
                 pending.removeAll { it.value.path == file.path }
                 if (pending.isEmpty()) {
                     selectMainPage(SharedMobileMainDestination.LIBRARY)
-                    showMessage(if (total == 1) "Added $total audiobook" else "Added $total audiobooks")
+                    showMessage(
+                        when {
+                            addedCount > 0 -> if (addedCount == 1) "Added 1 audiobook" else "Added $addedCount audiobooks"
+                            duplicateCount > 0 -> if (duplicateCount == 1) {
+                                "This audiobook is already in the library"
+                            } else {
+                                "$duplicateCount audiobooks are already in the library"
+                            }
+                            total == 1 -> "Could not import the selected audiobook"
+                            else -> "Could not import the selected audiobooks"
+                        }
+                    )
                 }
             }
         }
@@ -3528,6 +3602,32 @@ private fun ReaderIosApp(
                 SharedMobileReaderTtsSettingsSheet(
                     tts = settingsTts,
                     onDismiss = { showTtsSettings = false },
+                )
+            }
+            if (showIosTtsBookPicker) {
+                SharedMobileTtsBookPickerSheet(
+                    books = state.rawLibraryBooks,
+                    onBookSelected = { book ->
+                        showIosTtsBookPicker = false
+                        audiobookPlayer.stop()
+                        ttsListenController.start(
+                            book = book,
+                            policy = SharedTtsListenStartPolicy.RESUME,
+                            chapterIndex = null,
+                            replacements = state.readerTtsReplacementPreferences,
+                        )
+                    },
+                    onDismiss = { showIosTtsBookPicker = false },
+                    coverContent = { book, coverModifier ->
+                        SharedMobileBookCover(
+                            book = book,
+                            selected = false,
+                            pinned = false,
+                            onTogglePinned = {},
+                            modifier = coverModifier,
+                            compact = true,
+                        )
+                    },
                 )
             }
             activeReaderBook?.let { book ->
@@ -4695,6 +4795,14 @@ private fun ReaderIosApp(
                                 onUpdateBook = { book -> updateIosBookMetadata(book) },
                                 onCreateShelf = { name -> state = state.createIosShelf(name, emptySet()) },
                                 onImportBooks = onImportBooks,
+                                onAddAudiobookFile = onImportAudiobookFile,
+                                onAddAudiobookMultiple = onImportAudiobookMultiple,
+                                // iOS's folder importer currently shares the
+                                // managed-folder scan path. The shared Add
+                                // sheet still exposes the dedicated action;
+                                // the host can specialize its scan later.
+                                onAddAudiobookFolder = onImportAudiobookFolder,
+                                onChooseTtsBook = { showIosTtsBookPicker = true },
                                 onAddFolder = onImportFolder,
                                 onScanFolders = ::refreshFolders,
                                 onSyncFolderMetadata = ::refreshFolders,

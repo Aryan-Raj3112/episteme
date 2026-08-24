@@ -17,6 +17,94 @@ data class SharedAudiobook(
     val lastListenedAt: Long = 0L,
 )
 
+/**
+ * Metadata returned by a platform audiobook decoder before an item is added
+ * to the shared library.  The decoder may omit any field; the import adapter
+ * supplies a filename-based title when no embedded title is available.
+ */
+data class SharedAudiobookImportMetadata(
+    val title: String? = null,
+    val author: String? = null,
+    val album: String? = null,
+    val narrator: String? = null,
+    val durationMs: Long = 0L,
+    val coverPath: String? = null,
+)
+
+enum class SharedAudiobookImportStatus {
+    ADDED,
+    DUPLICATE,
+    INVALID,
+    FAILED,
+}
+
+/**
+ * Result of projecting one decoded audiobook into the shared state.
+ * `DUPLICATE`, `INVALID`, and `FAILED` never mutate the supplied state.
+ */
+data class SharedAudiobookImportResult(
+    val state: SharedReaderScreenState,
+    val status: SharedAudiobookImportStatus,
+    val audiobook: SharedAudiobook? = null,
+    val libraryBook: BookItem? = null,
+    val message: String? = null,
+) {
+    val wasAdded: Boolean get() = status == SharedAudiobookImportStatus.ADDED
+}
+
+/**
+ * Decoder-independent import request.  Platform adapters use this to keep
+ * ID, file, metadata, and library projection semantics identical on mobile.
+ */
+data class SharedAudiobookImportRequest(
+    val bookId: String,
+    val filePath: String,
+    val displayName: String,
+    val format: String,
+    val metadata: SharedAudiobookImportMetadata = SharedAudiobookImportMetadata(),
+    val addedAt: Long,
+    val fileSize: Long = 0L,
+    val isAvailable: Boolean = true,
+) {
+    fun toAudiobook(): SharedAudiobook = SharedAudiobook(
+        bookId = bookId,
+        filePath = filePath,
+        format = format,
+        title = metadata.title?.takeIf { it.isNotBlank() }
+            ?: displayName.substringBeforeLast('.').ifBlank { displayName },
+        author = metadata.author,
+        album = metadata.album,
+        narrator = metadata.narrator,
+        durationMs = metadata.durationMs.coerceAtLeast(0L),
+        coverPath = metadata.coverPath,
+        addedAt = addedAt,
+    )
+}
+
+fun SharedAudiobook.toSharedLibraryBook(
+    displayName: String = title,
+    fileSize: Long = 0L,
+    isAvailable: Boolean = true,
+): BookItem = BookItem(
+    id = bookId,
+    path = filePath,
+    type = FileType.AUDIOBOOK,
+    displayName = displayName.ifBlank { title },
+    timestamp = addedAt,
+    dateAddedTimestamp = addedAt,
+    coverImagePath = coverPath,
+    title = title,
+    author = author,
+    progressPercentage = (progressFraction * 100f).coerceIn(0f, 100f),
+    isRecent = true,
+    isAvailable = isAvailable,
+    fileSize = fileSize.coerceAtLeast(0L),
+    fileContentModifiedTimestamp = addedAt,
+    metadataModifiedTimestamp = addedAt,
+    seriesName = album,
+    folderTextMetadataParsed = true,
+)
+
 data class SharedBookTtsListeningProgress(
     val bookId: String,
     val chapterIndex: Int = 0,

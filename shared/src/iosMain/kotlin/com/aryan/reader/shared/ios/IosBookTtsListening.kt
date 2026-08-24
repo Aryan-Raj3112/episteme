@@ -22,6 +22,7 @@ import com.aryan.reader.shared.SharedBookTtsListeningProgress
 import com.aryan.reader.shared.SharedTtsListenStartPolicy
 import com.aryan.reader.shared.calculateSharedTtsAudiobookProgress
 import com.aryan.reader.shared.currentTimestamp
+import com.aryan.reader.shared.advanceSharedSleepTimer
 import com.aryan.reader.shared.reduce
 import com.aryan.reader.shared.splitSharedTtsListenChunks
 import com.aryan.reader.shared.reader.loadSharedEpubTtsChapters
@@ -401,13 +402,16 @@ internal class IosBookTtsListeningController {
         }
         sleepTimerJob?.cancel()
         sleepTimerJob = scope.launch {
-            var remainingMs = minutes * 60_000L
-            while (remainingMs > 0) {
-                state = state.copy(sleepTimerRemainingMs = remainingMs)
+            var remainingSeconds = minutes * 60
+            while (remainingSeconds > 0) {
+                state = state.copy(sleepTimerRemainingMs = remainingSeconds * 1_000L)
                 delay(1_000)
-                remainingMs -= 1_000
+                // Keep the timer anchored to actual speech, matching Android's
+                // shared contract. Pausing TTS must pause the countdown too.
+                remainingSeconds = advanceSharedSleepTimer(remainingSeconds, state.isPlaying)
             }
             state = state.copy(sleepTimerRemainingMs = 0L)
+            sleepTimerJob = null
             stopForSleepTimer()
         }
     }
@@ -589,7 +593,13 @@ internal class IosBookTtsListeningController {
         generation += 1
         invalidateActiveUtterance()
         synthesizer.stopSpeakingAtBoundary(AVSpeechBoundary.AVSpeechBoundaryImmediate)
-        state = state.copy(isLoading = false, isPlaying = false, sleepTimerRemainingMs = 0L)
+        currentChunks = emptyList()
+        currentChunkIndex = -1
+        currentBookId = null
+        wantsPlayback = false
+        state = SharedBookTtsListenState(sessionEndedByStop = true)
+        deactivateAudioSession()
+        clearBookTtsNowPlaying()
     }
 
     private fun chunkProgress(chunkIndex: Int): Float =

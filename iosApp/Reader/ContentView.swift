@@ -12,7 +12,15 @@ import CryptoKit
 import OSLog
 
 struct ContentView: View {
-    private enum ImportKind { case books, folder, fonts, cover }
+    private enum ImportKind {
+        case books
+        case audiobookFile
+        case audiobookMultiple
+        case audiobookFolder
+        case folder
+        case fonts
+        case cover
+    }
 
     private let bridge = ReaderIosBridge()
     private let audiobookPlayer = AudiobookPlayerController()
@@ -29,6 +37,18 @@ struct ContentView: View {
             isSystemUiHidden: $isReaderSystemUiHidden,
             onImportBooks: {
                 importKind = .books
+                isImportPickerPresented = true
+            },
+            onImportAudiobookFile: {
+                importKind = .audiobookFile
+                isImportPickerPresented = true
+            },
+            onImportAudiobookMultiple: {
+                importKind = .audiobookMultiple
+                isImportPickerPresented = true
+            },
+            onImportAudiobookFolder: {
+                importKind = .audiobookFolder
                 isImportPickerPresented = true
             },
             onImportFolder: {
@@ -58,18 +78,35 @@ struct ContentView: View {
             allowedContentTypes: importKind == .fonts
                 ? [.font]
                 : (
-                    importKind == .folder
+                    importKind == .folder || importKind == .audiobookFolder
                         ? [.folder]
                         : (
                             importKind == .cover
                                 ? [.image]
-                                : allowedReaderImportTypes
+                                : (importKind == .audiobookFile || importKind == .audiobookMultiple
+                                    ? [.audio]
+                                    : allowedReaderImportTypes)
                         )
                 ),
-            allowsMultipleSelection: importKind != .folder && importKind != .cover
+            allowsMultipleSelection: importKind != .folder &&
+                importKind != .audiobookFolder &&
+                importKind != .audiobookFile &&
+                importKind != .cover
         ) { result in
             switch result {
             case .success(let urls):
+                if importKind == .audiobookFolder, let folderURL = urls.first {
+                    let scan = copyImportedAudiobookFolderToAppSupport(folderURL)
+                    bridge.recordImportedFiles(
+                        fileNames: scan.files.map(\.name),
+                        filePaths: scan.files.map(\.path),
+                        contentIds: scan.files.map(\.contentId),
+                        failedCount: scan.succeeded && !scan.files.isEmpty ? 0 : 1,
+                        wasCancelled: false,
+                        autoOpen: false,
+                    )
+                    return
+                }
                 if importKind == .folder, let folderURL = urls.first {
                     let folderName = rememberImportedFolder(folderURL, bridge: bridge)
                     scheduleImportedFolderScan(
@@ -96,7 +133,7 @@ struct ContentView: View {
                         contentIds: importedFiles.map(\.contentId),
                         failedCount: Int32(urls.count - importedFiles.count),
                         wasCancelled: false,
-                        autoOpen: true
+                        autoOpen: importKind != .audiobookFile && importKind != .audiobookMultiple
                     )
                 }
             case .failure(let error):
@@ -118,6 +155,15 @@ struct ContentView: View {
                         lastModifiedTimestamps: [],
                         scanSucceeded: false
                     )
+                } else if importKind == .audiobookFolder {
+                    bridge.recordImportedFiles(
+                        fileNames: [],
+                        filePaths: [],
+                        contentIds: [],
+                        failedCount: wasCancelled ? 0 : 1,
+                        wasCancelled: wasCancelled,
+                        autoOpen: false,
+                    )
                 } else {
                     bridge.recordImportedFiles(
                         fileNames: [],
@@ -125,7 +171,7 @@ struct ContentView: View {
                         contentIds: [],
                         failedCount: wasCancelled ? 0 : 1,
                         wasCancelled: wasCancelled,
-                        autoOpen: true
+                        autoOpen: importKind != .audiobookFile && importKind != .audiobookMultiple
                     )
                 }
             }
@@ -171,6 +217,9 @@ struct ContentView: View {
                     sleepTimerRemainingMs: sleepTimerRemainingMs,
                     error: error
                 )
+            }
+            audiobookPlayer.onPlaybackSessionEnded = {
+                bridge.notifyAudiobookSessionEnded()
             }
             bridge.setAudiobookPlayHandler { filePath, positionMs, speed in
                 audiobookPlayer.play(
@@ -717,6 +766,94 @@ nonisolated private func copyImportedFolderToAppSupport(_ sourceURL: URL, folder
     }
 }
 
+/// Audiobook folder imports are app-owned files, matching Android's
+/// AudiobookImporter.importFolder semantics. They must not become a generic
+/// synced folder (which would also import EPUB/PDF files and remove audio on
+/// folder-bookmark deletion).
+nonisolated private func copyImportedAudiobookFolderToAppSupport(_ sourceURL: URL) -> ImportedFolderScan {
+    let didStartAccessing = sourceURL.startAccessingSecurityScopedResource()
+    defer {
+        if didStartAccessing {
+            sourceURL.stopAccessingSecurityScopedResource()
+        }
+    }
+
+    let audiobookExtensions: Set<String> = ["mp3", "m4a", "m4b", "aac", "ogg", "opus", "flac"]
+    do {
+        let fileManager = FileManager.default
+        let appSupport = try fileManager.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        )
+        let importsRoot = appSupport
+            .appendingPathComponent("Imports", isDirectory: true)
+            .appendingPathComponent("Audiobooks-\(UUID().uuidString)", isDirectory: true)
+        try fileManager.createDirectory(at: importsRoot, withIntermediateDirectories: true)
+        let resourceKeys: [URLResourceKey] = [
+            .isRegularFileKey,
+            .isDirectoryKey,
+            .fileSizeKey,
+            .contentModificationDateKey,
+        ]
+        var enumerationFailed = false
+        guard let enumerator = fileManager.enumerator(
+            at: sourceURL,
+            includingPropertiesForKeys: resourceKeys,
+            options: [.skipsHiddenFiles, .skipsPackageDescendants],
+            errorHandler: { _, _ in
+                enumerationFailed = true
+                return false
+            }
+        ) else {
+            return ImportedFolderScan(files: [], succeeded: false)
+        }
+
+        var imported: [ImportedReaderFile] = []
+        for case let itemURL as URL in enumerator {
+            let values = try itemURL.resourceValues(forKeys: Set(resourceKeys))
+            guard values.isRegularFile == true else { continue }
+            guard audiobookExtensions.contains(itemURL.pathExtension.lowercased()) else { continue }
+            let relativePath = itemURL.path.replacingOccurrences(
+                of: sourceURL.path + "/",
+                with: "",
+                options: [.anchored]
+            )
+            let destinationURL = importsRoot.appendingPathComponent(relativePath)
+            try fileManager.createDirectory(
+                at: destinationURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try fileManager.copyItem(at: itemURL, to: destinationURL)
+            guard let contentId = sha256FileId(destinationURL) else {
+                try? fileManager.removeItem(at: destinationURL)
+                enumerationFailed = true
+                break
+            }
+            imported.append(
+                ImportedReaderFile(
+                    name: itemURL.lastPathComponent,
+                    path: destinationURL.path,
+                    contentId: contentId,
+                    relativePath: relativePath,
+                    fileSize: Int64(values.fileSize ?? 0),
+                    lastModifiedTimestamp: Int64(
+                        (values.contentModificationDate?.timeIntervalSince1970 ?? 0) * 1000
+                    )
+                )
+            )
+        }
+        guard !enumerationFailed else {
+            try? fileManager.removeItem(at: importsRoot)
+            return ImportedFolderScan(files: [], succeeded: false)
+        }
+        return ImportedFolderScan(files: imported, succeeded: true)
+    } catch {
+        return ImportedFolderScan(files: [], succeeded: false)
+    }
+}
+
 nonisolated private func safeLocalFolderName(_ name: String) -> String {
     let cleaned = name.replacingOccurrences(of: "/", with: "_").trimmingCharacters(in: .whitespacesAndNewlines)
     return cleaned.isEmpty ? "Imported Folder" : cleaned
@@ -843,6 +980,9 @@ private struct ReaderComposeHost: UIViewControllerRepresentable {
     let bridge: ReaderIosBridge
     @Binding var isSystemUiHidden: Bool
     let onImportBooks: () -> Void
+    let onImportAudiobookFile: () -> Void
+    let onImportAudiobookMultiple: () -> Void
+    let onImportAudiobookFolder: () -> Void
     let onImportFolder: () -> Void
     let onRefreshFolders: () -> Void
     let onImportFonts: () -> Void
@@ -853,6 +993,9 @@ private struct ReaderComposeHost: UIViewControllerRepresentable {
         let composeController = ReaderIosAppKt.readerComposeViewController(
             bridge: bridge,
             onImportBooks: onImportBooks,
+            onImportAudiobookFile: onImportAudiobookFile,
+            onImportAudiobookMultiple: onImportAudiobookMultiple,
+            onImportAudiobookFolder: onImportAudiobookFolder,
             onImportFolder: onImportFolder,
             onRefreshFolders: onRefreshFolders,
             onImportFonts: onImportFonts,

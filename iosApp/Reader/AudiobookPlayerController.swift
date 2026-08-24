@@ -18,14 +18,16 @@ class AudiobookPlayerController {
     private var endObserver: NSObjectProtocol?
     private var failureObserver: NSObjectProtocol?
     private var statusObserver: NSKeyValueObservation?
-    private var sleepTimer: Timer?
     private var sleepTickTimer: Timer?
+    private var interruptionObserver: NSObjectProtocol?
+    private var routeChangeObserver: NSObjectProtocol?
     private var sleepRemainingSeconds: Int64 = 0
     private var pendingSeekMs: Double?
     private var isLoading = false
     private var currentSpeed: Float = 1
     private var nowPlayingTitle: String = ""
     private var nowPlayingSubtitle: String?
+    private var wasPlayingBeforeInterruption = false
 
     /// Invoked from the main thread on every playback state change (tick,
     /// pause, resume, seek, sleep-timer tick, end or error updates).
@@ -38,6 +40,10 @@ class AudiobookPlayerController {
          _ sleepTimerRemainingMs: Int64,
          _ error: String?) -> Void
     )?
+    /// Called after a sleep-timer expiry has published its final position and
+    /// the native player has been torn down. The Kotlin host flushes and clears
+    /// its matching session snapshot.
+    var onPlaybackSessionEnded: (() -> Void)?
 
     func play(filePath: String, positionMs: Double, speed: Double) {
         stopInternal()
@@ -58,6 +64,7 @@ class AudiobookPlayerController {
         nowPlayingSubtitle = nil
         installRemoteCommands()
         installObservers(for: item)
+        installAudioSessionObservers()
         refreshNowPlayingInfo()
         // Embedded metadata (title/artist/album) replaces the filename once known,
         // matching the library card presentation.
@@ -116,41 +123,71 @@ class AudiobookPlayerController {
     func setSleepTimer(minutes: Int) {
         cancelSleepTimer()
         sleepRemainingSeconds = Int64(max(minutes, 1) * 60)
-        let seconds = TimeInterval(sleepRemainingSeconds)
-        sleepTimer = Timer.scheduledTimer(withTimeInterval: seconds, repeats: false) { [weak self] _ in
-            self?.sleepTimer = nil
-            self?.sleepRemainingSeconds = 0
-            self?.player?.pause()
-            self?.pushUpdate(isPlaying: false, isLoading: false)
-        }
         sleepTickTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
             guard let self = self else { return }
-            if self.sleepRemainingSeconds > 1 {
-                self.sleepRemainingSeconds -= 1
-                self.pushUpdate(isPlaying: self.player?.timeControlStatus == .playing, isLoading: false)
-            } else {
+            guard self.sleepRemainingSeconds > 0 else {
                 timer.invalidate()
+                self.sleepTickTimer = nil
+                return
+            }
+
+            // Match Android's shared timer contract: paused playback does not
+            // consume sleep time. A single repeating timer avoids expiring an
+            // absolute wall-clock timer while AVPlayer is paused/backgrounded.
+            guard self.player?.timeControlStatus == .playing else {
+                self.pushUpdate(isPlaying: false, isLoading: false)
+                return
+            }
+
+            self.sleepRemainingSeconds -= 1
+            if self.sleepRemainingSeconds <= 0 {
+                timer.invalidate()
+                self.sleepTickTimer = nil
+                self.expireSleepTimer()
+            } else {
+                self.pushUpdate(isPlaying: true, isLoading: false)
             }
         }
         pushUpdate(isPlaying: player?.timeControlStatus == .playing, isLoading: false)
     }
 
     func cancelSleepTimer() {
-        sleepTimer?.invalidate()
-        sleepTimer = nil
-        sleepTickTimer?.invalidate()
-        sleepTickTimer = nil
-        if sleepRemainingSeconds > 0 {
-            sleepRemainingSeconds = 0
+        let hadActiveTimer = sleepRemainingSeconds > 0
+        invalidateSleepTimer()
+        if hadActiveTimer {
             pushUpdate(isPlaying: player?.timeControlStatus == .playing, isLoading: false)
         }
+    }
+
+    private func invalidateSleepTimer() {
+        sleepTickTimer?.invalidate()
+        sleepTickTimer = nil
+        sleepRemainingSeconds = 0
+    }
+
+    private func expireSleepTimer() {
+        sleepRemainingSeconds = 0
+        player?.pause()
+        // Publish the final AVPlayer position before deactivating audio so the
+        // Kotlin host can persist the same boundary Android saves on expiry.
+        pushUpdate(isPlaying: false, isLoading: false)
+        stopInternal(publishFinalPosition: false)
+        onPlaybackSessionEnded?()
     }
 
     func stop() {
         stopInternal()
     }
 
-    private func stopInternal() {
+    private func stopInternal(publishFinalPosition: Bool = true) {
+        invalidateSleepTimer()
+        // A stop can occur between periodic observer ticks. Publish the
+        // current position synchronously while AVPlayer still exists so the
+        // host can persist the exact final position.
+        if publishFinalPosition, player != nil {
+            player?.pause()
+            pushUpdate(isPlaying: false, isLoading: false)
+        }
         if let timeObserver = timeObserver {
             player?.removeTimeObserver(timeObserver)
         }
@@ -165,13 +202,21 @@ class AudiobookPlayerController {
         failureObserver = nil
         statusObserver?.invalidate()
         statusObserver = nil
-        cancelSleepTimer()
-        player?.pause()
+        if let interruptionObserver = interruptionObserver {
+            NotificationCenter.default.removeObserver(interruptionObserver)
+        }
+        interruptionObserver = nil
+        if let routeChangeObserver = routeChangeObserver {
+            NotificationCenter.default.removeObserver(routeChangeObserver)
+        }
+        routeChangeObserver = nil
         player = nil
         isLoading = false
         pendingSeekMs = nil
+        wasPlayingBeforeInterruption = false
         removeRemoteCommands()
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+        deactivateAudioSession()
     }
 
     // MARK: - Now Playing / remote commands (Android's media-notification contract)
@@ -302,6 +347,63 @@ class AudiobookPlayerController {
               duration.isNumeric && !duration.seconds.isNaN && duration.seconds > 0
         else { return 0 }
         return Int64(duration.seconds * 1000)
+    }
+
+    // AVPlayer does not automatically mirror Android's audio-focus/noisy
+    // behavior. Pause on phone-call/audio interruptions and headphone removal,
+    // then resume only when iOS explicitly says the interrupted session may
+    // resume and playback was active before the interruption.
+    private func installAudioSessionObservers() {
+        let center = NotificationCenter.default
+        interruptionObserver = center.addObserver(
+            forName: AVAudioSession.interruptionNotification,
+            object: AVAudioSession.sharedInstance(),
+            queue: .main
+        ) { [weak self] notification in
+            guard let self = self else { return }
+            let typeRawValue = (notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? NSNumber)?.uintValue ?? 0
+            if typeRawValue == AVAudioSession.InterruptionType.began.rawValue {
+                self.wasPlayingBeforeInterruption = self.player?.timeControlStatus == .playing
+                if self.wasPlayingBeforeInterruption {
+                    self.player?.pause()
+                }
+                self.pushUpdate(isPlaying: false, isLoading: false)
+            } else if typeRawValue == AVAudioSession.InterruptionType.ended.rawValue {
+                let optionsRawValue = (notification.userInfo?[AVAudioSessionInterruptionOptionKey] as? NSNumber)?.uintValue ?? 0
+                let shouldResume = AVAudioSession.InterruptionOptions(rawValue: optionsRawValue)
+                    .contains(.shouldResume)
+                if self.wasPlayingBeforeInterruption && shouldResume {
+                    try? AVAudioSession.sharedInstance().setActive(true)
+                    self.player?.play()
+                    self.pushUpdate(isPlaying: true, isLoading: false)
+                } else {
+                    self.pushUpdate(isPlaying: false, isLoading: false)
+                }
+                self.wasPlayingBeforeInterruption = false
+            }
+        }
+        routeChangeObserver = center.addObserver(
+            forName: AVAudioSession.routeChangeNotification,
+            object: AVAudioSession.sharedInstance(),
+            queue: .main
+        ) { [weak self] notification in
+            guard let self = self else { return }
+            let reasonRawValue = (notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? NSNumber)?.uintValue ?? 0
+            guard reasonRawValue == AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue else {
+                return
+            }
+            if self.player?.timeControlStatus == .playing {
+                self.player?.pause()
+                self.pushUpdate(isPlaying: false, isLoading: false)
+            }
+        }
+    }
+
+    private func deactivateAudioSession() {
+        try? AVAudioSession.sharedInstance().setActive(
+            false,
+            options: [.notifyOthersOnDeactivation]
+        )
     }
 
     private func pushUpdate(
