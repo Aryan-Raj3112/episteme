@@ -24,11 +24,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
@@ -64,9 +63,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.aryan.reader.shared.ReaderExternalLookupAction
 import com.aryan.reader.shared.HighlightStyle
+import com.aryan.reader.shared.HighlightColor
 import com.aryan.reader.shared.ReaderHighlightPalette
+import com.aryan.reader.shared.ReaderHighlightListAction
 import com.aryan.reader.shared.UserHighlight
 import com.aryan.reader.shared.deduplicatedReaderBookmarks
+import com.aryan.reader.shared.readerHighlightListActions
 import com.aryan.reader.shared.reader.ReaderBookmark
 import com.aryan.reader.shared.reader.ReaderImageReference
 import com.aryan.reader.shared.reader.ReaderSettings
@@ -327,11 +329,17 @@ internal fun SharedMobileEpubBookmarks(
 internal fun SharedMobileEpubHighlights(
     highlights: List<UserHighlight>,
     chapters: List<com.aryan.reader.shared.reader.SharedEpubChapter>,
+    palette: ReaderHighlightPalette,
     onHighlightClick: (UserHighlight) -> Unit,
     onHighlightEdit: (UserHighlight) -> Unit,
+    onHighlightColorChange: (UserHighlight, HighlightColor) -> Unit,
+    onDeleteHighlight: (UserHighlight) -> Unit,
+    onOpenPaletteManager: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     var notesOnly by remember { mutableStateOf(false) }
+    var menuHighlight by remember { mutableStateOf<UserHighlight?>(null) }
+    var deleteHighlight by remember { mutableStateOf<UserHighlight?>(null) }
     if (highlights.isEmpty()) {
         Box(modifier, contentAlignment = Alignment.Center) { Text("No annotations yet") }
         return
@@ -390,13 +398,132 @@ internal fun SharedMobileEpubHighlights(
                                     Text(note, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 6.dp))
                                 }
                             }
-                            IconButton(onClick = { onHighlightEdit(highlight) }) {
-                                Icon(Icons.Default.Edit, contentDescription = "Edit annotation")
+                            Box {
+                                IconButton(onClick = { menuHighlight = highlight }) {
+                                    Icon(Icons.Default.MoreVert, contentDescription = "Annotation options")
+                                }
+                                DropdownMenu(
+                                    expanded = menuHighlight?.id == highlight.id,
+                                    onDismissRequest = { menuHighlight = null }
+                                ) {
+                                    val actions = readerHighlightListActions(onOpenPaletteManager != null)
+                                    actions.forEach { action ->
+                                        when (action) {
+                                            ReaderHighlightListAction.CHANGE_COLOR -> {
+                                                SharedMobileEpubHighlightColorRow(
+                                                    palette = palette,
+                                                    selectedHighlight = highlight,
+                                                    onOpenPaletteManager = if (ReaderHighlightListAction.MANAGE_PALETTE in actions) {
+                                                        {
+                                                            onOpenPaletteManager?.invoke()
+                                                            menuHighlight = null
+                                                        }
+                                                    } else {
+                                                        null
+                                                    },
+                                                    onColorSelect = { color ->
+                                                        onHighlightColorChange(highlight, color)
+                                                        menuHighlight = null
+                                                    },
+                                                )
+                                            }
+                                            ReaderHighlightListAction.MANAGE_PALETTE -> {
+                                                HorizontalDivider()
+                                            }
+                                            ReaderHighlightListAction.EDIT_NOTE -> {
+                                                DropdownMenuItem(
+                                                    text = { Text(if (highlight.note.isNullOrBlank()) "Add note" else "Edit note") },
+                                                    onClick = {
+                                                        onHighlightEdit(highlight)
+                                                        menuHighlight = null
+                                                    }
+                                                )
+                                            }
+                                            ReaderHighlightListAction.DELETE -> {
+                                                DropdownMenuItem(
+                                                    text = { Text("Delete") },
+                                                    onClick = {
+                                                        deleteHighlight = highlight
+                                                        menuHighlight = null
+                                                    }
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
                 }
             }
+        }
+    }
+    deleteHighlight?.let { highlight ->
+        AlertDialog(
+            onDismissRequest = { deleteHighlight = null },
+            title = { Text("Delete annotation?") },
+            text = { Text("This removes the highlight and its comment.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    onDeleteHighlight(highlight)
+                    deleteHighlight = null
+                }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteHighlight = null }) { Text("Cancel") }
+            }
+        )
+    }
+}
+
+@Composable
+private fun SharedMobileEpubHighlightColorRow(
+    palette: ReaderHighlightPalette,
+    selectedHighlight: UserHighlight,
+    onOpenPaletteManager: (() -> Unit)?,
+    onColorSelect: (HighlightColor) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .padding(vertical = 8.dp, horizontal = 10.dp)
+            .fillMaxWidth(),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        palette.sanitized().colors.forEach { color ->
+            val selected = selectedHighlight.color == color && selectedHighlight.colorArgb == null
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .padding(horizontal = 4.dp)
+                    .size(28.dp)
+                    .clip(CircleShape)
+                    .background(color.color)
+                    .border(
+                        width = if (selected) 3.dp else 1.dp,
+                        color = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
+                        shape = CircleShape,
+                    )
+                    .clickable { onColorSelect(color) },
+            ) {
+                if (selected) {
+                    Icon(
+                        imageVector = Icons.Default.Check,
+                        contentDescription = "Selected color",
+                        tint = if (color == HighlightColor.WHITE) Color.Black else Color.White,
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
+            }
+        }
+        onOpenPaletteManager?.let { openPaletteManager ->
+            Spacer(Modifier.width(6.dp))
+            SharedReaderHighlightPaletteSpectrumButton(
+                onClick = {
+                    openPaletteManager()
+                },
+                size = 28.dp,
+            )
         }
     }
 }

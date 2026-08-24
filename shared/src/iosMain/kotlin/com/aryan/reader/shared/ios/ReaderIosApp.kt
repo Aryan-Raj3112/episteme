@@ -3690,6 +3690,9 @@ private fun ReaderIosApp(
                                 state = state.reduce(AppAction.ReaderDefaultSettingsChanged(defaults))
                             },
                             readerHighlightPalette = state.readerHighlightPalette,
+                            onReaderHighlightPaletteChange = { palette ->
+                                state = state.reduce(AppAction.ReaderHighlightPaletteChanged(palette))
+                            },
                             readerToolbarPreferences = state.readerToolbarPreferences,
                             onReaderToolbarPreferencesChange = { preferences ->
                                 state = state.reduce(AppAction.ReaderToolbarPreferencesChanged(preferences))

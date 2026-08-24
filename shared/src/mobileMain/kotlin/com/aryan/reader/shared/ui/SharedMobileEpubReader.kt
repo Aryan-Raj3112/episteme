@@ -164,6 +164,7 @@ fun SharedMobileEpubReaderScreen(
     readerDefaultSettings: ReaderSettings = ReaderSettings(),
     onReaderDefaultSettingsChange: (ReaderSettings) -> Unit = {},
     readerHighlightPalette: ReaderHighlightPalette = ReaderHighlightPalette(),
+    onReaderHighlightPaletteChange: (ReaderHighlightPalette) -> Unit = {},
     readerToolbarPreferences: ReaderToolbarPreferences = ReaderToolbarPreferences(),
     onReaderToolbarPreferencesChange: (ReaderToolbarPreferences) -> Unit = {},
     readerTtsReplacementPreferences: ReaderTtsReplacementPreferences = ReaderTtsReplacementPreferences(),
@@ -280,6 +281,7 @@ fun SharedMobileEpubReaderScreen(
     var highlights by remember(book.id) { mutableStateOf(book.readerHighlights) }
     var jumpHistory by remember(book.id) { mutableStateOf(ReaderJumpHistory()) }
     var editingHighlight by remember(book.id) { mutableStateOf<UserHighlight?>(null) }
+    var showHighlightPaletteManager by remember(book.id) { mutableStateOf(false) }
     // Match Android's distraction-free reader entry; a reader tap reveals chrome.
     var showChrome by remember(book.id) { mutableStateOf(false) }
     var showFormatSheet by remember(book.id) { mutableStateOf(false) }
@@ -1037,11 +1039,26 @@ fun SharedMobileEpubReaderScreen(
                         2 -> SharedMobileEpubHighlights(
                             highlights = highlights,
                             chapters = loadedBook?.chapters.orEmpty(),
+                            palette = readerHighlightPalette,
                             onHighlightClick = { highlight ->
                                 recordJumpAndNavigate(highlight.locator)
                                 scope.launch { drawerState.close() }
                             },
                             onHighlightEdit = { editingHighlight = it },
+                            onHighlightColorChange = { highlight, color ->
+                                highlights = highlights.map { current ->
+                                    if (current.id == highlight.id) {
+                                        current.copy(color = color, colorArgb = null)
+                                    } else {
+                                        current
+                                    }
+                                }
+                            },
+                            onDeleteHighlight = { highlight ->
+                                highlights = highlights.filterNot { it.id == highlight.id }
+                                if (editingHighlight?.id == highlight.id) editingHighlight = null
+                            },
+                            onOpenPaletteManager = { showHighlightPaletteManager = true },
                             modifier = Modifier.fillMaxSize()
                         )
                         else -> SharedMobileEpubImages(
@@ -1985,6 +2002,16 @@ fun SharedMobileEpubReaderScreen(
                     .padding(horizontal = 20.dp).padding(bottom = 32.dp)
             )
         }
+    }
+    if (showHighlightPaletteManager) {
+        SharedReaderHighlightPaletteDialog(
+            palette = readerHighlightPalette,
+            onDismiss = { showHighlightPaletteManager = false },
+            onSave = { palette ->
+                onReaderHighlightPaletteChange(palette)
+                showHighlightPaletteManager = false
+            }
+        )
     }
     if (showFileInfo) {
         ModalBottomSheet(onDismissRequest = { showFileInfo = false }) {
