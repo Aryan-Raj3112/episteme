@@ -1,5 +1,6 @@
 package com.aryan.reader
 
+import com.aryan.reader.shared.CloudSyncSetupIntent
 import com.aryan.reader.shared.SharedFeaturePolicy
 import com.aryan.reader.shared.SharedSettingsHubInput
 import com.aryan.reader.shared.SharedSettingsPlatform
@@ -28,6 +29,11 @@ fun androidSettingsHubInput(
         isProUser = uiState.isProUser,
         accountAvailable = supportsSync,
         syncAvailable = supportsSync,
+        cloudSyncSetupIntent = if (uiState.isProUser) {
+            CloudSyncSetupIntent.READY
+        } else {
+            CloudSyncSetupIntent.NEEDS_PRO
+        },
         folderSyncAvailable = supportsSync,
         aiSettingsAvailable = supportsOssAiKeys,
         ttsSettingsAvailable = true,

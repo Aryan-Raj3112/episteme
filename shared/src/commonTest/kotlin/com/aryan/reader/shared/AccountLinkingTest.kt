@@ -64,6 +64,62 @@ class AccountLinkingTest {
     }
 
     @Test
+    fun `cloud sync setup intent reports the first missing prerequisite`() {
+        assertEquals(
+            CloudSyncSetupIntent.NEEDS_PRO,
+            resolveCloudSyncSetupIntent(
+                isProUser = false,
+                providers = setOf(AccountAuthProvider.GOOGLE),
+                hasGoogleDrivePermission = true,
+            ),
+        )
+        assertEquals(
+            CloudSyncSetupIntent.NEEDS_GOOGLE_LINK,
+            resolveCloudSyncSetupIntent(
+                isProUser = true,
+                providers = setOf(AccountAuthProvider.APPLE),
+                hasGoogleDrivePermission = false,
+            ),
+        )
+        assertEquals(
+            CloudSyncSetupIntent.NEEDS_DRIVE_AUTH,
+            resolveCloudSyncSetupIntent(
+                isProUser = true,
+                providers = setOf(AccountAuthProvider.GOOGLE),
+                hasGoogleDrivePermission = false,
+            ),
+        )
+        assertEquals(
+            CloudSyncSetupIntent.READY,
+            resolveCloudSyncSetupIntent(
+                isProUser = true,
+                providers = setOf(AccountAuthProvider.APPLE, AccountAuthProvider.GOOGLE),
+                hasGoogleDrivePermission = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `cloud sync setup intent maps to platform routes`() {
+        assertEquals(
+            CloudSyncSetupRoute.TOGGLE_SYNC,
+            cloudSyncSetupRoute(CloudSyncSetupIntent.READY),
+        )
+        assertEquals(
+            CloudSyncSetupRoute.OPEN_PRO,
+            cloudSyncSetupRoute(CloudSyncSetupIntent.NEEDS_PRO),
+        )
+        assertEquals(
+            CloudSyncSetupRoute.OPEN_ACCOUNT,
+            cloudSyncSetupRoute(CloudSyncSetupIntent.NEEDS_GOOGLE_LINK),
+        )
+        assertEquals(
+            CloudSyncSetupRoute.AUTHORIZE_GOOGLE_DRIVE,
+            cloudSyncSetupRoute(CloudSyncSetupIntent.NEEDS_DRIVE_AUTH),
+        )
+    }
+
+    @Test
     fun `cloud sync additionally requires pro while other pro features accept apple`() {
         assertFalse(
             canUseCloudSync(

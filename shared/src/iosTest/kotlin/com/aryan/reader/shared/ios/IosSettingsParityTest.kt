@@ -1,8 +1,11 @@
 package com.aryan.reader.shared.ios
 
+import com.aryan.reader.shared.CloudSyncSetupIntent
+import com.aryan.reader.shared.CloudSyncSetupRoute
 import com.aryan.reader.shared.SharedSettingsAction
 import com.aryan.reader.shared.SharedSettingsHubInput
 import com.aryan.reader.shared.SharedSettingsPlatform
+import com.aryan.reader.shared.cloudSyncSetupRoute
 import com.aryan.reader.shared.sharedSettingsHubModel
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -78,7 +81,7 @@ class IosSettingsParityTest {
                 isSignedIn = true,
                 isProUser = true,
                 syncAvailable = true,
-                cloudSyncEligible = true,
+                cloudSyncSetupIntent = CloudSyncSetupIntent.READY,
                 includeCloudLocalDataClear = true,
                 includeHideReaderAi = true,
             )
@@ -98,5 +101,17 @@ class IosSettingsParityTest {
         )
         assertFalse(SharedSettingsAction.TEST_PANEL_DETECTION in actions)
         assertFalse(SharedSettingsAction.TEST_SPEECH_BUBBLE_DETECTION in actions)
+    }
+
+    @Test
+    fun iosCloudSyncSetupRoutesProviderAndDrivePrerequisites() {
+        assertEquals(
+            CloudSyncSetupRoute.OPEN_ACCOUNT,
+            cloudSyncSetupRoute(CloudSyncSetupIntent.NEEDS_GOOGLE_LINK),
+        )
+        assertEquals(
+            CloudSyncSetupRoute.AUTHORIZE_GOOGLE_DRIVE,
+            cloudSyncSetupRoute(CloudSyncSetupIntent.NEEDS_DRIVE_AUTH),
+        )
     }
 }

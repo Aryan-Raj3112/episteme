@@ -59,6 +59,8 @@ import com.aryan.reader.shared.AccountAuthProvider
 import com.aryan.reader.shared.BannerMessage
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.CloudBookTombstone
+import com.aryan.reader.shared.CloudSyncSetupIntent
+import com.aryan.reader.shared.CloudSyncSetupRoute
 import com.aryan.reader.shared.CustomFontItem
 import com.aryan.reader.shared.FileType
 import com.aryan.reader.shared.pdf.IosPdfiumRuntime
@@ -112,6 +114,7 @@ import com.aryan.reader.shared.currentTimestamp
 import com.aryan.reader.shared.canEnableGoogleDriveSync
 import com.aryan.reader.shared.canOpenMobilePdfTab
 import com.aryan.reader.shared.canUseCloudSync
+import com.aryan.reader.shared.cloudSyncSetupRoute
 import com.aryan.reader.shared.mergeCloudLibrarySnapshotWithDownloadedBooks
 import com.aryan.reader.shared.enqueueMobileFolderScan
 import com.aryan.reader.shared.mobileExternalFileCloseAction
@@ -120,6 +123,7 @@ import com.aryan.reader.shared.mobileExternalOpenAction
 import com.aryan.reader.shared.MobileSettingsMutation
 import com.aryan.reader.shared.MobileSettingsMutationState
 import com.aryan.reader.shared.MobileStrictFileFilterEffect
+import com.aryan.reader.shared.resolveCloudSyncSetupIntent
 import com.aryan.reader.shared.planMobileSettingsMutation
 import com.aryan.reader.shared.normalizedExternalFileBehavior
 import com.aryan.reader.shared.planMobileImportBatch
@@ -2228,6 +2232,7 @@ private fun ReaderIosApp(
         )
     }
     var utilityScreen by remember { mutableStateOf<IosUtilityScreen?>(null) }
+    var pendingCloudSyncSetup by remember { mutableStateOf(false) }
     var languageReturnScreen by remember { mutableStateOf<IosUtilityScreen?>(null) }
     var settingsDestination by remember { mutableStateOf(SharedSettingsDestination.ROOT) }
     var settingsQuery by remember { mutableStateOf("") }
@@ -2824,6 +2829,32 @@ private fun ReaderIosApp(
                     .withStableIosAudiobookPaths()
             )
         )
+    }
+
+    LaunchedEffect(
+        pendingCloudSyncSetup,
+        state.isProUser,
+        bridge.accountState.providers,
+        bridge.accountState.googleDriveAuthorized,
+    ) {
+        if (!pendingCloudSyncSetup) return@LaunchedEffect
+        val setupIntent = resolveCloudSyncSetupIntent(
+            isProUser = state.isProUser,
+            providers = bridge.accountState.providers,
+            hasGoogleDrivePermission = bridge.accountState.googleDriveAuthorized,
+        )
+        if (setupIntent == CloudSyncSetupIntent.READY) {
+            pendingCloudSyncSetup = false
+            state = state.reduce(AppAction.SyncEnabledChanged(true))
+            utilityScreen = IosUtilityScreen.SETTINGS
+            showMessage(
+                stringResolver.string(
+                    "account_google_drive_sync_available",
+                    "Google Drive sync is available.",
+                )
+            )
+            requestCloudSyncIfEligible()
+        }
     }
 
     fun setFolderSyncEnabled(enabled: Boolean) {
@@ -3937,7 +3968,10 @@ private fun ReaderIosApp(
                 when (screen) {
                     IosUtilityScreen.ACCOUNT -> IosAccountScreen(
                         account = bridge.accountState,
-                        onBack = { utilityScreen = null },
+                        onBack = {
+                            pendingCloudSyncSetup = false
+                            utilityScreen = null
+                        },
                         onAuthenticate = bridge::requestAuthentication,
                         onSignOut = { showSignOutConfirmation = true },
                     )
@@ -3957,6 +3991,11 @@ private fun ReaderIosApp(
                         onRevoke = bridge::requestDeviceRevoke,
                     )
                     IosUtilityScreen.SETTINGS -> {
+                        val cloudSyncSetupIntent = resolveCloudSyncSetupIntent(
+                            isProUser = state.isProUser,
+                            providers = bridge.accountState.providers,
+                            hasGoogleDrivePermission = bridge.accountState.googleDriveAuthorized,
+                        )
                         val settingsModel = sharedSettingsHubModel(
                             SharedSettingsHubInput(
                                 platform = SharedSettingsPlatform.IOS,
@@ -3966,7 +4005,7 @@ private fun ReaderIosApp(
                                 accountAvailable = true,
                                 includeAccountAuthActions = true,
                                 syncAvailable = true,
-                                cloudSyncEligible = bridge.accountState.canSync,
+                                cloudSyncSetupIntent = cloudSyncSetupIntent,
                                 folderSyncAvailable = true,
                                 aiSettingsAvailable = true,
                                 ttsSettingsAvailable = true,
@@ -4065,14 +4104,33 @@ private fun ReaderIosApp(
                                     SharedSettingsAction.SIGN_OUT -> showSignOutConfirmation = true
                                     SharedSettingsAction.CLOUD_SYNC -> {
                                         val enabled = !state.isSyncEnabled
-                                        if (!enabled || canUseCloudSync(
-                                                providers = bridge.accountState.providers,
-                                                hasGoogleDrivePermission = bridge.accountState.googleDriveAuthorized,
-                                                isProUser = state.isProUser,
-                                            )
-                                        ) {
+                                        if (!enabled) {
                                             state = state.reduce(AppAction.SyncEnabledChanged(enabled))
-                                            if (enabled) requestCloudSyncIfEligible()
+                                        } else {
+                                            when (cloudSyncSetupRoute(cloudSyncSetupIntent)) {
+                                                CloudSyncSetupRoute.TOGGLE_SYNC -> {
+                                                    state = state.reduce(AppAction.SyncEnabledChanged(true))
+                                                    requestCloudSyncIfEligible()
+                                                }
+                                                CloudSyncSetupRoute.OPEN_PRO -> {
+                                                    pendingCloudSyncSetup = false
+                                                    utilityScreen = IosUtilityScreen.PRO
+                                                }
+                                                CloudSyncSetupRoute.OPEN_ACCOUNT -> {
+                                                    pendingCloudSyncSetup = true
+                                                    utilityScreen = IosUtilityScreen.ACCOUNT
+                                                }
+                                                CloudSyncSetupRoute.AUTHORIZE_GOOGLE_DRIVE -> {
+                                                    pendingCloudSyncSetup = true
+                                                    showMessage(
+                                                        stringResolver.string(
+                                                            "account_authorize_google_drive",
+                                                            "Authorize Google Drive to enable full library sync.",
+                                                        )
+                                                    )
+                                                    bridge.requestAuthentication("GOOGLE")
+                                                }
+                                            }
                                         }
                                     }
                                     SharedSettingsAction.HELP_FEEDBACK -> utilityScreen = IosUtilityScreen.FEEDBACK

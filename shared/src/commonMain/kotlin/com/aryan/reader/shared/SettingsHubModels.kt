@@ -649,7 +649,12 @@ data class SharedSettingsHubInput(
     val accountAvailable: Boolean = true,
     val includeAccountAuthActions: Boolean = true,
     val syncAvailable: Boolean = true,
-    val cloudSyncEligible: Boolean = true,
+    /**
+     * Optional setup state supplied by platforms that can guide the user to
+     * the missing account or Drive authorization step. A null value keeps the
+     * legacy platform gate for hosts without that setup flow.
+     */
+    val cloudSyncSetupIntent: CloudSyncSetupIntent? = null,
     val folderSyncAvailable: Boolean = true,
     val aiSettingsAvailable: Boolean = true,
     val ttsSettingsAvailable: Boolean = true,
@@ -778,15 +783,29 @@ fun sharedSettingsHubModel(input: SharedSettingsHubInput): SharedSettingsHubMode
                     }
                 }
                 if (input.syncAvailable && input.featurePolicy.aiAndCloud) {
-                    val syncEnabled = input.isProUser && input.cloudSyncEligible
+                    val setupIntent = input.cloudSyncSetupIntent
+                    val syncEnabled = when (setupIntent) {
+                        null -> input.isProUser
+                        CloudSyncSetupIntent.READY -> input.isProUser
+                        else -> true
+                    }
                     add(
                         SharedSettingsItemModel(
                             action = SharedSettingsAction.CLOUD_SYNC,
                             title = "Cloud library sync",
-                            summary = when {
-                                !input.isProUser -> "A Pro account is required for cloud sync."
-                                !input.cloudSyncEligible -> "Link Google and authorize Google Drive to enable sync."
-                                else -> "Sync library metadata across signed-in devices."
+                            summary = when (setupIntent) {
+                                CloudSyncSetupIntent.NEEDS_PRO,
+                                null -> if (!input.isProUser) {
+                                    "A Pro account is required for cloud sync."
+                                } else {
+                                    "Sync library metadata across signed-in devices."
+                                }
+                                CloudSyncSetupIntent.NEEDS_GOOGLE_LINK ->
+                                    "Link Google to enable cloud sync."
+                                CloudSyncSetupIntent.NEEDS_DRIVE_AUTH ->
+                                    "Authorize Google Drive to enable sync."
+                                CloudSyncSetupIntent.READY ->
+                                    "Sync library metadata across signed-in devices."
                             },
                             kind = SharedSettingsItemKind.TOGGLE,
                             enabled = syncEnabled,
