@@ -3,9 +3,11 @@ package com.aryan.reader.shared
 import com.aryan.reader.shared.reader.ReaderReadingMode
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.SharedReaderTextAlign
+import com.aryan.reader.shared.reader.DefaultPdfReaderSettings
 import com.aryan.reader.shared.pdf.PdfReverseColorMode
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 
 class ReaderDefaultSettingsStateTest {
 
@@ -91,5 +93,22 @@ class ReaderDefaultSettingsStateTest {
 
         assertEquals(epubDefaults, decoded.readerDefaultSettings)
         assertEquals(pdfDefaults, decoded.pdfReaderDefaultSettings)
+    }
+
+    @Test
+    fun `legacy pdf defaults keep Android tap to turn default disabled`() {
+        val decoded = SharedLibrarySnapshotJson.decodeOrEmpty(
+            """
+            {
+              "pdfReaderDefaultSettings": {
+                "themeId": "no_theme"
+              }
+            }
+            """.trimIndent()
+        )
+
+        assertFalse(DefaultPdfReaderSettings.tapToNavigateEnabled)
+        assertFalse(SharedReaderScreenState().pdfReaderDefaultSettings.tapToNavigateEnabled)
+        assertFalse(decoded.pdfReaderDefaultSettings.tapToNavigateEnabled)
     }
 }

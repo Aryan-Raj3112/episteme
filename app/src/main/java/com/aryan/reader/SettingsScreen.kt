@@ -37,12 +37,14 @@ import com.aryan.reader.epubreader.loadPageInfoPosition
 import com.aryan.reader.epubreader.loadPullToTurn
 import com.aryan.reader.epubreader.loadPullToTurnMultiplier
 import com.aryan.reader.epubreader.loadSystemUiMode
+import com.aryan.reader.epubreader.loadTapToNavigateSetting
 import com.aryan.reader.epubreader.savePageInfoMode
 import com.aryan.reader.epubreader.savePageInfoPosition
 import com.aryan.reader.epubreader.savePullToTurn
 import com.aryan.reader.epubreader.savePullToTurnMultiplier
 import com.aryan.reader.epubreader.saveReaderSettings
 import com.aryan.reader.epubreader.saveSystemUiMode
+import com.aryan.reader.epubreader.saveTapToNavigateSetting
 import com.aryan.reader.pdf.savePdfSystemUiMode
 import com.aryan.reader.pdf.savePdfThemeId
 import com.aryan.reader.pdf.savePdfVerticalPageGapVisible
@@ -481,6 +483,7 @@ private fun loadAndroidPdfReaderDefaultSettings(
         pdfPageNumberOverlayVisible = loadPdfPageNumberOverlayVisible(context),
         pdfReverseColorMode = loadPdfReverseColorMode(context),
         pdfPreserveImageColors = loadExcludeImages(context),
+        tapToNavigateEnabled = loadTapToNavigateSetting(context),
     )
     return BuiltInPdfReaderThemes.firstOrNull { it.id == base.themeId }?.toReaderSettings(base) ?: base
 }
@@ -522,6 +525,7 @@ private fun saveAndroidPdfReaderDefaultSettings(
     savePdfPageNumberOverlayVisible(context, settings.pdfPageNumberOverlayVisible)
     savePdfReverseColorMode(context, settings.pdfReverseColorMode)
     saveExcludeImages(context, settings.pdfPreserveImageColors)
+    saveTapToNavigateSetting(context, settings.tapToNavigateEnabled)
     saveGlobalTextureTransparency(context, 1f - settings.textureAlpha.coerceIn(0f, 1f))
 }
 

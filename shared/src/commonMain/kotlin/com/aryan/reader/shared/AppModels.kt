@@ -2,6 +2,7 @@ package com.aryan.reader.shared
 
 import androidx.compose.ui.graphics.Color
 import com.aryan.reader.shared.pdf.SharedPdfHighlighterPalette
+import com.aryan.reader.shared.reader.DefaultPdfReaderSettings
 import com.aryan.reader.shared.reader.ReaderSettings
 
 data class SharedText(
@@ -366,7 +367,7 @@ data class SharedReaderScreenState(
     val customReaderThemes: List<ReaderTheme> = emptyList(),
     val customFonts: List<CustomFontItem> = emptyList(),
     val readerDefaultSettings: ReaderSettings = ReaderSettings(),
-    val pdfReaderDefaultSettings: ReaderSettings = ReaderSettings(themeId = "no_theme"),
+    val pdfReaderDefaultSettings: ReaderSettings = DefaultPdfReaderSettings,
     val allTags: List<Tag> = emptyList(),
     val showTagSelectionDialogFor: Set<String> = emptySet(),
     val readerToolbarPreferences: ReaderToolbarPreferences = ReaderToolbarPreferences(),

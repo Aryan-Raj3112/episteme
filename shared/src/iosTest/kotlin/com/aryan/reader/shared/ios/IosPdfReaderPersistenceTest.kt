@@ -2,9 +2,12 @@ package com.aryan.reader.shared.ios
 
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.FileType
+import com.aryan.reader.shared.SharedLibrarySnapshotJson
 import com.aryan.reader.shared.pdf.SharedPdfBookmark
+import com.aryan.reader.shared.reader.DefaultPdfReaderSettings
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class IosPdfReaderPersistenceTest {
@@ -80,6 +83,22 @@ class IosPdfReaderPersistenceTest {
             ),
             decodeLegacyIosPdfBookmarksByBookId(raw),
         )
+    }
+
+    @Test
+    fun legacyIosPdfDefaultsUseTheAndroidTapToTurnDefault() {
+        val decoded = SharedLibrarySnapshotJson.decodeOrEmpty(
+            """
+            {
+              "pdfReaderDefaultSettings": {
+                "themeId": "no_theme"
+              }
+            }
+            """.trimIndent()
+        )
+
+        assertFalse(DefaultPdfReaderSettings.tapToNavigateEnabled)
+        assertFalse(decoded.pdfReaderDefaultSettings.tapToNavigateEnabled)
     }
 
     private fun pdfBook(id: String, path: String): BookItem = BookItem(

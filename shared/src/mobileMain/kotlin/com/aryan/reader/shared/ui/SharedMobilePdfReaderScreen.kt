@@ -158,6 +158,7 @@ import com.aryan.reader.shared.ReaderAiFeature
 import com.aryan.reader.shared.ReaderAiResultState
 import com.aryan.reader.shared.ReaderExtrasState
 import com.aryan.reader.shared.BuiltInPdfReaderThemes
+import com.aryan.reader.shared.reader.DefaultPdfReaderSettings
 import com.aryan.reader.shared.FileType
 import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.PdfDisplayMode
@@ -298,7 +299,7 @@ fun SharedMobilePdfReaderScreen(
     onOpenAiHub: () -> Unit = {},
     onTtsError: ((String) -> Unit)? = null,
     initialReaderState: SharedPdfReaderState? = null,
-    readerDefaultSettings: ReaderSettings = ReaderSettings(themeId = "no_theme"),
+    readerDefaultSettings: ReaderSettings = DefaultPdfReaderSettings,
     onReaderDefaultSettingsChange: (ReaderSettings) -> Unit = {},
     customReaderThemes: List<ReaderTheme> = emptyList(),
     onCustomReaderThemesChange: (List<ReaderTheme>) -> Unit = {},
@@ -433,7 +434,7 @@ fun SharedMobilePdfReaderHost(
     onOpenAiHub: () -> Unit = {},
     onTtsError: ((String) -> Unit)? = null,
     initialReaderState: SharedPdfReaderState? = null,
-    readerDefaultSettings: ReaderSettings = ReaderSettings(themeId = "no_theme"),
+    readerDefaultSettings: ReaderSettings = DefaultPdfReaderSettings,
     onReaderDefaultSettingsChange: (ReaderSettings) -> Unit = {},
     customReaderThemes: List<ReaderTheme> = emptyList(),
     onCustomReaderThemesChange: (List<ReaderTheme>) -> Unit = {},
@@ -539,7 +540,9 @@ fun SharedMobilePdfReaderHost(
     var autoScrollCollapsed by remember(readerSessionKey) { mutableStateOf(false) }
     var autoScrollInteractionToken by remember(readerSessionKey) { mutableStateOf(0) }
     var autoScrollPauseDurationMillis by remember(readerSessionKey) { mutableStateOf(300L) }
-    var tapToTurnPages by remember(readerSessionKey) { mutableStateOf(true) }
+    var tapToTurnPages by remember(readerSessionKey, readerDefaultSettings.tapToNavigateEnabled) {
+        mutableStateOf(readerDefaultSettings.tapToNavigateEnabled)
+    }
     var pdfSliderScrubbingPage by remember(readerSessionKey) { mutableStateOf<Int?>(null) }
     var showAllTextHighlights by remember(readerSessionKey) { mutableStateOf(false) }
     var isAllTextHighlightLoading by remember(readerSessionKey) { mutableStateOf(false) }
@@ -1351,7 +1354,13 @@ fun SharedMobilePdfReaderHost(
                             onTheme = { if (ownsGlobalModal) showThemePanel = true },
                             onVisualOptions = { if (ownsGlobalModal) showReaderOptions = !showReaderOptions },
                             tapToTurnPages = tapToTurnPages,
-                            onToggleTapToTurnPages = { tapToTurnPages = !tapToTurnPages },
+                            onToggleTapToTurnPages = {
+                                val enabled = !tapToTurnPages
+                                tapToTurnPages = enabled
+                                onReaderDefaultSettingsChange(
+                                    readerDefaultSettings.copy(tapToNavigateEnabled = enabled)
+                                )
+                            },
                             isScrollLocked = readerState.isScrollLocked,
                             onToggleScrollLock = {
                                 dispatch(

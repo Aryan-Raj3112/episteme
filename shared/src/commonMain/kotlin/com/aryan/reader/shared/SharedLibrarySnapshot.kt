@@ -21,6 +21,7 @@ import com.aryan.reader.shared.pdf.SharedPdfCloudSidecarSnapshot
 import com.aryan.reader.shared.pdf.SharedPdfReaderViewport
 import com.aryan.reader.shared.pdf.PdfReverseColorMode
 import com.aryan.reader.shared.reader.ReaderBookmark
+import com.aryan.reader.shared.reader.DefaultPdfReaderSettings
 import com.aryan.reader.shared.reader.ReaderPageSpreadMode
 import com.aryan.reader.shared.reader.ReaderReadingMode
 import com.aryan.reader.shared.reader.ReaderSettings
@@ -60,7 +61,7 @@ data class SharedLibrarySnapshot(
     val customAppThemes: List<CustomAppTheme> = emptyList(),
     val customReaderThemes: List<ReaderTheme> = emptyList(),
     val readerDefaultSettings: ReaderSettings = ReaderSettings(),
-    val pdfReaderDefaultSettings: ReaderSettings = ReaderSettings(themeId = "no_theme"),
+    val pdfReaderDefaultSettings: ReaderSettings = DefaultPdfReaderSettings,
     val desktopReaderDefaultsVersion: Int = 0,
     val readerToolbarPreferences: ReaderToolbarPreferences = ReaderToolbarPreferences(),
     val readerHighlightPalette: ReaderHighlightPalette = ReaderHighlightPalette(),
@@ -152,8 +153,8 @@ object SharedLibrarySnapshotJson {
             readerDefaultSettings = readerDefaultSettings.migrateLegacyDefaultReadingMode(schemaVersion),
             pdfReaderDefaultSettings = root["pdfReaderDefaultSettings"]
                 ?.takeUnless { it is JsonNull }
-                ?.asReaderSettingsOrNull()
-                ?: ReaderSettings(themeId = "no_theme"),
+                ?.asReaderSettingsOrNull(DefaultPdfReaderSettings)
+                ?: DefaultPdfReaderSettings,
             desktopReaderDefaultsVersion = root.int("desktopReaderDefaultsVersion", 0),
             readerToolbarPreferences = root["readerToolbarPreferences"]
                 ?.takeUnless { it is JsonNull }
@@ -703,9 +704,10 @@ private fun List<Int>.asIntJsonArray(): JsonArray {
     return JsonArray(map { JsonPrimitive(it) })
 }
 
-private fun JsonElement.asReaderSettingsOrNull(): ReaderSettings? {
+private fun JsonElement.asReaderSettingsOrNull(
+    defaults: ReaderSettings = ReaderSettings(),
+): ReaderSettings? {
     val obj = runCatching { jsonObject }.getOrNull() ?: return null
-    val defaults = ReaderSettings()
     return ReaderSettings(
         fontSize = obj.int("fontSize") ?: defaults.fontSize,
         fontWeight = obj.int("fontWeight") ?: defaults.fontWeight,

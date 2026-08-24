@@ -121,6 +121,18 @@ data class ReaderSettings(
     val resolvedVerticalMargin: Int get() = verticalMargin ?: margin
 }
 
+/**
+ * Defaults for a new PDF reader session.
+ *
+ * PDF tap-to-turn is opt-in on Android (the benchmark implementation). Keep
+ * that format-specific default separate from [ReaderSettings]' generic EPUB
+ * defaults, where tap navigation remains enabled by default.
+ */
+val DefaultPdfReaderSettings: ReaderSettings = ReaderSettings(
+    themeId = "no_theme",
+    tapToNavigateEnabled = false,
+)
+
 data class ReaderLayoutSignature(
     val fontSize: Int,
     val fontWeight: Int,
