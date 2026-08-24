@@ -52,6 +52,8 @@ import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
@@ -186,6 +188,8 @@ fun SharedMobileUnifiedLibraryScreen(
     onOpenFonts: () -> Unit,
     onOpenAiSettings: () -> Unit = {},
     onOpenAccountDrawer: () -> Unit = {},
+    onSortOrderChange: (SortOrder) -> Unit = {},
+    onFiltersChange: (LibraryFilters) -> Unit = {},
     accountAvatar: @Composable () -> Unit = {
         Icon(
             Icons.Default.AccountCircle,
@@ -224,6 +228,7 @@ fun SharedMobileUnifiedLibraryScreen(
     var filter by remember { mutableStateOf(MobileUnifiedLibraryFilter.ALL) }
     var query by remember { mutableStateOf("") }
     var searchVisible by remember { mutableStateOf(false) }
+    var showFilters by remember { mutableStateOf(false) }
     var infoBook by remember { mutableStateOf<BookItem?>(null) }
     var section by remember(initialSection) {
         mutableStateOf(MobileUnifiedLibrarySection.fromPersisted(initialSection))
@@ -239,14 +244,36 @@ fun SharedMobileUnifiedLibraryScreen(
     val drawerModel = remember(drawerCapabilities) {
         mobileUnifiedLibraryDrawerModel(drawerCapabilities)
     }
-    val visibleBooks = remember(state.rawLibraryBooks, filter, query) {
-        mobileUnifiedLibraryBooks(state.rawLibraryBooks, filter, query)
+    val visibleBooks = remember(
+        state.rawLibraryBooks,
+        state.libraryFilters,
+        state.syncedFolders,
+        state.sortOrder,
+        filter,
+        query,
+    ) {
+        mobileUnifiedLibraryBooks(
+            books = state.rawLibraryBooks,
+            filter = filter,
+            query = query,
+            libraryFilters = state.libraryFilters.withIosFolderFilterIdentities(state.syncedFolders),
+            sortOrder = state.sortOrder,
+        )
     }
     val continueReading = remember(state.rawLibraryBooks) {
         mobileUnifiedContinueReadingBook(state.rawLibraryBooks)
     }
     val ttsItems = remember(state.rawLibraryBooks, ttsProgress) {
         buildSharedTtsListenItems(state.rawLibraryBooks, ttsProgress)
+    }
+    val advancedFilterCount = state.libraryFilters.fileTypes.size +
+        state.libraryFilters.sourceFolders.size +
+        state.libraryFilters.tagIds.size +
+        if (state.libraryFilters.readStatus == ReadStatusFilter.ALL) 0 else 1
+
+    fun applyUnifiedLibraryFilters(filters: LibraryFilters) {
+        filter = filters.readStatus.toMobileUnifiedLibraryFilter()
+        onFiltersChange(filters)
     }
 
     fun closeDrawerAnd(action: () -> Unit) {
@@ -531,6 +558,42 @@ fun SharedMobileUnifiedLibraryScreen(
                             label = { Text(readerString(option.stringKey, option.fallbackLabel)) },
                         )
                     }
+                    SharedMobileLibrarySortControl(
+                        sortOrder = state.sortOrder,
+                        labels = SortOrder.entries.associateWith { it.sharedMobileLabel() },
+                        selectedContentDescription = readerString("content_desc_selected", "Selected"),
+                        onSortOrderChange = onSortOrderChange,
+                        modifier = Modifier.testTag("UnifiedLibrarySortButton"),
+                        icon = {
+                            Icon(
+                                Icons.Default.Sort,
+                                contentDescription = readerString("content_desc_sort", "Sort"),
+                                modifier = Modifier.size(20.dp),
+                            )
+                        },
+                    )
+                    BadgedBox(
+                        badge = {
+                            if (advancedFilterCount > 0) {
+                                Badge { Text(advancedFilterCount.toString()) }
+                            }
+                        },
+                    ) {
+                        IconButton(
+                            onClick = { showFilters = true },
+                            modifier = Modifier.testTag("UnifiedLibraryFilter"),
+                        ) {
+                            Icon(
+                                Icons.Default.FilterList,
+                                contentDescription = readerString("content_desc_filter", "Filter"),
+                                tint = if (advancedFilterCount > 0) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                            )
+                        }
+                    }
                 }
             }
             if (visibleBooks.isEmpty()) {
@@ -573,6 +636,13 @@ fun SharedMobileUnifiedLibraryScreen(
             }
         }
     }
+    }
+    if (showFilters) {
+        SharedMobileLibraryFilterDialog(
+            state = state,
+            onDismiss = { showFilters = false },
+            onFiltersChange = ::applyUnifiedLibraryFilters,
+        )
     }
 
     infoBook?.let { book ->
@@ -721,6 +791,13 @@ private val MobileUnifiedLibraryFilter.stringKey: String
 
 private val MobileUnifiedLibraryFilter.fallbackLabel: String
     get() = name.lowercase().replaceFirstChar { it.uppercase() }
+
+private fun ReadStatusFilter.toMobileUnifiedLibraryFilter(): MobileUnifiedLibraryFilter = when (this) {
+    ReadStatusFilter.ALL -> MobileUnifiedLibraryFilter.ALL
+    ReadStatusFilter.UNREAD -> MobileUnifiedLibraryFilter.UNREAD
+    ReadStatusFilter.IN_PROGRESS -> MobileUnifiedLibraryFilter.READING
+    ReadStatusFilter.COMPLETED -> MobileUnifiedLibraryFilter.FINISHED
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

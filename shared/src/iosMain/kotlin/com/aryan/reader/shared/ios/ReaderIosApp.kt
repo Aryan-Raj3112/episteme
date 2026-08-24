@@ -4664,6 +4664,12 @@ private fun ReaderIosApp(
                                 onOpenAppTheme = { showAppThemePanel = true },
                                 onOpenFonts = { utilityScreen = IosUtilityScreen.FONTS },
                                 onOpenAccountDrawer = { scope.launch { drawerState.open() } },
+                                onSortOrderChange = { sortOrder ->
+                                    state = state.reduce(LibraryAction.SortChanged(sortOrder))
+                                },
+                                onFiltersChange = { filters ->
+                                    state = state.reduce(LibraryAction.FiltersChanged(filters))
+                                },
                                 drawerCapabilities = MobileUnifiedLibraryDrawerCapabilities(
                                     catalogsAvailable = true,
                                     aiSettingsAvailable = false,

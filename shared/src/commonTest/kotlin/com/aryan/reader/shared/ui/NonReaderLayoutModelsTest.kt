@@ -36,6 +36,25 @@ class NonReaderLayoutModelsTest {
     }
 
     @Test
+    fun `unified library applies persisted filters and sort order`() {
+        val folder = SyncedFolder("folder://downloads", "Downloads", lastScanTime = 0L)
+        val beta = book("beta", title = "Beta", sourceFolder = "Downloads")
+        val alpha = book("alpha", title = "Alpha", sourceFolder = "Downloads")
+        val outsideFolder = book("outside", title = "Outside")
+
+        val visible = mobileUnifiedLibraryBooks(
+            books = listOf(beta, outsideFolder, alpha),
+            filter = MobileUnifiedLibraryFilter.ALL,
+            query = "",
+            libraryFilters = LibraryFilters(sourceFolders = setOf(folder.uriString))
+                .withIosFolderFilterIdentities(listOf(folder)),
+            sortOrder = SortOrder.TITLE_ASC,
+        )
+
+        assertEquals(listOf("alpha", "beta"), visible.map { it.id })
+    }
+
+    @Test
     fun `unified continue reading prefers most recently positioned active book`() {
         val older = book(id = "older", displayName = "Older.epub", progress = 20f, positionModified = 20L)
         val newer = book(id = "newer", displayName = "Newer.epub", progress = 80f, positionModified = 40L)
