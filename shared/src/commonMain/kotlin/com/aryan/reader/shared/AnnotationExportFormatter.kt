@@ -5,13 +5,21 @@ import com.aryan.reader.shared.pdf.PdfAnnotationKind
 import com.aryan.reader.shared.pdf.SharedPdfAnnotation
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationComment
 import com.aryan.reader.shared.pdf.visiblePdfAnnotationComments
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.add
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 
 enum class AnnotationExportFormat(
     val extension: String,
     val mimeType: String
 ) {
     MARKDOWN("md", "text/markdown"),
-    TEXT("txt", "text/plain")
+    TEXT("txt", "text/plain"),
+    JSON("json", "application/json"),
+    CSV("csv", "text/csv")
 }
 
 data class AnnotationExportDocument(
@@ -96,6 +104,8 @@ object AnnotationExportFormatter {
         return when (format) {
             AnnotationExportFormat.MARKDOWN -> renderMarkdown(document)
             AnnotationExportFormat.TEXT -> renderText(document)
+            AnnotationExportFormat.JSON -> renderJson(document)
+            AnnotationExportFormat.CSV -> renderCsv(document)
         }
     }
 
@@ -168,6 +178,68 @@ object AnnotationExportFormatter {
             if (index != document.entries.lastIndex) appendLine()
         }
     }.trimEnd() + "\n"
+
+    private val prettyJson: Json = Json { prettyPrint = true }
+
+    private fun renderJson(document: AnnotationExportDocument): String {
+        val json = buildJsonObject {
+            put("bookTitle", document.bookTitle)
+            put("sourceType", document.sourceType.name)
+            put("annotationCount", document.entries.size)
+            put("annotations", buildJsonArray {
+                document.entries.forEach { entry ->
+                    add(buildJsonObject {
+                        put("location", entry.locationLabel)
+                        put("highlightedText", entry.highlightedText)
+                        entry.colorLabel?.takeIf { it.isNotBlank() }?.let { put("color", it) }
+                        entry.note?.takeIf { it.isNotBlank() }?.let { put("note", it) }
+                        put("comments", buildJsonArray {
+                            entry.comments.forEach { comment ->
+                                val author = comment.author.ifBlank { DEFAULT_SHARED_PDF_COMMENT_AUTHOR }
+                                add(buildJsonObject {
+                                    put("author", author)
+                                    put("contents", comment.contents)
+                                    put("depth", comment.depth)
+                                })
+                            }
+                        })
+                    })
+                }
+            })
+        }
+        return prettyJson.encodeToString(JsonObject.serializer(), json) + "\n"
+    }
+
+    private fun renderCsv(document: AnnotationExportDocument): String = buildString {
+        val header = listOf("Location", "Highlighted Text", "Color", "Note", "Comments")
+        appendLineCsv(header)
+        document.entries.forEach { entry ->
+            val color = entry.colorLabel?.takeIf { it.isNotBlank() }.orEmpty()
+            val note = entry.note.orEmpty()
+            val comments = entry.comments.joinToString("\n") { comment ->
+                val indent = "  ".repeat(comment.depth.coerceAtLeast(0))
+                val author = comment.author.ifBlank { DEFAULT_SHARED_PDF_COMMENT_AUTHOR }
+                "$indent$author: ${comment.contents}"
+            }
+            appendLineCsv(listOf(entry.locationLabel, entry.highlightedText, color, note, comments))
+        }
+    }
+
+    private fun StringBuilder.appendLineCsv(fields: List<String>) {
+        fields.forEachIndexed { index, field ->
+            if (index > 0) append(',')
+            append(csvField(field))
+        }
+        append("\r\n")
+    }
+
+    private fun csvField(value: String): String {
+        return if (value.contains(',') || value.contains('"') || value.contains('\n') || value.contains('\r')) {
+            "\"${value.replace("\"", "\"\"")}\""
+        } else {
+            value
+        }
+    }
 
     private fun List<UserHighlight>.toAnnotationExportEntries(): List<AnnotationExportEntry> {
         return asSequence()

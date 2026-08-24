@@ -56,7 +56,6 @@ import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.outlined.AccountCircle
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
@@ -83,7 +82,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -124,6 +122,8 @@ import com.aryan.reader.data.AppDatabase
 import com.aryan.reader.data.AudiobookImporter
 import com.aryan.reader.audiobook.AudiobookController
 import com.aryan.reader.shared.AnnotationExportFormat
+import com.aryan.reader.shared.ui.SharedAnnotationExportFormatDialog
+import com.aryan.reader.shared.ui.sharedAnnotationExportFormatOptions
 import kotlinx.coroutines.launch
 
 internal typealias UnifiedLibrarySection = com.aryan.reader.shared.ui.MobileUnifiedLibrarySection
@@ -245,6 +245,20 @@ fun UnifiedLibraryScreen(
         pendingAnnotationExportText = null
         if (destination != null && contents != null) viewModel.saveAnnotationExport(contents, destination)
     }
+    val saveJsonAnnotationsLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument(AnnotationExportFormat.JSON.mimeType)
+    ) { destination ->
+        val contents = pendingAnnotationExportText
+        pendingAnnotationExportText = null
+        if (destination != null && contents != null) viewModel.saveAnnotationExport(contents, destination)
+    }
+    val saveCsvAnnotationsLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument(AnnotationExportFormat.CSV.mimeType)
+    ) { destination ->
+        val contents = pendingAnnotationExportText
+        pendingAnnotationExportText = null
+        if (destination != null && contents != null) viewModel.saveAnnotationExport(contents, destination)
+    }
 
     fun launchDocumentPicker(onUnavailable: () -> Unit = {}, launch: () -> Unit) {
         try {
@@ -265,6 +279,12 @@ fun UnifiedLibraryScreen(
                 AnnotationExportFormat.TEXT -> launchDocumentPicker(
                     onUnavailable = { pendingAnnotationExportText = null }
                 ) { saveTextAnnotationsLauncher.launch(prepared.fileName) }
+                AnnotationExportFormat.JSON -> launchDocumentPicker(
+                    onUnavailable = { pendingAnnotationExportText = null }
+                ) { saveJsonAnnotationsLauncher.launch(prepared.fileName) }
+                AnnotationExportFormat.CSV -> launchDocumentPicker(
+                    onUnavailable = { pendingAnnotationExportText = null }
+                ) { saveCsvAnnotationsLauncher.launch(prepared.fileName) }
             }
         }
     }
@@ -763,23 +783,24 @@ fun UnifiedLibraryScreen(
         )
     }
     showAnnotationExportFormatDialogFor?.let { item ->
-        AlertDialog(
-            onDismissRequest = { showAnnotationExportFormatDialogFor = null },
-            title = { Text(stringResource(R.string.dialog_export_annotations_title)) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButton(onClick = {
-                        showAnnotationExportFormatDialogFor = null
-                        exportAnnotations(item, AnnotationExportFormat.MARKDOWN)
-                    }) { Text(stringResource(R.string.export_annotations_markdown)) }
-                    TextButton(onClick = {
-                        showAnnotationExportFormatDialogFor = null
-                        exportAnnotations(item, AnnotationExportFormat.TEXT)
-                    }) { Text(stringResource(R.string.export_annotations_text)) }
-                }
-            },
-            confirmButton = {},
-            dismissButton = { TextButton(onClick = { showAnnotationExportFormatDialogFor = null }) { Text(stringResource(R.string.action_cancel)) } }
+        SharedAnnotationExportFormatDialog(
+            title = stringResource(R.string.dialog_export_annotations_title),
+            cancelLabel = stringResource(R.string.action_cancel),
+            options = sharedAnnotationExportFormatOptions(
+                markdownLabel = stringResource(R.string.export_annotations_markdown),
+                markdownDescription = stringResource(R.string.export_annotations_markdown_description),
+                textLabel = stringResource(R.string.export_annotations_text),
+                textDescription = stringResource(R.string.export_annotations_text_description),
+                jsonLabel = stringResource(R.string.export_annotations_json),
+                jsonDescription = stringResource(R.string.export_annotations_json_description),
+                csvLabel = stringResource(R.string.export_annotations_csv),
+                csvDescription = stringResource(R.string.export_annotations_csv_description)
+            ),
+            onDismiss = { showAnnotationExportFormatDialogFor = null },
+            onExport = { format ->
+                showAnnotationExportFormatDialogFor = null
+                exportAnnotations(item, format)
+            }
         )
     }
     HydratedFileInfoDialog(

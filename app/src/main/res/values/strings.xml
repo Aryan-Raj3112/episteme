@@ -1208,8 +1208,14 @@
     <string name="action_share">Share</string>
     <string name="action_export_annotations">Export annotations</string>
     <string name="dialog_export_annotations_title">Export annotations</string>
-    <string name="export_annotations_markdown">Markdown (.md)</string>
-    <string name="export_annotations_text">Text (.txt)</string>
+    <string name="export_annotations_markdown">Markdown</string>
+    <string name="export_annotations_text">Plain text</string>
+    <string name="export_annotations_json">JSON</string>
+    <string name="export_annotations_csv">CSV</string>
+    <string name="export_annotations_markdown_description">Formatted document with headings and quotes</string>
+    <string name="export_annotations_text_description">Simple readable list of highlights and notes</string>
+    <string name="export_annotations_json_description">Structured data for apps and backups</string>
+    <string name="export_annotations_csv_description">Spreadsheet-friendly table of annotations</string>
     <string name="action_save_copy_to_device">Save copy to device</string>
     <string name="action_print">Print</string>
     <!-- "Text View" is the name of the PDF reflow feature — keep consistent. -->

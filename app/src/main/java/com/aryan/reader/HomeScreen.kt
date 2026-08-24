@@ -145,7 +145,9 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.shared.AnnotationExportFormat
+import com.aryan.reader.shared.ui.SharedAnnotationExportFormatDialog
 import com.aryan.reader.shared.ui.SharedMobileAppDestination
+import com.aryan.reader.shared.ui.sharedAnnotationExportFormatOptions
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import java.text.SimpleDateFormat
@@ -261,12 +263,34 @@ fun HomeScreen(
             }
         }
 
+        val saveJsonAnnotationsLauncher = rememberLauncherForActivityResult(
+            contract = ActivityResultContracts.CreateDocument(AnnotationExportFormat.JSON.mimeType)
+        ) { uri ->
+            val exportText = pendingAnnotationExportText
+            pendingAnnotationExportText = null
+            if (uri != null && exportText != null) {
+                viewModel.saveAnnotationExport(exportText, uri)
+            }
+        }
+
+        val saveCsvAnnotationsLauncher = rememberLauncherForActivityResult(
+            contract = ActivityResultContracts.CreateDocument(AnnotationExportFormat.CSV.mimeType)
+        ) { uri ->
+            val exportText = pendingAnnotationExportText
+            pendingAnnotationExportText = null
+            if (uri != null && exportText != null) {
+                viewModel.saveAnnotationExport(exportText, uri)
+            }
+        }
+
         fun exportAnnotationsItem(item: RecentFileItem, format: AnnotationExportFormat) {
             viewModel.prepareAnnotationExport(item, format) { prepared ->
                 pendingAnnotationExportText = prepared.contents
                 when (format) {
                     AnnotationExportFormat.MARKDOWN -> saveMarkdownAnnotationsLauncher.launch(prepared.fileName)
                     AnnotationExportFormat.TEXT -> saveTextAnnotationsLauncher.launch(prepared.fileName)
+                    AnnotationExportFormat.JSON -> saveJsonAnnotationsLauncher.launch(prepared.fileName)
+                    AnnotationExportFormat.CSV -> saveCsvAnnotationsLauncher.launch(prepared.fileName)
                 }
             }
         }
@@ -285,30 +309,23 @@ fun HomeScreen(
         }
 
         showAnnotationExportFormatDialogFor?.let { item ->
-            AlertDialog(
-                onDismissRequest = { showAnnotationExportFormatDialogFor = null },
-                title = { Text(stringResource(R.string.dialog_export_annotations_title)) },
-                text = {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        TextButton(onClick = {
-                            showAnnotationExportFormatDialogFor = null
-                            exportAnnotationsItem(item, AnnotationExportFormat.MARKDOWN)
-                        }) {
-                            Text(stringResource(R.string.export_annotations_markdown))
-                        }
-                        TextButton(onClick = {
-                            showAnnotationExportFormatDialogFor = null
-                            exportAnnotationsItem(item, AnnotationExportFormat.TEXT)
-                        }) {
-                            Text(stringResource(R.string.export_annotations_text))
-                        }
-                    }
-                },
-                confirmButton = {},
-                dismissButton = {
-                    TextButton(onClick = { showAnnotationExportFormatDialogFor = null }) {
-                        Text(stringResource(R.string.action_cancel))
-                    }
+            SharedAnnotationExportFormatDialog(
+                title = stringResource(R.string.dialog_export_annotations_title),
+                cancelLabel = stringResource(R.string.action_cancel),
+                options = sharedAnnotationExportFormatOptions(
+                    markdownLabel = stringResource(R.string.export_annotations_markdown),
+                    markdownDescription = stringResource(R.string.export_annotations_markdown_description),
+                    textLabel = stringResource(R.string.export_annotations_text),
+                    textDescription = stringResource(R.string.export_annotations_text_description),
+                    jsonLabel = stringResource(R.string.export_annotations_json),
+                    jsonDescription = stringResource(R.string.export_annotations_json_description),
+                    csvLabel = stringResource(R.string.export_annotations_csv),
+                    csvDescription = stringResource(R.string.export_annotations_csv_description)
+                ),
+                onDismiss = { showAnnotationExportFormatDialogFor = null },
+                onExport = { format ->
+                    showAnnotationExportFormatDialogFor = null
+                    exportAnnotationsItem(item, format)
                 }
             )
         }

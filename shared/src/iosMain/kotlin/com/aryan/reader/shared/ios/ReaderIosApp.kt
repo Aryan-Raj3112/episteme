@@ -175,6 +175,7 @@ import com.aryan.reader.shared.pdf.generateIosPdfReflowHtml
 import com.aryan.reader.shared.ui.SharedAppTheme
 import com.aryan.reader.shared.ui.SharedAppThemeSettingsDialog
 import com.aryan.reader.shared.ui.SharedAboutScreen
+import com.aryan.reader.shared.ui.SharedAnnotationExportFormatDialog
 import com.aryan.reader.shared.ui.SharedCustomFontsScreen
 import com.aryan.reader.shared.ui.SharedHelpFeedbackScreen
 import com.aryan.reader.shared.ui.SharedMobileAppDrawerContent
@@ -186,6 +187,7 @@ import com.aryan.reader.shared.ui.SharedMobileDictionarySettingsSheet
 import com.aryan.reader.shared.ui.SharedAiSettingsScreen
 import com.aryan.reader.shared.ui.SharedAiSettingsStrings
 import com.aryan.reader.shared.ui.IosSharedMobileCloudTts
+import com.aryan.reader.shared.ui.sharedAnnotationExportFormatOptions
 import com.aryan.reader.shared.ui.SharedMobileHomeScreen
 import com.aryan.reader.shared.ui.SharedMobileHomeActions
 import com.aryan.reader.shared.ui.SharedMobileLibraryScreen
@@ -4734,29 +4736,24 @@ private fun ReaderIosApp(
         )
     }
     annotationExportBook?.let { book ->
-        AlertDialog(
-            onDismissRequest = { annotationExportBook = null },
-            title = { Text(readerString("dialog_export_annotations_title", "Export annotations")) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButton(onClick = {
-                        annotationExportBook = null
-                        if (!bridge.exportAnnotations(book, AnnotationExportFormat.MARKDOWN)) {
-                            showMessage(stringResolver.string("banner_no_annotations_to_export", "This book has no annotations to export"))
-                        }
-                    }) { Text(readerString("export_annotations_markdown", "Markdown")) }
-                    TextButton(onClick = {
-                        annotationExportBook = null
-                        if (!bridge.exportAnnotations(book, AnnotationExportFormat.TEXT)) {
-                            showMessage(stringResolver.string("banner_no_annotations_to_export", "This book has no annotations to export"))
-                        }
-                    }) { Text(readerString("export_annotations_text", "Text")) }
-                }
-            },
-            confirmButton = {},
-            dismissButton = {
-                TextButton(onClick = { annotationExportBook = null }) {
-                    Text(readerString("action_cancel", "Cancel"))
+        SharedAnnotationExportFormatDialog(
+            title = readerString("dialog_export_annotations_title", "Export annotations"),
+            cancelLabel = readerString("action_cancel", "Cancel"),
+            options = sharedAnnotationExportFormatOptions(
+                markdownLabel = readerString("export_annotations_markdown", "Markdown"),
+                markdownDescription = readerString("export_annotations_markdown_description", "Formatted document with headings and quotes"),
+                textLabel = readerString("export_annotations_text", "Plain text"),
+                textDescription = readerString("export_annotations_text_description", "Simple readable list of highlights and notes"),
+                jsonLabel = readerString("export_annotations_json", "JSON"),
+                jsonDescription = readerString("export_annotations_json_description", "Structured data for apps and backups"),
+                csvLabel = readerString("export_annotations_csv", "CSV"),
+                csvDescription = readerString("export_annotations_csv_description", "Spreadsheet-friendly table of annotations")
+            ),
+            onDismiss = { annotationExportBook = null },
+            onExport = { format ->
+                annotationExportBook = null
+                if (!bridge.exportAnnotations(book, format)) {
+                    showMessage(stringResolver.string("banner_no_annotations_to_export", "This book has no annotations to export"))
                 }
             }
         )
