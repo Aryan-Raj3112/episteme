@@ -122,6 +122,10 @@ import com.aryan.reader.data.AppDatabase
 import com.aryan.reader.data.AudiobookImporter
 import com.aryan.reader.audiobook.AudiobookController
 import com.aryan.reader.shared.AnnotationExportFormat
+import com.aryan.reader.shared.ui.MobileUnifiedLibraryDrawerAppearance
+import com.aryan.reader.shared.ui.MobileUnifiedLibraryDrawerCapabilities
+import com.aryan.reader.shared.ui.MobileUnifiedLibraryDrawerDestination
+import com.aryan.reader.shared.ui.mobileUnifiedLibraryDrawerModel
 import com.aryan.reader.shared.ui.SharedAnnotationExportFormatDialog
 import com.aryan.reader.shared.ui.sharedAnnotationExportFormatOptions
 import kotlinx.coroutines.launch
@@ -862,21 +866,75 @@ private fun UnifiedLibraryDrawer(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(start = 28.dp, top = 20.dp, bottom = 8.dp)
             )
-            UnifiedLibraryDestination(stringResource(R.string.unified_library_home), currentSection == UnifiedLibrarySection.HOME, { Icon(Icons.Default.Home, null) }) { onSectionSelected(UnifiedLibrarySection.HOME) }
-            UnifiedLibraryDestination(stringResource(R.string.listen_title), currentSection == UnifiedLibrarySection.AUDIOBOOKS, { Icon(Icons.AutoMirrored.Filled.VolumeUp, null) }) { onSectionSelected(UnifiedLibrarySection.AUDIOBOOKS) }
-            UnifiedLibraryDestination(stringResource(R.string.tab_shelves), currentSection == UnifiedLibrarySection.SHELVES, { Icon(Icons.AutoMirrored.Filled.LibraryBooks, null) }) { onSectionSelected(UnifiedLibrarySection.SHELVES) }
-            UnifiedLibraryDestination(stringResource(R.string.tab_folders), currentSection == UnifiedLibrarySection.FOLDERS, { Icon(Icons.Default.Folder, null) }) { onSectionSelected(UnifiedLibrarySection.FOLDERS) }
-            if (!BuildConfig.IS_OFFLINE) {
-                UnifiedLibraryDestination(stringResource(R.string.tab_catalogs), currentSection == UnifiedLibrarySection.CATALOGS, { Icon(painterResource(R.drawable.cloud), null) }) { onSectionSelected(UnifiedLibrarySection.CATALOGS) }
+            val drawerModel = mobileUnifiedLibraryDrawerModel(
+                MobileUnifiedLibraryDrawerCapabilities(
+                    catalogsAvailable = !BuildConfig.IS_OFFLINE,
+                    aiSettingsAvailable = BuildConfig.FLAVOR == "oss" && !BuildConfig.IS_OFFLINE,
+                ),
+            )
+            drawerModel.destinations.forEach { destination ->
+                when (destination) {
+                    MobileUnifiedLibraryDrawerDestination.HOME -> UnifiedLibraryDestination(
+                        stringResource(R.string.unified_library_home),
+                        currentSection == destination.section,
+                        { Icon(Icons.Default.Home, null) },
+                    ) { onSectionSelected(destination.section) }
+                    MobileUnifiedLibraryDrawerDestination.AUDIOBOOKS -> UnifiedLibraryDestination(
+                        stringResource(R.string.listen_title),
+                        currentSection == destination.section,
+                        { Icon(Icons.AutoMirrored.Filled.VolumeUp, null) },
+                    ) { onSectionSelected(destination.section) }
+                    MobileUnifiedLibraryDrawerDestination.SHELVES -> UnifiedLibraryDestination(
+                        stringResource(R.string.tab_shelves),
+                        currentSection == destination.section,
+                        { Icon(Icons.AutoMirrored.Filled.LibraryBooks, null) },
+                    ) { onSectionSelected(destination.section) }
+                    MobileUnifiedLibraryDrawerDestination.FOLDERS -> UnifiedLibraryDestination(
+                        stringResource(R.string.tab_folders),
+                        currentSection == destination.section,
+                        { Icon(Icons.Default.Folder, null) },
+                    ) { onSectionSelected(destination.section) }
+                    MobileUnifiedLibraryDrawerDestination.CATALOGS -> UnifiedLibraryDestination(
+                        stringResource(R.string.tab_catalogs),
+                        currentSection == destination.section,
+                        { Icon(painterResource(R.drawable.cloud), null) },
+                    ) { onSectionSelected(destination.section) }
+                }
             }
 
             HorizontalDivider(modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp))
             Text(stringResource(R.string.unified_library_appearance), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 28.dp, bottom = 8.dp))
-            NavigationDrawerItem(icon = { Icon(Icons.Default.Palette, null) }, label = { Text(stringResource(R.string.app_theme_title)) }, selected = false, onClick = onThemeClick, modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp))
-            NavigationDrawerItem(icon = { Icon(Icons.Default.Settings, null) }, label = { Text(stringResource(R.string.settings)) }, selected = false, onClick = onSettingsClick, modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp))
-            NavigationDrawerItem(icon = { Icon(painterResource(R.drawable.fonts), null) }, label = { Text(stringResource(R.string.drawer_custom_fonts)) }, selected = false, onClick = onFontsClick, modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp))
-            if (BuildConfig.FLAVOR == "oss" && !BuildConfig.IS_OFFLINE) {
-                NavigationDrawerItem(icon = { Icon(painterResource(R.drawable.ai), null) }, label = { Text(stringResource(R.string.ai_settings_title)) }, selected = false, onClick = onAiSettingsClick, modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp))
+            drawerModel.appearance.forEach { appearance ->
+                when (appearance) {
+                    MobileUnifiedLibraryDrawerAppearance.THEME -> NavigationDrawerItem(
+                        icon = { Icon(Icons.Default.Palette, null) },
+                        label = { Text(stringResource(R.string.app_theme_title)) },
+                        selected = false,
+                        onClick = onThemeClick,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+                    )
+                    MobileUnifiedLibraryDrawerAppearance.SETTINGS -> NavigationDrawerItem(
+                        icon = { Icon(Icons.Default.Settings, null) },
+                        label = { Text(stringResource(R.string.settings)) },
+                        selected = false,
+                        onClick = onSettingsClick,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+                    )
+                    MobileUnifiedLibraryDrawerAppearance.FONTS -> NavigationDrawerItem(
+                        icon = { Icon(painterResource(R.drawable.fonts), null) },
+                        label = { Text(stringResource(R.string.drawer_custom_fonts)) },
+                        selected = false,
+                        onClick = onFontsClick,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+                    )
+                    MobileUnifiedLibraryDrawerAppearance.AI -> NavigationDrawerItem(
+                        icon = { Icon(painterResource(R.drawable.ai), null) },
+                        label = { Text(stringResource(R.string.ai_settings_title)) },
+                        selected = false,
+                        onClick = onAiSettingsClick,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.weight(1f))

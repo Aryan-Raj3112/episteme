@@ -28,7 +28,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.LibraryBooks
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AccountCircle
+import androidx.compose.material.icons.filled.Ai
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Close
@@ -41,7 +44,6 @@ import androidx.compose.material.icons.filled.Fonts
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Palette
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
@@ -93,6 +95,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontWeight
@@ -133,6 +136,34 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.isActive
 import kotlin.math.roundToInt
 
+@Composable
+private fun MobileUnifiedLibraryDrawerLabel.readerString(): String = when (this) {
+    MobileUnifiedLibraryDrawerLabel.HOME -> readerString("unified_library_home", "Home")
+    MobileUnifiedLibraryDrawerLabel.AUDIOBOOKS -> readerString("listen_title", "Listen")
+    MobileUnifiedLibraryDrawerLabel.SHELVES -> readerString("tab_shelves", "Shelves")
+    MobileUnifiedLibraryDrawerLabel.FOLDERS -> readerString("tab_folders", "Folders")
+    MobileUnifiedLibraryDrawerLabel.CATALOGS -> readerString("tab_catalogs", "Catalogs")
+    MobileUnifiedLibraryDrawerLabel.THEME -> readerString("app_theme_title", "App theme")
+    MobileUnifiedLibraryDrawerLabel.SETTINGS -> readerString("settings", "Settings")
+    MobileUnifiedLibraryDrawerLabel.FONTS -> readerString("drawer_custom_fonts", "Custom fonts")
+    MobileUnifiedLibraryDrawerLabel.AI -> readerString("ai_settings_title", "AI settings")
+}
+
+private fun MobileUnifiedLibraryDrawerDestination.icon(): ImageVector = when (this) {
+    MobileUnifiedLibraryDrawerDestination.HOME -> Icons.Default.Home
+    MobileUnifiedLibraryDrawerDestination.AUDIOBOOKS -> Icons.AutoMirrored.Filled.VolumeUp
+    MobileUnifiedLibraryDrawerDestination.SHELVES -> Icons.AutoMirrored.Filled.LibraryBooks
+    MobileUnifiedLibraryDrawerDestination.FOLDERS -> Icons.Default.Folder
+    MobileUnifiedLibraryDrawerDestination.CATALOGS -> Icons.Default.Cloud
+}
+
+private fun MobileUnifiedLibraryDrawerAppearance.icon(): ImageVector = when (this) {
+    MobileUnifiedLibraryDrawerAppearance.THEME -> Icons.Default.Palette
+    MobileUnifiedLibraryDrawerAppearance.SETTINGS -> Icons.Default.Settings
+    MobileUnifiedLibraryDrawerAppearance.FONTS -> Icons.Default.Fonts
+    MobileUnifiedLibraryDrawerAppearance.AI -> Icons.Default.Ai
+}
+
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -153,6 +184,16 @@ fun SharedMobileUnifiedLibraryScreen(
     onOpenSettings: () -> Unit,
     onOpenAppTheme: () -> Unit,
     onOpenFonts: () -> Unit,
+    onOpenAiSettings: () -> Unit = {},
+    onOpenAccountDrawer: () -> Unit = {},
+    accountAvatar: @Composable () -> Unit = {
+        Icon(
+            Icons.Default.AccountCircle,
+            contentDescription = readerString("content_desc_profile", "Profile"),
+            modifier = Modifier.size(32.dp),
+        )
+    },
+    drawerCapabilities: MobileUnifiedLibraryDrawerCapabilities = MobileUnifiedLibraryDrawerCapabilities(),
     catalogContent: @Composable (Modifier) -> Unit,
     initialSection: Int = 0,
     onSectionChange: (Int) -> Unit = {},
@@ -195,6 +236,9 @@ fun SharedMobileUnifiedLibraryScreen(
     var showTtsPlayerSheet by remember { mutableStateOf(false) }
     val unifiedDrawerState = rememberDrawerState(DrawerValue.Closed)
     val unifiedScope = rememberCoroutineScope()
+    val drawerModel = remember(drawerCapabilities) {
+        mobileUnifiedLibraryDrawerModel(drawerCapabilities)
+    }
     val visibleBooks = remember(state.rawLibraryBooks, filter, query) {
         mobileUnifiedLibraryBooks(state.rawLibraryBooks, filter, query)
     }
@@ -222,41 +266,21 @@ fun SharedMobileUnifiedLibraryScreen(
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
                 )
-                NavigationDrawerItem(
-                    label = { Text(readerString("unified_library_home", "Home")) },
-                    selected = section == MobileUnifiedLibrarySection.HOME,
-                    icon = { Icon(Icons.Default.Home, contentDescription = null) },
-                    onClick = { closeDrawerAnd { section = MobileUnifiedLibrarySection.HOME; selectedShelfId = null; onSectionChange(section.persistedValue) } },
-                    modifier = Modifier.padding(horizontal = 12.dp),
-                )
-                NavigationDrawerItem(
-                    label = { Text(readerString("tab_shelves", "Shelves")) },
-                    selected = section == MobileUnifiedLibrarySection.SHELVES,
-                    icon = { Icon(Icons.AutoMirrored.Filled.LibraryBooks, contentDescription = null) },
-                    onClick = { closeDrawerAnd { section = MobileUnifiedLibrarySection.SHELVES; selectedShelfId = null; onSectionChange(section.persistedValue) } },
-                    modifier = Modifier.padding(horizontal = 12.dp),
-                )
-                NavigationDrawerItem(
-                    label = { Text(readerString("tab_folders", "Folders")) },
-                    selected = section == MobileUnifiedLibrarySection.FOLDERS,
-                    icon = { Icon(Icons.Default.Folder, contentDescription = null) },
-                    onClick = { closeDrawerAnd { section = MobileUnifiedLibrarySection.FOLDERS; selectedShelfId = null; onSectionChange(section.persistedValue) } },
-                    modifier = Modifier.padding(horizontal = 12.dp),
-                )
-                NavigationDrawerItem(
-                    label = { Text(readerString("tab_catalogs", "Catalogs")) },
-                    selected = section == MobileUnifiedLibrarySection.CATALOGS,
-                    icon = { Icon(Icons.Default.Cloud, contentDescription = null) },
-                    onClick = { closeDrawerAnd { section = MobileUnifiedLibrarySection.CATALOGS; selectedShelfId = null; onSectionChange(section.persistedValue) } },
-                    modifier = Modifier.padding(horizontal = 12.dp),
-                )
-                NavigationDrawerItem(
-                    label = { Text(readerString("audiobooks_title", "Audiobooks")) },
-                    selected = section == MobileUnifiedLibrarySection.AUDIOBOOKS,
-                    icon = { Icon(Icons.Default.PlayArrow, contentDescription = null) },
-                    onClick = { closeDrawerAnd { section = MobileUnifiedLibrarySection.AUDIOBOOKS; selectedShelfId = null; onSectionChange(section.persistedValue) } },
-                    modifier = Modifier.padding(horizontal = 12.dp),
-                )
+                drawerModel.destinations.forEach { destination ->
+                    NavigationDrawerItem(
+                        label = { Text(destination.label.readerString()) },
+                        selected = section == destination.section,
+                        icon = { Icon(destination.icon(), contentDescription = null) },
+                        onClick = {
+                            closeDrawerAnd {
+                                section = destination.section
+                                selectedShelfId = null
+                                onSectionChange(section.persistedValue)
+                            }
+                        },
+                        modifier = Modifier.padding(horizontal = 12.dp),
+                    )
+                }
                 HorizontalDivider(Modifier.padding(horizontal = 16.dp, vertical = 12.dp))
                 Text(
                     readerString("unified_library_appearance", "Appearance"),
@@ -264,27 +288,24 @@ fun SharedMobileUnifiedLibraryScreen(
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                NavigationDrawerItem(
-                    label = { Text(readerString("settings", "Settings")) },
-                    selected = false,
-                    icon = { Icon(Icons.Default.Settings, contentDescription = null) },
-                    onClick = { closeDrawerAnd(onOpenSettings) },
-                    modifier = Modifier.padding(horizontal = 12.dp),
-                )
-                NavigationDrawerItem(
-                    label = { Text(readerString("app_theme", "App theme")) },
-                    selected = false,
-                    icon = { Icon(Icons.Default.Palette, contentDescription = null) },
-                    onClick = { closeDrawerAnd(onOpenAppTheme) },
-                    modifier = Modifier.padding(horizontal = 12.dp),
-                )
-                NavigationDrawerItem(
-                    label = { Text(readerString("custom_fonts", "Custom Fonts")) },
-                    selected = false,
-                    icon = { Icon(Icons.Default.Fonts, contentDescription = null) },
-                    onClick = { closeDrawerAnd(onOpenFonts) },
-                    modifier = Modifier.padding(horizontal = 12.dp),
-                )
+                drawerModel.appearance.forEach { appearance ->
+                    NavigationDrawerItem(
+                        label = { Text(appearance.label.readerString()) },
+                        selected = false,
+                        icon = { Icon(appearance.icon(), contentDescription = null) },
+                        onClick = {
+                            closeDrawerAnd {
+                                when (appearance) {
+                                    MobileUnifiedLibraryDrawerAppearance.THEME -> onOpenAppTheme()
+                                    MobileUnifiedLibraryDrawerAppearance.SETTINGS -> onOpenSettings()
+                                    MobileUnifiedLibraryDrawerAppearance.FONTS -> onOpenFonts()
+                                    MobileUnifiedLibraryDrawerAppearance.AI -> onOpenAiSettings()
+                                }
+                            }
+                        },
+                        modifier = Modifier.padding(horizontal = 12.dp),
+                    )
+                }
             }
         },
     ) {
@@ -344,6 +365,12 @@ fun SharedMobileUnifiedLibraryScreen(
                                 readerString("unified_library_list_view", "List view")
                             },
                         )
+                    }
+                    IconButton(
+                        onClick = onOpenAccountDrawer,
+                        modifier = Modifier.testTag("UnifiedLibraryProfile"),
+                    ) {
+                        accountAvatar()
                     }
                 },
             )

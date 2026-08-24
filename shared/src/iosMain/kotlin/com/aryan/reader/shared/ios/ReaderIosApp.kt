@@ -194,6 +194,7 @@ import com.aryan.reader.shared.ui.SharedMobileHomeScreen
 import com.aryan.reader.shared.ui.SharedMobileHomeActions
 import com.aryan.reader.shared.ui.SharedMobileLibraryScreen
 import com.aryan.reader.shared.ui.SharedMobileUnifiedLibraryScreen
+import com.aryan.reader.shared.ui.MobileUnifiedLibraryDrawerCapabilities
 import com.aryan.reader.shared.ui.SharedOpdsScreen
 import com.aryan.reader.shared.ui.LocalUsePdfFileNameAsDisplayName
 import com.aryan.reader.shared.ui.SharedMobileLibraryTab
@@ -4662,6 +4663,11 @@ private fun ReaderIosApp(
                                 onOpenSettings = { utilityScreen = IosUtilityScreen.SETTINGS },
                                 onOpenAppTheme = { showAppThemePanel = true },
                                 onOpenFonts = { utilityScreen = IosUtilityScreen.FONTS },
+                                onOpenAccountDrawer = { scope.launch { drawerState.open() } },
+                                drawerCapabilities = MobileUnifiedLibraryDrawerCapabilities(
+                                    catalogsAvailable = true,
+                                    aiSettingsAvailable = false,
+                                ),
                                 catalogContent = { catalogModifier ->
                                     SharedOpdsScreen(
                                         state = opdsState,
