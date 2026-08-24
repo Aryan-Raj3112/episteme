@@ -42,6 +42,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -71,6 +72,18 @@ import com.aryan.reader.shared.LibraryFilters
 import com.aryan.reader.shared.LocalFolderSyncEngine
 import com.aryan.reader.shared.MAX_OPEN_PDF_TABS
 import com.aryan.reader.shared.MobileExternalFileCloseAction
+import com.aryan.reader.shared.MobileHandoffCleanupPolicy
+import com.aryan.reader.shared.MobileHandoffEnvelope
+import com.aryan.reader.shared.MobileHandoffFileIdentity
+import com.aryan.reader.shared.MobileHandoffMapper
+import com.aryan.reader.shared.MobileHandoffOpenMode
+import com.aryan.reader.shared.MobileHandoffReducer
+import com.aryan.reader.shared.MobileHandoffRequest
+import com.aryan.reader.shared.MobileHandoffRequestKind
+import com.aryan.reader.shared.MobileHandoffRequestState
+import com.aryan.reader.shared.MobileHandoffTtsTarget
+import com.aryan.reader.shared.MobilePdfLifecycleAction
+import com.aryan.reader.shared.mobilePdfLifecycleAction
 import com.aryan.reader.shared.SharedLibrarySnapshot
 import com.aryan.reader.shared.SharedLibrarySnapshotJson
 import com.aryan.reader.shared.SharedLegalProfile
@@ -100,6 +113,7 @@ import com.aryan.reader.shared.sharedAudiobookResumePosition
 import com.aryan.reader.shared.SyncedFolder
 import com.aryan.reader.shared.UserData
 import com.aryan.reader.shared.ReaderPlatform
+import com.aryan.reader.shared.ReaderLocator
 import com.aryan.reader.shared.ReaderAutoScrollProfile
 import com.aryan.reader.shared.ReaderTtsOverlaySize
 import com.aryan.reader.shared.resolveReaderTtsOverlaySize
@@ -306,13 +320,14 @@ class ReaderIosBridge internal constructor(
     private var latestSystemUiState: IosSystemUiState? = null
     private var originalReaderBrightness: Double? = null
     private var orientationHandler: ((mode: Int) -> Unit)? = null
+    private var handoffEnvelope: MobileHandoffEnvelope = IosMobileHandoffStore.load()
     internal var importedFiles by mutableStateOf<List<IosImportedFile>>(loadPersistedImportedFiles())
         private set
-    internal var pendingImportBatches by mutableStateOf<List<IosPendingImportBatch>>(emptyList())
+    internal var pendingImportBatches by mutableStateOf(loadIosPendingImportBatches(handoffEnvelope))
         private set
     internal var importedFonts by mutableStateOf<List<CustomFontItem>>(loadIosLibrarySnapshot().customFonts)
         private set
-    internal var pendingExternalOpen by mutableStateOf<IosExternalOpen?>(null)
+    internal var pendingExternalOpen by mutableStateOf(loadIosPendingExternalOpen(handoffEnvelope))
         private set
     internal var pendingFolderScans by mutableStateOf<List<SharedMobileFolderScanResult>>(emptyList())
         private set
@@ -381,6 +396,51 @@ class ReaderIosBridge internal constructor(
     internal var latestNativeEvent by mutableStateOf<String?>(null)
         private set
 
+    private fun persistHandoff(request: MobileHandoffRequest) {
+        handoffEnvelope = MobileHandoffReducer.enqueue(handoffEnvelope, request)
+        IosMobileHandoffStore.save(handoffEnvelope)
+        refreshPendingHandoffState()
+    }
+
+    private fun refreshPendingHandoffState() {
+        val next = MobileHandoffReducer.replay(handoffEnvelope)
+        pendingExternalOpen = next
+            ?.takeIf { it.kind == MobileHandoffRequestKind.EXTERNAL_FILE || it.kind == MobileHandoffRequestKind.TTS_TARGET }
+            ?.toIosExternalOpen()
+        pendingImportBatches = if (next?.kind == MobileHandoffRequestKind.IMPORT_BATCH) {
+            handoffEnvelope.requests
+                .asSequence()
+                .filter { it.state == MobileHandoffRequestState.PENDING && it.kind == MobileHandoffRequestKind.IMPORT_BATCH }
+                .sortedBy { it.createdAtMs }
+                .mapNotNull(MobileHandoffRequest::toIosPendingImportBatch)
+                .toList()
+        } else {
+            emptyList()
+        }
+    }
+
+    private fun consumeHandoff(requestId: String?) {
+        val id = requestId?.takeIf { it.isNotBlank() } ?: return
+        handoffEnvelope = MobileHandoffReducer.consume(
+            envelope = handoffEnvelope,
+            requestId = id,
+        )
+        IosMobileHandoffStore.save(handoffEnvelope)
+        refreshPendingHandoffState()
+    }
+
+    private fun failHandoff(requestId: String?, message: String) {
+        val id = requestId?.takeIf { it.isNotBlank() } ?: return
+        handoffEnvelope = MobileHandoffReducer.fail(
+            envelope = handoffEnvelope,
+            requestId = id,
+            message = message,
+            nowMs = currentTimestamp(),
+        )
+        IosMobileHandoffStore.save(handoffEnvelope)
+        refreshPendingHandoffState()
+    }
+
     fun updateAudiobookPlaybackState(
         isPlaying: Boolean,
         isLoading: Boolean,
@@ -445,8 +505,21 @@ class ReaderIosBridge internal constructor(
         failedCount: Int = 0,
         wasCancelled: Boolean = false,
         autoOpen: Boolean = true,
+        enqueueHandoff: Boolean = true,
     ) {
         if (wasCancelled) {
+            if (enqueueHandoff) {
+                persistHandoff(
+                    MobileHandoffMapper.importBatch(
+                        requestId = iosImportBatchRequestId(emptyList(), filePaths, failedCount, autoOpen),
+                        files = emptyList(),
+                        failedCount = failedCount,
+                        wasCancelled = true,
+                        autoOpen = autoOpen,
+                        message = "Import cancelled",
+                    )
+                )
+            }
             latestNativeEvent = "Import cancelled"
             return
         }
@@ -461,11 +534,24 @@ class ReaderIosBridge internal constructor(
         importedFiles = (imported + importedFiles).distinctBy { it.path }
         persistImportedFiles(importedFiles)
         if (imported.isNotEmpty() || failedCount > 0) {
-            pendingImportBatches = pendingImportBatches + IosPendingImportBatch(
-                files = imported,
-                failedCount = failedCount.coerceAtLeast(0),
-                autoOpen = autoOpen,
-            )
+            if (enqueueHandoff) {
+                val message = when {
+                    imported.isEmpty() && failedCount > 0 -> "Could not import the selected file(s)"
+                    failedCount > 0 -> "Copied ${imported.size} file(s); $failedCount failed"
+                    else -> "Selected ${fileNames.size} file(s) from iOS"
+                }
+                persistHandoff(
+                    MobileHandoffMapper.importBatch(
+                        requestId = iosImportBatchRequestId(imported, filePaths, failedCount, autoOpen),
+                        files = imported.map(IosImportedFile::toMobileHandoffFileIdentity),
+                        failedCount = failedCount,
+                        autoOpen = autoOpen,
+                        message = message,
+                        messageIsError = failedCount > 0 && imported.isEmpty(),
+                        createdAtMs = currentTimestamp(),
+                    )
+                )
+            }
         }
         latestNativeEvent = when {
             imported.isEmpty() && failedCount > 0 -> "Could not import the selected file(s)"
@@ -476,7 +562,7 @@ class ReaderIosBridge internal constructor(
     }
 
     internal fun consumeImportBatch() {
-        pendingImportBatches = pendingImportBatches.drop(1)
+        consumeHandoff(pendingImportBatches.firstOrNull()?.requestId)
     }
 
     fun recordImportedFolder(
@@ -601,16 +687,42 @@ class ReaderIosBridge internal constructor(
         persistImportedFiles(importedFiles)
     }
 
-    fun openExternalFile(fileName: String, filePath: String, contentId: String, addToLibrary: Boolean) {
+    fun openExternalFile(
+        fileName: String,
+        filePath: String,
+        contentId: String,
+        addToLibrary: Boolean,
+        requestId: String? = null,
+    ) {
         if (fileName.isBlank() || filePath.isBlank()) return
         val behavior = normalizedExternalFileBehavior(externalFileBehavior())
         if (addToLibrary) {
-            recordImportedFiles(listOf(fileName), listOf(filePath), listOf(contentId))
+            recordImportedFiles(
+                listOf(fileName),
+                listOf(filePath),
+                listOf(contentId),
+                enqueueHandoff = false,
+            )
         }
-        pendingExternalOpen = IosExternalOpen(
-            file = IosImportedFile(name = fileName, path = filePath, contentId = contentId),
-            addToLibrary = addToLibrary,
-            behavior = behavior,
+        val file = MobileHandoffFileIdentity(
+            name = fileName,
+            path = filePath,
+            contentId = contentId,
+        )
+        persistHandoff(
+            MobileHandoffMapper.externalFile(
+                requestId = requestId?.takeIf { it.isNotBlank() }
+                    ?: iosExternalRequestId(file, addToLibrary),
+                file = file,
+                openMode = if (addToLibrary) MobileHandoffOpenMode.LIBRARY_COPY else MobileHandoffOpenMode.TEMPORARY,
+                cleanupPolicy = if (addToLibrary) {
+                    MobileHandoffCleanupPolicy.KEEP
+                } else {
+                    MobileHandoffCleanupPolicy.DELETE_ON_FAILURE
+                },
+                autoOpen = true,
+                createdAtMs = currentTimestamp(),
+            ).copy(metadata = mapOf("behavior" to behavior))
         )
     }
 
@@ -623,8 +735,48 @@ class ReaderIosBridge internal constructor(
         importedCoverPath = null
     }
 
-    internal fun consumeExternalOpen() {
-        pendingExternalOpen = null
+    internal fun consumeExternalOpen(requestId: String? = null) {
+        consumeHandoff(requestId ?: pendingExternalOpen?.requestId)
+    }
+
+    internal fun failExternalOpen(message: String) {
+        val requestId = pendingExternalOpen?.requestId
+        val request = requestId?.let { id ->
+            handoffEnvelope.requests.firstOrNull { it.requestId == id }
+        }
+        if (request?.openMode == MobileHandoffOpenMode.TEMPORARY) {
+            deleteIosExternalRequestDirectory(
+                requestId = request.requestId,
+                filePath = request.files.firstOrNull()?.path,
+            )
+        }
+        failHandoff(requestId, message)
+    }
+
+    /** Native notification/Now Playing adapters can enqueue this before Compose starts. */
+    fun openTtsTarget(
+        bookId: String,
+        sourceCfi: String? = null,
+        startOffset: Int? = null,
+        chapterIndex: Int? = null,
+        pageIndex: Int? = null,
+        requestId: String? = null,
+    ) {
+        val target = MobileHandoffTtsTarget(
+            bookId = bookId,
+            sourceCfi = sourceCfi,
+            startOffset = startOffset,
+            chapterIndex = chapterIndex,
+            pageIndex = pageIndex,
+        )
+        persistHandoff(
+            MobileHandoffMapper.ttsTarget(
+                requestId = requestId?.takeIf { it.isNotBlank() }
+                    ?: MobileHandoffMapper.stableTtsRequestId(target),
+                target = target,
+                createdAtMs = currentTimestamp(),
+            )
+        )
     }
 
     internal fun consumeFolderScan() {
@@ -1000,6 +1152,8 @@ class ReaderIosBridge internal constructor(
         pendingImportBatches = emptyList()
         pendingFolderScans = emptyList()
         pendingExternalOpen = null
+        handoffEnvelope = MobileHandoffEnvelope()
+        IosMobileHandoffStore.clear()
         pendingCloudSync = null
         persistImportedFiles(emptyList())
         clearPendingIosExternalFileRemoval()
@@ -1168,16 +1322,102 @@ data class IosImportedFile(
 )
 
 data class IosPendingImportBatch(
+    val requestId: String,
     val files: List<IosImportedFile>,
     val failedCount: Int,
     val autoOpen: Boolean = true,
+    val wasCancelled: Boolean = false,
+    val message: String? = null,
 )
 
 internal data class IosExternalOpen(
+    val requestId: String,
     val file: IosImportedFile,
     val addToLibrary: Boolean,
     val behavior: String,
+    val ttsTarget: MobileHandoffTtsTarget? = null,
 )
+
+private fun IosImportedFile.toMobileHandoffFileIdentity(): MobileHandoffFileIdentity =
+    MobileHandoffFileIdentity(
+        name = name,
+        path = path,
+        contentId = contentId,
+        size = fileSize,
+        lastModifiedTimestamp = lastModifiedTimestamp,
+        relativePath = relativePath,
+    )
+
+private fun MobileHandoffFileIdentity.toIosImportedFile(): IosImportedFile = IosImportedFile(
+    name = name,
+    path = path,
+    contentId = contentId,
+    relativePath = relativePath,
+    fileSize = size,
+    lastModifiedTimestamp = lastModifiedTimestamp,
+)
+
+private fun MobileHandoffRequest.toIosExternalOpen(): IosExternalOpen? {
+    val tts = ttsTarget
+    if (kind == MobileHandoffRequestKind.TTS_TARGET && tts != null) {
+        return IosExternalOpen(
+            requestId = requestId,
+            file = IosImportedFile(name = "", path = "", contentId = tts.bookId),
+            addToLibrary = true,
+            behavior = "KEEP",
+            ttsTarget = tts,
+        )
+    }
+    val identity = files.firstOrNull() ?: return null
+    return IosExternalOpen(
+        requestId = requestId,
+        file = identity.toIosImportedFile(),
+        addToLibrary = openMode == MobileHandoffOpenMode.LIBRARY_COPY,
+        behavior = metadata["behavior"] ?: "KEEP",
+    )
+}
+
+private fun MobileHandoffRequest.toIosPendingImportBatch(): IosPendingImportBatch? {
+    if (kind != MobileHandoffRequestKind.IMPORT_BATCH) return null
+    return IosPendingImportBatch(
+        requestId = requestId,
+        files = files.map(MobileHandoffFileIdentity::toIosImportedFile),
+        failedCount = failedCount,
+        autoOpen = autoOpen,
+        wasCancelled = wasCancelled,
+        message = message,
+    )
+}
+
+private fun loadIosPendingImportBatches(envelope: MobileHandoffEnvelope): List<IosPendingImportBatch> {
+    val next = MobileHandoffReducer.replay(envelope)
+    if (next?.kind != MobileHandoffRequestKind.IMPORT_BATCH) return emptyList()
+    return envelope.requests
+        .asSequence()
+        .filter { it.state == MobileHandoffRequestState.PENDING && it.kind == MobileHandoffRequestKind.IMPORT_BATCH }
+        .sortedBy { it.createdAtMs }
+        .mapNotNull(MobileHandoffRequest::toIosPendingImportBatch)
+        .toList()
+}
+
+private fun loadIosPendingExternalOpen(envelope: MobileHandoffEnvelope): IosExternalOpen? =
+    MobileHandoffReducer.replay(envelope)
+        ?.takeIf { it.kind == MobileHandoffRequestKind.EXTERNAL_FILE || it.kind == MobileHandoffRequestKind.TTS_TARGET }
+        ?.toIosExternalOpen()
+
+private fun iosImportBatchRequestId(
+    imported: List<IosImportedFile>,
+    paths: List<String>,
+    failedCount: Int,
+    autoOpen: Boolean,
+): String {
+    val identity = imported.joinToString("|") { it.contentId.ifBlank { it.path } } +
+        "|" + paths.joinToString("|") + "|$failedCount|$autoOpen"
+    return "import:${identity.hashCode()}"
+}
+
+private fun iosExternalRequestId(file: MobileHandoffFileIdentity, addToLibrary: Boolean): String =
+    "external:${file.contentId.ifBlank { file.path }}:$addToLibrary"
 
 private data class IosPendingExternalFileRemoval(
     val bookId: String,
@@ -1251,17 +1491,37 @@ private fun loadPendingIosExternalFileRemoval(): IosPendingExternalFileRemoval? 
     return IosPendingExternalFileRemoval(bookId, path)
 }
 
-private fun persistPendingIosExternalFileRemoval(book: BookItem) {
-    val path = book.path?.stableIosImportedFilePath()?.takeIf(String::isNotBlank) ?: return
-    val defaults = NSUserDefaults.standardUserDefaults
-    defaults.setObject(book.id, forKey = IosPendingExternalBookIdDefaultsKey)
-    defaults.setObject(path, forKey = IosPendingExternalPathDefaultsKey)
-}
-
+/** Migration reader for the pre-envelope one-shot external cleanup marker. */
 private fun clearPendingIosExternalFileRemoval() {
     val defaults = NSUserDefaults.standardUserDefaults
     defaults.removeObjectForKey(IosPendingExternalBookIdDefaultsKey)
     defaults.removeObjectForKey(IosPendingExternalPathDefaultsKey)
+}
+
+/**
+ * Removes only a request-owned temporary directory. The request id and file
+ * path must both resolve below tmp/ExternalOpen/<request-id>; this prevents a
+ * malformed or stale handoff from deleting another request's data.
+ */
+private fun deleteIosExternalRequestDirectory(requestId: String?, filePath: String?): Boolean {
+    val safeRequestId = requestId
+        ?.trim()
+        ?.takeIf(String::isNotBlank)
+        ?.replace("/", "_")
+        ?.replace("\\", "_")
+        ?.takeIf { it != "." && it != ".." }
+        ?: return false
+    val temporaryRoot = NSTemporaryDirectory().trimEnd('/').canonicalIosFilePath()
+    if (temporaryRoot.isBlank()) return false
+    val externalRoot = "$temporaryRoot/ExternalOpen"
+    val requestDirectory = "$externalRoot/$safeRequestId"
+    val canonicalFilePath = filePath
+        ?.trim()
+        ?.takeIf(String::isNotBlank)
+        ?.canonicalIosFilePath()
+        ?: return false
+    if (!canonicalFilePath.startsWith("$requestDirectory/")) return false
+    return NSFileManager.defaultManager.removeItemAtPath(requestDirectory, error = null)
 }
 
 private fun loadIosMobileLibraryNavigation(): IosMobileLibraryNavigation {
@@ -1754,6 +2014,46 @@ private fun loadPersistedIosPdfReaderStateFromDefaults(book: BookItem): SharedPd
 private fun persistIosPdfReaderState(book: BookItem, state: SharedPdfReaderState) {
     val encoded = SharedPdfReaderStateSerializer.encode(state)
     NSUserDefaults.standardUserDefaults.setObject(encoded, forKey = book.iosPdfReaderStateKey())
+}
+
+/** Writes the portable PDF sidecar synchronously at a lifecycle boundary. */
+private fun persistIosPdfSidecarNow(book: BookItem, state: SharedPdfReaderState) {
+    persistIosPdfReaderState(book, state)
+    val existingData = IosPdfCloudSidecarStore.read(book.id)
+    val existingTimestamp = SharedPdfCloudSidecarCodec.decode(
+        rawDataJson = existingData,
+        fallbackPageCount = 1,
+        fallbackPageIndex = book.lastPageIndex ?: 0,
+    )?.modifiedTimestamp ?: 0L
+    val previousTimestamp = NSUserDefaults.standardUserDefaults.integerForKey(
+        book.iosPdfSidecarTimestampKey()
+    )
+    val modifiedTimestamp = maxOf(
+        currentTimestamp(),
+        existingTimestamp + 1L,
+        previousTimestamp + 1L,
+    )
+    val localData = SharedPdfCloudSidecarCodec.encode(
+        bookId = book.id,
+        state = state,
+        sourceFingerprint = book.iosPdfSourceFingerprint(),
+        modifiedTimestamp = modifiedTimestamp,
+        existingDataJson = existingData,
+    )
+    val mergedData = existingData?.let { existing ->
+        SharedPdfCloudSidecarCodec.merge(
+            localDataJson = localData,
+            remoteDataJson = existing,
+            preferRemoteOnConflict = false,
+            fallbackPageCount = 1,
+            fallbackPageIndex = book.lastPageIndex ?: 0,
+        )
+    } ?: localData
+    IosPdfCloudSidecarStore.write(book.id, mergedData)
+    NSUserDefaults.standardUserDefaults.setInteger(
+        value = modifiedTimestamp,
+        forKey = book.iosPdfSidecarTimestampKey(),
+    )
 }
 
 private fun BookItem.iosPdfReaderStateKey(): String =
@@ -2305,6 +2605,7 @@ private fun ReaderIosApp(
     var activeTemporaryBookId by remember { mutableStateOf<String?>(null) }
     var activeTemporaryBookPath by remember { mutableStateOf<String?>(null) }
     var activeExternalBookId by remember { mutableStateOf<String?>(null) }
+    var activeExternalRequestId by remember { mutableStateOf<String?>(null) }
     var activeExternalBehavior by remember { mutableStateOf<String?>(null) }
     var pendingExternalClosePrompt by remember { mutableStateOf<BookItem?>(null) }
     var pendingUnavailableBookId by remember { mutableStateOf<String?>(null) }
@@ -2340,6 +2641,21 @@ private fun ReaderIosApp(
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val pdfSidecarWriteJobs = remember { mutableMapOf<String, Job>() }
+    val latestPdfStates = remember { mutableStateMapOf<String, SharedPdfReaderState>() }
+    val latestPdfBooks = remember { mutableStateMapOf<String, BookItem>() }
+
+    LaunchedEffect(bridge.appLifecycleState.eventId) {
+        if (mobilePdfLifecycleAction(bridge.appLifecycleState.isActive) != MobilePdfLifecycleAction.FINAL_FLUSH) {
+            return@LaunchedEffect
+        }
+        latestPdfStates.toMap().forEach { (bookId, pdfState) ->
+            val book = latestPdfBooks[bookId] ?: return@forEach
+            pdfSidecarWriteJobs[bookId]?.cancel()
+            withContext(Dispatchers.Default) {
+                persistIosPdfSidecarNow(book, pdfState)
+            }
+        }
+    }
 
     fun selectMainPage(page: SharedMobileMainDestination) {
         selectedPage = page
@@ -2902,19 +3218,24 @@ private fun ReaderIosApp(
 
     fun finishManagedExternalOpen(book: BookItem): Boolean {
         if (activeExternalBookId != book.id) return false
+        val requestId = activeExternalRequestId
         when (mobileExternalFileCloseAction(activeExternalBehavior)) {
             MobileExternalFileCloseAction.KEEP -> {
+                bridge.consumeExternalOpen(requestId)
                 clearPendingIosExternalFileRemoval()
                 requestCloudSyncIfEligible()
             }
             MobileExternalFileCloseAction.PROMPT -> {
                 pendingExternalClosePrompt = book
+                return true
             }
             MobileExternalFileCloseAction.DELETE -> {
                 removeManagedExternalBook(book)
+                bridge.consumeExternalOpen(requestId)
             }
         }
         activeExternalBookId = null
+        activeExternalRequestId = null
         activeExternalBehavior = null
         return true
     }
@@ -2924,12 +3245,20 @@ private fun ReaderIosApp(
         bridge.setKeepScreenOn(false)
         activeReaderBook = null
         if (activeTemporaryBookId == book.id) {
-            activeTemporaryBookPath?.let {
-                NSFileManager.defaultManager.removeItemAtPath(it, error = null)
+            val requestId = activeExternalRequestId
+            val temporaryPath = activeTemporaryBookPath
+            if (!deleteIosExternalRequestDirectory(requestId, temporaryPath)) {
+                // Legacy sessions did not persist a request id. Keep the
+                // fallback narrowly scoped to the exact active file.
+                temporaryPath?.let {
+                    NSFileManager.defaultManager.removeItemAtPath(it, error = null)
+                }
             }
             state = state.withMobileTemporaryBookClosed(book.id)
+            bridge.consumeExternalOpen(requestId)
             activeTemporaryBookId = null
             activeTemporaryBookPath = null
+            activeExternalRequestId = null
         } else {
             clearIosReaderSession()
             state = state.withoutMobileReaderSession()
@@ -3094,6 +3423,24 @@ private fun ReaderIosApp(
 
     LaunchedEffect(bridge.pendingExternalOpen) {
         val request = bridge.pendingExternalOpen ?: return@LaunchedEffect
+        request.ttsTarget?.let { target ->
+            val book = state.rawLibraryBooks.firstOrNull { it.id == target.bookId }
+            if (book == null) {
+                showMessage("Could not find the book for this TTS session")
+            } else {
+                val locator = ReaderLocator(
+                    chapterIndex = target.chapterIndex,
+                    pageIndex = target.pageIndex,
+                    startOffset = target.startOffset,
+                    blockIndex = target.blockIndex,
+                    charOffset = target.charOffset,
+                    cfi = target.sourceCfi,
+                )
+                openLibraryBook(book.copy(readerPosition = locator))
+            }
+            bridge.consumeExternalOpen()
+            return@LaunchedEffect
+        }
         val existing = state.rawLibraryBooks.firstOrNull {
             request.addToLibrary && (
                 it.path == request.file.path ||
@@ -3107,24 +3454,34 @@ private fun ReaderIosApp(
                         id = "ios_temporary_${currentTimestamp()}_${request.file.path.hashCode()}"
                     )
                 }
-        if (externalBook != null) {
+        if (externalBook != null && externalBook.type !in IOS_NATIVE_READER_FILE_TYPES) {
+            showMessage("This file type is not supported")
+            bridge.failExternalOpen("This file type is not supported")
+        } else if (externalBook != null) {
             if (request.addToLibrary && existing == null) {
                 addBooksToLibrary(listOf(externalBook), "Added ${externalBook.displayName}")
             }
-            if (request.addToLibrary && existing == null) {
+            if (request.addToLibrary) {
                 activeExternalBookId = externalBook.id
+                activeExternalRequestId = request.requestId
                 activeExternalBehavior = request.behavior
-                persistPendingIosExternalFileRemoval(externalBook)
+            } else {
+                activeExternalRequestId = request.requestId
             }
             openLibraryBook(externalBook, temporary = !request.addToLibrary)
         } else {
             showMessage("This file type is not supported")
+            bridge.failExternalOpen("This file type is not supported")
         }
-        bridge.consumeExternalOpen()
     }
 
     LaunchedEffect(bridge.importedFiles, bridge.pendingImportBatches, bridge.pendingFolderScans) {
         bridge.pendingImportBatches.firstOrNull()?.let { batch ->
+            if (batch.wasCancelled) {
+                batch.message?.let(::showMessage)
+                bridge.consumeImportBatch()
+                return@let
+            }
             val audioSplit = splitFilesByAudiobookDecodability(
                 batch.files.filter { SharedAudiobookFormats.supportsFileName(it.name) },
                 IosImportedFile::name,
@@ -3537,6 +3894,8 @@ private fun ReaderIosApp(
                     return@SharedMobilePdfReaderHost
                 }
                 val currentBook = state.rawLibraryBooks.firstOrNull { it.id == paneBook.id } ?: paneBook
+                latestPdfStates[currentBook.id] = pdfState
+                latestPdfBooks[currentBook.id] = currentBook
                 // Keep the id-keyed local copy even while focus/active-reader
                 // ownership is changing.  The sidecar write below remains
                 // guarded, but a close/background transition must not erase a
@@ -3546,43 +3905,8 @@ private fun ReaderIosApp(
                 pdfSidecarWriteJobs[currentBook.id]?.cancel()
                 pdfSidecarWriteJobs[currentBook.id] = scope.launch {
                     delay(300L)
-                    val bookForWrite = currentBook
                     withContext(Dispatchers.Default) {
-                        val existingData = IosPdfCloudSidecarStore.read(bookForWrite.id)
-                        val existingTimestamp = SharedPdfCloudSidecarCodec.decode(
-                            rawDataJson = existingData,
-                            fallbackPageCount = 1,
-                            fallbackPageIndex = bookForWrite.lastPageIndex ?: 0,
-                        )?.modifiedTimestamp ?: 0L
-                        val previousTimestamp = NSUserDefaults.standardUserDefaults.integerForKey(
-                            bookForWrite.iosPdfSidecarTimestampKey()
-                        )
-                        val modifiedTimestamp = maxOf(
-                            currentTimestamp(),
-                            existingTimestamp + 1L,
-                            previousTimestamp + 1L,
-                        )
-                        val localData = SharedPdfCloudSidecarCodec.encode(
-                            bookId = bookForWrite.id,
-                            state = pdfState,
-                            sourceFingerprint = bookForWrite.iosPdfSourceFingerprint(),
-                            modifiedTimestamp = modifiedTimestamp,
-                            existingDataJson = existingData,
-                        )
-                        val mergedData = existingData?.let { existing ->
-                            SharedPdfCloudSidecarCodec.merge(
-                                localDataJson = localData,
-                                remoteDataJson = existing,
-                                preferRemoteOnConflict = false,
-                                fallbackPageCount = 1,
-                                fallbackPageIndex = bookForWrite.lastPageIndex ?: 0,
-                            )
-                        } ?: localData
-                        IosPdfCloudSidecarStore.write(bookForWrite.id, mergedData)
-                        NSUserDefaults.standardUserDefaults.setInteger(
-                            value = modifiedTimestamp,
-                            forKey = bookForWrite.iosPdfSidecarTimestampKey(),
-                        )
+                        persistIosPdfSidecarNow(currentBook, pdfState)
                     }
                 }
                 val updatedBook = currentBook.withIosPdfReaderProgress(pdfState)
@@ -5303,11 +5627,16 @@ private fun ReaderIosApp(
                     state = state.copy(externalFileBehavior = if (keep) "KEEP" else "DELETE")
                 }
                 if (keep) {
+                    bridge.consumeExternalOpen(activeExternalRequestId)
                     clearPendingIosExternalFileRemoval()
                     requestCloudSyncIfEligible()
                 } else {
                     removeManagedExternalBook(book)
+                    bridge.consumeExternalOpen(activeExternalRequestId)
                 }
+                activeExternalBookId = null
+                activeExternalRequestId = null
+                activeExternalBehavior = null
                 pendingExternalClosePrompt = null
             },
         )

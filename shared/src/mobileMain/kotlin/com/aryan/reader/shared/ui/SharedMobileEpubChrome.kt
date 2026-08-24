@@ -73,6 +73,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -166,6 +168,7 @@ internal fun SharedMobileEpubTopBar(
 ) {
     var showReadingModeExpanded by remember { mutableStateOf(false) }
     var showHiddenToolsExpanded by remember { mutableStateOf(false) }
+    val formatContentDescription = readerString("tooltip_format", "Text formatting")
     val ttsBusy = localTtsState != SharedMobileEpubLocalTtsState.IDLE ||
         cloudTtsState.isLoading || cloudTtsState.isPlaying || cloudTtsState.isPaused
     val onReadAloudToggle = if (cloudTtsAvailable) onCloudTtsToggle else onLocalTtsToggle
@@ -188,7 +191,13 @@ internal fun SharedMobileEpubTopBar(
                         Icon(Icons.Default.Menu, contentDescription = "Contents")
                     }
                     ReaderTool.FORMAT -> IconButton(onClick = onFormat) {
-                        Text("Tᵀ", style = MaterialTheme.typography.titleLarge)
+                        Text(
+                            "Tᵀ",
+                            style = MaterialTheme.typography.titleLarge,
+                            modifier = Modifier.semantics {
+                                contentDescription = formatContentDescription
+                            },
+                        )
                     }
                     ReaderTool.SEARCH -> IconButton(onClick = onSearch) {
                         Icon(Icons.Default.Search, contentDescription = "Search")
@@ -575,6 +584,7 @@ internal fun SharedMobileEpubBottomBar(
     onCloudTtsToggle: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    val formatContentDescription = readerString("tooltip_format", "Text formatting")
     val onReadAloudToggle = if (cloudTtsAvailable) onCloudTtsToggle else onLocalTtsToggle
     val readAloudIcon = if (cloudTtsAvailable) cloudTtsState.icon() else localTtsState.icon()
     val readAloudLabel = if (cloudTtsAvailable) cloudTtsState.menuLabel() else localTtsState.menuLabel()
@@ -588,7 +598,15 @@ internal fun SharedMobileEpubBottomBar(
                 tools.forEach { tool ->
                     when (tool) {
                         ReaderTool.TOC -> IconButton(onClick = onToc) { Icon(Icons.Default.Menu, contentDescription = "Contents") }
-                        ReaderTool.FORMAT -> IconButton(onClick = onFormat) { Text("Tᵀ", style = MaterialTheme.typography.titleLarge) }
+                        ReaderTool.FORMAT -> IconButton(onClick = onFormat) {
+                            Text(
+                                "Tᵀ",
+                                style = MaterialTheme.typography.titleLarge,
+                                modifier = Modifier.semantics {
+                                    contentDescription = formatContentDescription
+                                },
+                            )
+                        }
                         ReaderTool.SEARCH -> IconButton(onClick = onSearch) { Icon(Icons.Default.Search, contentDescription = "Search") }
                         ReaderTool.THEME -> IconButton(onClick = onTheme) { Icon(Icons.Default.Palette, contentDescription = "Theme") }
                         ReaderTool.BOOKMARK -> IconButton(onClick = onBookmark) {

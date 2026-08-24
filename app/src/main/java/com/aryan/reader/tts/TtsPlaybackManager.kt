@@ -2747,6 +2747,11 @@ class TtsPlaybackManager(
                 state.pageIndex?.let { putExtra(EXTRA_TTS_PAGE_INDEX, it) }
                 targetCfi?.let { putExtra(EXTRA_TTS_SOURCE_CFI, it) }
                 targetOffset?.let { putExtra(EXTRA_TTS_START_OFFSET, it) }
+                putExtra(
+                    EXTRA_TTS_REQUEST_ID,
+                    "tts:${state.bookId}:${targetCfi.orEmpty()}:${targetOffset ?: -1}:" +
+                        "${state.chapterIndex ?: -1}:${state.pageIndex ?: -1}",
+                )
             } else {
                 action = Intent.ACTION_MAIN
                 addCategory(Intent.CATEGORY_LAUNCHER)

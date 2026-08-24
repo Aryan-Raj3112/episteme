@@ -104,6 +104,7 @@ struct ContentView: View {
                         failedCount: scan.succeeded && !scan.files.isEmpty ? 0 : 1,
                         wasCancelled: false,
                         autoOpen: false,
+                        enqueueHandoff: true,
                     )
                     return
                 }
@@ -133,7 +134,8 @@ struct ContentView: View {
                         contentIds: importedFiles.map(\.contentId),
                         failedCount: Int32(urls.count - importedFiles.count),
                         wasCancelled: false,
-                        autoOpen: importKind != .audiobookFile && importKind != .audiobookMultiple
+                        autoOpen: importKind != .audiobookFile && importKind != .audiobookMultiple,
+                        enqueueHandoff: true,
                     )
                 }
             case .failure(let error):
@@ -163,6 +165,7 @@ struct ContentView: View {
                         failedCount: wasCancelled ? 0 : 1,
                         wasCancelled: wasCancelled,
                         autoOpen: false,
+                        enqueueHandoff: true,
                     )
                 } else {
                     bridge.recordImportedFiles(
@@ -171,7 +174,8 @@ struct ContentView: View {
                         contentIds: [],
                         failedCount: wasCancelled ? 0 : 1,
                         wasCancelled: wasCancelled,
-                        autoOpen: importKind != .audiobookFile && importKind != .audiobookMultiple
+                        autoOpen: importKind != .audiobookFile && importKind != .audiobookMultiple,
+                        enqueueHandoff: true
                     )
                 }
             }
@@ -282,9 +286,10 @@ struct ContentView: View {
     }
 
     private func openExternalURL(_ url: URL, addToLibrary: Bool) {
+        let requestId = UUID().uuidString
         let imported = addToLibrary
             ? copyImportedFileToAppSupport(url, directoryName: "Imports")
-            : copyExternalFileToTemporaryStorage(url)
+            : copyExternalFileToTemporaryStorage(url, requestId: requestId)
         guard let imported else {
             bridge.recordNativeEvent(message: "Could not open the external file")
             return
@@ -293,7 +298,8 @@ struct ContentView: View {
             fileName: imported.name,
             filePath: imported.path,
             contentId: imported.contentId,
-            addToLibrary: addToLibrary
+            addToLibrary: addToLibrary,
+            requestId: requestId,
         )
     }
 }
@@ -929,7 +935,15 @@ private func copyImportedFileToAppSupport(_ sourceURL: URL, directoryName: Strin
     }
 }
 
-private func copyExternalFileToTemporaryStorage(_ sourceURL: URL) -> ImportedReaderFile? {
+private func copyExternalFileToTemporaryStorage(_ sourceURL: URL, requestId: String) -> ImportedReaderFile? {
+    let fileManager = FileManager.default
+    var requestDirectory: URL?
+    var keepRequestDirectory = false
+    defer {
+        if !keepRequestDirectory, let requestDirectory {
+            try? fileManager.removeItem(at: requestDirectory)
+        }
+    }
     let didStartAccessing = sourceURL.startAccessingSecurityScopedResource()
     defer {
         if didStartAccessing {
@@ -937,19 +951,18 @@ private func copyExternalFileToTemporaryStorage(_ sourceURL: URL) -> ImportedRea
         }
     }
     do {
-        let fileManager = FileManager.default
-        let directory = fileManager.temporaryDirectory.appendingPathComponent("ExternalOpen", isDirectory: true)
-        if fileManager.fileExists(atPath: directory.path) {
-            try fileManager.removeItem(at: directory)
-        }
+        let rootDirectory = fileManager.temporaryDirectory.appendingPathComponent("ExternalOpen", isDirectory: true)
+        let safeRequestId = requestId.replacingOccurrences(of: "/", with: "_")
+        let directory = rootDirectory.appendingPathComponent(safeRequestId, isDirectory: true)
+        requestDirectory = directory
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
         let destination = directory.appendingPathComponent(uniqueImportedFileName(sourceURL.lastPathComponent))
         try fileManager.copyItem(at: sourceURL, to: destination)
         guard let contentId = sha256FileId(destination) else {
-            try? fileManager.removeItem(at: destination)
             return nil
         }
         let values = try destination.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+        keepRequestDirectory = true
         return ImportedReaderFile(
             name: sourceURL.lastPathComponent,
             path: destination.path,

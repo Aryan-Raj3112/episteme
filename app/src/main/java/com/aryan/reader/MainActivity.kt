@@ -56,6 +56,7 @@ import com.aryan.reader.tts.EXTRA_TTS_CHAPTER_INDEX
 import com.aryan.reader.tts.EXTRA_TTS_PAGE_INDEX
 import com.aryan.reader.tts.EXTRA_TTS_SOURCE_CFI
 import com.aryan.reader.tts.EXTRA_TTS_START_OFFSET
+import com.aryan.reader.tts.toMobileTtsHandoffRequest
 
 @UnstableApi
 open class MainActivity : AppCompatActivity() {
@@ -152,18 +153,17 @@ open class MainActivity : AppCompatActivity() {
     }
 
     private fun handleIntent(intent: Intent?) {
-        if (intent?.action == ACTION_OPEN_TTS_SESSION) {
-            val bookId = intent.getStringExtra(EXTRA_TTS_BOOK_ID)
-            if (!bookId.isNullOrBlank()) {
-                Timber.d("Received TTS notification intent for bookId=$bookId")
-                viewModel.openTtsNotificationTarget(
-                    bookId = bookId,
-                    sourceCfi = intent.getStringExtra(EXTRA_TTS_SOURCE_CFI),
-                    startOffset = intent.getIntExtra(EXTRA_TTS_START_OFFSET, -1).takeIf { it >= 0 },
-                    chapterIndex = intent.getIntExtra(EXTRA_TTS_CHAPTER_INDEX, -1).takeIf { it >= 0 },
-                    pageIndex = intent.getIntExtra(EXTRA_TTS_PAGE_INDEX, -1).takeIf { it >= 0 }
-                )
-            }
+        val ttsRequest = intent?.toMobileTtsHandoffRequest()
+        if (ttsRequest != null) {
+            val target = ttsRequest.ttsTarget ?: return
+            Timber.d("Received TTS notification intent for bookId=${target.bookId}")
+            viewModel.openTtsNotificationTarget(
+                bookId = target.bookId,
+                sourceCfi = target.sourceCfi,
+                startOffset = target.startOffset,
+                chapterIndex = target.chapterIndex,
+                pageIndex = target.pageIndex,
+            )
             return
         }
 
