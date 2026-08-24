@@ -67,6 +67,7 @@ import com.aryan.reader.shared.toSharedReaderTextAlign
 import com.aryan.reader.shared.reader.ReaderReadingMode
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.SharedReaderTextAlign
+import com.aryan.reader.shared.reader.pullToTurnEnabled
 import com.aryan.reader.shared.readerThemeById
 import com.aryan.reader.shared.sharedSettingsHubModel
 import com.aryan.reader.shared.toReaderSettings
@@ -505,7 +506,7 @@ private fun saveAndroidEpubReaderDefaultSettings(
     saveSystemUiMode(context, settings.systemUiMode)
     savePageInfoMode(context, settings.pageInfoMode)
     savePageInfoPosition(context, settings.pageInfoPosition)
-    savePullToTurn(context, settings.seamlessChapterNavigation)
+    savePullToTurn(context, settings.pullToTurnEnabled)
     savePullToTurnMultiplier(context, settings.chapterTurnDragMultiplier)
     saveReaderThemeId(context, settings.themeId ?: "system")
     saveGlobalTextureTransparency(context, 1f - settings.textureAlpha.coerceIn(0f, 1f))

@@ -98,6 +98,8 @@ import com.aryan.reader.shared.toSharedReaderFontFamily
 import com.aryan.reader.shared.reader.ReaderPageInfo
 import com.aryan.reader.shared.reader.ReaderReadingMode
 import com.aryan.reader.shared.reader.ReaderSettings
+import com.aryan.reader.shared.reader.pullToTurnEnabled
+import com.aryan.reader.shared.reader.seamlessChapterTransitionEnabled
 import com.aryan.reader.shared.reader.SharedReaderTextAlign
 import com.aryan.reader.shared.toReaderSettings
 import com.aryan.reader.shared.generated.resources.Res
@@ -810,7 +812,7 @@ internal fun SharedMobileEpubVisualOptionsSheet(
                 Column {
                     Row(
                         Modifier.fillMaxWidth().clickable {
-                            onSettingsChange(settings.copy(seamlessChapterNavigation = !settings.seamlessChapterNavigation))
+                            onSettingsChange(settings.copy(seamlessChapterNavigation = !settings.pullToTurnEnabled))
                         }.padding(16.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -824,11 +826,13 @@ internal fun SharedMobileEpubVisualOptionsSheet(
                         }
                         Spacer(Modifier.width(16.dp))
                         Switch(
-                            checked = settings.seamlessChapterNavigation,
-                            onCheckedChange = { seamless -> onSettingsChange(settings.copy(seamlessChapterNavigation = seamless)) }
+                            checked = settings.seamlessChapterTransitionEnabled,
+                            onCheckedChange = { seamless ->
+                                onSettingsChange(settings.copy(seamlessChapterNavigation = !seamless))
+                            }
                         )
                     }
-                    if (settings.seamlessChapterNavigation) {
+                    if (settings.pullToTurnEnabled) {
                         HorizontalDivider(Modifier.padding(horizontal = 16.dp))
                         Column(Modifier.padding(16.dp)) {
                             SharedMobileEpubSettingSlider(

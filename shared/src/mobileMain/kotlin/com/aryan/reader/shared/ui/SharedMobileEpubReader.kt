@@ -113,9 +113,13 @@ import com.aryan.reader.shared.reader.ReaderSpreadLayout
 import com.aryan.reader.shared.reader.ReaderViewportSpec
 import com.aryan.reader.shared.reader.SharedEpubPaginationCache
 import com.aryan.reader.shared.reader.SharedMeasuredEpubPaginator
+import com.aryan.reader.shared.reader.effectiveReaderTocEntries
 import com.aryan.reader.shared.reader.findPageIndexForLocator
 import com.aryan.reader.shared.reader.layoutSignature
 import com.aryan.reader.shared.reader.readerImageReferences
+import com.aryan.reader.shared.reader.readerTocActiveIndex
+import com.aryan.reader.shared.reader.pullToTurnEnabled
+import com.aryan.reader.shared.reader.seamlessChapterTransitionEnabled
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
@@ -391,6 +395,25 @@ fun SharedMobileEpubReaderScreen(
     val systemUiHidden = !systemBarsVisibility.statusBarsVisible
     val navigationUiHidden = !systemBarsVisibility.navigationBarsVisible
 
+    fun refreshSelectedTocIndex(
+        locator: ReaderLocator? = currentLocator,
+        activeHref: String? = null,
+        activeFragmentId: String? = null
+    ) {
+        val epub = loadedBook ?: return
+        val effectiveLocator = locator ?: ReaderLocator(
+            chapterIndex = currentChapterIndex,
+            href = epub.chapters.getOrNull(currentChapterIndex)?.baseHref
+        )
+        readerTocActiveIndex(
+            entries = epub.effectiveReaderTocEntries(),
+            book = epub,
+            locator = effectiveLocator,
+            activeHref = activeHref,
+            activeFragmentId = activeFragmentId
+        )?.let { selectedTocIndex = it }
+    }
+
     DisposableEffect(readerScreenOrientationMode, onApplyReaderScreenOrientation) {
         onApplyReaderScreenOrientation(readerScreenOrientationMode)
         onDispose { onApplyReaderScreenOrientation(ReaderScreenOrientationMode.FOLLOW_SYSTEM) }
@@ -410,10 +433,7 @@ fun SharedMobileEpubReaderScreen(
             jumpHistory = jumpHistory.pruned(it.chapters.size)
             currentChapterIndex = currentChapterIndex.coerceIn(0, it.chapters.lastIndex.coerceAtLeast(0))
             if (selectedTocIndex < 0) {
-                val currentHref = currentLocator?.href?.normalizeMobileEpubPath()
-                selectedTocIndex = it.tableOfContents.indexOfFirst { entry ->
-                    currentHref != null && entry.href.normalizeMobileEpubPath() == currentHref
-                }
+                refreshSelectedTocIndex()
             }
             onMetadataLoaded(it.title, it.author)
         }
@@ -626,6 +646,7 @@ fun SharedMobileEpubReaderScreen(
         navigationRequestId++
         currentLocator = locator
         locator.pageIndex?.let { currentPageIndex = it.coerceIn(0, pageCount - 1) }
+        refreshSelectedTocIndex(locator, activeFragmentId = fragment)
     }
 
     fun publishCapturedEpubLocator(locator: ReaderLocator?) {
@@ -637,6 +658,7 @@ fun SharedMobileEpubReaderScreen(
         locator.pageIndex?.let { pageIndex ->
             currentPageIndex = pageIndex.coerceIn(0, pageCount - 1)
         }
+        refreshSelectedTocIndex(locator)
     }
 
     /**
@@ -724,10 +746,7 @@ fun SharedMobileEpubReaderScreen(
             }
         }
         navigationRequestId++
-        selectedTocIndex = epub.tableOfContents.indexOfLast { entry ->
-            entry.href.normalizeMobileEpubPath() == epub.chapters[targetChapterIndex].baseHref.orEmpty().normalizeMobileEpubPath() &&
-                entry.fragmentId == epub.chapters[targetChapterIndex].fragmentId
-        }
+        refreshSelectedTocIndex(locator)
     }
 
     fun navigatePage(direction: Int) {
@@ -1086,9 +1105,10 @@ fun SharedMobileEpubReaderScreen(
                                 searchHighlight = MaterialTheme.colorScheme.primary.copy(alpha = 0.28f),
                                 onVisiblePageChanged = { pageIndex, locator ->
                                     currentPageIndex = pageIndex.coerceIn(0, pageCount - 1)
-                                    currentChapterIndex = pages.getOrNull(currentPageIndex)?.chapterIndex
-                                        ?: currentChapterIndex
-                                    currentLocator = locator ?: currentLocator
+                                    val page = pages.getOrNull(currentPageIndex)
+                                    currentChapterIndex = page?.chapterIndex ?: currentChapterIndex
+                                    currentLocator = locator ?: page?.toMobileEpubLocator(loadedBook) ?: currentLocator
+                                    refreshSelectedTocIndex()
                                 },
                                 onHighlightCreated = { highlight ->
                                     highlights = highlights.filterNot { it.id == highlight.id } + highlight
@@ -1184,9 +1204,10 @@ fun SharedMobileEpubReaderScreen(
                             searchHighlight = MaterialTheme.colorScheme.primary.copy(alpha = 0.28f),
                             onVisiblePageChanged = { pageIndex, locator ->
                                 currentPageIndex = pageIndex.coerceIn(0, pageCount - 1)
-                                currentChapterIndex = pages.getOrNull(currentPageIndex)?.chapterIndex
-                                    ?: currentChapterIndex
-                                currentLocator = locator ?: currentLocator
+                                val page = pages.getOrNull(currentPageIndex)
+                                currentChapterIndex = page?.chapterIndex ?: currentChapterIndex
+                                currentLocator = locator ?: page?.toMobileEpubLocator(loadedBook) ?: currentLocator
+                                refreshSelectedTocIndex()
                             },
                             onHighlightCreated = { highlight ->
                                 highlights = highlights.filterNot { it.id == highlight.id } + highlight
@@ -1288,8 +1309,8 @@ fun SharedMobileEpubReaderScreen(
                             ReaderHtmlDocumentBuilder.appearanceUpdateScript(settings) + "\n" +
                                 ReaderHtmlDocumentBuilder.pageAnchorsUpdateScript(pages) + "\n" +
                                 sharedMobileEpubActiveTocScript(loadedBook, currentChapterIndex) + "\n" +
-                                "window.readerIosPullEnabled=${settings.seamlessChapterNavigation};" +
-                                "window.readerIosSeamlessChapter=${!settings.seamlessChapterNavigation};" +
+                                "window.readerIosPullEnabled=${settings.pullToTurnEnabled};" +
+                                "window.readerIosSeamlessChapter=${settings.seamlessChapterTransitionEnabled};" +
                                 "window.readerIosPullMultiplier=${settings.chapterTurnDragMultiplier.coerceIn(0.5f, 2f)};"
                         }
                         val navigationScript = buildList {
@@ -1325,6 +1346,8 @@ fun SharedMobileEpubReaderScreen(
                                         if (reportedChapter == null || reportedChapter == currentChapterIndex) {
                                             currentLocator = position
                                             currentPageIndex = (position.pageIndex ?: currentPageIndex).coerceIn(0, pageCount - 1)
+                                            position.chapterIndex?.let { currentChapterIndex = it }
+                                            refreshSelectedTocIndex(position)
                                             commandScript = null
                                         }
                                     }
@@ -1350,14 +1373,11 @@ fun SharedMobileEpubReaderScreen(
                                         pullProgress = pull.second
                                     }
                                     "readerActiveTocChanged" -> payload.sharedMobileEpubActiveTocOrNull()?.let { active ->
-                                        val activePath = active.href.normalizeMobileEpubPath()
-                                        selectedTocIndex = loadedBook.tableOfContents.indexOfFirst { entry ->
-                                            entry.href.normalizeMobileEpubPath() == activePath &&
-                                                if (active.fragmentId == null) entry.fragmentId == null
-                                                else entry.fragmentId == active.fragmentId
-                                        }.takeIf { it >= 0 } ?: loadedBook.tableOfContents.indexOfFirst { entry ->
-                                            entry.href.normalizeMobileEpubPath() == activePath
-                                        }
+                                        refreshSelectedTocIndex(
+                                            locator = currentLocator,
+                                            activeHref = active.href,
+                                            activeFragmentId = active.fragmentId
+                                        )
                                     }
                                     "readerLinkClicked" -> payload.sharedMobileEpubLinkOrNull()?.let { link ->
                                         if (link.href.isExternalEpubLink()) {
@@ -1400,7 +1420,7 @@ fun SharedMobileEpubReaderScreen(
                 }
             }
 
-                val chapterTitle = loadedBook?.tableOfContents?.getOrNull(selectedTocIndex)?.label
+                val chapterTitle = loadedBook?.effectiveReaderTocEntries()?.getOrNull(selectedTocIndex)?.label
                     ?: loadedBook?.chapters?.getOrNull(currentChapterIndex)?.title
                     ?: "Chapter ${currentChapterIndex + 1}"
                 val pageInfoVisible = shouldShowEpubPageInfoBar(
@@ -1699,7 +1719,7 @@ fun SharedMobileEpubReaderScreen(
                 }
                 val canPullDirection = (pullDirection == "previous" && currentChapterIndex > 0) ||
                     (pullDirection == "next" && currentChapterIndex < (loadedBook?.chapters?.lastIndex ?: -1))
-                if (pullProgress > 0.05f && settings.seamlessChapterNavigation && canPullDirection) {
+                if (pullProgress > 0.05f && settings.pullToTurnEnabled && canPullDirection) {
                     SharedMobileEpubChapterChangeIndicator(
                         direction = pullDirection.orEmpty(),
                         progress = pullProgress,

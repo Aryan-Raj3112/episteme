@@ -22,12 +22,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -71,6 +73,11 @@ import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.ReaderSpreadLayout
 import com.aryan.reader.shared.reader.SharedEpubBook
 import com.aryan.reader.shared.reader.SharedEpubTocEntry
+import com.aryan.reader.shared.reader.effectiveReaderTocEntries
+import com.aryan.reader.shared.reader.projectReaderTocEntries
+import com.aryan.reader.shared.reader.readerTocLocatePlan
+import com.aryan.reader.shared.reader.readerTocParentIndices
+import com.aryan.reader.shared.reader.readerTocToggleExpansion
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
@@ -138,20 +145,26 @@ internal fun SharedMobileEpubToc(
     onEntryClick: (Int, SharedEpubTocEntry) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val entries = epub?.tableOfContents.orEmpty()
+    val entries = epub?.effectiveReaderTocEntries().orEmpty()
     if (entries.isEmpty()) {
         Box(modifier, contentAlignment = Alignment.Center) { Text("No table of contents") }
         return
     }
     var query by remember(epub?.id) { mutableStateOf("") }
-    var expanded by remember(epub?.id) { mutableStateOf(true) }
+    var expandedEntryIndices by remember(epub?.id, entries) {
+        mutableStateOf(readerTocParentIndices(entries) { it.depth })
+    }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
-    val visibleEntries = remember(entries, query, expanded) {
-        entries.withIndex().filter { indexed ->
-            val matches = query.isBlank() || indexed.value.label.contains(query, ignoreCase = true)
-            matches && (expanded || indexed.value.depth == 0)
-        }
+    val visibleEntries = remember(entries, query, expandedEntryIndices, selectedIndex) {
+        projectReaderTocEntries(
+            entries = entries,
+            expandedEntryIndices = expandedEntryIndices,
+            query = query,
+            activeOriginalIndex = selectedIndex.takeIf { it in entries.indices },
+            labelOf = { it.label },
+            depthOf = { it.depth }
+        )
     }
     Column(modifier) {
         OutlinedTextField(
@@ -166,20 +179,34 @@ internal fun SharedMobileEpubToc(
             Modifier.fillMaxWidth().padding(horizontal = 8.dp),
             horizontalArrangement = Arrangement.SpaceEvenly
         ) {
-            TextButton(onClick = { expanded = true }) { Text("Expand All") }
-            TextButton(onClick = { expanded = false }) { Text("Collapse All") }
+            TextButton(onClick = { expandedEntryIndices = readerTocParentIndices(entries) { it.depth } }) {
+                Text("Expand All")
+            }
+            TextButton(onClick = { expandedEntryIndices = emptySet() }) { Text("Collapse All") }
             TextButton(
                 onClick = {
                     query = ""
-                    expanded = true
-                    scope.launch { listState.animateScrollToItem(selectedIndex.coerceAtLeast(0)) }
+                    val plan = readerTocLocatePlan(
+                        entries = entries,
+                        expandedEntryIndices = expandedEntryIndices,
+                        activeOriginalIndex = selectedIndex.takeIf { it in entries.indices },
+                        depthOf = { it.depth }
+                    )
+                    expandedEntryIndices = plan.expandedEntryIndices
+                    scope.launch {
+                        // Let the LazyColumn consume the new expansion projection before
+                        // asking it to scroll. The plan's index is in that projection, not
+                        // the filtered/collapsed source list.
+                        kotlinx.coroutines.yield()
+                        plan.visibleIndex?.let { listState.animateScrollToItem(it) }
+                    }
                 }
             ) { Text("Locate") }
         }
         HorizontalDivider()
         LazyColumn(Modifier.fillMaxSize(), state = listState) {
-            items(visibleEntries, key = { it.index }) { indexed ->
-                val entry = indexed.value
+            items(visibleEntries, key = { it.originalIndex }) { projected ->
+                val entry = projected.entry
                 NavigationDrawerItem(
                     label = {
                         Text(
@@ -189,8 +216,37 @@ internal fun SharedMobileEpubToc(
                             fontWeight = if (entry.depth == 0) FontWeight.SemiBold else FontWeight.Normal
                         )
                     },
-                    selected = indexed.index == selectedIndex,
-                    onClick = { onEntryClick(indexed.index, entry) },
+                    icon = if (projected.hasChildren) {
+                        {
+                            val isExpanded = projected.originalIndex in expandedEntryIndices
+                            IconButton(
+                                onClick = {
+                                    expandedEntryIndices = readerTocToggleExpansion(
+                                        entries = entries,
+                                        expandedEntryIndices = expandedEntryIndices,
+                                        originalIndex = projected.originalIndex,
+                                        depthOf = { it.depth }
+                                    )
+                                },
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(
+                                    imageVector = if (isExpanded) {
+                                        Icons.Default.KeyboardArrowDown
+                                    } else {
+                                        Icons.AutoMirrored.Filled.KeyboardArrowRight
+                                    },
+                                    contentDescription = if (isExpanded) {
+                                        "Collapse ${entry.label}"
+                                    } else {
+                                        "Expand ${entry.label}"
+                                    }
+                                )
+                            }
+                        }
+                    } else null,
+                    selected = projected.isActive,
+                    onClick = { onEntryClick(projected.originalIndex, entry) },
                     modifier = Modifier.padding(start = (entry.depth * 18).dp, end = 8.dp)
                 )
             }
