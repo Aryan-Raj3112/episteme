@@ -4,6 +4,9 @@ import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.FileType
 import com.aryan.reader.shared.SharedLibrarySnapshotJson
 import com.aryan.reader.shared.pdf.SharedPdfBookmark
+import com.aryan.reader.shared.pdf.SharedPdfHighlighterPalette
+import com.aryan.reader.shared.pdf.SharedPdfReaderState
+import com.aryan.reader.shared.pdf.initialSharedPdfReaderState
 import com.aryan.reader.shared.reader.DefaultPdfReaderSettings
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -99,6 +102,23 @@ class IosPdfReaderPersistenceTest {
 
         assertFalse(DefaultPdfReaderSettings.tapToNavigateEnabled)
         assertFalse(decoded.pdfReaderDefaultSettings.tapToNavigateEnabled)
+    }
+
+    @Test
+    fun iosPdfSessionUsesGlobalAnnotationPreferencesWhenRestoringState() {
+        val palette = SharedPdfHighlighterPalette(
+            SharedPdfHighlighterPalette.defaultColors.asReversed(),
+        ).sanitized()
+        val restored = initialSharedPdfReaderState(
+            persistedState = SharedPdfReaderState.initial(pageCount = 4),
+            defaults = DefaultPdfReaderSettings,
+            initialPageIndex = 0,
+            highlighterPalette = palette,
+            isHighlighterSnapEnabled = true,
+        )
+
+        assertEquals(palette.colors, restored.highlighterPalette)
+        assertTrue(restored.isHighlighterSnapEnabled)
     }
 
     private fun pdfBook(id: String, path: String): BookItem = BookItem(

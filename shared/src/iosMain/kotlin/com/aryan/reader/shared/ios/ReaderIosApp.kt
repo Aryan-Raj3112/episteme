@@ -3361,6 +3361,18 @@ private fun ReaderIosApp(
             onReaderDefaultSettingsChange = { defaults ->
                 state = state.reduce(AppAction.PdfReaderDefaultSettingsChanged(defaults))
             },
+            pdfHighlighterPalette = state.pdfHighlighterPalette,
+            onPdfHighlighterPaletteChange = { palette ->
+                if (acceptsCurrentHostCallback()) {
+                    state = state.reduce(AppAction.PdfHighlighterPaletteChanged(palette))
+                }
+            },
+            pdfHighlighterSnapEnabled = state.pdfHighlighterSnapEnabled,
+            onPdfHighlighterSnapChange = { enabled ->
+                if (acceptsCurrentHostCallback()) {
+                    state = state.reduce(AppAction.PdfHighlighterSnapChanged(enabled))
+                }
+            },
             customReaderThemes = state.customReaderThemes,
             onCustomReaderThemesChange = { themes ->
                 state = state.reduce(AppAction.CustomReaderThemesChanged(themes))

@@ -373,6 +373,7 @@ data class SharedReaderScreenState(
     val readerToolbarPreferences: ReaderToolbarPreferences = ReaderToolbarPreferences(),
     val readerHighlightPalette: ReaderHighlightPalette = ReaderHighlightPalette(),
     val pdfHighlighterPalette: SharedPdfHighlighterPalette = SharedPdfHighlighterPalette(),
+    val pdfHighlighterSnapEnabled: Boolean = false,
     val readerTtsReplacementPreferences: ReaderTtsReplacementPreferences = ReaderTtsReplacementPreferences(),
     val readerBookReplacementPreferences: ReaderBookReplacementPreferences = ReaderBookReplacementPreferences()
 )

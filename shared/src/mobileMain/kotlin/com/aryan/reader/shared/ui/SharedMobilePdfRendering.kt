@@ -162,6 +162,7 @@ import com.aryan.reader.shared.pdf.PdfMusicianHoldDurationMillis
 import com.aryan.reader.shared.pdf.planPdfMusicianGesture
 import com.aryan.reader.shared.pdf.PdfPageBounds
 import com.aryan.reader.shared.pdf.PdfPagePoint
+import com.aryan.reader.shared.pdf.sharedPdfSnapHighlighterPoint
 import com.aryan.reader.shared.pdf.pdfPaginationEdgeTarget
 import com.aryan.reader.shared.pdf.centeredPdfPageScrollOffset
 import com.aryan.reader.shared.pdf.PdfSpreadLayout
@@ -651,6 +652,7 @@ internal fun SharedMobilePdfVerticalPages(
     ttsPageIndex: Int?,
     ttsHighlightBounds: List<PdfPageBounds>,
     activeStroke: List<PdfPagePoint>,
+    highlighterSnapEnabled: Boolean = false,
     isStylusOnlyMode: Boolean = false,
     verticalScrollController: SharedMobilePdfVerticalScrollController? = null,
     autoScrollPlaying: Boolean,
@@ -809,6 +811,7 @@ internal fun SharedMobilePdfVerticalPages(
                         ttsHighlights = if (ttsPageIndex == pdfPage && !zoomCamera.isZoomed()) ttsHighlightBounds else emptyList(),
                         annotations = state.annotations.filter { it.pageIndex == pdfPage },
                         activeStroke = if (page == state.pageIndex) activeStroke else emptyList(),
+                        highlighterSnapEnabled = highlighterSnapEnabled,
                         isStylusOnlyMode = isStylusOnlyMode,
                         selectedTool = state.selectedTool,
                         selectedColorArgb = state.selectedColorArgb,
@@ -967,6 +970,7 @@ internal fun SharedMobilePdfPaginatedPages(
     ttsPageIndex: Int?,
     ttsHighlightBounds: List<PdfPageBounds>,
     activeStroke: List<PdfPagePoint>,
+    highlighterSnapEnabled: Boolean = false,
     isStylusOnlyMode: Boolean = false,
     tapToTurnPages: Boolean,
     positionController: SharedMobilePdfPaginationPositionController? = null,
@@ -1236,6 +1240,7 @@ internal fun SharedMobilePdfPaginatedPages(
                                     ttsHighlights = if (ttsPageIndex == pdfPage && !activeZoomCamera.isZoomed()) ttsHighlightBounds else emptyList(),
                                     annotations = state.annotations.filter { it.pageIndex == pdfPage },
                                     activeStroke = if (displayPage == state.pageIndex) activeStroke else emptyList(),
+                                    highlighterSnapEnabled = highlighterSnapEnabled,
                                     isStylusOnlyMode = isStylusOnlyMode,
                                     selectedTool = state.selectedTool,
                                     selectedColorArgb = state.selectedColorArgb,
@@ -1978,6 +1983,7 @@ internal fun SharedMobilePdfPageSurface(
     ttsHighlights: List<PdfPageBounds>,
     annotations: List<SharedPdfAnnotation>,
     activeStroke: List<PdfPagePoint>,
+    highlighterSnapEnabled: Boolean = false,
     isStylusOnlyMode: Boolean = false,
     selectedTool: PdfInkTool,
     selectedColorArgb: Int,
@@ -2161,7 +2167,20 @@ internal fun SharedMobilePdfPageSurface(
                                     if (localCanvasSize.width > 0 && localCanvasSize.height > 0) {
                                         val mutableStroke = activeStroke as? MutableList<PdfPagePoint>
                                         if (mutableStroke != null) {
-                                            mutableStroke.add(change.position.toSharedMobilePdfPoint(localCanvasSize))
+                                            val point = change.position.toSharedMobilePdfPoint(localCanvasSize)
+                                            val snapped = if (
+                                                highlighterSnapEnabled && selectedTool.isDesktopHighlighter &&
+                                                !eraserOverride
+                                            ) {
+                                                sharedPdfSnapHighlighterPoint(
+                                                    pageAspectRatio = pageRender.aspectRatio,
+                                                    currentPoint = point,
+                                                    startPoint = mutableStroke.firstOrNull(),
+                                                )
+                                            } else {
+                                                point
+                                            }
+                                            mutableStroke.add(snapped)
                                         }
                                         if (eraserOverride) eraserOverridePosition = change.position
                                     }

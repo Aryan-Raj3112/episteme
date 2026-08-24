@@ -39,6 +39,7 @@ fun SharedLibrarySnapshot.toSharedMobileReaderState(): SharedReaderScreenState {
         readerToolbarPreferences = readerToolbarPreferences,
         readerHighlightPalette = readerHighlightPalette,
         pdfHighlighterPalette = pdfHighlighterPalette,
+        pdfHighlighterSnapEnabled = pdfHighlighterSnapEnabled,
         readerTtsReplacementPreferences = readerTtsReplacementPreferences,
         readerBookReplacementPreferences = readerBookReplacementPreferences,
         cloudBookTombstones = bookTombstones,
@@ -152,6 +153,7 @@ fun SharedReaderScreenState.toSharedMobileLibrarySnapshot(): SharedLibrarySnapsh
         readerToolbarPreferences = readerToolbarPreferences,
         readerHighlightPalette = readerHighlightPalette,
         pdfHighlighterPalette = pdfHighlighterPalette,
+        pdfHighlighterSnapEnabled = pdfHighlighterSnapEnabled,
         readerTtsReplacementPreferences = readerTtsReplacementPreferences,
         readerBookReplacementPreferences = readerBookReplacementPreferences,
     )

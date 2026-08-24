@@ -1,5 +1,8 @@
 package com.aryan.reader.shared.pdf
 
+import kotlin.math.abs
+import kotlin.math.atan2
+
 import androidx.compose.ui.graphics.Color
 import com.aryan.reader.shared.HighlightStyle
 import kotlinx.serialization.Serializable
@@ -369,6 +372,32 @@ data class SharedPdfHighlighterPalette(
             get() = SharedPdfAnnotationDefaults.highlighterPalette
                 .take(MaxColors)
                 .map { it.withPdfHighlighterAlpha() }
+    }
+}
+
+/**
+ * Matches Android's highlighter gesture snapping: near-horizontal and
+ * near-vertical strokes are constrained in page coordinates, accounting for
+ * the rendered page aspect ratio so the threshold is visually consistent.
+ */
+fun sharedPdfSnapHighlighterPoint(
+    pageAspectRatio: Float,
+    currentPoint: PdfPagePoint,
+    startPoint: PdfPagePoint?,
+    thresholdDegrees: Float = 10f,
+): PdfPagePoint {
+    if (startPoint == null) return currentPoint
+    val safeAspectRatio = pageAspectRatio.takeIf { it.isFinite() && it > 0f } ?: 1f
+    val dx = (currentPoint.x - startPoint.x) * safeAspectRatio
+    val dy = currentPoint.y - startPoint.y
+    val angleDegrees = atan2(dy, dx) * 180f / kotlin.math.PI.toFloat()
+    val isHorizontal = abs(angleDegrees) < thresholdDegrees ||
+        abs(abs(angleDegrees) - 180f) < thresholdDegrees
+    val isVertical = abs(abs(angleDegrees) - 90f) < thresholdDegrees
+    return when {
+        isHorizontal -> currentPoint.copy(y = startPoint.y)
+        isVertical -> currentPoint.copy(x = startPoint.x)
+        else -> currentPoint
     }
 }
 

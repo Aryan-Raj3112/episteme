@@ -108,7 +108,7 @@ fun sharedPdfNearestPdfPageIndex(
 
 @Serializable
 data class SharedPdfReaderStore(
-    val version: Int = 2,
+    val version: Int = 3,
     val pageIndex: Int = 0,
     val pageCount: Int = 0,
     val displayMode: PdfDisplayMode = PdfDisplayMode.PAGINATION,
@@ -128,6 +128,10 @@ data class SharedPdfReaderStore(
     val annotations: List<SharedPdfAnnotation> = emptyList(),
     val blankPageInsertions: List<SharedPdfBlankPageInsertion> = emptyList(),
     val penPalette: List<Int> = SharedPdfAnnotationDefaults.penPalette,
+    /** Android's five-slot PDF highlighter palette, persisted with reader state. */
+    val highlighterPalette: List<Int> = SharedPdfHighlighterPalette.defaultColors,
+    /** Whether PDF highlighter strokes should snap to a straight line. */
+    val isHighlighterSnapEnabled: Boolean = false,
     val lastActivePenTool: PdfInkTool = PdfInkTool.PEN,
     val lastActiveHighlighterTool: PdfInkTool = PdfInkTool.HIGHLIGHTER,
     val richTextDocumentJson: String = ""
@@ -183,6 +187,8 @@ object SharedPdfReaderStateSerializer {
                 annotations = state.annotations,
                 blankPageInsertions = state.blankPageInsertions,
                 penPalette = state.penPalette,
+                highlighterPalette = state.highlighterPalette,
+                isHighlighterSnapEnabled = state.isHighlighterSnapEnabled,
                 lastActivePenTool = state.lastActivePenTool,
                 lastActiveHighlighterTool = state.lastActiveHighlighterTool,
                 richTextDocumentJson = state.richTextDocumentJson
@@ -226,6 +232,8 @@ object SharedPdfReaderStateSerializer {
             annotations = store.annotations,
             blankPageInsertions = store.blankPageInsertions,
             penPalette = store.penPalette,
+            highlighterPalette = store.highlighterPalette,
+            isHighlighterSnapEnabled = store.isHighlighterSnapEnabled,
             lastActivePenTool = store.lastActivePenTool,
             lastActiveHighlighterTool = store.lastActiveHighlighterTool,
             richTextDocumentJson = store.richTextDocumentJson
@@ -406,6 +414,8 @@ data class SharedPdfReaderState(
     val blankPageInsertions: List<SharedPdfBlankPageInsertion> = emptyList(),
     val toolConfigs: Map<PdfInkTool, PdfToolConfig> = emptyMap(),
     val penPalette: List<Int> = SharedPdfAnnotationDefaults.penPalette,
+    val highlighterPalette: List<Int> = SharedPdfHighlighterPalette.defaultColors,
+    val isHighlighterSnapEnabled: Boolean = false,
     val lastActivePenTool: PdfInkTool = PdfInkTool.PEN,
     val lastActiveHighlighterTool: PdfInkTool = PdfInkTool.HIGHLIGHTER,
     val annotationUndoStack: List<SharedPdfAnnotationHistoryAction> = emptyList(),
@@ -440,6 +450,8 @@ data class SharedPdfReaderState(
             bookmarks = bookmarks.normalizedBookmarks(lastPdfPageIndex),
             annotations = annotations.map { it.sanitizedSharedPdfTextAnnotation() },
             penPalette = penPalette.sanitizedSharedPdfPenPalette(),
+            highlighterPalette = SharedPdfHighlighterPalette(highlighterPalette).sanitized().colors,
+            isHighlighterSnapEnabled = isHighlighterSnapEnabled,
             lastActivePenTool = lastActivePenTool.takeIf { it.isSharedPdfPenTool } ?: PdfInkTool.PEN,
             lastActiveHighlighterTool = lastActiveHighlighterTool.takeIf { it.isSharedPdfHighlighterTool }
                 ?: PdfInkTool.HIGHLIGHTER,
@@ -485,12 +497,16 @@ fun initialSharedPdfReaderState(
     persistedState: SharedPdfReaderState?,
     defaults: ReaderSettings,
     initialPageIndex: Int,
+    highlighterPalette: SharedPdfHighlighterPalette = SharedPdfHighlighterPalette(),
+    isHighlighterSnapEnabled: Boolean = false,
 ): SharedPdfReaderState {
     return persistedState
         ?.copy(
             themeId = defaults.themeId ?: persistedState.themeId,
             reverseColorMode = defaults.pdfReverseColorMode,
             preserveImageColors = defaults.pdfPreserveImageColors,
+            highlighterPalette = highlighterPalette.sanitized().colors,
+            isHighlighterSnapEnabled = isHighlighterSnapEnabled,
         )
         ?.coerced()
         // Opening is asynchronous. Preserve the requested restore page until the renderer reports
@@ -504,6 +520,8 @@ fun initialSharedPdfReaderState(
                 themeId = defaults.themeId ?: "no_theme",
                 reverseColorMode = defaults.pdfReverseColorMode,
                 preserveImageColors = defaults.pdfPreserveImageColors,
+                highlighterPalette = highlighterPalette.sanitized().colors,
+                isHighlighterSnapEnabled = isHighlighterSnapEnabled,
             )
 }
 
@@ -545,6 +563,8 @@ sealed interface SharedPdfReaderAction {
     data class ColorSelected(val colorArgb: Int) : SharedPdfReaderAction
     data class StrokeWidthChanged(val strokeWidth: Float) : SharedPdfReaderAction
     data class PenPaletteChanged(val colors: List<Int>) : SharedPdfReaderAction
+    data class HighlighterPaletteChanged(val colors: List<Int>) : SharedPdfReaderAction
+    data class HighlighterSnapChanged(val enabled: Boolean) : SharedPdfReaderAction
     data class TextSelectionModeChanged(val enabled: Boolean) : SharedPdfReaderAction
     data class BookmarksLoaded(val bookmarks: List<SharedPdfBookmark>) : SharedPdfReaderAction
     data class BookmarkToggled(
@@ -663,6 +683,10 @@ fun SharedPdfReaderState.reduce(
         is SharedPdfReaderAction.ColorSelected -> withActiveToolColor(action.colorArgb)
         is SharedPdfReaderAction.StrokeWidthChanged -> withActiveToolStrokeWidth(action.strokeWidth.coerceAtLeast(0.0001f))
         is SharedPdfReaderAction.PenPaletteChanged -> copy(penPalette = action.colors.sanitizedSharedPdfPenPalette())
+        is SharedPdfReaderAction.HighlighterPaletteChanged -> copy(
+            highlighterPalette = SharedPdfHighlighterPalette(action.colors).sanitized().colors,
+        )
+        is SharedPdfReaderAction.HighlighterSnapChanged -> copy(isHighlighterSnapEnabled = action.enabled)
         is SharedPdfReaderAction.TextSelectionModeChanged -> {
             if (action.enabled) {
                 val config = SharedPdfAnnotationDefaults.configFor(PdfInkTool.NONE)
@@ -817,7 +841,21 @@ fun SharedPdfReaderState.reduce(
 }
 
 private fun SharedPdfReaderState.toolConfigFor(tool: PdfInkTool): PdfToolConfig {
-    return toolConfigs[tool] ?: SharedPdfAnnotationDefaults.configFor(tool)
+    return toolConfigs[tool] ?: SharedPdfAnnotationDefaults.configFor(tool).let { config ->
+        when (tool) {
+            PdfInkTool.HIGHLIGHTER -> config.copy(
+                colorArgb = highlighterPalette.getOrElse(0) { SharedPdfHighlighterPalette.defaultColors[0] },
+            )
+            PdfInkTool.HIGHLIGHTER_ROUND -> config.copy(
+                colorArgb = highlighterPalette.getOrElse(1) {
+                    SharedPdfHighlighterPalette.defaultColors.getOrElse(1) {
+                        SharedPdfHighlighterPalette.defaultColors.first()
+                    }
+                },
+            )
+            else -> config
+        }
+    }
 }
 
 private fun SharedPdfReaderState.withActiveToolColor(colorArgb: Int): SharedPdfReaderState {

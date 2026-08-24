@@ -66,6 +66,7 @@ data class SharedLibrarySnapshot(
     val readerToolbarPreferences: ReaderToolbarPreferences = ReaderToolbarPreferences(),
     val readerHighlightPalette: ReaderHighlightPalette = ReaderHighlightPalette(),
     val pdfHighlighterPalette: SharedPdfHighlighterPalette = SharedPdfHighlighterPalette(),
+    val pdfHighlighterSnapEnabled: Boolean = false,
     val readerTtsReplacementPreferences: ReaderTtsReplacementPreferences = ReaderTtsReplacementPreferences(),
     val readerBookReplacementPreferences: ReaderBookReplacementPreferences = ReaderBookReplacementPreferences(),
     /** Raw PDF sidecars transported alongside the library snapshot. */
@@ -73,7 +74,7 @@ data class SharedLibrarySnapshot(
 )
 
 object SharedLibrarySnapshotJson {
-    private const val SCHEMA_VERSION = 30
+    private const val SCHEMA_VERSION = 31
 
     private val json = Json {
         prettyPrint = true
@@ -168,6 +169,7 @@ object SharedLibrarySnapshotJson {
                 ?.takeUnless { it is JsonNull }
                 ?.asSharedPdfHighlighterPaletteOrNull()
                 ?: SharedPdfHighlighterPalette(),
+            pdfHighlighterSnapEnabled = root.boolean("pdfHighlighterSnapEnabled", false),
             readerTtsReplacementPreferences = root["readerTtsReplacementPreferences"]
                 ?.takeUnless { it is JsonNull }
                 ?.let { ReaderTtsReplacementPreferencesJson.fromJsonElement(it) }
@@ -228,6 +230,7 @@ object SharedLibrarySnapshotJson {
                 "readerToolbarPreferences" to snapshot.readerToolbarPreferences.sanitized().toJsonObject(),
                 "readerHighlightPalette" to snapshot.readerHighlightPalette.sanitized().toJsonObject(),
                 "pdfHighlighterPalette" to snapshot.pdfHighlighterPalette.sanitized().toJsonObject(),
+                "pdfHighlighterSnapEnabled" to JsonPrimitive(snapshot.pdfHighlighterSnapEnabled),
                 "readerTtsReplacementPreferences" to ReaderTtsReplacementPreferencesJson.toJsonElement(
                     snapshot.readerTtsReplacementPreferences,
                 ),

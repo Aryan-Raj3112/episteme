@@ -198,6 +198,7 @@ import com.aryan.reader.shared.reader.ReaderScreenOrientationMode
 import com.aryan.reader.shared.pdf.SharedPdfAnnotation
 import com.aryan.reader.shared.pdf.SharedPdfBookmark
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationDefaults
+import com.aryan.reader.shared.pdf.SharedPdfHighlighterPalette
 import com.aryan.reader.shared.pdf.SharedPdfRichTextController
 import com.aryan.reader.shared.pdf.SharedPdfRichTextSerializer
 import com.aryan.reader.shared.pdf.SharedPdfTextAnnotationDefaults
@@ -301,6 +302,10 @@ fun SharedMobilePdfReaderScreen(
     initialReaderState: SharedPdfReaderState? = null,
     readerDefaultSettings: ReaderSettings = DefaultPdfReaderSettings,
     onReaderDefaultSettingsChange: (ReaderSettings) -> Unit = {},
+    pdfHighlighterPalette: SharedPdfHighlighterPalette = SharedPdfHighlighterPalette(),
+    onPdfHighlighterPaletteChange: (SharedPdfHighlighterPalette) -> Unit = {},
+    pdfHighlighterSnapEnabled: Boolean = false,
+    onPdfHighlighterSnapChange: (Boolean) -> Unit = {},
     customReaderThemes: List<ReaderTheme> = emptyList(),
     onCustomReaderThemesChange: (List<ReaderTheme>) -> Unit = {},
     initialKeepScreenOn: Boolean = false,
@@ -363,6 +368,10 @@ fun SharedMobilePdfReaderScreen(
         initialReaderState = initialReaderState,
         readerDefaultSettings = readerDefaultSettings,
         onReaderDefaultSettingsChange = onReaderDefaultSettingsChange,
+        pdfHighlighterPalette = pdfHighlighterPalette,
+        onPdfHighlighterPaletteChange = onPdfHighlighterPaletteChange,
+        pdfHighlighterSnapEnabled = pdfHighlighterSnapEnabled,
+        onPdfHighlighterSnapChange = onPdfHighlighterSnapChange,
         customReaderThemes = customReaderThemes,
         onCustomReaderThemesChange = onCustomReaderThemesChange,
         initialKeepScreenOn = initialKeepScreenOn,
@@ -436,6 +445,10 @@ fun SharedMobilePdfReaderHost(
     initialReaderState: SharedPdfReaderState? = null,
     readerDefaultSettings: ReaderSettings = DefaultPdfReaderSettings,
     onReaderDefaultSettingsChange: (ReaderSettings) -> Unit = {},
+    pdfHighlighterPalette: SharedPdfHighlighterPalette = SharedPdfHighlighterPalette(),
+    onPdfHighlighterPaletteChange: (SharedPdfHighlighterPalette) -> Unit = {},
+    pdfHighlighterSnapEnabled: Boolean = false,
+    onPdfHighlighterSnapChange: (Boolean) -> Unit = {},
     customReaderThemes: List<ReaderTheme> = emptyList(),
     onCustomReaderThemesChange: (List<ReaderTheme>) -> Unit = {},
     initialKeepScreenOn: Boolean = false,
@@ -474,6 +487,8 @@ fun SharedMobilePdfReaderHost(
                 persistedState = initialReaderState,
                 defaults = readerDefaultSettings,
                 initialPageIndex = initialPage,
+                highlighterPalette = pdfHighlighterPalette,
+                isHighlighterSnapEnabled = pdfHighlighterSnapEnabled,
             )
         )
     }
@@ -1040,7 +1055,34 @@ fun SharedMobilePdfReaderHost(
         }
     }
 
-    fun activeToolConfig(tool: PdfInkTool) = SharedPdfAnnotationDefaults.configFor(tool)
+    fun activeToolConfig(tool: PdfInkTool) = SharedPdfAnnotationDefaults.configFor(tool).let { config ->
+        when (tool) {
+            PdfInkTool.HIGHLIGHTER -> config.copy(
+                colorArgb = readerState.highlighterPalette.getOrElse(0) {
+                    SharedPdfHighlighterPalette.defaultColors.first()
+                },
+            )
+            PdfInkTool.HIGHLIGHTER_ROUND -> config.copy(
+                colorArgb = readerState.highlighterPalette.getOrElse(1) {
+                    SharedPdfHighlighterPalette.defaultColors.getOrElse(1) {
+                        SharedPdfHighlighterPalette.defaultColors.first()
+                    }
+                },
+            )
+            else -> config
+        }
+    }
+
+    fun updatePdfHighlighterPalette(palette: SharedPdfHighlighterPalette) {
+        val sanitized = palette.sanitized()
+        dispatch(SharedPdfReaderAction.HighlighterPaletteChanged(sanitized.colors))
+        onPdfHighlighterPaletteChange(sanitized)
+    }
+
+    fun updatePdfHighlighterSnap(enabled: Boolean) {
+        dispatch(SharedPdfReaderAction.HighlighterSnapChanged(enabled))
+        onPdfHighlighterSnapChange(enabled)
+    }
 
     fun setTool(tool: PdfInkTool) {
         if (tool != PdfInkTool.TEXT && readerState.selectedTool == PdfInkTool.TEXT && textDraft != null) {
@@ -1477,6 +1519,8 @@ fun SharedMobilePdfReaderHost(
                         onToolSelected = ::setTool,
                         onColorSelected = { dispatch(SharedPdfReaderAction.ColorSelected(it)) },
                         onStrokeWidthChange = { dispatch(SharedPdfReaderAction.StrokeWidthChanged(it)) },
+                        onHighlighterPaletteChange = ::updatePdfHighlighterPalette,
+                        onHighlighterSnapChange = ::updatePdfHighlighterSnap,
                         onUndo = { dispatch(SharedPdfReaderAction.UndoLastAnnotationOnPage(readerState.pageIndex)) },
                         onRedo = { dispatch(SharedPdfReaderAction.RedoAnnotationEdit) },
                         onClearPage = { dispatch(SharedPdfReaderAction.ClearPageAnnotations(readerState.pageIndex)) },
@@ -1581,6 +1625,7 @@ fun SharedMobilePdfReaderHost(
                         ttsPageIndex = ttsPageIndex.takeIf { pdfTts.isSessionActive || pendingTtsStart != null },
                         ttsHighlightBounds = ttsHighlightBounds,
                         activeStroke = activeStroke,
+                        highlighterSnapEnabled = readerState.isHighlighterSnapEnabled,
                         isStylusOnlyMode = isStylusOnlyMode,
                         verticalScrollController = pdfVerticalScrollController,
                         autoScrollPlaying = autoScrollPlaying,
@@ -1642,6 +1687,7 @@ fun SharedMobilePdfReaderHost(
                         ttsPageIndex = ttsPageIndex.takeIf { pdfTts.isSessionActive || pendingTtsStart != null },
                         ttsHighlightBounds = ttsHighlightBounds,
                         activeStroke = activeStroke,
+                        highlighterSnapEnabled = readerState.isHighlighterSnapEnabled,
                         isStylusOnlyMode = isStylusOnlyMode,
                         tapToTurnPages = tapToTurnPages,
                         positionController = pdfPaginationPositionController,
@@ -3191,6 +3237,8 @@ private fun SharedMobilePdfReaderBottomBar(
     onToolSelected: (PdfInkTool) -> Unit,
     onColorSelected: (Int) -> Unit,
     onStrokeWidthChange: (Float) -> Unit,
+    onHighlighterPaletteChange: (SharedPdfHighlighterPalette) -> Unit,
+    onHighlighterSnapChange: (Boolean) -> Unit,
     onUndo: () -> Unit,
     onRedo: () -> Unit,
     onClearPage: () -> Unit,
@@ -3282,6 +3330,7 @@ private fun SharedMobilePdfReaderBottomBar(
                     strokeWidth = state.strokeWidth,
                     toolConfigs = state.toolConfigs,
                     penPalette = state.penPalette,
+                    highlighterPalette = state.highlighterPalette,
                     lastActivePenTool = state.lastActivePenTool,
                     lastActiveHighlighterTool = state.lastActiveHighlighterTool,
                     onPanSelected = { onToolSelected(PdfInkTool.NONE) },
@@ -3289,6 +3338,9 @@ private fun SharedMobilePdfReaderBottomBar(
                     onToolSelected = onToolSelected,
                     onColorSelected = onColorSelected,
                     onStrokeWidthChange = onStrokeWidthChange,
+                    isHighlighterSnapEnabled = state.isHighlighterSnapEnabled,
+                    onHighlighterSnapChange = onHighlighterSnapChange,
+                    onHighlighterPaletteChange = { onHighlighterPaletteChange(SharedPdfHighlighterPalette(it)) },
                     onUndo = onUndo,
                     onRedo = onRedo,
                     onClearPage = onClearPage,
