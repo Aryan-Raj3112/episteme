@@ -145,6 +145,8 @@ class VerticalPdfReaderState {
     var currentPage by mutableIntStateOf(0)
         internal set
 
+    private var authoritativeCurrentPageIndex = 0
+
     var firstVisiblePage by mutableIntStateOf(0)
         internal set
 
@@ -156,6 +158,16 @@ class VerticalPdfReaderState {
     internal var scrollByHandler: (suspend (Float) -> Unit)? = null
     internal var scrollToTopHandler: (suspend () -> Unit)? = null
     internal var scrollToBottomHandler: (suspend () -> Unit)? = null
+
+    internal fun latestCurrentPage(): Int = authoritativeCurrentPageIndex
+
+    internal fun updateAuthoritativeCurrentPage(pageIndex: Int) {
+        if (pageIndex < 0) return
+        authoritativeCurrentPageIndex = pageIndex
+        if (currentPage != pageIndex) {
+            currentPage = pageIndex
+        }
+    }
 
     suspend fun scrollToPage(pageIndex: Int) {
         scrollToPageHandler?.invoke(pageIndex)
@@ -199,6 +211,29 @@ private data class PdfPageLayout(
 
     val width: Float
         get() = widthPx.toFloat()
+}
+
+internal data class PdfVerticalPagePosition(
+    val index: Int,
+    val top: Float,
+    val height: Float,
+)
+
+internal fun mostVisiblePdfVerticalPageIndex(
+    pages: List<PdfVerticalPagePosition>,
+    panY: Float,
+    zoom: Float,
+    screenHeight: Float,
+): Int? {
+    if (pages.isEmpty()) return null
+    val safeZoom = zoom.takeIf { it.isFinite() && it > 0f } ?: 1f
+    val realViewportTop = -panY / safeZoom
+    val realViewportBottom = (-panY + screenHeight) / safeZoom
+    return pages.maxByOrNull { page ->
+        val top = max(page.top, realViewportTop)
+        val bottom = min(page.top + page.height, realViewportBottom)
+        max(0f, bottom - top)
+    }?.index
 }
 
 private data class DividerLayout(val yPx: Int, val widthPx: Int, val heightPx: Int) {
@@ -436,11 +471,38 @@ internal fun PdfVerticalReader(
             )
         }
         var cameraPanY by remember { mutableFloatStateOf(0f) }
+        val fullPagePositions = remember(layoutInfo) {
+            layoutInfo.map { page ->
+                PdfVerticalPagePosition(
+                    index = page.index,
+                    top = page.y,
+                    height = page.height,
+                )
+            }
+        }
+
+        fun authoritativePageForCamera(zoom: Float, panY: Float): Int? {
+            return mostVisiblePdfVerticalPageIndex(
+                pages = fullPagePositions,
+                panY = panY,
+                zoom = zoom,
+                screenHeight = screenHeight,
+            )
+        }
 
         fun commitRenderedCamera(zoom: Float, panX: Float, panY: Float) {
             cameraZoom = zoom
             cameraPanX = panX
             cameraPanY = panY
+            authoritativePageForCamera(zoom, panY)?.let { pageIndex ->
+                state.updateAuthoritativeCurrentPage(pageIndex)
+            }
+        }
+
+        LaunchedEffect(fullPagePositions, screenHeight) {
+            state.updateAuthoritativeCurrentPage(
+                authoritativePageForCamera(cameraZoom, cameraPanY) ?: 0
+            )
         }
 
         var cameraEpoch by remember { mutableLongStateOf(0L) }
@@ -454,7 +516,7 @@ internal fun PdfVerticalReader(
         var isVerticalOneHandZooming by remember { mutableStateOf(false) }
         val latestIsVerticalOneHandZooming by rememberUpdatedState(isVerticalOneHandZooming)
 
-        LaunchedEffect(zoomAnimatable, panXAnimatable, panYAnimatable) {
+        LaunchedEffect(zoomAnimatable, panXAnimatable, panYAnimatable, fullPagePositions, screenHeight) {
             snapshotFlow {
                 Triple(zoomAnimatable.value, panXAnimatable.value, panYAnimatable.value)
             }.collect { (zoom, panX, panY) ->
@@ -543,7 +605,9 @@ internal fun PdfVerticalReader(
 
                 zoomAnimatable.snapTo(savedScale)
                 panXAnimatable.snapTo(savedPanX)
-                panYAnimatable.snapTo(savedPanY.coerceIn(minPanY, headerHeightPx))
+                val restoredPanY = savedPanY.coerceIn(minPanY, headerHeightPx)
+                panYAnimatable.snapTo(restoredPanY)
+                commitRenderedCamera(savedScale, savedPanX, restoredPanY)
 
                 Timber.tag("PdfLockDiagnostic").d("RESTORE SNAP COMPLETE: Scale=${cameraZoom}, X=${cameraPanX}, Y=${cameraPanY}")
 
@@ -585,7 +649,8 @@ internal fun PdfVerticalReader(
                         launch { panYAnimatable.snapTo(resetCamera.panY) }
                     }
 
-                    state.currentPage = targetPageIdx
+                    commitRenderedCamera(resetCamera.zoom, resetCamera.panX, resetCamera.panY)
+                    state.updateAuthoritativeCurrentPage(targetPageIdx)
                     hasRestoredLockedState = true
                     onZoomChange(resetCamera.zoom)
                     onZoomAndPanChanged?.invoke(resetCamera.zoom, Offset(resetCamera.panX, resetCamera.panY))
@@ -655,6 +720,7 @@ internal fun PdfVerticalReader(
                         launch { panXAnimatable.snapTo(targetPanX) }
                         launch { panYAnimatable.snapTo(finalPanY) }
                     }
+                    commitRenderedCamera(targetZoom, targetPanX, finalPanY)
                 }
             }
 
@@ -791,12 +857,14 @@ internal fun PdfVerticalReader(
 
             if (y != currentPanY) {
                 panYAnimatable.snapTo(y)
+                commitRenderedCamera(currentZoom, currentPanX, y)
             }
             if (x != currentPanX) {
                 if (isScrollLocked) {
                     Timber.tag("PdfLockDiagnostic").d("FORCED SNAP: X=$currentPanX to $x")
                 }
                 panXAnimatable.snapTo(x)
+                commitRenderedCamera(currentZoom, x, cameraPanY)
             }
         }
 
@@ -826,6 +894,7 @@ internal fun PdfVerticalReader(
                 val clampedPanY = calculateTargetPanY(index)
                 if (clampedPanY != null) {
                     panYAnimatable.animateTo(clampedPanY, animationSpec = tween(500))
+                    commitRenderedCamera(cameraZoom, cameraPanX, clampedPanY)
                 }
             }
 
@@ -834,6 +903,7 @@ internal fun PdfVerticalReader(
                 Timber.tag("PdfPositionDebug").d("VerticalReader: snapToPage($index) called. ClampedPanY: $clampedPanY")
                 if (clampedPanY != null) {
                     panYAnimatable.snapTo(clampedPanY)
+                    commitRenderedCamera(cameraZoom, cameraPanX, clampedPanY)
                 }
             }
 
@@ -850,6 +920,7 @@ internal fun PdfVerticalReader(
                         targetValue = targetPanY,
                         animationSpec = tween(durationMillis = 500, easing = FastOutSlowInEasing)
                     )
+                    commitRenderedCamera(currentZoom, cameraPanX, targetPanY)
                 }
             }
 
@@ -858,6 +929,7 @@ internal fun PdfVerticalReader(
                     targetValue = headerHeightPx,
                     animationSpec = tween(durationMillis = 500, easing = FastOutSlowInEasing)
                 )
+                commitRenderedCamera(cameraZoom, cameraPanX, headerHeightPx)
             }
 
             state.scrollToBottomHandler = {
@@ -868,6 +940,7 @@ internal fun PdfVerticalReader(
                     targetValue = minPanY,
                     animationSpec = tween(durationMillis = 500, easing = FastOutSlowInEasing)
                 )
+                commitRenderedCamera(currentZoom, cameraPanX, minPanY)
             }
         }
 
@@ -883,6 +956,7 @@ internal fun PdfVerticalReader(
             draggingBoxId,
             draggingBoxOffset,
             screenHeight,
+            fullPagePositions,
             bottomContentPaddingPx,
             topContentPaddingPx
         ) {
@@ -946,6 +1020,7 @@ internal fun PdfVerticalReader(
             autoScrollSpeed,
             totalDocHeight,
             screenHeight,
+            fullPagePositions,
             isInteracting,
             isFlinging,
         ) {
@@ -1138,6 +1213,7 @@ internal fun PdfVerticalReader(
                     if (abs(requiredShift) > 10f) {
                         val targetPanY = currentPanY + requiredShift
                         panYAnimatable.snapTo(targetPanY)
+                        commitRenderedCamera(currentZoom, cameraPanX, targetPanY)
                     }
                 }
             }
@@ -1424,7 +1500,7 @@ internal fun PdfVerticalReader(
                 // Touchpads send scroll events rather than press-and-drag changes.
                 // The custom PDF camera handles the latter itself, so explicitly
                 // translate wheel/trackpad deltas into bounded vertical panning.
-                .pointerInput(totalDocHeight, screenHeight, headerHeightPx, footerHeightPx) {
+                .pointerInput(totalDocHeight, screenHeight, headerHeightPx, footerHeightPx, fullPagePositions) {
                     val scrollStepPx = with(density) { 48.dp.toPx() }
                     awaitPointerEventScope {
                         while (true) {
@@ -1542,6 +1618,7 @@ internal fun PdfVerticalReader(
                 }
                 .pointerInput(
                     totalDocHeight,
+                    fullPagePositions,
                     isEditMode,
                     selectedTool,
                     isScrollLocked,
@@ -2166,7 +2243,7 @@ internal fun PdfVerticalReader(
                 }
             }
 
-            LaunchedEffect(visiblePages, screenHeight, isResizing) {
+            LaunchedEffect(visiblePages, fullPagePositions, screenHeight, isResizing) {
                 snapshotFlow {
                     Pair(cameraPanY, cameraZoom)
                 }.collectLatest { (panY, zoom) ->
@@ -2174,23 +2251,24 @@ internal fun PdfVerticalReader(
                         state.firstVisiblePage = visiblePages.first().index
                         state.lastVisiblePage = visiblePages.last().index
 
-                        val realViewportTop = -panY / zoom
-                        val realViewportBottom = (-panY + screenHeight) / zoom
+                        val safeZoom = zoom.takeIf { it.isFinite() && it > 0f } ?: 1f
+                        val realViewportTop = -panY / safeZoom
+                        val realViewportBottom = (-panY + screenHeight) / safeZoom
+                        val mostVisibleIndex = mostVisiblePdfVerticalPageIndex(
+                            pages = fullPagePositions,
+                            panY = panY,
+                            zoom = safeZoom,
+                            screenHeight = screenHeight,
+                        )
 
-                        val mostVisible = visiblePages.maxByOrNull { page ->
-                            val top = max(page.y, realViewportTop)
-                            val bottom = min(page.y + page.height, realViewportBottom)
-                            max(0f, bottom - top)
-                        }
-
-                        if (mostVisible != null && mostVisible.index != state.currentPage) {
-                            Timber.tag("PdfPositionDebug").v("VerticalReader: Page changed to ${mostVisible.index} (PanY: $panY)")
+                        if (mostVisibleIndex != null && mostVisibleIndex != state.currentPage) {
+                            Timber.tag("PdfPositionDebug").v("VerticalReader: Page changed to $mostVisibleIndex (PanY: $panY)")
                             PdfVerticalPerfLog.d(
-                                "current-page-change from=${state.currentPage} to=${mostVisible.index} " +
+                                "current-page-change from=${state.currentPage} to=$mostVisibleIndex " +
                                     "viewport=${PdfVerticalPerfLog.xy(realViewportTop, realViewportBottom)} panY=${PdfVerticalPerfLog.f(panY)} zoom=${PdfVerticalPerfLog.f(zoom)}"
                             )
-                            state.currentPage = mostVisible.index
                         }
+                        mostVisibleIndex?.let(state::updateAuthoritativeCurrentPage)
                     }
                 }
             }
@@ -2299,7 +2377,7 @@ internal fun PdfVerticalReader(
                             }
 
                             val onTtsHighlightCenter: (Float) -> Unit =
-                                remember(page.index, ttsReadingPage) {
+                                remember(page.index, ttsReadingPage, fullPagePositions) {
                                     { highlightCenterY ->
                                         if (page.index == ttsReadingPage && !isInteracting) {
                                             val currentZ = cameraZoom
@@ -2320,13 +2398,14 @@ internal fun PdfVerticalReader(
                                                 panYAnimatable.animateTo(
                                                     clampedPanY, animationSpec = tween(500)
                                                 )
+                                                commitRenderedCamera(cameraZoom, cameraPanX, clampedPanY)
                                             }
                                         }
                                     }
                                 }
 
                             val onSearchHighlightCenter: (Float) -> Unit =
-                                remember(page.index, searchResultToHighlight) {
+                                remember(page.index, searchResultToHighlight, fullPagePositions) {
                                     { highlightCenterY ->
                                         if (searchResultToHighlight?.locationInSource == page.index && !isInteracting) {
                                             val currentZ = cameraZoom
@@ -2349,6 +2428,7 @@ internal fun PdfVerticalReader(
                                                 panYAnimatable.animateTo(
                                                     clampedPanY, animationSpec = tween(500)
                                                 )
+                                                commitRenderedCamera(cameraZoom, cameraPanX, clampedPanY)
                                             }
                                         }
                                     }
@@ -2751,7 +2831,7 @@ internal fun PdfVerticalReader(
                             .width(48.dp)
                             .onGloballyPositioned {}
                             .pointerInput(
-                                scrollbarTrackHeight, totalDocHeight, screenHeight
+                                scrollbarTrackHeight, totalDocHeight, screenHeight, fullPagePositions
                             ) {
                                 awaitEachGesture {
                                     val down = awaitFirstDown(

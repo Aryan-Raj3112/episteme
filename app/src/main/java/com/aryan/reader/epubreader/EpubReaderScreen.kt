@@ -457,6 +457,8 @@ fun EpubReaderHost(
     var sliderCurrentPage by remember { mutableFloatStateOf(0f) }
     var isFastScrubbing by remember { mutableStateOf(false) }
     val scrubDebounceJob = remember { mutableStateOf<Job?>(null) }
+    var pendingSliderJumpOrigin by remember { mutableStateOf<SharedReaderLocator?>(null) }
+    var sliderJumpGeneration by remember { mutableIntStateOf(0) }
     val volumeScrollFocusDebounceJob = remember { mutableStateOf<Job?>(null) }
     var sliderStartPage by remember { mutableIntStateOf(0) }
 
@@ -2665,16 +2667,6 @@ fun EpubReaderHost(
         }
     }
 
-    fun Locator.toEpubJumpLocator(pageIndex: Int? = null, cfiOverride: String? = null): SharedReaderLocator {
-        return SharedReaderLocator(
-            chapterIndex = chapterIndex,
-            pageIndex = pageIndex,
-            blockIndex = blockIndex,
-            charOffset = charOffset,
-            cfi = cfiOverride ?: "android-locator:$chapterIndex:$blockIndex:$charOffset"
-        )
-    }
-
     fun SharedReaderLocator.toAndroidLocatorOrNull(): Locator? {
         val chapter = chapterIndex
         val block = blockIndex
@@ -2712,13 +2704,21 @@ fun EpubReaderHost(
                 }
             }
             RenderMode.PAGINATED -> {
-                val pageIndex = paginatedPagerState.currentPage.takeIf { it >= 0 }
-                val locator = (paginator as? BookPaginator)?.getLocatorForPage(paginatedPagerState.currentPage)
-                val fallbackLocator = lastKnownLocator?.takeIf {
-                    currentChapterInPaginatedMode != null && it.chapterIndex == currentChapterInPaginatedMode
-                }
-                locator?.toEpubJumpLocator(pageIndex = pageIndex)
-                    ?: fallbackLocator?.toEpubJumpLocator(pageIndex = pageIndex)
+                val bookPaginator = paginator as? BookPaginator
+                val currentPageIndex = authoritativePaginatedPageIndex(
+                    currentPageIndex = paginatedPagerState.currentPage,
+                    settledPageIndex = paginatedPagerState.settledPage,
+                    isScrollInProgress = paginatedPagerState.isScrollInProgress
+                )
+                val currentChapterIndex = currentPageIndex?.let { bookPaginator?.findChapterIndexForPage(it) }
+                paginatedEpubJumpLocator(
+                    currentPageIndex = paginatedPagerState.currentPage,
+                    settledPageIndex = paginatedPagerState.settledPage,
+                    isScrollInProgress = paginatedPagerState.isScrollInProgress,
+                    locatorForPage = { pageIndex -> bookPaginator?.getLocatorForPage(pageIndex) },
+                    fallbackLocator = lastKnownLocator,
+                    fallbackChapterIndex = currentChapterIndex
+                )
             }
         }
     }
@@ -2747,9 +2747,12 @@ fun EpubReaderHost(
         )
     }
 
-    fun recordEpubJump(target: SharedReaderLocator?) {
+    fun recordEpubJump(
+        target: SharedReaderLocator?,
+        currentLocator: SharedReaderLocator? = currentEpubJumpLocator()
+    ) {
         epubJumpHistory = epubJumpHistory.record(
-            currentLocator = currentEpubJumpLocator(),
+            currentLocator = currentLocator,
             targetLocator = target,
             chapterCount = chapters.size
         )
@@ -2778,6 +2781,36 @@ fun EpubReaderHost(
             pageIndex = safePageIndex,
             cfi = "android-page:$safePageIndex"
         )
+    }
+
+    fun sliderJumpTargetForPage(page: Int): SharedReaderLocator? {
+        val pageIndex = (page - 1).takeIf { it >= 0 } ?: return null
+        return when {
+            isNativeVerticalMode -> {
+                val bookPaginator = paginator as? BookPaginator
+                val targetLocator = bookPaginator?.getLocatorForPage(pageIndex)
+                targetLocator?.toEpubJumpLocator(pageIndex = pageIndex)
+                    ?: SharedReaderLocator(
+                        chapterIndex = bookPaginator?.findChapterIndexForPage(pageIndex),
+                        pageIndex = pageIndex,
+                        cfi = "android-page:$pageIndex"
+                    )
+            }
+            currentRenderMode == RenderMode.VERTICAL_SCROLL -> {
+                SharedReaderLocator(
+                    chapterIndex = currentChapterIndex,
+                    cfi = "android-scroll:${(page - 1) * currentClientHeightValue}"
+                )
+            }
+            else -> {
+                val targetLocator = (paginator as? BookPaginator)?.getLocatorForPage(pageIndex)
+                paginatedJumpLocatorForPage(
+                    pageIndex = pageIndex,
+                    targetLocator = targetLocator,
+                    allowPageFallback = true
+                )
+            }
+        }
     }
 
     suspend fun scrollPaginatedToJumpPage(
@@ -3156,14 +3189,22 @@ fun EpubReaderHost(
     }
 
     fun goBackInEpubJumpHistory() {
-        val target = epubJumpHistory.backLocator ?: return
-        epubJumpHistory = epubJumpHistory.stepBack()
+        val refreshedHistory = epubJumpHistory.updateCurrentLocation(
+            currentLocator = currentEpubJumpLocator(),
+            chapterCount = chapters.size
+        )
+        val target = refreshedHistory.backLocator ?: return
+        epubJumpHistory = refreshedHistory.stepBack()
         navigateToEpubJumpLocator(target)
     }
 
     fun goForwardInEpubJumpHistory() {
-        val target = epubJumpHistory.forwardLocator ?: return
-        epubJumpHistory = epubJumpHistory.stepForward()
+        val refreshedHistory = epubJumpHistory.updateCurrentLocation(
+            currentLocator = currentEpubJumpLocator(),
+            chapterCount = chapters.size
+        )
+        val target = refreshedHistory.forwardLocator ?: return
+        epubJumpHistory = refreshedHistory.stepForward()
         navigateToEpubJumpLocator(target)
     }
 
@@ -4525,6 +4566,7 @@ fun EpubReaderHost(
                                         activeFootnoteHtml = html
                                     },
                                     onInternalLinkNavigated = { targetPageIndex, targetLocatorFromLink ->
+                                        val currentLocator = currentEpubJumpLocator()
                                         val bookPaginator = paginator as? BookPaginator
                                         val targetChapter = targetLocatorFromLink?.chapterIndex
                                             ?: bookPaginator?.findChapterIndexForPage(targetPageIndex)
@@ -4539,7 +4581,7 @@ fun EpubReaderHost(
                                             pageIndex = targetPageIndex,
                                             targetLocator = targetLocator,
                                             fallbackChapterIndex = targetChapter
-                                        )?.let { recordEpubJump(it) }
+                                        )?.let { recordEpubJump(it, currentLocator) }
                                     },
                                     onHighlightDeleted = { cfi ->
                                         userHighlights.find { it.cfi == cfi }?.let { userHighlights.remove(it) }
@@ -5754,6 +5796,7 @@ fun EpubReaderHost(
                                     activeFootnoteHtml = html
                                 },
                                 onInternalLinkNavigated = { targetPageIndex, targetLocatorFromLink ->
+                                    val currentLocator = currentEpubJumpLocator()
                                     val bookPaginator = paginator as? BookPaginator
                                     val targetChapter = targetLocatorFromLink?.chapterIndex
                                         ?: bookPaginator?.findChapterIndexForPage(targetPageIndex)
@@ -5772,7 +5815,7 @@ fun EpubReaderHost(
                                         pageIndex = targetPageIndex,
                                         targetLocator = targetLocator,
                                         fallbackChapterIndex = targetChapter
-                                    )?.let { recordEpubJump(it) }
+                                    )?.let { recordEpubJump(it, currentLocator) }
                                 },
                                 onHighlightDeleted = { cfi ->
                                     val beforeCount = userHighlights.size
@@ -7143,6 +7186,7 @@ fun EpubReaderHost(
                         effectiveText = effectiveText,
                         onInternalLinkClick = { href ->
                             scope.launch {
+                                val currentLocator = currentEpubJumpLocator()
                                 val bookPaginator = paginator as? BookPaginator
                                 val currentChapterPath = chapters.getOrNull(currentChapterIndex)?.absPath.orEmpty()
                                 val extractionBaseUrl = "file://${epubBook.extractionBasePath.trimEnd('/')}/"
@@ -7167,7 +7211,7 @@ fun EpubReaderHost(
                                     ?: targetPage?.let { bookPaginator?.getLocatorForPage(it) }
                                 destination?.let {
                                     lastKnownLocator = it
-                                    recordEpubJump(it.toEpubJumpLocator(targetPage))
+                                    recordEpubJump(it.toEpubJumpLocator(targetPage), currentLocator)
                                 }
                                 when {
                                     isNativeVerticalMode -> requestNativeVerticalLocatorScroll(
@@ -7204,30 +7248,51 @@ fun EpubReaderHost(
                     onScrub = { newValue ->
                         sliderCurrentPage = newValue
                         isFastScrubbing = true
+                        val scrubOrigin = pendingSliderJumpOrigin ?: currentEpubJumpLocator().also {
+                            pendingSliderJumpOrigin = it
+                        }
+                        val scrubGeneration = sliderJumpGeneration + 1
+                        sliderJumpGeneration = scrubGeneration
                         scrubDebounceJob.value?.cancel()
                         scrubDebounceJob.value = scope.launch {
-                            delay(200)
-                            if (isActive) {
-                                val targetPage = newValue.roundToInt()
-                                if (isNativeVerticalMode) {
-                                    requestNativeVerticalProgressScroll(
-                                        nativeVerticalProgressForCompatPage(
-                                            pageIndex = targetPage - 1,
-                                            totalPageCount = nativeVerticalTotalPages
+                            try {
+                                delay(200)
+                                if (isActive) {
+                                    val targetPage = newValue.roundToInt()
+                                    sliderJumpTargetForPage(targetPage)?.let {
+                                        recordEpubJump(it, scrubOrigin)
+                                    }
+                                    if (isNativeVerticalMode) {
+                                        requestNativeVerticalProgressScroll(
+                                            nativeVerticalProgressForCompatPage(
+                                                pageIndex = targetPage - 1,
+                                                totalPageCount = nativeVerticalTotalPages
+                                            )
                                         )
-                                    )
-                                } else if (currentRenderMode == RenderMode.VERTICAL_SCROLL) {
-                                    val scrollY = (targetPage - 1) * currentClientHeightValue
-                                    webViewRefForTts?.evaluateJavascript("window.scrollTo(0, $scrollY);", null)
-                                } else {
-                                    paginatedPagerState.scrollToPage(targetPage - 1)
+                                    } else if (currentRenderMode == RenderMode.VERTICAL_SCROLL) {
+                                        val scrollY = (targetPage - 1) * currentClientHeightValue
+                                        webViewRefForTts?.evaluateJavascript("window.scrollTo(0, $scrollY);", null)
+                                    } else {
+                                        paginatedPagerState.scrollToPage(targetPage - 1)
+                                    }
+                                    isFastScrubbing = false
                                 }
-                                isFastScrubbing = false
+                            } finally {
+                                if (sliderJumpGeneration == scrubGeneration) {
+                                    pendingSliderJumpOrigin = null
+                                }
                             }
                         }
                     },
                     onJumpToPage = { page ->
                         scope.launch {
+                            scrubDebounceJob.value?.cancel()
+                            sliderJumpGeneration += 1
+                            pendingSliderJumpOrigin = null
+                            val currentLocator = currentEpubJumpLocator()
+                            sliderJumpTargetForPage(page)?.let {
+                                recordEpubJump(it, currentLocator)
+                            }
                             if (isNativeVerticalMode) {
                                 sliderCurrentPage = page.toFloat()
                                 requestNativeVerticalProgressScroll(

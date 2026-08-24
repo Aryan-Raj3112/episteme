@@ -288,6 +288,29 @@ data class SharedPdfJumpHistory(
         ).bounded()
     }
 
+    /**
+     * Refreshes the entry at the cursor with the position the reader is actually showing.
+     *
+     * Explicit navigation records a destination before the scroll starts, so a manual scroll
+     * after that navigation can leave the cursor entry stale. Updating that entry immediately
+     * before stepping back or forward keeps the history target anchored to the real position
+     * without creating a new history entry.
+     */
+    fun updateCurrentLocation(
+        currentPageIndex: Int,
+        pageCount: Int
+    ): SharedPdfJumpHistory {
+        if (pageCount <= 0 || currentPageIndex !in 0 until pageCount) return this
+
+        val pruned = pruned(pageCount)
+        val currentIndex = pruned.cursor.takeIf { it in pruned.pages.indices } ?: return pruned
+        if (pruned.pages[currentIndex] == currentPageIndex) return pruned
+
+        val nextPages = pruned.pages.toMutableList()
+        nextPages[currentIndex] = currentPageIndex
+        return pruned.copy(pages = nextPages).bounded()
+    }
+
     fun pruned(pageCount: Int): SharedPdfJumpHistory {
         if (pageCount <= 0) return clear()
         val nextPages = pages.toMutableList()

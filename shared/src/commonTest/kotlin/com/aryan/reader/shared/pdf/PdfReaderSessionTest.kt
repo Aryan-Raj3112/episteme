@@ -554,6 +554,36 @@ class PdfReaderSessionTest {
     }
 
     @Test
+    fun `jump history refreshes current page before stepping back`() {
+        val page1 = 0
+        val page20 = 19
+        val page22 = 21
+
+        val refreshed = SharedPdfJumpHistory()
+            .record(currentPageIndex = page1, targetPageIndex = page20, pageCount = 30)
+            .updateCurrentLocation(currentPageIndex = page22, pageCount = 30)
+        val steppedBack = refreshed.stepBack()
+        val steppedForward = steppedBack.stepForward()
+
+        assertEquals(listOf(page1, page22), refreshed.pages)
+        assertEquals(page1, steppedBack.pages[steppedBack.cursor])
+        assertEquals(page22, steppedBack.forwardPage)
+        assertEquals(page22, steppedForward.pages[steppedForward.cursor])
+    }
+
+    @Test
+    fun `jump history ignores invalid current refreshes`() {
+        val history = SharedPdfJumpHistory()
+            .record(currentPageIndex = 0, targetPageIndex = 19, pageCount = 30)
+
+        assertEquals(
+            history,
+            history.updateCurrentLocation(currentPageIndex = 30, pageCount = 30)
+        )
+        assertEquals(history, history.updateCurrentLocation(currentPageIndex = 21, pageCount = 0))
+    }
+
+    @Test
     fun `jump history replaces reverse adjacent jump like android`() {
         val history = SharedPdfJumpHistory()
             .record(currentPageIndex = 0, targetPageIndex = 4, pageCount = 10)

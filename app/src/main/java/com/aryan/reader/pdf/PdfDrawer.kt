@@ -467,6 +467,7 @@ internal fun PdfNavigationDrawerContent(
     excludeImages: Boolean = false,
     customHighlightColors: Map<PdfHighlightColor, Color>,
     onPageSelected: (Int) -> Unit,
+    onDisplayPageSelected: ((Int) -> Unit)? = null,
     onTabSelected: (String) -> Unit = {},
     onTabClosed: (String) -> Unit = {},
     onNewTabClick: () -> Unit = {},
@@ -899,7 +900,7 @@ internal fun PdfNavigationDrawerContent(
                                                     )
                                                     .clickable {
                                                         onCloseDrawer()
-                                                        onPageSelected(pageIdx)
+                                                        (onDisplayPageSelected ?: onPageSelected)(pageIdx)
                                                     },
                                                 contentAlignment = Alignment.Center
                                             ) {

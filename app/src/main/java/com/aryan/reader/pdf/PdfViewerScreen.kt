@@ -282,11 +282,13 @@ import com.aryan.reader.shared.ReaderTtsReplacementPreferences
 import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.pdf.PdfSpreadLayout
 import com.aryan.reader.shared.pdf.PdfReverseColorMode
+import com.aryan.reader.shared.pdf.PdfNavigationReason
 import com.aryan.reader.shared.pdf.PDF_MAX_ZOOM_SCALE
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationSessionAction
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationSessionState
 import com.aryan.reader.shared.pdf.SharedPdfJumpHistory
 import com.aryan.reader.shared.pdf.reduce
+import com.aryan.reader.shared.pdf.animatesPagination
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.ui.ReaderMinimalSlider
 import com.aryan.reader.shared.ui.SharedPdfRichTextHiddenInput
@@ -984,9 +986,9 @@ private fun PdfViewerScreenContent(
     var isDocumentReady by surfaceState.isDocumentReady
     val detectSpeechBubblesForPage = surfaceState.detectSpeechBubblesForPage
     var jumpHistory by surfaceState.jumpHistory
-    val recordJumpHistory = surfaceState.recordJumpHistory
     val clearJumpHistory = surfaceState.clearJumpHistory
     val navigateToJumpHistoryPage = surfaceState.navigateToJumpHistoryPage
+    val navigateToPdfPage = surfaceState.navigateToPdfPage
     val lifecycleOwner = surfaceState.lifecycleOwner
 
     val sidecarsReadyForCurrentBook = annotationSession.canUseFor(currentBookId)
@@ -2569,24 +2571,9 @@ private fun PdfViewerScreenContent(
 
     val onLinkClickedStable = remember { { url: String -> clickedLinkUrl = url } }
 
-    val onInternalLinkNavStable = remember(displayMode) {
-        { targetPage: Int ->
-            coroutineScope.launch {
-                if (targetPage in 0 until totalPages) {
-                    val current = if (displayMode == DisplayMode.PAGINATION) currentPaginationDisplayPage() else verticalReaderState.currentPage
-
-                    if (current != targetPage) {
-                        recordJumpHistory(current, targetPage)
-                    }
-
-                    if (displayMode == DisplayMode.PAGINATION) {
-                        animatePaginationToDisplayPage(targetPage)
-                    } else {
-                        verticalReaderState.scrollToPage(targetPage)
-                    }
-                }
-            }
-            Unit
+    val onInternalLinkNavStable: (Int) -> Unit = { targetPage ->
+        pdfPageToDisplayPage(targetPage)?.let { targetDisplayPage ->
+            navigateToPdfPage(targetDisplayPage, PdfNavigationReason.INTERNAL_LINK, true)
         }
     }
 
@@ -3882,20 +3869,8 @@ private fun PdfViewerScreenContent(
         (ttsState.isPlaying || ttsState.isLoading || isAutoPagingForTts)
 
     val onInternalLinkNav: (Int) -> Unit = { targetPage ->
-        coroutineScope.launch {
-            if (targetPage in 0 until totalPages) {
-                val current = if (displayMode == DisplayMode.PAGINATION) currentPaginationDisplayPage() else verticalReaderState.currentPage
-
-                if (current != targetPage) {
-                    recordJumpHistory(current, targetPage)
-                }
-
-                if (displayMode == DisplayMode.PAGINATION) {
-                    animatePaginationToDisplayPage(targetPage)
-                } else {
-                    verticalReaderState.scrollToPage(targetPage)
-                }
-            }
+        pdfPageToDisplayPage(targetPage)?.let { targetDisplayPage ->
+            navigateToPdfPage(targetDisplayPage, PdfNavigationReason.INTERNAL_LINK, true)
         }
     }
 
@@ -3920,22 +3895,8 @@ private fun PdfViewerScreenContent(
     fun navigateToPdfSearchResult(result: SearchResult) {
         currentPdfSearchResult = result
         searchHighlightTarget = result
-
-        coroutineScope.launch {
-            val targetPage = result.locationInSource
-            val current = if (displayMode == DisplayMode.PAGINATION) currentPaginationDisplayPage() else verticalReaderState.currentPage
-
-            if (current != targetPage) {
-                recordJumpHistory(current, targetPage)
-            }
-
-            if (displayMode == DisplayMode.PAGINATION) {
-                if (currentPaginationDisplayPage() != targetPage) {
-                    scrollPaginationToDisplayPage(targetPage)
-                }
-            } else {
-                verticalReaderState.scrollToPage(targetPage)
-            }
+        pdfPageToDisplayPage(result.locationInSource)?.let { targetDisplayPage ->
+            navigateToPdfPage(targetDisplayPage, PdfNavigationReason.SEARCH_RESULT, true)
         }
     }
 
@@ -4239,6 +4200,7 @@ private fun PdfViewerScreenOverlays(surfaceState: PdfViewerSurfaceState) {
     val onHighlightDelete = surfaceState.onHighlightDelete
     val onNoteRequested = surfaceState.onNoteRequested
     var bookmarks by surfaceState.bookmarks
+    var virtualPages by surfaceState.virtualPages
     val persistBookmarksNow = surfaceState.persistBookmarksNow
     var globalTextureTransparency by surfaceState.globalTextureTransparency
     var excludeImages by surfaceState.excludeImages
@@ -4307,7 +4269,7 @@ private fun PdfViewerScreenOverlays(surfaceState: PdfViewerSurfaceState) {
     var readerBrightnessSettings by surfaceState.readerBrightnessSettings
     val requestNotificationPermission = surfaceState.requestNotificationPermission
     val startTtsForOverlay = surfaceState.startTtsForOverlay
-    val recordJumpHistory = surfaceState.recordJumpHistory
+    val navigateToPdfPage = surfaceState.navigateToPdfPage
     val onNavigateToPro = surfaceState.onNavigateToPro
     val clipboardManager = surfaceState.clipboardManager
     var screenOrientationMode by surfaceState.screenOrientationMode
@@ -4351,19 +4313,13 @@ private fun PdfViewerScreenOverlays(surfaceState: PdfViewerSurfaceState) {
                     excludeImages = excludeImages,
                     customHighlightColors = customHighlightColors,
                     onPageSelected = { targetPage ->
-                        coroutineScope.launch {
-                            val current = if (displayMode == DisplayMode.PAGINATION) currentPaginationDisplayPage() else verticalReaderState.currentPage
-
-                            if (current != targetPage) {
-                                recordJumpHistory(current, targetPage)
-                            }
-
-                            if (displayMode == DisplayMode.PAGINATION) {
-                                scrollPaginationToDisplayPage(targetPage)
-                            } else {
-                                verticalReaderState.scrollToPage(targetPage)
-                            }
-                        }
+                        val targetDisplayPage = virtualPages.indexOfFirst {
+                            it is VirtualPage.PdfPage && it.pdfIndex == targetPage
+                        }.takeIf { it >= 0 } ?: targetPage
+                        navigateToPdfPage(targetDisplayPage, PdfNavigationReason.TABLE_OF_CONTENTS, true)
+                    },
+                    onDisplayPageSelected = { targetPage ->
+                        navigateToPdfPage(targetPage, PdfNavigationReason.TABLE_OF_CONTENTS, true)
                     },
                     onTabSelected = { tabBookId ->
                         coroutineScope.launch {
@@ -5882,7 +5838,12 @@ private fun PdfViewerDocumentSetup(
     }
 
     fun currentPaginationDisplayPage(): Int {
-        return paginationDisplayPageForPagerPage(pagerState.currentPage)
+        val pagerPage = authoritativePdfPaginationPageIndex(
+            currentPageIndex = pagerState.currentPage,
+            settledPageIndex = pagerState.settledPage,
+            isScrollInProgress = pagerState.isScrollInProgress,
+        ) ?: pagerState.currentPage
+        return paginationDisplayPageForPagerPage(pagerPage)
     }
 
     val currentPage by remember(
@@ -6048,33 +6009,64 @@ private fun PdfViewerDocumentSetup(
     var jumpHistory by remember(currentBookId) { mutableStateOf(SharedPdfJumpHistory()) }
 
     fun pruneJumpHistoryForDocument() {
-        jumpHistory = jumpHistory.pruned(totalPages)
+        jumpHistory = jumpHistory.pruned(totalDisplayPages)
     }
 
     fun recordJumpHistory(currentPageIndex: Int, targetPageIndex: Int) {
-        jumpHistory = jumpHistory.record(currentPageIndex, targetPageIndex, totalPages)
+        jumpHistory = jumpHistory.record(currentPageIndex, targetPageIndex, totalDisplayPages)
     }
 
     fun clearJumpHistory() {
         jumpHistory = SharedPdfJumpHistory()
     }
 
-    fun navigateToJumpHistoryPage(targetPageIndex: Int) {
-        if (targetPageIndex !in 0 until totalPages) {
-            pruneJumpHistoryForDocument()
-            return
+    fun currentPdfDisplayPage(): Int {
+        val lastDisplayPage = (totalDisplayPages - 1).coerceAtLeast(0)
+        val page = if (displayMode == DisplayMode.PAGINATION) {
+            currentPaginationDisplayPage()
+        } else {
+            verticalReaderState.latestCurrentPage()
+        }
+        return page.coerceIn(0, lastDisplayPage)
+    }
+
+    fun navigateToPdfPage(
+        targetPageIndex: Int,
+        reason: PdfNavigationReason,
+        recordHistory: Boolean = true,
+    ) {
+        if (totalDisplayPages <= 0) return
+
+        val targetPage = targetPageIndex.coerceIn(0, totalDisplayPages - 1)
+        if (recordHistory) {
+            val currentPage = currentPdfDisplayPage()
+            if (currentPage != targetPage) {
+                recordJumpHistory(currentPage, targetPage)
+            }
         }
 
         coroutineScope.launch {
             if (displayMode == DisplayMode.PAGINATION) {
-                pagerState.animateScrollToPage(targetPageIndex)
+                if (reason.animatesPagination()) {
+                    animatePaginationToDisplayPage(targetPage)
+                } else {
+                    scrollPaginationToDisplayPage(targetPage)
+                }
             } else {
-                verticalReaderState.scrollToPage(targetPageIndex)
+                verticalReaderState.scrollToPage(targetPage)
             }
         }
     }
 
-    LaunchedEffect(totalPages) {
+    fun navigateToJumpHistoryPage(targetPageIndex: Int) {
+        if (targetPageIndex !in 0 until totalDisplayPages) {
+            pruneJumpHistoryForDocument()
+            return
+        }
+        navigateToPdfPage(targetPageIndex, PdfNavigationReason.JUMP_HISTORY, recordHistory = false)
+    }
+
+    LaunchedEffect(totalDisplayPages) {
         pruneJumpHistoryForDocument()
     }
 
@@ -6252,13 +6244,16 @@ private fun PdfViewerDocumentSetup(
     surfaceState.scrollPaginationToDisplayPage = PdfViewerSuspendPageAction { displayPage -> scrollPaginationToDisplayPage(displayPage) }
     surfaceState.animatePaginationToDisplayPage = PdfViewerSuspendPageAction { displayPage -> animatePaginationToDisplayPage(displayPage) }
     surfaceState.currentPaginationDisplayPage = { currentPaginationDisplayPage() }
+    surfaceState.currentPdfDisplayPage = { currentPdfDisplayPage() }
     surfaceState.currentPage = currentPage
     surfaceState.isDocumentReady = pdfViewerMutableValue({ isDocumentReady }, { isDocumentReady = it })
     surfaceState.detectSpeechBubblesForPage = PdfViewerSpeechBubbleDetector { sourcePageIndex, fallbackBitmap, allowHighQualityFallback -> detectSpeechBubblesForPage(sourcePageIndex, fallbackBitmap, allowHighQualityFallback) }
     surfaceState.jumpHistory = pdfViewerMutableValue({ jumpHistory }, { jumpHistory = it })
-    surfaceState.recordJumpHistory = { currentPageIndex, targetPageIndex -> recordJumpHistory(currentPageIndex, targetPageIndex) }
     surfaceState.clearJumpHistory = { clearJumpHistory() }
     surfaceState.navigateToJumpHistoryPage = { value -> navigateToJumpHistoryPage(value) }
+    surfaceState.navigateToPdfPage = { value, reason, recordHistory ->
+        navigateToPdfPage(value, reason, recordHistory)
+    }
     surfaceState.lifecycleOwner = lifecycleOwner
 }
 
@@ -6556,9 +6551,11 @@ private class PdfViewerSurfaceState {
     lateinit var scrollPaginationToDisplayPage: PdfViewerSuspendPageAction
     lateinit var animatePaginationToDisplayPage: PdfViewerSuspendPageAction
     lateinit var currentPaginationDisplayPage: () -> Int
+    lateinit var currentPdfDisplayPage: () -> Int
     lateinit var detectSpeechBubblesForPage: PdfViewerSpeechBubbleDetector
     lateinit var clearJumpHistory: () -> Unit
     lateinit var navigateToJumpHistoryPage: (Int) -> Unit
+    lateinit var navigateToPdfPage: (Int, PdfNavigationReason, Boolean) -> Unit
     lateinit var isAnnotationHit: (PdfAnnotation, PdfPoint, PdfPoint?, Float, Float) -> Boolean
     lateinit var navigateToPdfSearchResult: (SearchResult) -> Unit
     lateinit var showBanner: PdfViewerBanner
@@ -6586,7 +6583,6 @@ private class PdfViewerSurfaceState {
     lateinit var readerBrightnessSettings: PdfViewerMutableValue<com.aryan.reader.ReaderBrightnessSettings>
     lateinit var requestNotificationPermission: () -> Unit
     lateinit var startTtsForOverlay: () -> Unit
-    lateinit var recordJumpHistory: (Int, Int) -> Unit
     lateinit var onNavigateToPro: () -> Unit
     lateinit var clipboardManager: androidx.compose.ui.platform.ClipboardManager
     var paneInitialPage: Int? = null
@@ -7659,10 +7655,11 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
         var isOcrScanning by surfaceState.isOcrScanning
         var smartSearchResult by surfaceState.smartSearchResult
         var currentPdfSearchResult by surfaceState.currentPdfSearchResult
-        val scrollPaginationToDisplayPage = surfaceState.scrollPaginationToDisplayPage
         val currentPaginationDisplayPage = surfaceState.currentPaginationDisplayPage
+        val currentPdfDisplayPage = surfaceState.currentPdfDisplayPage
         val clearJumpHistory = surfaceState.clearJumpHistory
         val navigateToJumpHistoryPage = surfaceState.navigateToJumpHistoryPage
+        val navigateToPdfPage = surfaceState.navigateToPdfPage
         val navigateToPdfSearchResult = surfaceState.navigateToPdfSearchResult
         val showBanner = surfaceState.showBanner
     val boxMaxWidthFloat = constraints.maxWidth.toFloat()
@@ -7684,23 +7681,12 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
     val pdfSliderMaxPage = (totalDisplayPages - 1).coerceAtLeast(0)
     val pdfSliderCurrentPage = sliderCurrentPage.roundToInt().coerceIn(0, pdfSliderMaxPage)
 
-    suspend fun scrollPdfSliderToPage(pageIndex: Int) {
-        val targetPage = pageIndex.coerceIn(0, pdfSliderMaxPage)
-        if (displayMode == DisplayMode.PAGINATION) {
-            scrollPaginationToDisplayPage(targetPage)
-        } else {
-            verticalReaderState.scrollToPage(targetPage)
-        }
-    }
-
     fun jumpPdfSliderToPage(pageIndex: Int) {
         val targetPage = pageIndex.coerceIn(0, pdfSliderMaxPage)
         scrubDebounceJob.value?.cancel()
         sliderCurrentPage = targetPage.toFloat()
         isFastScrubbing = false
-        coroutineScope.launch {
-            scrollPdfSliderToPage(targetPage)
-        }
+        navigateToPdfPage(targetPage, PdfNavigationReason.PAGE_SLIDER, true)
     }
 
     fun scrubPdfSliderToPage(newValue: Float) {
@@ -7711,7 +7697,7 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
             delay(200)
             if (isActive) {
                 val targetPage = newValue.roundToInt().coerceIn(0, pdfSliderMaxPage)
-                scrollPdfSliderToPage(targetPage)
+                navigateToPdfPage(targetPage, PdfNavigationReason.PAGE_SLIDER, true)
                 sliderCurrentPage = targetPage.toFloat()
                 isFastScrubbing = false
             }
@@ -8349,14 +8335,32 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
         backPage = jumpBackPage,
         forwardPage = jumpForwardPage,
         onBack = {
-            jumpBackPage?.let { target ->
-                jumpHistory = jumpHistory.stepBack()
+            val refreshedHistory = jumpHistory.updateCurrentLocation(
+                currentPageIndex = currentPdfDisplayPage(),
+                pageCount = totalDisplayPages,
+            )
+            val target = refreshedHistory.backPage
+            jumpHistory = if (target != null) {
+                refreshedHistory.stepBack()
+            } else {
+                refreshedHistory
+            }
+            if (target != null) {
                 navigateToJumpHistoryPage(target)
             }
         },
         onForward = {
-            jumpForwardPage?.let { target ->
-                jumpHistory = jumpHistory.stepForward()
+            val refreshedHistory = jumpHistory.updateCurrentLocation(
+                currentPageIndex = currentPdfDisplayPage(),
+                pageCount = totalDisplayPages,
+            )
+            val target = refreshedHistory.forwardPage
+            jumpHistory = if (target != null) {
+                refreshedHistory.stepForward()
+            } else {
+                refreshedHistory
+            }
+            if (target != null) {
                 navigateToJumpHistoryPage(target)
             }
         },

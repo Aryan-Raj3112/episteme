@@ -50,6 +50,29 @@ data class ReaderJumpHistory(
         ).bounded()
     }
 
+    /**
+     * Refreshes the entry at the cursor with the position the reader is actually showing.
+     *
+     * Explicit navigation records a destination before the scroll starts, so a manual scroll
+     * after that navigation can leave the cursor entry stale. Updating that entry immediately
+     * before stepping back or forward keeps the history target anchored to the real locator
+     * without creating a new history entry.
+     */
+    fun updateCurrentLocation(
+        currentLocator: ReaderLocator?,
+        chapterCount: Int
+    ): ReaderJumpHistory {
+        val current = currentLocator?.takeIf { it.isValidJumpLocator(chapterCount) } ?: return this
+
+        val pruned = pruned(chapterCount)
+        val currentIndex = pruned.cursor.takeIf { it in pruned.locators.indices } ?: return pruned
+        if (pruned.locators[currentIndex] == current) return pruned
+
+        val nextLocators = pruned.locators.toMutableList()
+        nextLocators[currentIndex] = current
+        return pruned.copy(locators = nextLocators).bounded()
+    }
+
     fun pruned(chapterCount: Int): ReaderJumpHistory {
         if (chapterCount <= 0) return clear()
         val nextLocators = locators.toMutableList()
