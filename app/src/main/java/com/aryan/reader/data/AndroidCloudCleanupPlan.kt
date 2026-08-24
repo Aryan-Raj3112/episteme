@@ -17,6 +17,7 @@ internal object AndroidCloudCleanupPlan {
         "pdf_text_boxes",
         "pdf_highlights",
         "textboxes",
+        "derived",
     )
 
     val generatedFilesDirPrefixes: Set<String> = setOf(

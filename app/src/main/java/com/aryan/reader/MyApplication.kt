@@ -30,6 +30,7 @@ import com.aryan.reader.shared.ui.installSharedAndroidMobileEpubTtsFactory
 import com.aryan.reader.shared.ui.installSharedAndroidPdfOcrAdapter
 import com.aryan.reader.tts.SharedMobileEpubTtsAdapter
 import com.aryan.reader.pdf.SharedMobilePdfOcrAdapter
+import com.aryan.reader.data.AndroidBackupRestoreCoordinator
 import timber.log.Timber // Add this
 
 class MyApplication : Application(), ImageLoaderFactory {
@@ -39,6 +40,7 @@ class MyApplication : Application(), ImageLoaderFactory {
             SharedAndroidMobileEpubTtsFactory(::SharedMobileEpubTtsAdapter)
         )
         installSharedAndroidPdfOcrAdapter(SharedMobilePdfOcrAdapter)
+        AndroidBackupRestoreCoordinator.start(this)
         if (BuildConfig.DEBUG) {
             Timber.plant(Timber.DebugTree())
             WebView.setWebContentsDebuggingEnabled(true)

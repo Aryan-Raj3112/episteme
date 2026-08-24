@@ -1,9 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!--
-    API 26-27 fallback. This is intentionally a conservative common policy:
-    private book/audio originals are added only by the API 28+ variant with a
-    deviceToDeviceTransfer flag. Android 12+ uses data_extraction_rules.xml.
--->
+<!-- API 28-30: same common policy, plus originals for device-to-device copy. -->
 <full-backup-content>
     <include domain="sharedpref" path="reader_prefs.xml" />
     <include domain="sharedpref" path="epub_reader_settings.xml" />
@@ -21,17 +17,16 @@
     <include domain="file" path="pdf_highlights" />
     <include domain="file" path="custom_fonts" />
     <include domain="file" path="reader_textures" />
+    <include domain="file" path="books" requireFlags="deviceToDeviceTransfer" />
+    <include domain="file" path="audiobooks" requireFlags="deviceToDeviceTransfer" />
+    <include domain="file" path="metadata_backups" requireFlags="deviceToDeviceTransfer" />
 
-    <!-- Credentials, mixed device state, generated data, and SDK state. -->
     <exclude domain="sharedpref" path="ai_byok_prefs.xml" />
     <exclude domain="sharedpref" path="reader_opds_prefs.xml" />
     <exclude domain="sharedpref" path="reader_user_prefs.xml" />
     <exclude domain="database" path="book_cache_database" />
     <exclude domain="database" path="pdf_text_cache_db" />
     <exclude domain="database" path="androidx.work.workdb" />
-    <exclude domain="file" path="books" />
-    <exclude domain="file" path="audiobooks" />
-    <exclude domain="file" path="metadata_backups" />
     <exclude domain="file" path="cover_cache" />
     <exclude domain="file" path="TTS_Cache" />
     <exclude domain="file" path="derived" />

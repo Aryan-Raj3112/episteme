@@ -93,6 +93,12 @@ interface RecentFileDao {
     @Query("UPDATE recent_files SET isAvailable = 1, uriString = :uriString, timestamp = :timestamp, lastModifiedTimestamp = :timestamp WHERE bookId = :bookId")
     suspend fun updateBookAvailability(bookId: String, uriString: String, timestamp: Long)
 
+    @Query("UPDATE recent_files SET uriString = :uriString, isAvailable = 1, lastModifiedTimestamp = :timestamp WHERE bookId = :bookId")
+    suspend fun updateBookUri(bookId: String, uriString: String, timestamp: Long)
+
+    @Query("UPDATE recent_files SET isAvailable = 0 WHERE bookId = :bookId AND isAvailable = 1")
+    suspend fun markUnavailable(bookId: String): Int
+
     @Query("UPDATE recent_files SET isRecent = 0, lastModifiedTimestamp = :timestamp WHERE bookId IN (:bookIds)")
     suspend fun markAsNotRecent(bookIds: List<String>, timestamp: Long)
 

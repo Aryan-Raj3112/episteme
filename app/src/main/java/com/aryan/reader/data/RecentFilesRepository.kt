@@ -143,7 +143,7 @@ class RecentFilesRepository(private val context: Context) :
         pdfHighlightRepository.clearAll()
 
         // Keep the cache directory available for the next import.
-        listOf("books", "custom_fonts", "audiobooks", COVER_CACHE_DIR).forEach { directoryName ->
+        listOf("books", "custom_fonts", "audiobooks", COVER_CACHE_DIR, "derived").forEach { directoryName ->
             File(context.filesDir, directoryName).mkdirs()
         }
         Timber.d("Cleared all local book data, sidecars, and cover cache.")

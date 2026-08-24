@@ -10,6 +10,7 @@ class AndroidCloudCleanupPlanTest {
         assertTrue(AndroidCloudCleanupPlan.shouldDeleteFilesDirEntry("books", isDirectory = true))
         assertTrue(AndroidCloudCleanupPlan.shouldDeleteFilesDirEntry("custom_fonts", isDirectory = true))
         assertTrue(AndroidCloudCleanupPlan.shouldDeleteFilesDirEntry("audiobooks", isDirectory = true))
+        assertTrue(AndroidCloudCleanupPlan.shouldDeleteFilesDirEntry("derived", isDirectory = true))
         assertTrue(AndroidCloudCleanupPlan.shouldDeleteFilesDirEntry("book-1_reflow.html", isDirectory = false))
         assertTrue(AndroidCloudCleanupPlan.shouldDeleteCacheEntry("imported_file_book-1", isDirectory = true))
         assertTrue(AndroidCloudCleanupPlan.shouldDeleteCacheEntry("reflow_cache", isDirectory = true))

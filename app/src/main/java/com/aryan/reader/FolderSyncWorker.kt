@@ -32,6 +32,7 @@ import androidx.work.WorkerParameters
 import androidx.work.WorkManager
 import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.data.RecentFilesRepository
+import com.aryan.reader.data.AndroidBookArtifactPaths
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -409,10 +410,9 @@ class FolderSyncWorker(
             val (remoteTs, jsonPayload) = sidecarData
 
             val safeSlashBookId = book.bookId.replace("/", "_")
-            val safeRichTextBookId = book.bookId.replace("[^a-zA-Z0-9._-]".toRegex(), "_")
             val localFiles = listOf(
                 File(appContext.filesDir, "annotations/annotation_$safeSlashBookId.json"),
-                File(appContext.filesDir, "rich_doc_${safeRichTextBookId}.json"),
+                AndroidBookArtifactPaths.richTextFile(appContext.filesDir, book.bookId),
                 File(appContext.filesDir, "page_layouts/layout_$safeSlashBookId.json"),
                 File(appContext.filesDir, "textboxes/textboxes_$safeSlashBookId.json"),
                 File(appContext.filesDir, "pdf_highlights/highlights_$safeSlashBookId.json")
