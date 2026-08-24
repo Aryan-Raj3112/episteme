@@ -4035,7 +4035,7 @@ private fun PdfViewerScreenContent(
     }
 
     bindPdfViewerSurfaceChunk {
-        surfaceState.activeTheme = activeTheme
+        surfaceState.activeTheme.value = activeTheme
         surfaceState.pdfSliderChromeVisible = pdfSliderChromeVisible
         surfaceState.ownsPaneGlobals = ownsPaneGlobals
         surfaceState.drawerState = drawerState
@@ -4162,7 +4162,7 @@ private fun PdfViewerScreenContent(
 
 @Composable
 private fun PdfViewerScreenOverlays(surfaceState: PdfViewerSurfaceState) {
-    val activeTheme = surfaceState.activeTheme
+    val activeTheme = surfaceState.activeTheme.value
     val ownsPaneGlobals = surfaceState.ownsPaneGlobals
     val drawerState = surfaceState.drawerState
     val ttsState = surfaceState.ttsState
@@ -6299,7 +6299,13 @@ private class PdfViewerSurfaceState {
     var density: androidx.compose.runtime.MutableState<androidx.compose.ui.unit.Density> =
         mutableStateOf(androidx.compose.ui.unit.Density(1f))
     lateinit var searchState: ReaderSearchState
-    lateinit var activeTheme: ReaderTheme
+    /**
+     * The document surface is kept behind a stable bridge, so this value must be observable.
+     * A plain field here lets the parent bind a new theme without invalidating already composed
+     * vertical or paginated PDF pages; those pages then appear to update only after another input
+     * causes an unrelated recomposition.
+     */
+    val activeTheme = mutableStateOf(PdfBuiltInThemes[0])
     var pdfSliderChromeVisible: Boolean = false
     lateinit var pdfSpreadSettings: ReaderSettings
     var ownsPaneGlobals: Boolean = false
@@ -6702,7 +6708,7 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
     val selectedTool = surfaceState.selectedTool.value
     val density = surfaceState.density.value
     val searchState = surfaceState.searchState
-    val activeTheme = surfaceState.activeTheme
+    val activeTheme = surfaceState.activeTheme.value
     val pdfSpreadSettings = surfaceState.pdfSpreadSettings
     val isTtsPlayingOrLoading = surfaceState.isTtsPlayingOrLoading
     val totalDisplayPages = surfaceState.totalDisplayPages
@@ -7523,7 +7529,7 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
         val richTextController = surfaceState.richTextController
         val density = surfaceState.density.value
         val searchState = surfaceState.searchState
-        val activeTheme = surfaceState.activeTheme
+        val activeTheme = surfaceState.activeTheme.value
         val pdfSliderChromeVisible = surfaceState.pdfSliderChromeVisible
         val pdfSpreadSettings = surfaceState.pdfSpreadSettings
         val ownsPaneGlobals = surfaceState.ownsPaneGlobals
@@ -9420,7 +9426,7 @@ private fun PdfViewerPaginationPage(
     val selectedTool = surfaceState.selectedTool.value
     val density = surfaceState.density.value
     val searchState = surfaceState.searchState
-    val activeTheme = surfaceState.activeTheme
+    val activeTheme = surfaceState.activeTheme.value
     val pdfSpreadSettings = surfaceState.pdfSpreadSettings
     val totalDisplayPages = surfaceState.totalDisplayPages
     val pagerState = surfaceState.pagerState
