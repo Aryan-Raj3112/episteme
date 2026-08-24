@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
@@ -193,6 +194,8 @@ import com.aryan.reader.shared.ui.SharedAnnotationExportFormatDialog
 import com.aryan.reader.shared.ui.SharedCustomFontsScreen
 import com.aryan.reader.shared.ui.SharedHelpFeedbackScreen
 import com.aryan.reader.shared.ui.SharedMobileAppDrawerContent
+import com.aryan.reader.shared.ui.MobileAccountLegalDisclosure
+import com.aryan.reader.shared.ui.MobileAccountPresentation
 import com.aryan.reader.shared.ui.SharedMobileEpubReaderScreen
 import com.aryan.reader.shared.ui.SharedMobileReaderTtsSettingsSheet
 import com.aryan.reader.shared.ui.SharedMobilePdfReaderHost
@@ -861,6 +864,7 @@ class ReaderIosBridge internal constructor(
 
     fun updateLocalStoreKitState(
         available: Boolean,
+        entitlementsLoaded: Boolean,
         proUnlocked: Boolean,
         credits: Int,
         proPrice: String?,
@@ -871,6 +875,7 @@ class ReaderIosBridge internal constructor(
     ) {
         localStoreKitState = IosLocalStoreKitState(
             available = available,
+            entitlementsLoaded = entitlementsLoaded,
             proUnlocked = proUnlocked,
             credits = credits.coerceAtLeast(0),
             proPrice = proPrice,
@@ -1065,6 +1070,7 @@ class ReaderIosBridge internal constructor(
         uid: String?,
         displayName: String?,
         email: String?,
+        photoUrl: String? = null,
         appleLinked: Boolean,
         googleLinked: Boolean,
         googleDriveAuthorized: Boolean,
@@ -1075,6 +1081,7 @@ class ReaderIosBridge internal constructor(
             uid = uid,
             displayName = displayName,
             email = email,
+            photoUrl = photoUrl,
             providers = buildSet {
                 if (appleLinked) add(AccountAuthProvider.APPLE)
                 if (googleLinked) add(AccountAuthProvider.GOOGLE)
@@ -1106,6 +1113,7 @@ internal object IosStoreKitProductIds {
 
 internal data class IosLocalStoreKitState(
     val available: Boolean = false,
+    val entitlementsLoaded: Boolean = false,
     val proUnlocked: Boolean = false,
     val credits: Int = 0,
     val proPrice: String? = null,
@@ -1117,6 +1125,7 @@ internal data class IosAccountState(
     val uid: String? = null,
     val displayName: String? = null,
     val email: String? = null,
+    val photoUrl: String? = null,
     val providers: Set<AccountAuthProvider> = emptySet(),
     val googleDriveAuthorized: Boolean = false,
     val status: String? = null,
@@ -2195,27 +2204,40 @@ private fun ReaderIosApp(
     }
     LaunchedEffect(bridge.localStoreKitState) {
         val store = bridge.localStoreKitState
-        if (store.available && (state.isProUser != store.proUnlocked || state.credits != store.credits)) {
+        // Product catalog loading is independent from durable account grants.
+        // Keep server-projected Pro/credits visible even when StoreKit prices
+        // are unavailable or still loading.
+        if (store.entitlementsLoaded && (state.isProUser != store.proUnlocked || state.credits != store.credits)) {
             state = state.copy(isProUser = store.proUnlocked, credits = store.credits)
         }
     }
     LaunchedEffect(bridge.accountState) {
         val account = bridge.accountState
-        state = state.copy(
-            currentUser = account.uid?.let {
-                UserData(
-                    uid = it,
+        val previousUid = state.currentUser?.uid
+        state = if (account.uid == null) {
+            state.copy(
+                currentUser = null,
+                isProUser = false,
+                credits = 0,
+                isSyncEnabled = if (account.hasLoaded) false else state.isSyncEnabled,
+            )
+        } else {
+            state.copy(
+                currentUser = UserData(
+                    uid = account.uid,
                     displayName = account.displayName,
-                    photoUrl = null,
+                    photoUrl = account.photoUrl,
                     email = account.email,
-                )
-            },
-            isSyncEnabled = if (account.hasLoaded) {
-                state.isSyncEnabled && account.canSync
-            } else {
-                state.isSyncEnabled
-            },
-        )
+                ),
+                isProUser = if (previousUid != account.uid) false else state.isProUser,
+                credits = if (previousUid != account.uid) 0 else state.credits,
+                isSyncEnabled = if (account.hasLoaded) {
+                    state.isSyncEnabled && account.canSync
+                } else {
+                    state.isSyncEnabled
+                },
+            )
+        }
     }
     var selectedPage by remember {
         mutableStateOf(
@@ -4355,14 +4377,48 @@ private fun ReaderIosApp(
                 drawerState = drawerState,
                 drawerContent = {
                     SharedMobileAppDrawerContent(
-                        currentUser = state.currentUser,
-                        isProUser = state.isProUser,
-                        // StoreKit catalog availability is transient service state, not
-                        // an edition signal. Keep edition unknown until the host exposes
-                        // a real build-time capability.
-                        edition = null,
+                        account = MobileAccountPresentation(
+                            currentUser = state.currentUser,
+                            providers = bridge.accountState.providers,
+                            supportedSignInProviders = setOf(
+                                AccountAuthProvider.APPLE,
+                                AccountAuthProvider.GOOGLE,
+                            ),
+                            isProUser = state.isProUser,
+                            credits = state.credits,
+                            // StoreKit catalog availability is transient service state,
+                            // not an edition signal. Keep edition unknown until the
+                            // host exposes a real build-time capability.
+                            edition = null,
+                            signInLabel = readerString(
+                                "account_sign_in",
+                                "Sign in with Apple or Google",
+                            ),
+                            signedOutDescription = readerString(
+                                "drawer_signed_out_desc",
+                                "Sync account, Pro features, and credits.",
+                            ),
+                            legalDisclosure = if (state.currentUser == null) {
+                                MobileAccountLegalDisclosure(
+                                    text = readerString(
+                                        "legal_agreement_full",
+                                        "%1\$s you agree to our %2\$s and acknowledge you have read our %3\$s.",
+                                        readerString(
+                                            "account_drawer_by_signing_in",
+                                            "By signing in with Apple or Google,",
+                                        ),
+                                        readerString("legal_terms_of_service", "Terms of Service"),
+                                        readerString("legal_privacy_policy", "Privacy Policy"),
+                                    ),
+                                    termsLabel = readerString("legal_terms_of_service", "Terms of Service"),
+                                    privacyLabel = readerString("legal_privacy_policy", "Privacy Policy"),
+                                )
+                            } else {
+                                null
+                            },
+                        ),
+                        accountAvatar = { user, modifier -> IosAccountAvatar(user, modifier) },
                         drawerCapabilities = appDrawerCapabilities,
-                        credits = state.credits,
                         isSyncEnabled = state.isSyncEnabled,
                         isFolderSyncEnabled = state.isFolderSyncEnabled,
                         onSignInClick = { runDrawerAction { utilityScreen = IosUtilityScreen.ACCOUNT } },
@@ -4989,6 +5045,9 @@ private fun ReaderIosApp(
                                 onOpenAppTheme = { showAppThemePanel = true },
                                 onOpenFonts = { utilityScreen = IosUtilityScreen.FONTS },
                                 onOpenAccountDrawer = { scope.launch { drawerState.open() } },
+                                accountAvatar = {
+                                    IosAccountAvatar(state.currentUser, Modifier.size(32.dp))
+                                },
                                 onSortOrderChange = { sortOrder ->
                                     state = state.reduce(LibraryAction.SortChanged(sortOrder))
                                 },

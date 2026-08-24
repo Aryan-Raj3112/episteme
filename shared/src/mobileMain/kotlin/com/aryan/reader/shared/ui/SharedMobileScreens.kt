@@ -1,6 +1,7 @@
 package com.aryan.reader.shared.ui
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -41,14 +42,23 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import com.aryan.reader.shared.UserData
 
 @Composable
 fun SharedMobileAppDrawerContent(
-    currentUser: UserData?,
-    isProUser: Boolean,
-    credits: Int,
+    account: MobileAccountPresentation = MobileAccountPresentation(),
+    accountAvatar: @Composable (UserData, Modifier) -> Unit = { _, modifier ->
+        Icon(
+            imageVector = Icons.Default.AccountCircle,
+            contentDescription = readerString("content_desc_profile", "Profile"),
+            modifier = modifier,
+            tint = MaterialTheme.colorScheme.primary,
+        )
+    },
     isSyncEnabled: Boolean,
     isFolderSyncEnabled: Boolean,
     onSignInClick: () -> Unit,
@@ -64,7 +74,6 @@ fun SharedMobileAppDrawerContent(
     onPrivacyPolicyClick: () -> Unit,
     onTermsClick: () -> Unit,
     onLicensesClick: () -> Unit,
-    edition: MobileAppEdition? = null,
     drawerCapabilities: MobileAppDrawerCapabilities = MobileAppDrawerCapabilities.GLOBAL,
     onAboutClick: (() -> Unit)? = null,
     onSupportProjectClick: (() -> Unit)? = null,
@@ -72,6 +81,10 @@ fun SharedMobileAppDrawerContent(
 ) {
     ModalDrawerSheet(modifier = modifier) {
         Column(modifier = Modifier.fillMaxSize()) {
+            val currentUser = account.currentUser
+            val isProUser = account.isProUser
+            val credits = account.credits
+            val edition = account.edition
             if (currentUser != null) {
                 Column(
                     modifier = Modifier
@@ -80,12 +93,7 @@ fun SharedMobileAppDrawerContent(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.AccountCircle,
-                        contentDescription = readerString("content_desc_profile", "Profile"),
-                        modifier = Modifier.size(80.dp),
-                        tint = MaterialTheme.colorScheme.primary
-                    )
+                    accountAvatar(currentUser, Modifier.size(80.dp))
                     Text(
                         text = currentUser.displayName
                             ?: currentUser.email
@@ -126,13 +134,18 @@ fun SharedMobileAppDrawerContent(
                 Spacer(Modifier.height(8.dp))
                 NavigationDrawerItem(
                     icon = { Icon(Icons.Default.AccountCircle, contentDescription = null) },
-                    label = { Text(readerString("drawer_sign_in", "Sign in with Google")) },
+                    label = {
+                        Text(
+                            account.signInLabel
+                                ?: mobileAccountSignInLabel(account.supportedSignInProviders)
+                        )
+                    },
                     selected = false,
                     onClick = onSignInClick,
                     modifier = Modifier.padding(horizontal = 12.dp).testTag("MobileDrawerSignIn")
                 )
                 Text(
-                    text = if (edition == MobileAppEdition.STANDARD) {
+                    text = account.signedOutDescription ?: if (edition == MobileAppEdition.STANDARD) {
                         readerString(
                             "drawer_signed_out_standard_desc",
                             "Sync account and app settings.",
@@ -147,6 +160,59 @@ fun SharedMobileAppDrawerContent(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 28.dp, vertical = 10.dp)
                 )
+                account.legalDisclosure?.let { disclosure ->
+                    val annotatedDisclosure = buildAnnotatedString {
+                        append(disclosure.text)
+                        disclosure.termsLabel
+                            ?.takeIf(String::isNotEmpty)
+                            ?.let { label ->
+                                val start = disclosure.text.indexOf(label)
+                                if (start >= 0) {
+                                    addStringAnnotation("terms", label, start, start + label.length)
+                                    addStyle(
+                                        SpanStyle(
+                                            color = MaterialTheme.colorScheme.primary,
+                                            textDecoration = TextDecoration.Underline,
+                                        ),
+                                        start,
+                                        start + label.length,
+                                    )
+                                }
+                            }
+                        disclosure.privacyLabel
+                            ?.takeIf(String::isNotEmpty)
+                            ?.let { label ->
+                                val start = disclosure.text.indexOf(label)
+                                if (start >= 0) {
+                                    addStringAnnotation("privacy", label, start, start + label.length)
+                                    addStyle(
+                                        SpanStyle(
+                                            color = MaterialTheme.colorScheme.primary,
+                                            textDecoration = TextDecoration.Underline,
+                                        ),
+                                        start,
+                                        start + label.length,
+                                    )
+                                }
+                            }
+                    }
+                    @Suppress("DEPRECATION")
+                    ClickableText(
+                        text = annotatedDisclosure,
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        ),
+                        modifier = Modifier.padding(horizontal = 28.dp, vertical = 2.dp),
+                        onClick = { offset ->
+                            when {
+                                annotatedDisclosure.getStringAnnotations("terms", offset, offset).isNotEmpty() ->
+                                    onTermsClick()
+                                annotatedDisclosure.getStringAnnotations("privacy", offset, offset).isNotEmpty() ->
+                                    onPrivacyPolicyClick()
+                            }
+                        },
+                    )
+                }
             }
 
             HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))

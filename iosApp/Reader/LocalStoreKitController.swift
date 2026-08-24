@@ -44,6 +44,9 @@ final class LocalStoreKitController: ObservableObject {
     private var localTestingCredits = 0
     private var localTestingClaimedTransactions = Set<UInt64>()
     private var status: String?
+    /// Durable account grants are independent from the StoreKit product catalog.
+    /// Keep this separate so a catalog outage cannot clear a valid account state.
+    private var serverEntitlementsLoaded = false
 #if canImport(FirebaseAuth)
     private var authStateHandle: AuthStateDidChangeListenerHandle?
 #endif
@@ -243,7 +246,11 @@ final class LocalStoreKitController: ObservableObject {
     private func refreshServerEntitlements() async {
 #if canImport(FirebaseFirestore) && canImport(FirebaseAuth)
         guard let uid = Auth.auth().currentUser?.uid else {
-            isProUnlocked = false; serverCredits = 0; publish(); return
+            isProUnlocked = false
+            serverCredits = 0
+            serverEntitlementsLoaded = true
+            publish()
+            return
         }
         do {
             let snapshot = try await Firestore.firestore().collection("users").document(uid).getDocument()
@@ -253,11 +260,14 @@ final class LocalStoreKitController: ObservableObject {
                 || (sources["appStoreLifetime"] as? String) == "active"
                 || (sources["googlePlayLifetime"] as? String) == "active"
             serverCredits = max((data["credits"] as? NSNumber)?.intValue ?? 0, 0)
+            serverEntitlementsLoaded = true
         } catch {
             status = "Could not refresh account entitlements."
         }
 #else
-        isProUnlocked = false; serverCredits = 0
+        isProUnlocked = false
+        serverCredits = 0
+        serverEntitlementsLoaded = true
 #endif
         publish()
     }
@@ -272,6 +282,12 @@ final class LocalStoreKitController: ObservableObject {
         authStateHandle = Auth.auth().addStateDidChangeListener { [weak self] _, _ in
             Task { @MainActor in
                 guard let self else { return }
+                // Do not project the previous Firebase account while the new
+                // account's durable grants are being fetched.
+                self.serverEntitlementsLoaded = false
+                self.isProUnlocked = false
+                self.serverCredits = 0
+                self.publish()
                 await self.reconcileUnfinishedTransactions()
                 await self.refreshServerEntitlements()
             }
@@ -339,6 +355,7 @@ final class LocalStoreKitController: ObservableObject {
     private func publish() {
         bridge?.updateLocalStoreKitState(
             available: !products.isEmpty,
+            entitlementsLoaded: serverEntitlementsLoaded,
             proUnlocked: isProUnlocked || localTestingProUnlocked,
             credits: Int32(clamping: serverCredits + localTestingCredits),
             proPrice: products[ProductID.pro]?.displayPrice,
