@@ -806,6 +806,7 @@ fun SharedMobileHomeScreen(
     actions: SharedMobileHomeActions,
     importedCoverPath: String? = null,
     showTopBar: Boolean = true,
+    homeOverflowCapabilities: SharedMobileHomeOverflowCapabilities = SharedMobileHomeOverflowCapabilities(),
     modifier: Modifier = Modifier
 ) {
     val selectedIds = state.selectedBookIds
@@ -882,6 +883,11 @@ fun SharedMobileHomeScreen(
                         onStrictFilterToggle = actions::toggleStrictFileFilter,
                         onPdfFileNameToggle = actions::togglePdfFileNameDisplay,
                         onLanguageClick = actions::openLanguage,
+                        hideReaderAi = state.hideReaderAi,
+                        homeOverflowCapabilities = homeOverflowCapabilities,
+                        onToggleReaderAi = actions::toggleReaderAi,
+                        onClearReflowCache = actions::clearReflowCache,
+                        onExportLogs = actions::exportLogs,
                     )
                 }
             }
@@ -2487,8 +2493,104 @@ private fun SharedMobileHomeTopBar(
     onStrictFilterToggle: () -> Unit,
     onPdfFileNameToggle: () -> Unit,
     onLanguageClick: () -> Unit,
+    hideReaderAi: Boolean,
+    homeOverflowCapabilities: SharedMobileHomeOverflowCapabilities,
+    onToggleReaderAi: () -> Unit,
+    onClearReflowCache: () -> Unit,
+    onExportLogs: () -> Unit,
 ) {
     var showOptionsMenu by remember { mutableStateOf(false) }
+    val overflowItems = sharedMobileHomeOverflowItems(
+        state = SharedMobileHomeOverflowState(
+            tabsEnabled = isTabsEnabled,
+            screenCaptureProtectionEnabled = false,
+            strictFileFilterEnabled = useStrictFileFilter,
+            usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName,
+            hideReaderAi = hideReaderAi,
+        ),
+        capabilities = homeOverflowCapabilities,
+    )
+
+    @Composable
+    fun itemLabel(action: SharedMobileHomeOverflowAction): String = when (action) {
+        SharedMobileHomeOverflowAction.ABOUT -> readerString("about_title", "About")
+        SharedMobileHomeOverflowAction.TABS_TOGGLE -> readerString(
+            "options_enable_multi_tab_reading",
+            "Enable multi-tab reading",
+        )
+        SharedMobileHomeOverflowAction.SCREEN_CAPTURE_PROTECTION -> readerString(
+            "options_screen_capture_protection",
+            "Screen capture protection",
+        )
+        SharedMobileHomeOverflowAction.EXTERNAL_FILE_BEHAVIOR -> readerString(
+            "options_external_file_behavior",
+            "External file behavior",
+        )
+        SharedMobileHomeOverflowAction.STRICT_FILE_FILTER -> readerString(
+            "options_use_strict_file_filter",
+            "Use strict file filter",
+        )
+        SharedMobileHomeOverflowAction.PDF_FILENAME_DISPLAY_NAME -> readerString(
+            "options_use_pdf_filename_display_name",
+            "Use PDF filename as display name",
+        )
+        SharedMobileHomeOverflowAction.LANGUAGE -> readerString("options_language", "Language")
+        SharedMobileHomeOverflowAction.TOGGLE_READER_AI -> if (hideReaderAi) {
+            readerString("options_show_ai_in_reader", "Show AI in reader")
+        } else {
+            readerString("options_hide_ai_in_reader", "Hide AI in reader")
+        }
+        SharedMobileHomeOverflowAction.CLEAR_BOOK_CACHE -> readerString(
+            "options_clear_book_cache",
+            "Clear book cache",
+        )
+        SharedMobileHomeOverflowAction.CLEAR_REFLOW_CACHE -> readerString(
+            "options_clear_reflow_cache",
+            "Clear reflow cache",
+        )
+        SharedMobileHomeOverflowAction.TEST_PANEL_DETECTION -> readerString(
+            "options_test_panel_ml_detection",
+            "Test panel detection",
+        )
+        SharedMobileHomeOverflowAction.TEST_SPEECH_BUBBLE_DETECTION -> readerString(
+            "options_test_speech_bubble_ml_detection",
+            "Test speech bubble detection",
+        )
+        SharedMobileHomeOverflowAction.EXPORT_LOGS -> readerString(
+            "options_export_logs_last_lines",
+            "Export Logs (Last 5000 lines)",
+            5000,
+        )
+        SharedMobileHomeOverflowAction.DEVICE_MANAGEMENT -> readerString(
+            "debug_show_device_management",
+            "Device management",
+        )
+        SharedMobileHomeOverflowAction.CLEAR_CLOUD_LOCAL_DATA -> readerString(
+            "debug_clear_cloud_local_data",
+            "Clear cloud and local data",
+        )
+    }
+
+    fun onItemClick(action: SharedMobileHomeOverflowAction) {
+        when (action) {
+            SharedMobileHomeOverflowAction.ABOUT -> onAboutClick()
+            SharedMobileHomeOverflowAction.TABS_TOGGLE -> onTabsToggle()
+            SharedMobileHomeOverflowAction.SCREEN_CAPTURE_PROTECTION -> Unit
+            SharedMobileHomeOverflowAction.EXTERNAL_FILE_BEHAVIOR -> onExternalFileBehaviorClick()
+            SharedMobileHomeOverflowAction.STRICT_FILE_FILTER -> onStrictFilterToggle()
+            SharedMobileHomeOverflowAction.PDF_FILENAME_DISPLAY_NAME -> onPdfFileNameToggle()
+            SharedMobileHomeOverflowAction.LANGUAGE -> onLanguageClick()
+            SharedMobileHomeOverflowAction.TOGGLE_READER_AI -> onToggleReaderAi()
+            SharedMobileHomeOverflowAction.CLEAR_BOOK_CACHE -> Unit
+            SharedMobileHomeOverflowAction.CLEAR_REFLOW_CACHE -> onClearReflowCache()
+            SharedMobileHomeOverflowAction.TEST_PANEL_DETECTION -> Unit
+            SharedMobileHomeOverflowAction.TEST_SPEECH_BUBBLE_DETECTION -> Unit
+            SharedMobileHomeOverflowAction.EXPORT_LOGS -> onExportLogs()
+            SharedMobileHomeOverflowAction.DEVICE_MANAGEMENT -> Unit
+            SharedMobileHomeOverflowAction.CLEAR_CLOUD_LOCAL_DATA -> Unit
+        }
+    }
+
     CenterAlignedTopAppBar(
         title = {},
         navigationIcon = {
@@ -2517,56 +2619,19 @@ private fun SharedMobileHomeTopBar(
                     expanded = showOptionsMenu,
                     onDismissRequest = { showOptionsMenu = false },
                 ) {
-                    SharedMobileHomeOption(
-                        label = readerString("about_title", "About"),
-                        onClick = {
-                            showOptionsMenu = false
-                            onAboutClick()
-                        },
-                    )
-                    HorizontalDivider()
-                    SharedMobileHomeOption(
-                        label = readerString("options_enable_multi_tab_reading", "Enable multi-tab reading"),
-                        checked = isTabsEnabled,
-                        onClick = {
-                            showOptionsMenu = false
-                            onTabsToggle()
-                        },
-                    )
-                    SharedMobileHomeOption(
-                        label = readerString("options_external_file_behavior", "External file behavior"),
-                        onClick = {
-                            showOptionsMenu = false
-                            onExternalFileBehaviorClick()
-                        },
-                    )
-                    SharedMobileHomeOption(
-                        label = readerString("options_use_strict_file_filter", "Use strict file filter"),
-                        checked = useStrictFileFilter,
-                        onClick = {
-                            showOptionsMenu = false
-                            onStrictFilterToggle()
-                        },
-                    )
-                    SharedMobileHomeOption(
-                        label = readerString(
-                            "options_use_pdf_filename_display_name",
-                            "Use PDF filename as display name",
-                        ),
-                        checked = usePdfFileNameAsDisplayName,
-                        onClick = {
-                            showOptionsMenu = false
-                            onPdfFileNameToggle()
-                        },
-                    )
-                    HorizontalDivider()
-                    SharedMobileHomeOption(
-                        label = readerString("options_language", "Language"),
-                        onClick = {
-                            showOptionsMenu = false
-                            onLanguageClick()
-                        },
-                    )
+                    overflowItems.forEachIndexed { index, item ->
+                        if (index > 0 && overflowItems[index - 1].section != item.section) {
+                            HorizontalDivider()
+                        }
+                        SharedMobileHomeOption(
+                            label = itemLabel(item.action),
+                            checked = item.checked,
+                            onClick = {
+                                showOptionsMenu = false
+                                onItemClick(item.action)
+                            },
+                        )
+                    }
                 }
             }
         }

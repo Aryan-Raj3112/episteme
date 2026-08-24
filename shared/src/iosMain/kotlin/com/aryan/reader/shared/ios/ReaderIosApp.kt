@@ -192,6 +192,7 @@ import com.aryan.reader.shared.ui.IosSharedMobileCloudTts
 import com.aryan.reader.shared.ui.sharedAnnotationExportFormatOptions
 import com.aryan.reader.shared.ui.SharedMobileHomeScreen
 import com.aryan.reader.shared.ui.SharedMobileHomeActions
+import com.aryan.reader.shared.ui.SharedMobileHomeOverflowCapabilities
 import com.aryan.reader.shared.ui.SharedMobileLibraryScreen
 import com.aryan.reader.shared.ui.SharedMobileUnifiedLibraryScreen
 import com.aryan.reader.shared.ui.MobileAppDrawerCapabilities
@@ -4365,8 +4366,24 @@ private fun ReaderIosApp(
                                             usePdfFileNameAsDisplayName = !state.usePdfFileNameAsDisplayName
                                         )
                                     }
+                                    override fun toggleReaderAi() {
+                                        state = state.copy(hideReaderAi = !state.hideReaderAi)
+                                    }
+                                    override fun clearReflowCache() {
+                                        showClearReflowCacheConfirmation = true
+                                    }
+                                    override fun exportLogs() {
+                                        if (!bridge.exportDiagnosticLogs()) {
+                                            showMessage("Unable to export diagnostic logs")
+                                        }
+                                    }
                                 },
                                 importedCoverPath = bridge.importedCoverPath,
+                                homeOverflowCapabilities = SharedMobileHomeOverflowCapabilities(
+                                    readerAi = true,
+                                    clearReflowCache = true,
+                                    exportLogs = true,
+                                ),
                                 modifier = Modifier.fillMaxSize()
                             )
 
