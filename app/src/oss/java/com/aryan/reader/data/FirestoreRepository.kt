@@ -112,6 +112,9 @@ class FirestoreRepository {
     suspend fun deleteFontMetadata(userId: String, fontId: String) {}
 
     suspend fun syncBookMetadata(userId: String, book: BookMetadata, originDeviceId: String) {}
+    suspend fun syncBookMetadataForDeletion(userId: String, book: BookMetadata, originDeviceId: String) {
+        error("Firestore is unavailable in the OSS build")
+    }
     suspend fun getAllBooks(userId: String): List<BookMetadata> = emptyList()
     suspend fun getBookMetadata(userId: String, bookId: String): BookMetadata? = null
 

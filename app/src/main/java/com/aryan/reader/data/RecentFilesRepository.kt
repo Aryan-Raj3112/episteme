@@ -108,23 +108,43 @@ class RecentFilesRepository(private val context: Context) :
     }
 
     override suspend fun clearAllLocalData() = withContext(Dispatchers.IO) {
-        recentFileDao.clearAll()
-        if (coverCacheDir.exists()) {
-            coverCacheDir.deleteRecursively()
+        // Keep the database cleanup together so a successful remote clear
+        // cannot leave orphaned library metadata behind.
+        database.withTransaction {
+            recentFileDao.clearAll()
+            database.customFontDao().clearAll()
+            database.audiobookDao().clearAll()
+            database.bookTtsListeningProgressDao().clearAll()
+            database.shelfDao().clearAllBookShelfCrossRefs()
+            database.shelfDao().clearAll()
+            database.tagDao().clearAllBookTagCrossRefs()
+            database.tagDao().clearAll()
+            database.pendingFolderAnnotationExportDao().clearAll()
         }
-        coverCacheDir.mkdirs()
-        pdfHighlightRepository.clearAll()
 
-        File(context.filesDir, "annotations").deleteRecursively()
-        File(context.filesDir, "pdf_rich_text").deleteRecursively()
-        File(context.filesDir, "page_layouts").deleteRecursively()
-        File(context.filesDir, "pdf_text_boxes").deleteRecursively()
-
-        context.cacheDir.listFiles()?.forEach { file ->
-            val name = file.name
-            if (name.startsWith("imported_file_") || name.startsWith("temp_") || name.startsWith("sync_bundle_")) {
+        // These paths are private app-owned storage. In particular, do not
+        // enumerate or delete arbitrary URI-backed files selected by users.
+        context.filesDir.listFiles()?.forEach { file ->
+            if (AndroidCloudCleanupPlan.shouldDeleteFilesDirEntry(file.name, file.isDirectory)) {
                 if (file.isDirectory) file.deleteRecursively() else file.delete()
             }
+        }
+        context.cacheDir.listFiles()?.forEach { file ->
+            if (AndroidCloudCleanupPlan.shouldDeleteCacheEntry(file.name, file.isDirectory)) {
+                if (file.isDirectory) file.deleteRecursively() else file.delete()
+            }
+        }
+
+        // Room-backed caches are separate databases and are not covered by
+        // the AppDatabase transaction above.
+        bookCacheDao.clearAllCache()
+        pdfTextRepository.clearAllText()
+        pdfTextBoxRepository.clearAll()
+        pdfHighlightRepository.clearAll()
+
+        // Keep the cache directory available for the next import.
+        listOf("books", "custom_fonts", "audiobooks", COVER_CACHE_DIR).forEach { directoryName ->
+            File(context.filesDir, directoryName).mkdirs()
         }
         Timber.d("Cleared all local book data, sidecars, and cover cache.")
     }

@@ -48,6 +48,9 @@ interface CustomFontDao {
     @Query("DELETE FROM custom_fonts WHERE id = :id")
     suspend fun deletePermanently(id: String)
 
+    @Query("DELETE FROM custom_fonts")
+    suspend fun clearAll()
+
     @Query("SELECT * FROM custom_fonts WHERE fileName = :fileName LIMIT 1")
     suspend fun getFontByFileName(fileName: String): CustomFontEntity?
 }

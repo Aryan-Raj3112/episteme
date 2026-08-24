@@ -56,8 +56,10 @@ import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import com.aryan.reader.data.BookMetadata
 import com.aryan.reader.data.BookMetadataEdit
+import com.aryan.reader.data.AndroidCloudBookDeleteOutbox
 import com.aryan.reader.data.CloudflareRepository
 import com.aryan.reader.data.AppDatabase
+import com.aryan.reader.data.DriveFile
 import com.aryan.reader.data.CustomFontEntity
 import com.aryan.reader.data.FeedbackRepository
 import com.aryan.reader.data.FirestoreRepository
@@ -66,6 +68,7 @@ import com.aryan.reader.data.FontsRepository
 import com.aryan.reader.data.GoogleDriveRepository
 import com.aryan.reader.data.LocalSyncUtils
 import com.aryan.reader.data.PurchaseEntity
+import com.aryan.reader.data.PERSISTED_URI_GRANT_FLAGS
 import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.data.RecentFilesRepository
 import com.aryan.reader.data.RemoteConfigRepository
@@ -73,6 +76,7 @@ import com.aryan.reader.data.ShelfMetadata
 import com.aryan.reader.data.TagEntity
 import com.aryan.reader.data.effectiveAnnotationModifiedTimestamp
 import com.aryan.reader.data.effectiveReadingPositionModifiedTimestamp
+import com.aryan.reader.data.executeRemoteFirstLocalDelete
 import com.aryan.reader.data.getUri
 import com.aryan.reader.data.toBookMetadata
 import com.aryan.reader.data.toRecentFileItem
@@ -114,6 +118,10 @@ import com.aryan.reader.pptx.PptxCoverGenerator
 import com.aryan.reader.shared.AnnotationExportDocument
 import com.aryan.reader.shared.AnnotationExportFormat
 import com.aryan.reader.shared.AnnotationExportFormatter
+import com.aryan.reader.shared.CloudBookTombstone
+import com.aryan.reader.shared.CloudMaintenanceCoordinator
+import com.aryan.reader.shared.CloudMaintenanceIntent
+import com.aryan.reader.shared.CloudMaintenanceResult
 import com.aryan.reader.shared.EpubAnnotationSerializer
 import com.aryan.reader.shared.SharedFileCapabilities
 import com.aryan.reader.shared.SharedLibraryEditor
@@ -236,6 +244,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
     private val prefs: SharedPreferences =
         application.getSharedPreferences("reader_user_prefs", Context.MODE_PRIVATE)
+    private val cloudBookDeleteOutbox = AndroidCloudBookDeleteOutbox(prefs)
     private val restoredPdfSplitWorkspace = PdfSplitWorkspaceJson.decodeOrEmpty(
         prefs.getString(KEY_PDF_SPLIT_WORKSPACE, null),
     )
@@ -2289,6 +2298,91 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    /**
+     * Completes one durable cloud-delete intent. Local rows/files are retained
+     * until the tombstone and all remote payloads are confirmed deleted.
+     */
+    private suspend fun executePendingCloudBookDelete(
+        tombstone: CloudBookTombstone,
+        accessToken: String,
+        userId: String,
+        deviceId: String,
+        remoteFilesByName: Map<String, DriveFile>,
+    ) {
+        val item = bookStore.getFileByBookId(tombstone.bookId)
+        val metadata = (item?.toBookMetadata() ?: BookMetadata(
+            bookId = tombstone.bookId,
+            type = tombstone.type.orEmpty(),
+        )).copy(
+            isDeleted = true,
+            lastModifiedTimestamp = maxOf(
+                tombstone.deletedAt,
+                item?.lastModifiedTimestamp ?: 0L,
+                System.currentTimeMillis(),
+            ),
+        )
+        executeRemoteFirstLocalDelete(
+            local = item,
+            deleteRemote = {
+                val contentFileName = item?.let { sharedCloudBookContentFileName(it.bookId, it.type) }
+                    ?: tombstone.type?.let { typeName ->
+                        runCatching { FileType.valueOf(typeName) }.getOrNull()?.let { type ->
+                            sharedCloudBookContentFileName(tombstone.bookId, type)
+                        }
+                    }
+                contentFileName?.let { remoteFilesByName[it]?.id }?.let { fileId ->
+                    googleDriveRepository.deleteDriveFileOrThrow(accessToken, fileId)
+                }
+                remoteFilesByName[cloudPdfAnnotationDriveFileName(tombstone.bookId)]?.id?.let { fileId ->
+                    googleDriveRepository.deleteDriveFileOrThrow(accessToken, fileId)
+                }
+
+                // Publish the Firestore tombstone last. If a Drive deletion
+                // fails, no remote tombstone exists for a later sync pass to
+                // consume while this local row is still pending.
+                firestoreRepository.syncBookMetadataForDeletion(userId, metadata, deviceId)
+            },
+            markDeleted = { localItem ->
+                bookStore.markAsDeleted(listOf(localItem.bookId))
+            },
+            finalizeLocal = { localItem ->
+                cleanupBookDataLocally(localItem.bookId)
+                bookStore.deleteFilePermanently(listOf(localItem.bookId))
+            },
+        )
+        cloudBookDeleteOutbox.remove(listOf(tombstone.bookId))
+    }
+
+    private suspend fun retryPendingCloudBookDeletes(
+        accessToken: String,
+        userId: String,
+    ) {
+        val pending = cloudBookDeleteOutbox.pending()
+        if (pending.isEmpty()) return
+        val remoteFiles = googleDriveRepository.getFiles(accessToken)?.files
+            ?: throw IllegalStateException("Unable to list Drive files for pending deletion")
+        val remoteFilesByName = remoteFiles.associateBy(DriveFile::name)
+        val deviceId = getInstallationId()
+        val failures = mutableListOf<Exception>()
+        pending.forEach { tombstone ->
+            try {
+                executePendingCloudBookDelete(
+                    tombstone = tombstone,
+                    accessToken = accessToken,
+                    userId = userId,
+                    deviceId = deviceId,
+                    remoteFilesByName = remoteFilesByName,
+                )
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                failures += error
+                Timber.e(error, "Cloud book delete is pending retry: ${tombstone.bookId}")
+            }
+        }
+        failures.firstOrNull()?.let { throw it }
+    }
+
     private fun getInstallationId(): String {
         var installationId = prefs.getString(KEY_INSTALLATION_ID, null)
         if (installationId == null) {
@@ -3911,7 +4005,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 filesToRemove.forEach { cleanupBookDataLocally(it.bookId) }
                 try {
                     appContext.contentResolver.releasePersistableUriPermission(
-                        folder.uriString.toUri(), Intent.FLAG_GRANT_READ_URI_PERMISSION
+                        folder.uriString.toUri(), PERSISTED_URI_GRANT_FLAGS
                     )
                 } catch (_: Exception) {
                 }
@@ -4014,34 +4108,32 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
         viewModelScope.launch {
             try {
-                // Clear local data
-                bookArtifactStore.clearAllLocalData()
-                clearBookCache()
-                pdfTextRepository.clearAllText()
-                pdfTextBoxRepository.clearAll()
-
-                // Clear cloud data
                 val accessToken = googleDriveRepository.getAccessToken(appContext)
-
-                val success = if (accessToken != null) {
-                    googleDriveRepository.deleteAllFiles(accessToken)
-                } else {
-                    false
-                }
-
+                    ?: throw IllegalStateException("Missing Drive access token")
                 val currentUser = uiState.value.currentUser
-                if (currentUser != null) {
-                    firestoreRepository.deleteAllUserFirestoreData(currentUser.uid)
-                }
+                    ?: throw IllegalStateException("Missing signed-in user")
+                val result = CloudMaintenanceCoordinator(
+                    deleteDrive = {
+                        googleDriveRepository.deleteAllFiles(accessToken)
+                    },
+                    deleteFirestore = {
+                        firestoreRepository.deleteAllUserFirestoreData(currentUser.uid)
+                    },
+                    clearLocal = {
+                        bookArtifactStore.clearAllLocalData()
+                        cloudBookDeleteOutbox.clear()
+                        prefs.edit { remove(KEY_LAST_SYNC_TIMESTAMP) }
+                    },
+                ).clearAll(CloudMaintenanceIntent(currentUser.uid))
 
-                if (success) {
+                if (result is CloudMaintenanceResult.Succeeded) {
                     _internalState.update {
                         it.copy(
                             isLoading = false, bannerMessage = BannerMessage(appContext.getString(R.string.banner_cloud_local_data_cleared))
                         )
                     }
-                } else {
-                    throw Exception("Failed to clear cloud data.")
+                } else if (result is CloudMaintenanceResult.Failed) {
+                    throw result.error
                 }
             } catch (e: Exception) {
                 Timber.e(e, "Failed to delete all cloud and local user data.")
@@ -4326,6 +4418,27 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         try {
             val accessToken = googleDriveRepository.getAccessToken(appContext) ?: run {
                 logCloudSyncTrace { "android.full_sync.skip reason=no_access_token user=${currentUser.uid}" }
+                return@launch
+            }
+
+            try {
+                retryPendingCloudBookDeletes(accessToken, currentUser.uid)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                // The durable outbox remains intact; a later sync retries it.
+                Timber.w(error, "Pending cloud book deletion could not be completed")
+                if (showBanner) {
+                    _internalState.update {
+                        it.copy(
+                            isLoading = false,
+                            errorMessage = appContext.getString(R.string.error_sync_library_failed),
+                        )
+                    }
+                }
+                // Do not merge remote metadata in this pass. A pending
+                // delete must remain the only destructive operation until it
+                // is fully confirmed on a subsequent retry.
                 return@launch
             }
 
@@ -7174,6 +7287,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     )
 
                 val (folderBooks, managedBooks) = itemsToRemove.partition { it.sourceFolderUri != null }
+                var managedDeletionSucceeded = true
 
                 withContext(Dispatchers.IO) {
                     if (folderBooks.isNotEmpty()) {
@@ -7230,7 +7344,15 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     if (managedBooks.isNotEmpty()) {
                         val currentUser = uiState.value.currentUser
 
-                        if (canSync && currentUser != null) {
+                        if (canSync && currentUser == null) {
+                            managedDeletionSucceeded = false
+                            _internalState.update {
+                                it.copy(
+                                    isLoading = false,
+                                    errorMessage = appContext.getString(R.string.error_clear_all_data),
+                                )
+                            }
+                        } else if (canSync && currentUser != null) {
                             _internalState.update {
                                 it.copy(
                                     isLoading = true,
@@ -7242,40 +7364,31 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                                     googleDriveRepository.getAccessToken(appContext) ?: throw Exception(
                                         "No token"
                                     )
-                                val deviceId = getInstallationId()
-
-                                val remoteFiles = googleDriveRepository.getFiles(accessToken)?.files.orEmpty()
-                                    .associateBy { it.name }
-
-                                for (item in managedBooks) {
-                                    if (item.isManualOnlyReaderFile()) {
+                                val cloudItems = managedBooks.filterNot(RecentFileItem::isManualOnlyReaderFile)
+                                val localOnlyItems = managedBooks.filter(RecentFileItem::isManualOnlyReaderFile)
+                                if (localOnlyItems.isNotEmpty()) {
+                                    localOnlyItems.forEach { item ->
                                         cleanupBookDataLocally(item.bookId)
                                         bookStore.deleteFilePermanently(listOf(item.bookId))
-                                        continue
                                     }
-
-                                    bookStore.markAsDeleted(listOf(item.bookId))
-                                    cleanupBookDataLocally(item.bookId)
-
-                                    firestoreRepository.syncBookMetadata(
-                                        currentUser.uid,
-                                        item.toBookMetadata().copy(isDeleted = true),
-                                        deviceId
+                                }
+                                if (cloudItems.isNotEmpty()) {
+                                    // Persist before touching the local row. A
+                                    // crash or network failure leaves these
+                                    // shared tombstones available for retry.
+                                    cloudBookDeleteOutbox.enqueue(
+                                        cloudItems.map { item ->
+                                            CloudBookTombstone(
+                                                bookId = item.bookId,
+                                                type = item.type.name,
+                                                deletedAt = System.currentTimeMillis(),
+                                            )
+                                        },
                                     )
-
-                                    sharedCloudBookContentFileName(item.bookId, item.type)
-                                        ?.let { fileName ->
-                                            remoteFiles[fileName]?.id?.let { fileId ->
-                                                Timber.d("Deleting from Drive: $fileName")
-                                                googleDriveRepository.deleteDriveFile(accessToken, fileId)
-                                            }
-                                        }
-                                    remoteFiles[cloudPdfAnnotationDriveFileName(item.bookId)]?.id?.let { fileId ->
-                                        Timber.d("Deleting annotation bundle from Drive: ${item.bookId}")
-                                        googleDriveRepository.deleteDriveFile(accessToken, fileId)
-                                    }
-
-                                    bookStore.deleteFilePermanently(listOf(item.bookId))
+                                    retryPendingCloudBookDeletes(
+                                        accessToken = accessToken,
+                                        userId = currentUser.uid,
+                                    )
                                 }
 
                                 _internalState.update {
@@ -7286,14 +7399,11 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                                 }
                             } catch (e: Exception) {
                                 Timber.e(e, "Error during permanent deletion")
-                                bookStore.deleteFilePermanently(managedBooks.map { it.bookId })
-                                managedBooks.forEach { item ->
-                                    cleanupBookDataLocally(item.bookId)
-                                }
+                                managedDeletionSucceeded = false
                                 _internalState.update {
                                     it.copy(
                                         isLoading = false,
-                                        errorMessage = appContext.getString(R.string.error_cloud_sync_failed_deleted_locally)
+                                        errorMessage = appContext.getString(R.string.error_clear_all_data)
                                     )
                                 }
                             }
@@ -7306,12 +7416,14 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     }
                 }
 
-                val totalRemoved = folderBooks.size + managedBooks.size
-                _internalState.update {
-                    it.copy(
-                        isLoading = false,
-                        bannerMessage = BannerMessage(appContext.resources.getQuantityString(R.plurals.banner_books_removed_library, totalRemoved, totalRemoved))
-                    )
+                if (managedDeletionSucceeded) {
+                    val totalRemoved = folderBooks.size + managedBooks.size
+                    _internalState.update {
+                        it.copy(
+                            isLoading = false,
+                            bannerMessage = BannerMessage(appContext.resources.getQuantityString(R.plurals.banner_books_removed_library, totalRemoved, totalRemoved))
+                        )
+                    }
                 }
             }
         } else {

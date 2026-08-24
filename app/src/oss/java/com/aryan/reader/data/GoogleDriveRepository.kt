@@ -67,6 +67,12 @@ class GoogleDriveRepository {
         return false
     }
 
+    suspend fun deleteDriveFileOrThrow(accessToken: String, fileId: String) {
+        check(deleteDriveFile(accessToken, fileId)) {
+            "Drive is unavailable in the OSS build"
+        }
+    }
+
     fun getSignInIntent(context: Context): Intent {
         return Intent()
     }
