@@ -306,6 +306,7 @@ fun SharedMobileEpubReaderScreen(
     var showTtsSettingsSheet by remember(book.id) { mutableStateOf(false) }
     var showBookReplacementsSheet by remember(book.id) { mutableStateOf(false) }
     var pendingExternalLink by remember(book.id) { mutableStateOf<String?>(null) }
+    var activeFootnote by remember(book.id) { mutableStateOf<SharedMobileEpubFootnote?>(null) }
     var keepScreenOn by remember(book.id) { mutableStateOf(initialKeepScreenOn) }
     var autoScrollModeActive by remember(book.id) { mutableStateOf(false) }
     var autoScroll by remember(book.id) { mutableStateOf(false) }
@@ -711,6 +712,20 @@ fun SharedMobileEpubReaderScreen(
         }
     }
 
+    fun showFootnoteIfAvailable(
+        href: String,
+        ownerHref: String?,
+        sourceChapterIndex: Int? = null,
+    ): Boolean {
+        val note = loadedBook?.resolveMobileEpubFootnote(
+            rawHref = href,
+            ownerHref = ownerHref,
+            sourceChapterIndex = sourceChapterIndex,
+        ) ?: return false
+        activeFootnote = note
+        return true
+    }
+
     fun navigateChapter(direction: Int) {
         val epub = loadedBook ?: return
         val targetChapterIndex = (currentChapterIndex + direction).coerceIn(0, epub.chapters.lastIndex)
@@ -958,6 +973,15 @@ fun SharedMobileEpubReaderScreen(
         )
     }
 
+    activeFootnote?.let { footnote ->
+        SharedMobileEpubFootnoteSheet(
+            footnote = footnote,
+            settings = settings,
+            onCopyText = { clipboard.setText(AnnotatedString(it)) },
+            onDismiss = { activeFootnote = null },
+        )
+    }
+
     ModalNavigationDrawer(
         drawerState = drawerState,
         gesturesEnabled = drawerState.isOpen,
@@ -1130,11 +1154,13 @@ fun SharedMobileEpubReaderScreen(
                                     }
                                 },
                                 onLinkClicked = { link ->
-                                    if (link.href.isExternalEpubLink()) {
+                                    val sourceChapter = link.chapterIndex ?: currentChapterIndex
+                                    val sourceHref = loadedBook.chapters.getOrNull(sourceChapter)?.baseHref
+                                    if (showFootnoteIfAvailable(link.href, sourceHref, sourceChapter)) {
+                                        Unit
+                                    } else if (link.href.isExternalEpubLink()) {
                                         pendingExternalLink = link.href
                                     } else {
-                                        val sourceChapter = link.chapterIndex ?: currentChapterIndex
-                                        val sourceHref = loadedBook.chapters.getOrNull(sourceChapter)?.baseHref
                                         loadedBook.locatorForLink(link.href, sourceHref, pages)?.let { (locator, fragment) ->
                                             recordJumpAndNavigate(locator, fragment)
                                         }
@@ -1229,11 +1255,13 @@ fun SharedMobileEpubReaderScreen(
                                 }
                             },
                             onLinkClicked = { link ->
-                                if (link.href.isExternalEpubLink()) {
+                                val sourceChapter = link.chapterIndex ?: currentChapterIndex
+                                val sourceHref = loadedBook.chapters.getOrNull(sourceChapter)?.baseHref
+                                if (showFootnoteIfAvailable(link.href, sourceHref, sourceChapter)) {
+                                    Unit
+                                } else if (link.href.isExternalEpubLink()) {
                                     pendingExternalLink = link.href
                                 } else {
-                                    val sourceChapter = link.chapterIndex ?: currentChapterIndex
-                                    val sourceHref = loadedBook.chapters.getOrNull(sourceChapter)?.baseHref
                                     loadedBook.locatorForLink(link.href, sourceHref, pages)?.let { (locator, fragment) ->
                                         recordJumpAndNavigate(locator, fragment)
                                     }
@@ -1380,7 +1408,9 @@ fun SharedMobileEpubReaderScreen(
                                         )
                                     }
                                     "readerLinkClicked" -> payload.sharedMobileEpubLinkOrNull()?.let { link ->
-                                        if (link.href.isExternalEpubLink()) {
+                                        if (showFootnoteIfAvailable(link.href, link.chapterHref)) {
+                                            Unit
+                                        } else if (link.href.isExternalEpubLink()) {
                                             pendingExternalLink = link.href
                                         } else {
                                             loadedBook.locatorForLink(link.href, link.chapterHref, pages)?.let { (locator, fragment) ->
