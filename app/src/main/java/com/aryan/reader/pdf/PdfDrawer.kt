@@ -97,20 +97,15 @@ import com.aryan.reader.shared.filterReaderTocEntries
 import com.aryan.reader.shared.pdf.LegacyPdfPageBookmark
 import com.aryan.reader.shared.pdf.LegacyPdfPageBookmarkCodec
 import com.aryan.reader.shared.pdf.PdfReverseColorMode
+import com.aryan.reader.shared.pdf.PdfDrawerCapabilities
+import com.aryan.reader.shared.pdf.PdfDrawerSection
+import com.aryan.reader.shared.pdf.pdfDrawerSections
 import org.json.JSONArray
 import org.json.JSONObject
 
 internal typealias PdfBookmark = LegacyPdfPageBookmark
 
 internal data class TocEntry(val title: String, val pageIndex: Int, val nestLevel: Int)
-
-private enum class PdfDrawerSection {
-    TABS,
-    CHAPTERS,
-    BOOKMARKS,
-    HIGHLIGHTS,
-    PAGES
-}
 
 private val PdfDrawerSection.titleResId: Int
     get() = when (this) {
@@ -478,15 +473,13 @@ internal fun PdfNavigationDrawerContent(
     onNoteRequested: (String?) -> Unit,
     onCloseDrawer: () -> Unit
 ) {
-    val showTabsPane = isTabsEnabled && openTabs.isNotEmpty()
-    val drawerSections = remember(showTabsPane) {
-        buildList {
-            if (showTabsPane) add(PdfDrawerSection.TABS)
-            add(PdfDrawerSection.CHAPTERS)
-            add(PdfDrawerSection.BOOKMARKS)
-            add(PdfDrawerSection.HIGHLIGHTS)
-            add(PdfDrawerSection.PAGES)
-        }
+    val drawerSections = remember(isTabsEnabled, openTabs.isNotEmpty()) {
+        pdfDrawerSections(
+            PdfDrawerCapabilities(
+                tabsEnabled = isTabsEnabled,
+                hasOpenTabs = openTabs.isNotEmpty(),
+            ),
+        )
     }
     val drawerPagerState = rememberPagerState(pageCount = { drawerSections.size })
     val drawerScope = rememberCoroutineScope()

@@ -175,6 +175,8 @@ import com.aryan.reader.shared.currentTimestamp
 import com.aryan.reader.shared.resolveReaderTheme
 import com.aryan.reader.pdf.shouldShowPdfAnnotationExportChoice
 import com.aryan.reader.shared.pdf.PdfAnnotationKind
+import com.aryan.reader.shared.pdf.PdfDrawerCapabilities
+import com.aryan.reader.shared.pdf.PdfDrawerSection
 import com.aryan.reader.shared.pdf.PdfInkTool
 import com.aryan.reader.shared.pdf.PdfReverseColorMode
 import com.aryan.reader.shared.pdf.PdfTtsSessionPlanner
@@ -185,6 +187,7 @@ import com.aryan.reader.shared.pdf.PdfPageBounds
 import com.aryan.reader.shared.pdf.PdfPagePoint
 import com.aryan.reader.shared.pdf.initialSharedPdfReaderState
 import com.aryan.reader.shared.pdf.PdfNavigationReason
+import com.aryan.reader.shared.pdf.pdfDrawerSections
 import com.aryan.reader.shared.pdf.PdfChromeMotionDurationMillis
 import com.aryan.reader.shared.pdf.animatesPagination
 import com.aryan.reader.shared.pdf.PdfZoomCamera
@@ -3276,13 +3279,12 @@ private fun SharedMobilePdfReaderDrawer(
 ) {
     val scope = rememberCoroutineScope()
     val sections = remember(tabsEnabled, tabs.isNotEmpty()) {
-        buildList {
-            add(SharedMobilePdfDrawerSection.CHAPTERS)
-            add(SharedMobilePdfDrawerSection.PAGES)
-            add(SharedMobilePdfDrawerSection.BOOKMARKS)
-            add(SharedMobilePdfDrawerSection.HIGHLIGHTS)
-            if (tabsEnabled && tabs.isNotEmpty()) add(SharedMobilePdfDrawerSection.TABS)
-        }
+        pdfDrawerSections(
+            PdfDrawerCapabilities(
+                tabsEnabled = tabsEnabled,
+                hasOpenTabs = tabs.isNotEmpty(),
+            ),
+        )
     }
     val pagerState = rememberPagerState(initialPage = 0) { sections.size }
     LaunchedEffect(sections.size) {
@@ -3296,40 +3298,40 @@ private fun SharedMobilePdfReaderDrawer(
                     Tab(
                         selected = pagerState.currentPage == index,
                         onClick = { scope.launch { pagerState.animateScrollToPage(index) } },
-                        text = { Text(section.label) }
+                        text = { Text(readerString(section.stringKey, section.fallbackLabel)) }
                     )
                 }
             }
             HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
                 when (sections.getOrNull(page)) {
-                    SharedMobilePdfDrawerSection.CHAPTERS -> SharedMobilePdfChaptersDrawerPage(
+                    PdfDrawerSection.CHAPTERS -> SharedMobilePdfChaptersDrawerPage(
                         entries = tableOfContents,
                         currentPageIndex = state.currentNearestPdfPageIndex ?: 0,
                         onGoToPage = onGoToPage,
                         modifier = Modifier.fillMaxSize()
                     )
-                    SharedMobilePdfDrawerSection.PAGES -> SharedMobilePdfPagesDrawerPage(
+                    PdfDrawerSection.PAGES -> SharedMobilePdfPagesDrawerPage(
                         book = book,
                         state = state,
                         pdfPassword = pdfPassword,
                         onGoToPage = onGoToDisplayPage,
                         modifier = Modifier.fillMaxSize()
                     )
-                    SharedMobilePdfDrawerSection.BOOKMARKS -> SharedMobilePdfBookmarksDrawerPage(
+                    PdfDrawerSection.BOOKMARKS -> SharedMobilePdfBookmarksDrawerPage(
                         state = state,
                         onGoToPage = onGoToPage,
                         onRenameBookmark = onRenameBookmark,
                         onDeleteBookmark = onDeleteBookmark,
                         modifier = Modifier.fillMaxSize()
                     )
-                    SharedMobilePdfDrawerSection.HIGHLIGHTS -> SharedMobilePdfAnnotationsDrawerPage(
+                    PdfDrawerSection.HIGHLIGHTS -> SharedMobilePdfAnnotationsDrawerPage(
                         state = state,
                         onGoToPage = onGoToPage,
                         onEditNote = onEditNote,
                         onDeleteHighlight = onDeleteHighlight,
                         modifier = Modifier.fillMaxSize()
                     )
-                    SharedMobilePdfDrawerSection.TABS -> SharedMobilePdfTabsDrawerPage(
+                    PdfDrawerSection.TABS -> SharedMobilePdfTabsDrawerPage(
                         tabs = tabs,
                         activeTabBookId = activeTabBookId,
                         isTopTabStripVisible = isTopTabStripVisible,
@@ -3344,14 +3346,6 @@ private fun SharedMobilePdfReaderDrawer(
             }
         }
     }
-}
-
-private enum class SharedMobilePdfDrawerSection(val label: String) {
-    CHAPTERS("Chapters"),
-    PAGES("Pages"),
-    BOOKMARKS("Bookmarks"),
-    HIGHLIGHTS("Highlights"),
-    TABS("Tabs"),
 }
 
 @Composable
