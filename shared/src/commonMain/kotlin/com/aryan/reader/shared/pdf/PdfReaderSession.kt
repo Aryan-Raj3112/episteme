@@ -200,7 +200,12 @@ object SharedPdfReaderStateSerializer {
             store.pageIndex.takeIf { it > 0 } ?: fallbackPageIndex
         }.coerceAtLeast(0)
         val restoredPageCount = store.pageCount.takeIf { it > 0 }
-            ?: maxOf(fallbackPageCount, restoredPageIndex + 1, 1)
+            ?: maxOf(
+                fallbackPageCount,
+                restoredPageIndex + 1,
+                store.bookmarks.maxOfOrNull { it.pageIndex + 1 } ?: 1,
+                1
+            )
         return SharedPdfReaderState(
             pageIndex = restoredPageIndex,
             pageCount = restoredPageCount,
@@ -410,6 +415,7 @@ data class SharedPdfReaderState(
             lockedZoomOffsetX = lockedZoomOffsetX.takeIf { it.isFinite() } ?: 0f,
             lockedZoomOffsetY = lockedZoomOffsetY.takeIf { it.isFinite() } ?: 0f,
             bookmarks = bookmarks.normalizedBookmarks(lastPdfPageIndex),
+            annotations = annotations.map { it.sanitizedSharedPdfTextAnnotation() },
             penPalette = penPalette.sanitizedSharedPdfPenPalette(),
             lastActivePenTool = lastActivePenTool.takeIf { it.isSharedPdfPenTool } ?: PdfInkTool.PEN,
             lastActiveHighlighterTool = lastActiveHighlighterTool.takeIf { it.isSharedPdfHighlighterTool }

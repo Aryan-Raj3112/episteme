@@ -97,6 +97,8 @@ import com.aryan.reader.shared.filterReaderTocEntries
 import com.aryan.reader.shared.pdf.LegacyPdfPageBookmark
 import com.aryan.reader.shared.pdf.LegacyPdfPageBookmarkCodec
 import com.aryan.reader.shared.pdf.PdfReverseColorMode
+import org.json.JSONArray
+import org.json.JSONObject
 
 internal typealias PdfBookmark = LegacyPdfPageBookmark
 
@@ -158,6 +160,22 @@ internal fun flattenToc(bookmarks: List<Bookmark>, level: Int = 0): List<TocEntr
 
 internal fun loadPdfBookmarksFromJson(bookmarksJson: String?): Set<PdfBookmark> {
     return LegacyPdfPageBookmarkCodec.decode(bookmarksJson)
+}
+
+internal fun serializePdfBookmarksToJson(bookmarks: Iterable<PdfBookmark>): String {
+    val array = JSONArray()
+    bookmarks
+        .sortedWith(compareBy<PdfBookmark> { it.pageIndex }.thenBy { it.title }.thenBy { it.totalPages })
+        .forEach { bookmark ->
+            array.put(
+                JSONObject().apply {
+                    put("pageIndex", bookmark.pageIndex)
+                    put("title", bookmark.title)
+                    put("totalPages", bookmark.totalPages)
+                }
+            )
+        }
+    return array.toString()
 }
 
 @Composable

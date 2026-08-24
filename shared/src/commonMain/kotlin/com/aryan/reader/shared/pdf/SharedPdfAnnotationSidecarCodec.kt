@@ -197,7 +197,7 @@ object SharedPdfAnnotationSidecarCodec {
             addAll(data[KEY_LEGACY_INK].parseLegacyAndroidInk())
             addAll(data[KEY_LEGACY_TEXT_BOXES].parseLegacyAndroidTextBoxes())
             addAll(data[KEY_LEGACY_HIGHLIGHTS].parseLegacyAndroidHighlights())
-        }
+        }.map { it.sanitizedSharedPdfTextAnnotation() }
     }
 
     private fun JsonElement?.parseLegacyAndroidInk(): List<SharedPdfAnnotation> {
@@ -553,7 +553,7 @@ object SharedPdfAnnotationSidecarCodec {
             top = minOf(top, bottom),
             right = maxOf(left, right),
             bottom = maxOf(top, bottom)
-        )
+        ).sanitizedForSharedPdf(allowEmpty = true)
     }
 
     private fun PdfPageBounds.toJsonObject(): JsonObject {

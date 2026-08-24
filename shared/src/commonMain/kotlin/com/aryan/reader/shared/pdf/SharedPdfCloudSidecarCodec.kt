@@ -175,8 +175,19 @@ object SharedPdfCloudSidecarCodec {
             remote = remotePayload,
             preferRemoteOnConflict = preferRemoteOnConflict
         )
-        val selectedState = if (useRemoteState) remotePayload?.readerState else localPayload?.readerState
-            ?: if (useRemoteState) localPayload?.readerState else remotePayload?.readerState
+        // A legacy state object can decode successfully while omitting the
+        // bookmarks field (which kotlinx.serialization then defaults to an
+        // empty list). Keep the other side's bookmarks in that case; an
+        // explicitly encoded empty list still represents an intentional clear.
+        val selectedIsRemote = when {
+            useRemoteState && remotePayload?.readerState != null -> true
+            !useRemoteState && localPayload?.readerState != null -> false
+            remotePayload?.readerState != null -> true
+            else -> false
+        }
+        val selectedState = if (selectedIsRemote) remotePayload?.readerState else localPayload?.readerState
+        val fallbackState = if (selectedIsRemote) localPayload?.readerState else remotePayload?.readerState
+        val selectedRoot = if (selectedIsRemote) remoteRoot else localRoot
 
         if (selectedState != null) {
             val hasAnnotationPayload = JsonObject(mergedRoot).hasAnnotationPayload()
@@ -187,8 +198,17 @@ object SharedPdfCloudSidecarCodec {
             }
             val mergedRichText = richTextDocumentJson(JsonObject(mergedRoot))
                 ?: selectedState.richTextDocumentJson
+            val mergedBookmarks = if (
+                !selectedRoot.hasReaderStateBookmarksField() &&
+                !fallbackState?.bookmarks.isNullOrEmpty()
+            ) {
+                fallbackState?.bookmarks.orEmpty()
+            } else {
+                selectedState.bookmarks
+            }
             mergedRoot[KEY_READER_STATE] = stateElement(
                 selectedState.copy(
+                    bookmarks = mergedBookmarks,
                     annotations = mergedAnnotationsList,
                     richTextDocumentJson = mergedRichText
                 )
@@ -295,6 +315,16 @@ object SharedPdfCloudSidecarCodec {
 
     private fun parseElementOrNull(raw: String): JsonElement? {
         return runCatching { json.parseToJsonElement(raw) }.getOrNull()
+    }
+
+    private fun JsonObject.hasReaderStateBookmarksField(): Boolean {
+        val stateElement = this[KEY_READER_STATE] ?: return false
+        val stateObject = if (stateElement is JsonPrimitive) {
+            stateElement.contentOrNull?.let(::parseElementOrNull)
+        } else {
+            stateElement
+        }
+        return (stateObject as? JsonObject)?.containsKey("bookmarks") == true
     }
 
     private fun encodeObject(element: JsonElement): String =

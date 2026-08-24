@@ -435,8 +435,12 @@ object SharedPdfAnnotationSerializer {
         if (raw.isBlank()) return emptyList()
         return runCatching {
             json.decodeFromString<SharedPdfAnnotationStore>(raw).annotations
+                .map { it.sanitizedSharedPdfTextAnnotation() }
         }.getOrElse {
-            runCatching { json.decodeFromString<List<SharedPdfAnnotation>>(raw) }.getOrDefault(emptyList())
+            runCatching {
+                json.decodeFromString<List<SharedPdfAnnotation>>(raw)
+                    .map { it.sanitizedSharedPdfTextAnnotation() }
+            }.getOrDefault(emptyList())
         }
     }
 }

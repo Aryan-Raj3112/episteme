@@ -100,6 +100,29 @@ class SharedPdfTextAnnotationsTest {
     }
 
     @Test
+    fun `legacy text box values migrate and clamp at the shared decode boundary`() {
+        val decoded = SharedPdfLegacyTextBoxCodec.decode(
+            """[{"id":"legacy","pageIndex":0,"text":"note","color":-16777216,"backgroundColor":0,"fontSize":16,"bounds":{"left":-1,"top":2,"right":2,"bottom":-1}}]"""
+        )
+
+        assertEquals(1, decoded.size)
+        assertEquals(0.032f, decoded.single().fontSize, 0.0001f)
+        assertEquals(PdfPageBounds(0f, 0f, 1f, 1f), decoded.single().bounds)
+    }
+
+    @Test
+    fun `non finite and oversized text sizes use a bounded shared value`() {
+        assertEquals(
+            0.032f,
+            SharedPdfTextAnnotationDefaults.sanitizePageRelativeFontSize(Float.NaN)
+        )
+        assertEquals(
+            SharedPdfTextAnnotationDefaults.MaxPageRelativeFontSize,
+            SharedPdfTextAnnotationDefaults.sanitizePageRelativeFontSize(100f)
+        )
+    }
+
+    @Test
     fun `text bounds grow for wrapped content and stay on page`() {
         val style = SharedPdfTextStyleConfig(fontSize = 18f)
         val shortBounds = SharedPdfTextAnnotationDefaults.boundsForPlacedText(

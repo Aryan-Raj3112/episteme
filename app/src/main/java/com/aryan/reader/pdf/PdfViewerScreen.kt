@@ -509,6 +509,7 @@ fun PdfViewerScreen(
         pdfUri,
         initialPage,
         initialBookmarksJson,
+        onBookmarksChanged,
         pane,
         viewModel,
         isPaneFocused,
@@ -529,6 +530,7 @@ fun PdfViewerScreen(
             pdfUri = pdfUri,
             initialPage = initialPage,
             initialBookmarksJson = initialBookmarksJson,
+            onBookmarksChanged = onBookmarksChanged,
             pane = pane,
             viewModel = viewModel,
             isPaneFocused = isPaneFocused,
@@ -923,7 +925,7 @@ private fun PdfViewerScreenContent(
     var errorMessage by surfaceState.errorMessage
     var showToolSettings by surfaceState.showToolSettings
     val isHighlighterSnapEnabled = surfaceState.isHighlighterSnapEnabled
-    val selectedTool = surfaceState.selectedTool
+    val selectedTool = surfaceState.selectedTool.value
     val lastPenTool = surfaceState.lastPenTool
     val lastHighlighterTool = surfaceState.lastHighlighterTool
     val dockPenColor = surfaceState.dockPenColor
@@ -1862,15 +1864,16 @@ private fun PdfViewerScreenContent(
             var currentLastIndex = virtualPages.size - 1
             var pageRemoved = false
 
-            while (
-                lastPage is VirtualPage.BlankPage &&
-                !lastPage.wasManuallyAdded &&
-                currentLastIndex > highestRequiredTextPageIndex &&
-                !hasTextOnPage(currentLastIndex) &&
-                allAnnotations[currentLastIndex].isNullOrEmpty() &&
-                textBoxes.none { it.pageIndex == currentLastIndex } &&
-                userHighlights.none { it.pageIndex == currentLastIndex }
-            ) {
+            while (shouldAutoPrunePdfBlankPage(
+                    lastPage = lastPage,
+                    currentLastIndex = currentLastIndex,
+                    highestRequiredTextPageIndex = highestRequiredTextPageIndex,
+                    hasText = hasTextOnPage(currentLastIndex),
+                    hasAnnotations = !allAnnotations[currentLastIndex].isNullOrEmpty(),
+                    hasTextBoxes = textBoxes.any { it.pageIndex == currentLastIndex },
+                    hasHighlights = userHighlights.any { it.pageIndex == currentLastIndex },
+                    hasBookmark = bookmarks.any { it.pageIndex == currentLastIndex },
+                )) {
                 Timber.tag("RichTextFlow").i("Auto-pruning empty page at index $currentLastIndex.")
                 Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
                     "ui.autoPage.prune.start bookId=$activeBookId removeIndex=$currentLastIndex " +
@@ -2056,7 +2059,9 @@ private fun PdfViewerScreenContent(
 
             if (bookmarks.any { it.pageIndex == pageIndex }) {
                 Timber.d("Bookmark exists. Removing...")
-                bookmarks = bookmarks.filterNot { it.pageIndex == pageIndex }.toSet()
+                val updatedBookmarks = bookmarks.filterNot { it.pageIndex == pageIndex }.toSet()
+                bookmarks = updatedBookmarks
+                onBookmarksChanged(serializePdfBookmarksToJson(updatedBookmarks))
             } else {
                 Timber.d("Creating new bookmark. Attempting text extraction...")
                 var extractedText = ""
@@ -2123,9 +2128,11 @@ private fun PdfViewerScreenContent(
 
                 Timber.d("Final Bookmark Title: '$finalTitle'")
 
-                bookmarks = bookmarks + PdfBookmark(
+                val updatedBookmarks = bookmarks + PdfBookmark(
                     pageIndex = pageIndex, title = finalTitle, totalPages = totalPages
                 )
+                bookmarks = updatedBookmarks
+                onBookmarksChanged(serializePdfBookmarksToJson(updatedBookmarks))
             }
         }
     }
@@ -4221,6 +4228,7 @@ private fun PdfViewerScreenOverlays(surfaceState: PdfViewerSurfaceState) {
     val onHighlightDelete = surfaceState.onHighlightDelete
     val onNoteRequested = surfaceState.onNoteRequested
     var bookmarks by surfaceState.bookmarks
+    val persistBookmarksNow = surfaceState.persistBookmarksNow
     var globalTextureTransparency by surfaceState.globalTextureTransparency
     var excludeImages by surfaceState.excludeImages
     var reverseColorMode by surfaceState.reverseColorMode
@@ -4376,11 +4384,15 @@ private fun PdfViewerScreenOverlays(surfaceState: PdfViewerSurfaceState) {
                     onRenameBookmark = { bookmarkToRename, newTitle ->
                         if (newTitle.isNotBlank()) {
                             val updatedBookmark = bookmarkToRename.copy(title = newTitle)
-                            bookmarks = (bookmarks - bookmarkToRename) + updatedBookmark
+                            val updatedBookmarks = (bookmarks - bookmarkToRename) + updatedBookmark
+                            bookmarks = updatedBookmarks
+                            persistBookmarksNow(updatedBookmarks)
                         }
                     },
                     onDeleteBookmark = { bookmarkToDelete ->
-                        bookmarks = bookmarks - bookmarkToDelete
+                        val updatedBookmarks = bookmarks - bookmarkToDelete
+                        bookmarks = updatedBookmarks
+                        persistBookmarksNow(updatedBookmarks)
                     },
                     onDeleteHighlight = { highlightToDelete ->
                         onHighlightDelete(highlightToDelete.id)
@@ -5161,6 +5173,7 @@ private class PdfViewerDocumentSetupInputs(
     val pdfUri: Uri,
     val initialPage: Int?,
     val initialBookmarksJson: String?,
+    val onBookmarksChanged: (String) -> Unit,
     val pane: PdfViewerPane?,
     val viewModel: MainViewModel,
     val isPaneFocused: Boolean,
@@ -5201,6 +5214,7 @@ private fun PdfViewerDocumentSetup(
     val pdfUri = setup.pdfUri
     val initialPage = setup.initialPage
     val initialBookmarksJson = setup.initialBookmarksJson
+    val onBookmarksChanged = setup.onBookmarksChanged
     val pane = setup.pane
     val viewModel = setup.viewModel
     val isPaneFocused = setup.isPaneFocused
@@ -6124,6 +6138,9 @@ private fun PdfViewerDocumentSetup(
     surfaceState.onOcrStateChange = onOcrStateChange
     surfaceState.showZoomIndicator = pdfViewerMutableValue({ showZoomIndicator }, { showZoomIndicator = it })
     surfaceState.bookmarks = pdfViewerMutableValue({ bookmarks }, { bookmarks = it })
+    surfaceState.persistBookmarksNow = { updatedBookmarks ->
+        onBookmarksChanged(serializePdfBookmarksToJson(updatedBookmarks))
+    }
     surfaceState.showPenPlayground = pdfViewerMutableValue({ showPenPlayground }, { showPenPlayground = it })
     surfaceState.isEditMode = pdfViewerMutableValue({ isEditMode }, { isEditMode = it })
     surfaceState.isDockMinimized = pdfViewerMutableValue({ isDockMinimized }, { isDockMinimized = it })
@@ -6169,7 +6186,7 @@ private fun PdfViewerDocumentSetup(
     surfaceState.errorMessage = pdfViewerMutableValue({ errorMessage }, { errorMessage = it })
     surfaceState.showToolSettings = pdfViewerMutableValue({ showToolSettings }, { showToolSettings = it })
     surfaceState.isHighlighterSnapEnabled = isHighlighterSnapEnabled
-    surfaceState.selectedTool = selectedTool
+    surfaceState.selectedTool.value = selectedTool
     surfaceState.lastPenTool = lastPenTool
     surfaceState.lastHighlighterTool = lastHighlighterTool
     surfaceState.dockPenColor = dockPenColor
@@ -6256,7 +6273,7 @@ private data class PdfViewerPaginationPageState(
 @Stable
 private class PdfViewerSurfaceState {
     var richTextController: RichTextController? = null
-    lateinit var selectedTool: InkType
+    val selectedTool: androidx.compose.runtime.MutableState<InkType> = mutableStateOf(InkType.PEN)
     var density: androidx.compose.runtime.MutableState<androidx.compose.ui.unit.Density> =
         mutableStateOf(androidx.compose.ui.unit.Density(1f))
     lateinit var searchState: ReaderSearchState
@@ -6358,6 +6375,7 @@ private class PdfViewerSurfaceState {
     lateinit var onHighlightDelete: (String) -> Unit
     lateinit var onNoteRequested: (String?) -> Unit
     lateinit var bookmarks: PdfViewerMutableValue<Set<PdfBookmark>>
+    lateinit var persistBookmarksNow: (Set<PdfBookmark>) -> Unit
     lateinit var searchHighlightTarget: PdfViewerMutableValue<SearchResult?>
     lateinit var isOcrModelDownloading: PdfViewerMutableValue<Boolean>
     lateinit var allAnnotationsProvider: () -> Map<Int, List<PdfAnnotation>>
@@ -6659,7 +6677,7 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
     stylusButtonHovering: Boolean,
 ) {
     val richTextController = surfaceState.richTextController
-    val selectedTool = surfaceState.selectedTool
+    val selectedTool = surfaceState.selectedTool.value
     val density = surfaceState.density.value
     val searchState = surfaceState.searchState
     val activeTheme = surfaceState.activeTheme
@@ -8300,7 +8318,7 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
     surfaceState: PdfViewerSurfaceState,
 ) {
         val richTextController = surfaceState.richTextController
-        val selectedTool = surfaceState.selectedTool
+        val selectedTool = surfaceState.selectedTool.value
         val density = surfaceState.density.value
         val searchState = surfaceState.searchState
         val ownsPaneGlobals = surfaceState.ownsPaneGlobals
@@ -8857,7 +8875,7 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
     surfaceState: PdfViewerSurfaceState,
 ) {
         val richTextController = surfaceState.richTextController
-        val selectedTool = surfaceState.selectedTool
+        val selectedTool = surfaceState.selectedTool.value
         val density = surfaceState.density.value
         val ownsPaneGlobals = surfaceState.ownsPaneGlobals
         val ttsState = surfaceState.ttsState
@@ -9333,7 +9351,7 @@ private fun PdfViewerPaginationPage(
     val stablePdfDocument = paginationPageState.stablePdfDocument
     val stylusButtonHovering = paginationPageState.stylusButtonHovering
     val richTextController = surfaceState.richTextController
-    val selectedTool = surfaceState.selectedTool
+    val selectedTool = surfaceState.selectedTool.value
     val density = surfaceState.density.value
     val searchState = surfaceState.searchState
     val activeTheme = surfaceState.activeTheme

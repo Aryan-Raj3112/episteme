@@ -6,6 +6,26 @@ import com.aryan.reader.pdf.data.VirtualPage
 import org.json.JSONArray
 import org.json.JSONObject
 
+internal fun shouldAutoPrunePdfBlankPage(
+    lastPage: VirtualPage?,
+    currentLastIndex: Int,
+    highestRequiredTextPageIndex: Int,
+    hasText: Boolean,
+    hasAnnotations: Boolean,
+    hasTextBoxes: Boolean,
+    hasHighlights: Boolean,
+    hasBookmark: Boolean,
+): Boolean {
+    return lastPage is VirtualPage.BlankPage &&
+        !lastPage.wasManuallyAdded &&
+        currentLastIndex > highestRequiredTextPageIndex &&
+        !hasText &&
+        !hasAnnotations &&
+        !hasTextBoxes &&
+        !hasHighlights &&
+        !hasBookmark
+}
+
 internal fun remapPdfAnnotationsForLayoutChange(
     currentLayout: List<VirtualPage>,
     updatedLayout: List<VirtualPage>,
@@ -111,7 +131,8 @@ internal fun remapPdfBookmarksJsonForLayoutChange(
 ): String {
     if (currentBookmarksJson.isBlank()) return "[]"
 
-    val jsonArray = JSONArray(currentBookmarksJson)
+    val jsonArray = runCatching { JSONArray(currentBookmarksJson) }.getOrNull()
+        ?: return currentBookmarksJson
     val sourcePageIndices = buildList {
         for (i in 0 until jsonArray.length()) {
             val pageIndex = jsonArray.optJSONObject(i)?.optInt("pageIndex", Int.MIN_VALUE)
@@ -126,12 +147,23 @@ internal fun remapPdfBookmarksJsonForLayoutChange(
     val newArray = JSONArray()
 
     for (i in 0 until jsonArray.length()) {
-        val obj = jsonArray.getJSONObject(i)
+        val obj = jsonArray.optJSONObject(i) ?: continue
         val sourcePageIndex = obj.optInt("pageIndex", Int.MIN_VALUE)
-        val targetPageIndex = mapping[sourcePageIndex] ?: continue
+        if (sourcePageIndex == Int.MIN_VALUE || sourcePageIndex < 0) continue
+
+        // A page can legitimately disappear when a generated blank page is
+        // contracted. Keep the bookmark instead of silently dropping it; the
+        // nearest remaining display page is the only lossless representation
+        // available in the legacy page-index schema.
+        val targetPageIndex = mapping[sourcePageIndex]
+            ?: sourcePageIndex.takeIf { updatedLayout.isNotEmpty() }
+                ?.coerceAtMost(updatedLayout.lastIndex)
+            ?: continue
         val newObj = JSONObject(obj.toString())
         newObj.put("pageIndex", targetPageIndex)
-        newObj.put("totalPages", updatedLayout.size)
+        if (updatedLayout.isNotEmpty()) {
+            newObj.put("totalPages", updatedLayout.size)
+        }
         newArray.put(newObj)
     }
 

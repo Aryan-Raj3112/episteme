@@ -270,6 +270,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     private var temporaryExternalSessionBookId: String? = null
     private var cloudContentRetryJob: Job? = null
     private val cloudMetadataUploadJobs = ConcurrentHashMap<String, Job>()
+    private val bookmarkSaveMutex = Mutex()
+    private val bookmarkSaveRevisions = mutableMapOf<String, Long>()
 
     private var panelDetector: com.aryan.reader.ml.IPanelDetector? = null
     private var speechBubbleDetector: ISpeechBubbleDetector? = null
@@ -6511,31 +6513,56 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun saveBookmarks(bookId: String, bookmarksJson: String, documentUri: Uri? = null) {
         Timber.d("saveBookmarks called. bookId=$bookId, bookmarksJson=$bookmarksJson")
-        viewModelScope.launch {
-            val currentBookUri = documentUri ?: (
-                _internalState.value.selectedPdfUri ?: _internalState.value.selectedEpubUri
-            )
-            Timber.d("saveBookmarks: currentBookUri is $currentBookUri")
+        val stableBookId = bookId.trim()
+        if (stableBookId.isNotEmpty()) {
+            enqueueBookmarkSave(stableBookId, bookmarksJson, documentUri)
+            return
+        }
 
-            if (currentBookUri != null) {
-                val item = bookStore.getFileByUri(currentBookUri.toString())
-                if (item != null) {
-                    Timber.d(
-                        "saveBookmarks: Found item by URI. Updating bookmarks for bookId=${item.bookId}"
-                    )
-                    bookStore.updateBookmarks(item.bookId, bookmarksJson)
-                } else if (bookId.isNotBlank()) {
-                    bookStore.updateBookmarks(bookId, bookmarksJson)
-                }
-            } else if (bookId.isNotBlank()) {
-                Timber.d(
-                    "saveBookmarks: URI is null, but bookId is present. Updating bookmarks for bookId=$bookId"
-                )
-                bookStore.updateBookmarks(bookId, bookmarksJson)
+        val stableDocumentUri = documentUri?.toString()?.takeIf(String::isNotBlank)
+        if (stableDocumentUri == null) {
+            Timber.w("PdfBookmarkDebug: saveBookmarks called with no stable book identity.")
+            return
+        }
+
+        // URI lookup is only a fallback for callers that genuinely do not have a
+        // book id. Never consult mutable selected-reader state here: a delayed
+        // save from one reader must not be applied to whichever reader is active
+        // when that save happens to run.
+        viewModelScope.launch {
+            val item = bookStore.getFileByUri(stableDocumentUri)
+            if (item != null) {
+                enqueueBookmarkSave(item.bookId, bookmarksJson, documentUri)
             } else {
-                Timber.w(
-                    "PdfBookmarkDebug: saveBookmarks called with no active URI and empty bookId."
-                )
+                Timber.w("PdfBookmarkDebug: no book found for explicit URI=$stableDocumentUri")
+            }
+        }
+    }
+
+    private fun enqueueBookmarkSave(bookId: String, bookmarksJson: String, documentUri: Uri?) {
+        val revision = synchronized(bookmarkSaveRevisions) {
+            val nextRevision = (bookmarkSaveRevisions[bookId] ?: 0L) + 1L
+            bookmarkSaveRevisions[bookId] = nextRevision
+            nextRevision
+        }
+
+        Timber.d(
+            "Queueing bookmark save bookId=$bookId revision=$revision " +
+                "documentUri=${documentUri?.toString()}"
+        )
+        viewModelScope.launch {
+            bookmarkSaveMutex.withLock {
+                val latestRevision = synchronized(bookmarkSaveRevisions) {
+                    bookmarkSaveRevisions[bookId]
+                }
+                if (revision != latestRevision) {
+                    Timber.d(
+                        "Skipping stale bookmark save bookId=$bookId revision=$revision " +
+                            "latest=$latestRevision"
+                    )
+                    return@withLock
+                }
+                bookStore.updateBookmarks(bookId, bookmarksJson)
             }
         }
     }

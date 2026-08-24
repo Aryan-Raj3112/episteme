@@ -164,6 +164,8 @@ import com.aryan.reader.shared.pdf.SharedPdfExportSnapshot
 import com.aryan.reader.shared.pdf.SharedPdfReaderStateSerializer
 import com.aryan.reader.shared.pdf.SharedPdfCloudSidecarCodec
 import com.aryan.reader.shared.pdf.SharedPdfCloudSidecarSnapshot
+import com.aryan.reader.shared.pdf.LegacyPdfPageBookmarkCodec
+import com.aryan.reader.shared.pdf.SharedPdfBookmark
 import com.aryan.reader.shared.pdf.IosPdfCloudSidecarStore
 import com.aryan.reader.shared.pdf.loadIosPdfOcrLanguage
 import com.aryan.reader.shared.pdf.persistIosPdfOcrLanguage
@@ -221,6 +223,12 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.usePinned
 import platform.Foundation.NSApplicationSupportDirectory
@@ -1151,8 +1159,10 @@ private const val IosImportedFilesDefaultsKey = "reader_ios_imported_files_v1"
 private const val IosImportsRelativePrefix = "Imports/"
 private const val IosDocumentsRelativePrefix = "Documents/"
 private const val IosCoversRelativePrefix = "Covers/"
-private const val IosPdfReaderStateDefaultsPrefix = "reader_ios_pdf_state_v1_"
+private const val IosPdfReaderStateDefaultsPrefix = "reader_ios_pdf_state_v2_"
+private const val IosPdfLegacyReaderStateDefaultsPrefix = "reader_ios_pdf_state_v1_"
 private const val IosPdfReaderSidecarTimestampDefaultsPrefix = "reader_ios_pdf_sidecar_timestamp_v1_"
+private val IosReaderJson = Json { ignoreUnknownKeys = true }
 private const val IosPdfPageSliderVisibleDefaultsPrefix = "reader_ios_pdf_slider_visible_v1_"
 private const val IosEpubPageSliderVisibleDefaultsPrefix = "reader_ios_epub_slider_visible_v1_"
 private const val IosEpubReaderStateDefaultsPrefix = "reader_ios_epub_state_v1_"
@@ -1639,15 +1649,18 @@ private fun iosImportsDirectoryPath(): String? {
 
 private fun loadPersistedIosPdfReaderState(book: BookItem): SharedPdfReaderState? {
     loadPersistedIosPdfReaderStateFromDefaults(book)?.let { return it }
-    val sidecar = IosPdfCloudSidecarStore.readPayload(
-        bookId = book.id,
+    val sidecarData = IosPdfCloudSidecarStore.read(book.id)
+    val sidecar = SharedPdfCloudSidecarCodec.decode(
+        rawDataJson = sidecarData,
         fallbackPageCount = 1,
         fallbackPageIndex = book.lastPageIndex ?: 0,
     ) ?: return null
+    val legacyBookmarks = decodeLegacyIosPdfBookmarks(sidecarData)
     val restored = sidecar.readerState ?: SharedPdfReaderState.initial(
         pageCount = 1,
         initialPageIndex = book.lastPageIndex ?: 0,
     ).copy(
+        bookmarks = legacyBookmarks,
         annotations = sidecar.annotations,
         richTextDocumentJson = sidecar.richTextDocumentJson.orEmpty(),
     )
@@ -1662,12 +1675,25 @@ private fun loadPersistedIosPdfReaderState(book: BookItem): SharedPdfReaderState
 }
 
 private fun loadPersistedIosPdfReaderStateFromDefaults(book: BookItem): SharedPdfReaderState? {
-    val encoded = NSUserDefaults.standardUserDefaults.stringForKey(book.iosPdfReaderStateKey()) ?: return null
-    return SharedPdfReaderStateSerializer.decode(
-        raw = encoded,
-        fallbackPageCount = 1,
-        fallbackPageIndex = book.lastPageIndex ?: 0,
-    )
+    val defaults = NSUserDefaults.standardUserDefaults
+    val stableKey = book.iosPdfReaderStateKey()
+    book.iosPdfReaderStateDefaultsKeys().forEach { key ->
+        val encoded = defaults.stringForKey(key) ?: return@forEach
+        val decoded = SharedPdfReaderStateSerializer.decode(
+            raw = encoded,
+            fallbackPageCount = 1,
+            fallbackPageIndex = book.lastPageIndex ?: 0,
+        ) ?: return@forEach
+        if (key != stableKey) {
+            // v1 used the path as the key when available.  Paths can change
+            // after an import/move, so copy the first valid legacy value to
+            // the id-based key before removing the old alias.
+            defaults.setObject(encoded, forKey = stableKey)
+            defaults.removeObjectForKey(key)
+        }
+        return decoded
+    }
+    return null
 }
 
 private fun persistIosPdfReaderState(book: BookItem, state: SharedPdfReaderState) {
@@ -1675,8 +1701,16 @@ private fun persistIosPdfReaderState(book: BookItem, state: SharedPdfReaderState
     NSUserDefaults.standardUserDefaults.setObject(encoded, forKey = book.iosPdfReaderStateKey())
 }
 
-private fun BookItem.iosPdfReaderStateKey(): String {
-    return IosPdfReaderStateDefaultsPrefix + (path ?: id).normalizedId()
+private fun BookItem.iosPdfReaderStateKey(): String =
+    IosPdfReaderStateDefaultsPrefix + id.normalizedId()
+
+/** Stable id key first, followed by every v1 key that could contain this book. */
+internal fun BookItem.iosPdfReaderStateDefaultsKeys(): List<String> {
+    return buildList {
+        add(IosPdfReaderStateDefaultsPrefix + id.normalizedId())
+        add(IosPdfLegacyReaderStateDefaultsPrefix + id.normalizedId())
+        path?.let { add(IosPdfLegacyReaderStateDefaultsPrefix + it.normalizedId()) }
+    }.distinct()
 }
 
 private fun BookItem.iosPdfSidecarTimestampKey(): String {
@@ -1685,6 +1719,54 @@ private fun BookItem.iosPdfSidecarTimestampKey(): String {
 
 private fun BookItem.iosPdfSourceFingerprint(): String {
     return "${fileSize.coerceAtLeast(0L)}:${fileContentModifiedTimestamp.coerceAtLeast(0L)}"
+}
+
+/**
+ * Converts the Android PDF bookmark field when an old sidecar or library
+ * snapshot is opened on iOS.  PDF bookmarks historically lived outside the
+ * shared BookItem model, so unknown fields must be read before the snapshot
+ * decoder discards them.
+ */
+internal fun decodeLegacyIosPdfBookmarks(rawDataJson: String?): List<SharedPdfBookmark> {
+    val root = runCatching {
+        IosReaderJson.parseToJsonElement(rawDataJson.orEmpty()).jsonObject
+    }.getOrNull() ?: return emptyList()
+    val data = root["data"]
+        ?.takeUnless { it is JsonNull }
+        ?.let { runCatching { it.jsonObject }.getOrNull() }
+        ?: root
+    val bookmarkElement = data["bookmarksJson"] ?: data["bookmarks"] ?: return emptyList()
+    val rawBookmarks = runCatching { bookmarkElement.jsonPrimitive.contentOrNull }.getOrNull()
+        ?: bookmarkElement.toString()
+    return LegacyPdfPageBookmarkCodec.decode(rawBookmarks)
+        .asSequence()
+        .filter { it.pageIndex >= 0 }
+        .map { bookmark ->
+            SharedPdfBookmark(
+                pageIndex = bookmark.pageIndex,
+                label = bookmark.title.trim().ifBlank { "Page ${bookmark.pageIndex + 1}" },
+                createdAt = 0L,
+            )
+        }
+        .distinctBy { it.pageIndex }
+        .sortedBy { it.pageIndex }
+        .toList()
+}
+
+internal fun decodeLegacyIosPdfBookmarksByBookId(rawSnapshotJson: String?): Map<String, List<SharedPdfBookmark>> {
+    val root = runCatching {
+        IosReaderJson.parseToJsonElement(rawSnapshotJson.orEmpty()).jsonObject
+    }.getOrNull() ?: return emptyMap()
+    return root["books"]
+        ?.let { runCatching { it.jsonArray }.getOrNull() }
+        .orEmpty()
+        .mapNotNull { bookElement ->
+            val book = runCatching { bookElement.jsonObject }.getOrNull() ?: return@mapNotNull null
+            val bookId = book["id"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+            val bookmarks = decodeLegacyIosPdfBookmarks(bookElement.toString())
+            bookmarks.takeIf { it.isNotEmpty() }?.let { bookId to it }
+        }
+        .toMap()
 }
 
 /**
@@ -2772,11 +2854,13 @@ private fun ReaderIosApp(
         val pending = bridge.pendingCloudSync ?: return@LaunchedEffect
         val localSnapshot = state.toIosCloudSnapshot()
         val remoteSnapshot = SharedLibrarySnapshotJson.decodeOrEmpty(pending.remoteSnapshotJson)
+        val legacyPdfBookmarksByBookId = decodeLegacyIosPdfBookmarksByBookId(pending.remoteSnapshotJson)
         val mergedSnapshot = mergeCloudLibrarySnapshotWithDownloadedBooks(
             local = localSnapshot,
             remote = remoteSnapshot,
             downloadedBookPaths = pending.downloadedBookPaths,
         )
+        val migratedLegacyPdfBookmarkBookIds = mutableSetOf<String>()
         mergedSnapshot.pdfSidecars.forEach { sidecar ->
             val book = mergedSnapshot.books.firstOrNull { it.id == sidecar.bookId } ?: return@forEach
             val payload = SharedPdfCloudSidecarCodec.decode(
@@ -2784,22 +2868,53 @@ private fun ReaderIosApp(
                 fallbackPageCount = 1,
                 fallbackPageIndex = book.lastPageIndex ?: 0,
             )
+            val legacySidecarBookmarks = decodeLegacyIosPdfBookmarks(sidecar.data)
+            val legacyBookmarks = legacySidecarBookmarks.ifEmpty {
+                legacyPdfBookmarksByBookId[book.id].orEmpty()
+            }
             val restored = payload?.readerState ?: payload?.let {
                 SharedPdfReaderState.initial(
                     pageCount = 1,
                     initialPageIndex = book.lastPageIndex ?: 0,
                 ).copy(
+                    bookmarks = legacyBookmarks,
                     annotations = it.annotations,
                     richTextDocumentJson = it.richTextDocumentJson.orEmpty(),
                 )
-            }
+            } ?: legacyPdfBookmarksByBookId[book.id]
+                ?.takeIf { it.isNotEmpty() }
+                ?.let { bookmarks ->
+                    SharedPdfReaderState.initial(
+                        pageCount = 1,
+                        initialPageIndex = book.lastPageIndex ?: 0,
+                    ).copy(bookmarks = bookmarks)
+                }
             if (restored != null) {
+                if (legacyBookmarks.isNotEmpty() && payload?.readerState == null) {
+                    migratedLegacyPdfBookmarkBookIds += book.id
+                }
                 persistIosPdfReaderState(book, restored)
                 NSUserDefaults.standardUserDefaults.setInteger(
                     value = maxOf(sidecar.timestamp, payload?.modifiedTimestamp ?: 0L),
                     forKey = book.iosPdfSidecarTimestampKey(),
                 )
             }
+        }
+        // Older Android library snapshots kept PDF bookmarks in the book
+        // record rather than the portable sidecar.  Preserve those records
+        // even when the remote snapshot has no sidecar entry yet.
+        legacyPdfBookmarksByBookId.forEach { (bookId, bookmarks) ->
+            if (bookId in migratedLegacyPdfBookmarkBookIds || bookmarks.isEmpty()) return@forEach
+            val book = mergedSnapshot.books.firstOrNull { it.id == bookId && it.type == FileType.PDF }
+                ?: return@forEach
+            if (loadPersistedIosPdfReaderStateFromDefaults(book) != null) return@forEach
+            persistIosPdfReaderState(
+                book,
+                SharedPdfReaderState.initial(
+                    pageCount = 1,
+                    initialPageIndex = book.lastPageIndex ?: 0,
+                ).copy(bookmarks = bookmarks),
+            )
         }
         val mergedPdfSidecars = mergedSnapshot.pdfSidecars
         if (mergedPdfSidecars.isNotEmpty()) {
@@ -3259,11 +3374,16 @@ private fun ReaderIosApp(
             },
             onReaderStateChange = {},
             onReaderSessionStateChange = { sessionKey, pdfState ->
-                if (!effectiveHostConfig.acceptsCallback(sessionKey) || !acceptsCurrentHostCallback()) {
+                if (!effectiveHostConfig.acceptsCallback(sessionKey)) {
                     return@SharedMobilePdfReaderHost
                 }
                 val currentBook = state.rawLibraryBooks.firstOrNull { it.id == paneBook.id } ?: paneBook
+                // Keep the id-keyed local copy even while focus/active-reader
+                // ownership is changing.  The sidecar write below remains
+                // guarded, but a close/background transition must not erase a
+                // bookmark before the next session can flush it.
                 persistIosPdfReaderState(currentBook, pdfState)
+                if (!acceptsCurrentHostCallback()) return@SharedMobilePdfReaderHost
                 pdfSidecarWriteJobs[currentBook.id]?.cancel()
                 pdfSidecarWriteJobs[currentBook.id] = scope.launch {
                     delay(300L)

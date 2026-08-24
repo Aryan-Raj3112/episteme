@@ -57,6 +57,18 @@ class PdfReaderSessionTest {
     }
 
     @Test
+    fun `legacy persisted reader keeps bookmarks while the document page count is unknown`() {
+        val restored = SharedPdfReaderStateSerializer.decode(
+            raw = """{"pageIndex":0,"bookmarks":[{"pageIndex":9,"label":"Chapter"}]}""",
+            fallbackPageCount = 1,
+            fallbackPageIndex = 0,
+        )
+
+        assertEquals(10, restored?.pageCount)
+        assertEquals(listOf(9), restored?.bookmarks?.map { it.pageIndex })
+    }
+
+    @Test
     fun `legacy persisted reader without position uses library restore page`() {
         val restored = SharedPdfReaderStateSerializer.decode(
             raw = """{"displayMode":"VERTICAL_SCROLL"}""",

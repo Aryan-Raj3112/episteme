@@ -341,7 +341,11 @@ fun AppNavigation(
                             onSavePosition = viewModel::savePdfReadingPosition,
                             onBookmarksChanged = { bookmarksJson ->
                                 if (bookId != null) {
-                                    viewModel.saveBookmarks(bookId, bookmarksJson)
+                                    viewModel.saveBookmarks(
+                                        bookId = bookId,
+                                        bookmarksJson = bookmarksJson,
+                                        documentUri = pdfUri,
+                                    )
                                 } else {
                                     Timber.w("Could not find bookId to save PDF bookmarks for URI: ${uiState.selectedPdfUri}")
                                 }

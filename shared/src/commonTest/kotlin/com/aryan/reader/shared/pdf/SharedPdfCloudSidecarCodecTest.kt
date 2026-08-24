@@ -57,7 +57,7 @@ class SharedPdfCloudSidecarCodecTest {
         assertEquals(state.reverseColorMode, decoded.readerState?.reverseColorMode)
         assertEquals(state.preserveImageColors, decoded.readerState?.preserveImageColors)
         assertEquals(state.blankPageInsertions, decoded.readerState?.blankPageInsertions)
-        assertEquals(listOf(annotation), decoded.annotations)
+        assertEquals(listOf(annotation.sanitizedSharedPdfTextAnnotation()), decoded.annotations)
         assertEquals(
             json.parseToJsonElement(state.richTextDocumentJson),
             decoded.richTextDocumentJson?.let(json::parseToJsonElement)
@@ -126,6 +126,33 @@ class SharedPdfCloudSidecarCodecTest {
         assertEquals("dark", decoded.readerState?.themeId)
         assertEquals(listOf("local", "remote"), decoded.annotations.map { it.id })
         assertEquals(listOf("local", "remote"), decoded.readerState?.annotations?.map { it.id })
+    }
+
+    @Test
+    fun `merge preserves bookmarks when a legacy state omits the bookmarks field`() {
+        val localState = SharedPdfReaderState.initial(pageCount = 10).copy(
+            bookmarks = listOf(SharedPdfBookmark(pageIndex = 8, label = "Chapter"))
+        )
+        val local = SharedPdfCloudSidecarCodec.encode("book-1", localState, modifiedTimestamp = 100L)
+        val remoteRoot = json.parseToJsonElement(
+            SharedPdfCloudSidecarCodec.encode(
+                "book-1",
+                SharedPdfReaderState.initial(pageCount = 10).copy(pageIndex = 2),
+                modifiedTimestamp = 200L
+            )
+        ).jsonObject
+        val legacyRemoteState = JsonObject(
+            remoteRoot.getValue(SharedPdfCloudSidecarCodec.KEY_READER_STATE).jsonObject
+                .filterKeys { it != "bookmarks" }
+        )
+        val remote = JsonObject(
+            remoteRoot + (SharedPdfCloudSidecarCodec.KEY_READER_STATE to legacyRemoteState)
+        ).toString()
+
+        val merged = SharedPdfCloudSidecarCodec.merge(local, remote, preferRemoteOnConflict = false)
+        val decoded = assertNotNull(SharedPdfCloudSidecarCodec.decode(merged))
+
+        assertEquals(listOf(8), decoded.readerState?.bookmarks?.map { it.pageIndex })
     }
 
     @Test

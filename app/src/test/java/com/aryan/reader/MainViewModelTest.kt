@@ -411,6 +411,35 @@ class MainViewModelTest {
     }
 
     @Test
+    fun `saveBookmarks uses explicit book identity and skips stale queued state`() = runTest(testDispatcher) {
+        val writes = mutableListOf<String>()
+        val firstJson = "[{\"pageIndex\":1}]"
+        val latestJson = "[{\"pageIndex\":2}]"
+        coEvery {
+            anyConstructed<RecentFilesRepository>().updateBookmarks("stable-book", any())
+        } coAnswers {
+            writes += secondArg<String>()
+        }
+
+        viewModel.saveBookmarks(
+            bookId = "stable-book",
+            bookmarksJson = firstJson,
+            documentUri = mockUri("content://books/old-selection"),
+        )
+        viewModel.saveBookmarks(
+            bookId = "stable-book",
+            bookmarksJson = latestJson,
+            documentUri = mockUri("content://books/old-selection"),
+        )
+        advanceUntilIdle()
+
+        assertEquals(listOf(latestJson), writes)
+        coVerify(exactly = 0) {
+            anyConstructed<RecentFilesRepository>().getFileByUri("content://books/old-selection")
+        }
+    }
+
+    @Test
     fun `setRecentFilesLimit persists and limits visible home recents`() = runTest(testDispatcher) {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect {}
