@@ -194,6 +194,7 @@ import com.aryan.reader.shared.ui.SharedMobileHomeScreen
 import com.aryan.reader.shared.ui.SharedMobileHomeActions
 import com.aryan.reader.shared.ui.SharedMobileLibraryScreen
 import com.aryan.reader.shared.ui.SharedMobileUnifiedLibraryScreen
+import com.aryan.reader.shared.ui.MobileAppDrawerCapabilities
 import com.aryan.reader.shared.ui.MobileUnifiedLibraryDrawerCapabilities
 import com.aryan.reader.shared.ui.SharedOpdsScreen
 import com.aryan.reader.shared.ui.LocalUsePdfFileNameAsDisplayName
@@ -4150,14 +4151,23 @@ private fun ReaderIosApp(
                 return@Surface
             }
 
+            val appDrawerCapabilities = if (selectedPage == SharedMobileMainDestination.UNIFIED_LIBRARY) {
+                MobileAppDrawerCapabilities.UNIFIED_LIBRARY_ACCOUNT
+            } else {
+                MobileAppDrawerCapabilities.GLOBAL
+            }
+
             ModalNavigationDrawer(
                 drawerState = drawerState,
                 drawerContent = {
                     SharedMobileAppDrawerContent(
                         currentUser = state.currentUser,
                         isProUser = state.isProUser,
-                        isStandardEdition = !bridge.localStoreKitState.available,
-                        aiSettingsAvailable = true,
+                        // StoreKit catalog availability is transient service state, not
+                        // an edition signal. Keep edition unknown until the host exposes
+                        // a real build-time capability.
+                        edition = null,
+                        drawerCapabilities = appDrawerCapabilities,
                         credits = state.credits,
                         isSyncEnabled = state.isSyncEnabled,
                         isFolderSyncEnabled = state.isFolderSyncEnabled,
@@ -4186,6 +4196,8 @@ private fun ReaderIosApp(
                         onAiSettingsClick = { runDrawerAction { utilityScreen = IosUtilityScreen.AI_SETTINGS } },
                         onSettingsClick = { runDrawerAction { utilityScreen = IosUtilityScreen.SETTINGS } },
                         onAppThemeClick = { runDrawerAction { showAppThemePanel = true } },
+                        onAboutClick = { runDrawerAction { utilityScreen = IosUtilityScreen.ABOUT } },
+                        onSupportProjectClick = { runDrawerAction { utilityScreen = IosUtilityScreen.SUPPORT } },
                         onFeedbackClick = { runDrawerAction { utilityScreen = IosUtilityScreen.FEEDBACK } },
                         onPrivacyPolicyClick = {
                             runDrawerAction { openSharedMobileExternalUrl(IosLegalLinks.privacyPolicyUrl) }

@@ -17,11 +17,13 @@ import androidx.compose.material.icons.filled.Ai
 import androidx.compose.material.icons.filled.Feedback
 import androidx.compose.material.icons.filled.FolderSpecial
 import androidx.compose.material.icons.filled.Fonts
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.VerifiedUser
+import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -62,8 +64,10 @@ fun SharedMobileAppDrawerContent(
     onPrivacyPolicyClick: () -> Unit,
     onTermsClick: () -> Unit,
     onLicensesClick: () -> Unit,
-    isStandardEdition: Boolean = false,
-    aiSettingsAvailable: Boolean = true,
+    edition: MobileAppEdition? = null,
+    drawerCapabilities: MobileAppDrawerCapabilities = MobileAppDrawerCapabilities.GLOBAL,
+    onAboutClick: (() -> Unit)? = null,
+    onSupportProjectClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     ModalDrawerSheet(modifier = modifier) {
@@ -108,7 +112,7 @@ fun SharedMobileAppDrawerContent(
                         ) {
                             Icon(Icons.Default.VerifiedUser, contentDescription = null, modifier = Modifier.size(16.dp))
                             Text(
-                                if (isStandardEdition) {
+                                if (edition == MobileAppEdition.STANDARD) {
                                     readerString("drawer_standard_version", "Standard version")
                                 } else {
                                     readerString("credits_count", "%1\$d Credits", credits)
@@ -128,7 +132,7 @@ fun SharedMobileAppDrawerContent(
                     modifier = Modifier.padding(horizontal = 12.dp).testTag("MobileDrawerSignIn")
                 )
                 Text(
-                    text = if (isStandardEdition) {
+                    text = if (edition == MobileAppEdition.STANDARD) {
                         readerString(
                             "drawer_signed_out_standard_desc",
                             "Sync account and app settings.",
@@ -152,7 +156,7 @@ fun SharedMobileAppDrawerContent(
                 label = {
                     Text(
                         when {
-                            isStandardEdition -> readerString("drawer_standard_version", "Standard version")
+                            edition == MobileAppEdition.STANDARD -> readerString("drawer_standard_version", "Standard version")
                             isProUser -> readerString("drawer_pro_unlocked", "Pro unlocked")
                             else -> readerString("drawer_upgrade_pro", "Upgrade to Pro")
                         }
@@ -223,43 +227,63 @@ fun SharedMobileAppDrawerContent(
 
             HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
 
-            NavigationDrawerItem(
-                icon = { Icon(Icons.Default.Settings, contentDescription = null) },
-                label = { Text(readerString("settings", "Settings")) },
-                selected = false,
-                onClick = onSettingsClick,
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp).testTag("MobileDrawerSettings")
-            )
-            NavigationDrawerItem(
-                icon = { Icon(Icons.Default.Palette, contentDescription = null) },
-                label = { Text(readerString("app_theme_title", "App theme")) },
-                selected = false,
-                onClick = onAppThemeClick,
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp).testTag("MobileDrawerTheme")
-            )
-            NavigationDrawerItem(
-                icon = { Icon(Icons.Default.Fonts, contentDescription = null) },
-                label = { Text(readerString("drawer_custom_fonts", "Custom fonts")) },
-                selected = false,
-                onClick = onFontsClick,
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp).testTag("MobileDrawerFonts")
-            )
-            if (aiSettingsAvailable) {
-                NavigationDrawerItem(
-                    icon = { Icon(Icons.Default.Ai, contentDescription = null) },
-                    label = { Text(readerString("ai_settings_title", "AI settings")) },
-                    selected = false,
-                    onClick = onAiSettingsClick,
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp).testTag("MobileDrawerAiSettings")
-                )
+            mobileAppDrawerModel(drawerCapabilities).items.forEach { item ->
+                when (item) {
+                    MobileAppDrawerItem.SETTINGS -> NavigationDrawerItem(
+                        icon = { Icon(Icons.Default.Settings, contentDescription = null) },
+                        label = { Text(readerString("settings", "Settings")) },
+                        selected = false,
+                        onClick = onSettingsClick,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp).testTag("MobileDrawerSettings")
+                    )
+                    MobileAppDrawerItem.ABOUT -> onAboutClick?.let { onClick ->
+                        NavigationDrawerItem(
+                            icon = { Icon(Icons.Default.Info, contentDescription = null) },
+                            label = { Text(readerString("about_title", "About")) },
+                            selected = false,
+                            onClick = onClick,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp).testTag("MobileDrawerAbout")
+                        )
+                    }
+                    MobileAppDrawerItem.APP_THEME -> NavigationDrawerItem(
+                        icon = { Icon(Icons.Default.Palette, contentDescription = null) },
+                        label = { Text(readerString("app_theme_title", "App theme")) },
+                        selected = false,
+                        onClick = onAppThemeClick,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp).testTag("MobileDrawerTheme")
+                    )
+                    MobileAppDrawerItem.FONTS -> NavigationDrawerItem(
+                        icon = { Icon(Icons.Default.Fonts, contentDescription = null) },
+                        label = { Text(readerString("drawer_custom_fonts", "Custom fonts")) },
+                        selected = false,
+                        onClick = onFontsClick,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp).testTag("MobileDrawerFonts")
+                    )
+                    MobileAppDrawerItem.AI_SETTINGS -> NavigationDrawerItem(
+                        icon = { Icon(Icons.Default.Ai, contentDescription = null) },
+                        label = { Text(readerString("ai_settings_title", "AI settings")) },
+                        selected = false,
+                        onClick = onAiSettingsClick,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp).testTag("MobileDrawerAiSettings")
+                    )
+                    MobileAppDrawerItem.SUPPORT_PROJECT -> onSupportProjectClick?.let { onClick ->
+                        NavigationDrawerItem(
+                            icon = { Icon(Icons.Outlined.FavoriteBorder, contentDescription = null) },
+                            label = { Text(readerString("drawer_support_project", "Support project")) },
+                            selected = false,
+                            onClick = onClick,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp).testTag("MobileDrawerSupport")
+                        )
+                    }
+                    MobileAppDrawerItem.HELP_FEEDBACK -> NavigationDrawerItem(
+                        icon = { Icon(Icons.Default.Feedback, contentDescription = null) },
+                        label = { Text(readerString("drawer_help_feedback", "Help & Feedback")) },
+                        selected = false,
+                        onClick = onFeedbackClick,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp).testTag("MobileDrawerFeedback")
+                    )
+                }
             }
-            NavigationDrawerItem(
-                icon = { Icon(Icons.Default.Feedback, contentDescription = null) },
-                label = { Text(readerString("drawer_help_feedback", "Help & Feedback")) },
-                selected = false,
-                onClick = onFeedbackClick,
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp).testTag("MobileDrawerFeedback")
-            )
 
             if (currentUser != null) {
                 NavigationDrawerItem(

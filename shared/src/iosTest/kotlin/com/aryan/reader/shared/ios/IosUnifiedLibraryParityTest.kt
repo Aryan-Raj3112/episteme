@@ -3,6 +3,9 @@ package com.aryan.reader.shared.ios
 import com.aryan.reader.shared.ui.MobileUnifiedLibraryDrawerAppearance
 import com.aryan.reader.shared.ui.MobileUnifiedLibraryDrawerCapabilities
 import com.aryan.reader.shared.ui.MobileUnifiedLibraryDrawerDestination
+import com.aryan.reader.shared.ui.MobileAppDrawerCapabilities
+import com.aryan.reader.shared.ui.MobileAppDrawerItem
+import com.aryan.reader.shared.ui.mobileAppDrawerModel
 import com.aryan.reader.shared.ui.mobileUnifiedLibraryDrawerModel
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -34,6 +37,19 @@ class IosUnifiedLibraryParityTest {
                 MobileUnifiedLibraryDrawerAppearance.FONTS,
             ),
             model.appearance,
+        )
+    }
+
+    @Test
+    fun `ios unified account drawer omits actions owned by local drawer`() {
+        assertEquals(
+            listOf(
+                MobileAppDrawerItem.SETTINGS,
+                MobileAppDrawerItem.ABOUT,
+                MobileAppDrawerItem.SUPPORT_PROJECT,
+                MobileAppDrawerItem.HELP_FEEDBACK,
+            ),
+            mobileAppDrawerModel(MobileAppDrawerCapabilities.UNIFIED_LIBRARY_ACCOUNT).items,
         )
     }
 }
