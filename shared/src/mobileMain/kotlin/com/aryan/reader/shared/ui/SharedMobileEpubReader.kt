@@ -53,6 +53,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
@@ -84,6 +85,8 @@ import com.aryan.reader.shared.PageInfoPosition
 import com.aryan.reader.shared.ReaderTool
 import com.aryan.reader.shared.ReaderToolbarPreferences
 import com.aryan.reader.shared.ReaderTtsReplacementPreferences
+import com.aryan.reader.shared.ReaderTtsOverlaySize
+import com.aryan.reader.shared.readerTtsOverlayAlignmentBias
 import com.aryan.reader.shared.ReaderBookReplacementEngine
 import com.aryan.reader.shared.ReaderBookReplacementPreferences
 import com.aryan.reader.shared.currentTimestamp
@@ -180,6 +183,8 @@ fun SharedMobileEpubReaderScreen(
     cloudTtsVoiceId: String = com.aryan.reader.shared.DEFAULT_CLOUD_TTS_SPEAKER_ID,
     onCloudTtsVoiceChange: (String) -> Unit = {},
     onClearCloudTtsCache: () -> Unit = {},
+    initialTtsOverlaySize: ReaderTtsOverlaySize = ReaderTtsOverlaySize.LARGE,
+    onTtsOverlaySizePreferenceChange: (ReaderTtsOverlaySize) -> Unit = {},
     onAiAction: (ReaderAiFeature, String) -> Unit = { _, _ -> },
     onAiResultDismiss: () -> Unit = {},
     onOpenAiHub: () -> Unit = {},
@@ -307,6 +312,9 @@ fun SharedMobileEpubReaderScreen(
     var showTtsReplacementsSheet by remember(book.id) { mutableStateOf(false) }
     var showTtsSettingsSheet by remember(book.id) { mutableStateOf(false) }
     var showBookReplacementsSheet by remember(book.id) { mutableStateOf(false) }
+    var ttsOverlaySize by remember(book.id, initialTtsOverlaySize) {
+        mutableStateOf(initialTtsOverlaySize)
+    }
     var pendingExternalLink by remember(book.id) { mutableStateOf<String?>(null) }
     var activeFootnote by remember(book.id) { mutableStateOf<SharedMobileEpubFootnote?>(null) }
     var keepScreenOn by remember(book.id) { mutableStateOf(initialKeepScreenOn) }
@@ -1661,8 +1669,13 @@ fun SharedMobileEpubReaderScreen(
                             activeTtsChunk?.let { navigate(it.toLocator(), detachFromTts = false) }
                         },
                         onOpenSettings = { showTtsSettingsSheet = true },
+                        overlaySize = ttsOverlaySize,
+                        onOverlaySizeChange = {
+                            ttsOverlaySize = it
+                            onTtsOverlaySizePreferenceChange(it)
+                        },
                         modifier = Modifier
-                            .align(Alignment.BottomCenter)
+                            .align(BiasAlignment(readerTtsOverlayAlignmentBias(ttsOverlaySize), 1f))
                             .padding(horizontal = 12.dp)
                             .offset(y = if (showChrome) (-52).dp else (-12).dp)
                     )
@@ -1677,8 +1690,13 @@ fun SharedMobileEpubReaderScreen(
                             detachedTtsChunkIndex = null
                             activeCloudTtsChunk?.let { navigate(it.toLocator(), detachFromTts = false) }
                         },
+                        overlaySize = ttsOverlaySize,
+                        onOverlaySizeChange = {
+                            ttsOverlaySize = it
+                            onTtsOverlaySizePreferenceChange(it)
+                        },
                         modifier = Modifier
-                            .align(Alignment.BottomCenter)
+                            .align(BiasAlignment(readerTtsOverlayAlignmentBias(ttsOverlaySize), 1f))
                             .padding(horizontal = 12.dp)
                             .offset(y = if (showChrome) (-52).dp else (-12).dp),
                     )

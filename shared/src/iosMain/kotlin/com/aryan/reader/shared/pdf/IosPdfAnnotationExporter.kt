@@ -113,6 +113,10 @@ internal suspend fun exportIosPdfAnnotations(
                 importedDocument
             }
             val payload = SharedPdfAnnotationExportMapper.build(snapshot.state.annotations)
+            val textFontRegistry = buildIosPdfTextFontRegistry(
+                annotations = snapshot.state.annotations,
+                richTextLayouts = snapshot.richTextPageLayouts,
+            )
             val inkByPage = payload.inkAnnotations.groupBy { it.pageIndex }
             val highlightsByPage = payload.highlightAnnotations.groupBy { it.pageIndex }
             val textPageIndices = snapshot.state.annotations
@@ -148,6 +152,7 @@ internal suspend fun exportIosPdfAnnotations(
                         height,
                         snapshot.state.annotations,
                         snapshot.richTextPageLayouts,
+                        fontRegistry = textFontRegistry,
                     )
                     rasterization.overlays.forEach { overlay ->
                         annotationsWritten = addIosPdfRasterOverlay(document, page, overlay, width, height) && annotationsWritten

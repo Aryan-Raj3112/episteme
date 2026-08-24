@@ -47,6 +47,33 @@ class SharedPdfTextAnnotationsTest {
     }
 
     @Test
+    fun `imported font family survives annotation sidecar round trip`() {
+        val style = SharedPdfTextStyleConfig(
+            fontName = "Acme Serif",
+            fontPath = "/library/fonts/acme-serif.ttf",
+            fontSize = 18f,
+            isBold = true,
+        )
+        val annotation = SharedPdfTextAnnotationDefaults.createAnnotation(
+            id = "text-custom-font",
+            pageIndex = 0,
+            anchor = PdfPagePoint(0.2f, 0.25f),
+            canvasSize = IntSize(800, 1_200),
+            text = "Imported family",
+            style = style,
+            createdAt = 42L,
+        )
+
+        val restored = SharedPdfAnnotationSerializer.decode(
+            SharedPdfAnnotationSerializer.encode(listOf(annotation))
+        ).single()
+
+        assertEquals("Acme Serif", restored.fontName)
+        assertEquals("/library/fonts/acme-serif.ttf", restored.fontPath)
+        assertEquals(style.copy(pageRelativeFontSize = 0.036f), restored.sharedPdfTextStyle())
+    }
+
+    @Test
     fun `withSharedPdfTextStyle replaces all style fields only`() {
         val original = SharedPdfAnnotation(
             id = "text-2",

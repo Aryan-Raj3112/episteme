@@ -11,12 +11,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.material3.Text
 import com.aryan.reader.shared.generated.resources.*
+import com.aryan.reader.shared.CustomFontItem
 import com.aryan.reader.shared.pdf.*
 import org.jetbrains.compose.resources.painterResource
 
@@ -27,6 +29,9 @@ fun SharedMobilePdfTextDock(
     onInsertTextBox: () -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
+    customFonts: List<CustomFontItem> = emptyList(),
+    customFontFamilies: Map<String, FontFamily> = emptyMap(),
+    onImportFont: () -> Unit = {},
 ) {
     val state = rememberPdfTextDockState {}
     var textPalette by remember { mutableStateOf(SharedPdfTextAnnotationDefaults.textColorPalette.map(::Color)) }
@@ -43,6 +48,13 @@ fun SharedMobilePdfTextDock(
             isUnderline = decoration.contains(TextDecoration.Underline),
             isStrikeThrough = decoration.contains(TextDecoration.LineThrough),
         ))
+    }
+
+    val resolvedCustomFontFamilies = remember(customFonts, customFontFamilies) {
+        customFontFamilies.ifEmpty { loadSharedPdfCustomFontFamilies(customFonts) }
+    }
+    val availableCustomFonts = remember(customFonts, resolvedCustomFontFamilies) {
+        availableSharedPdfCustomFonts(customFonts, resolvedCustomFontFamilies.keys)
     }
 
     Box(modifier.fillMaxWidth(), contentAlignment = Alignment.BottomCenter) {
@@ -64,7 +76,7 @@ fun SharedMobilePdfTextDock(
                 SharedPdfTextDockFontPanel(
                     presetsLabel = readerString("tab_presets", "Presets"), importedLabel = readerString("tab_imported", "Imported"),
                     importLabel = readerString("action_import", "Import"), noImportedFontsLabel = readerString("msg_no_fonts_imported", "No fonts imported"),
-                    onImportClick = {}, hasImportedFonts = false,
+                    onImportClick = onImportFont, hasImportedFonts = availableCustomFonts.isNotEmpty(),
                     presetContent = {
                         LazyColumn { items(SharedPdfTextAnnotationDefaults.fontPresets) { preset ->
                             SharedPdfTextDockFontItem(preset.name, style.fontName == preset.name || preset.name == "Default" && style.fontName == null,
@@ -73,7 +85,25 @@ fun SharedMobilePdfTextDock(
                                 onStyleChange(style.copy(fontName = preset.name, fontPath = preset.fontPath)); state.dismiss()
                             }
                         } }
-                    }, importedContent = {},
+                    },
+                    importedContent = {
+                        availableCustomFonts.forEach { font ->
+                            val family = resolvedCustomFontFamilies[font.path]
+                                ?: resolvedCustomFontFamilies[font.displayName]
+                                ?: FontFamily.Default
+                            SharedPdfTextDockFontItem(
+                                name = font.displayName,
+                                isSelected = style.fontPath == font.path ||
+                                    (style.fontPath == null && style.fontName == font.displayName),
+                                fontFamily = family,
+                                selectedContentDescription = readerString("content_desc_selected", "Selected"),
+                                onClick = {
+                                    onStyleChange(style.copy(fontName = font.displayName, fontPath = font.path))
+                                    state.dismiss()
+                                },
+                            )
+                        }
+                    },
                 )
             },
         )

@@ -18,6 +18,7 @@ import org.jetbrains.skia.FontSlant
 import org.jetbrains.skia.FontStyle
 import org.jetbrains.skia.FontWeight
 import org.jetbrains.skia.FontWidth
+import org.jetbrains.skia.FontMgrWithFallback
 import org.jetbrains.skia.ImageInfo
 import org.jetbrains.skia.Paint
 import org.jetbrains.skia.Surface
@@ -27,6 +28,29 @@ import org.jetbrains.skia.paragraph.FontCollection
 import org.jetbrains.skia.paragraph.ParagraphBuilder
 import org.jetbrains.skia.paragraph.ParagraphStyle
 import org.jetbrains.skia.paragraph.TextStyle
+import org.jetbrains.skia.paragraph.TypefaceFontProviderWithFallback
+
+private const val IOS_PDF_RICH_FONT_PATH_TAG = "pdf-rich-font-path"
+
+/**
+ * Keeps imported PDF fonts registered for the lifetime of one export pass.
+ *
+ * The Compose surface loads the same files through its platform font loader. PDF
+ * export uses Skia paragraphs directly, so it needs its own provider; otherwise
+ * an imported family would be visible while editing but silently fall back in a
+ * saved copy.
+ */
+internal class IosPdfTextFontRegistry(
+    val fontCollection: FontCollection,
+    private val aliasesByPath: Map<String, String>,
+    private val aliasesByName: Map<String, String>,
+) {
+    fun familyName(path: String?, name: String?): String? {
+        path?.let { aliasesByPath[it] }?.let { return it }
+        name?.let { aliasesByName[it] }?.let { return it }
+        return name?.takeIf(String::isNotBlank)
+    }
+}
 
 internal data class IosPdfRasterOverlay(
     val pageIndex: Int,
@@ -47,17 +71,18 @@ internal fun buildIosPdfTextRasterOverlays(
     pageHeight: Float,
     annotations: List<SharedPdfAnnotation>,
     richTextLayouts: List<SharedPdfRichPageLayout>,
+    fontRegistry: IosPdfTextFontRegistry = buildIosPdfTextFontRegistry(annotations, richTextLayouts),
 ): IosPdfRasterizationResult {
     val overlays = mutableListOf<IosPdfRasterOverlay>()
     var complete = true
     annotations.filter { it.pageIndex == pageIndex && it.kind == PdfAnnotationKind.TEXT && it.text.isNotBlank() }
         .forEach { annotation ->
-            val overlay = annotation.toIosPdfTextBoxOverlay(pageWidth, pageHeight)
+            val overlay = annotation.toIosPdfTextBoxOverlay(pageWidth, pageHeight, fontRegistry)
             if (overlay == null) complete = false else overlays += overlay
         }
     richTextLayouts.filter { it.pageIndex == pageIndex && it.visibleText.any { char -> !char.isWhitespace() } }
         .forEach { layout ->
-            val overlay = layout.toIosPdfRichTextOverlay(pageWidth, pageHeight)
+            val overlay = layout.toIosPdfRichTextOverlay(pageWidth, pageHeight, fontRegistry)
             if (overlay == null) complete = false else overlays += overlay
         }
     return IosPdfRasterizationResult(overlays, complete)
@@ -66,6 +91,7 @@ internal fun buildIosPdfTextRasterOverlays(
 private fun SharedPdfAnnotation.toIosPdfTextBoxOverlay(
     pageWidth: Float,
     pageHeight: Float,
+    fontRegistry: IosPdfTextFontRegistry,
 ): IosPdfRasterOverlay? {
     val safeBounds = bounds?.normalizedIosPdfBounds() ?: return null
     val exportHeight = iosPdfExportHeight(pageHeight)
@@ -92,7 +118,8 @@ private fun SharedPdfAnnotation.toIosPdfTextBoxOverlay(
         width = width,
         height = height,
         padding = padding,
-        fallbackFontName = fontName,
+        fallbackFontName = fontRegistry.familyName(fontPath, fontName),
+        fontRegistry = fontRegistry,
     ) ?: return null
     return IosPdfRasterOverlay(pageIndex, safeBounds, width, height, pixels)
 }
@@ -100,6 +127,7 @@ private fun SharedPdfAnnotation.toIosPdfTextBoxOverlay(
 private fun SharedPdfRichPageLayout.toIosPdfRichTextOverlay(
     pageWidth: Float,
     pageHeight: Float,
+    fontRegistry: IosPdfTextFontRegistry,
 ): IosPdfRasterOverlay? {
     val text = visibleText.withoutTrailingIosPdfPageBreak()
     if (text.text.isBlank()) return null
@@ -108,7 +136,13 @@ private fun SharedPdfRichPageLayout.toIosPdfRichTextOverlay(
     val exportWidth = exportHeight * (pageWidth / pageHeight.coerceAtLeast(1f))
     val width = ceil((bounds.right - bounds.left) * exportWidth).toInt().coerceAtLeast(1)
     val height = ceil((bounds.bottom - bounds.top) * exportHeight).toInt().coerceAtLeast(1)
-    val pixels = renderIosPdfParagraph(text, width, height, padding = 0f) ?: return null
+    val pixels = renderIosPdfParagraph(
+        text,
+        width,
+        height,
+        padding = 0f,
+        fontRegistry = fontRegistry,
+    ) ?: return null
     return IosPdfRasterOverlay(pageIndex, bounds, width, height, pixels)
 }
 
@@ -118,8 +152,8 @@ private fun renderIosPdfParagraph(
     height: Int,
     padding: Float,
     fallbackFontName: String? = null,
+    fontRegistry: IosPdfTextFontRegistry,
 ): ByteArray? = runCatching {
-    val fontCollection = FontCollection().setDefaultFontManager(FontMgr.default)
     val paragraphStyle = ParagraphStyle().apply {
         this.textStyle = TextStyle().apply {
             color = 0xFF000000.toInt()
@@ -127,7 +161,7 @@ private fun renderIosPdfParagraph(
             fontFamilies = arrayOf(fallbackFontName?.takeIf(String::isNotBlank) ?: "Arial")
         }
     }
-    val builder = ParagraphBuilder(paragraphStyle, fontCollection)
+    val builder = ParagraphBuilder(paragraphStyle, fontRegistry.fontCollection)
     val boundaries = buildSet {
         add(0)
         add(text.length)
@@ -141,7 +175,16 @@ private fun renderIosPdfParagraph(
         val merged = text.spanStyles
             .filter { it.start < end && it.end > start }
             .fold(SpanStyle()) { style, range -> style.merge(range.item) }
-        builder.pushStyle(merged.toIosSkiaTextStyle(fallbackFontName))
+        val spanFontPath = text.getStringAnnotations(
+            tag = IOS_PDF_RICH_FONT_PATH_TAG,
+            start = start,
+            end = end,
+        ).firstOrNull()?.item
+        builder.pushStyle(
+            merged.toIosSkiaTextStyle(
+                fallbackFontName = fontRegistry.familyName(spanFontPath, null) ?: fallbackFontName,
+            )
+        )
         builder.addText(text.text.substring(start, end))
         builder.popStyle()
     }
@@ -156,6 +199,44 @@ private fun renderIosPdfParagraph(
         width * 4,
     )
 }.getOrNull()
+
+internal fun buildIosPdfTextFontRegistry(
+    annotations: List<SharedPdfAnnotation>,
+    richTextLayouts: List<SharedPdfRichPageLayout> = emptyList(),
+): IosPdfTextFontRegistry {
+    val provider = TypefaceFontProviderWithFallback()
+    val aliasesByPath = mutableMapOf<String, String>()
+    val aliasesByName = mutableMapOf<String, String>()
+    val richFontPaths = richTextLayouts.asSequence()
+        .map { layout ->
+            layout.visibleText.getStringAnnotations(
+                tag = IOS_PDF_RICH_FONT_PATH_TAG,
+                start = 0,
+                end = layout.visibleText.length,
+            ).map { it.item }
+        }
+        .flatten()
+    annotations.asSequence()
+        .mapNotNull { it.fontPath?.takeIf(String::isNotBlank) }
+        .plus(richFontPaths)
+        .distinct()
+        .forEachIndexed { index, path ->
+            val typeface = runCatching { FontMgr.default.makeFromFile(path) }.getOrNull()
+                ?: return@forEachIndexed
+            val alias = "ReaderPdfImportedFont$index"
+            provider.registerTypeface(typeface, alias)
+            aliasesByPath[path] = alias
+            annotations.asSequence()
+                .filter { it.fontPath == path }
+                .mapNotNull { it.fontName?.takeIf(String::isNotBlank) }
+                .forEach { aliasesByName[it] = alias }
+        }
+    val fontManager = FontMgrWithFallback(provider)
+    val fontCollection = FontCollection()
+        .setDefaultFontManager(fontManager)
+        .setAssetFontManager(provider)
+    return IosPdfTextFontRegistry(fontCollection, aliasesByPath, aliasesByName)
+}
 
 private fun SpanStyle.toIosSkiaTextStyle(fallbackFontName: String?): TextStyle {
     val foreground = color.takeIf { it.isSpecified }?.toArgb() ?: 0xFF000000.toInt()

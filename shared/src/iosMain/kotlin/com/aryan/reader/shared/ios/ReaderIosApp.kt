@@ -94,6 +94,8 @@ import com.aryan.reader.shared.SyncedFolder
 import com.aryan.reader.shared.UserData
 import com.aryan.reader.shared.ReaderPlatform
 import com.aryan.reader.shared.ReaderAutoScrollProfile
+import com.aryan.reader.shared.ReaderTtsOverlaySize
+import com.aryan.reader.shared.resolveReaderTtsOverlaySize
 import com.aryan.reader.shared.ReaderAiByokSettings
 import com.aryan.reader.shared.ReaderAiFeature
 import com.aryan.reader.shared.SummarizationResult
@@ -1180,6 +1182,7 @@ private const val IosReaderAutoScrollMinDefaultsKey = "reader_ios_auto_scroll_mi
 private const val IosReaderAutoScrollMaxDefaultsKey = "reader_ios_auto_scroll_max_v1"
 private const val IosReaderAutoScrollSliderDefaultsKey = "reader_ios_auto_scroll_slider_v1"
 private const val IosReaderAutoScrollMusicianDefaultsKey = "reader_ios_auto_scroll_musician_v1"
+private const val IosReaderTtsOverlaySizeDefaultsKey = "reader_ios_tts_overlay_size_v1"
 private const val IosPdfAutoScrollSpeedDefaultsKey = "reader_ios_pdf_auto_scroll_speed_v1"
 private const val IosPdfAutoScrollMinDefaultsKey = "reader_ios_pdf_auto_scroll_min_v1"
 private const val IosPdfAutoScrollMaxDefaultsKey = "reader_ios_pdf_auto_scroll_max_v1"
@@ -1432,6 +1435,15 @@ private fun loadIosReaderAutoScrollMusicianMode(): Boolean =
 
 private fun persistIosReaderAutoScrollMusicianMode(enabled: Boolean) {
     NSUserDefaults.standardUserDefaults.setBool(enabled, forKey = IosReaderAutoScrollMusicianDefaultsKey)
+}
+
+private fun loadIosReaderTtsOverlaySize(): ReaderTtsOverlaySize =
+    resolveReaderTtsOverlaySize(
+        NSUserDefaults.standardUserDefaults.stringForKey(IosReaderTtsOverlaySizeDefaultsKey),
+    )
+
+private fun persistIosReaderTtsOverlaySize(size: ReaderTtsOverlaySize) {
+    NSUserDefaults.standardUserDefaults.setObject(size.name, forKey = IosReaderTtsOverlaySizeDefaultsKey)
 }
 
 private fun loadIosPdfPageSliderVisible(bookId: String): Boolean {
@@ -3377,6 +3389,8 @@ private fun ReaderIosApp(
             onCustomReaderThemesChange = { themes ->
                 state = state.reduce(AppAction.CustomReaderThemesChanged(themes))
             },
+            customFonts = state.customFonts,
+            onImportFont = onImportFonts,
             initialKeepScreenOn = loadIosKeepScreenOn(),
             onKeepScreenOnPreferenceChange = { enabled ->
                 if (acceptsCurrentHostCallback()) persistIosKeepScreenOn(enabled)
@@ -3726,6 +3740,8 @@ private fun ReaderIosApp(
                             cloudTtsVoiceId = effectiveReaderAiSettings.ttsSpeakerId,
                             onCloudTtsVoiceChange = ::updateCloudTtsVoice,
                             onClearCloudTtsCache = readerCloudTts::clearCache,
+                            initialTtsOverlaySize = loadIosReaderTtsOverlaySize(),
+                            onTtsOverlaySizePreferenceChange = ::persistIosReaderTtsOverlaySize,
                             onAiAction = ::runReaderAiAction,
                             onAiResultDismiss = {
                                 dismissReaderAiResult()

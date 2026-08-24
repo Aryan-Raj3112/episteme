@@ -85,6 +85,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextDecoration
@@ -1496,6 +1497,7 @@ fun SharedPdfTextBoxEditorOverlay(
     canvasSize: IntSize,
     onTextChange: (String) -> Unit,
     onBoundsChange: (PdfPageBounds) -> Unit,
+    customFontFamilies: Map<String, FontFamily> = emptyMap(),
     onGlobalDragStart: (() -> Unit)? = null,
     onGlobalDrag: ((Offset) -> Unit)? = null,
     onGlobalDragEnd: (() -> Unit)? = null,
@@ -1561,7 +1563,8 @@ fun SharedPdfTextBoxEditorOverlay(
                 lineHeight = with(density) { (fontSizePx * 1.25f).toSp() },
                 fontWeight = if (style.isBold) FontWeight.Bold else FontWeight.Normal,
                 fontStyle = if (style.isItalic) FontStyle.Italic else FontStyle.Normal,
-                fontFamily = sharedPdfFontFamily(style.fontName ?: style.fontPath),
+                fontFamily = sharedPdfFontFamily(style.fontPath, customFontFamilies)
+                    ?: sharedPdfFontFamily(style.fontName, customFontFamilies),
                 textDecoration = style.textDecoration
             ),
             cursorBrush = SolidColor(textColor),

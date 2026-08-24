@@ -125,6 +125,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.changedToDown
@@ -652,6 +653,7 @@ internal fun SharedMobilePdfVerticalPages(
     ttsPageIndex: Int?,
     ttsHighlightBounds: List<PdfPageBounds>,
     activeStroke: List<PdfPagePoint>,
+    customFontFamilies: Map<String, FontFamily> = emptyMap(),
     highlighterSnapEnabled: Boolean = false,
     isStylusOnlyMode: Boolean = false,
     verticalScrollController: SharedMobilePdfVerticalScrollController? = null,
@@ -811,6 +813,7 @@ internal fun SharedMobilePdfVerticalPages(
                         ttsHighlights = if (ttsPageIndex == pdfPage && !zoomCamera.isZoomed()) ttsHighlightBounds else emptyList(),
                         annotations = state.annotations.filter { it.pageIndex == pdfPage },
                         activeStroke = if (page == state.pageIndex) activeStroke else emptyList(),
+                        customFontFamilies = customFontFamilies,
                         highlighterSnapEnabled = highlighterSnapEnabled,
                         isStylusOnlyMode = isStylusOnlyMode,
                         selectedTool = state.selectedTool,
@@ -970,6 +973,7 @@ internal fun SharedMobilePdfPaginatedPages(
     ttsPageIndex: Int?,
     ttsHighlightBounds: List<PdfPageBounds>,
     activeStroke: List<PdfPagePoint>,
+    customFontFamilies: Map<String, FontFamily> = emptyMap(),
     highlighterSnapEnabled: Boolean = false,
     isStylusOnlyMode: Boolean = false,
     tapToTurnPages: Boolean,
@@ -1240,6 +1244,7 @@ internal fun SharedMobilePdfPaginatedPages(
                                     ttsHighlights = if (ttsPageIndex == pdfPage && !activeZoomCamera.isZoomed()) ttsHighlightBounds else emptyList(),
                                     annotations = state.annotations.filter { it.pageIndex == pdfPage },
                                     activeStroke = if (displayPage == state.pageIndex) activeStroke else emptyList(),
+                                    customFontFamilies = customFontFamilies,
                                     highlighterSnapEnabled = highlighterSnapEnabled,
                                     isStylusOnlyMode = isStylusOnlyMode,
                                     selectedTool = state.selectedTool,
@@ -1302,7 +1307,8 @@ internal fun SharedMobilePdfPaginatedPages(
                             text = draft.text,
                             color = Color(0xFF111111),
                             fontSize = with(LocalDensity.current) { draft.style.sharedPdfTextFontSizePx(drag.originCanvasSize).toSp() },
-                            fontFamily = sharedPdfFontFamily(draft.style.fontName ?: draft.style.fontPath),
+                            fontFamily = sharedPdfFontFamily(draft.style.fontPath, customFontFamilies)
+                                ?: sharedPdfFontFamily(draft.style.fontName, customFontFamilies),
                             textAlign = TextAlign.Start
                         )
                 }
@@ -1983,6 +1989,7 @@ internal fun SharedMobilePdfPageSurface(
     ttsHighlights: List<PdfPageBounds>,
     annotations: List<SharedPdfAnnotation>,
     activeStroke: List<PdfPagePoint>,
+    customFontFamilies: Map<String, FontFamily> = emptyMap(),
     highlighterSnapEnabled: Boolean = false,
     isStylusOnlyMode: Boolean = false,
     selectedTool: PdfInkTool,
@@ -2334,6 +2341,7 @@ internal fun SharedMobilePdfPageSurface(
                 annotations = annotations,
                 activeStroke = activeStroke,
                 canvasSize = localCanvasSize,
+                customFontFamilies = customFontFamilies,
                 activeTool = if (isEraserOverrideActive) PdfInkTool.ERASER else selectedTool,
                 activeStrokeColorArgb = selectedColorArgb,
                 activeStrokeWidth = strokeWidth,
@@ -2348,6 +2356,7 @@ internal fun SharedMobilePdfPageSurface(
                     style = draft.style,
                     bounds = draft.bounds,
                     canvasSize = localCanvasSize,
+                    customFontFamilies = customFontFamilies,
                     onTextChange = { nextText ->
                         onTextDraftChange(draft.withText(nextText, localCanvasSize))
                     },

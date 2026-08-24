@@ -85,6 +85,7 @@ fun SharedPdfAnnotationOverlay(
     annotations: List<SharedPdfAnnotation>,
     activeStroke: List<PdfPagePoint>,
     canvasSize: IntSize,
+    customFontFamilies: Map<String, FontFamily> = emptyMap(),
     activeTool: PdfInkTool = PdfInkTool.PEN,
     activeStrokeColorArgb: Int = 0xFF1976D2.toInt(),
     activeStrokeWidth: Float = SharedPdfAnnotationDefaults.configFor(PdfInkTool.PEN).strokeWidth,
@@ -170,7 +171,7 @@ fun SharedPdfAnnotationOverlay(
                     lineHeight = with(density) { (fontSizePx * 1.25f).toSp() },
                     fontWeight = if (annotation.isBold) FontWeight.Bold else FontWeight.Normal,
                     fontStyle = if (annotation.isItalic) FontStyle.Italic else FontStyle.Normal,
-                    fontFamily = annotation.sharedPdfTextFontFamily(),
+                    fontFamily = annotation.sharedPdfTextFontFamily(customFontFamilies),
                     textDecoration = annotation.textDecoration,
                     overflow = TextOverflow.Ellipsis,
                     maxLines = SharedPdfTextAnnotationDefaults.estimateLineCount(annotation.text, fontSizePx, widthPx),
@@ -1114,8 +1115,11 @@ internal val SharedPdfTextStyleConfig.textDecoration: TextDecoration
         return if (decorations.isEmpty()) TextDecoration.None else TextDecoration.combine(decorations)
     }
 
-internal fun SharedPdfAnnotation.sharedPdfTextFontFamily(): FontFamily? {
-    return sharedPdfFontFamily(fontName ?: fontPath)
+internal fun SharedPdfAnnotation.sharedPdfTextFontFamily(
+    customFontFamilies: Map<String, FontFamily> = emptyMap(),
+): FontFamily? {
+    return sharedPdfFontFamily(fontPath, customFontFamilies)
+        ?: sharedPdfFontFamily(fontName, customFontFamilies)
 }
 
 internal fun SharedPdfTextResizeHandle.centerOffset(
@@ -1149,7 +1153,11 @@ internal fun SharedPdfTextStyleConfig.displayFontName(): String {
         ?: "Default"
 }
 
-internal fun sharedPdfFontFamily(nameOrPath: String?): FontFamily? {
+internal fun sharedPdfFontFamily(
+    nameOrPath: String?,
+    customFontFamilies: Map<String, FontFamily> = emptyMap(),
+): FontFamily? {
+    customFontFamilies[nameOrPath]?.let { return it }
     return when (nameOrPath) {
         "Merriweather",
         "Lora",

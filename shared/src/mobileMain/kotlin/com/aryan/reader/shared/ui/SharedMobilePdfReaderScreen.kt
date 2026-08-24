@@ -154,6 +154,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import com.aryan.reader.shared.BookItem
+import com.aryan.reader.shared.CustomFontItem
 import com.aryan.reader.shared.ReaderAiFeature
 import com.aryan.reader.shared.ReaderAiResultState
 import com.aryan.reader.shared.ReaderExtrasState
@@ -224,6 +225,7 @@ import com.aryan.reader.shared.pdf.reduce
 import com.aryan.reader.shared.pdf.sharedPdfPageRangeLabel
 import com.aryan.reader.shared.pdf.SharedPdfKeyboardNavigationAction
 import com.aryan.reader.shared.pdf.sharedPdfKeyboardNavigationAction
+import com.aryan.reader.shared.pdf.loadSharedPdfCustomFontFamilies
 import com.aryan.reader.shared.reader.ReaderPageSpreadMode
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.captureCurrentPdfHistoryPage
@@ -308,6 +310,8 @@ fun SharedMobilePdfReaderScreen(
     onPdfHighlighterSnapChange: (Boolean) -> Unit = {},
     customReaderThemes: List<ReaderTheme> = emptyList(),
     onCustomReaderThemesChange: (List<ReaderTheme>) -> Unit = {},
+    customFonts: List<CustomFontItem> = emptyList(),
+    onImportFont: () -> Unit = {},
     initialKeepScreenOn: Boolean = false,
     onKeepScreenOnPreferenceChange: (Boolean) -> Unit = {},
     initialStylusOnlyMode: Boolean = false,
@@ -374,6 +378,8 @@ fun SharedMobilePdfReaderScreen(
         onPdfHighlighterSnapChange = onPdfHighlighterSnapChange,
         customReaderThemes = customReaderThemes,
         onCustomReaderThemesChange = onCustomReaderThemesChange,
+        customFonts = customFonts,
+        onImportFont = onImportFont,
         initialKeepScreenOn = initialKeepScreenOn,
         onKeepScreenOnPreferenceChange = onKeepScreenOnPreferenceChange,
         initialStylusOnlyMode = initialStylusOnlyMode,
@@ -451,6 +457,8 @@ fun SharedMobilePdfReaderHost(
     onPdfHighlighterSnapChange: (Boolean) -> Unit = {},
     customReaderThemes: List<ReaderTheme> = emptyList(),
     onCustomReaderThemesChange: (List<ReaderTheme>) -> Unit = {},
+    customFonts: List<CustomFontItem> = emptyList(),
+    onImportFont: () -> Unit = {},
     initialKeepScreenOn: Boolean = false,
     onKeepScreenOnPreferenceChange: (Boolean) -> Unit = {},
     initialStylusOnlyMode: Boolean = false,
@@ -478,6 +486,9 @@ fun SharedMobilePdfReaderHost(
     val ownsTts = hostConfig.owns(SharedPdfReaderGlobalResource.TTS)
     val ownsGlobalModal = hostConfig.owns(SharedPdfReaderGlobalResource.GLOBAL_MODAL)
     val ownsNativeAction = hostConfig.owns(SharedPdfReaderGlobalResource.NATIVE_ACTION)
+    val customPdfFontFamilies = remember(customFonts) {
+        loadSharedPdfCustomFontFamilies(customFonts)
+    }
     key(readerSessionKey) {
         val pdfCardTitle = book.cardTitle(LocalUsePdfFileNameAsDisplayName.current)
         val initialPage = book.lastPageIndex?.coerceAtLeast(0) ?: 0
@@ -1021,12 +1032,14 @@ fun SharedMobilePdfReaderHost(
     }
 
     fun startEditingTextBox(annotation: SharedPdfAnnotation) {
+        val annotationStyle = annotation.sharedPdfTextStyle()
+        textStyle = annotationStyle
         textDraft = SharedPdfTextDraft(
             id = annotation.id,
             pageIndex = annotation.pageIndex,
             bounds = annotation.bounds ?: PdfPageBounds(left = 0.3f, top = 0.45f, right = 0.7f, bottom = 0.55f),
             text = annotation.text,
-            style = annotation.sharedPdfTextStyle(),
+            style = annotationStyle,
             createdAt = annotation.createdAt,
             isManuallySized = true
         )
@@ -1625,6 +1638,7 @@ fun SharedMobilePdfReaderHost(
                         ttsPageIndex = ttsPageIndex.takeIf { pdfTts.isSessionActive || pendingTtsStart != null },
                         ttsHighlightBounds = ttsHighlightBounds,
                         activeStroke = activeStroke,
+                        customFontFamilies = customPdfFontFamilies,
                         highlighterSnapEnabled = readerState.isHighlighterSnapEnabled,
                         isStylusOnlyMode = isStylusOnlyMode,
                         verticalScrollController = pdfVerticalScrollController,
@@ -1687,6 +1701,7 @@ fun SharedMobilePdfReaderHost(
                         ttsPageIndex = ttsPageIndex.takeIf { pdfTts.isSessionActive || pendingTtsStart != null },
                         ttsHighlightBounds = ttsHighlightBounds,
                         activeStroke = activeStroke,
+                        customFontFamilies = customPdfFontFamilies,
                         highlighterSnapEnabled = readerState.isHighlighterSnapEnabled,
                         isStylusOnlyMode = isStylusOnlyMode,
                         tapToTurnPages = tapToTurnPages,
@@ -1957,8 +1972,9 @@ fun SharedMobilePdfReaderHost(
                     exit = slideOutVertically(tween(PdfChromeMotionDurationMillis)) { it } + fadeOut(tween(PdfChromeMotionDurationMillis)),
                     modifier = Modifier.align(Alignment.BottomCenter)
                 ) {
+                    val activeTextStyle = textDraft?.style ?: textStyle
                     SharedMobilePdfTextDock(
-                        style = textStyle,
+                        style = activeTextStyle,
                         onStyleChange = { newStyle ->
                             textStyle = newStyle
                             textDraft?.let { draft ->
@@ -1967,6 +1983,9 @@ fun SharedMobilePdfReaderHost(
                         },
                         onInsertTextBox = ::insertTextBox,
                         onClose = { setTool(PdfInkTool.NONE) },
+                        customFonts = customFonts,
+                        customFontFamilies = customPdfFontFamilies,
+                        onImportFont = onImportFont,
                         modifier = Modifier.padding(
                             start = 12.dp,
                             end = 12.dp,
