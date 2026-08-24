@@ -1702,6 +1702,10 @@ private fun PdfViewerScreenContent(
         val currentP = if (displayMode == DisplayMode.PAGINATION) currentPaginationDisplayPage() else verticalReaderState.currentPage
 
         Timber.tag("PdfTextBoxDebug").d("Viewer: onInsertTextBox triggered. Target Page: $currentP, DisplayMode: $displayMode")
+        Timber.tag(PDF_TEXT_BOX_INPUT_TRACE_TAG).d(
+            "event=insert_request page=$currentP displayMode=$displayMode " +
+                "textBoxEditMode=$isDrawingActive selectedTextBoxId=${selectedTextBoxId ?: "none"}"
+        )
 
         val defaultWidth = 0.4f
         val defaultHeight = 0.1f
@@ -1735,6 +1739,11 @@ private fun PdfViewerScreenContent(
         textBoxes.add(newBox)
         Timber.tag("PdfTextBoxDebug").i("Viewer: Added TextBox [ID: ${newBox.id}] to list. Total boxes now: ${textBoxes.size}")
         selectedTextBoxId = newBox.id
+        Timber.tag(PDF_TEXT_BOX_INPUT_TRACE_TAG).i(
+            "event=insert_created id=${newBox.id} page=${newBox.pageIndex} " +
+                "selectedTextBoxId=${selectedTextBoxId ?: "none"} textLength=${newBox.text.length} " +
+                "textBoxEditMode=$isDrawingActive"
+        )
         richTextController?.clearSelection()
         showBars = false
     }
@@ -4098,7 +4107,6 @@ private fun PdfViewerScreenContent(
         surfaceState.calculateSnappedPoint = calculateSnappedPoint
         surfaceState.dynamicBeyondViewportPageCount = dynamicBeyondViewportPageCount
         surfaceState.visibleUserHighlightsByPage = visibleUserHighlightsByPage
-        surfaceState.visibleTextBoxesByPage = visibleTextBoxesByPage
         surfaceState.isProUser = isProUser
         surfaceState.onDictionaryLookupStable = onDictionaryLookupStable
         surfaceState.onTranslateTextStable = onTranslateTextStable
@@ -4123,7 +4131,10 @@ private fun PdfViewerScreenContent(
         surfaceState.onBookmarkClickStable = onBookmarkClickStable
         surfaceState.onOcrStateChangeStable = onOcrStateChangeStable
         surfaceState.onGetOcrSearchRectsStable = onGetOcrSearchRectsStable
-        surfaceState.visibleTextBoxes = visibleTextBoxes
+        surfaceState.textBoxSurfaceState.data.value = PdfViewerTextBoxSurfaceData(
+            all = visibleTextBoxes,
+            byPage = visibleTextBoxesByPage,
+        )
         surfaceState.bottomScrollLimitPx.value = bottomScrollLimitPx
         surfaceState.topScrollLimitPx.value = topScrollLimitPx
         surfaceState.visibleUserHighlights = visibleUserHighlights
@@ -6261,6 +6272,22 @@ private data class PdfViewerPaginationPageState(
 )
 
 /**
+ * The text-box snapshots consumed by the independently recomposed PDF surface.
+ *
+ * Keeping the complete list and its page index together ensures that a text edit publishes one
+ * consistent snapshot to both vertical scrolling and pagination surfaces.
+ */
+internal data class PdfViewerTextBoxSurfaceData(
+    val all: List<PdfTextBox> = emptyList(),
+    val byPage: Map<Int, List<PdfTextBox>> = emptyMap(),
+)
+
+/** Compose-observable holder for the text-box snapshots shared by the PDF surfaces. */
+internal class PdfViewerTextBoxSurfaceState {
+    val data = mutableStateOf(PdfViewerTextBoxSurfaceData())
+}
+
+/**
  * Stable bridge between the reader's stateful screen and the extracted PDF surface.
  *
  * It keeps business state out of the bridge. The parent binds each current value or accessor on
@@ -6357,7 +6384,7 @@ private class PdfViewerSurfaceState {
     lateinit var showVerticalPageGap: PdfViewerMutableValue<Boolean>
     lateinit var pdfTextRepository: PdfTextRepository
     lateinit var visibleUserHighlightsByPage: Map<Int, List<PdfUserHighlight>>
-    lateinit var visibleTextBoxesByPage: Map<Int, List<PdfTextBox>>
+    val textBoxSurfaceState = PdfViewerTextBoxSurfaceState()
     var isProUser: Boolean = false
     lateinit var onDictionaryLookupStable: (String) -> Unit
     lateinit var onTranslateTextStable: (String) -> Unit
@@ -6431,7 +6458,6 @@ private class PdfViewerSurfaceState {
     lateinit var onBookmarkClickStable: (Int) -> Unit
     lateinit var onOcrStateChangeStable: (Boolean) -> Unit
     lateinit var onGetOcrSearchRectsStable: suspend (Int, String) -> List<RectF>
-    lateinit var visibleTextBoxes: List<PdfTextBox>
     var bottomScrollLimitPx: androidx.compose.runtime.MutableState<Float> = mutableStateOf(0f)
     var topScrollLimitPx: androidx.compose.runtime.MutableState<Float> = mutableStateOf(0f)
     lateinit var onAutoScrollInteraction: () -> Unit
@@ -6709,7 +6735,8 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
     var currentActiveOffset by surfaceState.currentActiveOffset
     var showVerticalPageGap by surfaceState.showVerticalPageGap
     val visibleUserHighlightsByPage = surfaceState.visibleUserHighlightsByPage
-    val visibleTextBoxesByPage = surfaceState.visibleTextBoxesByPage
+    val textBoxSurfaceData = surfaceState.textBoxSurfaceState.data.value
+    val visibleTextBoxesByPage = textBoxSurfaceData.byPage
     val isProUser = surfaceState.isProUser
     val onDictionaryLookupStable = surfaceState.onDictionaryLookupStable
     val onTranslateTextStable = surfaceState.onTranslateTextStable
@@ -6769,7 +6796,7 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
     val onBookmarkClickStable = surfaceState.onBookmarkClickStable
     val onOcrStateChangeStable = surfaceState.onOcrStateChangeStable
     val onGetOcrSearchRectsStable = surfaceState.onGetOcrSearchRectsStable
-    val visibleTextBoxes = surfaceState.visibleTextBoxes
+    val visibleTextBoxes = textBoxSurfaceData.all
     val bottomScrollLimitPx = surfaceState.bottomScrollLimitPx.value
     val topScrollLimitPx = surfaceState.topScrollLimitPx.value
     val onAutoScrollInteraction = surfaceState.onAutoScrollInteraction
@@ -6781,11 +6808,24 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
     val detectSpeechBubblesForPage = surfaceState.detectSpeechBubblesForPage
     val isAnnotationHit = surfaceState.isAnnotationHit
     val boxConstraints = constraints
+    val hiddenRichTextInputEnabled = isPdfRichTextInputEnabled(
+        isEditMode = isEditMode,
+        selectedTool = selectedTool,
+        selectedTextBoxId = selectedTextBoxId,
+    )
+
+    LaunchedEffect(isEditMode, selectedTool, selectedTextBoxId, isDrawingActive) {
+        Timber.tag(PDF_TEXT_BOX_INPUT_TRACE_TAG).d(
+            "event=viewport_input_state selectedTool=$selectedTool pageRichTextEditMode=$isEditMode " +
+                "textBoxEditMode=$isDrawingActive selectedTextBoxId=${selectedTextBoxId ?: "none"} " +
+                "hiddenRichTextInputEnabled=$hiddenRichTextInputEnabled"
+        )
+    }
 
     if (richTextController != null) {
         SharedPdfRichTextHiddenInput(
             controller = richTextController.sharedDelegate,
-            enabled = isEditMode && selectedTool == InkType.TEXT,
+            enabled = hiddenRichTextInputEnabled,
             modifier = Modifier
                 .align(Alignment.BottomStart)
                 .windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars))
@@ -7128,9 +7168,20 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                                 selectedTextBoxId = selectedTextBoxId,
                                 onTextBoxChange = { updatedBox ->
                                     val idx = textBoxes.indexOfFirst { it.id == updatedBox.id }
+                                    val previousLength = textBoxes.getOrNull(idx)?.text?.length
+                                    Timber.tag(PDF_TEXT_BOX_INPUT_TRACE_TAG).d(
+                                        "event=viewer_value_change path=vertical id=${updatedBox.id} " +
+                                            "page=${updatedBox.pageIndex} oldLength=${previousLength ?: -1} " +
+                                            "newLength=${updatedBox.text.length} matched=${idx != -1} " +
+                                            "selected=${updatedBox.id == selectedTextBoxId} textBoxEditMode=$isDrawingActive"
+                                    )
                                     if (idx != -1) textBoxes[idx] = updatedBox
                                 },
                                 onTextBoxSelect = { id ->
+                                    Timber.tag(PDF_TEXT_BOX_INPUT_TRACE_TAG).d(
+                                        "event=viewer_select path=vertical id=$id " +
+                                            "selectedBefore=${selectedTextBoxId ?: "none"} textBoxEditMode=$isDrawingActive"
+                                    )
                                     selectedTextBoxId = id
                                     richTextController?.clearSelection()
                                 },
@@ -9090,6 +9141,13 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                     annotationSettingsRepo.updateHighlighterPalette(newPalette)
                 },
                 onUpdateStyle = { newStyle ->
+                    Timber.tag(PDF_TEXT_BOX_INPUT_TRACE_TAG).d(
+                        "event=style_update target=${if (selectedTextBoxId == null) "page_rich_text" else "legacy_text_box"} " +
+                            "selectedTextBoxId=${selectedTextBoxId ?: "none"} fontSize=${newStyle.fontSize.value} " +
+                            "bold=${newStyle.fontWeight == FontWeight.Bold} italic=${newStyle.fontStyle == FontStyle.Italic} " +
+                            "underline=${newStyle.textDecoration?.contains(TextDecoration.Underline) == true} " +
+                            "strike=${newStyle.textDecoration?.contains(TextDecoration.LineThrough) == true}"
+                    )
                     val newConfig = TextStyleConfig(
                         colorArgb = newStyle.color.toArgb(),
                         backgroundColorArgb = newStyle.background.toArgb(),
@@ -9143,6 +9201,10 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                 onImportFont = viewModel::importFont,
                 onFontSelected = { name, path ->
                     Timber.tag("PdfFontDebug").i("UI Action: Font Selected -> Name: $name, Path: $path")
+                    Timber.tag(PDF_TEXT_BOX_INPUT_TRACE_TAG).d(
+                        "event=style_font_update target=${if (selectedTextBoxId == null) "page_rich_text" else "legacy_text_box"} " +
+                            "selectedTextBoxId=${selectedTextBoxId ?: "none"}"
+                    )
                     val currentConfig = toolSettings.textStyle
                     val newConfig = currentConfig.copy(fontPath = path, fontName = name)
                     annotationSettingsRepo.updateTextStyle(newConfig)
@@ -9381,7 +9443,7 @@ private fun PdfViewerPaginationPage(
     var showVerticalPageGap by surfaceState.showVerticalPageGap
     val pdfTextRepository = surfaceState.pdfTextRepository
     val visibleUserHighlightsByPage = surfaceState.visibleUserHighlightsByPage
-    val visibleTextBoxesByPage = surfaceState.visibleTextBoxesByPage
+    val visibleTextBoxesByPage = surfaceState.textBoxSurfaceState.data.value.byPage
     val isProUser = surfaceState.isProUser
     val onDictionaryLookupStable = surfaceState.onDictionaryLookupStable
     val onTranslateTextStable = surfaceState.onTranslateTextStable
@@ -10230,9 +10292,20 @@ private fun PdfViewerPaginationPage(
         selectedTextBoxId = selectedTextBoxId,
         onTextBoxChange = { updatedBox ->
             val idx = textBoxes.indexOfFirst { it.id == updatedBox.id }
+            val previousLength = textBoxes.getOrNull(idx)?.text?.length
+            Timber.tag(PDF_TEXT_BOX_INPUT_TRACE_TAG).d(
+                "event=viewer_value_change path=pagination id=${updatedBox.id} " +
+                    "page=${updatedBox.pageIndex} oldLength=${previousLength ?: -1} " +
+                    "newLength=${updatedBox.text.length} matched=${idx != -1} " +
+                    "selected=${updatedBox.id == selectedTextBoxId} textBoxEditMode=$isDrawingActive"
+            )
             if (idx != -1) textBoxes[idx] = updatedBox
         },
         onTextBoxSelect = { id ->
+            Timber.tag(PDF_TEXT_BOX_INPUT_TRACE_TAG).d(
+                "event=viewer_select path=pagination id=$id " +
+                    "selectedBefore=${selectedTextBoxId ?: "none"} textBoxEditMode=$isDrawingActive"
+            )
             selectedTextBoxId = id
             richTextController?.clearSelection()
         },

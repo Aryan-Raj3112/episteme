@@ -1275,7 +1275,11 @@ internal fun PdfPageRenderer(
                             controller = richTextController.sharedDelegate,
                             pageWidth = staticData.targetWidth.toFloat(),
                             pageHeight = staticData.targetHeight.toFloat(),
-                            isTextEditingEnabled = isEditable && selectedTextBoxId == null,
+                            isTextEditingEnabled = isPdfRichTextInputEnabled(
+                                isEditMode = isEditMode,
+                                selectedTool = selectedTool,
+                                selectedTextBoxId = selectedTextBoxId,
+                            ),
                             centeringOffsetX = staticData.centeringOffsetX,
                             centeringOffsetY = staticData.centeringOffsetY,
                             isDarkMode = staticData.isDarkMode,
@@ -1313,10 +1317,20 @@ internal fun PdfPageRenderer(
                                 }
                             },
                             onTextChanged = { newText ->
+                                Timber.tag(PDF_TEXT_BOX_INPUT_TRACE_TAG).d(
+                                    "event=renderer_value_change id=${box.id} page=${box.pageIndex} " +
+                                        "oldLength=${box.text.length} newLength=${newText.length} " +
+                                        "selected=${box.id == selectedTextBoxId} editMode=$isEditMode " +
+                                        "dragging=${draggingBoxId == box.id}"
+                                )
                                 onTextBoxChange(box.copy(text = newText))
                             },
                             onSelect = {
                                 Timber.tag("PdfTextBoxDebug").d("PdfPageRenderer onSelect propagated[ID: ${box.id}]")
+                                Timber.tag(PDF_TEXT_BOX_INPUT_TRACE_TAG).d(
+                                    "event=renderer_select id=${box.id} page=${box.pageIndex} " +
+                                        "selectedBefore=${box.id == selectedTextBoxId} editMode=$isEditMode"
+                                )
                                 onTextBoxSelect(box.id)
                             },
                             onDragStart = { touchOffset ->
