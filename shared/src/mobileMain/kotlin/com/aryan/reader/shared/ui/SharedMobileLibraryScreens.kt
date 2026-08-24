@@ -228,6 +228,9 @@ fun SharedMobileUnifiedLibraryScreen(
     onAddAudiobookMultiple: (() -> Unit)? = null,
     onAddAudiobookFolder: (() -> Unit)? = null,
     onChooseTtsBook: (() -> Unit)? = null,
+    selectionCapabilities: SharedMobileUnifiedLibrarySelectionCapabilities =
+        SharedMobileUnifiedLibrarySelectionCapabilities(),
+    selectionActions: SharedMobileUnifiedLibraryActions? = null,
     modifier: Modifier = Modifier,
 ) {
     var filter by remember { mutableStateOf(MobileUnifiedLibraryFilter.ALL) }
@@ -240,6 +243,10 @@ fun SharedMobileUnifiedLibraryScreen(
     }
     var selectedShelfId by remember { mutableStateOf<String?>(null) }
     var showCreateShelf by remember { mutableStateOf(false) }
+    var showCreateShelfFromSelection by remember { mutableStateOf(false) }
+    var showAddToShelf by remember { mutableStateOf(false) }
+    var showTagDialog by remember { mutableStateOf(false) }
+    var showDeleteBooks by remember { mutableStateOf(false) }
     var playerBook by remember { mutableStateOf<SharedAudiobook?>(null) }
     var showPlayerSheet by remember { mutableStateOf(false) }
     var ttsPlayerItem by remember { mutableStateOf<SharedTtsListenItem?>(null) }
@@ -276,6 +283,12 @@ fun SharedMobileUnifiedLibraryScreen(
         state.libraryFilters.sourceFolders.size +
         state.libraryFilters.tagIds.size +
         if (state.libraryFilters.readStatus == ReadStatusFilter.ALL) 0 else 1
+    val selectedIds = state.selectedBookIds
+    val selectedBook = selectedIds.singleOrNull()?.let { id ->
+        state.rawLibraryBooks.firstOrNull { it.id == id }
+    }
+    val contextualActions = selectionActions?.takeIf { selectionCapabilities.selectionActions }
+    val isContextualMode = contextualActions != null && selectedIds.isNotEmpty()
 
     fun applyUnifiedLibraryFilters(filters: LibraryFilters) {
         filter = filters.readStatus.toMobileUnifiedLibraryFilter()
@@ -345,71 +358,126 @@ fun SharedMobileUnifiedLibraryScreen(
     Scaffold(
         modifier = modifier,
         topBar = {
-            TopAppBar(
-                title = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            selectedShelfId?.let { id -> state.shelves.firstOrNull { it.id == id }?.name }
-                                ?: when (section) {
-                                    MobileUnifiedLibrarySection.HOME -> readerString("nav_unified_library", "Library Beta")
-                                    MobileUnifiedLibrarySection.SHELVES -> readerString("tab_shelves", "Shelves")
-                                    MobileUnifiedLibrarySection.FOLDERS -> readerString("tab_folders", "Folders")
-                                    MobileUnifiedLibrarySection.CATALOGS -> readerString("tab_catalogs", "Catalogs")
-                                    MobileUnifiedLibrarySection.AUDIOBOOKS -> readerString("audiobooks_title", "Audiobooks")
-                                }
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        if (section == MobileUnifiedLibrarySection.HOME) Surface(
-                            shape = RoundedCornerShape(6.dp),
-                            color = MaterialTheme.colorScheme.primaryContainer,
-                        ) {
+            if (isContextualMode) {
+                val actions = requireNotNull(contextualActions)
+                SharedMobileContextualTopBar(
+                        selectedCount = selectedIds.size,
+                        onClose = actions::clearSelection,
+                        onSelectAll = if (selectionCapabilities.selectAll) {
+                            {
+                                actions.selectAll(visibleBooks.mapTo(linkedSetOf()) { it.id })
+                            }
+                        } else {
+                            null
+                        },
+                        onPin = if (selectionCapabilities.pin) actions::toggleSelectedPins else null,
+                        onAddToShelf = if (selectionCapabilities.addToShelf) {
+                            { showAddToShelf = true }
+                        } else {
+                            null
+                        },
+                        onTag = if (selectionCapabilities.tag) {
+                            { showTagDialog = true }
+                        } else {
+                            null
+                        },
+                        onInfo = if (selectionCapabilities.info) {
+                            selectedBook?.let { book -> { infoBook = book } }
+                        } else {
+                            null
+                        },
+                        onSave = if (selectionCapabilities.save) {
+                            selectedBook
+                                ?.takeIf { it.canExportOriginalFile() }
+                                ?.let { book -> { actions.saveBook(book) } }
+                        } else {
+                            null
+                        },
+                        onShare = if (selectionCapabilities.share) {
+                            selectedBook
+                                ?.takeIf { it.canExportOriginalFile() }
+                                ?.let { book -> { actions.shareBook(book) } }
+                        } else {
+                            null
+                        },
+                        onExportAnnotations = if (selectionCapabilities.exportAnnotations) {
+                            selectedBook?.let { book -> { actions.exportAnnotations(book) } }
+                        } else {
+                            null
+                        },
+                        onDelete = if (selectionCapabilities.delete) {
+                            { showDeleteBooks = true }
+                        } else {
+                            null
+                        },
+                )
+            } else {
+                TopAppBar(
+                    title = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
-                                readerString("unified_library_beta", "BETA"),
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                                style = MaterialTheme.typography.labelSmall,
+                                selectedShelfId?.let { id -> state.shelves.firstOrNull { it.id == id }?.name }
+                                    ?: when (section) {
+                                        MobileUnifiedLibrarySection.HOME -> readerString("nav_unified_library", "Library Beta")
+                                        MobileUnifiedLibrarySection.SHELVES -> readerString("tab_shelves", "Shelves")
+                                        MobileUnifiedLibrarySection.FOLDERS -> readerString("tab_folders", "Folders")
+                                        MobileUnifiedLibrarySection.CATALOGS -> readerString("tab_catalogs", "Catalogs")
+                                        MobileUnifiedLibrarySection.AUDIOBOOKS -> readerString("audiobooks_title", "Audiobooks")
+                                    }
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            if (section == MobileUnifiedLibrarySection.HOME) Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = MaterialTheme.colorScheme.primaryContainer,
+                            ) {
+                                Text(
+                                    readerString("unified_library_beta", "BETA"),
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                    style = MaterialTheme.typography.labelSmall,
+                                )
+                            }
+                        }
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = {
+                            if (selectedShelfId != null) selectedShelfId = null
+                            else unifiedScope.launch { unifiedDrawerState.open() }
+                        }) {
+                            Icon(
+                                if (selectedShelfId != null) Icons.AutoMirrored.Filled.ArrowBack else Icons.Default.Menu,
+                                contentDescription = if (selectedShelfId != null) readerString("unified_library_back_to_shelves", "All shelves") else readerString("unified_library_drawer_title", "Your library"),
                             )
                         }
-                    }
-                },
-                navigationIcon = {
-                    IconButton(onClick = {
-                        if (selectedShelfId != null) selectedShelfId = null
-                        else unifiedScope.launch { unifiedDrawerState.open() }
-                    }) {
-                        Icon(
-                            if (selectedShelfId != null) Icons.AutoMirrored.Filled.ArrowBack else Icons.Default.Menu,
-                            contentDescription = if (selectedShelfId != null) readerString("unified_library_back_to_shelves", "All shelves") else readerString("unified_library_drawer_title", "Your library"),
-                        )
-                    }
-                },
-                actions = {
-                    if (section == MobileUnifiedLibrarySection.HOME) IconButton(onClick = { searchVisible = !searchVisible; if (!searchVisible) query = "" }) {
-                        Icon(
-                            if (searchVisible) Icons.Default.Close else Icons.Default.Search,
-                            contentDescription = readerString("unified_library_search_books", "Search your books"),
-                        )
-                    }
-                    if (section == MobileUnifiedLibrarySection.HOME) IconButton(onClick = { onListViewChange(!useListView) }) {
-                        Icon(
-                            if (useListView) Icons.AutoMirrored.Filled.LibraryBooks else Icons.Default.FormatListNumbered,
-                            contentDescription = if (useListView) {
-                                readerString("unified_library_grid_view", "Grid view")
-                            } else {
-                                readerString("unified_library_list_view", "List view")
-                            },
-                        )
-                    }
-                    IconButton(
-                        onClick = onOpenAccountDrawer,
-                        modifier = Modifier.testTag("UnifiedLibraryProfile"),
-                    ) {
-                        accountAvatar()
-                    }
-                },
-            )
+                    },
+                    actions = {
+                        if (section == MobileUnifiedLibrarySection.HOME) IconButton(onClick = { searchVisible = !searchVisible; if (!searchVisible) query = "" }) {
+                            Icon(
+                                if (searchVisible) Icons.Default.Close else Icons.Default.Search,
+                                contentDescription = readerString("unified_library_search_books", "Search your books"),
+                            )
+                        }
+                        if (section == MobileUnifiedLibrarySection.HOME) IconButton(onClick = { onListViewChange(!useListView) }) {
+                            Icon(
+                                if (useListView) Icons.AutoMirrored.Filled.LibraryBooks else Icons.Default.FormatListNumbered,
+                                contentDescription = if (useListView) {
+                                    readerString("unified_library_grid_view", "Grid view")
+                                } else {
+                                    readerString("unified_library_list_view", "List view")
+                                },
+                            )
+                        }
+                        IconButton(
+                            onClick = onOpenAccountDrawer,
+                            modifier = Modifier.testTag("UnifiedLibraryProfile"),
+                        ) {
+                            accountAvatar()
+                        }
+                    },
+                )
+            }
         },
         floatingActionButton = {
-            when {
+            if (!isContextualMode) when {
                 section == MobileUnifiedLibrarySection.HOME -> ExtendedFloatingActionButton(
                     onClick = onImportBooks,
                     icon = { Icon(Icons.Default.Add, contentDescription = null) },
@@ -673,6 +741,73 @@ fun SharedMobileUnifiedLibraryScreen(
             onDismiss = { showCreateShelf = false },
             onCreate = { name -> onCreateShelf(name); showCreateShelf = false },
         )
+    }
+    if (showCreateShelfFromSelection) {
+        val actions = contextualActions
+        if (actions != null) {
+            SharedMobileCreateShelfDialog(
+                title = readerString("desktop_add_to_shelf", "Add selected books to shelf"),
+                onDismiss = { showCreateShelfFromSelection = false },
+                onCreate = { name ->
+                    actions.createShelfFromSelectedBooks(name)
+                    showCreateShelfFromSelection = false
+                },
+            )
+        }
+    }
+    if (showAddToShelf) {
+        val actions = contextualActions
+        if (actions != null) {
+            SharedAddToShelfDialog(
+                shelves = state.shelves.filter { it.type == ShelfType.MANUAL },
+                onDismiss = { showAddToShelf = false },
+                onCreateShelf = {
+                    showAddToShelf = false
+                    showCreateShelfFromSelection = true
+                },
+                onShelvesSelected = { shelfIds ->
+                    actions.addSelectedBooksToShelves(shelfIds)
+                    showAddToShelf = false
+                },
+            )
+        }
+    }
+    if (showDeleteBooks) {
+        val actions = contextualActions
+        if (actions != null) {
+            val containsFolderBooks = state.rawLibraryBooks.any {
+                it.id in selectedIds && it.sourceFolder != null
+            }
+            SharedMobileDeleteConfirmationDialog(
+                title = "Permanently delete ${selectedIds.size} selected book(s)?",
+                body = if (containsFolderBooks) {
+                    "Warning: Some selected items are synced from a local folder. Proceeding will delete the actual files from your device storage.\n\nThis action cannot be undone."
+                } else {
+                    "Permanently delete ${selectedIds.size} selected book(s)? This action cannot be undone."
+                },
+                confirmLabel = readerString("action_delete", "Delete"),
+                emphasizeConfirm = containsFolderBooks,
+                onDismiss = { showDeleteBooks = false },
+                onConfirm = {
+                    actions.deleteBooks(selectedIds)
+                    showDeleteBooks = false
+                },
+            )
+        }
+    }
+    if (showTagDialog) {
+        val actions = contextualActions
+        if (actions != null) {
+            SharedMobileTagSelectionSheet(
+                allTags = state.allTags,
+                selectedBookIds = selectedIds,
+                books = state.rawLibraryBooks,
+                onCreateAndAssign = actions::createAndAssignTag,
+                onToggleTag = actions::toggleTagForSelectedBooks,
+                onDeleteTag = actions::deleteTag,
+                onDismiss = { showTagDialog = false },
+            )
+        }
     }
     if (showAudiobookAddSheet) {
         SharedMobileAudiobookAddSheet(

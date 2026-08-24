@@ -203,6 +203,7 @@ import com.aryan.reader.shared.ui.SharedMobileHomeActions
 import com.aryan.reader.shared.ui.SharedMobileHomeOverflowCapabilities
 import com.aryan.reader.shared.ui.SharedMobileLibraryScreen
 import com.aryan.reader.shared.ui.SharedMobileUnifiedLibraryScreen
+import com.aryan.reader.shared.ui.SharedMobileUnifiedLibraryActions
 import com.aryan.reader.shared.ui.SharedMobileTtsBookPickerSheet
 import com.aryan.reader.shared.ui.SharedMobileBookCover
 import com.aryan.reader.shared.ui.MobileAppDrawerCapabilities
@@ -4806,6 +4807,89 @@ private fun ReaderIosApp(
                                 onLongPressBook = { book -> state = state.toggleBookSelection(book.id) },
                                 onTogglePinned = { book -> state = state.toggleLibraryPinned(book.id) },
                                 onUpdateBook = { book -> updateIosBookMetadata(book) },
+                                selectionCapabilities = iosUnifiedLibrarySelectionCapabilities(),
+                                selectionActions = object : SharedMobileUnifiedLibraryActions {
+                                    override fun clearSelection() {
+                                        state = state.copy(selectedBookIds = emptySet())
+                                    }
+
+                                    override fun selectAll(visibleBookIds: Set<String>) {
+                                        state = SharedLibraryEditor.toggleVisibleBookSelectionInState(
+                                            state = state,
+                                            visibleBookIds = visibleBookIds,
+                                        )
+                                    }
+
+                                    override fun toggleSelectedPins() {
+                                        SharedLibraryEditor.toggleSelectedPinsInState(
+                                            state = state,
+                                            bookIds = state.selectedBookIds,
+                                            isHome = false,
+                                        )?.let { state = it }
+                                    }
+
+                                    override fun addSelectedBooksToShelves(shelfIds: Set<String>) {
+                                        SharedLibraryEditor.addBooksToShelvesInState(
+                                            state = state,
+                                            bookIds = state.selectedBookIds,
+                                            shelfIds = shelfIds,
+                                        )?.let { state = it }
+                                    }
+
+                                    override fun createShelfFromSelectedBooks(name: String) {
+                                        state = state.createIosShelf(name, state.selectedBookIds)
+                                    }
+
+                                    override fun createAndAssignTag(name: String) {
+                                        SharedLibraryEditor.createAndAssignTagInState(
+                                            state = state,
+                                            name = name,
+                                            bookIds = state.selectedBookIds,
+                                        )?.let { state = it }
+                                    }
+
+                                    override fun toggleTagForSelectedBooks(tagId: String, assign: Boolean) {
+                                        SharedLibraryEditor.toggleTagForBooksInState(
+                                            state = state,
+                                            tagId = tagId,
+                                            bookIds = state.selectedBookIds,
+                                            assign = assign,
+                                        )?.let { state = it }
+                                    }
+
+                                    override fun deleteTag(tagId: String) {
+                                        SharedLibraryEditor.deleteTagInState(state, tagId)?.let { state = it }
+                                    }
+
+                                    override fun saveBook(book: BookItem) {
+                                        if (!bridge.shareFile(book.path.orEmpty())) {
+                                            showMessage("The original file is not available to save")
+                                        }
+                                    }
+
+                                    override fun shareBook(book: BookItem) {
+                                        if (!bridge.shareFile(book.path.orEmpty())) {
+                                            showMessage("The original file is not available to share")
+                                        }
+                                    }
+
+                                    override fun exportAnnotations(book: BookItem) {
+                                        annotationExportBook = book
+                                    }
+
+                                    override fun deleteBooks(bookIds: Set<String>) {
+                                        val removedBooks = state.rawLibraryBooks.filter { it.id in bookIds }
+                                        removedBooks.filter { it.sourceFolder == null }
+                                            .mapNotNull { it.path }
+                                            .let(bridge::removeImportedFiles)
+                                        removedBooks.filter { it.sourceFolder != null }
+                                            .groupBy { it.sourceFolder.orEmpty() }
+                                            .forEach { (folder, books) ->
+                                                bridge.removeFolderManagedFiles(folder, books.mapNotNull { it.path })
+                                            }
+                                        state = state.removeIosBooks(bookIds, recordCloudDeletion = true)
+                                    }
+                                },
                                 onCreateShelf = { name -> state = state.createIosShelf(name, emptySet()) },
                                 onImportBooks = onImportBooks,
                                 onAddAudiobookFile = onImportAudiobookFile,

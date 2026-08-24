@@ -7,6 +7,7 @@ import com.aryan.reader.shared.ui.MobileAppDrawerCapabilities
 import com.aryan.reader.shared.ui.MobileAppDrawerItem
 import com.aryan.reader.shared.ui.mobileAppDrawerModel
 import com.aryan.reader.shared.ui.mobileUnifiedLibraryDrawerModel
+import com.aryan.reader.shared.ui.SharedMobileUnifiedLibrarySelectionAction
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -50,6 +51,14 @@ class IosUnifiedLibraryParityTest {
                 MobileAppDrawerItem.HELP_FEEDBACK,
             ),
             mobileAppDrawerModel(MobileAppDrawerCapabilities.UNIFIED_LIBRARY_ACCOUNT).items,
+        )
+    }
+
+    @Test
+    fun iosUnifiedLibraryExposesTheFullContextualSelectionActionSet() {
+        assertEquals(
+            SharedMobileUnifiedLibrarySelectionAction.entries.toSet(),
+            iosUnifiedLibrarySelectionCapabilities().enabledActions,
         )
     }
 }
