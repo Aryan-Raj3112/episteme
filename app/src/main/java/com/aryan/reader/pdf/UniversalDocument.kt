@@ -16,6 +16,8 @@ import com.aryan.reader.COMIC_ARCHIVE_FILE_TYPES
 import com.aryan.reader.FileType
 import com.aryan.reader.R
 import com.aryan.reader.pptx.PptxDocumentWrapper
+import com.aryan.reader.shared.opds.OpdsStreamReference
+import com.aryan.reader.shared.opds.SharedOpdsStreamRequest
 import io.legere.pdfiumandroid.api.Bookmark
 import io.legere.pdfiumandroid.suspend.PdfDocumentKt
 import com.aryan.reader.shared.ui.getAndroidCompatiblePdfTableOfContents
@@ -828,21 +830,16 @@ class OpdsStreamDocumentWrapper(
             }
         }
 
-        val streamCatalog = catalog
-        val finalUrlTemplate = if (streamCatalog != null && urlTemplate.startsWith("http")) {
-            try {
-                val oldUrl = java.net.URL(urlTemplate)
-                val newUrl = java.net.URL(streamCatalog.url)
-                val oldBase = "${oldUrl.protocol}://${oldUrl.authority}"
-                val newBase = "${newUrl.protocol}://${newUrl.authority}"
-                urlTemplate.replace(oldBase, newBase)
-            } catch (_: Exception) {
-                urlTemplate
-            }
-        } else urlTemplate
-
-        val url = finalUrlTemplate.replace("{pageNumber}", pageIndex.toString())
-            .replace("{maxWidth}", "1600")
+        val url = SharedOpdsStreamRequest.buildPageUrl(
+            reference = OpdsStreamReference(
+                id = bookId,
+                count = pageCount,
+                urlTemplate = urlTemplate,
+                catalogId = catalogId,
+            ),
+            pageIndex = pageIndex,
+            catalogUrl = catalog?.url,
+        )
 
         val request = Request.Builder().url(url).build()
         try {

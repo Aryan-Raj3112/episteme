@@ -2302,6 +2302,7 @@ private fun ReaderIosApp(
         stringResolver = loadIosStringResolver(state.appLanguageTag)
     }
     val opdsRepository = remember { IosOpdsRepository(folderFileAdditionHandler = bridge::addFolderManagedFile) }
+    val opdsStreamPageLoader = remember(opdsRepository) { IosOpdsStreamPageLoader(opdsRepository) }
     val opdsController = remember {
         SharedOpdsController(
             repository = opdsRepository,
@@ -3756,6 +3757,7 @@ private fun ReaderIosApp(
                         }
                         SharedMobileEpubReaderScreen(
                             book = readerBook,
+                            streamPageLoader = opdsStreamPageLoader,
                             onBack = {
                                 closeActiveReader(book)
                             },

@@ -56,6 +56,20 @@ class SharedMobileEpubWebViewController {
     }
 }
 
+data class SharedMobileEpubStreamPageResponse(
+    val bytes: ByteArray,
+    val mimeType: String,
+)
+
+/**
+ * Optional platform resource boundary for authenticated remote OPDS-PSE pages.
+ * The URL passed here is a credential-free reader-opds-page resource URI; the
+ * platform implementation resolves credentials from its persisted catalog store.
+ */
+interface SharedMobileEpubStreamPageLoader {
+    suspend fun loadPage(resourceUrl: String): SharedMobileEpubStreamPageResponse?
+}
+
 @Composable
 internal expect fun rememberSharedMobileEpubLoadState(book: BookItem): SharedMobileEpubLoadState
 
@@ -68,6 +82,8 @@ internal expect fun SharedMobileEpubWebView(
     navigationRequestId: Long,
     onBridgeMessage: (method: String, payload: String) -> Unit,
     positionController: SharedMobileEpubWebViewController? = null,
+    streamPageLoader: SharedMobileEpubStreamPageLoader? = null,
+    streamPageUnavailableLabel: String,
     modifier: Modifier = Modifier
 )
 

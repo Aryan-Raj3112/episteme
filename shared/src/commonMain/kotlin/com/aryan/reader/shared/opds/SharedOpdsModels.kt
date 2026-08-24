@@ -201,6 +201,12 @@ data class OpdsStreamReference(
     val catalogId: String? = null
 )
 
+data class SharedOpdsStreamPageRequest(
+    val reference: OpdsStreamReference,
+    val pageIndex: Int,
+    val maxWidth: Int = SharedOpdsStreamRequest.DefaultMaxWidth,
+)
+
 interface SharedOpdsRepository {
     fun loadCatalogs(): List<OpdsCatalog>
     fun saveCatalogs(catalogs: List<OpdsCatalog>)

@@ -304,6 +304,102 @@ object SharedOpdsStreamUri {
     }
 }
 
+object SharedOpdsStreamRequest {
+    const val DefaultMaxWidth = 1600
+    const val ResourceScheme = "reader-opds-page"
+    private const val RESOURCE_PREFIX = "$ResourceScheme://stream"
+
+    fun buildPageUrl(
+        reference: OpdsStreamReference,
+        pageIndex: Int,
+        maxWidth: Int = DefaultMaxWidth,
+        catalogUrl: String? = null,
+    ): String {
+        require(pageIndex >= 0) { "OPDS stream page index must be non-negative" }
+        require(maxWidth > 0) { "OPDS stream max width must be positive" }
+        val template = rewriteCatalogHost(reference.urlTemplate, catalogUrl)
+        return template
+            .replace("{pageNumber}", pageIndex.toString())
+            .replace("{maxWidth}", maxWidth.toString())
+    }
+
+    fun buildResourceUri(
+        reference: OpdsStreamReference,
+        pageIndex: Int,
+        maxWidth: Int = DefaultMaxWidth,
+    ): String {
+        require(pageIndex in 0 until reference.count) {
+            "OPDS stream page index is outside the declared page count"
+        }
+        require(maxWidth > 0) { "OPDS stream max width must be positive" }
+        return "$RESOURCE_PREFIX?id=${reference.id.percentEncode()}" +
+            "&count=${reference.count}" +
+            "&page=$pageIndex" +
+            "&width=$maxWidth" +
+            "&url=${reference.urlTemplate.percentEncode()}" +
+            reference.catalogId?.let { "&catalogId=${it.percentEncode()}" }.orEmpty()
+    }
+
+    fun parseResourceUri(uriString: String?): SharedOpdsStreamPageRequest? {
+        if (uriString.isNullOrBlank() || !uriString.startsWith(RESOURCE_PREFIX)) return null
+        val params = uriString.substringAfter('?', missingDelimiterValue = "")
+            .split('&')
+            .mapNotNull { pair ->
+                if (pair.isBlank()) return@mapNotNull null
+                val key = pair.substringBefore('=').percentDecode()
+                val value = pair.substringAfter('=', missingDelimiterValue = "").percentDecode()
+                key to value
+            }
+            .toMap()
+        val id = params["id"]?.takeIf { it.isNotBlank() } ?: return null
+        val count = params["count"]?.toIntOrNull()?.takeIf { it > 0 } ?: return null
+        val pageIndex = params["page"]?.toIntOrNull()?.takeIf { it in 0 until count } ?: return null
+        val maxWidth = params["width"]?.toIntOrNull()?.takeIf { it > 0 } ?: return null
+        val urlTemplate = params["url"]?.takeIf { it.isNotBlank() } ?: return null
+        return SharedOpdsStreamPageRequest(
+            reference = OpdsStreamReference(
+                id = id,
+                count = count,
+                urlTemplate = urlTemplate,
+                catalogId = params["catalogId"]?.takeIf { it.isNotBlank() },
+            ),
+            pageIndex = pageIndex,
+            maxWidth = maxWidth,
+        )
+    }
+
+    /**
+     * OPDS-PSE feeds sometimes serve the stream from a transient CDN/feed host.
+     * Android resolves the persisted catalog authority before fetching; keep that
+     * policy in shared code so the iOS resource handler follows the same rule.
+     */
+    fun rewriteCatalogHost(urlTemplate: String, catalogUrl: String?): String {
+        val sourceAuthority = httpAuthority(urlTemplate) ?: return urlTemplate
+        val targetAuthority = httpAuthority(catalogUrl.orEmpty()) ?: return urlTemplate
+        return urlTemplate.replace(sourceAuthority, targetAuthority)
+    }
+
+    private fun httpAuthority(url: String): String? {
+        val schemeEnd = url.indexOf("://")
+        if (schemeEnd <= 0) return null
+        val scheme = url.substring(0, schemeEnd)
+        if (!scheme.equals("http", ignoreCase = true) && !scheme.equals("https", ignoreCase = true)) {
+            return null
+        }
+        val authorityStart = schemeEnd + 3
+        if (authorityStart >= url.length) return null
+        val authorityEnd = url.indexOfFirstAfterAuthority(authorityStart)
+        return url.substring(0, authorityEnd)
+    }
+
+    private fun String.indexOfFirstAfterAuthority(startIndex: Int): Int {
+        val slash = indexOf('/', startIndex).takeIf { it >= 0 } ?: length
+        val query = indexOf('?', startIndex).takeIf { it >= 0 } ?: length
+        val fragment = indexOf('#', startIndex).takeIf { it >= 0 } ?: length
+        return minOf(slash, query, fragment)
+    }
+}
+
 /** Streamed books owned by a catalog, used when that catalog is deleted. */
 fun List<BookItem>.opdsStreamBooksForCatalog(catalogId: String): List<BookItem> = filter { book ->
     SharedOpdsStreamUri.parse(book.path)?.catalogId == catalogId

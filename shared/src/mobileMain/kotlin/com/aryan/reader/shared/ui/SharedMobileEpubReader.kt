@@ -206,6 +206,7 @@ fun SharedMobileEpubReaderScreen(
     readerScreenOrientationMode: ReaderScreenOrientationMode = ReaderScreenOrientationMode.FOLLOW_SYSTEM,
     onReaderScreenOrientationModeChange: (ReaderScreenOrientationMode) -> Unit = {},
     onApplyReaderScreenOrientation: (ReaderScreenOrientationMode) -> Unit = {},
+    streamPageLoader: SharedMobileEpubStreamPageLoader? = null,
     modifier: Modifier = Modifier
 ) {
     val loadState = rememberSharedMobileEpubLoadState(book)
@@ -230,6 +231,7 @@ fun SharedMobileEpubReaderScreen(
         )
     }
     val localTts = rememberSharedMobileEpubLocalTts()
+    val streamPageUnavailableLabel = readerString("msg_page_unavailable", "Page Unavailable")
     val cloudTtsState = cloudTts?.state ?: readerExtrasState.cloudTts
     val cloudTtsAvailable = cloudTts != null && cloudTtsState.isAvailable && !localTts.isSessionActive
     LaunchedEffect(localTts.errorMessage) {
@@ -1387,6 +1389,8 @@ fun SharedMobileEpubReaderScreen(
                             navigationScript = navigationScript,
                             navigationRequestId = navigationRequestId,
                             positionController = webViewPositionController,
+                            streamPageLoader = streamPageLoader,
+                            streamPageUnavailableLabel = streamPageUnavailableLabel,
                             onBridgeMessage = { method, payload ->
                                 when (method) {
                                     "readerPointerActivity" -> {

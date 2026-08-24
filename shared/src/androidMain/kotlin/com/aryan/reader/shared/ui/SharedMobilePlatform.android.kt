@@ -124,6 +124,8 @@ internal actual fun SharedMobileEpubWebView(
     navigationRequestId: Long,
     onBridgeMessage: (method: String, payload: String) -> Unit,
     positionController: SharedMobileEpubWebViewController?,
+    streamPageLoader: SharedMobileEpubStreamPageLoader?,
+    streamPageUnavailableLabel: String,
     modifier: Modifier,
 ) {
     rememberAndroidSharedMobileContext()

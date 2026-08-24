@@ -70,6 +70,7 @@ import com.aryan.reader.shared.reader.rewriteMobiResourceReferences
 import com.aryan.reader.shared.reader.splitMobiHtml
 import com.aryan.reader.shared.reader.readComicTarEntries
 import com.aryan.reader.shared.opds.SharedOpdsStreamUri
+import com.aryan.reader.shared.opds.SharedOpdsStreamRequest
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.alloc
 import kotlinx.cinterop.allocArray
@@ -661,7 +662,10 @@ private fun loadIosCbzBook(book: BookItem): SharedEpubBook {
             title = title,
             author = book.author,
             chapters = (0 until stream.count).map { pageIndex ->
-                val imageUrl = stream.urlTemplate.replace("{pageNumber}", pageIndex.toString())
+                val imageUrl = SharedOpdsStreamRequest.buildResourceUri(
+                    reference = stream,
+                    pageIndex = pageIndex,
+                )
                 SharedEpubChapter(
                     id = "${book.id}-page-${pageIndex + 1}",
                     title = "Page ${pageIndex + 1}",

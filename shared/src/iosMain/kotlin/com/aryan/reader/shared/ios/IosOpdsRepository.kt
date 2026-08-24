@@ -10,13 +10,19 @@ import com.aryan.reader.shared.opds.OpdsCatalog
 import com.aryan.reader.shared.opds.OpdsEntry
 import com.aryan.reader.shared.opds.OpdsFacet
 import com.aryan.reader.shared.opds.OpdsFeed
+import com.aryan.reader.shared.opds.OpdsStreamReference
 import com.aryan.reader.shared.opds.SharedOpdsCatalogs
 import com.aryan.reader.shared.opds.SharedOpdsDownloadLocation
 import com.aryan.reader.shared.opds.SharedOpdsDownloadLocationCodec
 import com.aryan.reader.shared.opds.SharedOpdsDownloadNamer
 import com.aryan.reader.shared.opds.SharedOpdsRepository
+import com.aryan.reader.shared.opds.SharedOpdsStreamRequest
 import com.aryan.reader.shared.opds.SharedOpdsTransferProgress
 import com.aryan.reader.shared.reader.SharedLruMemoryCache
+import com.aryan.reader.shared.reader.sharedSha256Hex
+import kotlinx.cinterop.addressOf
+import kotlinx.cinterop.pin
+import kotlinx.cinterop.usePinned
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -31,6 +37,7 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import platform.Foundation.NSData
+import platform.Foundation.NSCachesDirectory
 import platform.Foundation.NSDocumentDirectory
 import platform.Foundation.NSError
 import platform.Foundation.NSFileHandle
@@ -58,16 +65,23 @@ import platform.Foundation.NSUTF8StringEncoding
 import platform.Foundation.NSUserDomainMask
 import platform.Foundation.NSTemporaryDirectory
 import platform.Foundation.HTTPMethod
+import platform.Foundation.NSFileModificationDate
+import platform.Foundation.NSSearchPathForDirectoriesInDomains
 import platform.Foundation.appendData
 import platform.Foundation.closeFile
+import platform.Foundation.dataWithContentsOfFile
 import platform.Foundation.dataTaskWithRequest
 import platform.Foundation.dataWithLength
 import platform.Foundation.create
 import platform.Foundation.fileHandleForWritingAtPath
 import platform.Foundation.lastPathComponent
 import platform.Foundation.setValue
+import platform.Foundation.timeIntervalSince1970
+import platform.Foundation.writeToFile
 import platform.Foundation.writeData
 import platform.darwin.NSObject
+import platform.posix.memcpy
+import kotlin.math.roundToLong
 
 private const val ProgressUpdateIntervalMs = 200L
 
@@ -78,6 +92,7 @@ internal class IosOpdsRepository(
     private val parser = IosOpdsParser()
     private val coverDataCache = SharedLruMemoryCache<String, NSData>(maxEntries = 64)
     private val coverDataCacheMutex = Mutex()
+    private val streamPageCache = IosOpdsStreamPageCache()
 
     override fun loadCatalogs(): List<OpdsCatalog> {
         val encoded = NSUserDefaults.standardUserDefaults.stringForKey(KeyCatalogsJson)
@@ -287,6 +302,41 @@ internal class IosOpdsRepository(
         return data
     }
 
+    internal suspend fun fetchStreamPageData(
+        reference: OpdsStreamReference,
+        pageIndex: Int,
+        maxWidth: Int = SharedOpdsStreamRequest.DefaultMaxWidth,
+    ): IosOpdsStreamPageData? {
+        if (pageIndex !in 0 until reference.count) return null
+        val catalog = reference.catalogId
+            ?.let { catalogId -> loadCatalogs().firstOrNull { it.id == catalogId } }
+        val cacheKey = streamPageCacheKey(reference, pageIndex, maxWidth, catalog)
+        streamPageCache.read(cacheKey)?.let { bytes ->
+            return IosOpdsStreamPageData(bytes = bytes, mimeType = detectImageMimeType(bytes))
+        }
+
+        val url = SharedOpdsStreamRequest.buildPageUrl(
+            reference = reference,
+            pageIndex = pageIndex,
+            maxWidth = maxWidth,
+            catalogUrl = catalog?.url,
+        )
+        val response = fetchBinary(url, catalog?.username, catalog?.password)
+        val data = response.data?.toByteArray()
+            ?.takeIf { it.isNotEmpty() }
+            ?.takeIf { response.statusCode in 200..299 }
+            ?: return null
+        streamPageCache.write(cacheKey, data)
+        return IosOpdsStreamPageData(
+            bytes = data,
+            mimeType = response.headerValue("Content-Type")
+                ?.substringBefore(';')
+                ?.trim()
+                ?.takeIf { it.startsWith("image/", ignoreCase = true) }
+                ?: detectImageMimeType(data),
+        )
+    }
+
     private suspend fun fetch(
         url: String,
         username: String?,
@@ -300,6 +350,30 @@ internal class IosOpdsRepository(
             onData = onData,
         )
         return toResponse(response.data, response.response, response.error)
+    }
+
+    private suspend fun fetchBinary(
+        url: String,
+        username: String?,
+        password: String?,
+    ): IosHttpResponse {
+        val response = httpClient.fetch(
+            url = url,
+            username = username,
+            password = password,
+        )
+        if (response.error != null) error(response.error.localizedDescription)
+        val httpResponse = response.response as? NSHTTPURLResponse
+        val headers = httpResponse?.allHeaderFields
+            ?.mapNotNull { (key, value) -> (key as? String)?.let { it to value.toString() } }
+            ?.toMap()
+            .orEmpty()
+        return IosHttpResponse(
+            statusCode = httpResponse?.statusCode?.toInt() ?: 200,
+            body = "",
+            data = response.data,
+            headers = headers,
+        )
     }
 
     private fun IosHttpResponse.headerValue(name: String): String? {
@@ -347,6 +421,122 @@ internal class IosOpdsRepository(
         private const val KeyCatalogsJson = "reader_ios_opds_catalogs_json"
         private const val KeyDownloadLocationJson = "reader_ios_opds_download_location_json"
     }
+}
+
+internal data class IosOpdsStreamPageData(
+    val bytes: ByteArray,
+    val mimeType: String,
+)
+
+private class IosOpdsStreamPageCache(
+    private val maxMemoryEntries: Int = 32,
+    private val maxDiskEntries: Int = 128,
+) {
+    private val memory = SharedLruMemoryCache<String, ByteArray>(maxMemoryEntries)
+    private val mutex = Mutex()
+    private val rootPath: String? = run {
+        val cachesDirectory = NSSearchPathForDirectoriesInDomains(
+            NSCachesDirectory,
+            NSUserDomainMask,
+            true,
+        ).firstOrNull() as? String
+        cachesDirectory?.let { "$it/episteme_opds_stream_pages" }?.also { root ->
+            NSFileManager.defaultManager.createDirectoryAtPath(
+                root,
+                withIntermediateDirectories = true,
+                attributes = null,
+                error = null,
+            )
+        }
+    }
+
+    suspend fun read(key: String): ByteArray? {
+        mutex.withLock { memory[key] }?.let { return it }
+        val path = rootPath?.let { "$it/${sharedSha256Hex(key).take(32)}.page" } ?: return null
+        val bytes = NSData.dataWithContentsOfFile(path)?.toByteArray() ?: return null
+        mutex.withLock { memory[key] = bytes }
+        return bytes
+    }
+
+    suspend fun write(key: String, bytes: ByteArray) {
+        mutex.withLock { memory[key] = bytes }
+        val root = rootPath ?: return
+        val path = "$root/${sharedSha256Hex(key).take(32)}.page"
+        bytes.toNSData().writeToFile(path, atomically = true)
+        trimDisk()
+    }
+
+    private fun trimDisk() {
+        val root = rootPath ?: return
+        val fileManager = NSFileManager.defaultManager
+        val files = fileManager.contentsOfDirectoryAtPath(root, error = null)
+            ?.mapNotNull { it as? String }
+            ?.filter { it.endsWith(".page") }
+            ?.map { name ->
+                val path = "$root/$name"
+                val modified = (fileManager.attributesOfItemAtPath(path, error = null)
+                    ?.get(NSFileModificationDate) as? platform.Foundation.NSDate)
+                    ?.timeIntervalSince1970
+                    ?.roundToLong()
+                    ?: 0L
+                path to modified
+            }
+            ?.sortedByDescending { it.second }
+            .orEmpty()
+        files.drop(maxDiskEntries).forEach { (path, _) ->
+            fileManager.removeItemAtPath(path, error = null)
+        }
+    }
+}
+
+private fun streamPageCacheKey(
+    reference: OpdsStreamReference,
+    pageIndex: Int,
+    maxWidth: Int,
+    catalog: OpdsCatalog?,
+): String {
+    // Include a credential fingerprint so changing an authenticated catalog cannot
+    // reuse bytes fetched for the previous account. The password is hashed before
+    // it becomes part of the cache key and is never used as a file name directly.
+    val catalogFingerprint = sharedSha256Hex(
+        listOf(catalog?.url, catalog?.username, catalog?.password).joinToString("\u0000")
+    )
+    return "${reference.id}|${reference.count}|${reference.urlTemplate}|${reference.catalogId.orEmpty()}|$catalogFingerprint|$pageIndex|$maxWidth"
+}
+
+private fun detectImageMimeType(bytes: ByteArray): String {
+    return when {
+        bytes.size >= 8 && bytes[0] == 0x89.toByte() && bytes[1] == 0x50.toByte() &&
+            bytes[2] == 0x4E.toByte() && bytes[3] == 0x47.toByte() -> "image/png"
+        bytes.size >= 3 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xD8.toByte() && bytes[2] == 0xFF.toByte() -> "image/jpeg"
+        bytes.size >= 6 && bytes.copyOfRange(0, 6).decodeToString().startsWith("GIF") -> "image/gif"
+        bytes.size >= 12 && bytes.copyOfRange(0, 4).decodeToString() == "RIFF" &&
+            bytes.copyOfRange(8, 12).decodeToString() == "WEBP" -> "image/webp"
+        else -> "image/jpeg"
+    }
+}
+
+private fun NSData.toByteArray(): ByteArray {
+    val output = ByteArray(length.toInt())
+    if (output.isNotEmpty()) {
+        output.usePinned { pinned ->
+            memcpy(pinned.addressOf(0), bytes, length)
+        }
+    }
+    return output
+}
+
+private fun ByteArray.toNSData(): NSData {
+    val data = NSMutableData.dataWithLength(size.toULong()) ?: NSMutableData()
+    if (isNotEmpty()) {
+        val pinned = pin()
+        try {
+            memcpy(data.mutableBytes, pinned.addressOf(0), size.toULong())
+        } finally {
+            pinned.unpin()
+        }
+    }
+    return data
 }
 
 internal object IosOpdsCatalogIds {
