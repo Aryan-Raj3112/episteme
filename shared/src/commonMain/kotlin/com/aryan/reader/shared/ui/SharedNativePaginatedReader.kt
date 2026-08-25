@@ -41,6 +41,7 @@ import androidx.compose.ui.geometry.isSpecified
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.layer.GraphicsLayer
 import androidx.compose.ui.graphics.layer.drawLayer
 import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -54,6 +55,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
@@ -283,9 +285,11 @@ fun SharedNativePaginatedReader(
     onHighlightSelected: (String) -> Unit = {},
     onLinkClicked: (SharedNativeReaderLinkClick) -> Unit = {},
     onReaderTap: () -> Unit = {},
-    onReaderHorizontalTap: ((Float) -> Unit)? = null,
+    onReaderHorizontalTap: ((horizontalFraction: Float, touchY: Float) -> Unit)? = null,
     imageContent: (@Composable (SemanticImage, Modifier) -> Unit)? = null,
-    positionController: SharedNativePaginatedPositionController? = null
+    positionController: SharedNativePaginatedPositionController? = null,
+    pageTurn: SharedPaginatedPageTurnSpec? = null,
+    pageDragController: SharedPaginatedPageDragController? = null
 ) {
     val visiblePages = renderPlan.visiblePages
     val logicalFirstPage = remember(visiblePages) {
@@ -374,87 +378,50 @@ fun SharedNativePaginatedReader(
     }
 
     val selectionHighlight = MaterialTheme.colorScheme.primary.copy(alpha = 0.28f)
+    val dragController = pageDragController?.let { controller ->
+        SharedPaginatedPageDragController(
+            // Selections own the gesture while active (handles, menu, drag-to-select);
+            // otherwise horizontal drags page like the Android pager.
+            isEnabled = { activeSelection == null && controller.isEnabled() },
+            onDragStarted = controller.onDragStarted,
+            onDrag = controller.onDrag,
+            onDragReleased = controller.onDragReleased,
+            onDragCancelled = controller.onDragCancelled
+        )
+    }
     Box(
         modifier = modifier
-            .readerHorizontalTapPointerInput { horizontalFraction ->
+            .readerHorizontalTapPointerInput { horizontalFraction, touchY ->
                 if (activeSelection == null) {
-                    onReaderHorizontalTap?.invoke(horizontalFraction) ?: onReaderTap()
+                    onReaderHorizontalTap?.invoke(horizontalFraction, touchY) ?: onReaderTap()
                 }
             }
+            .then(
+                if (dragController != null) {
+                    Modifier.readerPaginatedDragPointerInput(dragController)
+                } else {
+                    Modifier
+                }
+            )
             .onGloballyPositioned { readerCoordinates = it }
     ) {
-        BoxWithConstraints(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(renderPlan.background)
-                .drawWithContent {
-                    magnifierCaptureLayer.record(
-                        density = Density(this@drawWithContent.density),
-                        layoutDirection = this@drawWithContent.layoutDirection,
-                        size = IntSize(size.width.roundToInt(), size.height.roundToInt())
-                    ) {
-                        this@drawWithContent.drawContent()
-                    }
-                    drawLayer(magnifierCaptureLayer)
-                },
-            contentAlignment = Alignment.Center
-        ) {
-            val pageGap = 28.dp
-            val horizontalMargin = renderPlan.settings.resolvedHorizontalMargin.dp
-            val configuredContentWidth = renderPlan.settings.pageWidth.dp
-            val pageOuterWidth = if (renderPlan.settings.usesNativePaginatedSpreadPageSlot()) {
-                val availablePageOuterWidth = ((maxWidth - pageGap).coerceAtLeast(1.dp)) / 2f
-                val availableContentWidth = (availablePageOuterWidth - (horizontalMargin * 2f)).coerceAtLeast(1.dp)
-                minOf(availableContentWidth, configuredContentWidth) + (horizontalMargin * 2f)
-            } else {
-                val availableContentWidth = (maxWidth - (horizontalMargin * 2f)).coerceAtLeast(1.dp)
-                minOf(availableContentWidth, configuredContentWidth) + (horizontalMargin * 2f)
-            }
-            val pageRenderGeometry = with(readerDensity) {
-                val contentWidth = (pageOuterWidth - (horizontalMargin * 2f)).coerceAtLeast(1.dp)
-                val contentHeight = (maxHeight - (renderPlan.settings.resolvedVerticalMargin.dp * 2f)).coerceAtLeast(1.dp)
-                SharedNativePageRenderGeometry(
-                    readerWidthPx = maxWidth.toPx().roundToInt(),
-                    readerHeightPx = maxHeight.toPx().roundToInt(),
-                    pageOuterWidthPx = pageOuterWidth.toPx().roundToInt(),
-                    pageContentWidthPx = contentWidth.toPx().roundToInt(),
-                    pageContentHeightPx = contentHeight.toPx().roundToInt(),
-                    pageGapPx = pageGap.toPx().roundToInt(),
-                    horizontalMarginPx = horizontalMargin.toPx().roundToInt(),
-                    verticalMarginPx = renderPlan.settings.resolvedVerticalMargin.dp.toPx().roundToInt(),
-                    configuredPageWidthPx = configuredContentWidth.toPx().roundToInt(),
-                    visiblePageCount = visiblePages.size,
-                    spreadMode = renderPlan.settings.pageSpreadMode.name
-                )
-            }
-            Row(
-                modifier = Modifier.fillMaxSize(),
-                horizontalArrangement = Arrangement.spacedBy(pageGap, Alignment.CenterHorizontally),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                visiblePages.forEach { page ->
-                    SharedNativePaginatedPage(
-                        page = page,
-                        renderPlan = renderPlan,
-                        readerFontFamily = readerFontFamily,
-                        searchHighlight = searchHighlight,
-                        selectionHighlight = selectionHighlight,
-                        activeSelection = activeSelection,
-                        renderGeometry = pageRenderGeometry,
-                        onSelectionChange = ::updateActiveSelection,
-                        onSelectionGestureActiveChange = { selectionGestureActive = it },
-                        onHighlightSelected = onHighlightSelected,
-                        onLinkClicked = onLinkClicked,
-                        onReaderTap = onReaderTap,
-                        selectionLayouts = selectionLayouts,
-                        imageContent = imageContent,
-                        modifier = Modifier
-                            .width(pageOuterWidth)
-                            .fillMaxHeight()
-                    )
-                }
-            }
-        }
+        SharedNativePaginatedPagesContent(
+            visiblePages = visiblePages,
+            renderPlan = renderPlan,
+            readerFontFamily = readerFontFamily,
+            searchHighlight = searchHighlight,
+            selectionHighlight = selectionHighlight,
+            activeSelection = activeSelection,
+            selectionLayouts = selectionLayouts,
+            onSelectionChange = ::updateActiveSelection,
+            onSelectionGestureActiveChange = { selectionGestureActive = it },
+            onHighlightSelected = onHighlightSelected,
+            onLinkClicked = onLinkClicked,
+            onReaderTap = onReaderTap,
+            imageContent = imageContent,
+            pageTurn = pageTurn,
+            magnifierCaptureLayer = magnifierCaptureLayer
+        )
         activeSelection?.let { selection ->
             arrayOf(SharedNativeSelectionHandle.START, SharedNativeSelectionHandle.END).forEach { handle ->
                 SharedNativeSelectionHandleView(
@@ -553,6 +520,170 @@ fun SharedNativePaginatedReader(
             }
         }
     }
+}
+
+/** Renders the paginated page surface itself (geometry + page Row), shared by the reader and the page-turn overlay. */
+@Composable
+internal fun SharedNativePaginatedPagesContent(
+    visiblePages: List<ReaderPage>,
+    renderPlan: ReaderContentRenderPlan.NativePaginatedPages,
+    readerFontFamily: FontFamily,
+    searchHighlight: Color,
+    selectionHighlight: Color,
+    activeSelection: SharedNativeReaderTextSelection?,
+    selectionLayouts: MutableMap<String, SharedNativeTextLayoutInfo>,
+    onSelectionChange: (SharedNativeReaderTextSelection?) -> Unit,
+    onSelectionGestureActiveChange: (Boolean) -> Unit,
+    onHighlightSelected: (String) -> Unit,
+    onLinkClicked: (SharedNativeReaderLinkClick) -> Unit,
+    onReaderTap: () -> Unit,
+    imageContent: (@Composable (SemanticImage, Modifier) -> Unit)?,
+    pageTurn: SharedPaginatedPageTurnSpec?,
+    magnifierCaptureLayer: GraphicsLayer?,
+    modifier: Modifier = Modifier
+) {
+    if (visiblePages.isEmpty()) {
+        Box(modifier = modifier, contentAlignment = Alignment.Center) {
+            Text(readerString("desktop_no_page_content", "No page content"), color = renderPlan.foreground.copy(alpha = 0.68f))
+        }
+        return
+    }
+    val readerDensity = LocalDensity.current
+    BoxWithConstraints(
+        modifier = modifier
+            .fillMaxSize()
+            .background(renderPlan.background)
+            .then(
+                if (magnifierCaptureLayer != null) {
+                    Modifier.drawWithContent {
+                        magnifierCaptureLayer.record(
+                            density = Density(this@drawWithContent.density),
+                            layoutDirection = this@drawWithContent.layoutDirection,
+                            size = IntSize(size.width.roundToInt(), size.height.roundToInt())
+                        ) {
+                            this@drawWithContent.drawContent()
+                        }
+                        drawLayer(magnifierCaptureLayer)
+                    }
+                } else {
+                    Modifier
+                }
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        val pageGap = 28.dp
+        val horizontalMargin = renderPlan.settings.resolvedHorizontalMargin.dp
+        val configuredContentWidth = renderPlan.settings.pageWidth.dp
+        val pageOuterWidth = if (renderPlan.settings.usesNativePaginatedSpreadPageSlot()) {
+            val availablePageOuterWidth = ((maxWidth - pageGap).coerceAtLeast(1.dp)) / 2f
+            val availableContentWidth = (availablePageOuterWidth - (horizontalMargin * 2f)).coerceAtLeast(1.dp)
+            minOf(availableContentWidth, configuredContentWidth) + (horizontalMargin * 2f)
+        } else {
+            val availableContentWidth = (maxWidth - (horizontalMargin * 2f)).coerceAtLeast(1.dp)
+            minOf(availableContentWidth, configuredContentWidth) + (horizontalMargin * 2f)
+        }
+        val pageRenderGeometry = with(readerDensity) {
+            val contentWidth = (pageOuterWidth - (horizontalMargin * 2f)).coerceAtLeast(1.dp)
+            val contentHeight = (maxHeight - (renderPlan.settings.resolvedVerticalMargin.dp * 2f)).coerceAtLeast(1.dp)
+            SharedNativePageRenderGeometry(
+                readerWidthPx = maxWidth.toPx().roundToInt(),
+                readerHeightPx = maxHeight.toPx().roundToInt(),
+                pageOuterWidthPx = pageOuterWidth.toPx().roundToInt(),
+                pageContentWidthPx = contentWidth.toPx().roundToInt(),
+                pageContentHeightPx = contentHeight.toPx().roundToInt(),
+                pageGapPx = pageGap.toPx().roundToInt(),
+                horizontalMarginPx = horizontalMargin.toPx().roundToInt(),
+                verticalMarginPx = renderPlan.settings.resolvedVerticalMargin.dp.toPx().roundToInt(),
+                configuredPageWidthPx = configuredContentWidth.toPx().roundToInt(),
+                visiblePageCount = visiblePages.size,
+                spreadMode = renderPlan.settings.pageSpreadMode.name
+            )
+        }
+        val paperIsDark = sharedReaderPaperIsDark(renderPlan.background)
+        Row(
+            modifier = Modifier.fillMaxSize(),
+            horizontalArrangement = Arrangement.spacedBy(pageGap, Alignment.CenterHorizontally),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            visiblePages.forEachIndexed { slot, page ->
+                val turnModifier = if (pageTurn != null) {
+                    // Within a set the relative pager z-order is static (earlier slots stack on
+                    // top); cross-layer order is decided by the host Box child order.
+                    Modifier
+                        .zIndex(-slot.toFloat())
+                        .offset {
+                            // Pager natural position: the curl's translationX cancels it while
+                            // |offset| < 1, and at |offset| >= 1 the page rests off-screen exactly
+                            // like a HorizontalPager slot.
+                            val pageOffset = pageTurn.offsetForSlot(slot)
+                            IntOffset((pageOffset * pageOuterWidth.toPx()).roundToInt(), 0)
+                        }
+                        .sharedRealisticBookPage(
+                            pageOffsetProvider = { pageTurn.offsetForSlot(slot) },
+                            touchYProvider = { pageTurn.touchY },
+                            paperColor = renderPlan.background,
+                            isDarkPaper = paperIsDark
+                        )
+                } else {
+                    Modifier
+                }
+                SharedNativePaginatedPage(
+                    page = page,
+                    renderPlan = renderPlan,
+                    readerFontFamily = readerFontFamily,
+                    searchHighlight = searchHighlight,
+                    selectionHighlight = selectionHighlight,
+                    activeSelection = activeSelection,
+                    renderGeometry = pageRenderGeometry,
+                    onSelectionChange = onSelectionChange,
+                    onSelectionGestureActiveChange = onSelectionGestureActiveChange,
+                    onHighlightSelected = onHighlightSelected,
+                    onLinkClicked = onLinkClicked,
+                    onReaderTap = onReaderTap,
+                    selectionLayouts = selectionLayouts,
+                    imageContent = imageContent,
+                    modifier = turnModifier
+                        .width(pageOuterWidth)
+                        .fillMaxHeight()
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Visual-only layer for the outgoing page set during a realistic page turn.
+ * It renders no interactive chrome, so taps fall through to the reader beneath.
+ */
+@Composable
+internal fun SharedNativePaginatedPageTurnOverlay(
+    renderPlan: ReaderContentRenderPlan.NativePaginatedPages,
+    readerFontFamily: FontFamily,
+    searchHighlight: Color,
+    selectionHighlight: Color,
+    pageTurn: SharedPaginatedPageTurnSpec,
+    imageContent: (@Composable (SemanticImage, Modifier) -> Unit)? = null,
+    modifier: Modifier = Modifier
+) {
+    val selectionLayouts = remember { mutableStateMapOf<String, SharedNativeTextLayoutInfo>() }
+    SharedNativePaginatedPagesContent(
+        visiblePages = renderPlan.visiblePages,
+        renderPlan = renderPlan,
+        readerFontFamily = readerFontFamily,
+        searchHighlight = searchHighlight,
+        selectionHighlight = selectionHighlight,
+        activeSelection = null,
+        selectionLayouts = selectionLayouts,
+        onSelectionChange = {},
+        onSelectionGestureActiveChange = {},
+        onHighlightSelected = {},
+        onLinkClicked = {},
+        onReaderTap = {},
+        imageContent = imageContent,
+        pageTurn = pageTurn,
+        magnifierCaptureLayer = null,
+        modifier = modifier
+    )
 }
 
 /** Lets the host screen drive the native vertical EPUB list from outside it (auto-scroll, musician gestures). */

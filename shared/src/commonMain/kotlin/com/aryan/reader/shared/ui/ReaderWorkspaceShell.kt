@@ -638,15 +638,15 @@ internal fun Modifier.readerChromeTapTogglePointerInput(
 }
 
 internal fun Modifier.readerHorizontalTapPointerInput(
-    onTap: (Float) -> Unit
+    onTap: (horizontalFraction: Float, touchY: Float) -> Unit
 ): Modifier {
-    return readerChromeTapTogglePointerInputWithPosition { horizontalPosition, width ->
-        onTap((horizontalPosition / width.coerceAtLeast(1)).coerceIn(0f, 1f))
+    return readerHorizontalTapPointerInputWithPosition { horizontalPosition, touchY, width ->
+        onTap((horizontalPosition / width.coerceAtLeast(1)).coerceIn(0f, 1f), touchY)
     }
 }
 
-private fun Modifier.readerChromeTapTogglePointerInputWithPosition(
-    onTap: (horizontalPosition: Float, width: Int) -> Unit
+private fun Modifier.readerHorizontalTapPointerInputWithPosition(
+    onTap: (horizontalPosition: Float, touchY: Float, width: Int) -> Unit
 ): Modifier {
     return pointerInput(onTap) {
         awaitEachGesture {
@@ -663,7 +663,7 @@ private fun Modifier.readerChromeTapTogglePointerInputWithPosition(
                 consumed = consumed || change.isConsumed
                 if (!moved && (change.position - start).getDistance() > touchSlop) moved = true
                 if (change.changedToUp() || !change.pressed) {
-                    if (!moved && !consumed) onTap(change.position.x, size.width)
+                    if (!moved && !consumed) onTap(change.position.x, change.position.y, size.width)
                     return@awaitEachGesture
                 }
             }

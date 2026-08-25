@@ -870,6 +870,8 @@ internal fun SharedNativeInteractiveText(
                             val event = awaitPointerEvent()
                             val change = event.changes.firstOrNull { it.id == down.id } ?: break
                             if (!change.pressed) break
+                            // A parent gesture (page drag) claimed the pointer; selection loses.
+                            if (!selecting && change.isConsumed) break
                             val dx = change.position.x - down.position.x
                             val dy = change.position.y - down.position.y
                             if (!selecting && dx * dx + dy * dy >= touchSlopSquared) {
