@@ -23,7 +23,6 @@
 package com.aryan.reader
 
 import android.app.Application
-import android.content.ClipData
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
@@ -118,6 +117,7 @@ import com.aryan.reader.pptx.PptxCoverGenerator
 import com.aryan.reader.shared.AnnotationExportDocument
 import com.aryan.reader.shared.AnnotationExportFormat
 import com.aryan.reader.shared.AnnotationExportFormatter
+import com.aryan.reader.shared.AndroidShareArtifactManager
 import com.aryan.reader.shared.CloudBookTombstone
 import com.aryan.reader.shared.CloudMaintenanceCoordinator
 import com.aryan.reader.shared.CloudMaintenanceIntent
@@ -2812,22 +2812,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 ?: getFastFileId(appContext, sourceUri)
 
             try {
-                val shareDir = File(appContext.cacheDir, "shared_files")
-
-                if (shareDir.exists()) {
-                    shareDir.listFiles()?.forEach { file ->
-                        try {
-                            file.delete()
-                        } catch (_: Exception) {
-                            Timber.w("Failed to delete temp share file: ${file.name}")
-                        }
-                    }
-                } else {
-                    shareDir.mkdirs()
-                }
-
-                val destFile = File(shareDir, filename)
-                FileOutputStream(destFile).use { outputStream ->
+                val artifact = AndroidShareArtifactManager.createSuspending(appContext, filename, write = { outputStream ->
                     if (includeAnnotations) {
                         val virtualPages = pageLayoutRepository.getLayoutOrNull(resolvedBookId)
 
@@ -2847,24 +2832,14 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                             input.copyTo(outputStream)
                         }
                     }
-                }
+                })
 
-                val authority = "${appContext.packageName}.provider"
-                val contentUri = androidx.core.content.FileProvider.getUriForFile(
-                    appContext, authority, destFile
+                val shareIntent = AndroidShareArtifactManager.buildShareIntent(
+                    artifact = artifact,
+                    mimeType = "application/pdf",
+                    title = artifact.fileName,
+                    subject = appContext.getString(R.string.share_subject, artifact.fileName),
                 )
-
-                val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                    type = "application/pdf"
-                    putExtra(Intent.EXTRA_STREAM, contentUri)
-
-                    putExtra(Intent.EXTRA_TITLE, filename)
-                    putExtra(Intent.EXTRA_SUBJECT, appContext.getString(R.string.share_subject, filename))
-
-                    clipData = ClipData.newRawUri(filename, contentUri)
-
-                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                }
 
                 val chooser = Intent.createChooser(shareIntent, appContext.getString(R.string.share_chooser_title))
 
@@ -2888,39 +2863,19 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     ) {
         withContext(Dispatchers.IO) {
             try {
-                val shareDir = File(appContext.cacheDir, "shared_files")
-                if (shareDir.exists()) {
-                    shareDir.listFiles()?.forEach { file ->
-                        try {
-                            file.delete()
-                        } catch (_: Exception) {
-                            Timber.w("Failed to delete temp share file: ${file.name}")
-                        }
-                    }
-                } else {
-                    shareDir.mkdirs()
-                }
-
-                val destFile = File(shareDir, filename)
-                FileOutputStream(destFile).use { output ->
+                val artifact = AndroidShareArtifactManager.create(appContext, filename, write = { output ->
                     appContext.contentResolver.openInputStream(sourceUri)?.use { input ->
                         input.copyTo(output)
                     } ?: error("Could not open source file.")
-                }
+                })
 
-                val authority = "${appContext.packageName}.provider"
-                val contentUri = androidx.core.content.FileProvider.getUriForFile(
-                    appContext, authority, destFile
-                )
                 val mimeType = SharedFileCapabilities.mimeTypeFor(fileType) ?: "application/octet-stream"
-                val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                    type = mimeType
-                    putExtra(Intent.EXTRA_STREAM, contentUri)
-                    putExtra(Intent.EXTRA_TITLE, filename)
-                    putExtra(Intent.EXTRA_SUBJECT, appContext.getString(R.string.share_subject, filename))
-                    clipData = ClipData.newRawUri(filename, contentUri)
-                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                }
+                val shareIntent = AndroidShareArtifactManager.buildShareIntent(
+                    artifact = artifact,
+                    mimeType = mimeType,
+                    title = artifact.fileName,
+                    subject = appContext.getString(R.string.share_subject, artifact.fileName),
+                )
                 val chooser = Intent.createChooser(shareIntent, appContext.getString(R.string.share_file_chooser_title))
                 if (activityContext !is android.app.Activity) {
                     chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -5458,6 +5413,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     ImportedFileCache.activeBookDirName(it)
                 }
                 ImportedFileCache.deleteStaleTemporaryBookDirs(appContext, TimeUnit.HOURS.toMillis(1))
+                AndroidShareArtifactManager.sweep(appContext).takeIf { it > 0 }?.let { deletedCount ->
+                    Timber.d("Sweeper cleaned $deletedCount expired share artifacts")
+                }
 
                 cacheDir.listFiles()?.forEach { file ->
                     val name = file.name
@@ -6708,22 +6666,22 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 Timber.d("Generating logcat dump for debugging...")
-                val logFile = File(appContext.cacheDir, "debug_logs_${System.currentTimeMillis()}.txt")
-
                 val process = Runtime.getRuntime().exec("logcat -d -v threadtime -t 5000")
-                process.inputStream.bufferedReader().use { reader ->
-                    logFile.writeText(reader.readText())
+                val logText = process.inputStream.bufferedReader().use { reader ->
+                    reader.readText()
                 }
-
-                val authority = "${appContext.packageName}.provider"
-                val uri = androidx.core.content.FileProvider.getUriForFile(appContext, authority, logFile)
-
-                val intent = Intent(Intent.ACTION_SEND).apply {
-                    type = "text/plain"
-                    putExtra(Intent.EXTRA_STREAM, uri)
-                    putExtra(Intent.EXTRA_TITLE, "App Debug Logs")
-                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                }
+                val artifact = AndroidShareArtifactManager.create(
+                    context = appContext,
+                    requestedFileName = "debug_logs_${System.currentTimeMillis()}.txt",
+                    write = { output ->
+                    output.write(logText.toByteArray())
+                    },
+                )
+                val intent = AndroidShareArtifactManager.buildShareIntent(
+                    artifact = artifact,
+                    mimeType = "text/plain",
+                    title = "App Debug Logs",
+                )
 
                 val chooser = Intent.createChooser(intent, "Export Debug Logs")
                 if (activityContext !is android.app.Activity) {

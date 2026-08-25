@@ -17,10 +17,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.core.content.FileProvider
 import io.legere.pdfiumandroid.api.Bookmark
 import io.legere.pdfiumandroid.suspend.PdfDocumentKt
 import com.aryan.reader.shared.BookItem
+import com.aryan.reader.shared.AndroidShareArtifactManager
 import com.aryan.reader.shared.PdfTocEntry
 import com.aryan.reader.shared.ReaderExternalLookupAction
 import com.aryan.reader.shared.ReaderTtsChunk
@@ -291,11 +291,10 @@ internal actual fun shareSharedMobileEpubImage(bytes: ByteArray, fileName: Strin
     if (bytes.isEmpty()) return false
     val context = AndroidSharedMobileContext.applicationContext ?: return false
     return runCatching {
-        val safeName = fileName.replace(Regex("[^A-Za-z0-9._-]+"), "_").ifBlank { "image.png" }
-        val directory = File(context.cacheDir, "shared_files").apply { mkdirs() }
-        val file = File(directory, safeName).apply { writeBytes(bytes) }
-        val uri = FileProvider.getUriForFile(context, "${context.packageName}.provider", file)
-        val mimeType = when (file.extension.lowercase()) {
+        val artifact = AndroidShareArtifactManager.create(context, fileName, write = { output ->
+            output.write(bytes)
+        })
+        val mimeType = when (artifact.fileName.substringAfterLast('.', "").lowercase()) {
             "svg" -> "image/svg+xml"
             "jpg", "jpeg" -> "image/jpeg"
             "gif" -> "image/gif"
@@ -304,11 +303,7 @@ internal actual fun shareSharedMobileEpubImage(bytes: ByteArray, fileName: Strin
         }
         context.startActivity(
             Intent.createChooser(
-                Intent(Intent.ACTION_SEND).apply {
-                    type = mimeType
-                    putExtra(Intent.EXTRA_STREAM, uri)
-                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                },
+                AndroidShareArtifactManager.buildShareIntent(artifact, mimeType),
                 null,
             ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
         )

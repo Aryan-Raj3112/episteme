@@ -14,6 +14,7 @@ class AndroidCloudCleanupPlanTest {
         assertTrue(AndroidCloudCleanupPlan.shouldDeleteFilesDirEntry("book-1_reflow.html", isDirectory = false))
         assertTrue(AndroidCloudCleanupPlan.shouldDeleteCacheEntry("imported_file_book-1", isDirectory = true))
         assertTrue(AndroidCloudCleanupPlan.shouldDeleteCacheEntry("reflow_cache", isDirectory = true))
+        assertFalse(AndroidCloudCleanupPlan.shouldDeleteCacheEntry("shared_files", isDirectory = true))
         assertFalse(AndroidCloudCleanupPlan.shouldDeleteFilesDirEntry("selected_external_file", isDirectory = false))
         assertFalse(AndroidCloudCleanupPlan.shouldDeleteCacheEntry("user_selected_cache", isDirectory = true))
     }

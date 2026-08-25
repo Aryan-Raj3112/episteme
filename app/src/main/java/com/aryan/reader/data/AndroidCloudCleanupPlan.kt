@@ -29,7 +29,6 @@ internal object AndroidCloudCleanupPlan {
         "pdfium_annotation_export",
         "reflow_cache",
         "reflow_images",
-        "shared_files",
     )
 
     fun shouldDeleteFilesDirEntry(name: String, isDirectory: Boolean): Boolean =
