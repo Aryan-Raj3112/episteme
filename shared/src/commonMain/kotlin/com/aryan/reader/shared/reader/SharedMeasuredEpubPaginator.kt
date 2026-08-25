@@ -1148,7 +1148,7 @@ internal fun measureImageSize(
 private const val MeasuredSpreadGutterPx = 28
 
 private fun ReaderSettings.usesMeasuredPaginatedSpreadPageSlot(): Boolean {
-    return readingMode == ReaderReadingMode.PAGINATED
+    return isTwoPageSpreadEnabled()
 }
 
 private fun Int.scaleCssPx(scale: Float): Int {

@@ -53,7 +53,7 @@ class SharedMeasuredEpubPaginatorTest {
     }
 
     @Test
-    fun `paginated single page geometry matches one rendered page in a spread`() {
+    fun `paginated single page geometry fills the viewport width like the android benchmark`() {
         val singlePageGeometry = measuredPageGeometryFor(
             settings = ReaderSettings(
                 pageWidth = 760,
@@ -64,6 +64,30 @@ class SharedMeasuredEpubPaginatorTest {
             ),
             viewport = ReaderViewportSpec(widthPx = 1_300, heightPx = 900)
         )
+
+        assertEquals(760, singlePageGeometry.pageWidthPx)
+        assertEquals(820, singlePageGeometry.pageHeightPx)
+    }
+
+    @Test
+    fun `paginated single page geometry uses full viewport width when narrower than configured page width`() {
+        val singlePageGeometry = measuredPageGeometryFor(
+            settings = ReaderSettings(
+                pageWidth = 760,
+                horizontalMargin = 80,
+                verticalMargin = 40,
+                readingMode = ReaderReadingMode.PAGINATED,
+                pageSpreadMode = ReaderPageSpreadMode.SINGLE
+            ),
+            viewport = ReaderViewportSpec(widthPx = 600, heightPx = 900)
+        )
+
+        assertEquals(440, singlePageGeometry.pageWidthPx)
+        assertEquals(820, singlePageGeometry.pageHeightPx)
+    }
+
+    @Test
+    fun `paginated two page geometry keeps half viewport spread slot per page`() {
         val twoPageGeometry = measuredPageGeometryFor(
             settings = ReaderSettings(
                 pageWidth = 760,
@@ -75,9 +99,8 @@ class SharedMeasuredEpubPaginatorTest {
             viewport = ReaderViewportSpec(widthPx = 1_300, heightPx = 900)
         )
 
-        assertEquals(twoPageGeometry, singlePageGeometry)
-        assertEquals(476, singlePageGeometry.pageWidthPx)
-        assertEquals(820, singlePageGeometry.pageHeightPx)
+        assertEquals(476, twoPageGeometry.pageWidthPx)
+        assertEquals(820, twoPageGeometry.pageHeightPx)
     }
 
     @Test

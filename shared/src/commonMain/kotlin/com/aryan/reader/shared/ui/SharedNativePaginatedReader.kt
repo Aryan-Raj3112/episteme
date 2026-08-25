@@ -63,8 +63,8 @@ import com.aryan.reader.shared.ReaderExternalLookupAction
 import com.aryan.reader.shared.ReaderLocator
 import com.aryan.reader.shared.UserHighlight
 import com.aryan.reader.shared.reader.ReaderPage
-import com.aryan.reader.shared.reader.ReaderReadingMode
 import com.aryan.reader.shared.reader.ReaderSettings
+import com.aryan.reader.shared.reader.isTwoPageSpreadEnabled
 import com.aryan.reader.shared.reader.logSharedReaderDiagnostic
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -1028,5 +1028,5 @@ fun SharedNativeVerticalReader(
 }
 
 internal fun ReaderSettings.usesNativePaginatedSpreadPageSlot(): Boolean {
-    return readingMode == ReaderReadingMode.PAGINATED
+    return isTwoPageSpreadEnabled()
 }

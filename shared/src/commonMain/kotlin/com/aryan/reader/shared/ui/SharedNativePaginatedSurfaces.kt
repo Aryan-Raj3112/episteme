@@ -48,6 +48,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.LayoutCoordinates
@@ -210,14 +211,15 @@ internal fun SharedNativePaginatedPage(
         }
     }
 
+    val showsPageChrome = renderGeometry.showsPageChrome
     Surface(
         modifier = modifier,
-        shape = RoundedCornerShape(4.dp),
+        shape = if (showsPageChrome) RoundedCornerShape(4.dp) else RectangleShape,
         color = renderPlan.background,
         contentColor = renderPlan.foreground,
         tonalElevation = 0.dp,
-        shadowElevation = 1.dp,
-        border = BorderStroke(1.dp, renderPlan.foreground.copy(alpha = 0.14f))
+        shadowElevation = if (showsPageChrome) 1.dp else 0.dp,
+        border = if (showsPageChrome) BorderStroke(1.dp, renderPlan.foreground.copy(alpha = 0.14f)) else null
     ) {
         Column(
             modifier = Modifier
