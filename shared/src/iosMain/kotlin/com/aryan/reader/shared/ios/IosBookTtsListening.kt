@@ -27,6 +27,7 @@ import com.aryan.reader.shared.reduce
 import com.aryan.reader.shared.splitSharedTtsListenChunks
 import com.aryan.reader.shared.reader.loadSharedEpubTtsChapters
 import com.aryan.reader.shared.pdf.IosPdfiumRuntime
+import com.aryan.reader.shared.pdf.PdfTextProcessing
 import com.aryan.reader.shared.pdfium.c.FPDF_DOCUMENT
 import com.aryan.reader.shared.pdfium.c.FPDF_CloseDocument
 import com.aryan.reader.shared.pdfium.c.FPDF_ClosePage
@@ -779,6 +780,7 @@ internal class IosBookTtsListeningController {
             val normalized = rawText
                 .replace("\r\n", "\n")
                 .replace(Regex("\\n{3,}"), "\n\n")
+                .let(PdfTextProcessing::joinHyphenatedLineBreaks)
                 .trim()
             var searchFrom = 0
             val chunks = splitSharedTtsListenChunks(normalized).map { chunkText ->

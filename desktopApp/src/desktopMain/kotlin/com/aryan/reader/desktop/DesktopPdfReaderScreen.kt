@@ -97,6 +97,7 @@ import com.aryan.reader.shared.pdf.PdfAnnotationKind
 import com.aryan.reader.shared.pdf.PdfInkTool
 import com.aryan.reader.shared.pdf.PdfPageBounds
 import com.aryan.reader.shared.pdf.PdfPagePoint
+import com.aryan.reader.shared.pdf.PdfTextProcessing
 import com.aryan.reader.shared.pdf.PdfSpreadLayout
 import com.aryan.reader.shared.pdf.PdfVisiblePageLayout
 import com.aryan.reader.shared.pdf.SharedPdfAnnotation
@@ -1803,14 +1804,23 @@ internal fun PdfReaderScreen(
         val chunks = mutableListOf<ReaderTtsChunk>()
         pageIndices.forEach { targetPage ->
             if (targetPage !in 0 until document.pageCount) return@forEach
-            val pageText = runCatching { document.textPageData(targetPage).text }.getOrDefault("")
+            // Join soft-wrap hyphens for speech, but keep chunk offsets pointing at the
+            // raw pdfium text so textRectsForRange highlighting stays aligned.
+            val processed = PdfTextProcessing.joinHyphenatedLineBreaksMapped(
+                runCatching { document.textPageData(targetPage).text }.getOrDefault("")
+            )
             ReaderTtsPlanner.chunksForText(
-                text = pageText,
+                text = processed.cleanText,
                 pageIndex = targetPage,
                 chapterIndex = 0,
                 chapterTitle = pdfString("pdf_page_short", "Page %1\$d", targetPage + 1)
             ).forEach { chunk ->
-                chunks += chunk.copy(index = chunks.size)
+                val rawOffsets = processed.rawRange(chunk.startOffset, chunk.endOffset)
+                chunks += chunk.copy(
+                    index = chunks.size,
+                    startOffset = rawOffsets?.first ?: chunk.startOffset,
+                    endOffset = rawOffsets?.second ?: chunk.endOffset
+                )
             }
         }
         return chunks

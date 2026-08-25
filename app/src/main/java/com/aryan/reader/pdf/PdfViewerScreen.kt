@@ -359,6 +359,9 @@ import kotlin.math.roundToInt
 private const val PDF_SPREAD_PAN_FLING_MIN_VELOCITY = 600f
 private const val PDF_SPREAD_PAN_FLING_MULTIPLIER = 0.72f
 
+/** Temporary diagnostics for the PDF TTS start regression; remove once root-caused. */
+private const val TTS_DIAG_TAG = "TTS_DIAG"
+
 @Suppress("KotlinConstantConditions")
 @SuppressLint("UnusedBoxWithConstraintsScope", "ObsoleteSdkInt", "LocalContextGetResourceValueCall")
 @ExperimentalMaterial3Api
@@ -1195,19 +1198,42 @@ private fun PdfViewerScreenContent(
     }
 
     fun displayPageToPdfPage(displayPageIndex: Int): Int? {
-        if (displayPageIndex !in 0 until totalDisplayPages) return null
+        // Read the live surface value instead of a composition-time snapshot: this
+        // closure is captured by long-lived callbacks (remember-ed TTS starters,
+        // permission launchers) created before the document finishes loading.
+        val displayPageCount = surfaceState.totalDisplayPages
+        if (displayPageIndex !in 0 until displayPageCount) {
+            Timber.tag(TTS_DIAG_TAG).w(
+                "map.reject index=$displayPageIndex totalDisplayPages=$displayPageCount " +
+                    "totalPdfPages=$totalPages virtual=${virtualPages.pdfLayoutDebugSummary()}"
+            )
+            return null
+        }
         if (virtualPages.isEmpty()) return displayPageIndex.takeIf { it in 0 until totalPages }
 
         return when (val virtualPage = virtualPages.getOrNull(displayPageIndex)) {
             is VirtualPage.PdfPage -> virtualPage.pdfIndex.takeIf { it in 0 until totalPages }
-            is VirtualPage.BlankPage -> null
-            null -> null
+            is VirtualPage.BlankPage -> {
+                Timber.tag(TTS_DIAG_TAG).w(
+                    "map.blankPage index=$displayPageIndex totalDisplayPages=$displayPageCount " +
+                        "virtual=${virtualPages.pdfLayoutDebugSummary()}"
+                )
+                null
+            }
+            null -> {
+                Timber.tag(TTS_DIAG_TAG).w(
+                    "map.missingEntry index=$displayPageIndex totalDisplayPages=$displayPageCount " +
+                        "virtual=${virtualPages.pdfLayoutDebugSummary()}"
+                )
+                null
+            }
         }
     }
 
     fun pdfPageToDisplayPage(pdfPageIndex: Int): Int? {
+        val displayPageCount = surfaceState.totalDisplayPages
         if (pdfPageIndex !in 0 until totalPages) return null
-        if (virtualPages.isEmpty()) return pdfPageIndex.takeIf { it in 0 until totalDisplayPages }
+        if (virtualPages.isEmpty()) return pdfPageIndex.takeIf { it in 0 until displayPageCount }
 
         return virtualPages.indexOfFirst {
             it is VirtualPage.PdfPage && it.pdfIndex == pdfPageIndex
@@ -2885,13 +2911,24 @@ private fun PdfViewerScreenContent(
         }
         coroutineScope.launch {
             val token = viewModel.getAuthToken()
-            val requestedDisplayPage = pageToReadOverride ?: currentPage
+            // Live read: startTts can be reached through long-lived remembered callbacks
+            // whose captured snapshot predates the document load.
+            val requestedDisplayPage = pageToReadOverride ?: surfaceState.currentPage
             val pageToRead = displayPageToPdfPage(requestedDisplayPage)
             if (pageToRead == null) {
+                Timber.tag(TTS_DIAG_TAG).w(
+                    "startTts.reject requestedDisplayPage=$requestedDisplayPage " +
+                        "currentPageSnapshot=$currentPage liveTotalDisplayPages=${surfaceState.totalDisplayPages} " +
+                        "totalPdfPages=$totalPages virtual=${virtualPages.pdfLayoutDebugSummary()}"
+                )
                 Timber.w("TTS: Ignoring blank or invalid display page $requestedDisplayPage.")
                 return@launch
             }
             val displayPageForTts = pdfPageToDisplayPage(pageToRead) ?: requestedDisplayPage
+            Timber.tag(TTS_DIAG_TAG).i(
+                "startTts.mapped displayPage=$requestedDisplayPage pdfPage=$pageToRead " +
+                    "totalDisplayPages=${surfaceState.totalDisplayPages}"
+            )
             var rawPageText: String? = null
             var tempPage: ReaderPage? = null
             var tempTextPage: ReaderTextPage? = null
@@ -6249,6 +6286,12 @@ private fun PdfViewerDocumentSetup(
     surfaceState.virtualPages = pdfViewerMutableValue({ virtualPages }, { virtualPages = it })
     surfaceState.loadedPageLayoutBookId = pdfViewerMutableValue({ loadedPageLayoutBookId }, { loadedPageLayoutBookId = it })
     surfaceState.pageLayoutMutationVersion = pdfViewerMutableValue({ pageLayoutMutationVersion }, { pageLayoutMutationVersion = it })
+    if (surfaceState.totalDisplayPages != totalDisplayPages) {
+        Timber.tag(TTS_DIAG_TAG).i(
+            "bind.totalDisplayPages value=$totalDisplayPages totalPdfPages=$totalPages " +
+                "virtual=${virtualPages.pdfLayoutDebugSummary()}"
+        )
+    }
     surfaceState.totalDisplayPages = totalDisplayPages
     surfaceState.pdfSpreadSettings = pdfSpreadSettings
     surfaceState.paginationSpreadStarts = paginationSpreadStarts
@@ -6321,16 +6364,22 @@ private class PdfViewerSurfaceState {
      * causes an unrelated recomposition.
      */
     val activeTheme = mutableStateOf(PdfBuiltInThemes[0])
-    var pdfSliderChromeVisible: Boolean = false
+    var pdfSliderChromeVisible: Boolean by androidx.compose.runtime.mutableStateOf(false)
     lateinit var pdfSpreadSettings: ReaderSettings
-    var ownsPaneGlobals: Boolean = false
+    var ownsPaneGlobals: Boolean by androidx.compose.runtime.mutableStateOf(false)
     lateinit var drawerState: DrawerState
-    lateinit var ttsState: TtsPlaybackManager.TtsState
+
+    // TTS and page-mapping values must be Compose-observable: several consumer scopes
+    // read them as plain `val` snapshots, so a non-observable field would freeze those
+    // snapshots until an unrelated recomposition (overlay/toolbar staleness bugs).
+    var ttsState: TtsPlaybackManager.TtsState by androidx.compose.runtime.mutableStateOf(
+        TtsPlaybackManager.TtsState()
+    )
     lateinit var bookId: String
     lateinit var ttsController: TtsController
-    var isTtsPlayingOrLoading: Boolean = false
+    var isTtsPlayingOrLoading: Boolean by androidx.compose.runtime.mutableStateOf(false)
     lateinit var context: Context
-    var totalDisplayPages: Int = 0
+    var totalDisplayPages: Int by androidx.compose.runtime.mutableStateOf(0)
     lateinit var paginationSpreadStarts: List<Int>
     lateinit var pagerState: androidx.compose.foundation.pager.PagerState
     lateinit var verticalReaderState: VerticalPdfReaderState
@@ -6350,8 +6399,8 @@ private class PdfViewerSurfaceState {
     lateinit var toolOrder: List<PdfReaderTool>
     lateinit var bottomTools: Set<String>
     var isPdfTabStripVisible: androidx.compose.runtime.MutableState<Boolean> = mutableStateOf(false)
-    lateinit var openTabs: List<RecentFileItem>
-    var activeTabBookId: String? = null
+    var openTabs: List<RecentFileItem> by androidx.compose.runtime.mutableStateOf(emptyList())
+    var activeTabBookId: String? by androidx.compose.runtime.mutableStateOf(null)
     lateinit var effectiveFileType: FileType
     lateinit var saveStateAndExit: () -> Unit
     lateinit var showPenPlayground: PdfViewerMutableValue<Boolean>
@@ -6360,7 +6409,7 @@ private class PdfViewerSurfaceState {
     lateinit var onInsertPage: () -> Unit
     lateinit var onDeletePage: () -> Unit
     lateinit var saveAllData: (Boolean) -> Job
-    var currentPage: Int = 0
+    var currentPage: Int by androidx.compose.runtime.mutableStateOf(0)
     lateinit var pendingRestorePage: PdfViewerMutableValue<Int?>
     var hasReflowFile: Boolean = false
     lateinit var uiState: ReaderScreenState
@@ -6373,7 +6422,7 @@ private class PdfViewerSurfaceState {
     lateinit var currentBookId: PdfViewerMutableValue<String?>
     lateinit var onNavigateBack: () -> Unit
     lateinit var jumpHistory: PdfViewerMutableValue<SharedPdfJumpHistory>
-    var isComicFile: Boolean = false
+    var isComicFile: Boolean by androidx.compose.runtime.mutableStateOf(false)
     var dockHeightPx: androidx.compose.runtime.MutableState<Float> = mutableStateOf(0f)
     var window: android.view.Window? = null
     lateinit var view: android.view.View
@@ -6391,7 +6440,7 @@ private class PdfViewerSurfaceState {
     lateinit var currentPageScale: PdfViewerMutableValue<Float>
     lateinit var isScrollLocked: PdfViewerMutableValue<Boolean>
     lateinit var rightToLeftPagination: PdfViewerMutableValue<Boolean>
-    var dynamicBeyondViewportPageCount: Int = 0
+    var dynamicBeyondViewportPageCount: Int by androidx.compose.runtime.mutableStateOf(0)
     lateinit var textBoxes: androidx.compose.runtime.snapshots.SnapshotStateList<PdfTextBox>
     lateinit var paginationDraggingBoxId: PdfViewerMutableValue<String?>
     var isDrawingActive: Boolean = false
@@ -6400,16 +6449,18 @@ private class PdfViewerSurfaceState {
     lateinit var currentActiveOffset: PdfViewerMutableValue<Offset>
     lateinit var showVerticalPageGap: PdfViewerMutableValue<Boolean>
     lateinit var pdfTextRepository: PdfTextRepository
-    lateinit var visibleUserHighlightsByPage: Map<Int, List<PdfUserHighlight>>
+    var visibleUserHighlightsByPage: Map<Int, List<PdfUserHighlight>> by androidx.compose.runtime.mutableStateOf(
+        emptyMap()
+    )
     val textBoxSurfaceState = PdfViewerTextBoxSurfaceState()
-    var isProUser: Boolean = false
+    var isProUser: Boolean by androidx.compose.runtime.mutableStateOf(false)
     lateinit var onDictionaryLookupStable: (String) -> Unit
     lateinit var onTranslateTextStable: (String) -> Unit
     lateinit var onSearchTextStable: (String) -> Unit
     lateinit var onInternalLinkNav: (Int) -> Unit
     lateinit var onOcrStateChange: (Boolean) -> Unit
     lateinit var onToggleBookmark: (Int) -> Unit
-    var paginationPagerPageCount: Int = 0
+    var paginationPagerPageCount: Int by androidx.compose.runtime.mutableStateOf(0)
     lateinit var drawingState: PdfDrawingState
     lateinit var persistInkAnnotationsNow: (Map<Int, List<PdfAnnotation>>, Collection<PdfAnnotation>, String) -> Job
     lateinit var selectedTextBoxId: PdfViewerMutableValue<String?>
