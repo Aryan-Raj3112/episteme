@@ -67,6 +67,7 @@ val PdfReaderTool.titleRes: Int
         PdfReaderTool.FILE_INFO -> R.string.file_information
         PdfReaderTool.VISUAL_OPTIONS -> R.string.menu_visual_options
         PdfReaderTool.TAP_TO_TURN -> R.string.menu_tap_to_turn_pages
+        PdfReaderTool.PAGE_TURN_ANIM -> R.string.menu_realistic_page_turns
         PdfReaderTool.SLIDER -> R.string.tool_navigation_slider
         PdfReaderTool.TOC -> R.string.tool_sidebar
         PdfReaderTool.SEARCH -> R.string.action_search

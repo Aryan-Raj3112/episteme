@@ -129,6 +129,8 @@ internal fun PdfTopBar(
     isHighlightingLoading: Boolean,
     tapToNavigateEnabled: Boolean,
     onToggleTapToNavigate: () -> Unit,
+    pageTurnAnimationEnabled: Boolean,
+    onTogglePageTurnAnimation: () -> Unit,
     onChangeDisplayMode: (DisplayMode) -> Unit,
     onSetRightToLeftPagination: (Boolean) -> Unit,
     onToggleKeepScreenOn: () -> Unit,
@@ -495,6 +497,24 @@ internal fun PdfTopBar(
                                                 },
                                                 trailingIcon = {
                                                     if (tapToNavigateEnabled) {
+                                                        Icon(
+                                                            Icons.Filled.Check,
+                                                            contentDescription = stringResource(R.string.content_desc_enabled)
+                                                        )
+                                                    }
+                                                }
+                                            )
+                                        }
+                                        PdfOverflowMenuSection.PAGE_TURN_ANIM -> {
+                                            DropdownMenuItem(
+                                                text = { Text(stringResource(R.string.menu_realistic_page_turns)) },
+                                                enabled = displayMode == DisplayMode.PAGINATION,
+                                                onClick = {
+                                                    onTogglePageTurnAnimation()
+                                                    showMoreMenu = false
+                                                },
+                                                trailingIcon = {
+                                                    if (pageTurnAnimationEnabled) {
                                                         Icon(
                                                             Icons.Filled.Check,
                                                             contentDescription = stringResource(R.string.content_desc_enabled)

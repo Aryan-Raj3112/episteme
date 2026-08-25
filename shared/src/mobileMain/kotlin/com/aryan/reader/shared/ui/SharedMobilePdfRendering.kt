@@ -116,6 +116,7 @@ import androidx.compose.ui.graphics.ImageShader
 import androidx.compose.ui.graphics.Paint
 import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.TileMode
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.isSpecified
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.luminance
@@ -126,6 +127,7 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.changedToDown
@@ -163,6 +165,9 @@ import com.aryan.reader.shared.pdf.PdfMusicianHoldDurationMillis
 import com.aryan.reader.shared.pdf.planPdfMusicianGesture
 import com.aryan.reader.shared.pdf.PdfPageBounds
 import com.aryan.reader.shared.pdf.PdfPagePoint
+import com.aryan.reader.shared.pdf.RealisticPdfPageTurnAnimationSpec
+import com.aryan.reader.shared.pdf.pdfPaginatedPagePaperColor
+import com.aryan.reader.shared.pdf.shouldPlayRealisticPdfPageTurn
 import com.aryan.reader.shared.pdf.sharedPdfSnapHighlighterPoint
 import com.aryan.reader.shared.pdf.pdfPaginationEdgeTarget
 import com.aryan.reader.shared.pdf.centeredPdfPageScrollOffset
@@ -977,6 +982,7 @@ internal fun SharedMobilePdfPaginatedPages(
     highlighterSnapEnabled: Boolean = false,
     isStylusOnlyMode: Boolean = false,
     tapToTurnPages: Boolean,
+    pageTurnAnimationEnabled: Boolean = false,
     positionController: SharedMobilePdfPaginationPositionController? = null,
     onExternalLink: (String) -> Unit,
     onInternalLink: (Int) -> Unit,
@@ -1026,11 +1032,23 @@ internal fun SharedMobilePdfPaginatedPages(
     LaunchedEffect(isPagerDragged) {
         if (isPagerDragged) onManualPageTurnStarted()
     }
+    // Android-benchmark realistic page turn: pager pages read their continuous
+    // offset and render the curl while the turn animates. Disabled while zoomed
+    // because the zoom camera would rescale the curl's counter-translation.
+    val realisticTurnActive = pageTurnAnimationEnabled && !zoomCamera.isZoomed()
+    val latestRealisticTurnActive by rememberUpdatedState(realisticTurnActive)
+    val pagePaperColor = pdfPaginatedPagePaperColor(activeTheme)
+    var pageTurnTouchY by remember(book.id) { mutableStateOf<Float?>(null) }
     LaunchedEffect(navigationRequestToken, spreadStarts) {
         val requestedPage = if (navigationRequestToken == 0) state.pageIndex else navigationRequestPage
         val target = pagerIndexForPage(requestedPage)
         if (pagerState.currentPage != target) {
-            if (animateNavigation) pagerState.animateScrollToPage(target) else pagerState.scrollToPage(target)
+            when {
+                animateNavigation && shouldPlayRealisticPdfPageTurn(latestRealisticTurnActive, pagerState.currentPage, target) ->
+                    pagerState.animateScrollToPage(target, animationSpec = RealisticPdfPageTurnAnimationSpec)
+                animateNavigation -> pagerState.animateScrollToPage(target)
+                else -> pagerState.scrollToPage(target)
+            }
         }
     }
     LaunchedEffect(pagerState, spreadStarts) {
@@ -1128,8 +1146,64 @@ internal fun SharedMobilePdfPaginatedPages(
             userScrollEnabled = userScrollEnabled && state.selectedTool == PdfInkTool.NONE && !zoomCamera.isZoomed(),
             reverseLayout = rightToLeftPagination,
             beyondViewportPageCount = 1,
-            modifier = Modifier.fillMaxSize()
+            modifier = Modifier
+                .fillMaxSize()
+                .then(
+                    // Android benchmark: capture the touch Y of every gesture on the
+                    // pager so the curl folds from the corner the reader touched.
+                    if (realisticTurnActive) {
+                        Modifier.pointerInput(book.id) {
+                            awaitPointerEventScope {
+                                while (true) {
+                                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                                    event.changes.firstOrNull { it.pressed }?.let { down ->
+                                        pageTurnTouchY = down.position.y
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        Modifier
+                    }
+                )
         ) { pagerPage ->
+        val turnPageOffset =
+            if (realisticTurnActive) {
+                (pagerPage - pagerState.currentPage) - pagerState.currentPageOffsetFraction
+            } else {
+                0f
+            }
+        // Pager natural position: the curl's counter-translation cancels the pager's
+        // own translation while |offset| < 1, exactly like the Android benchmark, and
+        // at |offset| >= 1 the page rests off-screen like a HorizontalPager slot.
+        val turnSlotModifier = if (realisticTurnActive) {
+            Modifier
+                .zIndex(-turnPageOffset)
+                .graphicsLayer {
+                    if (turnPageOffset <= 1f && turnPageOffset > -1f) {
+                        translationX = -turnPageOffset * size.width
+                    }
+                }
+        } else {
+            Modifier
+        }
+        val turnSheetModifier = if (realisticTurnActive) {
+            Modifier
+                .graphicsLayer {
+                    if (turnPageOffset != 0f) {
+                        shadowElevation = 10f
+                        shape = RectangleShape
+                        clip = false
+                    }
+                }
+                .realisticPageCurl(
+                    pageOffsetProvider = { turnPageOffset },
+                    touchYProvider = { pageTurnTouchY },
+                    paperColor = pagePaperColor
+                )
+        } else {
+            Modifier
+        }
         val spreadPages = remember(pagerPage, spreadStarts, pageCount, useTwoPageSpread, firstPageStandaloneInSpread) {
             val start = spreadStarts.getOrElse(pagerPage) { 0 }
             when {
@@ -1147,6 +1221,16 @@ internal fun SharedMobilePdfPaginatedPages(
             onSingleTap = { offset ->
                 val viewportWidthForTap = paginationViewportSize.width.toFloat()
                 val edge = viewportWidthForTap * 0.25f
+                fun turnPager(target: Int) {
+                    onManualPageTurnStarted()
+                    scope.launch {
+                        if (shouldPlayRealisticPdfPageTurn(latestRealisticTurnActive, pagerState.currentPage, target)) {
+                            pagerState.animateScrollToPage(target, animationSpec = RealisticPdfPageTurnAnimationSpec)
+                        } else {
+                            pagerState.animateScrollToPage(target)
+                        }
+                    }
+                }
                 when {
                     tapToTurnPages && !zoomCamera.isZoomed() && offset.x < edge ->
                         pdfPaginationEdgeTarget(
@@ -1154,24 +1238,20 @@ internal fun SharedMobilePdfPaginatedPages(
                             lastPage = spreadStarts.lastIndex,
                             tappedLeftEdge = true,
                             rightToLeft = rightToLeftPagination,
-                        )?.let { target ->
-                            onManualPageTurnStarted()
-                            scope.launch { pagerState.animateScrollToPage(target) }
-                        }
+                        )?.let(::turnPager)
                     tapToTurnPages && !zoomCamera.isZoomed() && offset.x > viewportWidthForTap - edge ->
                         pdfPaginationEdgeTarget(
                             currentPage = pagerPage,
                             lastPage = spreadStarts.lastIndex,
                             tappedLeftEdge = false,
                             rightToLeft = rightToLeftPagination,
-                        )?.let { target ->
-                            onManualPageTurnStarted()
-                            scope.launch { pagerState.animateScrollToPage(target) }
-                        }
+                        )?.let(::turnPager)
                     else -> onToggleChrome()
                 }
             },
-            modifier = Modifier.fillMaxSize().onSizeChanged { paginationViewportSize = it }
+            modifier = turnSlotModifier
+                .fillMaxSize()
+                .onSizeChanged { paginationViewportSize = it }
         ) { activeZoomCamera ->
           val zoomScale = activeZoomCamera.scale
           Box(
@@ -1207,7 +1287,7 @@ internal fun SharedMobilePdfPaginatedPages(
                                     showPageNumberOverlay = showPageNumberOverlay,
                                     richTextController = richTextController,
                                     isRichTextEditingEnabled = isRichTextEditingEnabled,
-                                    modifier = Modifier.size(fittedWidth, fittedHeight)
+                                    modifier = Modifier.size(fittedWidth, fittedHeight).then(turnSheetModifier)
                                 )
                             }
                         } else {
@@ -1273,7 +1353,7 @@ internal fun SharedMobilePdfPaginatedPages(
                                     onFinishInkStroke = onFinishInkStroke,
                                     showAllTextHighlights = showAllTextHighlights,
                                     onAllTextHighlightsLoadingChange = onAllTextHighlightsLoadingChange,
-                                    modifier = Modifier.size(fittedWidth, fittedHeight)
+                                    modifier = Modifier.size(fittedWidth, fittedHeight).then(turnSheetModifier)
                                 )
                             }
                         }

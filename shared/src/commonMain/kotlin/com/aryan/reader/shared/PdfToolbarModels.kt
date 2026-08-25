@@ -8,6 +8,7 @@ enum class PdfReaderTool(val id: String, val title: String, val category: String
     FILE_INFO("file_info", "File Information", "Overflow Menu"),
     VISUAL_OPTIONS("visual_options", "Visual Options", "Overflow Menu"),
     TAP_TO_TURN("tap_to_turn", "Tap to Turn Pages", "Overflow Menu"),
+    PAGE_TURN_ANIM("page_turn_anim", "Realistic Page Turns", "Overflow Menu"),
     SLIDER("slider", "Navigation Slider", "Bottom Bar"),
     TOC("toc", "Sidebar", "Bottom Bar"),
     SEARCH("search", "Search", "Bottom Bar"),

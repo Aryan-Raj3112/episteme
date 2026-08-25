@@ -160,6 +160,8 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.zIndex
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.isBackPressed
 import androidx.compose.ui.input.pointer.isForwardPressed
@@ -240,7 +242,9 @@ import com.aryan.reader.epubreader.DictionarySettingsDialog
 import com.aryan.reader.epubreader.ExternalDictionaryHelper
 import com.aryan.reader.epubreader.SystemUiMode
 import com.aryan.reader.epubreader.TtsOverlayControls
+import com.aryan.reader.epubreader.loadPageTurnAnimationSetting
 import com.aryan.reader.epubreader.loadTapToNavigateSetting
+import com.aryan.reader.epubreader.savePageTurnAnimationSetting
 import com.aryan.reader.epubreader.saveTapToNavigateSetting
 import com.aryan.reader.fetchAiDefinition
 import com.aryan.reader.isByokCloudTtsAvailable
@@ -283,6 +287,9 @@ import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.pdf.PdfSpreadLayout
 import com.aryan.reader.shared.pdf.PdfReverseColorMode
 import com.aryan.reader.shared.pdf.PdfNavigationReason
+import com.aryan.reader.shared.pdf.RealisticPdfPageTurnAnimationSpec
+import com.aryan.reader.shared.pdf.pdfPaginatedPagePaperColor
+import com.aryan.reader.shared.pdf.shouldPlayRealisticPdfPageTurn
 import com.aryan.reader.shared.pdf.PDF_MAX_ZOOM_SCALE
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationSessionAction
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationSessionState
@@ -291,6 +298,7 @@ import com.aryan.reader.shared.pdf.reduce
 import com.aryan.reader.shared.pdf.animatesPagination
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.ui.ReaderMinimalSlider
+import com.aryan.reader.shared.ui.realisticPageCurl
 import com.aryan.reader.shared.ui.SharedPdfRichTextHiddenInput
 import com.aryan.reader.shared.ui.SharedMobileReaderDrawer
 import com.aryan.reader.shared.ui.SharedMobileReaderScaffold
@@ -388,6 +396,7 @@ fun PdfViewerScreen(
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     var displayMode by remember { mutableStateOf(loadDisplayMode(context)) }
     var tapToNavigateEnabled by remember { mutableStateOf(loadTapToNavigateSetting(context)) }
+    var pageTurnAnimationEnabled by remember { mutableStateOf(loadPageTurnAnimationSetting(context)) }
     var showThemePanel by remember { mutableStateOf(false) }
     var currentThemeId by remember { mutableStateOf(loadPdfThemeId(context)) }
     var excludeImages by remember { mutableStateOf(com.aryan.reader.loadExcludeImages(context)) }
@@ -615,6 +624,7 @@ fun PdfViewerScreen(
             onUpdateToolOrder = onUpdateToolOrder,
             ownsPaneGlobals = ownsPaneGlobals,
             pageAspectRatios = pdfViewerMutableValue({ pageAspectRatios }, { pageAspectRatios = it }),
+            pageTurnAnimationEnabled = pdfViewerMutableValue({ pageTurnAnimationEnabled }, { pageTurnAnimationEnabled = it }),
             pdfFirstPageStandaloneInSpread = pdfViewerMutableValue({ pdfFirstPageStandaloneInSpread }, { pdfFirstPageStandaloneInSpread = it }),
             pdfPageSpreadMode = pdfViewerMutableValue({ pdfPageSpreadMode }, { pdfPageSpreadMode = it }),
             pdfUri = pdfUri,
@@ -700,6 +710,7 @@ private class PdfViewerScreenContentInputs(
     val onUpdateToolOrder: (List<PdfReaderTool>) -> Unit,
     val ownsPaneGlobals: Boolean,
     val pageAspectRatios: PdfViewerMutableValue<List<Float>>,
+    val pageTurnAnimationEnabled: PdfViewerMutableValue<Boolean>,
     val pdfFirstPageStandaloneInSpread: PdfViewerMutableValue<Boolean>,
     val pdfPageSpreadMode: PdfViewerMutableValue<com.aryan.reader.shared.reader.ReaderPageSpreadMode>,
     val pdfUri: Uri,
@@ -813,6 +824,7 @@ private fun PdfViewerScreenContent(
     var systemUiMode by inputs.systemUiMode
     val tabStateMap = inputs.tabStateMap
     var tapToNavigateEnabled by inputs.tapToNavigateEnabled
+    var pageTurnAnimationEnabled by inputs.pageTurnAnimationEnabled
     val toolOrder = inputs.toolOrder
     val toolSettings = inputs.toolSettings
     val ttsController = inputs.ttsController
@@ -3974,6 +3986,7 @@ private fun PdfViewerScreenContent(
         surfaceState.isLoadingDocument = pdfViewerMutableValue({ isLoadingDocument }, { isLoadingDocument = it })
         surfaceState.displayMode = pdfViewerMutableValue({ displayMode }, { displayMode = it })
         surfaceState.tapToNavigateEnabled = pdfViewerMutableValue({ tapToNavigateEnabled }, { tapToNavigateEnabled = it })
+        surfaceState.pageTurnAnimationEnabled = pdfViewerMutableValue({ pageTurnAnimationEnabled }, { pageTurnAnimationEnabled = it })
         surfaceState.isScrollLocked = pdfViewerMutableValue({ isScrollLocked }, { isScrollLocked = it })
         surfaceState.rightToLeftPagination = pdfViewerMutableValue({ rightToLeftPagination }, { rightToLeftPagination = it })
         surfaceState.currentActiveScale = pdfViewerMutableValue({ currentActiveScale }, { currentActiveScale = it })
@@ -6372,6 +6385,7 @@ private class PdfViewerSurfaceState {
     lateinit var totalPages: PdfViewerMutableValue<Int>
     lateinit var displayMode: PdfViewerMutableValue<DisplayMode>
     lateinit var tapToNavigateEnabled: PdfViewerMutableValue<Boolean>
+    lateinit var pageTurnAnimationEnabled: PdfViewerMutableValue<Boolean>
     lateinit var currentPageScale: PdfViewerMutableValue<Float>
     lateinit var isScrollLocked: PdfViewerMutableValue<Boolean>
     lateinit var rightToLeftPagination: PdfViewerMutableValue<Boolean>
@@ -6727,6 +6741,7 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
     var totalPages by surfaceState.totalPages
     var displayMode by surfaceState.displayMode
     var currentPageScale by surfaceState.currentPageScale
+    var pageTurnAnimationEnabled by surfaceState.pageTurnAnimationEnabled
     var isScrollLocked by surfaceState.isScrollLocked
     var rightToLeftPagination by surfaceState.rightToLeftPagination
     val dynamicBeyondViewportPageCount = surfaceState.dynamicBeyondViewportPageCount
@@ -6878,9 +6893,30 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                         }
 
                         Box(modifier = Modifier.fillMaxSize().clipToBounds()) {
+                            var pageTurnTouchY by remember { mutableStateOf<Float?>(null) }
                             HorizontalPager(
                                 state = pagerState,
-                                modifier = Modifier.fillMaxSize().clipToBounds(),
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .clipToBounds()
+                                    .then(
+                                        // Android benchmark: capture every gesture's touch Y so
+                                        // the realistic curl folds from the corner the reader touched.
+                                        if (pageTurnAnimationEnabled) {
+                                            Modifier.pointerInput(Unit) {
+                                                awaitPointerEventScope {
+                                                    while (true) {
+                                                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                                                        event.changes.firstOrNull { it.pressed }?.let { down ->
+                                                            pageTurnTouchY = down.position.y
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        } else {
+                                            Modifier
+                                        }
+                                    ),
                                 key = { page ->
                                     "$activeDocumentRenderKey:${pdfSpreadSettings.pageSpreadMode}:${pdfSpreadSettings.pdfFirstPageStandaloneInSpread}:$page:${paginationDisplayPageForPagerPage(page)}"
                                 },
@@ -6897,6 +6933,8 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                                 PdfViewerPaginationPage(
                                     paginationPageState = paginationPageState,
                                     pagerPageIndex = pagerPageIndex,
+                                    pageTurnAnimationEnabled = pageTurnAnimationEnabled,
+                                    pageTurnTouchY = pageTurnTouchY,
                                 )
                             }
 
@@ -7587,6 +7625,7 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
         var totalPages by surfaceState.totalPages
         var displayMode by surfaceState.displayMode
         var tapToNavigateEnabled by surfaceState.tapToNavigateEnabled
+        var pageTurnAnimationEnabled by surfaceState.pageTurnAnimationEnabled
         var currentPageScale by surfaceState.currentPageScale
         var isScrollLocked by surfaceState.isScrollLocked
         var rightToLeftPagination by surfaceState.rightToLeftPagination
@@ -8037,6 +8076,13 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
             if (ownsPaneGlobals) {
                 tapToNavigateEnabled = !tapToNavigateEnabled
                 saveTapToNavigateSetting(context, tapToNavigateEnabled)
+            }
+        },
+        pageTurnAnimationEnabled = pageTurnAnimationEnabled,
+        onTogglePageTurnAnimation = {
+            if (ownsPaneGlobals) {
+                pageTurnAnimationEnabled = !pageTurnAnimationEnabled
+                savePageTurnAnimationSetting(context, pageTurnAnimationEnabled)
             }
         },
         onChangeDisplayMode = { if (ownsPaneGlobals) displayMode = it },
@@ -9416,6 +9462,8 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
 private fun PdfViewerPaginationPage(
     paginationPageState: PdfViewerPaginationPageState,
     pagerPageIndex: Int,
+    pageTurnAnimationEnabled: Boolean,
+    pageTurnTouchY: Float?,
 ) {
     val surfaceState = paginationPageState.surfaceState
     val boxMaxWidthFloat = paginationPageState.boxMaxWidth.toFloat()
@@ -9444,6 +9492,10 @@ private fun PdfViewerPaginationPage(
     var currentPageScale by surfaceState.currentPageScale
     var isScrollLocked by surfaceState.isScrollLocked
     var rightToLeftPagination by surfaceState.rightToLeftPagination
+    // Android-benchmark realistic page turn: disabled while zoomed because the page
+    // zoom transform would rescale the curl's counter-translation.
+    val realisticPageTurnActive = pageTurnAnimationEnabled && currentPageScale <= 1f
+    val pagePaperColor = pdfPaginatedPagePaperColor(activeTheme)
     val textBoxes = surfaceState.textBoxes
     var paginationDraggingBoxId by surfaceState.paginationDraggingBoxId
     val isDrawingActive = surfaceState.isDrawingActive
@@ -9527,6 +9579,17 @@ private fun PdfViewerPaginationPage(
             false
         } else {
             val oneQuarterWidthPx = boxMaxWidthFloat / 4f
+            suspend fun turnPager(targetPage: Int) {
+                if (targetPage != pagerState.currentPage) {
+                    // Android-benchmark realistic turn: single-step manual turns snap
+                    // with tween(700) so the curl tracks the pager animation.
+                    if (shouldPlayRealisticPdfPageTurn(realisticPageTurnActive, pagerState.currentPage, targetPage)) {
+                        pagerState.animateScrollToPage(targetPage, animationSpec = RealisticPdfPageTurnAnimationSpec)
+                    } else {
+                        pagerState.scrollToPage(targetPage)
+                    }
+                }
+            }
             when {
                 tapOffset.x < oneQuarterWidthPx -> {
                     coroutineScope.launch {
@@ -9536,9 +9599,7 @@ private fun PdfViewerPaginationPage(
                             } else {
                                 (pagerState.currentPage - 1).coerceAtLeast(0)
                             }
-                        if (targetPage != pagerState.currentPage) {
-                            pagerState.scrollToPage(targetPage)
-                        }
+                        turnPager(targetPage)
                     }
                     true
                 }
@@ -9553,9 +9614,7 @@ private fun PdfViewerPaginationPage(
                                     pagerState.pageCount - 1
                                 )
                             }
-                        if (targetPage != pagerState.currentPage) {
-                            pagerState.scrollToPage(targetPage)
-                        }
+                        turnPager(targetPage)
                     }
                     true
                 }
@@ -9588,8 +9647,46 @@ private fun PdfViewerPaginationPage(
     val spreadPageGapPx = with(density) { spreadPageGap.toPx() }
     val spreadPageCount = spreadPageIndices.size
     var spreadPanFlingJob by remember { mutableStateOf<Job?>(null) }
+    // Pager natural position: the curl's counter-translation cancels the pager's own
+    // translation while |offset| < 1 (Android benchmark), and the curling page draws
+    // above the incoming one.
+    val turnPageOffset =
+        if (realisticPageTurnActive) {
+            (pagerPageIndex - pagerState.currentPage) - pagerState.currentPageOffsetFraction
+        } else {
+            0f
+        }
+    val turnSlotModifier = if (realisticPageTurnActive) {
+        Modifier
+            .zIndex(-turnPageOffset)
+            .graphicsLayer {
+                if (turnPageOffset <= 1f && turnPageOffset > -1f) {
+                    translationX = -turnPageOffset * size.width
+                }
+            }
+    } else {
+        Modifier
+    }
+    val turnSheetModifier = if (realisticPageTurnActive) {
+        Modifier
+            .graphicsLayer {
+                if (turnPageOffset != 0f) {
+                    shadowElevation = 10f
+                    shape = RectangleShape
+                    clip = false
+                }
+            }
+            .realisticPageCurl(
+                pageOffsetProvider = { turnPageOffset },
+                touchYProvider = { pageTurnTouchY },
+                paperColor = pagePaperColor
+            )
+    } else {
+        Modifier
+    }
     Row(
         modifier = Modifier
+            .then(turnSlotModifier)
             .fillMaxSize()
             .clipToBounds()
             .then(
@@ -10174,13 +10271,15 @@ private fun PdfViewerPaginationPage(
         searchHighlightMode = searchHighlightMode,
         searchResultToHighlight = if (isActivePagerPage) searchHighlightTarget else null,
         ocrHoverHighlights = stableOcrRects,
-        modifier = if (spreadPageIndices.size > 1) {
-            Modifier
-                .width(spreadPageWidth)
-                .fillMaxHeight()
-        } else {
-            Modifier.fillMaxSize()
-        },
+        modifier = turnSheetModifier.then(
+            if (spreadPageIndices.size > 1) {
+                Modifier
+                    .width(spreadPageWidth)
+                    .fillMaxHeight()
+            } else {
+                Modifier.fillMaxSize()
+            }
+        ),
         showAllTextHighlights = showAllTextHighlights,
         onHighlightLoading = { /* no-op for paginated mode */ },
         onPreSingleTap = onPaginationPreSingleTap,

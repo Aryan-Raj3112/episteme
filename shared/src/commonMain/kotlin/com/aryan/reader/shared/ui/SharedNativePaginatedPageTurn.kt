@@ -92,10 +92,6 @@ internal fun Modifier.sharedRealisticBookPage(
     textureBitmap: ImageBitmap? = null,
     textureAlpha: Float = 0f
 ): Modifier {
-    val frontPath = remember { Path() }
-    val backPath = remember { Path() }
-    val reflectedScreenPath = remember { Path() }
-
     return this
         .graphicsLayer {
             val pageOffset = pageOffsetProvider()
@@ -110,7 +106,36 @@ internal fun Modifier.sharedRealisticBookPage(
                 clip = false
             }
         }
-        .drawWithContent {
+        .realisticPageCurl(
+            pageOffsetProvider = pageOffsetProvider,
+            touchYProvider = touchYProvider,
+            paperColor = paperColor,
+            textureBitmap = textureBitmap,
+            textureAlpha = textureAlpha
+        )
+}
+
+/**
+ * Public draw-only page-curl modifier shared by the paginated readers. Unlike
+ * [sharedRealisticBookPage] it does not translate or shadow the page, so hosts
+ * whose pages are letterboxed inside a larger pager slot (PDF) can cancel the
+ * pager translation themselves and fold just the sheet. Flap tinting is derived
+ * from [paperColor] darkness.
+ */
+@Composable
+fun Modifier.realisticPageCurl(
+    pageOffsetProvider: () -> Float,
+    touchYProvider: () -> Float?,
+    paperColor: Color,
+    textureBitmap: ImageBitmap? = null,
+    textureAlpha: Float = 0f
+): Modifier {
+    val isDarkPaper = sharedReaderPaperIsDark(paperColor)
+    val frontPath = remember { Path() }
+    val backPath = remember { Path() }
+    val reflectedScreenPath = remember { Path() }
+
+    return this.drawWithContent {
             val pageOffset = pageOffsetProvider()
             fun drawPaperBackground() {
                 drawRect(color = paperColor)

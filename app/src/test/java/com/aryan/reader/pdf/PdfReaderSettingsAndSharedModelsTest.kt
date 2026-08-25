@@ -278,6 +278,7 @@ class PdfReaderSettingsAndSharedModelsTest {
                     PdfReaderTool.FILE_INFO,
                     PdfReaderTool.VISUAL_OPTIONS,
                     PdfReaderTool.TAP_TO_TURN,
+                    PdfReaderTool.PAGE_TURN_ANIM,
                     PdfReaderTool.READING_MODE,
                     PdfReaderTool.KEEP_SCREEN_ON,
                     PdfReaderTool.AUTO_SCROLL,

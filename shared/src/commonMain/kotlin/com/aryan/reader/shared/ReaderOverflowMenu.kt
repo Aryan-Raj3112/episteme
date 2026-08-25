@@ -51,6 +51,7 @@ enum class PdfOverflowMenuSection {
     VISUAL_OPTIONS,
     READING_MODE,
     TAP_TO_TURN,
+    PAGE_TURN_ANIM,
     KEEP_SCREEN_ON,
     AUTO_SCROLL,
     TTS_SETTINGS,
@@ -75,6 +76,7 @@ fun pdfOverflowMenuSections(
     if (PdfReaderTool.VISUAL_OPTIONS.name !in hiddenTools) add(PdfOverflowMenuSection.VISUAL_OPTIONS)
     if (PdfReaderTool.READING_MODE.name !in hiddenTools) add(PdfOverflowMenuSection.READING_MODE)
     if (PdfReaderTool.TAP_TO_TURN.name !in hiddenTools) add(PdfOverflowMenuSection.TAP_TO_TURN)
+    if (PdfReaderTool.PAGE_TURN_ANIM.name !in hiddenTools) add(PdfOverflowMenuSection.PAGE_TURN_ANIM)
     if (PdfReaderTool.KEEP_SCREEN_ON.name !in hiddenTools) add(PdfOverflowMenuSection.KEEP_SCREEN_ON)
     if (PdfReaderTool.AUTO_SCROLL.name !in hiddenTools) add(PdfOverflowMenuSection.AUTO_SCROLL)
     if (PdfReaderTool.TTS_SETTINGS.name !in hiddenTools || PdfReaderTool.TTS_REPLACEMENTS.name !in hiddenTools) {

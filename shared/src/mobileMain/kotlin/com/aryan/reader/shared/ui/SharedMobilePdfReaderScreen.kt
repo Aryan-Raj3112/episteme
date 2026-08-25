@@ -569,6 +569,9 @@ fun SharedMobilePdfReaderHost(
     var tapToTurnPages by remember(readerSessionKey, readerDefaultSettings.tapToNavigateEnabled) {
         mutableStateOf(readerDefaultSettings.tapToNavigateEnabled)
     }
+    var pageTurnAnimationEnabled by remember(readerSessionKey, readerDefaultSettings.pageTurnAnimationEnabled) {
+        mutableStateOf(readerDefaultSettings.pageTurnAnimationEnabled)
+    }
     var pdfSliderScrubbingPage by remember(readerSessionKey) { mutableStateOf<Int?>(null) }
     var showAllTextHighlights by remember(readerSessionKey) { mutableStateOf(false) }
     var isAllTextHighlightLoading by remember(readerSessionKey) { mutableStateOf(false) }
@@ -1416,6 +1419,14 @@ fun SharedMobilePdfReaderHost(
                                     readerDefaultSettings.copy(tapToNavigateEnabled = enabled)
                                 )
                             },
+                            pageTurnAnimationEnabled = pageTurnAnimationEnabled,
+                            onTogglePageTurnAnimation = {
+                                val enabled = !pageTurnAnimationEnabled
+                                pageTurnAnimationEnabled = enabled
+                                onReaderDefaultSettingsChange(
+                                    readerDefaultSettings.copy(pageTurnAnimationEnabled = enabled)
+                                )
+                            },
                             isScrollLocked = readerState.isScrollLocked,
                             onToggleScrollLock = {
                                 dispatch(
@@ -1705,6 +1716,7 @@ fun SharedMobilePdfReaderHost(
                         highlighterSnapEnabled = readerState.isHighlighterSnapEnabled,
                         isStylusOnlyMode = isStylusOnlyMode,
                         tapToTurnPages = tapToTurnPages,
+                        pageTurnAnimationEnabled = pageTurnAnimationEnabled && readerState.displayMode == PdfDisplayMode.PAGINATION,
                         positionController = pdfPaginationPositionController,
                         onExternalLink = { url -> if (ownsGlobalModal) pendingExternalLink = url },
                         onInternalLink = { navigateToPage(sharedPdfDisplayIndexFor(virtualLayout, it), reason = PdfNavigationReason.INTERNAL_LINK) },
@@ -2452,6 +2464,8 @@ private fun SharedMobilePdfReaderTopBar(
     onVisualOptions: () -> Unit,
     tapToTurnPages: Boolean,
     onToggleTapToTurnPages: () -> Unit,
+    pageTurnAnimationEnabled: Boolean,
+    onTogglePageTurnAnimation: () -> Unit,
     isScrollLocked: Boolean,
     onToggleScrollLock: () -> Unit,
     keepScreenOn: Boolean,
@@ -2686,6 +2700,15 @@ private fun SharedMobilePdfReaderTopBar(
                         onToggleTapToTurnPages()
                     }
                 )
+                if (toolbarPreferences.isVisible(PdfReaderTool.PAGE_TURN_ANIM)) SharedMobilePdfOverflowItem(
+                    readerString("menu_realistic_page_turns", "Realistic Page Turns"),
+                    enabled = displayMode == PdfDisplayMode.PAGINATION,
+                    trailingIcon = { if (pageTurnAnimationEnabled) Icon(Icons.Default.Check, contentDescription = readerString("content_desc_enabled", "Enabled")) },
+                    onClick = {
+                        showMoreMenu = false
+                        onTogglePageTurnAnimation()
+                    }
+                )
                 if (toolbarPreferences.isVisible(PdfReaderTool.KEEP_SCREEN_ON)) SharedMobilePdfOverflowItem(
                     readerString("menu_keep_screen_on", "Keep Screen On"),
                     trailingIcon = { if (keepScreenOn) Icon(Icons.Default.Check, contentDescription = readerString("content_desc_enabled", "Enabled")) },
@@ -2808,6 +2831,7 @@ private fun sharedPdfReaderToolTitle(tool: PdfReaderTool): String = when (tool) 
     PdfReaderTool.FILE_INFO -> readerString("file_information", "File Information")
     PdfReaderTool.VISUAL_OPTIONS -> readerString("menu_visual_options", "Visual Options")
     PdfReaderTool.TAP_TO_TURN -> readerString("menu_tap_to_turn_pages", "Tap to Turn Pages")
+    PdfReaderTool.PAGE_TURN_ANIM -> readerString("menu_realistic_page_turns", "Realistic Page Turns")
     PdfReaderTool.SLIDER -> readerString("tool_navigation_slider", "Navigation Slider")
     PdfReaderTool.TOC -> readerString("tool_sidebar", "Sidebar")
     PdfReaderTool.SEARCH -> readerString("tooltip_search", "Search")
@@ -2883,6 +2907,7 @@ private val SharedMobilePdfAvailableTools = setOf(
     PdfReaderTool.FILE_INFO,
     PdfReaderTool.VISUAL_OPTIONS,
     PdfReaderTool.TAP_TO_TURN,
+    PdfReaderTool.PAGE_TURN_ANIM,
     PdfReaderTool.SLIDER,
     PdfReaderTool.TOC,
     PdfReaderTool.SEARCH,
