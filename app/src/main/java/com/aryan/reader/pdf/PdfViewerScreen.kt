@@ -191,6 +191,8 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -9458,6 +9460,25 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
     }
 }
 
+/**
+ * Aspect-fits a page with [aspectRatio] (width/height) inside the available area.
+ *
+ * The realistic page curl must fold the drawn PDF page, not the letterboxed pager
+ * slot, so the turn sheet is sized to this rect. Each display page is measured with
+ * its own ratio from [displayPageRatios], which keeps mixed page sizes (portrait and
+ * landscape pages in one document, inserted blanks) turning correctly.
+ */
+internal fun pdfPaginationTurnSheetSize(
+    availableWidth: Dp,
+    availableHeight: Dp,
+    aspectRatio: Float,
+): DpSize {
+    val safeAspectRatio = if (aspectRatio > 0f) aspectRatio else 1f
+    val widthLimited = availableWidth / availableHeight <= safeAspectRatio
+    val fittedWidth = if (widthLimited) availableWidth else availableHeight * safeAspectRatio
+    return DpSize(width = fittedWidth, height = fittedWidth / safeAspectRatio)
+}
+
 @Composable
 private fun PdfViewerPaginationPage(
     paginationPageState: PdfViewerPaginationPageState,
@@ -10072,6 +10093,17 @@ private fun PdfViewerPaginationPage(
                 } else {
                     with(density) { boxMaxWidthFloat.toDp() }
                 }
+                // Fold the drawn page, not the slot: each display page uses its own
+                // aspect ratio, so mixed page sizes turn with their own fitted rect.
+                val turnSheetSize = if (realisticPageTurnActive) {
+                    pdfPaginationTurnSheetSize(
+                        availableWidth = spreadPageWidth,
+                        availableHeight = with(density) { boxMaxHeightFloat.toDp() },
+                        aspectRatio = displayPageRatios.getOrElse(pageIndex) { 1f },
+                    )
+                } else {
+                    null
+                }
     val isPageBookmarked by remember(bookmarks, pageIndex) {
         derivedStateOf {
             bookmarks.any { it.pageIndex == pageIndex }
@@ -10272,12 +10304,10 @@ private fun PdfViewerPaginationPage(
         searchResultToHighlight = if (isActivePagerPage) searchHighlightTarget else null,
         ocrHoverHighlights = stableOcrRects,
         modifier = turnSheetModifier.then(
-            if (spreadPageIndices.size > 1) {
-                Modifier
-                    .width(spreadPageWidth)
-                    .fillMaxHeight()
-            } else {
-                Modifier.fillMaxSize()
+            when {
+                turnSheetSize != null -> Modifier.size(turnSheetSize)
+                spreadPageIndices.size > 1 -> Modifier.width(spreadPageWidth).fillMaxHeight()
+                else -> Modifier.fillMaxSize()
             }
         ),
         showAllTextHighlights = showAllTextHighlights,
