@@ -1609,11 +1609,7 @@ object SharedJvmBookLoader {
         }
     }
 
-    private fun File.readTextLenient(): String {
-        val bytes = readBytes()
-        return bytes.toString(Charsets.UTF_8).takeIf { '\uFFFD' !in it }
-            ?: bytes.toString(Charset.forName("windows-1252"))
-    }
+    private fun File.readTextLenient(): String = SharedTextDecoding.decode(readBytes())
 
     private fun String.extractBodyOrSelf(): String {
         return Regex("(?is)<body\\b[^>]*>(.*?)</body>")

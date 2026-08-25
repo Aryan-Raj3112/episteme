@@ -21,6 +21,7 @@ package com.aryan.reader.epub
 
 import android.content.Context
 import com.aryan.reader.FileType
+import com.aryan.reader.shared.reader.SharedTextDecoding
 import com.vladsch.flexmark.ext.autolink.AutolinkExtension
 import com.vladsch.flexmark.ext.gfm.strikethrough.StrikethroughExtension
 import com.vladsch.flexmark.ext.gfm.tasklist.TaskListExtension
@@ -39,9 +40,11 @@ import org.jsoup.nodes.Document
 import org.jsoup.safety.Safelist
 import org.zwobble.mammoth.DocumentConverter
 import timber.log.Timber
+import java.io.BufferedReader
 import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStream
+import java.io.StringReader
 import java.util.UUID
 import java.util.zip.ZipFile
 
@@ -251,7 +254,7 @@ class SingleFileImporter(private val context: Context) {
 
                 val delimiter = if (originalBookNameHint.lowercase().let { it.endsWith(".tsv") || it.endsWith(".tsv.txt") }) '\t' else ','
 
-                inputStream.bufferedReader().use { reader ->
+                BufferedReader(StringReader(SharedTextDecoding.decode(inputStream.readBytes()))).use { reader ->
                     var line = reader.readLine()
                     while (line != null) {
                         if (isCsv) {
@@ -344,7 +347,7 @@ class SingleFileImporter(private val context: Context) {
         val title = originalBookNameHint.substringBeforeLast(".")
 
         // Read the full Markdown content
-        val markdownContent = inputStream.bufferedReader().use { it.readText() }
+        val markdownContent = SharedTextDecoding.decode(inputStream.readBytes())
             .replace("\r\n", "\n")
 
         Timber.tag("FileOpenPerf").d("[MD] parseMarkdown: Read ${markdownContent.length} chars | elapsed=${System.currentTimeMillis() - parseStart}ms")
@@ -599,7 +602,8 @@ class SingleFileImporter(private val context: Context) {
 
         var inParagraph = false
 
-        inputStream.bufferedReader().use { reader ->
+        val decodedContent = SharedTextDecoding.decode(inputStream.readBytes())
+        BufferedReader(StringReader(decodedContent)).use { reader ->
             while (true) {
                 val line = reader.readLine()
                 if (line != null) {
@@ -747,7 +751,8 @@ class SingleFileImporter(private val context: Context) {
         val cssBuilder = java.lang.StringBuilder()
         val chapters = mutableListOf<EpubChapter>()
 
-        inputStream.bufferedReader().use { reader ->
+        val decodedHtml = SharedTextDecoding.decode(inputStream.readBytes())
+        BufferedReader(StringReader(decodedHtml)).use { reader ->
             var inScript = false
             var skippedScriptLines = 0
             var scriptStartLines = 0

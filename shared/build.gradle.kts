@@ -166,6 +166,9 @@ kotlin {
             dependsOn(commonMain)
             dependencies {
                 implementation("org.jsoup:jsoup:1.17.2")
+                // Charset detection for legacy "ANSI" text files (GBK, Big5,
+                // Shift-JIS, EUC-KR, windows-125x) shared by Android + desktop.
+                implementation("com.github.albfernandez:juniversalchardet:2.5.0")
             }
         }
         if (!desktopOnlyBuild) {

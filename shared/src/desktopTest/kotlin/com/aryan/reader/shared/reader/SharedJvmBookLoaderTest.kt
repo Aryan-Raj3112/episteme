@@ -169,6 +169,17 @@ class SharedJvmBookLoaderTest {
     }
 
     @Test
+    fun `txt loader decodes legacy ansi chinese encodings`() = withTempDir { dir ->
+        val text = "中文测试：这是一段较长的简体中文文本，用于字符集检测，第一章 读书使人进步。"
+        val file = File(dir, "ansi.txt")
+        file.writeBytes(text.toByteArray(charset("GBK")))
+
+        val book = SharedJvmBookLoader.load(file, FileType.TXT)
+
+        assertTrue(book.chapters.single().plainText.contains("中文测试"))
+    }
+
+    @Test
     fun `epub loader keeps embedded images in semantic pagination blocks`() = withTempDir { dir ->
         val file = File(dir, "image-book.epub")
         writeImageEpub(file)

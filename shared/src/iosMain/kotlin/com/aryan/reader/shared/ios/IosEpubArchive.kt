@@ -66,6 +66,7 @@ import com.aryan.reader.shared.reader.SharedEpubPackageLoader
 import com.aryan.reader.shared.reader.SharedEpubTocEntry
 import com.aryan.reader.shared.reader.SharedLruMemoryCache
 import com.aryan.reader.shared.reader.SharedMobiTocPoint
+import com.aryan.reader.shared.reader.SharedTextDecoding
 import com.aryan.reader.shared.reader.rewriteMobiResourceReferences
 import com.aryan.reader.shared.reader.splitMobiHtml
 import com.aryan.reader.shared.reader.readComicTarEntries
@@ -1612,29 +1613,7 @@ internal fun String.readIosFileBytes(): ByteArray {
     return output
 }
 
-internal fun ByteArray.decodeEpubText(): String {
-    if (size >= 2 && this[0] == 0xFF.toByte() && this[1] == 0xFE.toByte()) {
-        return buildString((size - 2) / 2) {
-            var index = 2
-            while (index + 1 < size) {
-                append(((this@decodeEpubText[index].toInt() and 0xFF) or ((this@decodeEpubText[index + 1].toInt() and 0xFF) shl 8)).toChar())
-                index += 2
-            }
-        }
-    }
-    if (size >= 2 && this[0] == 0xFE.toByte() && this[1] == 0xFF.toByte()) {
-        return buildString((size - 2) / 2) {
-            var index = 2
-            while (index + 1 < size) {
-                append((((this@decodeEpubText[index].toInt() and 0xFF) shl 8) or (this@decodeEpubText[index + 1].toInt() and 0xFF)).toChar())
-                index += 2
-            }
-        }
-    }
-    val utf8 = decodeToString().removePrefix("\uFEFF")
-    if ('\uFFFD' !in utf8) return utf8
-    return buildString(size) { this@decodeEpubText.forEach { append((it.toInt() and 0xFF).toChar()) } }
-}
+internal fun ByteArray.decodeEpubText(): String = SharedTextDecoding.decode(this)
 
 private fun ByteArray.decodeZipEntryName(flags: Int): String {
     val decoded = decodeToString()
