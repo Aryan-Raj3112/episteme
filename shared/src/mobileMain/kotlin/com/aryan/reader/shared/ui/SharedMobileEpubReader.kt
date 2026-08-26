@@ -96,6 +96,7 @@ import com.aryan.reader.shared.readerLifecycleAction
 import com.aryan.reader.shared.readerAutoScrollPixelsPerSecond
 import com.aryan.reader.shared.readerAutoScrollBoundaryAction
 import com.aryan.reader.shared.migrateLegacyIosReaderAutoScrollSpeed
+import com.aryan.reader.shared.migrateAndroidEpubFormatSettings
 import com.aryan.reader.shared.shouldFollowReaderTtsChunk
 import com.aryan.reader.shared.shouldShowEpubPageInfoBar
 import com.aryan.reader.shared.toSharedReaderFontFamily
@@ -249,15 +250,17 @@ fun SharedMobileEpubReaderScreen(
     }
     val activeTtsChunk = localTts.progress.currentChunk
     var detachedTtsChunkIndex by remember(book.id) { mutableStateOf<Int?>(null) }
-    val storedBookSettings = book.readerSettings ?: readerDefaultSettings
+    val migratedReaderDefaults = readerDefaultSettings.migrateAndroidEpubFormatSettings()
+    val storedBookSettings = (book.readerSettings ?: migratedReaderDefaults).migrateAndroidEpubFormatSettings()
+    val migratedLocalFormatSettings = book.readerLocalFormatSettings?.migrateAndroidEpubFormatSettings()
     var isLocalFormatMode by remember(book.id) { mutableStateOf(book.readerFormatIsLocal) }
-    var localFormatSettings by remember(book.id) { mutableStateOf(book.readerLocalFormatSettings) }
+    var localFormatSettings by remember(book.id) { mutableStateOf(migratedLocalFormatSettings) }
     var settings by remember(book.id) {
         mutableStateOf(
             if (book.readerFormatIsLocal) {
-                storedBookSettings.withReaderFormatFrom(book.readerLocalFormatSettings ?: storedBookSettings)
+                storedBookSettings.withReaderFormatFrom(migratedLocalFormatSettings ?: storedBookSettings)
             } else {
-                storedBookSettings.withReaderFormatFrom(readerDefaultSettings)
+                storedBookSettings.withReaderFormatFrom(migratedReaderDefaults)
             }
         )
     }
@@ -2195,7 +2198,7 @@ fun SharedMobileEpubReaderScreen(
                         settings = settings.withReaderFormatFrom(local)
                     } else {
                         localFormatSettings = settings
-                        settings = settings.withReaderFormatFrom(readerDefaultSettings)
+                        settings = settings.withReaderFormatFrom(migratedReaderDefaults)
                     }
                     isLocalFormatMode = useLocal
                 }

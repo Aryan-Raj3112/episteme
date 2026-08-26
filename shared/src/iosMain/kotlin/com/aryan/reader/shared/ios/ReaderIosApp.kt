@@ -125,6 +125,7 @@ import com.aryan.reader.shared.RecapResult
 import com.aryan.reader.shared.ReaderExternalLookupService
 import com.aryan.reader.shared.ui.IosReaderLookupServices
 import com.aryan.reader.shared.migrateLegacyIosReaderAutoScrollSpeed
+import com.aryan.reader.shared.migrateAndroidEpubFormatSettings
 import com.aryan.reader.shared.currentTimestamp
 import com.aryan.reader.shared.canEnableGoogleDriveSync
 import com.aryan.reader.shared.canOpenMobilePdfTab
@@ -2195,8 +2196,13 @@ private fun SharedReaderScreenState.toIosCloudSnapshot(): SharedLibrarySnapshot 
 
 private fun loadPersistedIosEpubBookState(book: BookItem): BookItem {
     val encoded = NSUserDefaults.standardUserDefaults.stringForKey(book.iosEpubReaderStateKey()) ?: return book
-    val stored = SharedLibrarySnapshotJson.decodeOrEmpty(encoded).books.firstOrNull() ?: return book
-    return book.withNewerReaderSession(stored)
+    val decoded = SharedLibrarySnapshotJson.decodeOrEmpty(encoded).books.firstOrNull() ?: return book
+    val normalized = decoded.migrateAndroidEpubFormatSettings()
+    val restored = book.withNewerReaderSession(normalized)
+    if (normalized != decoded) {
+        persistIosEpubBookState(normalized)
+    }
+    return restored
 }
 
 private fun persistIosEpubBookState(book: BookItem) {
