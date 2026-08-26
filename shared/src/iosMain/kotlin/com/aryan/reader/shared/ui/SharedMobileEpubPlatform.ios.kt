@@ -41,6 +41,10 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.cinterop.ObjCSignatureOverride
 import kotlinx.cinterop.CValue
 import kotlinx.cinterop.addressOf
@@ -774,6 +778,15 @@ private class IosEpubWebViewCoordinator(
     }
 
     private fun handleBridgeMessage(method: String, payload: String) {
+        if (method == "readerCopyText") {
+            val text = runCatching {
+                Json.parseToJsonElement(payload).jsonObject["text"]?.jsonPrimitive?.contentOrNull
+            }.getOrNull()?.takeIf { it.isNotEmpty() }
+            if (text != null) {
+                writeSharedClipboard(label = "Copied Text", text = text)
+            }
+            return
+        }
         if (method == "readerChunkRequested") {
             val index = IosEpubChunkIndexRegex.find(payload)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: return
             val chunk = contentChunks.getOrNull(index) ?: return
@@ -922,10 +935,13 @@ private val IosEpubBridgeBootstrapScript = """
       function post(method, payload) {
         try {
           window.webkit.messageHandlers.$IosEpubBridgeName.postMessage(String(method || '') + '\n' + String(payload || '{}'));
-        } catch (_) {}
+          return true;
+        } catch (_) {
+          return false;
+        }
       }
       window.kmpJsBridge = {
-        callNative: function (method, payload) { post(method, payload); }
+        callNative: function (method, payload) { return post(method, payload); }
       };
       window.readerDisableLinkFallback = true;
       if (!window.readerIosPointerBridgeInstalled) {

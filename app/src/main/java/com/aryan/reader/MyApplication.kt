@@ -28,6 +28,7 @@ import com.aryan.reader.paginatedreader.SvgStringFetcher
 import com.aryan.reader.shared.ui.SharedAndroidMobileEpubTtsFactory
 import com.aryan.reader.shared.ui.installSharedAndroidMobileEpubTtsFactory
 import com.aryan.reader.shared.ui.installSharedAndroidPdfOcrAdapter
+import com.aryan.reader.shared.ui.registerSharedAndroidMobileApplicationContext
 import com.aryan.reader.tts.SharedMobileEpubTtsAdapter
 import com.aryan.reader.pdf.SharedMobilePdfOcrAdapter
 import com.aryan.reader.data.AndroidBackupRestoreCoordinator
@@ -36,6 +37,7 @@ import timber.log.Timber // Add this
 class MyApplication : Application(), ImageLoaderFactory {
     override fun onCreate() {
         super.onCreate()
+        registerSharedAndroidMobileApplicationContext(this)
         installSharedAndroidMobileEpubTtsFactory(
             SharedAndroidMobileEpubTtsFactory(::SharedMobileEpubTtsAdapter)
         )

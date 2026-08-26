@@ -676,6 +676,7 @@ internal fun SharedMobilePdfVerticalPages(
     onHighlight: (Int, com.aryan.reader.shared.pdf.PdfTextSelectionRange, String, List<PdfPageBounds>, Int, HighlightStyle, Boolean) -> Unit,
     onReadAloud: (Int, Int) -> Unit,
     onAiDefine: ((String) -> Unit)? = null,
+    onClipboardError: ((String) -> Unit)? = null,
     userScrollEnabled: Boolean,
     isScrollLocked: Boolean,
     zoomCamera: PdfZoomCamera,
@@ -836,6 +837,7 @@ internal fun SharedMobilePdfVerticalPages(
                         onHighlight = onHighlight,
                         onReadAloud = onReadAloud,
                         onAiDefine = onAiDefine,
+                        onClipboardError = onClipboardError,
                         onCanvasSizeChanged = onCanvasSizeChanged,
                         onFinishInkStroke = onFinishInkStroke,
                             showAllTextHighlights = showAllTextHighlights,
@@ -990,6 +992,7 @@ internal fun SharedMobilePdfPaginatedPages(
     onHighlight: (Int, com.aryan.reader.shared.pdf.PdfTextSelectionRange, String, List<PdfPageBounds>, Int, HighlightStyle, Boolean) -> Unit,
     onReadAloud: (Int, Int) -> Unit,
     onAiDefine: ((String) -> Unit)? = null,
+    onClipboardError: ((String) -> Unit)? = null,
     userScrollEnabled: Boolean,
     isScrollLocked: Boolean,
     zoomCamera: PdfZoomCamera,
@@ -1349,6 +1352,7 @@ internal fun SharedMobilePdfPaginatedPages(
                                     onHighlight = onHighlight,
                                     onReadAloud = onReadAloud,
                                     onAiDefine = onAiDefine,
+                                    onClipboardError = onClipboardError,
                                     onCanvasSizeChanged = onCanvasSizeChanged,
                                     onFinishInkStroke = onFinishInkStroke,
                                     showAllTextHighlights = showAllTextHighlights,
@@ -2094,6 +2098,7 @@ internal fun SharedMobilePdfPageSurface(
     onHighlight: (Int, com.aryan.reader.shared.pdf.PdfTextSelectionRange, String, List<PdfPageBounds>, Int, HighlightStyle, Boolean) -> Unit,
     onReadAloud: (Int, Int) -> Unit,
     onAiDefine: ((String) -> Unit)? = null,
+    onClipboardError: ((String) -> Unit)? = null,
     onCanvasSizeChanged: (IntSize) -> Unit,
     onFinishInkStroke: (Int, Boolean) -> Unit,
     showAllTextHighlights: Boolean = false,
@@ -2479,6 +2484,7 @@ internal fun SharedMobilePdfPageSurface(
                 onHighlight = { range, text, bounds, color, style, note -> onHighlight(pageIndex, range, text, bounds, color, style, note) },
                 onReadAloud = { charIndex -> onReadAloud(pageIndex, charIndex) },
                 onAiDefine = onAiDefine,
+                onClipboardError = onClipboardError,
                 modifier = Modifier.fillMaxSize()
             )
             if (showPageNumberOverlay) {

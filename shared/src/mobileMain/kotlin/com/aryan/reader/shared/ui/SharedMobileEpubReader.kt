@@ -57,8 +57,6 @@ import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
@@ -213,6 +211,7 @@ fun SharedMobileEpubReaderScreen(
     initialUseNativeVerticalRenderer: Boolean = false,
     onUseNativeVerticalRendererPreferenceChange: (Boolean) -> Unit = {},
     onTtsError: ((String) -> Unit)? = null,
+    onClipboardError: ((String) -> Unit)? = null,
     readerScreenOrientationMode: ReaderScreenOrientationMode = ReaderScreenOrientationMode.FOLLOW_SYSTEM,
     onReaderScreenOrientationModeChange: (ReaderScreenOrientationMode) -> Unit = {},
     onApplyReaderScreenOrientation: (ReaderScreenOrientationMode) -> Unit = {},
@@ -400,7 +399,15 @@ fun SharedMobileEpubReaderScreen(
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val focusManager = LocalFocusManager.current
-    val clipboard = LocalClipboardManager.current
+    val copiedTextLabel = readerString("clip_label_copied_text", "Copied Text")
+    val copiedLinkLabel = readerString("clip_label_copied_link", "Copied Link")
+    val clipboardErrorMessage = readerString("error_copy_to_clipboard", "Could not copy to clipboard")
+
+    fun copyToClipboard(text: String, label: String = copiedTextLabel): SharedClipboardResult {
+        val result = writeSharedClipboard(label = label, text = text)
+        if (!result.success) onClipboardError?.invoke(clipboardErrorMessage)
+        return result
+    }
     val sanitizedToolbarPreferences = readerToolbarPreferences.sanitized()
     val visibleToolbarTools = sanitizedToolbarPreferences.orderedVisibleTools().filter {
         it in SharedMobileEpubCustomizableTools && (it != ReaderTool.AI_FEATURES || readerAiAvailable)
@@ -982,7 +989,7 @@ fun SharedMobileEpubReaderScreen(
                     }
                     TextButton(
                         onClick = {
-                            clipboard.setText(AnnotatedString(url))
+                            copyToClipboard(url, copiedLinkLabel)
                             pendingExternalLink = null
                         }
                     ) {
@@ -1002,7 +1009,7 @@ fun SharedMobileEpubReaderScreen(
         SharedMobileEpubFootnoteSheet(
             footnote = footnote,
             settings = settings,
-            onCopyText = { clipboard.setText(AnnotatedString(it)) },
+            onCopyText = { copyToClipboard(it) },
             onDismiss = { activeFootnote = null },
         )
     }
@@ -1464,7 +1471,7 @@ fun SharedMobileEpubReaderScreen(
                                         editingHighlight = highlights.firstOrNull { it.id == id }
                                     },
                                     enabledSelectionActions = SharedNativeReaderSelectionAction.entries.toSet(),
-                                    onCopyText = { text -> clipboard.setText(AnnotatedString(text)) },
+                                    onCopyText = { text -> copyToClipboard(text) },
                                     onSelectionAction = { action, text, locator ->
                                         val selectionLocator = locator ?: currentLocator ?: return@SharedNativePaginatedReader
                                         val lookupAction = action.externalLookupActionOrNull()
@@ -1573,7 +1580,7 @@ fun SharedMobileEpubReaderScreen(
                                 editingHighlight = highlights.firstOrNull { it.id == id }
                             },
                                 enabledSelectionActions = SharedNativeReaderSelectionAction.entries.toSet(),
-                            onCopyText = { text -> clipboard.setText(AnnotatedString(text)) },
+                            onCopyText = { text -> copyToClipboard(text) },
                             onSelectionAction = { action, text, locator ->
                                 val selectionLocator = locator ?: currentLocator ?: return@SharedNativeVerticalReader
                                 val lookupAction = action.externalLookupActionOrNull()
@@ -2371,6 +2378,7 @@ fun SharedMobileEpubReaderScreen(
             onLookup = { action ->
                 openSharedMobileEpubLookup(action, highlight.text)
             },
+            onClipboardError = onClipboardError,
             onDismiss = { editingHighlight = null }
         )
     }

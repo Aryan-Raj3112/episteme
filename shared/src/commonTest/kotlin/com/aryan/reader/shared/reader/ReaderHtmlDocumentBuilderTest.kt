@@ -29,6 +29,17 @@ import kotlin.test.assertTrue
 class ReaderHtmlDocumentBuilderTest {
 
     @Test
+    fun `selection copy reports async failures and uses native fallback`() {
+        val script = readerHtmlSelectionScript()
+
+        assertTrue(script.contains("navigator.clipboard.writeText(text)"))
+        assertTrue(script.contains(".catch(function (error)"))
+        assertTrue(script.contains("document.execCommand('copy')"))
+        assertTrue(script.contains("readerCopyText"))
+        assertTrue(script.contains("READER_COPY failed"))
+    }
+
+    @Test
     fun `vertical position reports are throttled during scrolling instead of deferred until scroll stops`() {
         val html = ReaderHtmlDocumentBuilder.verticalDocument(
             book = repeatedWordBook("alpha beta"),

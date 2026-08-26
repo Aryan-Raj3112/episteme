@@ -56,8 +56,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -537,10 +535,12 @@ internal fun SharedMobileEpubHighlightSheet(
     onDelete: () -> Unit,
     onSpeak: () -> Unit,
     onLookup: (ReaderExternalLookupAction) -> Unit,
+    onClipboardError: ((String) -> Unit)? = null,
     onDismiss: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val clipboard = LocalClipboardManager.current
+    val copiedTextLabel = readerString("clip_label_copied_text", "Copied Text")
+    val clipboardErrorMessage = readerString("error_copy_to_clipboard", "Could not copy to clipboard")
     var note by remember(highlight.id, highlight.note) { mutableStateOf(highlight.note.orEmpty()) }
     var confirmDelete by remember(highlight.id) { mutableStateOf(false) }
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
@@ -568,7 +568,10 @@ internal fun SharedMobileEpubHighlightSheet(
                 modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                TextButton(onClick = { clipboard.setText(AnnotatedString(highlight.text)) }) { Text("Copy") }
+                TextButton(onClick = {
+                    val result = writeSharedClipboard(copiedTextLabel, highlight.text)
+                    if (!result.success) onClipboardError?.invoke(clipboardErrorMessage)
+                }) { Text("Copy") }
                 TextButton(onClick = onSpeak) { Text("Speak") }
                 TextButton(onClick = { onLookup(ReaderExternalLookupAction.DICTIONARY) }) { Text("Dictionary") }
                 TextButton(onClick = { onLookup(ReaderExternalLookupAction.TRANSLATE) }) { Text("Translate") }

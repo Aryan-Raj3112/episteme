@@ -3884,6 +3884,10 @@ private fun ReaderIosApp(
                 if (!acceptsCurrentHostCallback()) return@SharedMobilePdfReaderHost
                 state = state.reduce(AppAction.BannerShown(BannerMessage(message, isError = true)))
             },
+            onClipboardError = { message ->
+                if (!acceptsCurrentHostCallback()) return@SharedMobilePdfReaderHost
+                state = state.reduce(AppAction.BannerShown(BannerMessage(message, isError = true)))
+            },
             initialReaderState = initialPdfReaderState,
             readerDefaultSettings = state.pdfReaderDefaultSettings,
             onReaderDefaultSettingsChange = { defaults ->
@@ -4288,6 +4292,9 @@ private fun ReaderIosApp(
                             initialUseNativeVerticalRenderer = loadIosNativeVerticalRenderer(),
                             onUseNativeVerticalRendererPreferenceChange = ::persistIosNativeVerticalRenderer,
                             onTtsError = { message ->
+                                state = state.reduce(AppAction.BannerShown(BannerMessage(message, isError = true)))
+                            },
+                            onClipboardError = { message ->
                                 state = state.reduce(AppAction.BannerShown(BannerMessage(message, isError = true)))
                             },
                             readerScreenOrientationMode = readerOrientation,

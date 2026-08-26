@@ -38,6 +38,7 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonPrimitive
+import org.json.JSONObject
 import java.io.File
 import java.text.DateFormat
 import java.util.Date
@@ -49,7 +50,7 @@ private object AndroidSharedMobileContext {
 internal fun sharedAndroidMobileApplicationContext(): Context? =
     AndroidSharedMobileContext.applicationContext
 
-internal fun registerSharedAndroidMobileApplicationContext(context: Context) {
+fun registerSharedAndroidMobileApplicationContext(context: Context) {
     AndroidSharedMobileContext.applicationContext = context.applicationContext
 }
 
@@ -151,7 +152,8 @@ private class AndroidEpubBridge(
     private val coordinator: AndroidEpubWebViewCoordinator,
 ) {
     @JavascriptInterface
-    fun callNative(method: String, payload: String) = coordinator.handleBridgeMessage(method, payload)
+    fun callNative(method: String, payload: String): Boolean =
+        coordinator.handleBridgeMessage(method, payload)
 }
 
 private class AndroidEpubWebViewCoordinator(
@@ -232,20 +234,31 @@ private class AndroidEpubWebViewCoordinator(
         }
     }
 
-    fun handleBridgeMessage(method: String, payload: String) {
+    fun handleBridgeMessage(method: String, payload: String): Boolean {
+        if (method == "readerCopyText") {
+            val text = runCatching { JSONObject(payload).optString("text") }
+                .getOrNull()
+                ?.takeIf { it.isNotEmpty() }
+                ?: return false
+            return writeSharedClipboard(
+                label = "Copied Text",
+                text = text,
+            ).success
+        }
         if (method == "readerChunkRequested") {
             val index = AndroidEpubChunkIndexRegex.find(payload)
-                ?.groupValues?.getOrNull(1)?.toIntOrNull() ?: return
-            val chunk = contentChunks.getOrNull(index) ?: return
+                ?.groupValues?.getOrNull(1)?.toIntOrNull() ?: return false
+            val chunk = contentChunks.getOrNull(index) ?: return false
             activeWebView?.post {
                 activeWebView?.evaluateJavascript(
                     "window.readerVirtualization && window.readerVirtualization.provideChunk($index, ${JsonPrimitive(chunk)});",
                     null,
                 )
             }
-            return
+            return true
         }
         onBridgeMessage(method, payload)
+        return true
     }
 
     fun captureCurrentLocator(callback: (String?) -> Unit) {
@@ -277,7 +290,7 @@ private val AndroidEpubBridgeBootstrapScript = """
     (function () {
       window.kmpJsBridge = {
         callNative: function (method, payload) {
-          try { window.$AndroidEpubBridgeName.callNative(String(method || ''), String(payload || '{}')); } catch (_) {}
+          try { return window.$AndroidEpubBridgeName.callNative(String(method || ''), String(payload || '{}')); } catch (_) { return false; }
         }
       };
       window.readerDisableLinkFallback = true;

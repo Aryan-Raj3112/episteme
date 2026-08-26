@@ -151,8 +151,6 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.text.AnnotatedString
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.CustomFontItem
 import com.aryan.reader.shared.ReaderAiFeature
@@ -301,6 +299,7 @@ fun SharedMobilePdfReaderScreen(
     onAiResultDismiss: () -> Unit = {},
     onOpenAiHub: () -> Unit = {},
     onTtsError: ((String) -> Unit)? = null,
+    onClipboardError: ((String) -> Unit)? = null,
     initialReaderState: SharedPdfReaderState? = null,
     readerDefaultSettings: ReaderSettings = DefaultPdfReaderSettings,
     onReaderDefaultSettingsChange: (ReaderSettings) -> Unit = {},
@@ -369,6 +368,7 @@ fun SharedMobilePdfReaderScreen(
         onAiResultDismiss = onAiResultDismiss,
         onOpenAiHub = onOpenAiHub,
         onTtsError = onTtsError,
+        onClipboardError = onClipboardError,
         initialReaderState = initialReaderState,
         readerDefaultSettings = readerDefaultSettings,
         onReaderDefaultSettingsChange = onReaderDefaultSettingsChange,
@@ -448,6 +448,7 @@ fun SharedMobilePdfReaderHost(
     onAiResultDismiss: () -> Unit = {},
     onOpenAiHub: () -> Unit = {},
     onTtsError: ((String) -> Unit)? = null,
+    onClipboardError: ((String) -> Unit)? = null,
     initialReaderState: SharedPdfReaderState? = null,
     readerDefaultSettings: ReaderSettings = DefaultPdfReaderSettings,
     onReaderDefaultSettingsChange: (ReaderSettings) -> Unit = {},
@@ -802,7 +803,15 @@ fun SharedMobilePdfReaderHost(
     }
     val edgeToEdgeSystemUi = systemUiMode != SharedMobilePdfSystemUiMode.ALWAYS_SHOW
     val density = LocalDensity.current
-    val clipboard = LocalClipboardManager.current
+    val copiedTextLabel = readerString("clip_label_copied_text", "Copied Text")
+    val copiedLinkLabel = readerString("clip_label_copied_link", "Copied Link")
+    val clipboardErrorMessage = readerString("error_copy_to_clipboard", "Could not copy to clipboard")
+
+    fun copyToClipboard(text: String, label: String = copiedTextLabel): SharedClipboardResult {
+        val result = writeSharedClipboard(label = label, text = text)
+        if (!result.success) onClipboardError?.invoke(clipboardErrorMessage)
+        return result
+    }
     val systemNavigationInset = with(density) {
         WindowInsets.safeDrawing.getBottom(density).toDp()
     }
@@ -1671,6 +1680,7 @@ fun SharedMobilePdfReaderHost(
                         onAiDefine = if (readerAiAvailable) {
                             { text -> onAiAction(ReaderAiFeature.DEFINE, text) }
                         } else null,
+                        onClipboardError = onClipboardError,
                         onReadAloud = { page, charIndex -> requestTts(sharedPdfDisplayIndexFor(virtualLayout, page), charIndex) },
                         userScrollEnabled = !readerState.isScrollLocked,
                         isScrollLocked = readerState.isScrollLocked,
@@ -1725,6 +1735,7 @@ fun SharedMobilePdfReaderHost(
                         onAiDefine = if (readerAiAvailable) {
                             { text -> onAiAction(ReaderAiFeature.DEFINE, text) }
                         } else null,
+                        onClipboardError = onClipboardError,
                         onReadAloud = { page, charIndex -> requestTts(sharedPdfDisplayIndexFor(virtualLayout, page), charIndex) },
                         userScrollEnabled = !readerState.isScrollLocked,
                         isScrollLocked = readerState.isScrollLocked,
@@ -2037,7 +2048,7 @@ fun SharedMobilePdfReaderHost(
                     Row {
                         TextButton(
                             onClick = {
-                                clipboard.setText(AnnotatedString(url))
+                                copyToClipboard(url, copiedLinkLabel)
                                 pendingExternalLink = null
                             }
                         ) {
@@ -2150,6 +2161,7 @@ fun SharedMobilePdfReaderHost(
                     )
                     noteAnnotationId = null
                 },
+                onClipboardError = onClipboardError,
                 onDismiss = { noteAnnotationId = null }
             )
         } else {

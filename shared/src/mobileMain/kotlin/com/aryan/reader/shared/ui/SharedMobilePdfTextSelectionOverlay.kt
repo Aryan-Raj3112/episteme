@@ -60,9 +60,7 @@ import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChanged
-import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
@@ -129,13 +127,15 @@ internal fun SharedMobilePdfTextSelectionOverlay(
     onHighlight: (PdfTextSelectionRange, String, List<PdfPageBounds>, Int, HighlightStyle, Boolean) -> Unit,
     onReadAloud: (Int) -> Unit,
     onAiDefine: ((String) -> Unit)? = null,
+    onClipboardError: ((String) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     if (canvasSize.width <= 0 || canvasSize.height <= 0) return
     val session = textSession
     val linkBounds = remember(session) { session?.linkBoundsNormalized().orEmpty() }
     val scope = rememberCoroutineScope()
-    val clipboard = LocalClipboardManager.current
+    val copiedTextLabel = readerString("clip_label_copied_text", "Copied Text")
+    val clipboardErrorMessage = readerString("error_copy_to_clipboard", "Could not copy to clipboard")
     val density = LocalDensity.current
     val teardropWidthDp = 24.dp
     val teardropHeightDp = 24.dp
@@ -506,7 +506,8 @@ internal fun SharedMobilePdfTextSelectionOverlay(
                     applyRangeUpdate(null, emptyList(), null)
                 },
                 onCopy = { text ->
-                    clipboard.setText(AnnotatedString(text))
+                    val result = writeSharedClipboard(copiedTextLabel, text)
+                    if (!result.success) onClipboardError?.invoke(clipboardErrorMessage)
                     applyRangeUpdate(null, emptyList(), null)
                 },
                 onDefine = { text ->
