@@ -43,15 +43,17 @@ internal object CloudFolderManifestCodec {
         json.encodeToString(CloudFolderManifest.serializer(), manifest.normalized())
 
     fun decode(raw: String): CloudFolderManifest {
-        val manifest = json.decodeFromString(CloudFolderManifest.serializer(), raw).normalized()
-        require(manifest.validationIssues().isEmpty()) {
-            "Invalid cloud-folder manifest: ${manifest.validationIssues().joinToString()}"
+        val decoded = json.decodeFromString(CloudFolderManifest.serializer(), raw)
+        val issues = decoded.validationIssues()
+        require(issues.isEmpty()) {
+            "Invalid cloud-folder manifest: ${issues.joinToString()}"
         }
-        return manifest
+        return decoded.normalized()
     }
 }
 
-internal fun CloudFolderRoot.toEntity(): CloudFolderRootEntity = CloudFolderRootEntity(
+internal fun CloudFolderRoot.toEntity(accountId: String): CloudFolderRootEntity = CloudFolderRootEntity(
+    accountId = accountId,
     rootId = rootId,
     name = name,
     createdAt = createdAt,
@@ -83,7 +85,8 @@ internal fun CloudFolderRootEntity.toModel(): CloudFolderRoot = CloudFolderRoot(
     isDeleted = isDeleted,
 )
 
-internal fun CloudFolderNode.toEntity(): CloudFolderNodeEntity = CloudFolderNodeEntity(
+internal fun CloudFolderNode.toEntity(accountId: String): CloudFolderNodeEntity = CloudFolderNodeEntity(
+    accountId = accountId,
     rootId = rootId,
     nodeId = nodeId,
     relativePath = relativePath,
@@ -115,7 +118,8 @@ internal fun CloudFolderNodeEntity.toModel(): CloudFolderNode? = runCatching {
     )
 }.getOrNull()
 
-internal fun CloudFolderTombstone.toEntity(): CloudFolderTombstoneEntity = CloudFolderTombstoneEntity(
+internal fun CloudFolderTombstone.toEntity(accountId: String): CloudFolderTombstoneEntity = CloudFolderTombstoneEntity(
+    accountId = accountId,
     rootId = rootId,
     nodeId = nodeId,
     relativePath = relativePath,
@@ -141,10 +145,10 @@ internal fun CloudFolderTombstoneEntity.toModel(): CloudFolderTombstone? = runCa
     )
 }.getOrNull()
 
-internal fun CloudFolderDeviceBinding.toEntity(): CloudFolderDeviceBindingEntity = CloudFolderDeviceBindingEntity(
+internal fun CloudFolderDeviceBinding.toEntity(accountId: String): CloudFolderDeviceBindingEntity = CloudFolderDeviceBindingEntity(
+    accountId = accountId,
     rootId = rootId,
     deviceId = deviceId,
-    localUri = localUri,
     permissionState = permissionState.name,
     materializationMode = materializationMode.name,
     lastAcknowledgedRevision = lastAcknowledgedRevision,
@@ -152,7 +156,7 @@ internal fun CloudFolderDeviceBinding.toEntity(): CloudFolderDeviceBindingEntity
     lastError = lastError,
 )
 
-internal fun CloudFolderDeviceBindingEntity.toModel(): CloudFolderDeviceBinding? = runCatching {
+internal fun CloudFolderDeviceBindingEntity.toModel(localUri: String? = null): CloudFolderDeviceBinding? = runCatching {
     CloudFolderDeviceBinding(
         rootId = rootId,
         deviceId = deviceId,
@@ -167,9 +171,11 @@ internal fun CloudFolderDeviceBindingEntity.toModel(): CloudFolderDeviceBinding?
 
 internal fun cloudFolderOutboxOperationId(
     operation: CloudFolderSyncOperation,
-    rootId: String = "",
+    accountId: String,
+    rootId: String,
 ): String {
     val material = listOf(
+        accountId,
         rootId,
         operation.nodeId,
         operation.kind.name,
@@ -184,11 +190,20 @@ internal fun cloudFolderOutboxOperationId(
     return "folder_op_${digest.take(32)}"
 }
 
+/** Compatibility helper for callers that predate account-scoped outboxes. */
+internal fun cloudFolderOutboxOperationId(
+    operation: CloudFolderSyncOperation,
+    rootId: String,
+): String = cloudFolderOutboxOperationId(operation, accountId = "", rootId = rootId)
+
 internal fun CloudFolderSyncOperation.toOutboxEntity(
+    accountId: String,
     rootId: String,
     operationId: String = "folder_op_${UUID.randomUUID()}",
     now: Long = 0L,
+    sourceUri: String? = null,
 ): CloudFolderOutboxEntity = CloudFolderOutboxEntity(
+    accountId = accountId,
     operationId = operationId,
     rootId = rootId,
     nodeId = nodeId,
@@ -209,17 +224,26 @@ internal fun CloudFolderSyncOperation.toOutboxEntity(
  */
 class CloudFolderSyncRepository(
     private val context: Context,
+    accountId: String,
     private val database: AppDatabase = AppDatabase.getDatabase(context),
+    private val privateDatabase: CloudFolderPrivateDatabase = CloudFolderPrivateDatabase.getDatabase(context),
     private val preferences: android.content.SharedPreferences =
         context.getSharedPreferences(CLOUD_FOLDER_PREFS, Context.MODE_PRIVATE),
     val deviceId: String = cloudFolderDeviceId(context),
 ) {
+    val accountId: String = accountId.trim()
+
+    init {
+        require(accountId.isNotBlank()) { "Cloud-folder repository requires an account ID" }
+    }
+
     private val dao = database.cloudFolderSyncDao()
+    private val privateDao = privateDatabase.cloudFolderPrivateDao()
 
     suspend fun getManifest(rootId: String): CloudFolderManifest? {
-        val root = dao.getRoot(rootId)?.toModel() ?: return null
-        val nodes = dao.getNodes(rootId).mapNotNull { it.toModel() }
-        val tombstones = dao.getTombstones(rootId).mapNotNull { it.toModel() }
+        val root = dao.getRoot(accountId, rootId)?.toModel() ?: return null
+        val nodes = dao.getNodes(accountId, rootId).mapNotNull { it.toModel() }
+        val tombstones = dao.getTombstones(accountId, rootId).mapNotNull { it.toModel() }
         return CloudFolderManifest(
             root = root,
             revision = root.manifestRevision,
@@ -232,39 +256,68 @@ class CloudFolderSyncRepository(
     }
 
     suspend fun saveManifest(manifest: CloudFolderManifest) {
-        val normalized = manifest.normalized()
-        val issues = normalized.validationIssues()
+        val issues = manifest.validationIssues()
         require(issues.isEmpty()) { "Cannot persist invalid cloud-folder manifest: $issues" }
+        val normalized = manifest.normalized()
         val root = normalized.root.copy(
             manifestRevision = normalized.revision,
             stats = normalized.root.stats.sanitized(),
         )
         dao.replaceManifest(
-            root = root.toEntity(),
-            nodes = normalized.nodes.map { it.toEntity() },
-            tombstones = normalized.tombstones.map { it.toEntity() },
+            root = root.toEntity(accountId),
+            nodes = normalized.nodes.map { it.toEntity(accountId) },
+            tombstones = normalized.tombstones.map { it.toEntity(accountId) },
         )
     }
 
-    suspend fun getRoot(rootId: String): CloudFolderRoot? = dao.getRoot(rootId)?.toModel()
+    suspend fun getRoot(rootId: String): CloudFolderRoot? = dao.getRoot(accountId, rootId)?.toModel()
 
-    suspend fun getRoots(): List<CloudFolderRoot> = dao.getRoots().map { it.toModel() }
+    suspend fun getRoots(): List<CloudFolderRoot> = dao.getRoots(accountId).map { it.toModel() }
 
     suspend fun getBinding(rootId: String, deviceId: String = this.deviceId): CloudFolderDeviceBinding? =
-        dao.getBinding(rootId, deviceId)?.toModel()
+        dao.getBinding(accountId, rootId, deviceId)?.toModel(
+            localUri = privateDao.getBindingUri(accountId, rootId, deviceId)?.localUri,
+        )
 
     suspend fun getBindingsForDevice(deviceId: String = this.deviceId): List<CloudFolderDeviceBinding> =
-        dao.getBindingsForDevice(deviceId).mapNotNull { it.toModel() }
+        dao.getBindingsForDevice(accountId, deviceId).mapNotNull { entity ->
+            entity.toModel(
+                localUri = privateDao.getBindingUri(accountId, entity.rootId, entity.deviceId)?.localUri,
+            )
+        }
 
     suspend fun saveBinding(binding: CloudFolderDeviceBinding) {
         require(binding.rootId.isNotBlank() && binding.deviceId.isNotBlank()) {
             "Cloud-folder bindings require root and device IDs"
         }
-        dao.upsertBinding(binding.toEntity())
+        val normalizedBinding = binding.copy(localUri = binding.localUri?.trim())
+        normalizedBinding.localUri?.let { localUri ->
+            val existing = privateDao.getBindingForLocalUri(accountId, normalizedBinding.deviceId, localUri)
+            require(existing == null || existing.rootId == normalizedBinding.rootId) {
+                "A local folder is already bound to another cloud root"
+            }
+        }
+        if (normalizedBinding.localUri.isNullOrBlank()) {
+            privateDao.deleteBindingUri(accountId, normalizedBinding.rootId, normalizedBinding.deviceId)
+        } else {
+            privateDao.upsertBindingUri(
+                CloudFolderBindingUriEntity(
+                    accountId = accountId,
+                    rootId = normalizedBinding.rootId,
+                    deviceId = normalizedBinding.deviceId,
+                    localUri = requireNotNull(normalizedBinding.localUri),
+                )
+            )
+        }
+        dao.upsertBinding(normalizedBinding.toEntity(accountId))
     }
 
-    suspend fun findBindingForLocalUri(localUri: String, deviceId: String = this.deviceId): CloudFolderDeviceBinding? =
-        dao.getBindingForLocalUri(localUri, deviceId)?.toModel()
+    suspend fun findBindingForLocalUri(localUri: String, deviceId: String = this.deviceId): CloudFolderDeviceBinding? {
+        val uri = localUri.trim()
+        if (uri.isBlank()) return null
+        val privateBinding = privateDao.getBindingForLocalUri(accountId, deviceId, uri) ?: return null
+        return getBinding(privateBinding.rootId, deviceId)
+    }
 
     /**
      * Adds only a local binding.  The account selection remains EXCLUDED until
@@ -273,31 +326,49 @@ class CloudFolderSyncRepository(
     suspend fun registerLocalFolder(
         localUri: String,
         name: String,
+        /**
+         * The logical root ID is generated by the device-local folder
+         * configuration and must be retained when the repository is created.
+         * Deriving it from a provider URI is kept only for older callers.
+         */
+        rootId: String? = null,
         materializationMode: CloudFolderMaterializationMode = CloudFolderMaterializationMode.CLOUD_ONLY,
         now: Long = System.currentTimeMillis(),
     ): CloudFolderDeviceBinding {
         val uri = localUri.trim()
         require(uri.isNotBlank()) { "A local folder URI is required" }
-        val rootId = cloudFolderRootId("android-saf:$uri")
-        val existingRoot = dao.getRoot(rootId)?.toModel()
+        val normalizedRootId = rootId?.trim()?.takeIf { it.isNotBlank() }
+            ?: cloudFolderRootId("android-saf:$uri")
+        val existingRoot = dao.getRoot(accountId, normalizedRootId)?.toModel()
         val root = existingRoot ?: CloudFolderRoot(
-            rootId = rootId,
+            rootId = normalizedRootId,
             name = name.trim().ifBlank { uri.substringAfterLast('/').ifBlank { "Local folder" } },
             createdAt = now,
             createdByDeviceId = deviceId,
             updatedAt = now,
         )
-        dao.upsertRoot(root.copy(updatedAt = now, isDeleted = false).toEntity())
+        dao.upsertRoot(root.copy(updatedAt = now, isDeleted = false).toEntity(accountId))
         val binding = CloudFolderDeviceBinding(
-            rootId = rootId,
+            rootId = normalizedRootId,
             deviceId = deviceId,
             localUri = uri,
             permissionState = CloudFolderPermissionState.UNKNOWN,
             materializationMode = materializationMode,
             lastAcknowledgedRevision = existingRoot?.manifestRevision ?: 0L,
         )
-        dao.upsertBinding(binding.toEntity())
+        saveBinding(binding)
         return binding
+    }
+
+    /**
+     * Detach this device's provider grant without deleting the account-level
+     * logical root. Other devices may still be using the same cloud folder.
+     */
+    suspend fun detachLocalFolder(rootId: String, deviceId: String = this.deviceId) {
+        val normalizedRootId = rootId.trim()
+        if (normalizedRootId.isBlank()) return
+        dao.deleteBinding(accountId, normalizedRootId, deviceId)
+        dao.clearOutbox(accountId, normalizedRootId)
     }
 
     suspend fun markBindingError(
@@ -316,44 +387,79 @@ class CloudFolderSyncRepository(
         )
     }
 
-    suspend fun enqueue(rootId: String, operation: CloudFolderSyncOperation, now: Long = System.currentTimeMillis()): String {
-        val operationId = cloudFolderOutboxOperationId(operation, rootId)
-        dao.upsertOutbox(operation.toOutboxEntity(rootId, operationId, now))
+    suspend fun enqueue(
+        rootId: String,
+        operation: CloudFolderSyncOperation,
+        now: Long = System.currentTimeMillis(),
+        sourceUri: String? = null,
+    ): String {
+        val operationId = cloudFolderOutboxOperationId(operation, accountId, rootId)
+        dao.upsertOutbox(operation.toOutboxEntity(accountId, rootId, operationId, now, sourceUri = null))
+        persistOutboxSource(operationId, sourceUri)
         return operationId
+    }
+
+    suspend fun attachOutboxSourceUri(operationId: String, sourceUri: String) {
+        val normalized = sourceUri.trim()
+        require(normalized.isNotBlank()) { "An outbox source URI is required" }
+        check(dao.getOutboxByOperation(accountId, operationId) != null) {
+            "Cloud-folder outbox row is no longer available: $operationId"
+        }
+        privateDao.upsertOutboxSource(
+            CloudFolderOutboxSourceEntity(accountId, operationId, normalized)
+        )
     }
 
     suspend fun enqueueAll(
         rootId: String,
         operations: Collection<CloudFolderSyncOperation>,
         now: Long = System.currentTimeMillis(),
+        sourceUris: Map<String, String> = emptyMap(),
     ) {
         if (operations.isEmpty()) return
         dao.upsertOutbox(
             operations.map { operation ->
                 operation.toOutboxEntity(
+                    accountId = accountId,
                     rootId = rootId,
-                    operationId = cloudFolderOutboxOperationId(operation, rootId),
+                    operationId = cloudFolderOutboxOperationId(operation, accountId, rootId),
                     now = now,
+                    sourceUri = null,
                 )
+            }
+        )
+        privateDao.upsertOutboxSources(
+            operations.mapNotNull { operation ->
+                sourceUris[operation.nodeId]
+                    ?.trim()
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { sourceUri ->
+                        CloudFolderOutboxSourceEntity(
+                            accountId = accountId,
+                            operationId = cloudFolderOutboxOperationId(operation, accountId, rootId),
+                            sourceUri = sourceUri,
+                        )
+                    }
             }
         )
     }
 
-    suspend fun getOutbox(rootId: String): List<CloudFolderOutboxEntity> = dao.getOutbox(rootId)
+    suspend fun getOutbox(rootId: String): List<CloudFolderOutboxEntity> = enrichOutbox(dao.getOutbox(accountId, rootId))
 
     suspend fun claimDueOutbox(
         rootId: String,
         now: Long = System.currentTimeMillis(),
         limit: Int = 50,
     ): List<CloudFolderOutboxEntity> {
-        val rows = dao.getDueOutbox(rootId, now, limit.coerceIn(1, 500))
-        return rows.filter {
-            dao.claimOutbox(it.operationId, now) == 1
-        }.map { it.copy(state = CloudFolderOutboxEntity.STATE_RUNNING, attempts = it.attempts + 1, lastAttemptAt = now) }
+        val rows = dao.getDueOutbox(accountId, rootId, now, limit.coerceIn(1, 500))
+        return enrichOutbox(rows.filter {
+            dao.claimOutbox(accountId, it.operationId, now) == 1
+        }.map { it.copy(state = CloudFolderOutboxEntity.STATE_RUNNING, attempts = it.attempts + 1, lastAttemptAt = now) })
     }
 
     suspend fun completeOutbox(operationId: String) {
-        dao.deleteOutbox(operationId)
+        privateDao.deleteOutboxSource(accountId, operationId)
+        dao.deleteOutbox(accountId, operationId)
     }
 
     suspend fun failOutbox(
@@ -362,6 +468,7 @@ class CloudFolderSyncRepository(
         retryAt: Long,
     ) {
         dao.recordOutboxAttempt(
+            accountId = accountId,
             operationId = operationId,
             state = CloudFolderOutboxEntity.STATE_PENDING,
             attemptedAt = System.currentTimeMillis(),
@@ -370,19 +477,153 @@ class CloudFolderSyncRepository(
         )
     }
 
-    suspend fun resetRunningOutbox(now: Long = System.currentTimeMillis(), error: String? = "Worker restarted") {
-        dao.resetRunningOutbox(nextAttemptAt = now, error = error)
+    suspend fun quarantineOutbox(operationId: String, error: String) {
+        check(
+            dao.quarantineOutbox(
+                accountId = accountId,
+                operationId = operationId,
+                attemptedAt = System.currentTimeMillis(),
+                nextAttemptAt = Long.MAX_VALUE,
+                error = error.take(500),
+            ) == 1
+        ) { "Cloud-folder outbox row is no longer available: $operationId" }
     }
 
+    suspend fun resetRunningOutbox(now: Long = System.currentTimeMillis(), error: String? = "Worker restarted") {
+        dao.resetRunningOutbox(accountId = accountId, nextAttemptAt = now, error = error)
+    }
+
+    /** Remove account-owned folder metadata and pending transfers on sign-out. */
+    suspend fun clearAccountState() {
+        dao.clearAccountState(accountId)
+        privateDao.clearAccount(accountId)
+        CloudFolderSyncPrefs.clear(context, accountId)
+    }
+
+    /**
+     * Legacy rows whose owner was unknown during migration are deliberately
+     * not attached to the first account that signs in.  The UI can show these
+     * records and ask the user to explicitly recover or dismiss each one.
+     */
+    fun pendingMigrationRecovery(): List<CloudFolderMigrationRecovery> =
+        privateDao.getPendingRecovery().map(CloudFolderMigrationRecoveryEntity::toModel)
+
+    /**
+     * Explicitly rebind one quarantined logical root to this authenticated
+     * account.  The old manifest/outbox state is copied under the new account
+     * key, while the selected local URI is stored only in the no-backup DB.
+     */
+    suspend fun claimMigrationRecovery(
+        legacyRootId: String,
+        legacyDeviceId: String,
+        localUri: String? = null,
+        materializationMode: CloudFolderMaterializationMode = CloudFolderMaterializationMode.CLOUD_ONLY,
+        now: Long = System.currentTimeMillis(),
+    ): CloudFolderDeviceBinding? {
+        val recovery = privateDao.getRecovery(legacyRootId, legacyDeviceId)
+            ?.takeIf { it.state == CloudFolderMigrationRecoveryEntity.STATE_PENDING }
+            ?: return null
+        val legacyRoot = dao.getRoot("", legacyRootId) ?: return null
+        val legacyNodes = dao.getNodes("", legacyRootId)
+        val legacyTombstones = dao.getTombstones("", legacyRootId)
+        val legacyOutbox = dao.getOutbox("", legacyRootId)
+        val legacySources: Map<String, String?> = privateDao.getAllOutboxSources("")
+            .associate { it.operationId to it.sourceUri }
+
+        val copiedRoot = legacyRoot.copy(accountId = accountId)
+        val copiedNodes = legacyNodes.map { it.copy(accountId = accountId) }
+        val copiedTombstones = legacyTombstones.map { it.copy(accountId = accountId) }
+        dao.replaceManifest(copiedRoot, copiedNodes, copiedTombstones)
+
+        val copiedOutbox: List<Pair<CloudFolderOutboxEntity, String?>> = legacyOutbox.map { row ->
+            val operation = CloudFolderSyncOperation(
+                nodeId = row.nodeId,
+                kind = CloudFolderSyncOperationKind.valueOf(row.operationKind),
+                direction = CloudFolderSyncDirection.valueOf(row.direction),
+                relativePath = row.relativePath,
+                previousRelativePath = row.previousRelativePath,
+                contentHash = row.contentHash,
+                sizeBytes = row.sizeBytes,
+                revision = row.revision,
+            )
+            val operationId = cloudFolderOutboxOperationId(operation, accountId, row.rootId)
+            Pair(
+                row.copy(
+                    accountId = accountId,
+                    operationId = operationId,
+                ),
+                legacySources[row.operationId],
+            )
+        }
+        if (copiedOutbox.isNotEmpty()) {
+            dao.upsertOutbox(copiedOutbox.map { it.first })
+            privateDao.upsertOutboxSources(
+                copiedOutbox.mapNotNull { (row, source) ->
+                    source?.trim()?.takeIf { it.isNotBlank() }?.let {
+                        CloudFolderOutboxSourceEntity(accountId, row.operationId, it)
+                    }
+                }
+            )
+        }
+
+        val resolvedUri = (localUri ?: recovery.localUri)?.trim()?.takeIf { it.isNotBlank() }
+        val binding = CloudFolderDeviceBinding(
+            rootId = legacyRootId,
+            deviceId = deviceId,
+            localUri = resolvedUri,
+            permissionState = if (resolvedUri == null) {
+                CloudFolderPermissionState.UNKNOWN
+            } else {
+                CloudFolderPermissionState.GRANTED
+            },
+            materializationMode = materializationMode,
+            lastAcknowledgedRevision = legacyRoot.manifestRevision,
+        )
+        saveBinding(binding)
+        check(privateDao.claimRecovery(legacyRootId, legacyDeviceId, accountId, now) == 1) {
+            "Cloud-folder migration recovery was already claimed"
+        }
+        return binding
+    }
+
+    fun dismissMigrationRecovery(
+        legacyRootId: String,
+        legacyDeviceId: String,
+        now: Long = System.currentTimeMillis(),
+    ): Boolean =
+        privateDao.dismissRecovery(legacyRootId, legacyDeviceId, now) == 1
+
     fun selection(): CloudFolderSyncSelection {
-        return CloudFolderSyncPrefs.load(context)
+        return CloudFolderSyncPrefs.load(context, accountId)
     }
 
     fun setSelection(selection: CloudFolderSyncSelection) {
-        CloudFolderSyncPrefs.save(context, selection)
+        CloudFolderSyncPrefs.save(context, accountId, selection)
     }
 
     fun isIncluded(rootId: String): Boolean = selection().includes(rootId)
+
+    private fun persistOutboxSource(operationId: String, sourceUri: String?) {
+        val normalized = sourceUri?.trim()?.takeIf { it.isNotBlank() }
+        if (normalized == null) {
+            privateDao.deleteOutboxSource(accountId, operationId)
+        } else {
+            privateDao.upsertOutboxSource(
+                CloudFolderOutboxSourceEntity(
+                    accountId = accountId,
+                    operationId = operationId,
+                    sourceUri = normalized,
+                )
+            )
+        }
+    }
+
+    private fun enrichOutbox(rows: List<CloudFolderOutboxEntity>): List<CloudFolderOutboxEntity> =
+        rows.map { row ->
+            row.copy().apply {
+                sourceUri = privateDao.getOutboxSource(accountId, row.operationId)?.sourceUri
+            }
+        }
 }
 
 internal fun cloudFolderDeviceId(context: Context): String {

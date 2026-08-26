@@ -95,6 +95,17 @@ class GoogleDriveRepository {
         manifest: CloudFolderManifest,
     ): DriveFile? = null
 
+    suspend fun listCloudFolderManifestRefs(accessToken: String): List<CloudFolderManifestRef> = emptyList()
+
+    suspend fun listCloudFolderObjectsForGarbageCollection(
+        accessToken: String,
+    ): List<CloudFolderDriveObjectRef> = emptyList()
+
+    suspend fun deleteCloudFolderObject(
+        accessToken: String,
+        objectRef: CloudFolderDriveObjectRef,
+    ): Boolean = false
+
     suspend fun downloadCloudFolderManifest(
         accessToken: String,
         rootId: String,
@@ -104,6 +115,11 @@ class GoogleDriveRepository {
         accessToken: String,
         fileId: String,
         output: OutputStream,
+        expectedRootId: String,
+        expectedNodeId: String,
+        expectedRevision: Long,
+        expectedContentHash: String,
+        expectedSizeBytes: Long,
     ) {
         throw UnsupportedOperationException("Drive is unavailable in the OSS build")
     }

@@ -1,9 +1,9 @@
 package com.aryan.reader.shared
 
-internal actual fun localFolderSyncSha256ShortHex(value: String): String {
+internal actual fun localFolderSyncSha256Hex(value: String): String {
     return sha256(value.encodeToByteArray()).joinToString("") { byte ->
         byte.toUByte().toString(16).padStart(2, '0')
-    }.take(12)
+    }
 }
 
 internal fun sha256(input: ByteArray): ByteArray {

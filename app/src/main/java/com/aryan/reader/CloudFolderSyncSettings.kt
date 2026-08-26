@@ -184,16 +184,23 @@ private fun CloudFolderSyncSettingsContent(
             }
 
             folders.forEach { folder ->
-                val included = selection.includes(folder.normalizedRootId)
+                val included = folder.isAvailable && selection.includes(folder.normalizedRootId)
                 CloudFolderSyncFolderRow(
                     folder = folder,
                     checked = included,
-                    enabled = folder.isAvailable && mode == CloudFolderSyncSelectionMode.SELECTED,
+                    // ALL is a default for current and future roots, but an
+                    // individual row must remain actionable so a user can
+                    // exclude just this root without accidentally clearing
+                    // every other folder.
+                    enabled = folder.isAvailable && mode != CloudFolderSyncSelectionMode.EXCLUDED,
                     onCheckedChange = { checked ->
                         val next = if (checked) {
                             selection.withRootIncluded(folder.normalizedRootId)
                         } else {
-                            selection.withoutRoot(folder.normalizedRootId)
+                            selection.withoutRoot(
+                                rootId = folder.normalizedRootId,
+                                knownRootIds = folders.map { it.normalizedRootId },
+                            )
                         }
                         onSelectionChange(next)
                     },

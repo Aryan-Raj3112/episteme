@@ -139,6 +139,87 @@ class CloudFolderSyncTest {
     }
 
     @Test
+    fun `raw validation rejects unsupported schema before normalization`() {
+        val invalid = manifest().copy(
+            schemaVersion = CLOUD_FOLDER_MANIFEST_SCHEMA_VERSION + 1,
+            nodes = listOf(file("Book.pdf", size = -1L)),
+        )
+
+        assertTrue(CloudFolderManifestIssueType.UNSUPPORTED_SCHEMA_VERSION in invalid.validationIssues().map { it.type })
+        assertTrue(CloudFolderManifestIssueType.NEGATIVE_SIZE in invalid.validationIssues().map { it.type })
+        assertEquals(invalid.schemaVersion, invalid.normalized().schemaVersion)
+
+        val plan = planCloudFolderSync(invalid, invalid, invalid)
+        assertFalse(plan.canCommit)
+        assertTrue(plan.operations.isEmpty())
+        assertTrue(plan.conflicts.all { it.type == CloudFolderConflictType.INVALID_MANIFEST })
+    }
+
+    @Test
+    fun `manifest validation requires every parent to be an explicit directory`() {
+        val missingParent = manifest(
+            nodes = listOf(file("Series/Book.epub")),
+        )
+        assertTrue(
+            CloudFolderManifestIssueType.MISSING_PARENT_DIRECTORY in
+                missingParent.validationIssues().map { it.type },
+        )
+
+        val fileParent = manifest(
+            nodes = listOf(
+                file("Series"),
+                file("Series/Book.epub"),
+            ),
+        )
+        assertTrue(
+            CloudFolderManifestIssueType.PARENT_NOT_DIRECTORY in
+                fileParent.validationIssues().map { it.type },
+        )
+
+        val plan = planCloudFolderSync(missingParent, missingParent, missingParent)
+        assertFalse(plan.canCommit)
+        assertTrue(plan.operations.isEmpty())
+    }
+
+    @Test
+    fun `manifest validation imposes a bounded node list`() {
+        val oversized = manifest(
+            nodes = List(MAX_CLOUD_FOLDER_MANIFEST_NODES + 1) { index ->
+                file("Book-$index.pdf", id = "book-$index")
+            },
+        )
+        assertTrue(
+            CloudFolderManifestIssueType.TOO_MANY_NODES in
+                oversized.validationIssues().map { it.type },
+        )
+        assertFalse(planCloudFolderSync(oversized, oversized, oversized).canCommit)
+    }
+
+    @Test
+    fun `logical root ids have UUID strength and do not expose the seed`() {
+        val id = cloudFolderRootId("device-generated-uuid-1234")
+        val suffix = id.removePrefix("folder_root_")
+        assertEquals(32, suffix.length)
+        assertTrue(suffix.all { it in '0'..'9' || it in 'a'..'f' })
+        assertFalse(id.contains("device-generated-uuid-1234"))
+        assertTrue(id != cloudFolderRootId("other-device-generated-uuid"))
+    }
+
+    @Test
+    fun `incoming download all explicitly requests offline materialization`() {
+        assertEquals(
+            CloudFolderMaterializationMode.KEEP_OFFLINE,
+            CloudFolderIncomingChoice.DOWNLOAD_ALL.materializationMode,
+        )
+        assertTrue(CloudFolderIncomingChoice.DOWNLOAD_ALL.shouldIncludeInLocalSyncSelection)
+        assertEquals(
+            CloudFolderMaterializationMode.CLOUD_ONLY,
+            CloudFolderIncomingChoice.CLOUD_ONLY.materializationMode,
+        )
+        assertFalse(CloudFolderIncomingChoice.CLOUD_ONLY.shouldIncludeInLocalSyncSelection)
+    }
+
+    @Test
     fun `manifest round trip preserves device neutral hierarchy`() {
         val manifest = CloudFolderManifest(
             root = root(name = "Books"),
@@ -164,10 +245,15 @@ class CloudFolderSyncTest {
 
     @Test
     fun `local new file emits upload without importing file bytes`() {
-        val base = manifest()
+        val base = manifest(
+            nodes = listOf(directory("Books", revision = 1L)),
+        )
         val local = base.copy(
             revision = 2L,
-            nodes = listOf(file("Books/Book.pdf", hash = "a".repeat(64), size = 12L, revision = 2L)),
+            nodes = listOf(
+                directory("Books", revision = 1L),
+                file("Books/Book.pdf", hash = "a".repeat(64), size = 12L, revision = 2L),
+            ),
         )
         val plan = planCloudFolderSync(base, local, base.copy(revision = 1L), nowMillis = 20L, deviceId = "pixel")
         val operation = plan.operations.single()
@@ -176,7 +262,10 @@ class CloudFolderSyncTest {
         assertEquals("Books/Book.pdf", operation.relativePath)
         assertEquals("a".repeat(64), operation.contentHash)
         assertTrue(plan.canCommit)
-        assertEquals("Books/Book.pdf", plan.mergedManifest.nodes.single().relativePath)
+        assertEquals(
+            "Books/Book.pdf",
+            plan.mergedManifest.nodes.first { it.isFile }.relativePath,
+        )
     }
 
     @Test
@@ -277,12 +366,12 @@ class CloudFolderSyncTest {
 
     @Test
     fun `one-sided rename emits move while common rename is not a conflict`() {
-        val original = file("Old/Book.pdf", hash = "a".repeat(64), size = 10L, revision = 1L)
+        val original = file("Old-Book.pdf", hash = "a".repeat(64), size = 10L, revision = 1L)
         val base = manifest(revision = 1L, nodes = listOf(original))
-        val renamed = original.copy(relativePath = "New/Book.pdf", revision = 2L)
+        val renamed = original.copy(relativePath = "New-Book.pdf", revision = 2L)
         val localPlan = planCloudFolderSync(base, base.copy(revision = 2L, nodes = listOf(renamed)), base)
         assertEquals(CloudFolderSyncOperationKind.MOVE_REMOTE, localPlan.operations.single().kind)
-        assertEquals("Old/Book.pdf", localPlan.operations.single().previousRelativePath)
+        assertEquals("Old-Book.pdf", localPlan.operations.single().previousRelativePath)
 
         val commonPlan = planCloudFolderSync(
             base,
@@ -297,8 +386,8 @@ class CloudFolderSyncTest {
     fun `different simultaneous renames produce move conflict`() {
         val original = file("Book.pdf", hash = "a".repeat(64), size = 10L, revision = 1L)
         val base = manifest(revision = 1L, nodes = listOf(original))
-        val local = base.copy(revision = 2L, nodes = listOf(original.copy(relativePath = "A/Book.pdf", revision = 2L)))
-        val remote = base.copy(revision = 3L, nodes = listOf(original.copy(relativePath = "B/Book.pdf", revision = 3L)))
+        val local = base.copy(revision = 2L, nodes = listOf(original.copy(relativePath = "A-Book.pdf", revision = 2L)))
+        val remote = base.copy(revision = 3L, nodes = listOf(original.copy(relativePath = "B-Book.pdf", revision = 3L)))
         val plan = planCloudFolderSync(base, local, remote)
         assertEquals(CloudFolderConflictType.MOVE_CHANGED_BOTH, plan.conflicts.single().type)
         assertFalse(plan.canCommit)

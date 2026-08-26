@@ -61,6 +61,7 @@ import com.aryan.reader.shared.AccountAuthProvider
 import com.aryan.reader.shared.BannerMessage
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.CloudBookTombstone
+import com.aryan.reader.shared.mergeCloudBookTombstones
 import com.aryan.reader.shared.CloudSyncSetupIntent
 import com.aryan.reader.shared.CloudSyncSetupRoute
 import com.aryan.reader.shared.CustomFontItem

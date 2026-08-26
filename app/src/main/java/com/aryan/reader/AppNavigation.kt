@@ -171,6 +171,7 @@ fun AppNavigation(
 ) {
     Timber.d("AppNavigation composable invoked.")
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val incomingFolderPrompt by viewModel.incomingCloudFolderPrompt.collectAsStateWithLifecycle()
     val currentBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = currentBackStackEntry?.destination?.route
     val ttsController = viewModel.ttsController
@@ -539,7 +540,11 @@ fun AppNavigation(
             SettingsScreen(
                 viewModel = viewModel,
                 navController = navController,
-                onBackClick = { navController.popBackStackIfReady() }
+                onBackClick = { navController.popBackStackIfReady() },
+                incomingFolderPrompt = incomingFolderPrompt,
+                onDismissIncomingFolder = {
+                    incomingFolderPrompt?.rootId?.let(viewModel::dismissIncomingCloudFolderPrompt)
+                },
             )
         }
         }

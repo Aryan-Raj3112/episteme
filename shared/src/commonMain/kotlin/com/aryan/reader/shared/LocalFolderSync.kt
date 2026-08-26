@@ -19,7 +19,10 @@ const val LOCAL_FOLDER_SYNC_DATA_DIR = "EpistemeSyncData"
 const val LOCAL_FOLDER_ANNOTATION_SUFFIX = "_annotations"
 const val LOCAL_FOLDER_SIDECAR_HASH_PREFIX = "book_"
 
-internal expect fun localFolderSyncSha256ShortHex(value: String): String
+internal expect fun localFolderSyncSha256Hex(value: String): String
+
+internal fun localFolderSyncSha256ShortHex(value: String): String =
+    localFolderSyncSha256Hex(value).take(12)
 
 fun localFolderSyncSidecarStem(bookId: String): String {
     return LOCAL_FOLDER_SIDECAR_HASH_PREFIX + localFolderSyncSha256ShortHex(bookId)

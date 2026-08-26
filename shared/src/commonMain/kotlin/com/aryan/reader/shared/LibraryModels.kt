@@ -75,7 +75,13 @@ data class SyncedFolder(
     val name: String,
     val lastScanTime: Long,
     val allowedFileTypes: Set<FileType> = SharedFileCapabilities.knownFileTypes,
-    val localSyncEnabled: Boolean = true
+    val localSyncEnabled: Boolean = true,
+    /**
+     * Device-local mapping to the account-level logical cloud root.  This is
+     * generated once when the folder is added and must not be derived from a
+     * SAF URI: the same folder on another device has a different URI.
+     */
+    val cloudRootId: String? = null,
 )
 
 data class BookItem(

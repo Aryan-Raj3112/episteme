@@ -86,6 +86,27 @@ data class FeedbackMessage(
 // --- Stub Class ---
 class FirestoreRepository {
 
+    suspend fun getCloudFolderManifestHead(
+        userId: String,
+        rootId: String,
+    ): CloudFolderManifestHead? = null
+
+    suspend fun reserveCloudFolderManifest(
+        userId: String,
+        rootId: String,
+        expectedRevision: Long?,
+        revision: Long,
+        deviceId: String,
+    ): CloudFolderManifestLeaseResult = CloudFolderManifestLeaseResult.Unsupported
+
+    suspend fun commitCloudFolderManifest(
+        lease: CloudFolderManifestLease,
+        manifestDriveFileId: String,
+        manifestHash: String,
+    ): Boolean = false
+
+    suspend fun releaseCloudFolderManifest(lease: CloudFolderManifestLease): Boolean = false
+
     // Helper to safely ignore listener removal in ViewModel
     fun removeListener(listener: Any?) {
         // No-op

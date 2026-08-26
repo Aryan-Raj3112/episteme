@@ -31,6 +31,21 @@ class CloudFolderDriveProtocolTest {
     }
 
     @Test
+    fun immutableObjectNamesIncludeRevisionAndContentAddress() {
+        val hashA = "sha256:" + "a".repeat(64)
+        val hashB = "sha256:" + "b".repeat(64)
+        val contentA = cloudFolderContentDriveName("root", "node", hashA, revision = 3L)
+        val contentB = cloudFolderContentDriveName("root", "node", hashB, revision = 4L)
+        val manifestA = cloudFolderManifestDriveName("root", revision = 3L, manifestHash = hashA)
+        val manifestB = cloudFolderManifestDriveName("root", revision = 4L, manifestHash = hashB)
+
+        assertNotEquals(contentA, contentB)
+        assertNotEquals(manifestA, manifestB)
+        assertTrue(contentA.contains("-r3-"))
+        assertTrue(manifestA.contains("-r3-"))
+    }
+
+    @Test
     fun driveMetadataRetainsPortableIdentityAndRevision() {
         val metadata = cloudFolderDriveMetadata(
             rootId = "root",
@@ -46,6 +61,49 @@ class CloudFolderDriveProtocolTest {
         assertEquals("Series/Book.epub", metadata["cloudFolderRelativePath"])
         assertEquals("7", metadata["cloudFolderRevision"])
         assertEquals("sha256:abc", metadata["cloudFolderContentHash"])
+    }
+
+    @Test
+    fun driveMetadataAuthenticationRejectsWrongIdentityOrSize() {
+        val hash = "sha256:" + "a".repeat(64)
+        val metadata = cloudFolderDriveMetadata(
+            rootId = "root",
+            nodeId = "node",
+            revision = 7L,
+            contentHash = hash,
+            contentSizeBytes = 12L,
+        )
+
+        assertTrue(
+            cloudFolderDriveMetadataMatches(
+                properties = metadata,
+                rootId = "root",
+                nodeId = "node",
+                revision = 7L,
+                contentHash = hash,
+                contentSizeBytes = 12L,
+            )
+        )
+        assertTrue(
+            !cloudFolderDriveMetadataMatches(
+                properties = metadata,
+                rootId = "other-root",
+                nodeId = "node",
+                revision = 7L,
+                contentHash = hash,
+                contentSizeBytes = 12L,
+            )
+        )
+        assertTrue(
+            !cloudFolderDriveMetadataMatches(
+                properties = metadata,
+                rootId = "root",
+                nodeId = "node",
+                revision = 7L,
+                contentHash = hash,
+                contentSizeBytes = 13L,
+            )
+        )
     }
 
     @Test
@@ -87,16 +145,20 @@ class CloudFolderDriveProtocolTest {
         )
 
         assertEquals(
-            cloudFolderOutboxOperationId(operation, "root"),
-            cloudFolderOutboxOperationId(operation, "root"),
+            cloudFolderOutboxOperationId(operation, "account-a", "root"),
+            cloudFolderOutboxOperationId(operation, "account-a", "root"),
         )
         assertNotEquals(
-            cloudFolderOutboxOperationId(operation, "root"),
-            cloudFolderOutboxOperationId(operation, "other-root"),
+            cloudFolderOutboxOperationId(operation, "account-a", "root"),
+            cloudFolderOutboxOperationId(operation, "account-a", "other-root"),
         )
         assertNotEquals(
-            cloudFolderOutboxOperationId(operation, "root"),
-            cloudFolderOutboxOperationId(operation.copy(revision = 5L), "root"),
+            cloudFolderOutboxOperationId(operation, "account-a", "root"),
+            cloudFolderOutboxOperationId(operation, "account-b", "root"),
+        )
+        assertNotEquals(
+            cloudFolderOutboxOperationId(operation, "account-a", "root"),
+            cloudFolderOutboxOperationId(operation.copy(revision = 5L), "account-a", "root"),
         )
     }
 }

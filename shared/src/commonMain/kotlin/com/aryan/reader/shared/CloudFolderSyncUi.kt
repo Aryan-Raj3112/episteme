@@ -42,16 +42,16 @@ data class CloudFolderSyncSettingsUiState(
             .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.normalizedDisplayName })
 
     val selectedFolderCount: Int
-        get() = normalizedFolders.count { selection.includes(it.normalizedRootId) }
+        get() = normalizedFolders.count { it.isAvailable && selection.includes(it.normalizedRootId) }
 
     val selectedFileCount: Int
         get() = normalizedFolders
-            .filter { selection.includes(it.normalizedRootId) }
+            .filter { it.isAvailable && selection.includes(it.normalizedRootId) }
             .sumOf { it.fileCount }
 
     val selectedTotalBytes: Long
         get() = normalizedFolders
-            .filter { selection.includes(it.normalizedRootId) }
+            .filter { it.isAvailable && selection.includes(it.normalizedRootId) }
             .sumOf { it.totalBytes }
 
     fun normalized(): CloudFolderSyncSettingsUiState {
@@ -106,13 +106,28 @@ data class CloudFolderIncomingFolderPrompt(
 
 /** How device 2 should materialize a remote logical folder. */
 @Serializable
-enum class CloudFolderIncomingChoice {
+enum class CloudFolderIncomingChoice(
+    /** How the selected root is materialized on this device. */
+    val materializationMode: CloudFolderMaterializationMode,
+    /** Whether the root must be opted into the local sync selection. */
+    val shouldIncludeInLocalSyncSelection: Boolean,
+) {
     /** Keep the manifest and cloud content available without a local grant. */
-    CLOUD_ONLY,
+    CLOUD_ONLY(
+        materializationMode = CloudFolderMaterializationMode.CLOUD_ONLY,
+        shouldIncludeInLocalSyncSelection = false,
+    ),
 
     /** Download the complete tree into app-managed local storage. */
-    DOWNLOAD_ALL,
+    DOWNLOAD_ALL(
+        materializationMode = CloudFolderMaterializationMode.KEEP_OFFLINE,
+        shouldIncludeInLocalSyncSelection = true,
+    ),
 
     /** Ask for a local folder grant and mirror the tree there. */
-    BIND_LOCAL_FOLDER,
+    BIND_LOCAL_FOLDER(
+        materializationMode = CloudFolderMaterializationMode.LOCAL_MIRROR,
+        shouldIncludeInLocalSyncSelection = true,
+    ),
+
 }

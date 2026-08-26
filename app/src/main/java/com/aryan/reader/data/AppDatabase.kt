@@ -46,7 +46,7 @@ import com.aryan.reader.audiobook.BookTtsListeningProgressEntity
         CloudFolderTombstoneEntity::class,
         CloudFolderOutboxEntity::class,
     ],
-    version = 29,
+    version = 32,
     exportSchema = false
 )
 @TypeConverters(FileTypeConverter::class)
@@ -501,12 +501,308 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Account scope was absent from the initial cloud-folder schema.  The
+         * old rows are deliberately quarantined under an empty account ID:
+         * there is no safe way to infer which authenticated account owned them
+         * during an upgrade, so they must never be processed automatically.
+         */
+        val MIGRATION_29_30 = object : Migration(29, 30) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE `cloud_folder_roots_v30` (
+                        `accountId` TEXT NOT NULL,
+                        `rootId` TEXT NOT NULL,
+                        `name` TEXT NOT NULL,
+                        `createdAt` INTEGER NOT NULL,
+                        `createdByDeviceId` TEXT NOT NULL,
+                        `updatedAt` INTEGER NOT NULL,
+                        `manifestRevision` INTEGER NOT NULL,
+                        `fileCount` INTEGER NOT NULL,
+                        `directoryCount` INTEGER NOT NULL,
+                        `totalBytes` INTEGER NOT NULL,
+                        `scannedAt` INTEGER NOT NULL,
+                        `scanComplete` INTEGER NOT NULL,
+                        `isDeleted` INTEGER NOT NULL,
+                        PRIMARY KEY(`accountId`, `rootId`)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
+                    INSERT INTO `cloud_folder_roots_v30` (
+                        `accountId`, `rootId`, `name`, `createdAt`, `createdByDeviceId`,
+                        `updatedAt`, `manifestRevision`, `fileCount`, `directoryCount`,
+                        `totalBytes`, `scannedAt`, `scanComplete`, `isDeleted`
+                    )
+                    SELECT '', `rootId`, `name`, `createdAt`, `createdByDeviceId`,
+                        `updatedAt`, `manifestRevision`, `fileCount`, `directoryCount`,
+                        `totalBytes`, `scannedAt`, `scanComplete`, `isDeleted`
+                    FROM `cloud_folder_roots`
+                    """.trimIndent()
+                )
+
+                db.execSQL(
+                    """
+                    CREATE TABLE `cloud_folder_bindings_v30` (
+                        `accountId` TEXT NOT NULL,
+                        `rootId` TEXT NOT NULL,
+                        `deviceId` TEXT NOT NULL,
+                        `localUri` TEXT,
+                        `permissionState` TEXT NOT NULL,
+                        `materializationMode` TEXT NOT NULL,
+                        `lastAcknowledgedRevision` INTEGER NOT NULL,
+                        `lastScanAt` INTEGER NOT NULL,
+                        `lastError` TEXT,
+                        PRIMARY KEY(`accountId`, `rootId`, `deviceId`)
+                    )
+                    """.trimIndent()
+                )
+                // Keep at most one pre-30 binding for each device/local URI.
+                // The new unique index covers account + device + URI, and
+                // INSERT OR IGNORE alone would not collapse rows whose roots
+                // differ (their composite primary keys are different).
+                db.execSQL(
+                    """
+                    INSERT OR IGNORE INTO `cloud_folder_bindings_v30` (
+                        `accountId`, `rootId`, `deviceId`, `localUri`, `permissionState`,
+                        `materializationMode`, `lastAcknowledgedRevision`, `lastScanAt`, `lastError`
+                    )
+                    SELECT '', `rootId`, `deviceId`, `localUri`, `permissionState`,
+                        `materializationMode`, `lastAcknowledgedRevision`, `lastScanAt`, `lastError`
+                    FROM `cloud_folder_bindings`
+                    WHERE `localUri` IS NULL
+                       OR `rowid` = (
+                           SELECT MIN(`candidate`.`rowid`)
+                           FROM `cloud_folder_bindings` AS `candidate`
+                           WHERE `candidate`.`deviceId` = `cloud_folder_bindings`.`deviceId`
+                             AND `candidate`.`localUri` = `cloud_folder_bindings`.`localUri`
+                       )
+                    """.trimIndent()
+                )
+
+                db.execSQL(
+                    """
+                    CREATE TABLE `cloud_folder_nodes_v30` (
+                        `accountId` TEXT NOT NULL,
+                        `rootId` TEXT NOT NULL,
+                        `nodeId` TEXT NOT NULL,
+                        `relativePath` TEXT NOT NULL,
+                        `kind` TEXT NOT NULL,
+                        `contentHash` TEXT,
+                        `sizeBytes` INTEGER NOT NULL,
+                        `mimeType` TEXT,
+                        `fileModifiedAt` INTEGER NOT NULL,
+                        `revision` INTEGER NOT NULL,
+                        `modifiedAt` INTEGER NOT NULL,
+                        `modifiedByDeviceId` TEXT NOT NULL,
+                        `contentObjectId` TEXT,
+                        PRIMARY KEY(`accountId`, `rootId`, `nodeId`)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
+                    INSERT INTO `cloud_folder_nodes_v30` (
+                        `accountId`, `rootId`, `nodeId`, `relativePath`, `kind`, `contentHash`,
+                        `sizeBytes`, `mimeType`, `fileModifiedAt`, `revision`, `modifiedAt`,
+                        `modifiedByDeviceId`, `contentObjectId`
+                    )
+                    SELECT '', `rootId`, `nodeId`, `relativePath`, `kind`, `contentHash`,
+                        `sizeBytes`, `mimeType`, `fileModifiedAt`, `revision`, `modifiedAt`,
+                        `modifiedByDeviceId`, `contentObjectId`
+                    FROM `cloud_folder_nodes`
+                    """.trimIndent()
+                )
+
+                db.execSQL(
+                    """
+                    CREATE TABLE `cloud_folder_tombstones_v30` (
+                        `accountId` TEXT NOT NULL,
+                        `rootId` TEXT NOT NULL,
+                        `nodeId` TEXT NOT NULL,
+                        `relativePath` TEXT NOT NULL,
+                        `kind` TEXT NOT NULL,
+                        `deletedAt` INTEGER NOT NULL,
+                        `deletedRevision` INTEGER NOT NULL,
+                        `deletedByDeviceId` TEXT NOT NULL,
+                        `lastKnownContentHash` TEXT,
+                        `lastKnownSizeBytes` INTEGER NOT NULL,
+                        PRIMARY KEY(`accountId`, `rootId`, `nodeId`)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
+                    INSERT INTO `cloud_folder_tombstones_v30` (
+                        `accountId`, `rootId`, `nodeId`, `relativePath`, `kind`, `deletedAt`,
+                        `deletedRevision`, `deletedByDeviceId`, `lastKnownContentHash`,
+                        `lastKnownSizeBytes`
+                    )
+                    SELECT '', `rootId`, `nodeId`, `relativePath`, `kind`, `deletedAt`,
+                        `deletedRevision`, `deletedByDeviceId`, `lastKnownContentHash`,
+                        `lastKnownSizeBytes`
+                    FROM `cloud_folder_tombstones`
+                    """.trimIndent()
+                )
+
+                db.execSQL(
+                    """
+                    CREATE TABLE `cloud_folder_outbox_v30` (
+                        `accountId` TEXT NOT NULL,
+                        `operationId` TEXT NOT NULL,
+                        `rootId` TEXT NOT NULL,
+                        `nodeId` TEXT NOT NULL,
+                        `operationKind` TEXT NOT NULL,
+                        `direction` TEXT NOT NULL,
+                        `relativePath` TEXT NOT NULL,
+                        `previousRelativePath` TEXT,
+                        `contentHash` TEXT,
+                        `sizeBytes` INTEGER NOT NULL,
+                        `revision` INTEGER NOT NULL,
+                        `state` TEXT NOT NULL,
+                        `attempts` INTEGER NOT NULL,
+                        `nextAttemptAt` INTEGER NOT NULL,
+                        `lastAttemptAt` INTEGER NOT NULL,
+                        `lastError` TEXT,
+                        PRIMARY KEY(`accountId`, `operationId`)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
+                    INSERT INTO `cloud_folder_outbox_v30` (
+                        `accountId`, `operationId`, `rootId`, `nodeId`, `operationKind`, `direction`,
+                        `relativePath`, `previousRelativePath`, `contentHash`, `sizeBytes`, `revision`,
+                        `state`, `attempts`, `nextAttemptAt`, `lastAttemptAt`, `lastError`
+                    )
+                    SELECT '', `operationId`, `rootId`, `nodeId`, `operationKind`, `direction`,
+                        `relativePath`, `previousRelativePath`, `contentHash`, `sizeBytes`, `revision`,
+                        `state`, `attempts`, `nextAttemptAt`, `lastAttemptAt`, `lastError`
+                    FROM `cloud_folder_outbox`
+                    """.trimIndent()
+                )
+
+                db.execSQL("DROP TABLE `cloud_folder_roots`")
+                db.execSQL("ALTER TABLE `cloud_folder_roots_v30` RENAME TO `cloud_folder_roots`")
+                db.execSQL("DROP TABLE `cloud_folder_bindings`")
+                db.execSQL("ALTER TABLE `cloud_folder_bindings_v30` RENAME TO `cloud_folder_bindings`")
+                db.execSQL("DROP TABLE `cloud_folder_nodes`")
+                db.execSQL("ALTER TABLE `cloud_folder_nodes_v30` RENAME TO `cloud_folder_nodes`")
+                db.execSQL("DROP TABLE `cloud_folder_tombstones`")
+                db.execSQL("ALTER TABLE `cloud_folder_tombstones_v30` RENAME TO `cloud_folder_tombstones`")
+                db.execSQL("DROP TABLE `cloud_folder_outbox`")
+                db.execSQL("ALTER TABLE `cloud_folder_outbox_v30` RENAME TO `cloud_folder_outbox`")
+
+                db.execSQL("CREATE INDEX `index_cloud_folder_bindings_accountId_rootId` ON `cloud_folder_bindings` (`accountId`, `rootId`)")
+                db.execSQL("CREATE INDEX `index_cloud_folder_bindings_accountId_deviceId` ON `cloud_folder_bindings` (`accountId`, `deviceId`)")
+                db.execSQL("CREATE UNIQUE INDEX `index_cloud_folder_bindings_accountId_deviceId_localUri` ON `cloud_folder_bindings` (`accountId`, `deviceId`, `localUri`)")
+                db.execSQL("CREATE INDEX `index_cloud_folder_nodes_accountId_rootId` ON `cloud_folder_nodes` (`accountId`, `rootId`)")
+                db.execSQL("CREATE INDEX `index_cloud_folder_nodes_accountId_rootId_relativePath` ON `cloud_folder_nodes` (`accountId`, `rootId`, `relativePath`)")
+                db.execSQL("CREATE INDEX `index_cloud_folder_tombstones_accountId_rootId` ON `cloud_folder_tombstones` (`accountId`, `rootId`)")
+                db.execSQL("CREATE INDEX `index_cloud_folder_tombstones_accountId_rootId_relativePath` ON `cloud_folder_tombstones` (`accountId`, `rootId`, `relativePath`)")
+                db.execSQL("CREATE INDEX `index_cloud_folder_outbox_accountId_rootId_state_nextAttemptAt` ON `cloud_folder_outbox` (`accountId`, `rootId`, `state`, `nextAttemptAt`)")
+                db.execSQL("CREATE INDEX `index_cloud_folder_outbox_accountId_rootId_nodeId` ON `cloud_folder_outbox` (`accountId`, `rootId`, `nodeId`)")
+            }
+        }
+
+        /** Persist the SAF source locator with each durable upload operation. */
+        val MIGRATION_30_31 = object : Migration(30, 31) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE cloud_folder_outbox ADD COLUMN sourceUri TEXT DEFAULT NULL")
+            }
+        }
+
+        /**
+         * SAF locators are installation capabilities and must not live in the
+         * database included by Android backup/device transfer.  The private
+         * sidecar imports the old values before this migration runs; this
+         * migration then removes the URI columns from the backed-up schema.
+         */
+        val MIGRATION_31_32 = object : Migration(31, 32) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE `cloud_folder_bindings_v32` (
+                        `accountId` TEXT NOT NULL,
+                        `rootId` TEXT NOT NULL,
+                        `deviceId` TEXT NOT NULL,
+                        `permissionState` TEXT NOT NULL,
+                        `materializationMode` TEXT NOT NULL,
+                        `lastAcknowledgedRevision` INTEGER NOT NULL,
+                        `lastScanAt` INTEGER NOT NULL,
+                        `lastError` TEXT,
+                        PRIMARY KEY(`accountId`, `rootId`, `deviceId`)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
+                    INSERT INTO `cloud_folder_bindings_v32` (
+                        `accountId`, `rootId`, `deviceId`, `permissionState`,
+                        `materializationMode`, `lastAcknowledgedRevision`, `lastScanAt`, `lastError`
+                    )
+                    SELECT `accountId`, `rootId`, `deviceId`, `permissionState`,
+                        `materializationMode`, `lastAcknowledgedRevision`, `lastScanAt`, `lastError`
+                    FROM `cloud_folder_bindings`
+                    """.trimIndent()
+                )
+                db.execSQL("DROP TABLE `cloud_folder_bindings`")
+                db.execSQL("ALTER TABLE `cloud_folder_bindings_v32` RENAME TO `cloud_folder_bindings`")
+                db.execSQL("CREATE INDEX `index_cloud_folder_bindings_accountId_rootId` ON `cloud_folder_bindings` (`accountId`, `rootId`)")
+                db.execSQL("CREATE INDEX `index_cloud_folder_bindings_accountId_deviceId` ON `cloud_folder_bindings` (`accountId`, `deviceId`)")
+
+                db.execSQL(
+                    """
+                    CREATE TABLE `cloud_folder_outbox_v32` (
+                        `accountId` TEXT NOT NULL,
+                        `operationId` TEXT NOT NULL,
+                        `rootId` TEXT NOT NULL,
+                        `nodeId` TEXT NOT NULL,
+                        `operationKind` TEXT NOT NULL,
+                        `direction` TEXT NOT NULL,
+                        `relativePath` TEXT NOT NULL,
+                        `previousRelativePath` TEXT,
+                        `contentHash` TEXT,
+                        `sizeBytes` INTEGER NOT NULL,
+                        `revision` INTEGER NOT NULL,
+                        `state` TEXT NOT NULL,
+                        `attempts` INTEGER NOT NULL,
+                        `nextAttemptAt` INTEGER NOT NULL,
+                        `lastAttemptAt` INTEGER NOT NULL,
+                        `lastError` TEXT,
+                        PRIMARY KEY(`accountId`, `operationId`)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
+                    INSERT INTO `cloud_folder_outbox_v32` (
+                        `accountId`, `operationId`, `rootId`, `nodeId`, `operationKind`, `direction`,
+                        `relativePath`, `previousRelativePath`, `contentHash`, `sizeBytes`, `revision`,
+                        `state`, `attempts`, `nextAttemptAt`, `lastAttemptAt`, `lastError`
+                    )
+                    SELECT `accountId`, `operationId`, `rootId`, `nodeId`, `operationKind`, `direction`,
+                        `relativePath`, `previousRelativePath`, `contentHash`, `sizeBytes`, `revision`,
+                        `state`, `attempts`, `nextAttemptAt`, `lastAttemptAt`, `lastError`
+                    FROM `cloud_folder_outbox`
+                    """.trimIndent()
+                )
+                db.execSQL("DROP TABLE `cloud_folder_outbox`")
+                db.execSQL("ALTER TABLE `cloud_folder_outbox_v32` RENAME TO `cloud_folder_outbox`")
+                db.execSQL("CREATE INDEX `index_cloud_folder_outbox_accountId_rootId_state_nextAttemptAt` ON `cloud_folder_outbox` (`accountId`, `rootId`, `state`, `nextAttemptAt`)")
+                db.execSQL("CREATE INDEX `index_cloud_folder_outbox_accountId_rootId_nodeId` ON `cloud_folder_outbox` (`accountId`, `rootId`, `nodeId`)")
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
+                CloudFolderPrivateStateMigrator.importLegacyState(context.applicationContext)
                 val instance = Room.databaseBuilder(
                     context.applicationContext,
                     AppDatabase::class.java,
-                    "reader_database"
+                    DATABASE_NAME
                 )
                     .addMigrations(
                         MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5,
@@ -516,7 +812,7 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20,
                         MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24,
                         MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28,
-                        MIGRATION_28_29
+                        MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32
                     )
                     .fallbackToDestructiveMigration(false)
                     .build()
@@ -524,5 +820,7 @@ abstract class AppDatabase : RoomDatabase() {
                 instance
             }
         }
+
+        const val DATABASE_NAME = "reader_database"
     }
 }

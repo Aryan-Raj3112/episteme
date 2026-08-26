@@ -58,6 +58,7 @@ import com.aryan.reader.data.BookMetadataEdit
 import com.aryan.reader.data.AndroidCloudBookDeleteOutbox
 import com.aryan.reader.data.CloudflareRepository
 import com.aryan.reader.data.AppDatabase
+import com.aryan.reader.data.CloudFolderSyncRepository
 import com.aryan.reader.data.DriveFile
 import com.aryan.reader.data.CustomFontEntity
 import com.aryan.reader.data.FeedbackRepository
@@ -119,6 +120,13 @@ import com.aryan.reader.shared.AnnotationExportFormat
 import com.aryan.reader.shared.AnnotationExportFormatter
 import com.aryan.reader.shared.AndroidShareArtifactManager
 import com.aryan.reader.shared.CloudBookTombstone
+import com.aryan.reader.shared.CloudFolderDeviceBinding
+import com.aryan.reader.shared.CloudFolderIncomingChoice
+import com.aryan.reader.shared.CloudFolderIncomingFolderPrompt
+import com.aryan.reader.shared.CloudFolderPermissionState
+import com.aryan.reader.shared.CloudFolderRootStats
+import com.aryan.reader.shared.CloudFolderSyncDirection
+import com.aryan.reader.shared.CloudFolderSyncSelection
 import com.aryan.reader.shared.CloudMaintenanceCoordinator
 import com.aryan.reader.shared.CloudMaintenanceIntent
 import com.aryan.reader.shared.CloudMaintenanceResult
@@ -144,6 +152,7 @@ import com.aryan.reader.shared.PdfSplitWorkspaceJson
 import com.aryan.reader.shared.PdfSplitWorkspaceState
 import com.aryan.reader.shared.recoverMissingPanes
 import com.aryan.reader.shared.samePdfDocument
+import com.aryan.reader.shared.cloudFolderRootId
 import com.aryan.reader.shared.syncedFolderAddDecision
 import com.aryan.reader.shared.withSyncedFolder
 import com.aryan.reader.shared.withoutSyncedFolder
@@ -226,7 +235,6 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     private val bookArtifactStore = appGraph.bookArtifactStore
     private val legacyMigrationStore = appGraph.legacyMigrationStore
     private val libraryStore = appGraph.libraryStore
-
     private val pdfTextRepository get() = appGraph.pdfTextRepository
     private val bookCacheDao get() = appGraph.bookCacheDao
     private val epubParser get() = appGraph.epubParser
@@ -664,6 +672,18 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             )
         )
     )
+
+    /**
+     * Cloud-folder inventory is intentionally separate from the library
+     * projection. A folder may be cloud-synced while local indexing is off,
+     * so settings must source counts and prompt state from the repository.
+     */
+    private val _cloudFolderRootStats = MutableStateFlow<Map<String, CloudFolderRootStats>>(emptyMap())
+    val cloudFolderRootStats: StateFlow<Map<String, CloudFolderRootStats>> = _cloudFolderRootStats.asStateFlow()
+
+    private val _incomingCloudFolderPrompt = MutableStateFlow<CloudFolderIncomingFolderPrompt?>(null)
+    val incomingCloudFolderPrompt: StateFlow<CloudFolderIncomingFolderPrompt?> =
+        _incomingCloudFolderPrompt.asStateFlow()
 
     private suspend fun prepareBookForImport(externalUri: Uri): AndroidPreparedImport? = withContext(Dispatchers.IO) {
         val displayName = getFileNameFromUri(externalUri, appContext)
@@ -1699,6 +1719,24 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             triggerFolderSyncWorker(metadataOnly = false, showFeedback = false)
         }
 
+        _internalState.value.currentUser?.uid?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?.let { accountId ->
+                viewModelScope.launch(Dispatchers.IO) {
+                    registerLocalCloudFolders(accountId)
+                    refreshCloudFolderSyncState()
+                }
+                if (_internalState.value.isSyncEnabled) {
+                    // Discovery is metadata-only for unbound roots and is
+                    // safe to schedule on every app start.
+                    CloudFolderSyncWorker.enqueuePull(
+                        appContext,
+                        accountId = accountId,
+                        replace = false,
+                    )
+                }
+            }
+
         sweepOrphanedCache()
         cleanupPendingExternalFileRemovals()
         restoreReaderSessionIfNeeded()
@@ -1715,6 +1753,14 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 billingClientWrapper.refreshPurchasesAsync()
 
                 if (newUserData != null) {
+                    // Cloud roots and device-local bindings are account
+                    // scoped. Rehydrate registrations before any sync work so
+                    // a folder added while signed out can still be uploaded
+                    // directly without entering the library.
+                    viewModelScope.launch(Dispatchers.IO) {
+                        registerLocalCloudFolders(newUserData.uid)
+                        refreshCloudFolderSyncState()
+                    }
                     registerOrUpdateDeviceOnSignIn(newUserData.uid)
 
                     feedbackListener =
@@ -1739,6 +1785,16 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
                                         if (googleDriveRepository.hasDrivePermissions(appContext)) {
                                             syncWithCloud(showBanner = false)
+                                            CloudFolderSyncWorker.enqueuePull(
+                                                appContext,
+                                                accountId = newUserData.uid,
+                                                replace = true,
+                                            )
+                                            CloudFolderSyncWorker.enqueue(
+                                                appContext,
+                                                accountId = newUserData.uid,
+                                                replace = true,
+                                            )
                                         } else {
                                             logCloudSyncTrace { "android.startup.sync_skip reason=missing_drive_permissions user=${newUserData.uid}" }
                                             Timber.tag("AnnotationSync").d(
@@ -1750,6 +1806,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                             }
                         }
                 } else {
+                    _cloudFolderRootStats.value = emptyMap()
+                    _incomingCloudFolderPrompt.value = null
                     _internalState.update { it.copy(isProUser = false, credits = 0, isSyncEnabled = false, hasUnreadFeedback = false) }
                 }
             }
@@ -3649,12 +3707,26 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     private fun loadSyncedFoldersFromPrefs(): List<SyncedFolder> {
         val jsonString = prefs.getString(SyncedFolderPrefs.KEY_SYNCED_FOLDERS_JSON, null)
         val oldUri = prefs.getString(SyncedFolderPrefs.KEY_LEGACY_SYNCED_FOLDER_URI, null)
-        val folders = SyncedFolderPrefs.decodeSyncedFolders(
+        val decodedFolders = SyncedFolderPrefs.decodeSyncedFolders(
             jsonString = jsonString,
             legacyUri = oldUri,
             legacyLastScanTime = prefs.getLong(SyncedFolderPrefs.KEY_LEGACY_LAST_FOLDER_SCAN_TIME, 0L),
             legacyNameResolver = { uri -> getDisplayPathFromUri(appContext, uri) }
         )
+        val folders = decodedFolders.map { folder ->
+            val existingRootId = folder.cloudRootId
+            if (existingRootId?.isNotBlank() == true) {
+                folder.copy(cloudRootId = existingRootId.trim())
+            } else {
+                // Migrate legacy URI-only bindings to a fresh logical root.
+                // The random seed is never uploaded and the generated ID is
+                // persisted locally alongside the provider URI.
+                folder.copy(cloudRootId = cloudFolderRootId("android-root:${UUID.randomUUID()}"))
+            }
+        }
+        if (jsonString != null && folders != decodedFolders) {
+            saveSyncedFoldersToPrefs(folders)
+        }
 
         if (jsonString == null && prefs.contains(SyncedFolderPrefs.KEY_LEGACY_SYNCED_FOLDER_URI) && oldUri != null) {
             saveSyncedFoldersToPrefs(folders)
@@ -3675,7 +3747,84 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    fun addSyncedFolder(folderUri: Uri) {
+    /** Refresh repository-backed folder counts and any durable incoming prompt. */
+    fun refreshCloudFolderSyncState() {
+        val accountId = _internalState.value.currentUser?.uid?.trim()
+            ?.takeIf { it.isNotBlank() }
+        if (accountId == null) {
+            _cloudFolderRootStats.value = emptyMap()
+            _incomingCloudFolderPrompt.value = null
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val repository = CloudFolderSyncRepository(appContext, accountId)
+                val roots = repository.getRoots().filterNot { it.isDeleted }
+                val boundRootIds = repository.getBindingsForDevice()
+                    .mapTo(mutableSetOf()) { it.rootId }
+                val pendingRootIds = CloudFolderSyncPrefs.pendingIncomingRootIds(appContext, accountId)
+                val promptRoot = roots
+                    .asSequence()
+                    .filter { it.rootId in pendingRootIds && it.rootId !in boundRootIds }
+                    .sortedWith(compareBy({ it.name.lowercase() }, { it.rootId }))
+                    .firstOrNull()
+                val stats = roots.associate { it.rootId to it.stats }
+                // A sign-in transition can race this refresh. Never publish
+                // state belonging to the account that is no longer active.
+                if (_internalState.value.currentUser?.uid?.trim() != accountId) return@launch
+                _cloudFolderRootStats.value = stats
+                _incomingCloudFolderPrompt.value = promptRoot?.let {
+                    CloudFolderIncomingFolderPrompt(
+                        root = it,
+                        sourceDeviceName = it.createdByDeviceId.takeIf { device -> device.isNotBlank() },
+                    )
+                }
+            } catch (error: Exception) {
+                Timber.w(error, "Unable to refresh cloud-folder repository state")
+            }
+        }
+    }
+
+    fun dismissIncomingCloudFolderPrompt(rootId: String) {
+        val accountId = _internalState.value.currentUser?.uid?.trim()
+            ?.takeIf { it.isNotBlank() } ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            val revision = try {
+                CloudFolderSyncRepository(appContext, accountId).getRoot(rootId)?.manifestRevision ?: 0L
+            } catch (error: Exception) {
+                Timber.w(error, "Unable to load incoming cloud-folder root=$rootId")
+                0L
+            }
+            CloudFolderSyncPrefs.dismissIncomingPrompt(appContext, accountId, rootId, revision)
+            refreshCloudFolderSyncState()
+        }
+    }
+
+    private suspend fun registerLocalCloudFolders(accountId: String) {
+        val repository = CloudFolderSyncRepository(appContext, accountId)
+        _internalState.value.syncedFolders.forEach { folder ->
+            val rootId = folder.cloudRootId?.trim()?.takeIf { it.isNotBlank() } ?: return@forEach
+            try {
+                repository.registerLocalFolder(
+                    localUri = folder.uriString,
+                    name = folder.name,
+                    rootId = rootId,
+                    // A configured local source is a mirror on this device;
+                    // incoming roots choose other materialization modes.
+                    materializationMode = com.aryan.reader.shared.CloudFolderMaterializationMode.LOCAL_MIRROR,
+                )
+            } catch (error: Exception) {
+                Timber.w(error, "Unable to register local cloud-folder root=$rootId")
+            }
+        }
+    }
+
+    /**
+     * [indexInLibrary] preserves the legacy library flow by default. The
+     * cloud-folder settings flow opts out so a direct cloud upload never
+     * imports files into the Reader library as a side effect.
+     */
+    fun addSyncedFolder(folderUri: Uri, indexInLibrary: Boolean = true) {
         val currentFolders = _internalState.value.syncedFolders
         when (syncedFolderAddDecision(currentFolders, folderUri.toString())) {
             SyncedFolderAddDecision.LIMIT_REACHED -> {
@@ -3706,7 +3855,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     name = name,
                     lastScanTime = 0L,
                     allowedFileTypes = ANDROID_SYNCABLE_FILE_TYPES,
-                    localSyncEnabled = true
+                    localSyncEnabled = indexInLibrary,
+                    cloudRootId = cloudFolderRootId("android-root:${UUID.randomUUID()}"),
                 )
                 val newStats = currentFolders.withSyncedFolder(newFolder)
 
@@ -3718,11 +3868,42 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     )
                 }
 
-                triggerFolderSyncWorker(
-                    metadataOnly = false,
-                    showFeedback = true,
-                    targetFolderUriString = newFolder.uriString
-                )
+                val accountId = _internalState.value.currentUser?.uid?.trim()
+                    ?.takeIf { it.isNotBlank() }
+                if (accountId != null) {
+                    try {
+                        CloudFolderSyncRepository(appContext, accountId).registerLocalFolder(
+                            localUri = newFolder.uriString,
+                            name = newFolder.name,
+                            rootId = newFolder.cloudRootId,
+                            materializationMode = com.aryan.reader.shared.CloudFolderMaterializationMode.LOCAL_MIRROR,
+                        )
+                    } catch (error: Exception) {
+                        // Keep the local configuration usable; sign-in/startup
+                        // registration retries the account-owned binding.
+                        Timber.w(error, "Unable to register newly added cloud-folder root")
+                    }
+                    refreshCloudFolderSyncState()
+                }
+
+                if (indexInLibrary) {
+                    triggerFolderSyncWorker(
+                        metadataOnly = false,
+                        showFeedback = true,
+                        targetFolderUriString = newFolder.uriString
+                    )
+                } else if (accountId != null && uiState.value.isSyncEnabled &&
+                    newFolder.cloudRootId?.let { CloudFolderSyncPrefs.load(appContext, accountId).includes(it) } == true
+                ) {
+                    // Direct-cloud mode scans/uploads the SAF tree without
+                    // touching RecentFilesRepository or library indexing.
+                    CloudFolderSyncWorker.enqueue(
+                        appContext,
+                        accountId = accountId,
+                        rootId = newFolder.cloudRootId,
+                        replace = true,
+                    )
+                }
 
                 showBanner(appContext.getString(R.string.banner_folder_added, name))
 
@@ -3744,6 +3925,18 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
             saveSyncedFoldersToPrefs(currentFolders)
             _internalState.update { it.copy(syncedFolders = currentFolders) }
+
+            folder.cloudRootId?.trim()?.takeIf { it.isNotBlank() }?.let { rootId ->
+                _internalState.value.currentUser?.uid?.trim()
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { accountId ->
+                        try {
+                            CloudFolderSyncRepository(appContext, accountId).detachLocalFolder(rootId)
+                        } catch (error: Exception) {
+                            Timber.w(error, "Unable to detach removed cloud-folder root=$rootId")
+                        }
+                    }
+            }
 
             val filesToRemove = bookStore.getFilesBySourceFolder(folder.uriString)
             folderMirrorStore.deleteFilesBySourceFolder(folder.uriString)
@@ -4183,6 +4376,19 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         viewModelScope.launch {
             val currentUser = _internalState.value.currentUser
             if (currentUser != null) {
+                val accountId = currentUser.uid.trim()
+                // Cancel and clear the account's folder work before changing
+                // auth state.  This prevents a queued request from a prior
+                // account from being reused after the next sign-in, while
+                // the worker's account check remains the final safety gate.
+                CloudFolderSyncWorker.cancelForAccount(appContext, accountId)
+                try {
+                    withContext(Dispatchers.IO) {
+                        CloudFolderSyncRepository(appContext, accountId).clearAccountState()
+                    }
+                } catch (e: Exception) {
+                    Timber.e(e, "Failed to clear cloud-folder state for account $accountId")
+                }
                 val deviceId = getInstallationId()
                 try {
                     withTimeoutOrNull(3000) {
@@ -4259,10 +4465,149 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             viewModelScope.launch {
                 if (googleDriveRepository.hasDrivePermissions(appContext)) {
                     syncWithCloud(showBanner = true)
+                    _internalState.value.currentUser?.uid?.trim()
+                        ?.takeIf { it.isNotBlank() }
+                        ?.let { accountId ->
+                            CloudFolderSyncWorker.enqueue(
+                                appContext,
+                                accountId = accountId,
+                                replace = true,
+                            )
+                            CloudFolderSyncWorker.enqueuePull(
+                                appContext,
+                                accountId = accountId,
+                                replace = true,
+                            )
+                        }
                 } else {
                     Timber.d("Requesting Drive permission from user.")
                     _internalState.update { it.copy(isRequestingDrivePermission = true) }
                 }
+            }
+        }
+    }
+
+    /**
+     * Account-level folder selection is separate from the legacy local-library
+     * switch.  A newly installed device therefore remains EXCLUDED until the
+     * user explicitly selects roots in the settings dialog.
+     */
+    fun cloudFolderSyncSelection(): CloudFolderSyncSelection =
+        _internalState.value.currentUser?.uid?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?.let { accountId -> CloudFolderSyncPrefs.load(appContext, accountId) }
+            ?: CloudFolderSyncSelection.Default
+
+    fun setCloudFolderSyncSelection(selection: CloudFolderSyncSelection) {
+        val accountId = _internalState.value.currentUser?.uid?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?: run {
+                Timber.w("Ignoring cloud-folder selection without a signed-in account")
+                return
+            }
+        val normalized = selection.normalized()
+        CloudFolderSyncPrefs.save(appContext, accountId, normalized)
+
+        // Queue a durable folder pass so the persisted policy is observed by
+        // the worker even if the process is killed after the dialog closes.
+        // The cloud-folder transfer worker consumes this same policy; the
+        // existing worker also refreshes the indexed folder inventory.
+        if (uiState.value.isSyncEnabled) {
+            CloudFolderSyncWorker.enqueue(
+                appContext,
+                accountId = accountId,
+                replace = true,
+            )
+        }
+    }
+
+    /**
+     * Persist device 2's materialization choice without ever uploading its
+     * local SAF URI.  A bind choice is completed by the caller after the SAF
+     * picker returns [localFolderUri]; cloud-only/download-all remain local
+     * binding records and are safe to retry.
+     */
+    fun recordIncomingCloudFolderChoice(
+        prompt: CloudFolderIncomingFolderPrompt,
+        choice: CloudFolderIncomingChoice,
+        localFolderUri: Uri? = null,
+    ) {
+        if (choice == CloudFolderIncomingChoice.BIND_LOCAL_FOLDER && localFolderUri == null) {
+            Timber.w("Ignoring bind choice without a local folder URI root=${prompt.rootId}")
+            return
+        }
+        val accountId = _internalState.value.currentUser?.uid?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?: run {
+                Timber.w("Ignoring incoming cloud-folder choice without a signed-in account")
+                return
+            }
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                if (authRepository.getSignedInUser()?.uid?.trim() != accountId) {
+                    Timber.i("Ignoring stale incoming cloud-folder choice for account $accountId")
+                    return@launch
+                }
+                val localUri = localFolderUri?.toString()
+                if (localFolderUri != null) {
+                    appContext.contentResolver.takePersistableUriPermission(
+                        localFolderUri,
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+                    )
+                }
+                val materialization = choice.materializationMode
+                if (choice.shouldIncludeInLocalSyncSelection) {
+                    // DOWNLOAD_ALL is intentionally an explicit opt-in: the
+                    // worker will otherwise leave the incoming root cloud
+                    // only because folder selection defaults to EXCLUDED.
+                    CloudFolderSyncPrefs.save(
+                        appContext,
+                        accountId,
+                        CloudFolderSyncPrefs.load(appContext, accountId).withRootIncluded(prompt.rootId),
+                    )
+                }
+                if (authRepository.getSignedInUser()?.uid?.trim() != accountId) {
+                    Timber.i("Ignoring account-switched incoming cloud-folder choice for $accountId")
+                    return@launch
+                }
+                val repository = CloudFolderSyncRepository(appContext, accountId)
+                repository.saveBinding(
+                    CloudFolderDeviceBinding(
+                        rootId = prompt.rootId,
+                        deviceId = repository.deviceId,
+                        localUri = localUri,
+                        permissionState = if (localUri == null) {
+                            CloudFolderPermissionState.UNKNOWN
+                        } else {
+                            CloudFolderPermissionState.GRANTED
+                        },
+                        materializationMode = materialization,
+                        lastAcknowledgedRevision = prompt.root.manifestRevision,
+                    )
+                )
+                CloudFolderSyncPrefs.dismissIncomingPrompt(
+                    context = appContext,
+                    accountId = accountId,
+                    rootId = prompt.rootId,
+                    revision = prompt.root.manifestRevision,
+                )
+                if (choice.shouldIncludeInLocalSyncSelection && uiState.value.isSyncEnabled) {
+                    // An incoming choice is a pull. Using the default
+                    // LOCAL_TO_CLOUD direction here would only scan a local
+                    // mirror and would never materialize DOWNLOAD_ALL (which
+                    // intentionally has no local URI).
+                    CloudFolderSyncWorker.enqueuePull(
+                        appContext,
+                        accountId = accountId,
+                        rootId = prompt.rootId,
+                        replace = true,
+                    )
+                }
+                refreshCloudFolderSyncState()
+            } catch (error: SecurityException) {
+                Timber.e(error, "Unable to persist incoming cloud-folder permission root=${prompt.rootId}")
+            } catch (error: Exception) {
+                Timber.e(error, "Unable to persist incoming cloud-folder choice root=${prompt.rootId}")
             }
         }
     }

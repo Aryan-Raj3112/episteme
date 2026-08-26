@@ -10,6 +10,21 @@ import kotlinx.serialization.Serializable
  */
 const val CLOUD_FOLDER_MANIFEST_SCHEMA_VERSION = 1
 
+/**
+ * Defensive limits for untrusted manifests.  Cloud-folder manifests are
+ * account data, so a malformed or malicious payload must not be allowed to
+ * turn a sync pass into an unbounded allocation or traversal.
+ */
+const val MAX_CLOUD_FOLDER_MANIFEST_NODES = 100_000
+const val MAX_CLOUD_FOLDER_MANIFEST_TOMBSTONES = 100_000
+const val MAX_CLOUD_FOLDER_MANIFEST_ID_LENGTH = 256
+const val MAX_CLOUD_FOLDER_MANIFEST_NAME_LENGTH = 512
+const val MAX_CLOUD_FOLDER_MANIFEST_PATH_LENGTH = 4_096
+const val MAX_CLOUD_FOLDER_MANIFEST_PATH_DEPTH = 256
+const val MAX_CLOUD_FOLDER_MANIFEST_MIME_TYPE_LENGTH = 256
+const val MAX_CLOUD_FOLDER_MANIFEST_DEVICE_ID_LENGTH = 256
+const val MAX_CLOUD_FOLDER_MANIFEST_OBJECT_ID_LENGTH = 512
+
 /** Maximum number of logical roots the settings UI should offer by default. */
 const val DEFAULT_CLOUD_FOLDER_ROOT_LIMIT = 100
 
@@ -333,7 +348,9 @@ data class CloudFolderManifest(
         val normalizedNodes = nodes.map { it.sanitized() }
         val normalizedTombstones = tombstones.map { it.sanitized() }
         return copy(
-            schemaVersion = schemaVersion.coerceAtLeast(1),
+            // Validation is deliberately separate from normalization.  Do
+            // not silently turn an unsupported schema into the current one.
+            schemaVersion = schemaVersion,
             root = root.sanitized(),
             revision = revision.coerceAtLeast(0L),
             baseRevision = baseRevision.coerceAtLeast(0L),
@@ -385,8 +402,14 @@ fun isCloudFolderSha256(hash: String?): Boolean {
 }
 
 /**
- * Deterministic bootstrap ID only.  Once a scanner has an inventory, it must
+ * Deterministic bootstrap ID only. Once a scanner has an inventory, it must
  * retain the ID so a rename remains a move instead of delete-plus-add.
+ *
+ * The seed should be fresh, device-local entropy generated when a logical
+ * root is first created (for example a platform UUID), not a provider URI.
+ * The 128-bit suffix gives the logical root UUID-strength collision
+ * resistance while [CloudFolderDeviceBinding] keeps the local URI private to
+ * the device that owns it.
  */
 fun cloudFolderNodeId(rootId: String, relativePath: String): String {
     val normalized = normalizeCloudFolderRelativePath(relativePath) ?: relativePath.trim()
@@ -394,19 +417,36 @@ fun cloudFolderNodeId(rootId: String, relativePath: String): String {
 }
 
 fun cloudFolderRootId(stableSeed: String): String =
-    "folder_root_${localFolderSyncSha256ShortHex(stableSeed.trim())}"
+    "folder_root_${localFolderSyncSha256Hex(stableSeed.trim()).take(32)}"
 
 /** Manifest validation is intentionally read-only; adapters decide how to report issues. */
 @Serializable
 enum class CloudFolderManifestIssueType {
+    UNSUPPORTED_SCHEMA_VERSION,
+    TOO_MANY_NODES,
+    TOO_MANY_TOMBSTONES,
     INVALID_ROOT,
+    INVALID_ROOT_ID,
+    INVALID_NODE_ID,
+    INVALID_TOMBSTONE_ID,
+    FIELD_TOO_LONG,
     INVALID_PATH,
+    PATH_TOO_LONG,
+    PATH_TOO_DEEP,
+    INVALID_HASH,
     DUPLICATE_NODE_ID,
+    DUPLICATE_TOMBSTONE_ID,
     DUPLICATE_PATH,
+    DUPLICATE_TOMBSTONE_PATH,
     NEGATIVE_SIZE,
+    NEGATIVE_REVISION,
+    NEGATIVE_TIMESTAMP,
+    INVALID_ROOT_STATS,
     NODE_ROOT_MISMATCH,
     TOMBSTONE_ROOT_MISMATCH,
     NODE_TOMBSTONE_COLLISION,
+    MISSING_PARENT_DIRECTORY,
+    PARENT_NOT_DIRECTORY,
 }
 
 @Serializable
@@ -414,15 +454,92 @@ data class CloudFolderManifestIssue(
     val type: CloudFolderManifestIssueType,
     val nodeId: String? = null,
     val path: String? = null,
+    val detail: String? = null,
 )
 
 fun CloudFolderManifest.validationIssues(): List<CloudFolderManifestIssue> {
     val issues = mutableListOf<CloudFolderManifestIssue>()
+
+    // This function must inspect the wire representation as received.  In
+    // particular, callers must not call normalized() first: doing so could
+    // turn an unsupported schema into a supported one, trim IDs used for
+    // root matching, or clamp negative sizes before they are rejected.
+    if (schemaVersion != CLOUD_FOLDER_MANIFEST_SCHEMA_VERSION) {
+        issues += CloudFolderManifestIssue(
+            type = CloudFolderManifestIssueType.UNSUPPORTED_SCHEMA_VERSION,
+            detail = schemaVersion.toString(),
+        )
+    }
+    if (nodes.size > MAX_CLOUD_FOLDER_MANIFEST_NODES) {
+        issues += CloudFolderManifestIssue(
+            type = CloudFolderManifestIssueType.TOO_MANY_NODES,
+            detail = nodes.size.toString(),
+        )
+    }
+    if (tombstones.size > MAX_CLOUD_FOLDER_MANIFEST_TOMBSTONES) {
+        issues += CloudFolderManifestIssue(
+            type = CloudFolderManifestIssueType.TOO_MANY_TOMBSTONES,
+            detail = tombstones.size.toString(),
+        )
+    }
+
+    // Stop before allocating path indexes for oversized untrusted lists. The
+    // limit issues above are sufficient to reject the manifest safely.
+    if (issues.any {
+            it.type == CloudFolderManifestIssueType.TOO_MANY_NODES ||
+                it.type == CloudFolderManifestIssueType.TOO_MANY_TOMBSTONES
+        }
+    ) {
+        return issues
+    }
+
     if (root.rootId.trim().isBlank() || root.name.trim().isBlank()) {
         issues += CloudFolderManifestIssue(CloudFolderManifestIssueType.INVALID_ROOT)
     }
+    if (root.rootId.trim().isBlank()) {
+        issues += CloudFolderManifestIssue(CloudFolderManifestIssueType.INVALID_ROOT_ID)
+    } else if (root.rootId.length > MAX_CLOUD_FOLDER_MANIFEST_ID_LENGTH) {
+        issues += CloudFolderManifestIssue(
+            type = CloudFolderManifestIssueType.FIELD_TOO_LONG,
+            detail = "rootId",
+        )
+    }
+    if (root.name.length > MAX_CLOUD_FOLDER_MANIFEST_NAME_LENGTH) {
+        issues += CloudFolderManifestIssue(
+            type = CloudFolderManifestIssueType.FIELD_TOO_LONG,
+            detail = "root.name",
+        )
+    }
+    if (root.createdAt < 0L || root.updatedAt < 0L || root.manifestRevision < 0L) {
+        issues += CloudFolderManifestIssue(CloudFolderManifestIssueType.NEGATIVE_TIMESTAMP)
+    }
+    if (root.stats.fileCount < 0 || root.stats.directoryCount < 0 || root.stats.totalBytes < 0L) {
+        issues += CloudFolderManifestIssue(CloudFolderManifestIssueType.INVALID_ROOT_STATS)
+    }
+    if (root.stats.fileCount > MAX_CLOUD_FOLDER_MANIFEST_NODES ||
+        root.stats.directoryCount > MAX_CLOUD_FOLDER_MANIFEST_NODES
+    ) {
+        issues += CloudFolderManifestIssue(
+            type = CloudFolderManifestIssueType.INVALID_ROOT_STATS,
+            detail = "root.stats",
+        )
+    }
+    if (revision < 0L || baseRevision < 0L) {
+        issues += CloudFolderManifestIssue(CloudFolderManifestIssueType.NEGATIVE_REVISION)
+    }
+    if (generatedAt < 0L) {
+        issues += CloudFolderManifestIssue(CloudFolderManifestIssueType.NEGATIVE_TIMESTAMP)
+    }
+    if (generatedByDeviceId.length > MAX_CLOUD_FOLDER_MANIFEST_DEVICE_ID_LENGTH) {
+        issues += CloudFolderManifestIssue(
+            type = CloudFolderManifestIssueType.FIELD_TOO_LONG,
+            detail = "generatedByDeviceId",
+        )
+    }
+
     val seenIds = mutableSetOf<String>()
     val seenPaths = mutableMapOf<String, String>()
+    val nodeByPath = mutableMapOf<String, CloudFolderNode>()
     nodes.forEach { node ->
         if (node.rootId != root.rootId) {
             issues += CloudFolderManifestIssue(
@@ -431,7 +548,21 @@ fun CloudFolderManifest.validationIssues(): List<CloudFolderManifestIssue> {
                 path = node.relativePath,
             )
         }
-        if (node.nodeId.trim().isBlank() || !seenIds.add(node.nodeId)) {
+        if (node.nodeId.trim().isBlank()) {
+            issues += CloudFolderManifestIssue(
+                type = CloudFolderManifestIssueType.INVALID_NODE_ID,
+                nodeId = node.nodeId,
+                path = node.relativePath,
+            )
+        } else if (node.nodeId.length > MAX_CLOUD_FOLDER_MANIFEST_ID_LENGTH) {
+            issues += CloudFolderManifestIssue(
+                type = CloudFolderManifestIssueType.FIELD_TOO_LONG,
+                nodeId = node.nodeId,
+                path = node.relativePath,
+                detail = "nodeId",
+            )
+        }
+        if (!seenIds.add(node.nodeId)) {
             issues += CloudFolderManifestIssue(
                 type = CloudFolderManifestIssueType.DUPLICATE_NODE_ID,
                 nodeId = node.nodeId,
@@ -444,10 +575,66 @@ fun CloudFolderManifest.validationIssues(): List<CloudFolderManifestIssue> {
                 nodeId = node.nodeId,
                 path = node.relativePath,
             )
+        } else {
+            val normalizedPath = normalizeCloudFolderRelativePath(node.relativePath)!!
+            if (node.relativePath.length > MAX_CLOUD_FOLDER_MANIFEST_PATH_LENGTH) {
+                issues += CloudFolderManifestIssue(
+                    type = CloudFolderManifestIssueType.PATH_TOO_LONG,
+                    nodeId = node.nodeId,
+                    path = node.relativePath,
+                )
+            }
+            if (normalizedPath.count { it == '/' } + 1 > MAX_CLOUD_FOLDER_MANIFEST_PATH_DEPTH) {
+                issues += CloudFolderManifestIssue(
+                    type = CloudFolderManifestIssueType.PATH_TOO_DEEP,
+                    nodeId = node.nodeId,
+                    path = node.relativePath,
+                )
+            }
+            val pathKey = cloudFolderPathKey(normalizedPath)
+            if (!nodeByPath.containsKey(pathKey)) {
+                nodeByPath[pathKey] = node
+            }
         }
         if (node.sizeBytes < 0L) {
             issues += CloudFolderManifestIssue(
                 type = CloudFolderManifestIssueType.NEGATIVE_SIZE,
+                nodeId = node.nodeId,
+                path = node.relativePath,
+            )
+        }
+        if (node.contentHash != null && !isCloudFolderSha256(node.contentHash)) {
+            issues += CloudFolderManifestIssue(
+                type = CloudFolderManifestIssueType.INVALID_HASH,
+                nodeId = node.nodeId,
+                path = node.relativePath,
+            )
+        }
+        if (node.mimeType != null && node.mimeType.length > MAX_CLOUD_FOLDER_MANIFEST_MIME_TYPE_LENGTH) {
+            issues += CloudFolderManifestIssue(
+                type = CloudFolderManifestIssueType.FIELD_TOO_LONG,
+                nodeId = node.nodeId,
+                path = node.relativePath,
+                detail = "mimeType",
+            )
+        }
+        if (node.modifiedByDeviceId.length > MAX_CLOUD_FOLDER_MANIFEST_DEVICE_ID_LENGTH ||
+            (node.contentObjectId?.length ?: 0) > MAX_CLOUD_FOLDER_MANIFEST_OBJECT_ID_LENGTH
+        ) {
+            issues += CloudFolderManifestIssue(
+                type = CloudFolderManifestIssueType.FIELD_TOO_LONG,
+                nodeId = node.nodeId,
+                path = node.relativePath,
+                detail = "node metadata",
+            )
+        }
+        if (node.revision < 0L || node.fileModifiedAt < 0L || node.modifiedAt < 0L) {
+            issues += CloudFolderManifestIssue(
+                type = if (node.revision < 0L) {
+                    CloudFolderManifestIssueType.NEGATIVE_REVISION
+                } else {
+                    CloudFolderManifestIssueType.NEGATIVE_TIMESTAMP
+                },
                 nodeId = node.nodeId,
                 path = node.relativePath,
             )
@@ -462,11 +649,64 @@ fun CloudFolderManifest.validationIssues(): List<CloudFolderManifestIssue> {
             )
         }
     }
+
+    // Every active node must have an explicit directory entry for each
+    // ancestor.  This prevents a provider from smuggling a file outside the
+    // advertised tree and gives executors a complete, deterministic order.
+    nodes.forEach { node ->
+        val normalizedPath = normalizeCloudFolderRelativePath(node.relativePath) ?: return@forEach
+        val segments = normalizedPath.split('/')
+        if (segments.size < 2) return@forEach
+        for (index in 1 until segments.size) {
+            val parentPath = segments.subList(0, index).joinToString("/")
+            when (val parent = nodeByPath[cloudFolderPathKey(parentPath)]) {
+                null -> issues += CloudFolderManifestIssue(
+                    type = CloudFolderManifestIssueType.MISSING_PARENT_DIRECTORY,
+                    nodeId = node.nodeId,
+                    path = normalizedPath,
+                    detail = parentPath,
+                )
+                else -> if (parent.kind != CloudFolderNodeKind.DIRECTORY) {
+                    issues += CloudFolderManifestIssue(
+                        type = CloudFolderManifestIssueType.PARENT_NOT_DIRECTORY,
+                        nodeId = node.nodeId,
+                        path = normalizedPath,
+                        detail = parentPath,
+                    )
+                }
+            }
+        }
+    }
+
     val nodeIds = nodes.mapTo(mutableSetOf(), CloudFolderNode::nodeId)
+    val seenTombstoneIds = mutableSetOf<String>()
+    val seenTombstonePaths = mutableMapOf<String, String>()
+    val tombstoneByPath = mutableMapOf<String, CloudFolderTombstone>()
     tombstones.forEach { tombstone ->
         if (tombstone.rootId != root.rootId) {
             issues += CloudFolderManifestIssue(
                 type = CloudFolderManifestIssueType.TOMBSTONE_ROOT_MISMATCH,
+                nodeId = tombstone.nodeId,
+                path = tombstone.relativePath,
+            )
+        }
+        if (tombstone.nodeId.trim().isBlank()) {
+            issues += CloudFolderManifestIssue(
+                type = CloudFolderManifestIssueType.INVALID_TOMBSTONE_ID,
+                nodeId = tombstone.nodeId,
+                path = tombstone.relativePath,
+            )
+        } else if (tombstone.nodeId.length > MAX_CLOUD_FOLDER_MANIFEST_ID_LENGTH) {
+            issues += CloudFolderManifestIssue(
+                type = CloudFolderManifestIssueType.FIELD_TOO_LONG,
+                nodeId = tombstone.nodeId,
+                path = tombstone.relativePath,
+                detail = "tombstone.nodeId",
+            )
+        }
+        if (!seenTombstoneIds.add(tombstone.nodeId)) {
+            issues += CloudFolderManifestIssue(
+                type = CloudFolderManifestIssueType.DUPLICATE_TOMBSTONE_ID,
                 nodeId = tombstone.nodeId,
                 path = tombstone.relativePath,
             )
@@ -477,6 +717,67 @@ fun CloudFolderManifest.validationIssues(): List<CloudFolderManifestIssue> {
                 nodeId = tombstone.nodeId,
                 path = tombstone.relativePath,
             )
+        } else {
+            val normalizedPath = normalizeCloudFolderRelativePath(tombstone.relativePath)!!
+            if (tombstone.relativePath.length > MAX_CLOUD_FOLDER_MANIFEST_PATH_LENGTH) {
+                issues += CloudFolderManifestIssue(
+                    type = CloudFolderManifestIssueType.PATH_TOO_LONG,
+                    nodeId = tombstone.nodeId,
+                    path = tombstone.relativePath,
+                )
+            }
+            if (normalizedPath.count { it == '/' } + 1 > MAX_CLOUD_FOLDER_MANIFEST_PATH_DEPTH) {
+                issues += CloudFolderManifestIssue(
+                    type = CloudFolderManifestIssueType.PATH_TOO_DEEP,
+                    nodeId = tombstone.nodeId,
+                    path = tombstone.relativePath,
+                )
+            }
+            val pathKey = cloudFolderPathKey(normalizedPath)
+            if (!tombstoneByPath.containsKey(pathKey)) {
+                tombstoneByPath[pathKey] = tombstone
+            }
+            val previous = seenTombstonePaths.put(pathKey, tombstone.nodeId)
+            if (previous != null && previous != tombstone.nodeId) {
+                issues += CloudFolderManifestIssue(
+                    type = CloudFolderManifestIssueType.DUPLICATE_TOMBSTONE_PATH,
+                    nodeId = tombstone.nodeId,
+                    path = tombstone.relativePath,
+                )
+            }
+        }
+        if (tombstone.lastKnownContentHash != null && !isCloudFolderSha256(tombstone.lastKnownContentHash)) {
+            issues += CloudFolderManifestIssue(
+                type = CloudFolderManifestIssueType.INVALID_HASH,
+                nodeId = tombstone.nodeId,
+                path = tombstone.relativePath,
+            )
+        }
+        if (tombstone.lastKnownSizeBytes < 0L) {
+            issues += CloudFolderManifestIssue(
+                type = CloudFolderManifestIssueType.NEGATIVE_SIZE,
+                nodeId = tombstone.nodeId,
+                path = tombstone.relativePath,
+            )
+        }
+        if (tombstone.deletedRevision < 0L || tombstone.deletedAt < 0L) {
+            issues += CloudFolderManifestIssue(
+                type = if (tombstone.deletedRevision < 0L) {
+                    CloudFolderManifestIssueType.NEGATIVE_REVISION
+                } else {
+                    CloudFolderManifestIssueType.NEGATIVE_TIMESTAMP
+                },
+                nodeId = tombstone.nodeId,
+                path = tombstone.relativePath,
+            )
+        }
+        if (tombstone.deletedByDeviceId.length > MAX_CLOUD_FOLDER_MANIFEST_DEVICE_ID_LENGTH) {
+            issues += CloudFolderManifestIssue(
+                type = CloudFolderManifestIssueType.FIELD_TOO_LONG,
+                nodeId = tombstone.nodeId,
+                path = tombstone.relativePath,
+                detail = "tombstone.deletedByDeviceId",
+            )
         }
         if (tombstone.nodeId in nodeIds) {
             issues += CloudFolderManifestIssue(
@@ -486,6 +787,38 @@ fun CloudFolderManifest.validationIssues(): List<CloudFolderManifestIssue> {
             )
         }
     }
+
+    // Tombstones may retain a deleted directory, so they are accepted as
+    // ancestors of other tombstones.  Active nodes, however, must always be
+    // backed by active directory nodes (checked above).
+    tombstones.forEach { tombstone ->
+        val normalizedPath = normalizeCloudFolderRelativePath(tombstone.relativePath) ?: return@forEach
+        val segments = normalizedPath.split('/')
+        if (segments.size < 2) return@forEach
+        for (index in 1 until segments.size) {
+            val parentPath = segments.subList(0, index).joinToString("/")
+            val parentKind = nodeByPath[cloudFolderPathKey(parentPath)]?.kind
+                ?: tombstoneByPath[cloudFolderPathKey(parentPath)]?.kind
+            when (parentKind) {
+                null -> issues += CloudFolderManifestIssue(
+                    type = CloudFolderManifestIssueType.MISSING_PARENT_DIRECTORY,
+                    nodeId = tombstone.nodeId,
+                    path = normalizedPath,
+                    detail = parentPath,
+                )
+                CloudFolderNodeKind.DIRECTORY -> Unit
+                else -> {
+                    issues += CloudFolderManifestIssue(
+                        type = CloudFolderManifestIssueType.PARENT_NOT_DIRECTORY,
+                        nodeId = tombstone.nodeId,
+                        path = normalizedPath,
+                        detail = parentPath,
+                    )
+                }
+            }
+        }
+    }
+
     return issues
 }
 
@@ -525,6 +858,7 @@ data class CloudFolderSyncOperation(
 
 @Serializable
 enum class CloudFolderConflictType {
+    INVALID_MANIFEST,
     CONTENT_CHANGED_BOTH,
     METADATA_CHANGED_BOTH,
     MOVE_CHANGED_BOTH,
@@ -834,6 +1168,44 @@ private fun mergeRoot(
 
 /** Pure, deterministic three-way planner shared by Android, iOS, and desktop. */
 object CloudFolderSyncPlanner {
+    private fun rejectedManifestPlan(
+        base: CloudFolderManifest,
+        local: CloudFolderManifest,
+        remote: CloudFolderManifest,
+        validation: List<Pair<String, CloudFolderManifestIssue>>,
+    ): CloudFolderSyncPlan {
+        // The base root is only used as a diagnostic key here.  No untrusted
+        // manifest is normalized or interpreted after validation fails.
+        val rootId = base.root.rootId.trim().ifBlank { "invalid-root" }
+        val conflicts = validation.map { (side, issue) ->
+            val nodeId = issue.nodeId?.trim().orEmpty().ifBlank { rootId }
+            CloudFolderConflict(
+                conflictId = cloudFolderConflictId(
+                    rootId = rootId,
+                    nodeIds = listOf(side, nodeId, issue.type.name),
+                    type = CloudFolderConflictType.INVALID_MANIFEST,
+                    path = issue.path.orEmpty(),
+                ),
+                rootId = rootId,
+                nodeId = nodeId,
+                type = CloudFolderConflictType.INVALID_MANIFEST,
+                relativePath = issue.path.orEmpty(),
+                relatedNodeIds = listOfNotNull(issue.nodeId),
+            )
+        }.distinctBy(CloudFolderConflict::conflictId)
+        return CloudFolderSyncPlan(
+            rootId = rootId,
+            baseRevision = base.revision.coerceAtLeast(0L),
+            localRevision = local.revision.coerceAtLeast(0L),
+            remoteRevision = remote.revision.coerceAtLeast(0L),
+            nextRevision = nextCloudFolderRevision(base.revision, local.revision, remote.revision),
+            conflicts = conflicts,
+            // This candidate is intentionally not committable because the
+            // conflicts above describe the rejected raw payload.
+            mergedManifest = base,
+        )
+    }
+
     fun plan(
         base: CloudFolderManifest,
         local: CloudFolderManifest,
@@ -841,6 +1213,17 @@ object CloudFolderSyncPlanner {
         nowMillis: Long = maxOf(local.generatedAt, remote.generatedAt),
         deviceId: String = local.generatedByDeviceId,
     ): CloudFolderSyncPlan {
+        // Validate each raw payload before any trimming, clamping, or
+        // de-duplication.  A future schema, oversized list, unsafe path, or
+        // broken hierarchy must never be normalized into executable state.
+        val validation = buildList {
+            base.validationIssues().forEach { add("base" to it) }
+            local.validationIssues().forEach { add("local" to it) }
+            remote.validationIssues().forEach { add("remote" to it) }
+        }
+        if (validation.isNotEmpty()) {
+            return rejectedManifestPlan(base, local, remote, validation)
+        }
         val normalizedBase = base.normalized()
         val normalizedLocal = local.normalized()
         val normalizedRemote = remote.normalized()
@@ -884,7 +1267,7 @@ object CloudFolderSyncPlanner {
         val baseStates = normalizedBase.entryStates()
         val localStates = normalizedLocal.entryStates()
         val remoteStates = normalizedRemote.entryStates()
-        val ids = (baseStates.keys + localStates.keys + remoteStates.keys).toSortedSet()
+        val ids = (baseStates.keys + localStates.keys + remoteStates.keys).distinct().sorted()
         val mergedStates = linkedMapOf<String, CloudFolderEntryState>()
         val operations = mutableListOf<CloudFolderSyncOperation>()
         val conflicts = mutableListOf<CloudFolderConflict>()
