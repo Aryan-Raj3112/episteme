@@ -606,6 +606,8 @@
     <string name="banner_clearing_cloud_local_data">Clearing all cloud and local data…</string>
     <string name="banner_cloud_local_data_cleared">All cloud and local data cleared successfully.</string>
     <string name="error_clear_all_data">Error: Failed to clear all data.</string>
+    <!-- Shown when a cloud book deletion could not reach the remote services and stays queued. -->
+    <string name="error_cloud_delete_pending">Couldn\'t reach the cloud. Your deletion will finish automatically the next time you\'re online.</string>
     <string name="banner_local_data_cleared">All local data cleared.</string>
     <string name="error_sign_in_failed">Sign in failed. Please try again.</string>
     <string name="error_no_google_account">Could not find a Google account. This can happen on a fresh install, please try again in a moment.</string>

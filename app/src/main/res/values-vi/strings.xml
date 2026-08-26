@@ -341,6 +341,7 @@
     <string name="banner_clearing_cloud_local_data">Đang xóa toàn bộ dữ liệu đám mây và cục bộ…</string>
     <string name="banner_cloud_local_data_cleared">Đã xóa thành công toàn bộ dữ liệu đám mây và cục bộ.</string>
     <string name="error_clear_all_data">Lỗi: Không thể xóa tất cả dữ liệu.</string>
+    <string name="error_cloud_delete_pending">Không thể kết nối với đám mây. Việc xóa của bạn sẽ tự động hoàn tất khi bạn trực tuyến trở lại.</string>
     <string name="banner_local_data_cleared">Đã xóa toàn bộ dữ liệu cục bộ.</string>
     <string name="error_sign_in_failed">Đăng nhập thất bại. Vui lòng thử lại.</string>
     <string name="error_no_google_account">Không tìm thấy tài khoản Google. Điều này có thể xảy ra sau khi cài mới, vui lòng thử lại sau giây lát.</string>

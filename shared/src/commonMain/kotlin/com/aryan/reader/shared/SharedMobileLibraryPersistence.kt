@@ -55,7 +55,11 @@ fun SharedLibrarySnapshot.toSharedMobileReaderState(): SharedReaderScreenState {
     ).let(base::withLibraryFeatureState)
 }
 
-private fun SharedReaderScreenState.toLibraryFeatureState() = LibraryFeatureState(
+/**
+ * Extracts the library-only slice consumed by [SharedLibraryStateProjector]
+ * from the full reader screen state. Shared by every platform shell.
+ */
+fun SharedReaderScreenState.toLibraryFeatureState() = LibraryFeatureState(
     sortOrder = sortOrder,
     filters = libraryFilters,
     syncedFolders = syncedFolders,
@@ -65,7 +69,8 @@ private fun SharedReaderScreenState.toLibraryFeatureState() = LibraryFeatureStat
     tabs = AppTabState(isTabsEnabled, openTabIds, activeTabBookId),
 )
 
-private fun SharedReaderScreenState.withLibraryFeatureState(feature: LibraryFeatureState) = copy(
+/** Copies a projection result back onto the originating reader screen state. */
+fun SharedReaderScreenState.withLibraryFeatureState(feature: LibraryFeatureState) = copy(
     sortOrder = feature.sortOrder,
     shelves = feature.shelves,
     viewingShelfId = feature.viewingShelfId,

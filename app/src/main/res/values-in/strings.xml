@@ -341,6 +341,7 @@
     <string name="banner_clearing_cloud_local_data">Menghapus semua data cloud dan lokal…</string>
     <string name="banner_cloud_local_data_cleared">Semua data cloud dan lokal berhasil dihapus.</string>
     <string name="error_clear_all_data">Kesalahan: Gagal menghapus semua data.</string>
+    <string name="error_cloud_delete_pending">Tidak dapat terhubung ke cloud. Penghapusan Anda akan otomatis selesai saat Anda kembali online.</string>
     <string name="banner_local_data_cleared">Semua data lokal dihapus.</string>
     <string name="error_sign_in_failed">Gagal masuk. Silakan coba lagi.</string>
     <string name="error_no_google_account">Tidak dapat menemukan akun Google. Hal ini dapat terjadi pada instalasi baru, silakan coba lagi sebentar lagi.</string>

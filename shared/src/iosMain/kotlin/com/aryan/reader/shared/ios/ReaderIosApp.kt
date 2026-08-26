@@ -6430,14 +6430,15 @@ private fun SharedReaderScreenState.removeIosBooks(
                 SharedFileCapabilities.capabilityFor(book.type)?.syncEligible == true &&
                 !SharedFileCapabilities.isManualOnlyReaderFileName(book.displayName)
         }
-        (cloudBookTombstones + deletedBooks.map { book ->
-            CloudBookTombstone(
-                bookId = book.id,
-                type = book.type.name,
-                deletedAt = deletedAt,
-            )
-        }).groupBy(CloudBookTombstone::bookId)
-            .map { (_, tombstones) -> tombstones.maxBy(CloudBookTombstone::deletedAt) }
+        mergeCloudBookTombstones(
+            cloudBookTombstones + deletedBooks.map { book ->
+                CloudBookTombstone(
+                    bookId = book.id,
+                    type = book.type.name,
+                    deletedAt = deletedAt,
+                )
+            }
+        )
     } else {
         cloudBookTombstones
     }

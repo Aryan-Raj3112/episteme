@@ -2350,14 +2350,14 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 bookStore.deleteFilePermanently(listOf(localItem.bookId))
             },
         )
-        cloudBookDeleteOutbox.remove(listOf(tombstone.bookId))
+        cloudBookDeleteOutbox.remove(userId, listOf(tombstone.bookId))
     }
 
     private suspend fun retryPendingCloudBookDeletes(
         accessToken: String,
         userId: String,
     ) {
-        val pending = cloudBookDeleteOutbox.pending()
+        val pending = cloudBookDeleteOutbox.pending(userId)
         if (pending.isEmpty()) return
         val remoteFiles = googleDriveRepository.getFilesOrThrow(accessToken).files
         val remoteFilesByName = remoteFiles.associateBy(DriveFile::name)
@@ -4079,7 +4079,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     },
                     clearLocal = {
                         bookArtifactStore.clearAllLocalData()
-                        cloudBookDeleteOutbox.clear()
+                        cloudBookDeleteOutbox.clear(currentUser.uid)
                         prefs.edit { remove(KEY_LAST_SYNC_TIMESTAMP) }
                     },
                 ).clearAll(CloudMaintenanceIntent(currentUser.uid))
@@ -7337,6 +7337,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                                     // crash or network failure leaves these
                                     // shared tombstones available for retry.
                                     cloudBookDeleteOutbox.enqueue(
+                                        currentUser.uid,
                                         cloudItems.map { item ->
                                             CloudBookTombstone(
                                                 bookId = item.bookId,

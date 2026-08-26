@@ -42,12 +42,8 @@ private fun mergedCloudBookTombstones(
     val activeBooks = (local.books + remote.books)
         .groupBy(BookItem::id)
         .mapValues { (_, books) -> books.maxOf(BookItem::cloudModifiedTimestamp) }
-    return (local.bookTombstones + remote.bookTombstones)
-        .groupBy(CloudBookTombstone::bookId)
-        .mapNotNull { (bookId, tombstones) ->
-            val newest = tombstones.maxBy(CloudBookTombstone::deletedAt)
-            newest.takeIf { it.deletedAt > (activeBooks[bookId] ?: Long.MIN_VALUE) }
-        }
+    return mergeCloudBookTombstones(local.bookTombstones + remote.bookTombstones)
+        .filter { it.deletedAt > (activeBooks[it.bookId] ?: Long.MIN_VALUE) }
 }
 
 /**

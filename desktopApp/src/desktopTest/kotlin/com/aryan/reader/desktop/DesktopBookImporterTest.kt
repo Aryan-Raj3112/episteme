@@ -10,6 +10,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class DesktopBookImporterTest {
     @Test
@@ -53,6 +54,71 @@ class DesktopBookImporterTest {
             assertNull(prepared.sourceFolder)
             assertNull(prepared.id)
             assertFalse(store.listFiles().orEmpty().any { it.isFile })
+        } finally {
+            tempRoot.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `delete imported file removes managed file when nothing else references it`() {
+        val tempRoot = Files.createTempDirectory("episteme-book-importer-test").toFile()
+        try {
+            val store = File(tempRoot, "books")
+            val importer = DesktopBookImporter(store)
+            val managed = importer.createBookFile("abc.epub").apply { writeText("book") }
+
+            val deleted = importer.deleteImportedBookFileIfUnreferenced(
+                path = managed.absolutePath,
+                otherReferencingPaths = listOf("/elsewhere/other.epub")
+            )
+
+            assertTrue(deleted)
+            assertFalse(managed.exists())
+        } finally {
+            tempRoot.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `delete imported file keeps content addressed storage shared between entries`() {
+        val tempRoot = Files.createTempDirectory("episteme-book-importer-test").toFile()
+        try {
+            val store = File(tempRoot, "books")
+            val importer = DesktopBookImporter(store)
+            val managed = importer.createBookFile("shared-hash.epub").apply { writeText("book") }
+
+            val deleted = importer.deleteImportedBookFileIfUnreferenced(
+                path = managed.absolutePath,
+                otherReferencingPaths = listOf(
+                    "/unrelated/other.epub",
+                    File(managed.parentFile, "./${managed.name}").absolutePath
+                )
+            )
+
+            assertFalse(deleted)
+            assertTrue(managed.exists())
+        } finally {
+            tempRoot.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `delete imported file never touches user owned paths outside managed storage`() {
+        val tempRoot = Files.createTempDirectory("episteme-book-importer-test").toFile()
+        try {
+            val importer = DesktopBookImporter(File(tempRoot, "books"))
+            val userOwned = File(tempRoot, "folder-sync/Book.epub").apply {
+                parentFile?.mkdirs()
+                writeText("user data")
+            }
+
+            val deleted = importer.deleteImportedBookFileIfUnreferenced(
+                path = userOwned.absolutePath,
+                otherReferencingPaths = emptyList()
+            )
+
+            assertFalse(deleted)
+            assertTrue(userOwned.exists())
         } finally {
             tempRoot.deleteRecursively()
         }

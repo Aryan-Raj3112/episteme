@@ -2,10 +2,11 @@ package com.aryan.reader.data
 
 import android.content.SharedPreferences
 import com.aryan.reader.shared.CloudBookTombstone
+import com.aryan.reader.shared.mergeCloudBookTombstones
 import org.json.JSONArray
 import org.json.JSONObject
 
-private const val CLOUD_BOOK_DELETE_OUTBOX_KEY = "cloud_book_delete_outbox_v1"
+private const val CLOUD_BOOK_DELETE_OUTBOX_KEY_PREFIX = "cloud_book_delete_outbox_v2_"
 
 /** JSON codec kept separate so the durable outbox can be tested without Android storage. */
 internal object CloudBookDeleteOutboxCodec {
@@ -56,42 +57,49 @@ internal class AndroidCloudBookDeleteOutbox(
     private val preferences: SharedPreferences,
 ) {
     @Synchronized
-    fun pending(): List<CloudBookTombstone> = CloudBookDeleteOutboxCodec.decode(
-        preferences.getString(CLOUD_BOOK_DELETE_OUTBOX_KEY, null),
+    fun pending(accountId: String): List<CloudBookTombstone> = CloudBookDeleteOutboxCodec.decode(
+        preferences.getString(scopedKey(accountId), null),
     )
 
     @Synchronized
-    fun enqueue(tombstones: Collection<CloudBookTombstone>) {
-        val merged = (pending() + tombstones)
-            .filter { it.bookId.isNotBlank() }
-            .groupBy(CloudBookTombstone::bookId)
-            .map { (_, values) -> values.maxBy(CloudBookTombstone::deletedAt) }
-            .sortedBy(CloudBookTombstone::bookId)
-        preferences.edit()
-            .putString(CLOUD_BOOK_DELETE_OUTBOX_KEY, CloudBookDeleteOutboxCodec.encode(merged))
+    fun enqueue(accountId: String, tombstones: Collection<CloudBookTombstone>): Boolean {
+        if (tombstones.isEmpty()) return true
+        val merged = mergeCloudBookTombstones(pending(accountId) + tombstones)
+        return preferences.edit()
+            .putString(scopedKey(accountId), CloudBookDeleteOutboxCodec.encode(merged))
             .commit()
     }
 
     @Synchronized
-    fun remove(bookIds: Collection<String>) {
+    fun remove(accountId: String, bookIds: Collection<String>): Boolean {
         val ids = bookIds.toSet()
-        if (ids.isEmpty()) return
-        val remaining = pending().filterNot { it.bookId in ids }
+        if (ids.isEmpty()) return true
+        val remaining = pending(accountId).filterNot { it.bookId in ids }
         val editor = preferences.edit()
         if (remaining.isEmpty()) {
-            editor.remove(CLOUD_BOOK_DELETE_OUTBOX_KEY)
+            editor.remove(scopedKey(accountId))
         } else {
-            editor.putString(CLOUD_BOOK_DELETE_OUTBOX_KEY, CloudBookDeleteOutboxCodec.encode(remaining))
+            editor.putString(scopedKey(accountId), CloudBookDeleteOutboxCodec.encode(remaining))
         }
-        editor.commit()
+        return editor.commit()
     }
 
     @Synchronized
-    fun clear() {
-        preferences.edit()
-            .remove(CLOUD_BOOK_DELETE_OUTBOX_KEY)
+    fun clear(accountId: String): Boolean {
+        // The v1 key deliberately remains untouched. It has no account
+        // identity, so processing it after an account switch could delete a
+        // different user's Drive file. New intents are always v2-scoped.
+        return preferences.edit()
+            .remove(scopedKey(accountId))
             .commit()
     }
+
+    private fun scopedKey(accountId: String): String {
+        val normalizedAccountId = accountId.trim()
+        require(normalizedAccountId.isNotEmpty()) { "Cloud delete outbox requires an account id" }
+        return CLOUD_BOOK_DELETE_OUTBOX_KEY_PREFIX + normalizedAccountId
+    }
+
 }
 
 /**

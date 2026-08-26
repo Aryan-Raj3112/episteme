@@ -362,6 +362,7 @@
     <string name="banner_clearing_cloud_local_data">Kõigi pilve- ja kohalike andmete kustutamine…</string>
     <string name="banner_cloud_local_data_cleared">Kõik pilve- ja kohalikud andmed kustutati edukalt.</string>
     <string name="error_clear_all_data">Viga: kõigi andmete kustutamine ebaõnnestus.</string>
+    <string name="error_cloud_delete_pending">Pilvega ei saanud ühendust. Teie kustutamine lõpetatakse automaatselt järgmisel võrguühenduse korral.</string>
     <string name="banner_local_data_cleared">Kõik kohalikud andmed kustutati.</string>
     <string name="error_sign_in_failed">Sisselogimine ebaõnnestus. Palun proovi uuesti.</string>
     <string name="error_no_google_account">Ei leitud Google konto. See võib juhtuda värske installi korral, proovige mõne aja pärast uuesti.</string>

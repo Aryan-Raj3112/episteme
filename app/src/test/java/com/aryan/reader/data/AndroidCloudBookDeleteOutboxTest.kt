@@ -27,7 +27,7 @@ class AndroidCloudBookDeleteOutboxTest {
         every { editor.remove(any()) } returns editor
         every { editor.commit() } returns true
 
-        AndroidCloudBookDeleteOutbox(preferences).clear()
+        AndroidCloudBookDeleteOutbox(preferences).clear("user-a")
 
         verify { editor.remove(any()) }
         verify { editor.commit() }

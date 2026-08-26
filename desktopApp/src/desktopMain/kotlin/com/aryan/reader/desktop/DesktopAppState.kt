@@ -7,6 +7,8 @@ import com.aryan.reader.shared.SharedLibrarySnapshot
 import com.aryan.reader.shared.SharedLibraryStateProjector
 import com.aryan.reader.shared.SharedReaderScreenState
 import com.aryan.reader.shared.ShelfRecord
+import com.aryan.reader.shared.toLibraryFeatureState
+import com.aryan.reader.shared.withLibraryFeatureState
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.SharedEpubBook
 import com.aryan.reader.shared.reader.SharedEpubChapter
@@ -101,19 +103,21 @@ internal fun SharedLibraryStateProjector.projectDesktopLibraryState(
 ): SharedReaderScreenState {
     val allBooks = state.rawLibraryBooks
     val visibleBooks = allBooks.filterNot { isDesktopPdfReflowBookId(it.id) }
-    val projected = project(
+    val projectedFeature = project(
         SharedLibraryProjectionInput(
-            state = state,
+            state = state.toLibraryFeatureState(),
             booksFromStore = visibleBooks,
             shelfRecords = shelfRecords,
             shelfRefs = shelfRefs,
             tags = state.allTags.ifEmpty { visibleBooks.collectTags() }
         )
     )
+    // Desktop resolves raw books and reader tabs against every book, including
+    // reflow-mode books that are deliberately excluded from the projection.
     val booksById = allBooks.associateBy { it.id }
     val openTabs = state.openTabIds.mapNotNull { booksById[it] }
     val openTabIds = openTabs.map { it.id }
-    return projected.copy(
+    return state.withLibraryFeatureState(projectedFeature).copy(
         rawLibraryBooks = allBooks,
         openTabs = openTabs,
         openTabIds = openTabIds,

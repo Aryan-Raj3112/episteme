@@ -323,6 +323,7 @@
     <string name="banner_clearing_cloud_local_data">جاري مسح كافة البيانات السحابية والمحلية…</string>
     <string name="banner_cloud_local_data_cleared">تم مسح كافة البيانات السحابية والمحلية بنجاح.</string>
     <string name="error_clear_all_data">خطأ: فشل مسح كافة البيانات.</string>
+    <string name="error_cloud_delete_pending">تعذّر الاتصال بالسحابة. سيكتمل الحذف تلقائيًا في المرة القادمة التي تكون فيها متصلاً بالإنترنت.</string>
     <string name="banner_local_data_cleared">تم مسح كافة البيانات المحلية.</string>
     <string name="error_sign_in_failed">فشل تسجيل الدخول. يرجى المحاولة مرة أخرى.</string>
     <string name="error_no_google_account">تعذر العثور على حساب Google. قد يحدث هذا عند تثبيت التطبيق لأول مرة، يرجى المحاولة مرة أخرى بعد قليل.</string>

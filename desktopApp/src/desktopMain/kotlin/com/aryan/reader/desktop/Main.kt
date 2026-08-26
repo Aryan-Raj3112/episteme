@@ -36,6 +36,7 @@ import com.aryan.reader.shared.AppFontPreference
 import com.aryan.reader.shared.BannerMessage
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.BookShelfRef
+import com.aryan.reader.shared.CloudBookTombstone
 import com.aryan.reader.shared.CustomFontItem
 import com.aryan.reader.shared.FileType
 import com.aryan.reader.shared.ImportedBookFile
@@ -148,6 +149,7 @@ private const val DesktopReaderCloseDisposeSyncDelayMillis = 350L
 private const val DesktopVerticalInitialPreparedHtmlChapterRadius = 2
 private const val DesktopLibraryOpenPersistDebounceMillis = 300L
 private const val DesktopCloudContentRetryDelayMillis = 10_000L
+private const val DesktopCloudDeletePendingBanner = "Couldn't reach the cloud. Your deletion will finish automatically the next time you're online."
 private const val DesktopReaderPositionPersistDebounceMillis = 650L
 private const val DesktopProgressEpsilon = 0.001f
 
@@ -239,6 +241,7 @@ internal fun EpistemeDesktopApp(
     val desktopInstallationIdStore = remember { DesktopInstallationIdStore() }
     val desktopFirestoreRepository = remember { DesktopFirestoreRepository(desktopCloudConfig) }
     val desktopGoogleDriveRepository = remember { DesktopGoogleDriveRepository() }
+    val desktopCloudBookDeleteOutbox = remember { DesktopCloudBookDeleteOutbox() }
     val desktopCloudSync = remember {
         DesktopCloudSync(
             firestoreRepository = desktopFirestoreRepository,
@@ -870,6 +873,47 @@ internal fun EpistemeDesktopApp(
         }
     }
 
+    fun desktopCloudDeletableBook(book: BookItem): Boolean {
+        return book.sourceFolder == null &&
+            !isDesktopPdfReflowBookId(book.id) &&
+            book.path?.startsWith("opds-pse") != true &&
+            !SharedFileCapabilities.isManualOnlyReaderFileName(book.displayName)
+    }
+
+    /**
+     * Drains queued cloud deletions before the destructive merge pass. Returns
+     * false when tombstones remain pending so the caller can abort the sync —
+     * a pending delete must remain the only destructive operation, otherwise a
+     * merge could re-upload a book that is being deleted.
+     */
+    suspend fun drainPendingDesktopCloudBookDeletes(credentials: DesktopCloudSyncCredentials): Boolean {
+        val pending = desktopCloudBookDeleteOutbox.pending(credentials.userId)
+        if (pending.isEmpty()) return true
+        logDesktopCloudSync { "desktop.full_sync.pending_deletes count=${pending.size}" }
+        val result = try {
+            withContext(Dispatchers.IO) {
+                desktopCloudSync.deleteBooksFromCloud(
+                    userId = credentials.userId,
+                    idToken = credentials.idToken,
+                    accessToken = credentials.driveAccessToken,
+                    deviceId = credentials.deviceId,
+                    tombstones = pending
+                )
+            }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            logDesktopCloudSync { "desktop.full_sync.pending_deletes_failed error=\"${error.message.orEmpty().logPreview(240)}\"" }
+            updateState(state.withBanner(DesktopCloudDeletePendingBanner, isError = true))
+            return false
+        }
+        val removed = desktopCloudBookDeleteOutbox.remove(credentials.userId, result.succeededBookIds)
+        if (result.failedBookIds.isEmpty() && removed) return true
+        logDesktopCloudSync { "desktop.full_sync.aborted reason=pending_delete_failed books=${result.failedBookIds.sorted().joinToString()}" }
+        updateState(state.withBanner(DesktopCloudDeletePendingBanner, isError = true))
+        return false
+    }
+
     fun syncDesktopCloud(showBanner: Boolean = false): Job {
         desktopCloudSyncJob?.takeIf { it.isActive }?.let {
             logDesktopCloudSync { "desktop.full_sync.reuse_active showBanner=$showBanner" }
@@ -882,6 +926,9 @@ internal fun EpistemeDesktopApp(
             }
             val credentials = desktopCloudSyncCredentials(showBanner) ?: run {
                 logDesktopCloudSync { "desktop.full_sync.skip reason=missing_credentials showBanner=$showBanner" }
+                return@launch
+            }
+            if (!drainPendingDesktopCloudBookDeletes(credentials)) {
                 return@launch
             }
             val snapshotState = state
@@ -1373,16 +1420,50 @@ internal fun EpistemeDesktopApp(
 
     fun deleteBooksFromDesktopCloud(books: List<BookItem>) {
         if (!state.isSyncEnabled || books.isEmpty()) return
+        val accountId = state.currentUser?.uid ?: return
+        val tombstones = books.filter(::desktopCloudDeletableBook).map { book ->
+            CloudBookTombstone(
+                bookId = book.id,
+                type = book.type.name,
+                deletedAt = System.currentTimeMillis()
+            )
+        }
+        if (tombstones.isEmpty()) return
+        // Persist before any remote work. A crash or network failure leaves
+        // these tombstones queued for the next sync instead of leaking the
+        // Drive payloads or losing the deletion intent.
+        if (!desktopCloudBookDeleteOutbox.enqueue(accountId, tombstones)) {
+            updateState(state.withBanner(DesktopCloudDeletePendingBanner, isError = true))
+            return
+        }
         scope.launch {
             val credentials = desktopCloudSyncCredentials(showBanner = false) ?: return@launch
-            withContext(Dispatchers.IO) {
-                desktopCloudSync.deleteBooksFromCloud(
-                    userId = credentials.userId,
-                    idToken = credentials.idToken,
-                    accessToken = credentials.driveAccessToken,
-                    deviceId = credentials.deviceId,
-                    books = books
-                )
+            if (credentials.userId != accountId) {
+                updateState(state.withBanner(DesktopCloudDeletePendingBanner, isError = true))
+                return@launch
+            }
+            val result = try {
+                withContext(Dispatchers.IO) {
+                    desktopCloudSync.deleteBooksFromCloud(
+                        userId = credentials.userId,
+                        idToken = credentials.idToken,
+                        accessToken = credentials.driveAccessToken,
+                        deviceId = credentials.deviceId,
+                        tombstones = desktopCloudBookDeleteOutbox.pending(credentials.userId)
+                    )
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                logDesktopCloudSync {
+                    "desktop.delete.drain_failed error=\"${error.message.orEmpty().logPreview(240)}\""
+                }
+                updateState(state.withBanner(DesktopCloudDeletePendingBanner, isError = true))
+                return@launch
+            }
+            val removed = desktopCloudBookDeleteOutbox.remove(credentials.userId, result.succeededBookIds)
+            if (result.failedBookIds.isNotEmpty() || !removed) {
+                updateState(state.withBanner(DesktopCloudDeletePendingBanner, isError = true))
             }
         }
     }
@@ -3051,6 +3132,15 @@ internal fun EpistemeDesktopApp(
         val booksToRemove = state.rawLibraryBooks.filter { it.id in state.selectedBookIds }
         closeReaderWindowsForBookIds(booksToRemove.mapTo(mutableSetOf()) { it.id })
         SharedLibraryEditor.removeSelectedBooks(state, shelfRecords, shelfRefs)?.let {
+            // Content-addressed storage may be shared between entries, so each
+            // managed file is removed only once nothing else references it.
+            val survivingPaths = it.state.rawLibraryBooks.mapNotNull { book -> book.path }
+            booksToRemove.forEach { book ->
+                desktopBookImporter.deleteImportedBookFileIfUnreferenced(
+                    path = book.path,
+                    otherReferencingPaths = survivingPaths
+                )
+            }
             replaceLibrary(it.state, records = it.shelfRecords, refs = it.shelfRefs)
             deleteBooksFromDesktopCloud(booksToRemove)
         }

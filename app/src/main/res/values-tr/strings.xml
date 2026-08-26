@@ -356,6 +356,7 @@
     <string name="banner_clearing_cloud_local_data">Tüm bulut ve yerel veriler temizleniyor…</string>
     <string name="banner_cloud_local_data_cleared">Tüm bulut ve yerel veriler temizlendi.</string>
     <string name="error_clear_all_data">Hata: Tüm veriler temizlenemedi.</string>
+    <string name="error_cloud_delete_pending">Buluta ulaşılamadı. Silme işleminiz bir sonraki çevrimiçi olduğunuzda otomatik olarak tamamlanacak.</string>
     <string name="banner_local_data_cleared">Tüm yerel veriler temizlendi.</string>
     <string name="error_sign_in_failed">Giriş başarısız oldu. Lütfen yeniden deneyin.</string>
     <string name="error_sign_in_internet">Giriş yapılırken bir hata oluştu. Lütfen internet bağlantınızı kontrol edin.</string>

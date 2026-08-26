@@ -379,6 +379,7 @@
     <string name="banner_clearing_cloud_local_data">Очищення всіх хмарних і локальних даних…</string>
     <string name="banner_cloud_local_data_cleared">Усі хмарні та локальні дані успішно очищено.</string>
     <string name="error_clear_all_data">Помилка: не вдалося видалити всі дані.</string>
+    <string name="error_cloud_delete_pending">Не вдалося з\'єднатися з хмарою. Видалення завершиться автоматично під час наступного підключення до інтернету.</string>
     <string name="banner_local_data_cleared">Усі локальні дані видалено.</string>
     <string name="error_sign_in_failed">Помилка входу. Спробуйте ще раз.</string>
     <string name="error_no_google_account">Не вдалося знайти обліковий запис Google. Це може статися під час нової інсталяції, спробуйте ще раз за мить.</string>
