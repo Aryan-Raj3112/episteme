@@ -1,8 +1,14 @@
 package com.aryan.reader
 
 import android.net.Uri
+import androidx.work.ListenableWorker
+import androidx.work.WorkManager
+import androidx.work.WorkerParameters
 import com.aryan.reader.data.CloudFolderSafEntry
 import com.aryan.reader.data.CloudFolderSafScanResult
+import com.aryan.reader.data.CloudFolderManifestReadResult
+import com.aryan.reader.data.CloudFolderManifestHead
+import com.aryan.reader.data.legacyCloudFolderManifestHeadCandidate
 import com.aryan.reader.shared.CloudFolderManifest
 import com.aryan.reader.shared.CloudFolderNode
 import com.aryan.reader.shared.CloudFolderNodeKind
@@ -11,15 +17,143 @@ import com.aryan.reader.shared.CloudFolderSyncDirection
 import com.aryan.reader.shared.CloudFolderSyncOperation
 import com.aryan.reader.shared.CloudFolderSyncOperationKind
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.runner.RunWith
 import org.junit.Test
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
+import io.mockk.every
+import io.mockk.mockk
+import io.mockk.mockkObject
+import io.mockk.unmockkObject
+import io.mockk.verify
+import kotlinx.coroutines.runBlocking
+import java.io.File
 
 @RunWith(RobolectricTestRunner::class)
 class CloudFolderSyncWorkerTest {
+    @Test
+    fun legacyDriveManifestProducesBootstrapHeadOnlyWhenFirestoreHeadIsAbsent() {
+        val manifest = manifest(revision = 4L)
+        val remote = CloudFolderManifestReadResult.Found(
+            manifest = manifest,
+            driveFileId = "drive-manifest-4",
+        )
+        val candidate = legacyCloudFolderManifestHeadCandidate(
+            remote = remote,
+            existingHead = null,
+            manifestHash = "sha256:${"a".repeat(64)}",
+        )
+
+        assertEquals("root", candidate?.rootId)
+        assertEquals(4L, candidate?.revision)
+        assertEquals("drive-manifest-4", candidate?.manifestDriveFileId)
+        assertEquals(
+            null,
+            legacyCloudFolderManifestHeadCandidate(
+                remote = remote,
+                existingHead = CloudFolderManifestHead(
+                    rootId = "root",
+                    revision = 4L,
+                    manifestDriveFileId = "existing",
+                    manifestHash = "sha256:${"b".repeat(64)}",
+                ),
+                manifestHash = "sha256:${"a".repeat(64)}",
+            ),
+        )
+        assertEquals(
+            null,
+            legacyCloudFolderManifestHeadCandidate(
+                remote = CloudFolderManifestReadResult.NotFound,
+                existingHead = null,
+                manifestHash = "sha256:${"a".repeat(64)}",
+            ),
+        )
+    }
+
+    @Test
+    fun disabledCloudSyncMakesWorkerExitBeforeAccountOrDriveAccess() = runBlocking {
+        val context = RuntimeEnvironment.getApplication()
+        val prefs = context.getSharedPreferences("reader_user_prefs", android.content.Context.MODE_PRIVATE)
+        prefs.edit().remove(KEY_SYNC_ENABLED).commit()
+
+        val worker = CloudFolderSyncWorker(context, mockk<WorkerParameters>(relaxed = true))
+
+        assertTrue(worker.doWork() is ListenableWorker.Result.Success)
+    }
+
+    @Test
+    fun appPrivateOfflineRootRejectsTraversalAndKeepsValidIdsInsideStorage() {
+        val filesDir = RuntimeEnvironment.getApplication().filesDir
+        val base = java.io.File(filesDir, "cloud-folder-sync").canonicalFile
+        val valid = cloudFolderAppRootDirectory(filesDir, "folder_root_${"a".repeat(32)}")
+
+        assertTrue(valid.path.startsWith(base.path + java.io.File.separator))
+        listOf("../outside", "nested/root", "/absolute", ".", "..").forEach { unsafeRootId ->
+            assertTrue(
+                "Expected traversal root ID to be rejected: $unsafeRootId",
+                runCatching { cloudFolderAppRootDirectory(filesDir, unsafeRootId) }.isFailure,
+            )
+        }
+    }
+
+    @Test
+    fun cancelForAccountCancelsAccountTagAndLegacyUniqueWork() {
+        val workManager = mockk<WorkManager>(relaxed = true)
+        mockkObject(WorkManager.Companion)
+        every { WorkManager.getInstance(any()) } returns workManager
+        try {
+            CloudFolderSyncWorker.cancelForAccount(
+                context = RuntimeEnvironment.getApplication(),
+                accountId = "account-1",
+            )
+
+            verify {
+                workManager.cancelAllWorkByTag(match {
+                    it.startsWith("${CloudFolderSyncWorker.WORK_NAME}:account:")
+                })
+            }
+            verify { workManager.cancelUniqueWork(CloudFolderSyncWorker.WORK_NAME) }
+        } finally {
+            unmockkObject(WorkManager.Companion)
+        }
+    }
+
+    @Test
+    fun clearOfflineMaterializationRemovesOnlyTheDedicatedRoot() = runBlocking {
+        val filesDir = RuntimeEnvironment.getApplication().filesDir
+        val rootId = "offline-${System.nanoTime()}"
+        val root = cloudFolderAppRootDirectory(filesDir, rootId)
+        val outside = File(filesDir, "offline-sentinel-${System.nanoTime()}").apply {
+            writeText("preserve")
+        }
+        root.resolve("nested/Book.epub").apply {
+            parentFile?.mkdirs()
+            writeText("offline")
+        }
+
+        CloudFolderSyncWorker.clearOfflineMaterialization(RuntimeEnvironment.getApplication(), rootId)
+
+        assertFalse(root.exists())
+        assertTrue(outside.exists())
+        outside.delete()
+        Unit
+    }
+
+    @Test
+    fun appMaterializationRootRejectsPathTraversal() {
+        val filesDir = RuntimeEnvironment.getApplication().filesDir
+
+        val failure = runCatching {
+            cloudFolderAppRootDirectory(filesDir, "../outside")
+        }.exceptionOrNull()
+
+        assertTrue(failure is IllegalArgumentException)
+    }
+
     @Test
     fun localSnapshotPreservesStableObjectIdWhenContentIsUnchanged() {
         val baseNode = fileNode(
@@ -120,7 +254,10 @@ class CloudFolderSyncWorkerTest {
             scannedAt = 20L,
         )
 
-    private fun manifest(revision: Long, nodes: List<CloudFolderNode>): CloudFolderManifest =
+    private fun manifest(
+        revision: Long,
+        nodes: List<CloudFolderNode> = emptyList(),
+    ): CloudFolderManifest =
         CloudFolderManifest(
             root = CloudFolderRoot(
                 rootId = "root",

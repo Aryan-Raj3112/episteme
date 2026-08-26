@@ -496,7 +496,11 @@ fun CloudFolderManifest.validationIssues(): List<CloudFolderManifestIssue> {
     if (root.rootId.trim().isBlank() || root.name.trim().isBlank()) {
         issues += CloudFolderManifestIssue(CloudFolderManifestIssueType.INVALID_ROOT)
     }
-    if (root.rootId.trim().isBlank()) {
+    val rootId = root.rootId.trim()
+    if (rootId.isBlank() || rootId == "." || rootId == ".." || rootId.any { character ->
+            character == '/' || character == '\\' || character == '\u0000'
+        }
+    ) {
         issues += CloudFolderManifestIssue(CloudFolderManifestIssueType.INVALID_ROOT_ID)
     } else if (root.rootId.length > MAX_CLOUD_FOLDER_MANIFEST_ID_LENGTH) {
         issues += CloudFolderManifestIssue(
@@ -854,6 +858,14 @@ data class CloudFolderSyncOperation(
     val contentHash: String? = null,
     val sizeBytes: Long = 0L,
     val revision: Long = 0L,
+    /**
+     * Optional source identity used by conflict-copy operations.  A
+     * keep-both resolution can create a new logical node while its bytes are
+     * still read from the original local node.  Keeping that relationship in
+     * the operation makes retries deterministic and avoids guessing from a
+     * renamed path.
+     */
+    val sourceNodeId: String? = null,
 )
 
 @Serializable
@@ -894,6 +906,68 @@ enum class CloudFolderConflictResolution {
     KEEP_REMOTE,
     KEEP_BOTH,
     DEFER,
+}
+
+/**
+ * A delete/update conflict has only one surviving byte stream.  There is no
+ * local file to copy when the local side deleted it, and no remote file to
+ * copy when the cloud side deleted it.  Treating KEEP_BOTH as the available
+ * update side keeps the persisted action safe while avoiding the false claim
+ * that two versions can be retained.
+ */
+fun CloudFolderConflictType.effectiveResolution(
+    resolution: CloudFolderConflictResolution,
+): CloudFolderConflictResolution = when {
+    resolution != CloudFolderConflictResolution.KEEP_BOTH -> resolution
+    this == CloudFolderConflictType.DELETE_VS_UPDATE -> CloudFolderConflictResolution.KEEP_REMOTE
+    this == CloudFolderConflictType.UPDATE_VS_DELETE -> CloudFolderConflictResolution.KEEP_LOCAL
+    else -> resolution
+}
+
+/** Whether this conflict can actually retain two active byte streams. */
+fun CloudFolderConflictType.supportsKeepBoth(): Boolean = when (this) {
+    CloudFolderConflictType.CONTENT_CHANGED_BOTH,
+    CloudFolderConflictType.METADATA_CHANGED_BOTH,
+    CloudFolderConflictType.MOVE_CHANGED_BOTH,
+    CloudFolderConflictType.TYPE_CHANGED,
+    CloudFolderConflictType.PATH_COLLISION -> true
+    CloudFolderConflictType.INVALID_MANIFEST,
+    CloudFolderConflictType.DELETE_VS_UPDATE,
+    CloudFolderConflictType.UPDATE_VS_DELETE,
+    CloudFolderConflictType.ROOT_METADATA_CHANGED_BOTH,
+    CloudFolderConflictType.ROOT_MISMATCH,
+    CloudFolderConflictType.INVALID_PATH,
+    CloudFolderConflictType.UNAVAILABLE_STATE -> false
+}
+
+/**
+ * Durable user-action state for one conflict observed by a sync plan.
+ *
+ * The complete conflict payload is retained so settings can explain the
+ * problem after process death or while offline.  Revision triples make a
+ * stored choice conditional: if either device changes the inputs before the
+ * choice is applied, the worker must surface a fresh conflict instead of
+ * applying an old decision to new bytes.
+ */
+@Serializable
+data class CloudFolderConflictRecord(
+    val conflict: CloudFolderConflict,
+    val baseRevision: Long,
+    val localRevision: Long,
+    val remoteRevision: Long,
+    val resolution: CloudFolderConflictResolution = CloudFolderConflictResolution.DEFER,
+    val createdAt: Long = 0L,
+    val updatedAt: Long = createdAt,
+) {
+    val conflictId: String get() = conflict.conflictId
+    val rootId: String get() = conflict.rootId
+
+    fun matches(plan: CloudFolderSyncPlan): Boolean =
+        rootId == plan.rootId &&
+            baseRevision == plan.baseRevision &&
+            localRevision == plan.localRevision &&
+            remoteRevision == plan.remoteRevision &&
+            plan.conflict(conflictId) == conflict
 }
 
 /**
@@ -972,7 +1046,11 @@ private fun entryStatesEquivalent(
     else -> false
 }
 
-/** Equality for merge decisions excludes provider object IDs and wall clocks. */
+/**
+ * Equality for merge decisions excludes provider object IDs and sync wall
+ * clocks, but includes file metadata that must be propagated independently of
+ * the bytes (MIME type and source-file modification time).
+ */
 private fun cloudFolderNodesEquivalent(first: CloudFolderNode, second: CloudFolderNode): Boolean {
     if (first.rootId != second.rootId) return false
     if (first.kind != second.kind) return false
@@ -980,19 +1058,30 @@ private fun cloudFolderNodesEquivalent(first: CloudFolderNode, second: CloudFold
         return false
     }
     if (first.kind == CloudFolderNodeKind.DIRECTORY) return true
+    if (!cloudFolderNodeContentEquivalent(first, second)) return false
+    return cloudFolderNodeMetadataEquivalent(first, second)
+}
+
+/**
+ * Byte identity is hash-first. When either side has no hash, retain the
+ * existing conservative size/timestamp fallback so an unknown byte change is
+ * never silently merged as equal.
+ */
+private fun cloudFolderNodeContentEquivalent(first: CloudFolderNode, second: CloudFolderNode): Boolean {
     val firstHash = canonicalCloudFolderContentHash(first.contentHash)
     val secondHash = canonicalCloudFolderContentHash(second.contentHash)
     if (firstHash != null && secondHash != null) {
         return firstHash == secondHash && first.sizeBytes == second.sizeBytes
     }
-    // Hashes are expected from an uploader.  Until one is available, retain
-    // timestamp/size checks rather than silently treating changed bytes as
-    // equal.
     return firstHash == secondHash &&
         first.sizeBytes == second.sizeBytes &&
-        first.fileModifiedAt == second.fileModifiedAt &&
-        first.mimeType == second.mimeType
+        first.fileModifiedAt == second.fileModifiedAt
 }
+
+/** Metadata that is meaningful for a file but does not identify its bytes. */
+private fun cloudFolderNodeMetadataEquivalent(first: CloudFolderNode, second: CloudFolderNode): Boolean =
+    first.mimeType == second.mimeType &&
+        first.fileModifiedAt == second.fileModifiedAt
 
 private fun cloudFolderTombstonesEquivalent(
     first: CloudFolderTombstone,
@@ -1455,6 +1544,246 @@ object CloudFolderSyncPlanner {
             mergedManifest = mergedManifest,
         )
     }
+
+    /**
+     * Re-run the same three-way planner after applying persisted user
+     * decisions.  Choices are applied as edits to one side of the merge so
+     * independent changes remain intact and every resulting operation still
+     * has the normal planner safety checks.
+     *
+     * KEEP_BOTH keeps the remote version at its original logical identity and
+     * creates a deterministic local conflict copy.  The copy is uploaded as a
+     * new node (with [CloudFolderSyncOperation.sourceNodeId] pointing to its
+     * source), which lets the executor preserve both byte streams without
+     * forging Drive metadata for an object owned by another node.
+     */
+    fun resolve(
+        base: CloudFolderManifest,
+        local: CloudFolderManifest,
+        remote: CloudFolderManifest,
+        plan: CloudFolderSyncPlan = plan(base, local, remote),
+        resolutions: Map<String, CloudFolderConflictResolution>,
+        nowMillis: Long = maxOf(local.generatedAt, remote.generatedAt),
+        deviceId: String = local.generatedByDeviceId,
+    ): CloudFolderSyncPlan {
+        if (plan.conflicts.isEmpty() || resolutions.isEmpty()) return plan
+
+        val normalizedBase = base.normalized()
+        val normalizedLocal = local.normalized()
+        val normalizedRemote = remote.normalized()
+        if (plan.rootId != normalizedBase.rootId ||
+            plan.baseRevision != normalizedBase.revision ||
+            plan.localRevision != normalizedLocal.revision ||
+            plan.remoteRevision != normalizedRemote.revision
+        ) {
+            // The supplied decision set belongs to a different snapshot. Do
+            // not reinterpret it against newer data.
+            return plan
+        }
+
+        val baseStates = normalizedBase.entryStates()
+        val localStates = normalizedLocal.entryStates()
+        val remoteStates = normalizedRemote.entryStates()
+        val localOverrides = linkedMapOf<String, CloudFolderEntryState>()
+        val remoteOverrides = linkedMapOf<String, CloudFolderEntryState>()
+        val localCopies = mutableListOf<CloudFolderNode>()
+        val sourceNodeByCopyId = linkedMapOf<String, String>()
+        val occupiedPaths = (normalizedBase.activeNodes() +
+            normalizedLocal.activeNodes() +
+            normalizedRemote.activeNodes())
+            .mapTo(mutableSetOf()) { it.pathKey }
+
+        fun baseState(nodeId: String): CloudFolderEntryState =
+            baseStates[nodeId] ?: CloudFolderEntryState.Absent
+
+        fun applyToAll(
+            nodeIds: Collection<String>,
+            target: MutableMap<String, CloudFolderEntryState>,
+            stateFor: (String) -> CloudFolderEntryState,
+        ) {
+            nodeIds.distinct().forEach { nodeId -> target[nodeId] = stateFor(nodeId) }
+        }
+
+        fun addLocalCopies(nodeIds: Collection<String>, conflict: CloudFolderConflict) {
+            val sourceNodes = nodeIds.distinct().mapNotNull { localStates[it]?.activeNodeOrNull() }
+            sourceNodes.forEach { sourceRoot ->
+                val sourceRootPath = normalizeCloudFolderRelativePath(sourceRoot.relativePath)
+                    ?: return@forEach
+                val copyRootPath = uniqueConflictCopyPath(sourceRootPath, occupiedPaths)
+                val descendants = normalizedLocal.activeNodes().filter { node ->
+                    val path = normalizeCloudFolderRelativePath(node.relativePath) ?: return@filter false
+                    path == sourceRootPath || path.startsWith("$sourceRootPath/")
+                }
+                descendants.forEach { source ->
+                    val sourcePath = normalizeCloudFolderRelativePath(source.relativePath)
+                        ?: return@forEach
+                    val suffix = sourcePath.removePrefix(sourceRootPath)
+                    val copyPath = copyRootPath + suffix
+                    val copyId = conflictCopyNodeId(conflict.conflictId, source.nodeId)
+                    val copy = source.copy(
+                        nodeId = copyId,
+                        relativePath = copyPath,
+                        // Directory entries have no payload. Files must be
+                        // uploaded under the copy identity; reusing a remote
+                        // content object would fail Drive metadata auth.
+                        contentObjectId = null,
+                        revision = maxOf(source.revision, plan.nextRevision),
+                        modifiedAt = nowMillis,
+                        modifiedByDeviceId = deviceId,
+                    )
+                    if (localCopies.none { it.nodeId == copyId }) {
+                        localCopies += copy
+                        occupiedPaths += copy.pathKey
+                        sourceNodeByCopyId[copyId] = source.nodeId
+                    }
+                    localOverrides[source.nodeId] = baseState(source.nodeId)
+                }
+            }
+        }
+
+        plan.conflicts.forEach { conflict ->
+            when (
+                conflict.type.effectiveResolution(
+                    resolutions[conflict.conflictId] ?: CloudFolderConflictResolution.DEFER,
+                )
+            ) {
+                CloudFolderConflictResolution.DEFER -> Unit
+                CloudFolderConflictResolution.KEEP_LOCAL -> when (conflict.type) {
+                    CloudFolderConflictType.ROOT_METADATA_CHANGED_BOTH ->
+                        remoteOverrides[normalizedRemote.root.rootId] = CloudFolderEntryState.Absent
+                    CloudFolderConflictType.PATH_COLLISION -> applyToAll(
+                        conflict.relatedNodeIds,
+                        remoteOverrides,
+                        ::baseState,
+                    )
+                    CloudFolderConflictType.INVALID_MANIFEST,
+                    CloudFolderConflictType.INVALID_PATH,
+                    CloudFolderConflictType.ROOT_MISMATCH -> Unit
+                    else -> remoteOverrides[conflict.nodeId] = baseState(conflict.nodeId)
+                }
+                CloudFolderConflictResolution.KEEP_REMOTE -> when (conflict.type) {
+                    CloudFolderConflictType.ROOT_METADATA_CHANGED_BOTH ->
+                        localOverrides[normalizedLocal.root.rootId] = CloudFolderEntryState.Absent
+                    CloudFolderConflictType.PATH_COLLISION -> applyToAll(
+                        conflict.relatedNodeIds,
+                        localOverrides,
+                        ::baseState,
+                    )
+                    CloudFolderConflictType.INVALID_MANIFEST,
+                    CloudFolderConflictType.INVALID_PATH,
+                    CloudFolderConflictType.ROOT_MISMATCH -> Unit
+                    else -> localOverrides[conflict.nodeId] = baseState(conflict.nodeId)
+                }
+                CloudFolderConflictResolution.KEEP_BOTH -> when (conflict.type) {
+                    CloudFolderConflictType.ROOT_METADATA_CHANGED_BOTH,
+                    CloudFolderConflictType.INVALID_MANIFEST,
+                    CloudFolderConflictType.INVALID_PATH,
+                    CloudFolderConflictType.ROOT_MISMATCH -> Unit
+                    CloudFolderConflictType.PATH_COLLISION -> {
+                        addLocalCopies(conflict.relatedNodeIds, conflict)
+                    }
+                    else -> {
+                        val localNode = localStates[conflict.nodeId]?.activeNodeOrNull()
+                        val remoteNode = remoteStates[conflict.nodeId]?.activeNodeOrNull()
+                        when {
+                            localNode != null && remoteNode != null ->
+                                addLocalCopies(listOf(conflict.nodeId), conflict)
+                            localNode != null -> remoteOverrides[conflict.nodeId] = baseState(conflict.nodeId)
+                            remoteNode != null -> localOverrides[conflict.nodeId] = baseState(conflict.nodeId)
+                        }
+                    }
+                }
+            }
+        }
+
+        val adjustedLocalEntries = applyEntryOverrides(
+            normalizedLocal.nodes,
+            normalizedLocal.tombstones,
+            localOverrides,
+        )
+        val adjustedRemoteEntries = applyEntryOverrides(
+            normalizedRemote.nodes,
+            normalizedRemote.tombstones,
+            remoteOverrides,
+        )
+        val adjustedLocal = normalizedLocal.copy(
+            nodes = adjustedLocalEntries.first + localCopies,
+            tombstones = adjustedLocalEntries.second,
+        )
+        val adjustedRemote = normalizedRemote.copy(
+            nodes = adjustedRemoteEntries.first,
+            tombstones = adjustedRemoteEntries.second,
+        )
+
+        // Root decisions need a manifest-side edit rather than an entry
+        // override.  Apply them after the immutable copies above so the
+        // intent remains obvious and no malformed root can be accepted.
+        val rootConflict = plan.conflicts.firstOrNull {
+            it.type == CloudFolderConflictType.ROOT_METADATA_CHANGED_BOTH
+        }
+        val rootChoice = rootConflict?.let { resolutions[it.conflictId] }
+        val rootAdjustedLocal = when (rootChoice) {
+            CloudFolderConflictResolution.KEEP_REMOTE -> adjustedLocal.copy(root = normalizedBase.root)
+            else -> adjustedLocal
+        }
+        val rootAdjustedRemote = when (rootChoice) {
+            CloudFolderConflictResolution.KEEP_LOCAL -> adjustedRemote.copy(root = normalizedBase.root)
+            else -> adjustedRemote
+        }
+        val resolved = plan(
+            base = normalizedBase,
+            local = rootAdjustedLocal,
+            remote = rootAdjustedRemote,
+            nowMillis = nowMillis,
+            deviceId = deviceId,
+        )
+        return resolved.copy(
+            operations = resolved.operations.map { operation ->
+                operation.copy(sourceNodeId = sourceNodeByCopyId[operation.nodeId])
+            },
+        )
+    }
+
+    private fun applyEntryOverrides(
+        nodes: List<CloudFolderNode>,
+        tombstones: List<CloudFolderTombstone>,
+        overrides: Map<String, CloudFolderEntryState>,
+    ): Pair<List<CloudFolderNode>, List<CloudFolderTombstone>> {
+        if (overrides.isEmpty()) return nodes to tombstones
+        val nodeIds = overrides.keys
+        val keptNodes = nodes.filterNot { it.nodeId in nodeIds }.toMutableList()
+        val keptTombstones = tombstones.filterNot { it.nodeId in nodeIds }.toMutableList()
+        overrides.forEach { (_, state) ->
+            when (state) {
+                CloudFolderEntryState.Absent -> Unit
+                is CloudFolderEntryState.Active -> keptNodes += state.node
+                is CloudFolderEntryState.Deleted -> keptTombstones += state.tombstone
+            }
+        }
+        return keptNodes to keptTombstones
+    }
+
+    private fun conflictCopyNodeId(conflictId: String, sourceNodeId: String): String =
+        "folder_copy_${localFolderSyncSha256ShortHex("$conflictId\u0000$sourceNodeId")}"
+
+    private fun uniqueConflictCopyPath(path: String, occupiedPaths: MutableSet<String>): String {
+        val normalized = normalizeCloudFolderRelativePath(path) ?: path
+        val slash = normalized.lastIndexOf('/')
+        val parent = normalized.substringBeforeLast('/', "")
+        val leaf = normalized.substring(slash + 1)
+        val dot = leaf.lastIndexOf('.').takeIf { it > 0 }
+        val stem = if (dot == null) leaf else leaf.substring(0, dot)
+        val extension = if (dot == null) "" else leaf.substring(dot)
+        var index = 0
+        while (true) {
+            val suffix = if (index == 0) " (Local copy)" else " (Local copy ${index + 1})"
+            val candidateLeaf = stem + suffix + extension
+            val candidate = if (parent.isBlank()) candidateLeaf else "$parent/$candidateLeaf"
+            val key = cloudFolderPathKey(candidate)
+            if (occupiedPaths.add(key)) return candidate
+            index++
+        }
+    }
 }
 
 fun planCloudFolderSync(
@@ -1464,3 +1793,22 @@ fun planCloudFolderSync(
     nowMillis: Long = maxOf(local.generatedAt, remote.generatedAt),
     deviceId: String = local.generatedByDeviceId,
 ): CloudFolderSyncPlan = CloudFolderSyncPlanner.plan(base, local, remote, nowMillis, deviceId)
+
+/** Apply persisted conflict choices against the exact three-way snapshot. */
+fun resolveCloudFolderSync(
+    base: CloudFolderManifest,
+    local: CloudFolderManifest,
+    remote: CloudFolderManifest,
+    plan: CloudFolderSyncPlan = planCloudFolderSync(base, local, remote),
+    resolutions: Map<String, CloudFolderConflictResolution>,
+    nowMillis: Long = maxOf(local.generatedAt, remote.generatedAt),
+    deviceId: String = local.generatedByDeviceId,
+): CloudFolderSyncPlan = CloudFolderSyncPlanner.resolve(
+    base = base,
+    local = local,
+    remote = remote,
+    plan = plan,
+    resolutions = resolutions,
+    nowMillis = nowMillis,
+    deviceId = deviceId,
+)

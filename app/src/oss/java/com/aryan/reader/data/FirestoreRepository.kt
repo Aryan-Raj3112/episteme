@@ -91,6 +91,14 @@ class FirestoreRepository {
         rootId: String,
     ): CloudFolderManifestHead? = null
 
+    suspend fun bootstrapCloudFolderManifestHead(
+        userId: String,
+        rootId: String,
+        manifestDriveFileId: String,
+        revision: Long,
+        manifestHash: String,
+    ): CloudFolderManifestHead? = null
+
     suspend fun reserveCloudFolderManifest(
         userId: String,
         rootId: String,

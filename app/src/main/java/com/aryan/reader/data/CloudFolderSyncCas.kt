@@ -29,3 +29,21 @@ sealed interface CloudFolderManifestLeaseResult {
     data object Unsupported : CloudFolderManifestLeaseResult
 }
 
+/**
+ * Derive the immutable head that a legacy Drive manifest may bootstrap. This
+ * pure decision keeps the worker from ever replacing an existing Firestore
+ * head; the repository still performs the final create-if-absent transaction.
+ */
+internal fun legacyCloudFolderManifestHeadCandidate(
+    remote: CloudFolderManifestReadResult,
+    existingHead: CloudFolderManifestHead?,
+    manifestHash: String,
+): CloudFolderManifestHead? {
+    if (existingHead != null || remote !is CloudFolderManifestReadResult.Found) return null
+    return CloudFolderManifestHead(
+        rootId = remote.manifest.rootId,
+        revision = remote.manifest.revision,
+        manifestDriveFileId = remote.driveFileId,
+        manifestHash = manifestHash,
+    )
+}

@@ -46,6 +46,117 @@ class CloudFolderDriveProtocolTest {
     }
 
     @Test
+    fun legacyObjectNamesRemainRecognizableWithoutExposingIds() {
+        val rootId = "root"
+        val nodeId = "node/with/a/path"
+        val legacyManifest = cloudFolderLegacyManifestDriveName(rootId)
+        val legacyContent = cloudFolderLegacyContentDriveName(rootId, nodeId)
+
+        assertEquals("${cloudFolderManifestDrivePrefix(rootId)}.json", legacyManifest)
+        assertEquals(
+            "cloud-folder-v1-content-${cloudFolderDriveSegment(rootId)}-${cloudFolderDriveSegment(nodeId)}",
+            legacyContent,
+        )
+        assertTrue("$rootId" !in legacyManifest)
+        assertTrue(nodeId !in legacyContent)
+        assertNotEquals(legacyManifest, cloudFolderManifestDriveName(rootId, 0L, "sha256:" + "a".repeat(64)))
+        assertNotEquals(legacyContent, cloudFolderContentDriveName(rootId, nodeId, "sha256:" + "a".repeat(64), 0L))
+    }
+
+    @Test
+    fun legacyMetadataRequiresExactIdentityAndOptionalPayloadMetadataMatches() {
+        val rootId = "root"
+        val nodeId = "node"
+        val hash = "sha256:" + "a".repeat(64)
+        val properties = cloudFolderDriveMetadata(
+            rootId = rootId,
+            nodeId = nodeId,
+            revision = 4L,
+            contentHash = hash,
+            contentSizeBytes = 12L,
+        )
+
+        assertTrue(
+            cloudFolderLegacyContentMetadataMatches(
+                name = cloudFolderLegacyContentDriveName(rootId, nodeId),
+                properties = properties,
+                rootId = rootId,
+                nodeId = nodeId,
+                revision = 4L,
+            )
+        )
+        assertTrue(
+            cloudFolderLegacyOptionalContentMetadataMatches(
+                properties = properties,
+                expectedContentHash = hash,
+                expectedSizeBytes = 12L,
+            )
+        )
+        assertTrue(
+            !cloudFolderLegacyContentMetadataMatches(
+                name = cloudFolderLegacyContentDriveName(rootId, "other-node"),
+                properties = properties,
+                rootId = rootId,
+                nodeId = nodeId,
+                revision = 4L,
+            )
+        )
+        assertTrue(
+            !cloudFolderLegacyOptionalContentMetadataMatches(
+                properties = properties,
+                expectedContentHash = "sha256:" + "b".repeat(64),
+                expectedSizeBytes = 12L,
+            )
+        )
+
+        val legacyManifestPayloadHash = "sha256:" + "c".repeat(64)
+        val legacyManifestProperties = cloudFolderDriveMetadata(
+            rootId = rootId,
+            nodeId = CLOUD_FOLDER_MANIFEST_NODE_ID,
+            revision = 4L,
+            contentHash = legacyManifestPayloadHash,
+            contentSizeBytes = 24L,
+        )
+        assertTrue(
+            cloudFolderLegacyManifestMetadataMatches(
+                name = cloudFolderLegacyManifestDriveName(rootId),
+                properties = legacyManifestProperties,
+                rootId = rootId,
+                revision = 4L,
+            )
+        )
+        assertTrue(
+            cloudFolderLegacyOptionalContentMetadataMatches(
+                properties = legacyManifestProperties,
+                expectedContentHash = legacyManifestPayloadHash,
+                expectedSizeBytes = 24L,
+            )
+        )
+        assertTrue(
+            !cloudFolderLegacyOptionalContentMetadataMatches(
+                properties = legacyManifestProperties,
+                expectedContentHash = legacyManifestPayloadHash,
+                expectedSizeBytes = 25L,
+            )
+        )
+    }
+
+    @Test
+    fun manifestPayloadDigestIsDerivedFromDownloadedBytesAndInvalidPayloadsFail() {
+        val manifest = CloudFolderManifest(
+            root = CloudFolderRoot(rootId = "root", name = "Books"),
+            revision = 2L,
+        )
+        val payload = CloudFolderManifestCodec.encode(manifest).toByteArray(Charsets.UTF_8)
+        val decoded = decodeCloudFolderManifestPayload(payload)
+
+        assertEquals(manifest.normalized(), decoded?.manifest)
+        assertEquals(payload.size.toLong(), decoded?.contentSizeBytes)
+        assertEquals(sha256CloudFolderBytes(payload), decoded?.contentHash)
+        assertEquals(null, decodeCloudFolderManifestPayload("not-json".toByteArray()))
+    }
+
+    @Test
     fun driveMetadataRetainsPortableIdentityAndRevision() {
         val metadata = cloudFolderDriveMetadata(
             rootId = "root",

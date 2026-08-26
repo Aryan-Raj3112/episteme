@@ -98,4 +98,52 @@ class CloudFolderSyncUiTest {
             CloudFolderIncomingChoice.entries.toSet(),
         )
     }
+
+    @Test
+    fun `remote inventory-only roots do not inflate local selection counts`() {
+        val state = CloudFolderSyncSettingsUiState(
+            selection = CloudFolderSyncSelection(
+                mode = CloudFolderSyncSelectionMode.ALL,
+            ),
+            folders = listOf(
+                CloudFolderSyncFolderOption(
+                    rootId = "local",
+                    displayName = "Local",
+                    fileCount = 2,
+                    totalBytes = 20L,
+                ),
+                CloudFolderSyncFolderOption(
+                    rootId = "remote",
+                    displayName = "Remote",
+                    fileCount = 9,
+                    totalBytes = 90L,
+                    isRemote = true,
+                    isSelectable = false,
+                ),
+            ),
+        )
+
+        assertEquals(1, state.selectedFolderCount)
+        assertEquals(2, state.selectedFileCount)
+        assertEquals(20L, state.selectedTotalBytes)
+    }
+
+    @Test
+    fun `keep both is hidden when one side is a deletion`() {
+        assertFalse(CloudFolderConflictType.DELETE_VS_UPDATE.supportsKeepBoth())
+        assertFalse(CloudFolderConflictType.UPDATE_VS_DELETE.supportsKeepBoth())
+        assertTrue(CloudFolderConflictType.CONTENT_CHANGED_BOTH.supportsKeepBoth())
+        assertEquals(
+            CloudFolderConflictResolution.KEEP_REMOTE,
+            CloudFolderConflictType.DELETE_VS_UPDATE.effectiveResolution(
+                CloudFolderConflictResolution.KEEP_BOTH,
+            ),
+        )
+        assertEquals(
+            CloudFolderConflictResolution.KEEP_LOCAL,
+            CloudFolderConflictType.UPDATE_VS_DELETE.effectiveResolution(
+                CloudFolderConflictResolution.KEEP_BOTH,
+            ),
+        )
+    }
 }

@@ -19,9 +19,12 @@
  */
 package com.aryan.reader
 
+import android.content.ActivityNotFoundException
 import android.os.Build
 import timber.log.Timber
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.RequiresApi
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -54,6 +57,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -70,6 +74,8 @@ import com.aryan.reader.pdf.PdfViewerScreen
 import com.aryan.reader.pdf.PdfSplitPdfPicker
 import com.aryan.reader.pdf.PdfSplitReaderScreen
 import com.aryan.reader.shared.ReaderFeatureSurface
+import com.aryan.reader.shared.CloudFolderIncomingChoice
+import com.aryan.reader.shared.CloudFolderIncomingFolderPrompt
 import com.aryan.reader.shared.PdfSplitOrientation
 import com.aryan.reader.shared.PdfSplitPaneState
 import com.aryan.reader.shared.samePdfDocument
@@ -160,6 +166,9 @@ private suspend fun NavHostController.syncRouteTo(destination: SharedMobileAppDe
     }
 }
 
+private fun incomingPromptKey(prompt: CloudFolderIncomingFolderPrompt): String =
+    "${prompt.rootId}:${prompt.root.manifestRevision}"
+
 @androidx.annotation.OptIn(UnstableApi::class)
 @OptIn(ExperimentalMaterial3Api::class)
 @RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
@@ -176,7 +185,55 @@ fun AppNavigation(
     val currentRoute = currentBackStackEntry?.destination?.route
     val ttsController = viewModel.ttsController
     val ttsState by ttsController.ttsState.collectAsStateWithLifecycle()
+    val context = LocalContext.current
     var showPdfSplitPicker by remember { mutableStateOf(false) }
+    var pendingIncomingBindPrompt by remember {
+        mutableStateOf<CloudFolderIncomingFolderPrompt?>(null)
+    }
+    var dismissedIncomingFolderKey by remember { mutableStateOf<String?>(null) }
+    var processingIncomingFolderKey by remember { mutableStateOf<String?>(null) }
+    val incomingCloudFolderLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree(),
+    ) { uri ->
+        val prompt = pendingIncomingBindPrompt
+        pendingIncomingBindPrompt = null
+        if (prompt == null) {
+            processingIncomingFolderKey = null
+            return@rememberLauncherForActivityResult
+        }
+        if (uri == null) {
+            // Picker cancellation is not a persisted decision. Leave the
+            // prompt visible so the user can retry the binding.
+            processingIncomingFolderKey = null
+            return@rememberLauncherForActivityResult
+        }
+
+        viewModel.recordIncomingCloudFolderChoice(
+            prompt = prompt,
+            choice = CloudFolderIncomingChoice.BIND_LOCAL_FOLDER,
+            localFolderUri = uri,
+            onPersisted = { persisted ->
+                processingIncomingFolderKey = null
+                if (persisted) {
+                    dismissedIncomingFolderKey = incomingPromptKey(prompt)
+                } else {
+                    dismissedIncomingFolderKey = null
+                    viewModel.refreshCloudFolderSyncState()
+                }
+            },
+        )
+    }
+    LaunchedEffect(incomingFolderPrompt?.rootId, incomingFolderPrompt?.root?.manifestRevision) {
+        // A newer manifest revision is a new decision.  A cancellation of the
+        // SAF picker leaves the current prompt visible and retryable. Keep an
+        // active picker association across a metadata refresh so a worker
+        // discovering a newer revision cannot orphan the user's URI result.
+        dismissedIncomingFolderKey = null
+        if (incomingFolderPrompt == null) {
+            pendingIncomingBindPrompt = null
+            processingIncomingFolderKey = null
+        }
+    }
     val currentDestination = SharedMobileAppDestination.fromRoute(currentRoute)
     val defaultPdfSplitOrientation = if (
         windowSizeClass.widthSizeClass == WindowWidthSizeClass.Compact
@@ -541,13 +598,77 @@ fun AppNavigation(
                 viewModel = viewModel,
                 navController = navController,
                 onBackClick = { navController.popBackStackIfReady() },
-                incomingFolderPrompt = incomingFolderPrompt,
-                onDismissIncomingFolder = {
-                    incomingFolderPrompt?.rootId?.let(viewModel::dismissIncomingCloudFolderPrompt)
-                },
+                onManageIncomingFolder = viewModel::showIncomingCloudFolderPrompt,
             )
         }
         }
+
+        // Incoming folder decisions are application-scoped.  Keeping this
+        // overlay outside Settings means device 2 is prompted on the home,
+        // reader, and settings routes alike, with exactly one dialog owner.
+        incomingFolderPrompt
+            ?.takeUnless { incomingPromptKey(it) == dismissedIncomingFolderKey }
+            ?.let { prompt ->
+                CloudFolderIncomingFolderPromptDialog(
+                    prompt = prompt,
+                    onChoice = { choice ->
+                        if (choice != CloudFolderIncomingChoice.BIND_LOCAL_FOLDER) {
+                            val key = incomingPromptKey(prompt)
+                            if (processingIncomingFolderKey != key) {
+                                processingIncomingFolderKey = key
+                                viewModel.recordIncomingCloudFolderChoice(
+                                    prompt = prompt,
+                                    choice = choice,
+                                    onPersisted = { persisted ->
+                                        processingIncomingFolderKey = null
+                                        if (persisted) {
+                                            dismissedIncomingFolderKey = key
+                                        } else {
+                                            dismissedIncomingFolderKey = null
+                                            viewModel.refreshCloudFolderSyncState()
+                                        }
+                                    },
+                                )
+                            }
+                        }
+                    },
+                    onBindLocalFolder = {
+                        val key = incomingPromptKey(prompt)
+                        if (processingIncomingFolderKey != key) {
+                            processingIncomingFolderKey = key
+                            pendingIncomingBindPrompt = prompt
+                            try {
+                                incomingCloudFolderLauncher.launch(null)
+                            } catch (_: ActivityNotFoundException) {
+                                pendingIncomingBindPrompt = null
+                                processingIncomingFolderKey = null
+                                viewModel.showBanner(
+                                    context.getString(R.string.error_folder_selection_unsupported),
+                                    isError = true,
+                                )
+                            }
+                        }
+                    },
+                    onDismiss = {
+                        val key = incomingPromptKey(prompt)
+                        if (processingIncomingFolderKey != key) {
+                            processingIncomingFolderKey = key
+                            viewModel.dismissIncomingCloudFolderPrompt(
+                                prompt.rootId,
+                                onPersisted = { persisted ->
+                                    processingIncomingFolderKey = null
+                                    if (persisted) {
+                                        dismissedIncomingFolderKey = key
+                                    } else {
+                                        dismissedIncomingFolderKey = null
+                                        viewModel.refreshCloudFolderSyncState()
+                                    }
+                                },
+                            )
+                        }
+                    },
+                )
+            }
 
         AnimatedVisibility(
             visible = showTtsMiniBar,

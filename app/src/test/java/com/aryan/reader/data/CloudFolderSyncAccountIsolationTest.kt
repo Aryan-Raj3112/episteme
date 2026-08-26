@@ -7,6 +7,7 @@ import androidx.sqlite.db.SupportSQLiteOpenHelper
 import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
 import com.aryan.reader.CloudFolderSyncPrefs
 import com.aryan.reader.shared.CloudFolderDeviceBinding
+import com.aryan.reader.shared.CloudFolderConflictResolution
 import com.aryan.reader.shared.CloudFolderManifest
 import com.aryan.reader.shared.CloudFolderMaterializationMode
 import com.aryan.reader.shared.CloudFolderNode
@@ -19,6 +20,7 @@ import com.aryan.reader.shared.CloudFolderSyncOperationKind
 import com.aryan.reader.shared.CloudFolderSyncSelection
 import com.aryan.reader.shared.CloudFolderSyncSelectionMode
 import com.aryan.reader.shared.cloudFolderRootId
+import com.aryan.reader.shared.planCloudFolderSync
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -87,6 +89,7 @@ class CloudFolderSyncAccountIsolationTest {
 
             repositoryA.saveManifest(root)
             repositoryB.saveManifest(root)
+            repositoryA.savePendingMaterialization(root.copy(revision = 2L), now = 42L)
             repositoryA.saveBinding(binding)
             repositoryB.saveBinding(binding)
             val operationIdA = repositoryA.enqueue(root.rootId, operation)
@@ -100,6 +103,8 @@ class CloudFolderSyncAccountIsolationTest {
 
             assertNotNull(repositoryA.getManifest(root.rootId))
             assertNotNull(repositoryB.getManifest(root.rootId))
+            assertEquals(2L, repositoryA.getPendingMaterialization(root.rootId)?.revision)
+            assertNull(repositoryB.getPendingMaterialization(root.rootId))
             assertNotNull(repositoryA.getBinding(root.rootId))
             assertNotNull(repositoryB.findBindingForLocalUri(binding.localUri!!, "shared-device"))
             assertEquals(1, repositoryA.getOutbox(root.rootId).size)
@@ -113,10 +118,12 @@ class CloudFolderSyncAccountIsolationTest {
             repositoryA.clearAccountState()
 
             assertNull(repositoryA.getManifest(root.rootId))
+            assertNull(repositoryA.getPendingMaterialization(root.rootId))
             assertNull(repositoryA.getBinding(root.rootId))
             assertTrue(repositoryA.getOutbox(root.rootId).isEmpty())
             assertEquals(CloudFolderSyncSelection.Default, repositoryA.selection())
             assertNotNull(repositoryB.getManifest(root.rootId))
+            assertNull(repositoryB.getPendingMaterialization(root.rootId))
             assertNotNull(repositoryB.getBinding(root.rootId))
             assertEquals(1, repositoryB.getOutbox(root.rootId).size)
             assertFalse(repositoryB.selection().includes(root.rootId))
@@ -172,6 +179,82 @@ class CloudFolderSyncAccountIsolationTest {
     }
 
     @Test
+    fun `conflict records and decisions are account scoped and reset for newer snapshots`() = runTest {
+        val database = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
+            .allowMainThreadQueries()
+            .build()
+        try {
+            val repositoryA = CloudFolderSyncRepository(
+                context = context,
+                accountId = accountA,
+                database = database,
+                deviceId = "device-a",
+            )
+            val repositoryB = CloudFolderSyncRepository(
+                context = context,
+                accountId = accountB,
+                database = database,
+                deviceId = "device-b",
+            )
+            val original = CloudFolderNode(
+                nodeId = "book",
+                rootId = "conflict-root",
+                relativePath = "Book.epub",
+                kind = CloudFolderNodeKind.FILE,
+                contentHash = "a".repeat(64),
+                sizeBytes = 10L,
+                revision = 1L,
+            )
+            val base = CloudFolderManifest(
+                root = CloudFolderRoot(rootId = "conflict-root", name = "Books"),
+                revision = 1L,
+                nodes = listOf(original),
+            )
+            val local = base.copy(
+                revision = 2L,
+                nodes = listOf(original.copy(contentHash = "b".repeat(64), revision = 2L)),
+            )
+            val remote = base.copy(
+                revision = 3L,
+                nodes = listOf(original.copy(contentHash = "c".repeat(64), revision = 3L)),
+            )
+            val plan = planCloudFolderSync(base, local, remote)
+            assertEquals(1, plan.conflicts.size)
+            val conflictId = plan.conflicts.single().conflictId
+
+            repositoryA.reconcileConflicts(plan, now = 10L)
+            assertEquals(1, repositoryA.getConflicts("conflict-root").size)
+            assertTrue(repositoryB.getConflicts("conflict-root").isEmpty())
+            assertTrue(
+                repositoryA.resolveConflict(
+                    rootId = "conflict-root",
+                    conflictId = conflictId,
+                    resolution = CloudFolderConflictResolution.KEEP_LOCAL,
+                    now = 11L,
+                )
+            )
+            assertEquals(
+                CloudFolderConflictResolution.KEEP_LOCAL,
+                repositoryA.getConflicts("conflict-root").single().resolution,
+            )
+            assertTrue(repositoryB.getConflicts("conflict-root").isEmpty())
+
+            val newerLocal = local.copy(
+                revision = 4L,
+                nodes = listOf(original.copy(contentHash = "d".repeat(64), revision = 4L)),
+            )
+            val newerPlan = planCloudFolderSync(base, newerLocal, remote)
+            repositoryA.reconcileConflicts(newerPlan, now = 20L)
+            assertEquals(
+                CloudFolderConflictResolution.DEFER,
+                repositoryA.getConflicts("conflict-root").single().resolution,
+            )
+        } finally {
+            database.close()
+        }
+    }
+
+    @Test
     fun `29 to 30 migration quarantines legacy rows and deduplicates local bindings`() = runTest {
         val databaseName = "cloud-folder-account-migration-test.db"
         context.deleteDatabase(databaseName)
@@ -198,6 +281,8 @@ class CloudFolderSyncAccountIsolationTest {
                 AppDatabase.MIGRATION_29_30,
                 AppDatabase.MIGRATION_30_31,
                 AppDatabase.MIGRATION_31_32,
+                AppDatabase.MIGRATION_32_33,
+                AppDatabase.MIGRATION_33_34,
             )
             .allowMainThreadQueries()
             .build()
@@ -258,6 +343,8 @@ private class LegacyCloudFolderCallback : SupportSQLiteOpenHelper.Callback(29) {
             "cloud_folder_nodes",
             "cloud_folder_tombstones",
             "cloud_folder_outbox",
+            "cloud_folder_conflicts",
+            "cloud_folder_pending_materializations",
         ).forEach { table -> db.execSQL("DROP TABLE IF EXISTS `$table`") }
         db.execSQL(
             """

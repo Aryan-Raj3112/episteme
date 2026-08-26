@@ -14,6 +14,7 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.aryan.reader.data.CloudFolderManifestReadResult
 import com.aryan.reader.data.CloudFolderManifestLeaseResult
+import com.aryan.reader.data.legacyCloudFolderManifestHeadCandidate
 import com.aryan.reader.data.CloudFolderOutboxEntity
 import com.aryan.reader.data.CloudFolderSafEntry
 import com.aryan.reader.data.CloudFolderSafScanResult
@@ -33,10 +34,12 @@ import com.aryan.reader.shared.CloudFolderRootStats
 import com.aryan.reader.shared.CloudFolderSyncDirection
 import com.aryan.reader.shared.CloudFolderSyncOperation
 import com.aryan.reader.shared.CloudFolderSyncOperationKind
+import com.aryan.reader.shared.CloudFolderConflictResolution
 import com.aryan.reader.shared.CloudFolderTombstone
 import com.aryan.reader.shared.canonicalCloudFolderContentHash
 import com.aryan.reader.shared.normalizeCloudFolderRelativePath
 import com.aryan.reader.shared.planCloudFolderSync
+import com.aryan.reader.shared.resolveCloudFolderSync
 import java.io.File
 import java.io.FileOutputStream
 import java.io.FilterInputStream
@@ -68,11 +71,19 @@ class CloudFolderSyncWorker(
     workerParams: WorkerParameters,
 ) : CoroutineWorker(appContext, workerParams) {
     private lateinit var repository: CloudFolderSyncRepository
-    private val driveRepository = GoogleDriveRepository()
-    private val firestoreRepository = FirestoreRepository()
+    // These repositories touch Google/Firebase SDK state during construction.
+    // Keep them lazy so a disabled or stale worker can exit before requiring
+    // an initialized Firebase app (and before doing any network setup).
+    private val driveRepository by lazy { GoogleDriveRepository() }
+    private val firestoreRepository by lazy { FirestoreRepository() }
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         GLOBAL_MUTEX.withLock {
+            if (!isCloudFolderSyncEnabled(applicationContext)) {
+                Timber.i("Cloud-folder worker skipped because cloud sync is disabled")
+                return@withLock Result.success()
+            }
+
             val direction = inputData.getString(KEY_DIRECTION)
                 ?.let { runCatching { Direction.valueOf(it) }.getOrNull() }
                 ?: Direction.SYNC
@@ -120,6 +131,11 @@ class CloudFolderSyncWorker(
                     discoverAndPull(accessToken)
                     syncSelectedRoots(accessToken, direction)
                 }
+                // Wake an already-running ViewModel so a newly discovered
+                // device-2 root is visible immediately, even when Settings
+                // is not the current route. Persisted state remains the
+                // source of truth across process death.
+                CloudFolderSyncEvents.notifyStateChanged()
                 Result.success()
             } catch (error: kotlinx.coroutines.CancellationException) {
                 throw error
@@ -208,6 +224,7 @@ class CloudFolderSyncWorker(
                             rootId = manifest.rootId,
                             revision = manifest.revision,
                         )
+                        CloudFolderSyncEvents.notifyStateChanged()
                     }
                 }
             } catch (error: Exception) {
@@ -226,8 +243,40 @@ class CloudFolderSyncWorker(
         ensureAccountStillActive()
         val result = driveRepository.downloadCloudFolderManifest(accessToken, rootId)
         if (!BuildConfig.IS_PRO) return result
-        val head = firestoreRepository.getCloudFolderManifestHead(repository.accountId, rootId)
-            ?: return result
+        var head = firestoreRepository.getCloudFolderManifestHead(repository.accountId, rootId)
+        val bootstrapCandidate = if (head == null && result is CloudFolderManifestReadResult.Found) {
+            legacyCloudFolderManifestHeadCandidate(
+                remote = result,
+                existingHead = null,
+                manifestHash = sha256CloudFolderManifest(result.manifest),
+            )
+        } else {
+            null
+        }
+        if (bootstrapCandidate != null) {
+            // Older cloud-folder manifests were written to Drive before the
+            // Firestore commit pointer existed. Bootstrap that pointer with
+            // a create-if-absent transaction so the first CAS publish can use
+            // the legacy revision without accepting an uncommitted object.
+            head = firestoreRepository.bootstrapCloudFolderManifestHead(
+                userId = repository.accountId,
+                rootId = rootId,
+                manifestDriveFileId = bootstrapCandidate.manifestDriveFileId,
+                revision = bootstrapCandidate.revision,
+                manifestHash = bootstrapCandidate.manifestHash,
+            ) ?: firestoreRepository.getCloudFolderManifestHead(repository.accountId, rootId)
+        }
+        if (head == null) {
+            // A missing Firestore head is valid only when Drive also has no
+            // manifest. If a legacy manifest was present but the
+            // create-if-absent bootstrap raced with a deletion or otherwise
+            // failed to produce a head, do not accept an unauthenticated
+            // Drive object as authoritative.
+            if (result is CloudFolderManifestReadResult.Found) {
+                throw IOException("Unable to bootstrap cloud-folder manifest head: $rootId")
+            }
+            return result
+        }
         if (result !is CloudFolderManifestReadResult.Found ||
             result.driveFileId != head.manifestDriveFileId ||
             result.manifest.revision != head.revision ||
@@ -238,12 +287,81 @@ class CloudFolderSyncWorker(
         return result
     }
 
+    /**
+     * Finish a target that was published/materialized only partially before a
+     * worker interruption. The committed repository manifest is intentionally
+     * updated last, so a successful return is the only point at which this
+     * method advances the local base.
+     */
+    private suspend fun resumePendingMaterialization(
+        accessToken: String,
+        rootId: String,
+        binding: com.aryan.reader.shared.CloudFolderDeviceBinding,
+        remoteResult: CloudFolderManifestReadResult,
+    ): Boolean {
+        val pending = repository.getPendingMaterialization(rootId) ?: return false
+        when (binding.materializationMode) {
+            CloudFolderMaterializationMode.CLOUD_ONLY -> {
+                // The user explicitly removed local materialization while a
+                // previous transfer was pending. No local bytes are required
+                // in this mode, so discard only the pending local target.
+                repository.clearPendingMaterialization(rootId)
+                return false
+            }
+            else -> {
+                val remote = (remoteResult as? CloudFolderManifestReadResult.Found)
+                    ?.manifest
+                    ?.normalized()
+                val canResume = remote != null &&
+                    remote.revision >= pending.revision &&
+                    (remote.revision != pending.revision ||
+                        sha256CloudFolderManifest(remote) == sha256CloudFolderManifest(pending))
+                if (!canResume) return false
+            }
+        }
+        when (binding.materializationMode) {
+            CloudFolderMaterializationMode.CLOUD_ONLY -> return false
+            CloudFolderMaterializationMode.KEEP_OFFLINE ->
+                materializeManifestToAppStorage(accessToken, pending)
+            CloudFolderMaterializationMode.LOCAL_MIRROR -> {
+                val localUri = binding.localUri?.takeIf { it.isNotBlank() } ?: return false
+                materializeManifest(
+                    accessToken = accessToken,
+                    manifest = pending,
+                    localRootUri = Uri.parse(localUri),
+                    expectedBase = repository.getManifest(rootId),
+                    allowAlreadyMaterialized = true,
+                )
+            }
+        }
+        ensureAccountStillActive()
+        repository.saveManifest(pending)
+        repository.clearPendingMaterialization(rootId)
+        repository.saveBinding(
+            binding.copy(
+                permissionState = CloudFolderPermissionState.GRANTED,
+                lastAcknowledgedRevision = pending.revision,
+                lastError = null,
+            )
+        )
+        CloudFolderSyncEvents.notifyStateChanged()
+        return true
+    }
+
     private suspend fun pullRoot(accessToken: String, rootId: String) {
-        when (val result = readRemoteManifest(accessToken, rootId)) {
+        val existingBinding = repository.getBinding(rootId)
+        if (existingBinding != null) {
+            if (!repository.isIncluded(rootId)) return
+        }
+        val remoteResult = readRemoteManifest(accessToken, rootId)
+        if (existingBinding != null &&
+            resumePendingMaterialization(accessToken, rootId, existingBinding, remoteResult)
+        ) return
+        when (remoteResult) {
             CloudFolderManifestReadResult.NotFound -> return
             is CloudFolderManifestReadResult.Found -> {
-                val manifest = result.manifest.normalized()
-                val binding = repository.getBinding(rootId)
+                val manifest = remoteResult.manifest.normalized()
+                val binding = existingBinding
                 if (binding == null) {
                     // Discovery remains metadata-only until the user makes an
                     // explicit incoming-folder choice.
@@ -254,6 +372,7 @@ class CloudFolderSyncWorker(
                         rootId = manifest.rootId,
                         revision = manifest.revision,
                     )
+                    CloudFolderSyncEvents.notifyStateChanged()
                     return
                 }
                 // Incoming roots are metadata-only until a persisted choice
@@ -269,21 +388,34 @@ class CloudFolderSyncWorker(
                         repository.saveManifest(manifest)
                         return
                     }
-                    CloudFolderMaterializationMode.KEEP_OFFLINE ->
+                    CloudFolderMaterializationMode.KEEP_OFFLINE -> {
+                        // The acknowledged revision is advanced only after
+                        // every file has been atomically written to the
+                        // app-private offline tree.
+                        if (binding.lastAcknowledgedRevision == manifest.revision &&
+                            repository.getManifest(rootId)?.revision == manifest.revision
+                        ) {
+                            return
+                        }
+                        repository.savePendingMaterialization(manifest)
                         materializeManifestToAppStorage(accessToken, manifest)
+                    }
                     CloudFolderMaterializationMode.LOCAL_MIRROR -> {
                         val localUri = binding.localUri?.takeIf { it.isNotBlank() } ?: return
                         verifyLocalMirrorIsPullSafe(rootId, manifest, Uri.parse(localUri))
+                        repository.savePendingMaterialization(manifest)
                         materializeManifest(
                             accessToken = accessToken,
                             manifest = manifest,
                             localRootUri = Uri.parse(localUri),
                             expectedBase = repository.getManifest(rootId),
+                            allowAlreadyMaterialized = true,
                         )
                     }
                 }
                 ensureAccountStillActive()
                 repository.saveManifest(manifest)
+                repository.clearPendingMaterialization(rootId)
                 repository.saveBinding(
                     binding.copy(
                         permissionState = CloudFolderPermissionState.GRANTED,
@@ -344,6 +476,15 @@ class CloudFolderSyncWorker(
     ) {
         if (!repository.isIncluded(rootId)) return
         val binding = repository.getBinding(rootId) ?: return
+        if (binding.materializationMode == CloudFolderMaterializationMode.KEEP_OFFLINE) {
+            // KEEP_OFFLINE has no SAF mirror to scan. A normal SYNC still
+            // needs to pull newer cloud revisions; an explicit PUSH cannot
+            // safely operate on this binding and is therefore a no-op.
+            if (direction == Direction.SYNC) pullRoot(accessToken, rootId)
+            return
+        }
+        val remoteResult = readRemoteManifest(accessToken, rootId)
+        if (resumePendingMaterialization(accessToken, rootId, binding, remoteResult)) return
         val localUri = binding.localUri?.takeIf { it.isNotBlank() } ?: return
         val rootUri = Uri.parse(localUri)
         val scan = CloudFolderSafScanner.scan(
@@ -369,7 +510,6 @@ class CloudFolderSyncWorker(
             generatedAt = now,
             generatedByDeviceId = repository.deviceId,
         )
-        val remoteResult = readRemoteManifest(accessToken, rootId)
         val remoteMissing = remoteResult is CloudFolderManifestReadResult.NotFound
         val remote = when (val result = remoteResult) {
             CloudFolderManifestReadResult.NotFound -> {
@@ -383,7 +523,7 @@ class CloudFolderSyncWorker(
         }
 
         val local = buildLocalManifest(base, scan, now, repository.deviceId)
-        val plan = planCloudFolderSync(
+        var plan = planCloudFolderSync(
             base = base,
             local = local,
             remote = remote,
@@ -391,11 +531,31 @@ class CloudFolderSyncWorker(
             deviceId = repository.deviceId,
         )
         if (plan.conflicts.isNotEmpty()) {
-            val message = "Cloud-folder sync needs conflict resolution (${plan.conflicts.size} conflict(s))"
-            repository.markBindingError(rootId, message)
-            // Conflicts are durable user-action state, not a transient network
-            // failure. Leave the last committed manifest untouched.
-            return
+            val records = repository.reconcileConflicts(plan, now)
+            val resolutions = records.associate { it.conflictId to it.resolution }
+            plan = resolveCloudFolderSync(
+                base = base,
+                local = local,
+                remote = remote,
+                plan = plan,
+                resolutions = resolutions,
+                nowMillis = now,
+                deviceId = repository.deviceId,
+            )
+            if (plan.conflicts.isNotEmpty()) {
+                // Conflicts are durable user-action state, not a transient
+                // network failure. Leave the last committed manifest
+                // untouched until every decision is explicit.
+                repository.reconcileConflicts(plan, now)
+                CloudFolderSyncEvents.notifyStateChanged()
+                val message = "Cloud-folder sync needs conflict resolution (${plan.conflicts.size} conflict(s))"
+                repository.markBindingError(rootId, message)
+                return
+            }
+        } else {
+            // Remove stale records after a later scan proves that the inputs
+            // no longer conflict (for example after an external repair).
+            repository.reconcileConflicts(plan, now)
         }
 
         // A PUSH request never silently folds a remote-only change into the
@@ -433,32 +593,54 @@ class CloudFolderSyncWorker(
         // orphaned Drive objects are harmless and can be garbage-collected by a
         // later retention pass, while a premature manifest would expose bytes
         // that were not fully uploaded.
-        if (remoteMissing || published != base || localOperations.isNotEmpty()) {
+        val shouldMaterialize = direction == Direction.SYNC && plan.operations.any {
+            it.direction == CloudFolderSyncDirection.CLOUD_TO_LOCAL
+        }
+        val shouldPublish = remoteMissing || localOperations.isNotEmpty() ||
+            !cloudFolderRootsEquivalentForPublish(published.root, remote.root)
+        val targetManifest = if (shouldPublish) published else remote
+        if (shouldPublish) {
             publishManifestWithCas(
                 accessToken = accessToken,
                 rootId = rootId,
                 initialRemote = remoteResult,
                 manifest = published,
+                persistLocalManifest = !shouldMaterialize,
             )
-        } else {
+        } else if (!shouldMaterialize) {
             ensureAccountStillActive()
             repository.saveManifest(local)
         }
-        if (direction == Direction.SYNC && plan.operations.any {
-                it.direction == CloudFolderSyncDirection.CLOUD_TO_LOCAL
-            }) {
+        if (!shouldMaterialize) {
+            // A successful local-only commit supersedes any stale target left
+            // by an older interrupted transfer. Keeping it would allow a
+            // later resume to overwrite this newer committed base.
+            repository.clearPendingMaterialization(rootId)
+        }
+
+        if (shouldMaterialize) {
+            // The remote commit may succeed before local writes do. Keep the
+            // target separate from the committed local base so a killed or
+            // failed materialization is resumed before the next scan.
+            repository.savePendingMaterialization(targetManifest, now)
             materializeManifest(
                 accessToken = accessToken,
-                manifest = published,
+                manifest = targetManifest,
                 localRootUri = rootUri,
                 expectedBase = base,
+                allowAlreadyMaterialized = true,
             )
+            ensureAccountStillActive()
+            repository.saveManifest(targetManifest)
+            repository.clearPendingMaterialization(rootId)
         }
+        repository.clearConflicts(rootId)
+        CloudFolderSyncEvents.notifyStateChanged()
         ensureAccountStillActive()
         repository.saveBinding(
             binding.copy(
                 permissionState = CloudFolderPermissionState.GRANTED,
-                lastAcknowledgedRevision = published.revision,
+                lastAcknowledgedRevision = targetManifest.revision,
                 lastScanAt = now,
                 lastError = null,
             )
@@ -476,6 +658,7 @@ class CloudFolderSyncWorker(
         rootId: String,
         initialRemote: CloudFolderManifestReadResult,
         manifest: CloudFolderManifest,
+        persistLocalManifest: Boolean = true,
     ) {
         ensureAccountStillActive()
         assertRemoteSnapshotUnchanged(accessToken, rootId, initialRemote)
@@ -518,8 +701,10 @@ class CloudFolderSyncWorker(
                 }
                 committed = true
             }
-            ensureAccountStillActive()
-            repository.saveManifest(manifest)
+            if (persistLocalManifest) {
+                ensureAccountStillActive()
+                repository.saveManifest(manifest)
+            }
         } finally {
             if (lease != null && !committed) {
                 runCatching { firestoreRepository.releaseCloudFolderManifest(lease) }
@@ -552,7 +737,7 @@ class CloudFolderSyncWorker(
                                 repository.completeOutbox(row.operationId)
                                 continue
                             }
-                        val current = sourceByNodeId[row.nodeId]
+                        val current = sourceByNodeId[row.sourceNodeId ?: row.nodeId]
                         if (current == null) {
                             // Never complete an upload merely because its
                             // persisted URI cannot be opened. Here the fresh,
@@ -638,6 +823,7 @@ class CloudFolderSyncWorker(
         manifest: CloudFolderManifest,
         localRootUri: Uri,
         expectedBase: CloudFolderManifest? = null,
+        allowAlreadyMaterialized: Boolean = false,
     ) {
         val root = DocumentFile.fromTreeUri(applicationContext, localRootUri)
             ?: throw IOException("Local SAF root is unavailable")
@@ -658,7 +844,14 @@ class CloudFolderSyncWorker(
             val expectedLocalNode = expectedBase?.activeNodes()?.firstOrNull { baseNode ->
                 baseNode.nodeId == node.nodeId && baseNode.relativePath == node.relativePath
             }
-            writeRemoteFileAtomically(accessToken, parent, node, objectId, expectedLocalNode)
+            writeRemoteFileAtomically(
+                accessToken = accessToken,
+                parent = parent,
+                node = node,
+                objectId = objectId,
+                expectedLocalNode = expectedLocalNode,
+                allowAlreadyMaterialized = allowAlreadyMaterialized,
+            )
         }
         applySafTombstones(root, manifest.tombstones)
     }
@@ -735,7 +928,7 @@ class CloudFolderSyncWorker(
         accessToken: String,
         manifest: CloudFolderManifest,
     ) = withContext(Dispatchers.IO) {
-        val root = File(applicationContext.filesDir, "cloud-folder-sync/${manifest.rootId}").canonicalFile
+        val root = cloudFolderAppRootDirectory(applicationContext.filesDir, manifest.rootId)
         if (!root.exists() && !root.mkdirs()) throw IOException("Unable to create offline folder")
         if (!root.isDirectory) throw IOException("Offline folder is not a directory")
 
@@ -896,6 +1089,7 @@ class CloudFolderSyncWorker(
         node: CloudFolderNode,
         objectId: String,
         expectedLocalNode: CloudFolderNode? = null,
+        allowAlreadyMaterialized: Boolean = false,
     ) {
         ensureAccountStillActive()
         val name = node.relativePath.substringAfterLast('/')
@@ -936,6 +1130,8 @@ class CloudFolderSyncWorker(
                 parent = parent,
                 name = name,
                 expectedLocalNode = expectedLocalNode,
+                targetNode = node,
+                allowAlreadyMaterialized = allowAlreadyMaterialized,
                 relativePath = node.relativePath,
             )
             ensureAccountStillActive()
@@ -954,10 +1150,19 @@ class CloudFolderSyncWorker(
         parent: DocumentFile,
         name: String,
         expectedLocalNode: CloudFolderNode?,
+        targetNode: CloudFolderNode,
+        allowAlreadyMaterialized: Boolean,
         relativePath: String,
     ): DocumentFile? {
         ensureAccountStillActive()
         val current = parent.findFile(name)
+        if (allowAlreadyMaterialized && current?.isFile == true) {
+            val targetHash = canonicalCloudFolderContentHash(targetNode.contentHash)
+            if (targetHash != null) {
+                val (actualHash, size) = hashDocument(current)
+                if (actualHash == targetHash && size == targetNode.sizeBytes) return current
+            }
+        }
         if (expectedLocalNode == null) {
             if (current != null) {
                 throw IOException("Local file appeared during download; preserving it: $relativePath")
@@ -1114,6 +1319,30 @@ class CloudFolderSyncWorker(
         const val MAX_OUTBOX_ATTEMPTS = 8
         private val GLOBAL_MUTEX = Mutex()
 
+        /**
+         * Remove a complete app-managed offline copy while sharing the same
+         * mutex as normal cloud-folder work. The caller changes the durable
+         * binding only after this returns, so a failure leaves KEEP_OFFLINE
+         * as the truthful state and the bytes available for retry.
+         */
+        internal suspend fun clearOfflineMaterialization(
+            context: Context,
+            rootId: String,
+        ) {
+            GLOBAL_MUTEX.withLock {
+                withContext(Dispatchers.IO) {
+                    val root = cloudFolderAppRootDirectory(context.applicationContext.filesDir, rootId)
+                    if (!root.exists()) return@withContext
+                    if (!root.isDirectory) {
+                        throw IOException("Offline materialization is not a directory")
+                    }
+                    if (!root.deleteRecursively() || root.exists()) {
+                        throw IOException("Unable to remove offline materialization")
+                    }
+                }
+            }
+        }
+
         fun enqueue(
             context: Context,
             accountId: String,
@@ -1230,6 +1459,49 @@ class CloudFolderSyncWorker(
             CloudFolderSyncDirection.NONE -> Direction.SYNC
         }
     }
+}
+
+/**
+ * Cloud-folder work shares the main cloud-sync switch.  Keep this check in
+ * the worker as a second line of defence because WorkManager can start a
+ * request after the setting has been changed (or after cancellation races
+ * with worker startup).
+ */
+internal fun isCloudFolderSyncEnabled(context: Context): Boolean =
+    context.getSharedPreferences("reader_user_prefs", Context.MODE_PRIVATE)
+        .getBoolean(KEY_SYNC_ENABLED, false)
+
+/** Compare only logical root metadata; revision/stats are commit bookkeeping. */
+private fun cloudFolderRootsEquivalentForPublish(
+    first: CloudFolderRoot,
+    second: CloudFolderRoot,
+): Boolean = first.rootId == second.rootId &&
+    first.name.trim() == second.name.trim() &&
+    first.isDeleted == second.isDeleted &&
+    first.createdAt == second.createdAt &&
+    first.createdByDeviceId == second.createdByDeviceId
+
+/**
+ * Resolve an app-private offline root without allowing a remote root ID to
+ * become a path component. Existing generated IDs remain in the same
+ * directory layout; malformed remote IDs fail before any filesystem access.
+ */
+internal fun cloudFolderAppRootDirectory(filesDir: File, rootId: String): File {
+    val normalizedRootId = rootId.trim()
+    require(
+        normalizedRootId.isNotBlank() &&
+            normalizedRootId != "." &&
+            normalizedRootId != ".." &&
+            normalizedRootId.none { character ->
+                character == '/' || character == '\\' || character == '\u0000'
+            },
+    ) { "Unsafe cloud-folder root ID" }
+
+    val base = File(filesDir, "cloud-folder-sync").canonicalFile
+    val target = File(base, normalizedRootId).canonicalFile
+    val prefix = base.path + File.separator
+    require(target.path.startsWith(prefix)) { "Cloud-folder root escapes app storage" }
+    return target
 }
 
 internal fun buildLocalManifest(

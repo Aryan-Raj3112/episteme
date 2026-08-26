@@ -79,6 +79,18 @@ class CloudFolderSyncTest {
     }
 
     @Test
+    fun `manifest root ids reject filesystem traversal`() {
+        val unsafeRootIds = listOf("../outside", "nested/root", "absolute\\root", ".", "..")
+        unsafeRootIds.forEach { rootId ->
+            val manifest = manifest().copy(root = root().copy(rootId = rootId))
+            assertTrue(
+                CloudFolderManifestIssueType.INVALID_ROOT_ID in
+                    manifest.validationIssues().map { it.type },
+            )
+        }
+    }
+
+    @Test
     fun `hashes are canonicalized without trusting timestamps`() {
         val raw = "A".repeat(64)
         assertEquals("a".repeat(64), canonicalCloudFolderContentHash(raw))
@@ -313,6 +325,50 @@ class CloudFolderSyncTest {
     }
 
     @Test
+    fun `hashed file metadata changes emit metadata operations without reuploading bytes`() {
+        val original = file("Book.pdf", hash = "a".repeat(64), size = 10L, revision = 1L)
+        val base = manifest(revision = 1L, nodes = listOf(original))
+        val unchangedRemote = base.copy(revision = 1L)
+
+        listOf(
+            original.copy(mimeType = "application/pdf", revision = 2L),
+            original.copy(fileModifiedAt = 42L, revision = 2L),
+        ).forEach { changedNode ->
+            val local = base.copy(revision = 2L, nodes = listOf(changedNode))
+            val plan = planCloudFolderSync(base, local, unchangedRemote)
+
+            assertTrue(plan.canCommit)
+            assertEquals(CloudFolderSyncOperationKind.UPDATE_REMOTE_METADATA, plan.operations.single().kind)
+            assertEquals(CloudFolderSyncDirection.LOCAL_TO_CLOUD, plan.operations.single().direction)
+            assertEquals(changedNode.contentHash, plan.operations.single().contentHash)
+            assertEquals(changedNode.mimeType, plan.mergedManifest.nodes.single().mimeType)
+            assertEquals(changedNode.fileModifiedAt, plan.mergedManifest.nodes.single().fileModifiedAt)
+        }
+    }
+
+    @Test
+    fun `independent metadata changes on both sides produce a metadata conflict`() {
+        val original = file("Book.pdf", hash = "a".repeat(64), size = 10L, revision = 1L)
+        val base = manifest(revision = 1L, nodes = listOf(original))
+        val local = base.copy(
+            revision = 2L,
+            nodes = listOf(original.copy(mimeType = "application/pdf", revision = 2L)),
+        )
+        val remote = base.copy(
+            revision = 3L,
+            nodes = listOf(original.copy(fileModifiedAt = 42L, revision = 3L)),
+        )
+
+        val plan = planCloudFolderSync(base, local, remote)
+
+        assertFalse(plan.canCommit)
+        assertTrue(plan.operations.isEmpty())
+        assertEquals(CloudFolderConflictType.METADATA_CHANGED_BOTH, plan.conflicts.single().type)
+        assertEquals(original.contentHash, plan.conflicts.single().localNode?.contentHash)
+        assertEquals(original.contentHash, plan.conflicts.single().remoteNode?.contentHash)
+    }
+
+    @Test
     fun `both changed content produces a conflict and safe base candidate`() {
         val original = file("Book.pdf", hash = "a".repeat(64), size = 10L, revision = 1L)
         val base = manifest(revision = 1L, nodes = listOf(original))
@@ -362,6 +418,213 @@ class CloudFolderSyncTest {
         assertFalse(plan.canCommit)
         assertEquals(CloudFolderConflictType.DELETE_VS_UPDATE, plan.conflicts.single().type)
         assertEquals("a".repeat(64), plan.mergedManifest.nodes.single().contentHash)
+    }
+
+    @Test
+    fun `keep both on delete versus update keeps the only surviving cloud file`() {
+        val original = file("Book.pdf", hash = "a".repeat(64), size = 10L, revision = 1L)
+        val base = manifest(revision = 1L, nodes = listOf(original))
+        val localDeleted = base.copy(
+            revision = 2L,
+            nodes = emptyList(),
+            tombstones = listOf(
+                CloudFolderTombstone(
+                    nodeId = original.nodeId,
+                    rootId = original.rootId,
+                    relativePath = original.relativePath,
+                    kind = CloudFolderNodeKind.FILE,
+                    deletedRevision = 2L,
+                ),
+            ),
+        )
+        val remoteUpdated = base.copy(
+            revision = 3L,
+            nodes = listOf(original.copy(contentHash = "b".repeat(64), sizeBytes = 11L, revision = 3L)),
+        )
+        val pending = planCloudFolderSync(base, localDeleted, remoteUpdated)
+        val conflict = pending.conflicts.single()
+        val resolved = resolveCloudFolderSync(
+            base = base,
+            local = localDeleted,
+            remote = remoteUpdated,
+            plan = pending,
+            resolutions = mapOf(conflict.conflictId to CloudFolderConflictResolution.KEEP_BOTH),
+        )
+
+        assertTrue(resolved.canCommit)
+        assertEquals("b".repeat(64), resolved.mergedManifest.activeFiles().single().contentHash)
+        assertTrue(resolved.mergedManifest.tombstones.isEmpty())
+        assertEquals(CloudFolderSyncOperationKind.DOWNLOAD_FILE, resolved.operations.single().kind)
+        assertEquals(CloudFolderSyncDirection.CLOUD_TO_LOCAL, resolved.operations.single().direction)
+    }
+
+    @Test
+    fun `keep both on update versus delete keeps the only surviving local file`() {
+        val original = file("Book.pdf", hash = "a".repeat(64), size = 10L, revision = 1L)
+        val base = manifest(revision = 1L, nodes = listOf(original))
+        val localUpdated = base.copy(
+            revision = 2L,
+            nodes = listOf(original.copy(contentHash = "b".repeat(64), sizeBytes = 11L, revision = 2L)),
+        )
+        val remoteDeleted = base.copy(
+            revision = 3L,
+            nodes = emptyList(),
+            tombstones = listOf(
+                CloudFolderTombstone(
+                    nodeId = original.nodeId,
+                    rootId = original.rootId,
+                    relativePath = original.relativePath,
+                    kind = CloudFolderNodeKind.FILE,
+                    deletedRevision = 3L,
+                ),
+            ),
+        )
+        val pending = planCloudFolderSync(base, localUpdated, remoteDeleted)
+        val conflict = pending.conflicts.single()
+        val resolved = resolveCloudFolderSync(
+            base = base,
+            local = localUpdated,
+            remote = remoteDeleted,
+            plan = pending,
+            resolutions = mapOf(conflict.conflictId to CloudFolderConflictResolution.KEEP_BOTH),
+        )
+
+        assertTrue(resolved.canCommit)
+        assertEquals("b".repeat(64), resolved.mergedManifest.activeFiles().single().contentHash)
+        assertTrue(resolved.mergedManifest.tombstones.isEmpty())
+        assertEquals(CloudFolderSyncOperationKind.UPLOAD_FILE, resolved.operations.single().kind)
+        assertEquals(CloudFolderSyncDirection.LOCAL_TO_CLOUD, resolved.operations.single().direction)
+    }
+
+    @Test
+    fun `persisted keep local decision resolves only the conflicted node`() {
+        val original = file("Book.pdf", hash = "a".repeat(64), size = 10L, revision = 1L)
+        val base = manifest(revision = 1L, nodes = listOf(original))
+        val local = base.copy(
+            revision = 2L,
+            nodes = listOf(original.copy(contentHash = "b".repeat(64), sizeBytes = 11L, revision = 2L)),
+        )
+        val remote = base.copy(
+            revision = 3L,
+            nodes = listOf(original.copy(contentHash = "c".repeat(64), sizeBytes = 12L, revision = 3L)),
+        )
+        val pending = planCloudFolderSync(base, local, remote)
+        val conflict = pending.conflicts.single()
+        val resolved = resolveCloudFolderSync(
+            base = base,
+            local = local,
+            remote = remote,
+            plan = pending,
+            resolutions = mapOf(conflict.conflictId to CloudFolderConflictResolution.KEEP_LOCAL),
+            nowMillis = 10L,
+            deviceId = "pixel",
+        )
+
+        assertTrue(resolved.canCommit)
+        assertEquals("b".repeat(64), resolved.mergedManifest.activeFiles().single().contentHash)
+        assertEquals(CloudFolderSyncOperationKind.UPLOAD_FILE, resolved.operations.single().kind)
+        assertEquals(CloudFolderSyncDirection.LOCAL_TO_CLOUD, resolved.operations.single().direction)
+    }
+
+    @Test
+    fun `persisted keep cloud decision materializes the remote version`() {
+        val original = file("Book.pdf", hash = "a".repeat(64), size = 10L, revision = 1L)
+        val base = manifest(revision = 1L, nodes = listOf(original))
+        val local = base.copy(
+            revision = 2L,
+            nodes = listOf(original.copy(contentHash = "b".repeat(64), sizeBytes = 11L, revision = 2L)),
+        )
+        val remote = base.copy(
+            revision = 3L,
+            nodes = listOf(original.copy(contentHash = "c".repeat(64), sizeBytes = 12L, revision = 3L)),
+        )
+        val pending = planCloudFolderSync(base, local, remote)
+        val conflict = pending.conflicts.single()
+        val resolved = resolveCloudFolderSync(
+            base,
+            local,
+            remote,
+            pending,
+            mapOf(conflict.conflictId to CloudFolderConflictResolution.KEEP_REMOTE),
+        )
+
+        assertTrue(resolved.canCommit)
+        assertEquals("c".repeat(64), resolved.mergedManifest.activeFiles().single().contentHash)
+        assertEquals(CloudFolderSyncOperationKind.DOWNLOAD_FILE, resolved.operations.single().kind)
+        assertEquals(CloudFolderSyncDirection.CLOUD_TO_LOCAL, resolved.operations.single().direction)
+    }
+
+    @Test
+    fun `keep both creates a deterministic local copy and retains cloud bytes`() {
+        val original = file(
+            "Book.pdf",
+            hash = "a".repeat(64),
+            size = 10L,
+            revision = 1L,
+        )
+        val base = manifest(revision = 1L, nodes = listOf(original))
+        val localNode = original.copy(contentHash = "b".repeat(64), sizeBytes = 11L, revision = 2L)
+        val remoteNode = original.copy(
+            contentHash = "c".repeat(64),
+            sizeBytes = 12L,
+            revision = 3L,
+            contentObjectId = "drive-cloud-book",
+        )
+        val local = base.copy(revision = 2L, nodes = listOf(localNode))
+        val remote = base.copy(revision = 3L, nodes = listOf(remoteNode))
+        val pending = planCloudFolderSync(base, local, remote)
+        val conflict = pending.conflicts.single()
+        val resolved = resolveCloudFolderSync(
+            base = base,
+            local = local,
+            remote = remote,
+            plan = pending,
+            resolutions = mapOf(conflict.conflictId to CloudFolderConflictResolution.KEEP_BOTH),
+            nowMillis = 40L,
+            deviceId = "pixel",
+        )
+
+        assertTrue(resolved.canCommit)
+        assertEquals(2, resolved.mergedManifest.activeFiles().size)
+        assertTrue(resolved.mergedManifest.activeFiles().any { it.contentHash == "c".repeat(64) })
+        val localCopy = resolved.mergedManifest.activeFiles().single { it.contentHash == "b".repeat(64) }
+        assertTrue(localCopy.relativePath != "Book.pdf")
+        assertTrue(localCopy.relativePath.contains("Local copy"))
+        val upload = resolved.operations.single { it.kind == CloudFolderSyncOperationKind.UPLOAD_FILE }
+        assertEquals(original.nodeId, upload.sourceNodeId)
+        assertTrue(resolved.operations.any { it.kind == CloudFolderSyncOperationKind.DOWNLOAD_FILE })
+    }
+
+    @Test
+    fun `deferred decision keeps conflict unresolved and stale plan cannot be reused`() {
+        val original = file("Book.pdf", hash = "a".repeat(64), size = 10L, revision = 1L)
+        val base = manifest(revision = 1L, nodes = listOf(original))
+        val local = base.copy(revision = 2L, nodes = listOf(original.copy(contentHash = "b".repeat(64), revision = 2L)))
+        val remote = base.copy(revision = 3L, nodes = listOf(original.copy(contentHash = "c".repeat(64), revision = 3L)))
+        val pending = planCloudFolderSync(base, local, remote)
+        val conflict = pending.conflicts.single()
+        val deferred = resolveCloudFolderSync(
+            base,
+            local,
+            remote,
+            pending,
+            mapOf(conflict.conflictId to CloudFolderConflictResolution.DEFER),
+        )
+        assertFalse(deferred.canCommit)
+        assertEquals(1, deferred.conflicts.size)
+
+        val newerLocal = local.copy(revision = 4L, nodes = listOf(original.copy(contentHash = "d".repeat(64), revision = 4L)))
+        val newerPlan = planCloudFolderSync(base, newerLocal, remote)
+        val stale = resolveCloudFolderSync(
+            base,
+            newerLocal,
+            remote,
+            pending,
+            mapOf(conflict.conflictId to CloudFolderConflictResolution.KEEP_LOCAL),
+        )
+        assertEquals(pending.conflicts, stale.conflicts)
+        assertTrue(newerPlan.conflicts != pending.conflicts)
+        assertFalse(stale.canCommit)
     }
 
     @Test

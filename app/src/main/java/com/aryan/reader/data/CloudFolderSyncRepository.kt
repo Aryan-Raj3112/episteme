@@ -5,6 +5,9 @@ import android.provider.Settings
 import androidx.core.content.edit
 import com.aryan.reader.CloudFolderSyncPrefs
 import com.aryan.reader.shared.CloudFolderDeviceBinding
+import com.aryan.reader.shared.CloudFolderConflict
+import com.aryan.reader.shared.CloudFolderConflictRecord
+import com.aryan.reader.shared.CloudFolderConflictResolution
 import com.aryan.reader.shared.CloudFolderManifest
 import com.aryan.reader.shared.CloudFolderMaterializationMode
 import com.aryan.reader.shared.CloudFolderNode
@@ -17,6 +20,7 @@ import com.aryan.reader.shared.CloudFolderSyncOperationKind
 import com.aryan.reader.shared.CloudFolderSyncDirection
 import com.aryan.reader.shared.CloudFolderSyncSelection
 import com.aryan.reader.shared.CloudFolderTombstone
+import com.aryan.reader.shared.CloudFolderConflictUiItem
 import com.aryan.reader.shared.cloudFolderRootId
 import com.aryan.reader.shared.validationIssues
 import java.nio.charset.StandardCharsets
@@ -183,6 +187,7 @@ internal fun cloudFolderOutboxOperationId(
         operation.relativePath,
         operation.previousRelativePath.orEmpty(),
         operation.revision.toString(),
+        operation.sourceNodeId.orEmpty(),
     ).joinToString("\u0000")
     val digest = MessageDigest.getInstance("SHA-256")
         .digest(material.toByteArray(StandardCharsets.UTF_8))
@@ -214,6 +219,7 @@ internal fun CloudFolderSyncOperation.toOutboxEntity(
     contentHash = contentHash,
     sizeBytes = sizeBytes,
     revision = revision,
+    sourceNodeId = sourceNodeId,
     nextAttemptAt = now,
 )
 
@@ -268,6 +274,49 @@ class CloudFolderSyncRepository(
             nodes = normalized.nodes.map { it.toEntity(accountId) },
             tombstones = normalized.tombstones.map { it.toEntity(accountId) },
         )
+    }
+
+    /**
+     * Return the last target that was published but not fully materialized.
+     * The target is validated on decode; a corrupt pending row must never be
+     * interpreted as executable local state.
+     */
+    suspend fun getPendingMaterialization(rootId: String): CloudFolderManifest? {
+        val normalizedRootId = rootId.trim().takeIf { it.isNotBlank() } ?: return null
+        val pending = dao.getPendingMaterialization(accountId, normalizedRootId) ?: return null
+        val manifest = CloudFolderManifestCodec.decode(pending.manifestJson)
+        require(manifest.rootId == normalizedRootId) {
+            "Pending cloud-folder materialization root mismatch"
+        }
+        require(manifest.revision == pending.targetRevision) {
+            "Pending cloud-folder materialization revision mismatch"
+        }
+        return manifest
+    }
+
+    /** Save a portable target before starting a potentially long transfer. */
+    suspend fun savePendingMaterialization(
+        manifest: CloudFolderManifest,
+        now: Long = System.currentTimeMillis(),
+    ) {
+        val issues = manifest.validationIssues()
+        require(issues.isEmpty()) { "Cannot persist invalid pending materialization: $issues" }
+        val normalized = manifest.normalized()
+        dao.upsertPendingMaterialization(
+            CloudFolderPendingMaterializationEntity(
+                accountId = accountId,
+                rootId = normalized.rootId,
+                manifestJson = CloudFolderManifestCodec.encode(normalized),
+                targetRevision = normalized.revision,
+                createdAt = now,
+                updatedAt = now,
+            )
+        )
+    }
+
+    suspend fun clearPendingMaterialization(rootId: String) {
+        val normalizedRootId = rootId.trim().takeIf { it.isNotBlank() } ?: return
+        dao.clearPendingMaterialization(accountId, normalizedRootId)
     }
 
     suspend fun getRoot(rootId: String): CloudFolderRoot? = dao.getRoot(accountId, rootId)?.toModel()
@@ -369,6 +418,7 @@ class CloudFolderSyncRepository(
         if (normalizedRootId.isBlank()) return
         dao.deleteBinding(accountId, normalizedRootId, deviceId)
         dao.clearOutbox(accountId, normalizedRootId)
+        dao.clearPendingMaterialization(accountId, normalizedRootId)
     }
 
     suspend fun markBindingError(
@@ -430,7 +480,7 @@ class CloudFolderSyncRepository(
         )
         privateDao.upsertOutboxSources(
             operations.mapNotNull { operation ->
-                sourceUris[operation.nodeId]
+                sourceUris[operation.sourceNodeId ?: operation.nodeId]
                     ?.trim()
                     ?.takeIf { it.isNotBlank() }
                     ?.let { sourceUri ->
@@ -445,6 +495,118 @@ class CloudFolderSyncRepository(
     }
 
     suspend fun getOutbox(rootId: String): List<CloudFolderOutboxEntity> = enrichOutbox(dao.getOutbox(accountId, rootId))
+
+    /** Return durable conflicts for settings/recovery UI in deterministic order. */
+    suspend fun getConflicts(rootId: String): List<CloudFolderConflictRecord> =
+        dao.getConflicts(accountId, rootId).mapNotNull { entity ->
+            runCatching {
+                CloudFolderConflictRecord(
+                    conflict = cloudFolderConflictJson.decodeFromString(
+                        CloudFolderConflict.serializer(),
+                        entity.conflictJson,
+                    ),
+                    baseRevision = entity.baseRevision,
+                    localRevision = entity.localRevision,
+                    remoteRevision = entity.remoteRevision,
+                    resolution = CloudFolderConflictResolution.valueOf(entity.resolution),
+                    createdAt = entity.createdAt,
+                    updatedAt = entity.updatedAt,
+                )
+            }.getOrNull()
+        }
+
+    suspend fun getConflictUiItems(): List<CloudFolderConflictUiItem> {
+        val items = mutableListOf<CloudFolderConflictUiItem>()
+        getRoots().filterNot { it.isDeleted }.forEach { root ->
+            getConflicts(root.rootId).forEach { record ->
+                items += CloudFolderConflictUiItem(
+                    rootId = root.rootId,
+                    folderName = root.name,
+                    conflictId = record.conflictId,
+                    relativePath = record.conflict.relativePath,
+                    type = record.conflict.type,
+                    resolution = record.resolution,
+                    baseRevision = record.baseRevision,
+                    localRevision = record.localRevision,
+                    remoteRevision = record.remoteRevision,
+                )
+            }
+        }
+        return items.sortedWith(
+            compareBy<CloudFolderConflictUiItem> { it.normalizedFolderName.lowercase() }
+                .thenBy { it.normalizedPath.lowercase() }
+                .thenBy { it.conflictId },
+        )
+    }
+
+    /**
+     * Reconcile the durable conflict set with a fresh plan. Existing choices
+     * survive only when the exact conflict payload and revision triple still
+     * match; changed bytes always reset the decision to DEFER.
+     */
+    suspend fun reconcileConflicts(
+        plan: com.aryan.reader.shared.CloudFolderSyncPlan,
+        now: Long = System.currentTimeMillis(),
+    ): List<CloudFolderConflictRecord> {
+        if (plan.conflicts.isEmpty()) {
+            dao.clearConflicts(accountId, plan.rootId)
+            return emptyList()
+        }
+        val existing = dao.getConflicts(accountId, plan.rootId).mapNotNull { entity ->
+            runCatching {
+                CloudFolderConflictRecord(
+                    conflict = cloudFolderConflictJson.decodeFromString(
+                        CloudFolderConflict.serializer(),
+                        entity.conflictJson,
+                    ),
+                    baseRevision = entity.baseRevision,
+                    localRevision = entity.localRevision,
+                    remoteRevision = entity.remoteRevision,
+                    resolution = CloudFolderConflictResolution.valueOf(entity.resolution),
+                    createdAt = entity.createdAt,
+                    updatedAt = entity.updatedAt,
+                )
+            }.getOrNull()
+        }.associateBy(CloudFolderConflictRecord::conflictId)
+        val records = plan.conflicts.distinctBy(CloudFolderConflict::conflictId).map { conflict ->
+            val old = existing[conflict.conflictId]
+            val sameSnapshot = old != null &&
+                old.baseRevision == plan.baseRevision &&
+                old.localRevision == plan.localRevision &&
+                old.remoteRevision == plan.remoteRevision &&
+                old.conflict == conflict
+            CloudFolderConflictRecord(
+                conflict = conflict,
+                baseRevision = plan.baseRevision,
+                localRevision = plan.localRevision,
+                remoteRevision = plan.remoteRevision,
+                resolution = if (sameSnapshot) old!!.resolution else CloudFolderConflictResolution.DEFER,
+                createdAt = if (sameSnapshot) old!!.createdAt else now,
+                updatedAt = if (sameSnapshot) old!!.updatedAt else now,
+            )
+        }
+        dao.clearConflicts(accountId, plan.rootId)
+        dao.upsertConflicts(records.map { it.toEntity(accountId, now) })
+        return records
+    }
+
+    /** Persist one decision; stale or unknown conflict IDs are rejected. */
+    suspend fun resolveConflict(
+        rootId: String,
+        conflictId: String,
+        resolution: CloudFolderConflictResolution,
+        now: Long = System.currentTimeMillis(),
+    ): Boolean {
+        val rows = dao.getConflicts(accountId, rootId)
+        val row = rows.firstOrNull { it.conflictId == conflictId } ?: return false
+        val updated = row.copy(resolution = resolution.name, updatedAt = now)
+        dao.upsertConflict(updated)
+        return true
+    }
+
+    suspend fun clearConflicts(rootId: String) {
+        dao.clearConflicts(accountId, rootId)
+    }
 
     suspend fun claimDueOutbox(
         rootId: String,
@@ -545,6 +707,7 @@ class CloudFolderSyncRepository(
                 contentHash = row.contentHash,
                 sizeBytes = row.sizeBytes,
                 revision = row.revision,
+                sourceNodeId = row.sourceNodeId,
             )
             val operationId = cloudFolderOutboxOperationId(operation, accountId, row.rootId)
             Pair(
@@ -625,6 +788,28 @@ class CloudFolderSyncRepository(
             }
         }
 }
+
+private val cloudFolderConflictJson = Json {
+    encodeDefaults = true
+    explicitNulls = false
+    ignoreUnknownKeys = true
+}
+
+private fun CloudFolderConflictRecord.toEntity(
+    accountId: String,
+    now: Long,
+): CloudFolderConflictEntity = CloudFolderConflictEntity(
+    accountId = accountId,
+    rootId = rootId,
+    conflictId = conflictId,
+    conflictJson = cloudFolderConflictJson.encodeToString(CloudFolderConflict.serializer(), conflict),
+    baseRevision = baseRevision,
+    localRevision = localRevision,
+    remoteRevision = remoteRevision,
+    resolution = resolution.name,
+    createdAt = createdAt,
+    updatedAt = maxOf(updatedAt, now),
+)
 
 internal fun cloudFolderDeviceId(context: Context): String {
     val preferences = context.getSharedPreferences(CLOUD_FOLDER_PREFS, Context.MODE_PRIVATE)

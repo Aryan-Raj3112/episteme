@@ -127,6 +127,7 @@ data class CloudFolderOutboxEntity(
     val contentHash: String?,
     val sizeBytes: Long,
     val revision: Long,
+    val sourceNodeId: String? = null,
     val state: String = STATE_PENDING,
     val attempts: Int = 0,
     val nextAttemptAt: Long = 0L,
@@ -143,6 +144,54 @@ data class CloudFolderOutboxEntity(
         const val STATE_QUARANTINED = "QUARANTINED"
     }
 }
+
+/**
+ * Account-scoped conflict decisions survive process death and offline
+ * periods.  The conflict JSON is a snapshot for explanation/review; the
+ * revision triple is checked again by the worker before a decision is used.
+ */
+@Entity(
+    tableName = "cloud_folder_conflicts",
+    primaryKeys = ["accountId", "rootId", "conflictId"],
+    indices = [
+        Index(value = ["accountId", "rootId", "resolution"]),
+        Index(value = ["accountId", "updatedAt"]),
+    ],
+)
+data class CloudFolderConflictEntity(
+    val accountId: String,
+    val rootId: String,
+    val conflictId: String,
+    val conflictJson: String,
+    val baseRevision: Long,
+    val localRevision: Long,
+    val remoteRevision: Long,
+    val resolution: String,
+    val createdAt: Long,
+    val updatedAt: Long,
+)
+
+/**
+ * A manifest whose bytes have been published but are not yet fully
+ * materialized on this device. Keeping it separate from the committed local
+ * manifest lets a killed worker resume without treating partially written
+ * files as user edits.
+ */
+@Entity(
+    tableName = "cloud_folder_pending_materializations",
+    primaryKeys = ["accountId", "rootId"],
+    indices = [
+        Index(value = ["accountId", "updatedAt"]),
+    ],
+)
+data class CloudFolderPendingMaterializationEntity(
+    val accountId: String,
+    val rootId: String,
+    val manifestJson: String,
+    val targetRevision: Long,
+    val createdAt: Long,
+    val updatedAt: Long,
+)
 
 @Dao
 abstract class CloudFolderSyncDao {
@@ -219,6 +268,51 @@ abstract class CloudFolderSyncDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     abstract suspend fun upsertOutbox(rows: List<CloudFolderOutboxEntity>)
+
+    @Query(
+        "SELECT * FROM cloud_folder_conflicts " +
+            "WHERE accountId = :accountId AND rootId = :rootId " +
+            "ORDER BY updatedAt DESC, conflictId"
+    )
+    abstract suspend fun getConflicts(accountId: String, rootId: String): List<CloudFolderConflictEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    abstract suspend fun upsertConflict(conflict: CloudFolderConflictEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    abstract suspend fun upsertConflicts(conflicts: List<CloudFolderConflictEntity>)
+
+    @Query(
+        "DELETE FROM cloud_folder_conflicts " +
+            "WHERE accountId = :accountId AND rootId = :rootId"
+    )
+    abstract suspend fun clearConflicts(accountId: String, rootId: String): Int
+
+    @Query("DELETE FROM cloud_folder_conflicts WHERE accountId = :accountId")
+    abstract suspend fun deleteConflictsForAccount(accountId: String): Int
+
+    @Query(
+        "SELECT * FROM cloud_folder_pending_materializations " +
+            "WHERE accountId = :accountId AND rootId = :rootId LIMIT 1"
+    )
+    abstract suspend fun getPendingMaterialization(
+        accountId: String,
+        rootId: String,
+    ): CloudFolderPendingMaterializationEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    abstract suspend fun upsertPendingMaterialization(
+        pending: CloudFolderPendingMaterializationEntity,
+    )
+
+    @Query(
+        "DELETE FROM cloud_folder_pending_materializations " +
+            "WHERE accountId = :accountId AND rootId = :rootId"
+    )
+    abstract suspend fun clearPendingMaterialization(accountId: String, rootId: String): Int
+
+    @Query("DELETE FROM cloud_folder_pending_materializations WHERE accountId = :accountId")
+    abstract suspend fun deletePendingMaterializationsForAccount(accountId: String): Int
 
     @Query("DELETE FROM cloud_folder_outbox WHERE accountId = :accountId AND operationId = :operationId")
     abstract suspend fun deleteOutbox(accountId: String, operationId: String): Int
@@ -303,6 +397,8 @@ abstract class CloudFolderSyncDao {
     @Transaction
     open suspend fun clearAccountState(accountId: String) {
         deleteOutboxForAccount(accountId)
+        deleteConflictsForAccount(accountId)
+        deletePendingMaterializationsForAccount(accountId)
         deleteTombstonesForAccount(accountId)
         deleteNodesForAccount(accountId)
         deleteBindingsForAccount(accountId)

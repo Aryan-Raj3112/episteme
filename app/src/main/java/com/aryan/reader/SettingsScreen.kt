@@ -60,8 +60,6 @@ import com.aryan.reader.pdf.loadPdfPageNumberOverlayVisible
 import com.aryan.reader.loadPdfReverseColorMode
 import com.aryan.reader.savePdfReverseColorMode
 import com.aryan.reader.shared.BuiltInPdfReaderThemes
-import com.aryan.reader.shared.CloudFolderIncomingChoice
-import com.aryan.reader.shared.CloudFolderIncomingFolderPrompt
 import com.aryan.reader.shared.CloudFolderSyncSelection
 import com.aryan.reader.shared.CustomFontItem
 import com.aryan.reader.shared.SharedSettingsAction
@@ -225,15 +223,15 @@ fun SettingsScreen(
     navController: NavHostController,
     onBackClick: () -> Unit,
     modifier: Modifier = Modifier,
-    incomingFolderPrompt: CloudFolderIncomingFolderPrompt? = null,
-    onIncomingFolderChoice: (CloudFolderIncomingChoice) -> Unit = {},
-    onBindIncomingFolder: () -> Unit = {},
-    onDismissIncomingFolder: () -> Unit = {},
+    onManageIncomingFolder: (String) -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val cloudFolderRootStats by viewModel.cloudFolderRootStats.collectAsStateWithLifecycle()
+    val cloudFolderRoots by viewModel.cloudFolderRoots.collectAsStateWithLifecycle()
+    val cloudFolderBindings by viewModel.cloudFolderBindings.collectAsStateWithLifecycle()
+    val cloudFolderConflicts by viewModel.cloudFolderConflicts.collectAsStateWithLifecycle()
     val customFonts by viewModel.customFonts.collectAsStateWithLifecycle()
     val ttsState by viewModel.ttsController.ttsState.collectAsStateWithLifecycle()
 
@@ -251,8 +249,6 @@ fun SettingsScreen(
     var showUpgradeDialog by remember { mutableStateOf(false) }
     var showCloudFolderSyncDialog by remember { mutableStateOf(false) }
     var showRecentLimitDialog by remember { mutableStateOf(false) }
-    var pendingIncomingBindPrompt by remember { mutableStateOf<CloudFolderIncomingFolderPrompt?>(null) }
-    var dismissedIncomingFolderRootId by remember { mutableStateOf<String?>(null) }
     var showTtsSettingsSheet by remember { mutableStateOf(false) }
     var hideReaderAi by remember { mutableStateOf(loadHideReaderAiFeatures(context)) }
     var epubReaderDefaults by remember(context, uiState.renderMode) {
@@ -294,28 +290,6 @@ fun SettingsScreen(
             showCloudFolderSyncDialog = true
         }
     }
-    val incomingCloudFolderLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocumentTree(),
-    ) { uri ->
-        val prompt = pendingIncomingBindPrompt
-        pendingIncomingBindPrompt = null
-        if (uri == null || prompt == null) return@rememberLauncherForActivityResult
-
-        viewModel.recordIncomingCloudFolderChoice(
-            prompt = prompt,
-            choice = CloudFolderIncomingChoice.BIND_LOCAL_FOLDER,
-            localFolderUri = uri,
-        )
-        dismissedIncomingFolderRootId = prompt.rootId
-        onIncomingFolderChoice(CloudFolderIncomingChoice.BIND_LOCAL_FOLDER)
-        onDismissIncomingFolder()
-    }
-
-    LaunchedEffect(incomingFolderPrompt?.rootId) {
-        pendingIncomingBindPrompt = null
-        dismissedIncomingFolderRootId = null
-    }
-
     LaunchedEffect(uiState.renderMode) {
         epubReaderDefaults = loadAndroidEpubReaderDefaultSettings(context, uiState.renderMode)
     }
@@ -332,11 +306,19 @@ fun SettingsScreen(
     )
     val settingsPage = settingsModel.page(settingsDestination)
 
-    val cloudFolderOptions = remember(uiState.syncedFolders, uiState.rawLibraryFiles, cloudFolderRootStats) {
+    val cloudFolderOptions = remember(
+        uiState.syncedFolders,
+        uiState.rawLibraryFiles,
+        cloudFolderRootStats,
+        cloudFolderRoots,
+        cloudFolderBindings,
+    ) {
         cloudFolderSyncFolderOptions(
             folders = uiState.syncedFolders,
             indexedFiles = uiState.rawLibraryFiles,
             repositoryStats = cloudFolderRootStats,
+            repositoryRoots = cloudFolderRoots,
+            deviceBindings = cloudFolderBindings,
         )
     }
 
@@ -507,12 +489,14 @@ fun SettingsScreen(
             folders = cloudFolderOptions,
             selection = cloudFolderSelection,
             localFolderIndexingEnabled = uiState.isFolderSyncEnabled,
+            conflicts = cloudFolderConflicts,
             onSelectionChange = { selection ->
                 val normalized = selection.normalized()
                 cloudFolderSelection = normalized
                 viewModel.setCloudFolderSyncSelection(normalized)
             },
             onLocalFolderIndexingChange = viewModel::setFolderSyncEnabled,
+            onConflictResolution = viewModel::resolveCloudFolderConflict,
             onAddFolder = {
                 showCloudFolderSyncDialog = false
                 try {
@@ -524,40 +508,14 @@ fun SettingsScreen(
                     )
                 }
             },
+            onSetMaterializationMode = { rootId, mode ->
+                viewModel.setCloudFolderMaterializationMode(rootId, mode)
+            },
+            onManageIncomingFolder = { rootId ->
+                showCloudFolderSyncDialog = false
+                onManageIncomingFolder(rootId)
+            },
             onDismiss = { showCloudFolderSyncDialog = false },
-        )
-    }
-
-    incomingFolderPrompt
-        ?.takeUnless { it.rootId == dismissedIncomingFolderRootId }
-        ?.let { prompt ->
-        CloudFolderIncomingFolderPromptDialog(
-            prompt = prompt,
-            onChoice = { choice ->
-                if (choice != CloudFolderIncomingChoice.BIND_LOCAL_FOLDER) {
-                    viewModel.recordIncomingCloudFolderChoice(prompt, choice)
-                    dismissedIncomingFolderRootId = prompt.rootId
-                    onIncomingFolderChoice(choice)
-                    onDismissIncomingFolder()
-                }
-            },
-            onBindLocalFolder = {
-                pendingIncomingBindPrompt = prompt
-                onBindIncomingFolder()
-                try {
-                    incomingCloudFolderLauncher.launch(null)
-                } catch (_: ActivityNotFoundException) {
-                    pendingIncomingBindPrompt = null
-                    viewModel.showBanner(
-                        context.getString(R.string.error_folder_selection_unsupported),
-                        isError = true,
-                    )
-                }
-            },
-            onDismiss = {
-                dismissedIncomingFolderRootId = prompt.rootId
-                onDismissIncomingFolder()
-            },
         )
     }
 

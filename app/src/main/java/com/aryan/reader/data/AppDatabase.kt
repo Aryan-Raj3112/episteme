@@ -45,8 +45,10 @@ import com.aryan.reader.audiobook.BookTtsListeningProgressEntity
         CloudFolderNodeEntity::class,
         CloudFolderTombstoneEntity::class,
         CloudFolderOutboxEntity::class,
+        CloudFolderConflictEntity::class,
+        CloudFolderPendingMaterializationEntity::class,
     ],
-    version = 32,
+    version = 34,
     exportSchema = false
 )
 @TypeConverters(FileTypeConverter::class)
@@ -796,6 +798,61 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** Persist conflict-copy source identity and user conflict choices. */
+        val MIGRATION_32_33 = object : Migration(32, 33) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE cloud_folder_outbox ADD COLUMN sourceNodeId TEXT DEFAULT NULL")
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `cloud_folder_conflicts` (
+                        `accountId` TEXT NOT NULL,
+                        `rootId` TEXT NOT NULL,
+                        `conflictId` TEXT NOT NULL,
+                        `conflictJson` TEXT NOT NULL,
+                        `baseRevision` INTEGER NOT NULL,
+                        `localRevision` INTEGER NOT NULL,
+                        `remoteRevision` INTEGER NOT NULL,
+                        `resolution` TEXT NOT NULL,
+                        `createdAt` INTEGER NOT NULL,
+                        `updatedAt` INTEGER NOT NULL,
+                        PRIMARY KEY(`accountId`, `rootId`, `conflictId`)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_cloud_folder_conflicts_accountId_rootId_resolution` " +
+                        "ON `cloud_folder_conflicts` (`accountId`, `rootId`, `resolution`)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_cloud_folder_conflicts_accountId_updatedAt` " +
+                        "ON `cloud_folder_conflicts` (`accountId`, `updatedAt`)"
+                )
+            }
+        }
+
+        /** Persist manifests waiting for complete local materialization. */
+        val MIGRATION_33_34 = object : Migration(33, 34) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `cloud_folder_pending_materializations` (
+                        `accountId` TEXT NOT NULL,
+                        `rootId` TEXT NOT NULL,
+                        `manifestJson` TEXT NOT NULL,
+                        `targetRevision` INTEGER NOT NULL,
+                        `createdAt` INTEGER NOT NULL,
+                        `updatedAt` INTEGER NOT NULL,
+                        PRIMARY KEY(`accountId`, `rootId`)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_cloud_folder_pending_materializations_accountId_updatedAt` " +
+                        "ON `cloud_folder_pending_materializations` (`accountId`, `updatedAt`)"
+                )
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 CloudFolderPrivateStateMigrator.importLegacyState(context.applicationContext)
@@ -812,7 +869,8 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20,
                         MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24,
                         MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28,
-                        MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32
+                        MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32,
+                        MIGRATION_32_33, MIGRATION_33_34
                     )
                     .fallbackToDestructiveMigration(false)
                     .build()
