@@ -1472,7 +1472,7 @@ internal fun FolderSyncScreen(
         isLoading = isLoading,
         strings = com.aryan.reader.shared.ui.SharedAndroidFolderSyncStrings(
             addFolder = stringResource(R.string.fab_add_folder),
-            addDescription = "Add",
+            addDescription = stringResource(R.string.action_add),
             scanning = stringResource(R.string.scanning),
             scanAll = stringResource(R.string.scan_all),
             syncMetadata = stringResource(R.string.sync_meta),
@@ -1480,7 +1480,7 @@ internal fun FolderSyncScreen(
             emptyMessage = stringResource(R.string.sync_folders_desc),
             selectFolder = stringResource(R.string.action_select_folder),
             localSyncDisabled = stringResource(R.string.folder_local_sync_disabled),
-            optionsDescription = "Options",
+            optionsDescription = stringResource(R.string.content_desc_options),
             editFilters = stringResource(R.string.menu_edit_filters),
             disableLocalSync = stringResource(R.string.menu_disable_folder_local_sync),
             enableLocalSync = stringResource(R.string.menu_enable_folder_local_sync),

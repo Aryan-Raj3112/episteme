@@ -1159,7 +1159,7 @@ fun PageScrubbingAnimation(currentPage: Int, totalPages: Int) {
             )
             Spacer(Modifier.height(12.dp))
             Text(
-                text = "Page $currentPage of $totalPages",
+                text = stringResource(R.string.page_of_format, currentPage, totalPages),
                 style = MaterialTheme.typography.headlineSmall,
                 color = MaterialTheme.colorScheme.onSurface
             )
@@ -1717,11 +1717,11 @@ fun TtsOverlayControls(
         val totalChapters = ttsState.totalChapters
         when {
             chapterNumber != null && totalChapters != null -> buildString {
-                append("Chapter $chapterNumber of $totalChapters")
+                append(context.getString(R.string.chapter_of_chapters, chapterNumber, totalChapters))
                 if (!cleanChapterTitle.isNullOrBlank()) append(": $cleanChapterTitle")
             }
             chapterNumber != null -> buildString {
-                append("Chapter $chapterNumber")
+                append(context.getString(R.string.chapter_number, chapterNumber))
                 if (!cleanChapterTitle.isNullOrBlank()) append(": $cleanChapterTitle")
             }
             !cleanChapterTitle.isNullOrBlank() -> cleanChapterTitle

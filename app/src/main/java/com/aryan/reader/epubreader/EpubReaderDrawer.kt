@@ -101,6 +101,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -637,12 +638,13 @@ private fun BookmarksList(
     onRenameBookmark: (Bookmark, String) -> Unit,
     onDeleteBookmark: (Bookmark) -> Unit
 ) {
+    val context = LocalContext.current
     com.aryan.reader.shared.ui.SharedAndroidEpubBookmarksList(
         bookmarks = bookmarks,
         strings = com.aryan.reader.shared.ui.SharedAndroidEpubBookmarkStrings(
             empty = stringResource(R.string.no_bookmarks_yet),
-            defaultLabel = "Bookmark",
-            pageOf = { page, total -> "Page $page of $total" },
+            defaultLabel = stringResource(R.string.content_desc_bookmark),
+            pageOf = { page, total -> context.getString(R.string.page_of_format, page, total) },
             moreOptionsDescription = stringResource(R.string.content_desc_more_options_bookmark),
             renameAction = stringResource(R.string.action_rename),
             deleteAction = stringResource(R.string.action_delete),
