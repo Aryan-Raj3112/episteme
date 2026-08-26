@@ -22,6 +22,7 @@ import com.aryan.reader.shared.ReaderTtsChunk
 import com.aryan.reader.shared.ReaderTtsProgress
 import com.aryan.reader.shared.ReaderExternalLookupAction
 import com.aryan.reader.shared.ReaderExternalLookupService
+import com.aryan.reader.shared.normalizeReaderHref
 import com.aryan.reader.shared.LocalTtsInterruptionAction
 import com.aryan.reader.shared.LocalTtsInterruptionEvent
 import com.aryan.reader.shared.LocalTtsInterruptionState
@@ -164,7 +165,7 @@ internal actual fun SharedMobileEpubWebView(
 }
 
 internal actual fun openSharedMobileEpubExternalLink(url: String): Boolean {
-    val normalized = if (url.trim().startsWith("//")) "https:${url.trim()}" else url.trim()
+    val normalized = normalizeReaderHref(url)
     val target = NSURL.URLWithString(normalized) ?: return false
     return UIApplication.sharedApplication.openURL(target)
 }

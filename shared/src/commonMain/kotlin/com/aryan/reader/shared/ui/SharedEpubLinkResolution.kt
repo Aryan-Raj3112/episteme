@@ -1,15 +1,14 @@
 package com.aryan.reader.shared.ui
 
 import com.aryan.reader.shared.ReaderLocator
+import com.aryan.reader.shared.isReaderExternalHref
 import com.aryan.reader.shared.reader.ReaderPage
 import com.aryan.reader.shared.reader.SharedEpubBook
 import com.aryan.reader.shared.reader.SharedEpubTocEntry
 import com.aryan.reader.shared.reader.findElementOffset
 
 internal fun String.isExternalEpubLink(): Boolean {
-    val lower = trim().lowercase()
-    return lower.startsWith("http://") || lower.startsWith("https://") || lower.startsWith("//") ||
-        lower.startsWith("mailto:") || lower.startsWith("tel:") || lower.startsWith("sms:")
+    return isReaderExternalHref(this)
 }
 
 internal fun String.containsReaderFragment(fragment: String): Boolean {

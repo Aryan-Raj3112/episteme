@@ -252,6 +252,7 @@ import org.jsoup.Jsoup
 import com.aryan.reader.shared.ui.SharedMobileReaderDrawer
 import com.aryan.reader.shared.ui.SharedMobileReaderScaffold
 import com.aryan.reader.shared.ui.SharedMobileReaderRecoveryGate
+import com.aryan.reader.shared.ui.rememberReaderMotionPolicy
 import com.aryan.reader.shared.reader.MobileEpubReaderBackAction
 import com.aryan.reader.shared.reader.selectMobileEpubReaderBackAction
 import org.json.JSONArray
@@ -423,6 +424,7 @@ fun EpubReaderHost(
 ) {
     val view = LocalView.current
     val context = LocalContext.current
+    val motionPolicy = rememberReaderMotionPolicy()
     val uiState by viewModel.uiState.collectAsState()
     val window = (view.context as? Activity)?.window
     val activity = context as? Activity
@@ -3179,6 +3181,7 @@ fun EpubReaderHost(
                 currentChapterIndex = currentChapterIndex,
                 currentChapterInPaginatedMode = currentChapterInPaginatedMode,
                 renderMode = currentRenderMode,
+                readerMotionPolicy = motionPolicy,
                 activeHighlightPalette = currentHighlightPalette,
                 onOpenPaletteManager = { showPaletteManager = true },
                 onHighlightColorChange = onHighlightColorChange,
@@ -4065,7 +4068,7 @@ fun EpubReaderHost(
                     verticalScrollRequests.nativeVerticalScrollDeltaRequest = deltaPx.toFloat()
                 } else {
                     webViewRefForTts?.evaluateJavascript(
-                        "window.scrollBy({ top: $deltaPx, behavior: 'smooth' });",
+                        "window.scrollBy({ top: $deltaPx, behavior: '${motionPolicy.webViewScrollBehavior()}' });",
                         null
                     )
                 }
@@ -4086,7 +4089,7 @@ fun EpubReaderHost(
                             if (pageCount <= 0) return@launch
                             val page = targetPage.coerceIn(0, pageCount - 1)
                             if (page != paginatedPagerState.currentPage) {
-                                if (prefs.isPageTurnAnimationEnabled) {
+                                if (motionPolicy.shouldAnimate(prefs.isPageTurnAnimationEnabled)) {
                                     paginatedPagerState.animateScrollToPage(page, animationSpec = tween(700))
                                 } else {
                                     paginatedPagerState.scrollToPage(page)
@@ -4110,9 +4113,9 @@ fun EpubReaderHost(
                     isNativeVerticalMode -> navigateReaderPage(if (first) 0 else nativeVerticalTotalPages - 1)
                     currentRenderMode == RenderMode.VERTICAL_SCROLL -> {
                         val script = if (first) {
-                            "window.scrollTo({ top: 0, behavior: 'smooth' });"
+                            "window.scrollTo({ top: 0, behavior: '${motionPolicy.webViewScrollBehavior()}' });"
                         } else {
-                            "window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' });"
+                            "window.scrollTo({ top: document.documentElement.scrollHeight, behavior: '${motionPolicy.webViewScrollBehavior()}' });"
                         }
                         webViewRefForTts?.evaluateJavascript(script, null)
                     }
@@ -4145,7 +4148,7 @@ fun EpubReaderHost(
                                 verticalScrollRequests.nativeVerticalScrollDeltaRequest = amount.toFloat()
                             } else {
                                 webViewRefForTts?.evaluateJavascript(
-                                    "window.scrollBy({ top: $amount, behavior: 'smooth' });",
+                                    "window.scrollBy({ top: $amount, behavior: '${motionPolicy.webViewScrollBehavior()}' });",
                                     null
                                 )
                             }
@@ -4184,7 +4187,7 @@ fun EpubReaderHost(
                                 if (pageCount > 0) {
                                     val targetPage = (paginatedPagerState.currentPage + 1).coerceAtMost(pageCount - 1)
                                     if (targetPage != paginatedPagerState.currentPage) {
-                                        if (prefs.isPageTurnAnimationEnabled) {
+                                        if (motionPolicy.shouldAnimate(prefs.isPageTurnAnimationEnabled)) {
                                             paginatedPagerState.animateScrollToPage(targetPage, animationSpec = tween(700))
                                         } else paginatedPagerState.scrollToPage(targetPage)
                                     }
@@ -4195,7 +4198,7 @@ fun EpubReaderHost(
                             scope.launch {
                                 val targetPage = (paginatedPagerState.currentPage - 1).coerceAtLeast(0)
                                 if (targetPage != paginatedPagerState.currentPage) {
-                                    if (prefs.isPageTurnAnimationEnabled) {
+                                    if (motionPolicy.shouldAnimate(prefs.isPageTurnAnimationEnabled)) {
                                         paginatedPagerState.animateScrollToPage(targetPage, animationSpec = tween(700))
                                     } else paginatedPagerState.scrollToPage(targetPage)
                                 }
@@ -4272,9 +4275,11 @@ fun EpubReaderHost(
                                     initialLocator = lastKnownLocator,
                                     initialPageIndexInBook = nativeVerticalCurrentPage,
                                     scrollRequestPage = verticalScrollRequests.nativeVerticalScrollRequest,
+                                    scrollRequestPageAnimated = motionPolicy.animationsEnabled,
                                     scrollRequestLocator = verticalScrollRequests.nativeVerticalLocatorScrollRequest,
                                     scrollRequestLocatorId = verticalScrollRequests.nativeVerticalLocatorScrollRequestId,
                                     scrollRequestLocatorKeepVisible = verticalScrollRequests.nativeVerticalLocatorScrollKeepVisible,
+                                    scrollRequestLocatorAnimated = motionPolicy.animationsEnabled,
                                     scrollRequestProgressPercent = verticalScrollRequests.nativeVerticalProgressScrollRequest,
                                     scrollRequestProgressId = verticalScrollRequests.nativeVerticalProgressScrollRequestId,
                                     scrollDeltaRequest = verticalScrollRequests.nativeVerticalScrollDeltaRequest,
@@ -4405,7 +4410,10 @@ fun EpubReaderHost(
                                 AnimatedContent(
                                     targetState = currentChapterIndex,
                                     transitionSpec = {
-                                        if (!prefs.pullToTurnEnabled) {
+                                        if (motionPolicy.reduceMotion) {
+                                            androidx.compose.animation.EnterTransition.None togetherWith
+                                                androidx.compose.animation.ExitTransition.None
+                                        } else if (!prefs.pullToTurnEnabled) {
                                             fadeIn(animationSpec = tween(150)) togetherWith fadeOut(animationSpec = tween(150))
                                         } else {
                                             if (targetState > initialState) {
@@ -5502,7 +5510,7 @@ fun EpubReaderHost(
                                                         (paginatedPagerState.currentPage - 1).coerceAtLeast(0)
                                                     }
                                                     if (targetPage != paginatedPagerState.currentPage) {
-                                                        if (prefs.isPageTurnAnimationEnabled) {
+                                                        if (motionPolicy.shouldAnimate(prefs.isPageTurnAnimationEnabled)) {
                                                             paginatedPagerState.animateScrollToPage(targetPage, animationSpec = tween(700))
                                                         } else paginatedPagerState.scrollToPage(targetPage)
                                                     }
@@ -5518,7 +5526,7 @@ fun EpubReaderHost(
                                                             (paginatedPagerState.currentPage + 1).coerceAtMost(pageCount - 1)
                                                         }
                                                         if (targetPage != paginatedPagerState.currentPage) {
-                                                            if (prefs.isPageTurnAnimationEnabled) {
+                                                            if (motionPolicy.shouldAnimate(prefs.isPageTurnAnimationEnabled)) {
                                                                 paginatedPagerState.animateScrollToPage(targetPage, animationSpec = tween(700))
                                                             } else paginatedPagerState.scrollToPage(targetPage)
                                                         }
@@ -5924,8 +5932,16 @@ fun EpubReaderHost(
                 // Page Info Bar (Vertical)
                 AnimatedVisibility(
                     visible = currentRenderMode == RenderMode.VERTICAL_SCROLL && isPageInfoVisible,
-                    enter = fadeIn(animationSpec = tween(200)),
-                    exit = fadeOut(animationSpec = tween(200)),
+                    enter = if (motionPolicy.reduceMotion) {
+                        androidx.compose.animation.EnterTransition.None
+                    } else {
+                        fadeIn(animationSpec = tween(200))
+                    },
+                    exit = if (motionPolicy.reduceMotion) {
+                        androidx.compose.animation.ExitTransition.None
+                    } else {
+                        fadeOut(animationSpec = tween(200))
+                    },
                     modifier = Modifier
                         .align(if (prefs.pageInfoPosition == PageInfoPosition.TOP) Alignment.TopCenter else Alignment.BottomCenter)
                         .padding(top = pageInfoChromeTopPadding, bottom = pageInfoChromeBottomPadding)
@@ -5984,8 +6000,16 @@ fun EpubReaderHost(
                 // Page Info Bar (Paginated)
                 AnimatedVisibility(
                     visible = currentRenderMode == RenderMode.PAGINATED && paginator != null && isPageInfoVisible && paginatedPagerState.pageCount > 0,
-                    enter = fadeIn(animationSpec = tween(200)),
-                    exit = fadeOut(animationSpec = tween(200)),
+                    enter = if (motionPolicy.reduceMotion) {
+                        androidx.compose.animation.EnterTransition.None
+                    } else {
+                        fadeIn(animationSpec = tween(200))
+                    },
+                    exit = if (motionPolicy.reduceMotion) {
+                        androidx.compose.animation.ExitTransition.None
+                    } else {
+                        fadeOut(animationSpec = tween(200))
+                    },
                     modifier = Modifier
                         .align(if (prefs.pageInfoPosition == PageInfoPosition.TOP) Alignment.TopCenter else Alignment.BottomCenter)
                         .padding(top = pageInfoChromeTopPadding, bottom = pageInfoChromeBottomPadding)
@@ -6098,11 +6122,11 @@ fun EpubReaderHost(
 
                     val leftPulseAlpha by animateFloatAsState(
                         targetValue = if (System.currentTimeMillis() - leftPulseTrigger < 150) 0.3f else 0f,
-                        animationSpec = tween(150), label = "leftPulse"
+                        animationSpec = tween(motionPolicy.durationMillis(150)), label = "leftPulse"
                     )
                     val rightPulseAlpha by animateFloatAsState(
                         targetValue = if (System.currentTimeMillis() - rightPulseTrigger < 150) 0.3f else 0f,
-                        animationSpec = tween(150), label = "rightPulse"
+                        animationSpec = tween(motionPolicy.durationMillis(150)), label = "rightPulse"
                     )
 
                     Box(modifier = Modifier.fillMaxSize()) {
@@ -6155,7 +6179,7 @@ fun EpubReaderHost(
                                             triggerAutoScrollTempPause(600L)
                                             val amount = (currentClientHeightValue * 0.75f).toInt()
                                             webViewRefForTts?.evaluateJavascript(
-                                                "window.scrollBy({ top: -${amount}, behavior: 'smooth' });", null
+                                                "window.scrollBy({ top: -${amount}, behavior: '${motionPolicy.webViewScrollBehavior()}' });", null
                                             )
                                         }
                                     }
@@ -6224,7 +6248,7 @@ fun EpubReaderHost(
                                             triggerAutoScrollTempPause(600L)
                                             val amount = (currentClientHeightValue * 0.75f).toInt()
                                             webViewRefForTts?.evaluateJavascript(
-                                                "window.scrollBy({ top: ${amount}, behavior: 'smooth' });", null
+                                                "window.scrollBy({ top: ${amount}, behavior: '${motionPolicy.webViewScrollBehavior()}' });", null
                                             )
                                         }
                                     }
@@ -6453,7 +6477,9 @@ fun EpubReaderHost(
                     onOpenAiHub = { showAiHubSheet = true },
                     onOpenSlider = ::toggleEpubPageSlider,
                     onOpenDrawer = {
-                        scope.launch { drawerState.open() }
+                        scope.launch {
+                            if (motionPolicy.animationsEnabled) drawerState.open() else drawerState.snapTo(DrawerValue.Open)
+                        }
                     },
                     onToggleFormat = {
                         navigation.showFormatAdjustmentBars = !navigation.showFormatAdjustmentBars
@@ -6502,33 +6528,46 @@ fun EpubReaderHost(
                             onToggleReflow(activeChapter)
                         }
                     } else null,
-                    onDeleteReflow = onDeleteReflow
+                    onDeleteReflow = onDeleteReflow,
+                    readerMotionPolicy = motionPolicy,
                 )
 
                 val autoScrollPadding by animateDpAsState(
                     targetValue = if (showBars) (bottomPadding + 45.dp + 16.dp) else 32.dp,
+                    animationSpec = tween(motionPolicy.durationMillis(200)),
                     label = "AutoScrollPadding"
                 )
 
                 val alignmentBias by animateFloatAsState(
                     targetValue = if (isAutoScrollCollapsed) 1f else 0f,
+                    animationSpec = tween(motionPolicy.durationMillis(200)),
                     label = "AutoScrollAlignAnimation"
                 )
 
                 val ttsOverlayPadding by animateDpAsState(
                     targetValue = if (showBars) (bottomPadding + 45.dp + 16.dp) else 32.dp,
+                    animationSpec = tween(motionPolicy.durationMillis(200)),
                     label = "TtsOverlayPadding"
                 )
 
                 val ttsAlignmentBias by animateFloatAsState(
                     targetValue = readerTtsOverlayAlignmentBias(ttsOverlaySize),
+                    animationSpec = tween(motionPolicy.durationMillis(200)),
                     label = "TtsAlignAnimation"
                 )
 
                 AnimatedVisibility(
                     visible = isTtsSessionActive && showBars,
-                    enter = slideInVertically(animationSpec = tween(200)) { it } + fadeIn(animationSpec = tween(200)),
-                    exit = slideOutVertically(animationSpec = tween(200)) { it } + fadeOut(animationSpec = tween(200)),
+                    enter = if (motionPolicy.reduceMotion) {
+                        androidx.compose.animation.EnterTransition.None
+                    } else {
+                        slideInVertically(animationSpec = tween(200)) { it } + fadeIn(animationSpec = tween(200))
+                    },
+                    exit = if (motionPolicy.reduceMotion) {
+                        androidx.compose.animation.ExitTransition.None
+                    } else {
+                        slideOutVertically(animationSpec = tween(200)) { it } + fadeOut(animationSpec = tween(200))
+                    },
                     modifier = Modifier
                         .align(BiasAlignment(ttsAlignmentBias, 1f))
                         .padding(bottom = ttsOverlayPadding)
@@ -6552,7 +6591,8 @@ fun EpubReaderHost(
                             userStoppedTts = true
                             ttsController.stop()
                         },
-                        credits = credits
+                        credits = credits,
+                        readerMotionPolicy = motionPolicy
                     )
                 }
 
@@ -6560,8 +6600,16 @@ fun EpubReaderHost(
 
                 AnimatedVisibility(
                     visible = isAutoScrollControlsVisible,
-                    enter = slideInVertically(animationSpec = tween(200)) { it } + fadeIn(animationSpec = tween(200)),
-                    exit = slideOutVertically(animationSpec = tween(200)) { it } + fadeOut(animationSpec = tween(200)),
+                    enter = if (motionPolicy.reduceMotion) {
+                        androidx.compose.animation.EnterTransition.None
+                    } else {
+                        slideInVertically(animationSpec = tween(200)) { it } + fadeIn(animationSpec = tween(200))
+                    },
+                    exit = if (motionPolicy.reduceMotion) {
+                        androidx.compose.animation.ExitTransition.None
+                    } else {
+                        slideOutVertically(animationSpec = tween(200)) { it } + fadeOut(animationSpec = tween(200))
+                    },
                     modifier = Modifier
                         .align(BiasAlignment(alignmentBias, 1f))
                         .padding(bottom = autoScrollPadding)
@@ -6654,10 +6702,11 @@ fun EpubReaderHost(
                                         fallbackChapterIndex = chapterIndex
                                     )
                                 } else {
-                                    webViewRefForTts?.evaluateJavascript("window.scrollTo({ top: 0, behavior: 'smooth' });", null)
+                                    webViewRefForTts?.evaluateJavascript("window.scrollTo({ top: 0, behavior: '${motionPolicy.webViewScrollBehavior()}' });", null)
                                 }
                             }
-                        }
+                        },
+                        readerMotionPolicy = motionPolicy
                     )
                 }
 
@@ -6671,7 +6720,8 @@ fun EpubReaderHost(
                     forwardLabel = epubJumpForwardLabel,
                     onBack = ::goBackInEpubJumpHistory,
                     onForward = ::goForwardInEpubJumpHistory,
-                    onClear = { epubJumpHistory = epubJumpHistory.clear() }
+                    onClear = { epubJumpHistory = epubJumpHistory.clear() },
+                    readerMotionPolicy = motionPolicy,
                 )
 
                 // Animated Bottom Bar
@@ -6692,7 +6742,9 @@ fun EpubReaderHost(
                     onOpenBrightness = { showBrightnessSheet = true },
                     onOpenSlider = ::toggleEpubPageSlider,
                     onOpenDrawer = {
-                        scope.launch { drawerState.open() }
+                        scope.launch {
+                            if (motionPolicy.animationsEnabled) drawerState.open() else drawerState.snapTo(DrawerValue.Open)
+                        }
                     },
                     onOpenScreenOrientation = { prefs.showScreenOrientationSheet = true },
                     onToggleFormat = {
@@ -6733,7 +6785,8 @@ fun EpubReaderHost(
                     },
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
-                        .padding(bottom = bottomPadding)
+                        .padding(bottom = bottomPadding),
+                    readerMotionPolicy = motionPolicy
                 )
 
                 ReaderTextFormatPanel(
@@ -6912,8 +6965,16 @@ fun EpubReaderHost(
                 }
                 AnimatedVisibility(
                     visible = navigation.isNavigatingByToc,
-                    enter = fadeIn(),
-                    exit = fadeOut()
+                    enter = if (motionPolicy.reduceMotion) {
+                        androidx.compose.animation.EnterTransition.None
+                    } else {
+                        fadeIn()
+                    },
+                    exit = if (motionPolicy.reduceMotion) {
+                        androidx.compose.animation.ExitTransition.None
+                    } else {
+                        fadeOut()
+                    }
                 ) {
                     Box(
                         modifier = Modifier
@@ -7139,7 +7200,8 @@ fun EpubReaderHost(
                         ),
                     activeColor = epubReaderSliderColors.activeTrackColor,
                     inactiveColor = epubReaderSliderColors.inactiveTrackColor,
-                    contentColor = epubReaderSliderColors.contentColor
+                    contentColor = epubReaderSliderColors.contentColor,
+                    readerMotionPolicy = motionPolicy
                 )
 
                 if (epubSliderChromeVisible && navigation.isFastScrubbing) {

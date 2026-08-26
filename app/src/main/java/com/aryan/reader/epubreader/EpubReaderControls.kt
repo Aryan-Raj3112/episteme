@@ -119,6 +119,7 @@ import androidx.media3.common.util.UnstableApi
 import com.aryan.reader.BuildConfig
 import com.aryan.reader.R
 import com.aryan.reader.RenderMode
+import com.aryan.reader.shared.ReaderMotionPolicy
 import com.aryan.reader.shared.ReaderSearchState as SearchState
 import com.aryan.reader.SearchTopBar
 import com.aryan.reader.TooltipIconButton
@@ -249,10 +250,12 @@ fun EpubReaderTopBar(
     modifier: Modifier = Modifier,
     onToggleReflow: (() -> Unit)? = null,
     onDeleteReflow: (() -> Unit)? = null,
+    readerMotionPolicy: ReaderMotionPolicy = ReaderMotionPolicy(),
 ) {
     com.aryan.reader.shared.ui.SharedReaderBarVisibility(
         visible = isVisible,
         edge = com.aryan.reader.shared.ui.SharedReaderBarEdge.TOP,
+        motionPolicy = readerMotionPolicy,
         modifier = modifier
     ) {
         com.aryan.reader.shared.ui.SharedReaderToolbarSurface(height = 55.dp) {
@@ -772,12 +775,21 @@ fun EpubJumpHistoryBar(
     forwardLabel: String?,
     onBack: () -> Unit,
     onForward: () -> Unit,
-    onClear: () -> Unit
+    onClear: () -> Unit,
+    readerMotionPolicy: ReaderMotionPolicy = ReaderMotionPolicy(),
 ) {
     AnimatedVisibility(
         visible = showStandardBars && !searchStateActive && (backLabel != null || forwardLabel != null),
-        enter = slideInVertically(animationSpec = tween(200)) { fullHeight -> fullHeight } + fadeIn(animationSpec = tween(200)),
-        exit = slideOutVertically(animationSpec = tween(200)) { fullHeight -> fullHeight } + fadeOut(animationSpec = tween(200)),
+        enter = if (readerMotionPolicy.reduceMotion) {
+            androidx.compose.animation.EnterTransition.None
+        } else {
+            slideInVertically(animationSpec = tween(200)) { fullHeight -> fullHeight } + fadeIn(animationSpec = tween(200))
+        },
+        exit = if (readerMotionPolicy.reduceMotion) {
+            androidx.compose.animation.ExitTransition.None
+        } else {
+            slideOutVertically(animationSpec = tween(200)) { fullHeight -> fullHeight } + fadeOut(animationSpec = tween(200))
+        },
         modifier = modifier
     ) {
         Surface(
@@ -869,11 +881,13 @@ fun EpubReaderBottomBar(
     hiddenTools: Set<String>,
     toolOrder: List<ReaderTool>,
     bottomTools: Set<String>,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    readerMotionPolicy: ReaderMotionPolicy = ReaderMotionPolicy(),
 ) {
     com.aryan.reader.shared.ui.SharedReaderBarVisibility(
         visible = isVisible,
         edge = com.aryan.reader.shared.ui.SharedReaderBarEdge.BOTTOM,
+        motionPolicy = readerMotionPolicy,
         modifier = modifier
     ) {
         com.aryan.reader.shared.ui.SharedReaderToolbarSurface(height = 45.dp) {
@@ -1011,7 +1025,8 @@ fun EpubReaderPageSlider(
     modifier: Modifier = Modifier,
     activeColor: Color = Color.Unspecified,
     inactiveColor: Color = Color.Unspecified,
-    contentColor: Color = Color.Unspecified
+    contentColor: Color = Color.Unspecified,
+    readerMotionPolicy: ReaderMotionPolicy = ReaderMotionPolicy(),
 ) {
     val effectiveActiveColor = if (activeColor == Color.Unspecified) {
         MaterialTheme.colorScheme.primary
@@ -1033,8 +1048,16 @@ fun EpubReaderPageSlider(
 
     AnimatedVisibility(
         visible = isVisible,
-        enter = slideInVertically(animationSpec = tween(200)) { fullHeight -> fullHeight } + fadeIn(animationSpec = tween(200)),
-        exit = slideOutVertically(animationSpec = tween(200)) { fullHeight -> fullHeight } + fadeOut(animationSpec = tween(200)),
+        enter = if (readerMotionPolicy.reduceMotion) {
+            androidx.compose.animation.EnterTransition.None
+        } else {
+            slideInVertically(animationSpec = tween(200)) { fullHeight -> fullHeight } + fadeIn(animationSpec = tween(200))
+        },
+        exit = if (readerMotionPolicy.reduceMotion) {
+            androidx.compose.animation.ExitTransition.None
+        } else {
+            slideOutVertically(animationSpec = tween(200)) { fullHeight -> fullHeight } + fadeOut(animationSpec = tween(200))
+        },
         modifier = modifier
     ) {
         Box(
@@ -1197,7 +1220,8 @@ fun AutoScrollControls(
     onLocalModeToggle: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
     isTempPaused: Boolean = false,
-    onScrollToTop: (() -> Unit)? = null
+    onScrollToTop: (() -> Unit)? = null,
+    readerMotionPolicy: ReaderMotionPolicy = ReaderMotionPolicy(),
 ) {
     val backgroundAlpha = 0.6f
 
@@ -1209,12 +1233,17 @@ fun AutoScrollControls(
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.8f)),
         modifier = modifier
             .widthIn(max = 400.dp)
-            .animateContentSize()
+            .then(if (readerMotionPolicy.reduceMotion) Modifier else Modifier.animateContentSize())
     ) {
         AnimatedContent(
             targetState = isCollapsed,
             transitionSpec = {
-                fadeIn(tween(200)) togetherWith fadeOut(tween(200))
+                if (readerMotionPolicy.reduceMotion) {
+                    androidx.compose.animation.EnterTransition.None togetherWith
+                        androidx.compose.animation.ExitTransition.None
+                } else {
+                    fadeIn(tween(200)) togetherWith fadeOut(tween(200))
+                }
             },
             label = "AutoScrollUnified"
         ) { collapsed ->
@@ -1666,7 +1695,8 @@ fun TtsOverlayControls(
     onOpenTtsSettings: () -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
-    credits: Int
+    credits: Int,
+    readerMotionPolicy: ReaderMotionPolicy = ReaderMotionPolicy(),
 ) {
     val context = LocalContext.current
     var rate by remember { mutableFloatStateOf(loadTtsSpeechRate(context)) }
@@ -1732,11 +1762,18 @@ fun TtsOverlayControls(
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.8f)),
         modifier = modifier
             .widthIn(max = if (overlaySize == ReaderTtsOverlaySize.MEDIUM) 560.dp else 400.dp)
-            .animateContentSize()
+            .then(if (readerMotionPolicy.reduceMotion) Modifier else Modifier.animateContentSize())
     ) {
         AnimatedContent(
             targetState = overlaySize,
-            transitionSpec = { fadeIn(tween(200)) togetherWith fadeOut(tween(200)) },
+            transitionSpec = {
+                if (readerMotionPolicy.reduceMotion) {
+                    androidx.compose.animation.EnterTransition.None togetherWith
+                        androidx.compose.animation.ExitTransition.None
+                } else {
+                    fadeIn(tween(200)) togetherWith fadeOut(tween(200))
+                }
+            },
             label = "TtsOverlayUnified"
         ) { size ->
             if (size == ReaderTtsOverlaySize.SMALL) {

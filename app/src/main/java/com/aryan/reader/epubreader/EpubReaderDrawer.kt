@@ -109,6 +109,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.fastSumBy
 import com.aryan.reader.R
 import com.aryan.reader.RenderMode
+import com.aryan.reader.shared.ReaderMotionPolicy
 import com.aryan.reader.epub.EpubChapter
 import com.aryan.reader.epub.EpubTocEntry
 import com.aryan.reader.shared.filterReaderTocEntries
@@ -245,7 +246,8 @@ fun EpubReaderDrawerSheet(
     onEditNote: (UserHighlight) -> Unit,
     activeHighlightPalette: List<Int>,
     onOpenPaletteManager: () -> Unit,
-    onHighlightColorChange: (UserHighlight, Int) -> Unit
+    onHighlightColorChange: (UserHighlight, Int) -> Unit,
+    readerMotionPolicy: ReaderMotionPolicy = ReaderMotionPolicy(),
 ) {
     ModalDrawerSheet(
         modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars)
@@ -262,22 +264,42 @@ fun EpubReaderDrawerSheet(
             ) {
                 Tab(
                     selected = drawerPagerState.currentPage == 0,
-                    onClick = { drawerScope.launch { drawerPagerState.animateScrollToPage(0) } },
+                    onClick = {
+                        drawerScope.launch {
+                            if (readerMotionPolicy.animationsEnabled) drawerPagerState.animateScrollToPage(0)
+                            else drawerPagerState.scrollToPage(0)
+                        }
+                    },
                     text = { Text(stringResource(R.string.tab_chapters)) }
                 )
                 Tab(
                     selected = drawerPagerState.currentPage == 1,
-                    onClick = { drawerScope.launch { drawerPagerState.animateScrollToPage(1) } },
+                    onClick = {
+                        drawerScope.launch {
+                            if (readerMotionPolicy.animationsEnabled) drawerPagerState.animateScrollToPage(1)
+                            else drawerPagerState.scrollToPage(1)
+                        }
+                    },
                     text = { Text(stringResource(R.string.tab_bookmarks)) }
                 )
                 Tab(
                     selected = drawerPagerState.currentPage == 2,
-                    onClick = { drawerScope.launch { drawerPagerState.animateScrollToPage(2) } },
+                    onClick = {
+                        drawerScope.launch {
+                            if (readerMotionPolicy.animationsEnabled) drawerPagerState.animateScrollToPage(2)
+                            else drawerPagerState.scrollToPage(2)
+                        }
+                    },
                     text = { Text(stringResource(R.string.tab_annotations)) }
                 )
                 Tab(
                     selected = drawerPagerState.currentPage == 3,
-                    onClick = { drawerScope.launch { drawerPagerState.animateScrollToPage(3) } },
+                    onClick = {
+                        drawerScope.launch {
+                            if (readerMotionPolicy.animationsEnabled) drawerPagerState.animateScrollToPage(3)
+                            else drawerPagerState.scrollToPage(3)
+                        }
+                    },
                     text = { Text(stringResource(R.string.tab_images)) }
                 )
             }

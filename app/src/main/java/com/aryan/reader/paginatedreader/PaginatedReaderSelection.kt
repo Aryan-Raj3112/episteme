@@ -79,6 +79,8 @@ import com.aryan.reader.epub.plainTextCharacterCount
 import com.aryan.reader.epubreader.TtsHighlightInfo
 import com.aryan.reader.epubreader.UserHighlight
 import com.aryan.reader.shared.ReaderLocator as SharedReaderLocator
+import com.aryan.reader.shared.isReaderExternalHref as sharedIsReaderExternalHref
+import com.aryan.reader.shared.normalizeReaderHref
 import com.aryan.reader.shared.reader.paintOnlyColorOverlayText
 import com.aryan.reader.shared.reader.withoutForegroundColorSpans
 import kotlinx.coroutines.flow.filter
@@ -1287,22 +1289,11 @@ internal fun AnnotatedString.readerUrlAnnotationAtOffset(offset: Int): String? {
 }
 
 internal fun String.isReaderExternalHref(): Boolean {
-    val href = trim()
-    if (href.startsWith("//")) return true
-
-    val schemeEnd = href.indexOf(':')
-    if (schemeEnd <= 0) return false
-
-    val scheme = href.substring(0, schemeEnd)
-    if (!scheme.first().isLetter()) return false
-    if (!scheme.all { it.isLetterOrDigit() || it == '+' || it == '-' || it == '.' }) return false
-
-    return scheme.lowercase() in setOf("http", "https", "mailto", "tel", "sms", "geo")
+    return sharedIsReaderExternalHref(this)
 }
 
 internal fun String.readerExternalHrefForDisplay(): String {
-    val href = trim()
-    return if (href.startsWith("//")) "https:$href" else href
+    return normalizeReaderHref(this)
 }
 
 internal const val READER_LINK_HIT_SLOP_PX = 2f

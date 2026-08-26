@@ -12,6 +12,9 @@ import com.aryan.reader.paginatedreader.SemanticWrappingBlock
 import com.aryan.reader.shared.HighlightColor
 import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.UserHighlight
+import com.aryan.reader.shared.isReaderExternalHref
+import com.aryan.reader.shared.normalizeReaderHref
+import com.aryan.reader.shared.readerHrefScheme
 import com.aryan.reader.shared.toStableReaderPositionCfi
 
 sealed interface ReaderLinkTarget {
@@ -287,17 +290,19 @@ class ReaderEngine(
             logReaderLink("resolve_ignored reason=blank")
             return ReaderLinkTarget.Ignored
         }
-        val normalizedHref = when {
-            trimmed.startsWith("about:blank#", ignoreCase = true) -> "#${trimmed.substringAfter('#')}"
-            trimmed.startsWith("www.", ignoreCase = true) -> "https://$trimmed"
-            else -> trimmed
+        val normalizedHref = normalizeReaderHref(trimmed).let { href ->
+            if (href.startsWith("about:blank#", ignoreCase = true)) {
+                "#${href.substringAfter('#')}"
+            } else {
+                href
+            }
         }
         logReaderLink("resolve_start href=\"$trimmed\" normalized=\"$normalizedHref\" sourceChapter=$sourceChapterIndex")
 
-        val scheme = normalizedHref.schemeOrNull()
+        val scheme = readerHrefScheme(normalizedHref)
         if (scheme != null) {
-            return when (scheme.lowercase()) {
-                "http", "https", "mailto", "tel" -> {
+            return when {
+                isReaderExternalHref(normalizedHref) -> {
                     logReaderLink("resolve_external scheme=$scheme")
                     ReaderLinkTarget.External(normalizedHref)
                 }
@@ -1118,17 +1123,6 @@ private fun ReaderPage.toVerticalScrollPageLocator(book: SharedEpubBook): Reader
 
 private fun ReaderPage.toDesktopCfi(): String {
     return "desktop:$chapterIndex:$startOffset:$endOffset"
-}
-
-private fun String.schemeOrNull(): String? {
-    val colonIndex = indexOf(':')
-    if (colonIndex <= 0) return null
-    val firstPathIndex = listOf(indexOf('/'), indexOf('?'), indexOf('#'))
-        .filter { it >= 0 }
-        .minOrNull()
-    if (firstPathIndex != null && firstPathIndex < colonIndex) return null
-    val candidate = substring(0, colonIndex)
-    return candidate.takeIf { it.all { char -> char.isLetterOrDigit() || char == '+' || char == '-' || char == '.' } }
 }
 
 private fun resolveEpubPath(baseHref: String?, hrefPath: String): String {

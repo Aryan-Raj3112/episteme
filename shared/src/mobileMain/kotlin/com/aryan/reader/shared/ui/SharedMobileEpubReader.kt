@@ -218,6 +218,7 @@ fun SharedMobileEpubReaderScreen(
     streamPageLoader: SharedMobileEpubStreamPageLoader? = null,
     modifier: Modifier = Modifier
 ) {
+    val motionPolicy = rememberReaderMotionPolicy()
     val loadState = rememberSharedMobileEpubLoadState(book)
     val rawLoadedBook = loadState.book
     val bookReplacementSignature = readerBookReplacementPreferences.signatureForFile(book.id)
@@ -444,7 +445,7 @@ fun SharedMobileEpubReaderScreen(
     fun openReaderDrawer(tab: Int? = null) {
         tab?.let { drawerTab = it }
         scope.launch {
-            drawerState.open()
+            if (motionPolicy.animationsEnabled) drawerState.open() else drawerState.snapTo(DrawerValue.Open)
             focusManager.clearFocus(force = true)
         }
     }
@@ -626,7 +627,7 @@ fun SharedMobileEpubReaderScreen(
                 ReaderMusicianNavigationTarget.END ->
                     "window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'auto' });"
                 ReaderMusicianNavigationTarget.RELATIVE ->
-                    "window.scrollBy({ top: window.innerHeight * ${plan.relativeViewportDelta}, behavior: 'smooth' });"
+                    "window.scrollBy({ top: window.innerHeight * ${plan.relativeViewportDelta}, behavior: '${motionPolicy.webViewScrollBehavior()}' });"
             }
         }
         navigationRequestId++
@@ -1011,7 +1012,13 @@ fun SharedMobileEpubReaderScreen(
                 val drawerPagerState = rememberPagerState(pageCount = { 4 })
                 val drawerScope = rememberCoroutineScope()
                 LaunchedEffect(drawerTab) {
-                    if (drawerTab in 0..3) drawerPagerState.animateScrollToPage(drawerTab)
+                    if (drawerTab in 0..3) {
+                        if (motionPolicy.animationsEnabled) {
+                            drawerPagerState.animateScrollToPage(drawerTab)
+                        } else {
+                            drawerPagerState.scrollToPage(drawerTab)
+                        }
+                    }
                 }
                 Text(
                     loadedBook?.title ?: book.displayName,
@@ -1022,7 +1029,15 @@ fun SharedMobileEpubReaderScreen(
                     listOf("Chapters", "Bookmarks", "Annotations", "Images").forEachIndexed { index, label ->
                         Tab(
                             selected = drawerPagerState.currentPage == index,
-                            onClick = { drawerScope.launch { drawerPagerState.animateScrollToPage(index) } },
+                            onClick = {
+                                drawerScope.launch {
+                                    if (motionPolicy.animationsEnabled) {
+                                        drawerPagerState.animateScrollToPage(index)
+                                    } else {
+                                        drawerPagerState.scrollToPage(index)
+                                    }
+                                }
+                            },
                             text = { Text(label, maxLines = 1) }
                         )
                     }
@@ -1159,7 +1174,7 @@ fun SharedMobileEpubReaderScreen(
                                     return@LaunchedEffect
                                 }
                                 val animateTurn = sharedPaginatedTurnShouldAnimate(
-                                    animationEnabled = settings.pageTurnAnimationEnabled,
+                                    animationEnabled = motionPolicy.shouldAnimate(settings.pageTurnAnimationEnabled),
                                     outgoingFirstPageIndex = outgoingPages.minOf { it.pageIndex },
                                     incomingFirstPageIndex = visiblePages.minOf { it.pageIndex },
                                     visiblePageCount = visiblePages.size
@@ -1218,6 +1233,11 @@ fun SharedMobileEpubReaderScreen(
 
                             fun settlePageDrag(targetPositionPages: Float, onCompleted: () -> Unit) {
                                 pageDragSettleJob?.cancel()
+                                if (!motionPolicy.animationsEnabled) {
+                                    pageDragPosition.floatValue = targetPositionPages
+                                    onCompleted()
+                                    return
+                                }
                                 pageDragSettleJob = scope.launch {
                                     // Android settles drags with the pager snap spring.
                                     val animation = Animatable(pageDragPosition.floatValue)

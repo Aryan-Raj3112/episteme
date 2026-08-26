@@ -36,6 +36,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.aryan.reader.shared.PdfReaderTool
+import com.aryan.reader.shared.ReaderMotionPolicy
 import com.aryan.reader.shared.ReaderTool
 
 enum class SharedReaderBarEdge { TOP, BOTTOM }
@@ -127,13 +128,14 @@ fun sharedReaderBarExitTransition(edge: SharedReaderBarEdge): ExitTransition =
 fun SharedReaderBarVisibility(
     visible: Boolean,
     edge: SharedReaderBarEdge,
+    motionPolicy: ReaderMotionPolicy = ReaderMotionPolicy(),
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit,
 ) {
     AnimatedVisibility(
         visible = visible,
-        enter = sharedReaderBarEnterTransition(edge),
-        exit = sharedReaderBarExitTransition(edge),
+        enter = if (motionPolicy.reduceMotion) EnterTransition.None else sharedReaderBarEnterTransition(edge),
+        exit = if (motionPolicy.reduceMotion) ExitTransition.None else sharedReaderBarExitTransition(edge),
         modifier = modifier,
     ) { content() }
 }

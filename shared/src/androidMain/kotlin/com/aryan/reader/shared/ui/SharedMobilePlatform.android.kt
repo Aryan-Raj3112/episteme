@@ -26,6 +26,8 @@ import com.aryan.reader.shared.ReaderExternalLookupAction
 import com.aryan.reader.shared.ReaderTtsChunk
 import com.aryan.reader.shared.ReaderTtsProgress
 import com.aryan.reader.shared.externalLookupUrl
+import com.aryan.reader.shared.isReaderExternalHref
+import com.aryan.reader.shared.normalizeReaderHref
 import com.aryan.reader.shared.pdf.PdfTextPageSession
 import com.aryan.reader.shared.pdf.SharedPdfSearchResult
 import com.aryan.reader.shared.pdf.SharedPdfSearchIndex
@@ -186,9 +188,9 @@ private class AndroidEpubWebViewCoordinator(
             }
 
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                val scheme = request.url.scheme.orEmpty().lowercase()
-                return if (scheme == "http" || scheme == "https" || scheme == "mailto") {
-                    openSharedMobileEpubExternalLink(request.url.toString())
+                val url = normalizeReaderHref(request.url.toString())
+                return if (isReaderExternalHref(url)) {
+                    openSharedMobileEpubExternalLink(url)
                     true
                 } else {
                     false
@@ -315,9 +317,10 @@ internal actual fun openSharedMobileExternalUrl(url: String): Boolean = openAndr
 
 private fun openAndroidUrl(url: String): Boolean {
     val context = AndroidSharedMobileContext.applicationContext ?: return false
+    val normalized = normalizeReaderHref(url)
     return runCatching {
         context.startActivity(
-            Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            Intent(Intent.ACTION_VIEW, Uri.parse(normalized)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
         )
         true
     }.getOrDefault(false)

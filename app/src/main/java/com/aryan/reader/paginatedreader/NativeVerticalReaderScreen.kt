@@ -209,9 +209,11 @@ fun NativeVerticalReaderScreen(
     initialLocator: Locator? = null,
     initialPageIndexInBook: Int = 0,
     scrollRequestPage: Int? = null,
+    scrollRequestPageAnimated: Boolean = true,
     scrollRequestLocator: Locator? = null,
     scrollRequestLocatorId: Long = 0L,
     scrollRequestLocatorKeepVisible: Boolean = false,
+    scrollRequestLocatorAnimated: Boolean = true,
     scrollRequestProgressPercent: Float? = null,
     scrollRequestProgressId: Long = 0L,
     scrollDeltaRequest: Float? = null,
@@ -736,20 +738,27 @@ fun NativeVerticalReaderScreen(
             }
         }
 
-        LaunchedEffect(scrollRequestPage, totalPageCount, flowChapters, rootWindowBounds) {
+        LaunchedEffect(scrollRequestPage, scrollRequestPageAnimated, totalPageCount, flowChapters, rootWindowBounds) {
             val requestedPage = scrollRequestPage ?: return@LaunchedEffect
             if (totalPageCount <= 0 || flowChapters == null || rootWindowBounds == Rect.Zero) return@LaunchedEffect
-            if (scrollToCompatPage(requestedPage, animate = true)) {
+            if (scrollToCompatPage(requestedPage, animate = scrollRequestPageAnimated)) {
                 onScrollRequestConsumed()
             }
         }
 
-        LaunchedEffect(scrollRequestLocatorId, scrollRequestLocator, scrollRequestLocatorKeepVisible, flowChapters, rootWindowBounds) {
+        LaunchedEffect(
+            scrollRequestLocatorId,
+            scrollRequestLocator,
+            scrollRequestLocatorKeepVisible,
+            scrollRequestLocatorAnimated,
+            flowChapters,
+            rootWindowBounds,
+        ) {
             val requestedLocator = scrollRequestLocator ?: return@LaunchedEffect
             if (flowChapters == null || rootWindowBounds == Rect.Zero) return@LaunchedEffect
             if (scrollToFlowLocator(
                     locator = requestedLocator,
-                    animate = scrollRequestLocatorKeepVisible,
+                    animate = scrollRequestLocatorAnimated,
                     keepVisible = scrollRequestLocatorKeepVisible
                 )
             ) {

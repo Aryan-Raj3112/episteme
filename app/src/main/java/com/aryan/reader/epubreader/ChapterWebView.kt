@@ -95,6 +95,8 @@ import com.aryan.reader.readerFontDiagnosticSummary
 import com.aryan.reader.shared.detectFontVariant
 import com.aryan.reader.shared.familyFilenameSignature
 import com.aryan.reader.shared.fontWeightCssDescriptor
+import com.aryan.reader.shared.isReaderExternalHref
+import com.aryan.reader.shared.normalizeReaderHref
 import com.aryan.reader.shared.ui.SharedSelectionMenuRect
 import com.aryan.reader.shared.ui.SharedSelectionMenuSize
 import com.aryan.reader.shared.ui.SharedSelectionMenuViewport
@@ -1031,8 +1033,9 @@ fun ChapterWebView(
                         override fun shouldOverrideUrlLoading(
                             view: WebView?, request: WebResourceRequest?
                         ): Boolean {
-                            val url = request?.url?.toString()
-                            if (url != null && (url.startsWith("http://") || url.startsWith("https://"))) {
+                            val rawUrl = request?.url?.toString()
+                            val url = rawUrl?.let(::normalizeReaderHref)
+                            if (url != null && isReaderExternalHref(url)) {
                                 Timber.tag(TAG_LINK_NAV)
                                     .d("[EXTERNAL-INTERCEPT] url='$url' from chapter '$chapterTitle'")
                                 showExternalLinkDialog = url
@@ -1122,7 +1125,7 @@ fun ChapterWebView(
                                             if (!anchor) return;
                                             var rawHref = anchor.getAttribute('href') || '';
                                             if (!rawHref) return;
-                                            if (/^(https?:|mailto:|tel:|javascript:)/i.test(rawHref)) return;
+                                            if (/^(https?:|mailto:|tel:|sms:|geo:|javascript:)/i.test(rawHref)) return;
                                             if (/^\/\//.test(rawHref)) return;
                                             event.preventDefault();
                                             var resolvedHref = anchor.href || rawHref;
