@@ -283,6 +283,8 @@ class CloudFolderSyncAccountIsolationTest {
                 AppDatabase.MIGRATION_31_32,
                 AppDatabase.MIGRATION_32_33,
                 AppDatabase.MIGRATION_33_34,
+                AppDatabase.MIGRATION_34_35,
+                AppDatabase.MIGRATION_35_36,
             )
             .allowMainThreadQueries()
             .build()
@@ -345,6 +347,7 @@ private class LegacyCloudFolderCallback : SupportSQLiteOpenHelper.Callback(29) {
             "cloud_folder_outbox",
             "cloud_folder_conflicts",
             "cloud_folder_pending_materializations",
+            "cloud_book_delete_intents",
         ).forEach { table -> db.execSQL("DROP TABLE IF EXISTS `$table`") }
         db.execSQL(
             """

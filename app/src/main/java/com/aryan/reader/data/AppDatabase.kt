@@ -47,8 +47,9 @@ import com.aryan.reader.audiobook.BookTtsListeningProgressEntity
         CloudFolderOutboxEntity::class,
         CloudFolderConflictEntity::class,
         CloudFolderPendingMaterializationEntity::class,
+        CloudBookDeleteIntentEntity::class,
     ],
-    version = 34,
+    version = 36,
     exportSchema = false
 )
 @TypeConverters(FileTypeConverter::class)
@@ -61,6 +62,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun bookTtsListeningProgressDao(): BookTtsListeningProgressDao
     abstract fun pendingFolderAnnotationExportDao(): PendingFolderAnnotationExportDao
     abstract fun cloudFolderSyncDao(): CloudFolderSyncDao
+    abstract fun cloudBookDeleteDao(): CloudBookDeleteDao
 
     companion object {
         @Volatile
@@ -853,6 +855,41 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** Persist account-scoped, versioned cloud-book delete intents. */
+        val MIGRATION_34_35 = object : Migration(34, 35) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `cloud_book_delete_intents` (
+                        `accountId` TEXT NOT NULL,
+                        `bookId` TEXT NOT NULL,
+                        `type` TEXT,
+                        `requestedAt` INTEGER NOT NULL,
+                        `state` TEXT NOT NULL,
+                        `lastError` TEXT,
+                        PRIMARY KEY(`accountId`, `bookId`)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_cloud_book_delete_intents_accountId_state_requestedAt` " +
+                        "ON `cloud_book_delete_intents` (`accountId`, `state`, `requestedAt`)"
+                )
+            }
+        }
+
+        /** Persist the local generation claimed by a pending cloud delete. */
+        val MIGRATION_35_36 = object : Migration(35, 36) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE cloud_book_delete_intents ADD COLUMN localClaimed INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE cloud_book_delete_intents ADD COLUMN claimedLocalLastModifiedTimestamp INTEGER")
+                db.execSQL("ALTER TABLE cloud_book_delete_intents ADD COLUMN claimedLocalTimestamp INTEGER")
+                db.execSQL("ALTER TABLE cloud_book_delete_intents ADD COLUMN claimedLocalFileContentModifiedTimestamp INTEGER")
+                db.execSQL("ALTER TABLE cloud_book_delete_intents ADD COLUMN claimedLocalFileSize INTEGER")
+                db.execSQL("ALTER TABLE cloud_book_delete_intents ADD COLUMN claimedLocalUriString TEXT")
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 CloudFolderPrivateStateMigrator.importLegacyState(context.applicationContext)
@@ -870,7 +907,7 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24,
                         MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28,
                         MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32,
-                        MIGRATION_32_33, MIGRATION_33_34
+                        MIGRATION_32_33, MIGRATION_33_34, MIGRATION_34_35, MIGRATION_35_36
                     )
                     .fallbackToDestructiveMigration(false)
                     .build()

@@ -63,6 +63,50 @@ interface RecentFileDao {
     @Query("SELECT * FROM recent_files WHERE bookId = :bookId")
     suspend fun getFileByBookId(bookId: String): RecentFileEntity?
 
+    /** Mark exactly the generation observed by a cloud-delete worker. */
+    @Query(
+        """
+        UPDATE recent_files
+        SET isDeleted = 1, isAvailable = 0
+        WHERE bookId = :bookId
+          AND lastModifiedTimestamp = :lastModifiedTimestamp
+          AND timestamp = :timestamp
+          AND fileContentModifiedTimestamp = :fileContentModifiedTimestamp
+          AND fileSize = :fileSize
+          AND ((uriString IS NULL AND :uriString IS NULL) OR uriString = :uriString)
+        """
+    )
+    suspend fun claimForCloudDelete(
+        bookId: String,
+        lastModifiedTimestamp: Long,
+        timestamp: Long,
+        fileContentModifiedTimestamp: Long,
+        fileSize: Long,
+        uriString: String?,
+    ): Int
+
+    /** Remove only a row still carrying the generation that was claimed. */
+    @Query(
+        """
+        DELETE FROM recent_files
+        WHERE bookId = :bookId
+          AND isDeleted = 1
+          AND lastModifiedTimestamp = :lastModifiedTimestamp
+          AND timestamp = :timestamp
+          AND fileContentModifiedTimestamp = :fileContentModifiedTimestamp
+          AND fileSize = :fileSize
+          AND ((uriString IS NULL AND :uriString IS NULL) OR uriString = :uriString)
+        """
+    )
+    suspend fun deleteCloudDeleteClaimedGeneration(
+        bookId: String,
+        lastModifiedTimestamp: Long,
+        timestamp: Long,
+        fileContentModifiedTimestamp: Long,
+        fileSize: Long,
+        uriString: String?,
+    ): Int
+
     @Query("SELECT * FROM recent_files WHERE uriString = :uriString")
     suspend fun getFileByUri(uriString: String): RecentFileEntity?
 

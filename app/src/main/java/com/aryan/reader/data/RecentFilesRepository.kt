@@ -60,13 +60,15 @@ private const val DIRECT_EMBEDDED_COVER_MAX_BYTES = 8L * 1024L * 1024L
 private const val EMBEDDED_COVER_MAX_DIMENSION = 1200
 private val EMBEDDED_COVER_EXTENSIONS = setOf("jpg", "jpeg", "png", "gif", "webp", "bmp")
 
-class RecentFilesRepository(private val context: Context) :
+class RecentFilesRepository(
+    private val context: Context,
+    private val database: AppDatabase = AppDatabase.getDatabase(context),
+) :
     AndroidBookStore,
     AndroidFolderMirrorStore,
     AndroidBookArtifactStore,
     AndroidLegacyMigrationStore {
 
-    private val database = AppDatabase.getDatabase(context)
     private val recentFileDao = database.recentFileDao()
     private val coverCacheDir = File(context.filesDir, COVER_CACHE_DIR)
     private val bookImporter = BookImporter(context)
@@ -754,6 +756,109 @@ class RecentFilesRepository(private val context: Context) :
             } else {
                 Timber.w("DeleteDebug: DAO - Files not found for permanent deletion.")
             }
+        }
+    }
+
+    /**
+     * Finalize a worker-owned deletion only when the claimed local generation
+     * is still present. The conditional claim/DELETE prevents a concurrent
+     * re-import or edit from being removed by a stale worker completion.
+     */
+    internal suspend fun deleteFilePermanentlyIfCloudDeleteGenerationMatches(
+        bookId: String,
+        generation: CloudBookLocalGeneration,
+    ): Boolean = withContext(Dispatchers.IO) {
+        val current = recentFileDao.getFileByBookId(bookId) ?: return@withContext true
+        if (!current.toRecentFileItem().matchesCloudBookLocalGeneration(generation)) {
+            return@withContext false
+        }
+        if (
+            recentFileDao.claimForCloudDelete(
+                bookId = bookId,
+                lastModifiedTimestamp = generation.lastModifiedTimestamp,
+                timestamp = generation.timestamp,
+                fileContentModifiedTimestamp = generation.fileContentModifiedTimestamp,
+                fileSize = generation.fileSize,
+                uriString = generation.uriString,
+            ) == 0
+        ) {
+            return@withContext false
+        }
+
+        // Re-read after the conditional claim. If an edit/re-import replaced
+        // the row, do not touch its physical URI or cached artifacts.
+        val claimed = recentFileDao.getFileByBookId(bookId)
+            ?: return@withContext true
+        if (!claimed.toRecentFileItem().matchesCloudBookLocalGeneration(generation)) {
+            return@withContext false
+        }
+        try {
+            claimed.uriString?.let { uri ->
+                try {
+                    bookImporter.deleteBookByUriString(uri)
+                } catch (error: Exception) {
+                    Timber.w(
+                        error,
+                        "Cloud-delete physical file cleanup failed (likely already gone) for $bookId",
+                    )
+                }
+            }
+            cleanupLocalBookArtifacts(claimed, "cloud-delete finalization")
+        } catch (error: Exception) {
+            Timber.e(error, "Cloud-delete artifact cleanup failed for $bookId")
+            return@withContext false
+        }
+        recentFileDao.deleteCloudDeleteClaimedGeneration(
+            bookId = bookId,
+            lastModifiedTimestamp = generation.lastModifiedTimestamp,
+            timestamp = generation.timestamp,
+            fileContentModifiedTimestamp = generation.fileContentModifiedTimestamp,
+            fileSize = generation.fileSize,
+            uriString = generation.uriString,
+        ) == 1
+    }
+
+    /**
+     * Finalize a cloud-delete recovery without touching user-owned storage.
+     *
+     * A WorkManager retry can race a re-import between a generation read and
+     * physical URI cleanup. Keep this operation entirely inside one Room
+     * transaction: the row is hidden and removed only when every generation
+     * field still matches the worker's claim. The source file and derived
+     * artifacts are intentionally left in place; a later orphan sweeper or
+     * manual cleanup can reclaim them once no newer local incarnation uses
+     * the URI.
+     */
+    internal suspend fun removeCloudDeleteGenerationFromDatabase(
+        bookId: String,
+        generation: CloudBookLocalGeneration,
+    ): Boolean = withContext(Dispatchers.IO) {
+        database.withTransaction {
+            val current = recentFileDao.getFileByBookId(bookId)
+                ?: return@withTransaction true
+            if (!current.toRecentFileItem().matchesCloudBookLocalGeneration(generation)) {
+                return@withTransaction false
+            }
+            if (
+                recentFileDao.claimForCloudDelete(
+                    bookId = bookId,
+                    lastModifiedTimestamp = generation.lastModifiedTimestamp,
+                    timestamp = generation.timestamp,
+                    fileContentModifiedTimestamp = generation.fileContentModifiedTimestamp,
+                    fileSize = generation.fileSize,
+                    uriString = generation.uriString,
+                ) != 1
+            ) {
+                return@withTransaction false
+            }
+            recentFileDao.deleteCloudDeleteClaimedGeneration(
+                bookId = bookId,
+                lastModifiedTimestamp = generation.lastModifiedTimestamp,
+                timestamp = generation.timestamp,
+                fileContentModifiedTimestamp = generation.fileContentModifiedTimestamp,
+                fileSize = generation.fileSize,
+                uriString = generation.uriString,
+            ) == 1
         }
     }
 

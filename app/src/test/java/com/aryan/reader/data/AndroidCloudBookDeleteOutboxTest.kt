@@ -17,6 +17,11 @@ class AndroidCloudBookDeleteOutboxTest {
 
         assertEquals(expected, CloudBookDeleteOutboxCodec.decode(encoded))
         assertTrue(CloudBookDeleteOutboxCodec.decode("not-json").isEmpty())
+        assertTrue(CloudBookDeleteOutboxCodec.decodeResult("not-json") is CloudBookDeleteOutboxCodec.DecodeResult.Malformed)
+        assertTrue(
+            CloudBookDeleteOutboxCodec.decodeResult("[{\"deletedAt\":42}]") is
+                CloudBookDeleteOutboxCodec.DecodeResult.Malformed,
+        )
     }
 
     @Test

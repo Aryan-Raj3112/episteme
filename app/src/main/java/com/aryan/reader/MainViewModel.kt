@@ -55,7 +55,7 @@ import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import com.aryan.reader.data.BookMetadata
 import com.aryan.reader.data.BookMetadataEdit
-import com.aryan.reader.data.AndroidCloudBookDeleteOutbox
+import com.aryan.reader.data.CloudBookDeletePersistence
 import com.aryan.reader.data.CloudflareRepository
 import com.aryan.reader.data.AppDatabase
 import com.aryan.reader.data.CloudFolderSyncRepository
@@ -76,7 +76,6 @@ import com.aryan.reader.data.ShelfMetadata
 import com.aryan.reader.data.TagEntity
 import com.aryan.reader.data.effectiveAnnotationModifiedTimestamp
 import com.aryan.reader.data.effectiveReadingPositionModifiedTimestamp
-import com.aryan.reader.data.executeRemoteFirstLocalDelete
 import com.aryan.reader.data.getUri
 import com.aryan.reader.data.toBookMetadata
 import com.aryan.reader.data.toRecentFileItem
@@ -180,6 +179,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -256,7 +256,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
     private val prefs: SharedPreferences =
         application.getSharedPreferences("reader_user_prefs", Context.MODE_PRIVATE)
-    private val cloudBookDeleteOutbox = AndroidCloudBookDeleteOutbox(prefs)
+    private val cloudBookDeletePersistence = CloudBookDeletePersistence(appContext)
     private val restoredPdfSplitWorkspace = PdfSplitWorkspaceJson.decodeOrEmpty(
         prefs.getString(KEY_PDF_SPLIT_WORKSPACE, null),
     )
@@ -1757,6 +1757,19 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     registerLocalCloudFolders(accountId)
                     refreshCloudFolderSyncState()
                 }
+                // A delete is an explicit durable user action and must finish
+                // even when the main sync switch is currently off.  Requeue
+                // it on process start so cancelling a worker during sign-out
+                // cannot strand the account's outbox.
+                viewModelScope.launch(Dispatchers.IO) {
+                    if (cloudBookDeletePersistence.pending(accountId).isNotEmpty()) {
+                        runCatching {
+                            CloudBookDeleteWorker.enqueue(appContext, accountId)
+                        }.onFailure { error ->
+                            Timber.e(error, "Unable to resume pending cloud-book deletion on startup")
+                        }
+                    }
+                }
                 if (_internalState.value.isSyncEnabled) {
                     // Discovery is metadata-only for unbound roots and is
                     // safe to schedule on every app start.
@@ -1791,6 +1804,15 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     viewModelScope.launch(Dispatchers.IO) {
                         registerLocalCloudFolders(newUserData.uid)
                         refreshCloudFolderSyncState()
+                    }
+                    viewModelScope.launch(Dispatchers.IO) {
+                        if (cloudBookDeletePersistence.pending(newUserData.uid).isNotEmpty()) {
+                            runCatching {
+                                CloudBookDeleteWorker.enqueue(appContext, newUserData.uid)
+                            }.onFailure { error ->
+                                Timber.e(error, "Unable to resume pending cloud-book deletion after sign-in")
+                            }
+                        }
                     }
                     registerOrUpdateDeviceOnSignIn(newUserData.uid)
 
@@ -2397,90 +2419,6 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 onDeleted()
             }
         }
-    }
-
-    /**
-     * Completes one durable cloud-delete intent. Local rows/files are retained
-     * until the tombstone and all remote payloads are confirmed deleted.
-     */
-    private suspend fun executePendingCloudBookDelete(
-        tombstone: CloudBookTombstone,
-        accessToken: String,
-        userId: String,
-        deviceId: String,
-        remoteFilesByName: Map<String, DriveFile>,
-    ) {
-        val item = bookStore.getFileByBookId(tombstone.bookId)
-        val metadata = (item?.toBookMetadata() ?: BookMetadata(
-            bookId = tombstone.bookId,
-            type = tombstone.type.orEmpty(),
-        )).copy(
-            isDeleted = true,
-            lastModifiedTimestamp = maxOf(
-                tombstone.deletedAt,
-                item?.lastModifiedTimestamp ?: 0L,
-                System.currentTimeMillis(),
-            ),
-        )
-        executeRemoteFirstLocalDelete(
-            local = item,
-            deleteRemote = {
-                val contentFileName = item?.let { sharedCloudBookContentFileName(it.bookId, it.type) }
-                    ?: tombstone.type?.let { typeName ->
-                        runCatching { FileType.valueOf(typeName) }.getOrNull()?.let { type ->
-                            sharedCloudBookContentFileName(tombstone.bookId, type)
-                        }
-                    }
-                contentFileName?.let { remoteFilesByName[it]?.id }?.let { fileId ->
-                    googleDriveRepository.deleteDriveFileOrThrow(accessToken, fileId)
-                }
-                remoteFilesByName[cloudPdfAnnotationDriveFileName(tombstone.bookId)]?.id?.let { fileId ->
-                    googleDriveRepository.deleteDriveFileOrThrow(accessToken, fileId)
-                }
-
-                // Publish the Firestore tombstone last. If a Drive deletion
-                // fails, no remote tombstone exists for a later sync pass to
-                // consume while this local row is still pending.
-                firestoreRepository.syncBookMetadataForDeletion(userId, metadata, deviceId)
-            },
-            markDeleted = { localItem ->
-                bookStore.markAsDeleted(listOf(localItem.bookId))
-            },
-            finalizeLocal = { localItem ->
-                cleanupBookDataLocally(localItem.bookId)
-                bookStore.deleteFilePermanently(listOf(localItem.bookId))
-            },
-        )
-        cloudBookDeleteOutbox.remove(userId, listOf(tombstone.bookId))
-    }
-
-    private suspend fun retryPendingCloudBookDeletes(
-        accessToken: String,
-        userId: String,
-    ) {
-        val pending = cloudBookDeleteOutbox.pending(userId)
-        if (pending.isEmpty()) return
-        val remoteFiles = googleDriveRepository.getFilesOrThrow(accessToken).files
-        val remoteFilesByName = remoteFiles.associateBy(DriveFile::name)
-        val deviceId = getInstallationId()
-        val failures = mutableListOf<Exception>()
-        pending.forEach { tombstone ->
-            try {
-                executePendingCloudBookDelete(
-                    tombstone = tombstone,
-                    accessToken = accessToken,
-                    userId = userId,
-                    deviceId = deviceId,
-                    remoteFilesByName = remoteFilesByName,
-                )
-            } catch (error: CancellationException) {
-                throw error
-            } catch (error: Exception) {
-                failures += error
-                Timber.e(error, "Cloud book delete is pending retry: ${tombstone.bookId}")
-            }
-        }
-        failures.firstOrNull()?.let { throw it }
     }
 
     private fun getInstallationId(): String {
@@ -4335,32 +4273,40 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
         viewModelScope.launch {
             try {
-                val accessToken = googleDriveRepository.getAccessToken(appContext)
-                    ?: throw IllegalStateException("Missing Drive access token")
                 val currentUser = uiState.value.currentUser
                     ?: throw IllegalStateException("Missing signed-in user")
-                val result = CloudMaintenanceCoordinator(
-                    deleteDrive = {
-                        googleDriveRepository.deleteAllFiles(accessToken)
-                    },
-                    deleteFirestore = {
-                        firestoreRepository.deleteAllUserFirestoreData(currentUser.uid)
-                    },
-                    clearLocal = {
-                        bookArtifactStore.clearAllLocalData()
-                        cloudBookDeleteOutbox.clear(currentUser.uid)
-                        prefs.edit { remove(KEY_LAST_SYNC_TIMESTAMP) }
-                    },
-                ).clearAll(CloudMaintenanceIntent(currentUser.uid))
+                CloudBookSyncBarrier.withAccountLock(currentUser.uid) {
+                    val accessToken = googleDriveRepository.getAccessToken(appContext)
+                        ?: throw IllegalStateException("Missing Drive access token")
+                    // Prevent an individual-delete worker from publishing a
+                    // tombstone while the explicit clear-all transaction is
+                    // removing the account's remote data. The queue is
+                    // cleared only after the remote clear succeeds below.
+                    CloudBookDeleteWorker.cancelForAccount(appContext, currentUser.uid)
+                    val result = CloudMaintenanceCoordinator(
+                        deleteDrive = {
+                            googleDriveRepository.deleteAllFiles(accessToken)
+                        },
+                        deleteFirestore = {
+                            firestoreRepository.deleteAllUserFirestoreData(currentUser.uid)
+                        },
+                        clearLocal = {
+                            bookArtifactStore.clearAllLocalData()
+                            CloudBookDeleteWorker.cancelForAccount(appContext, currentUser.uid)
+                            cloudBookDeletePersistence.clear(currentUser.uid)
+                            prefs.edit { remove(KEY_LAST_SYNC_TIMESTAMP) }
+                        },
+                    ).clearAll(CloudMaintenanceIntent(currentUser.uid))
 
-                if (result is CloudMaintenanceResult.Succeeded) {
-                    _internalState.update {
-                        it.copy(
-                            isLoading = false, bannerMessage = BannerMessage(appContext.getString(R.string.banner_cloud_local_data_cleared))
-                        )
+                    if (result is CloudMaintenanceResult.Succeeded) {
+                        _internalState.update {
+                            it.copy(
+                                isLoading = false, bannerMessage = BannerMessage(appContext.getString(R.string.banner_cloud_local_data_cleared))
+                            )
+                        }
+                    } else if (result is CloudMaintenanceResult.Failed) {
+                        throw result.error
                     }
-                } else if (result is CloudMaintenanceResult.Failed) {
-                    throw result.error
                 }
             } catch (e: Exception) {
                 Timber.e(e, "Failed to delete all cloud and local user data.")
@@ -4465,6 +4411,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 } catch (e: Exception) {
                     Timber.e(e, "Failed to clear cloud-folder state for account $accountId")
                 }
+                CloudBookDeleteWorker.cancelForAccount(appContext, accountId)
                 val deviceId = getInstallationId()
                 try {
                     withTimeoutOrNull(3000) {
@@ -5030,18 +4977,33 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     private fun syncWithCloud(showBanner: Boolean = false) = viewModelScope.launch {
+        val accountId = _internalState.value.currentUser?.uid?.trim()?.takeIf { it.isNotBlank() }
+            ?: return@launch
+        CloudBookSyncBarrier.withAccountLock(accountId) {
+            syncWithCloudLocked(accountId, showBanner)
+        }
+    }
+
+    private suspend fun syncWithCloudLocked(accountId: String, showBanner: Boolean = false) {
+        coroutineScope {
         val hasPermissions = googleDriveRepository.hasDrivePermissions(appContext)
         val currentUser = _internalState.value.currentUser
 
-        if (!hasPermissions || currentUser == null) {
+        if (!hasPermissions || currentUser == null || currentUser.uid.trim() != accountId ||
+            authRepository.getSignedInUser()?.uid?.trim() != accountId
+        ) {
             logCloudSyncTrace {
-                "android.full_sync.skip reason=${if (!hasPermissions) "missing_drive_permissions" else "no_user"} " +
+                "android.full_sync.skip reason=${when {
+                    !hasPermissions -> "missing_drive_permissions"
+                    currentUser == null -> "no_user"
+                    else -> "account_changed"
+                }} " +
                     "showBanner=$showBanner"
             }
             if (showBanner) _internalState.update {
                 it.copy(errorMessage = appContext.getString(R.string.error_not_signed_in_sync))
             }
-            return@launch
+            return@coroutineScope
         }
 
         logCloudSyncTrace {
@@ -5055,30 +5017,27 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
 
         try {
-            val accessToken = googleDriveRepository.getAccessToken(appContext) ?: run {
-                logCloudSyncTrace { "android.full_sync.skip reason=no_access_token user=${currentUser.uid}" }
-                return@launch
+            // Deletions are durable intents completed by a background worker.
+            // Keep those IDs out of this merge so an older active document
+            // cannot resurrect a book, but continue syncing every unrelated
+            // book instead of blocking Home on a large delete queue.
+            val pendingDeleteBookIds = cloudBookDeletePersistence.pending(currentUser.uid)
+                .mapTo(mutableSetOf()) { it.bookId }
+            if (pendingDeleteBookIds.isNotEmpty()) {
+                runCatching {
+                    CloudBookDeleteWorker.enqueue(appContext, currentUser.uid)
+                }.onFailure { error ->
+                    Timber.e(error, "Unable to schedule pending cloud-book deletion")
+                }
+                logCloudSyncTrace {
+                    "android.full_sync.delete_queue user=${currentUser.uid} books=${pendingDeleteBookIds.size}"
+                }
             }
 
-            try {
-                retryPendingCloudBookDeletes(accessToken, currentUser.uid)
-            } catch (error: CancellationException) {
-                throw error
-            } catch (error: Exception) {
-                // The durable outbox remains intact; a later sync retries it.
-                Timber.w(error, "Pending cloud book deletion could not be completed")
-                if (showBanner) {
-                    _internalState.update {
-                        it.copy(
-                            isLoading = false,
-                            errorMessage = appContext.getString(R.string.error_sync_library_failed),
-                        )
-                    }
-                }
-                // Do not merge remote metadata in this pass. A pending
-                // delete must remain the only destructive operation until it
-                // is fully confirmed on a subsequent retry.
-                return@launch
+            val accessToken = googleDriveRepository.getAccessToken(appContext)
+            if (accessToken == null) {
+                logCloudSyncTrace { "android.full_sync.skip reason=no_access_token user=${currentUser.uid}" }
+                return@coroutineScope
             }
 
             val deviceId = getInstallationId()
@@ -5111,7 +5070,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     "localBooks=${localBooks.size} remoteBooks=${remoteBooks.size} " +
                     "remoteShelves=${rawRemoteShelves.size} driveFiles=${initialDriveFiles.size}"
             }
-            val syncableBookIds = (localBooks.map { it.bookId } + remoteBooks.map { it.bookId }).toSet()
+            val syncableBookIds = (localBooks.map { it.bookId } + remoteBooks.map { it.bookId })
+                .filterNot { it in pendingDeleteBookIds }
+                .toSet()
             val shelfDao = AppDatabase.getDatabase(appContext).shelfDao()
             val localShelfEntities = shelfDao.getAllUserShelvesForSync()
             val localShelfIdByName = localShelfEntities.associate { it.name to it.id }
@@ -5150,7 +5111,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             // 3. Merge Books
             val localBooksMap = localBooks.associateBy { it.bookId }
             val remoteBooksMap = remoteBooks.associateBy { it.bookId }
-            val allBookIds = (localBooksMap.keys + remoteBooksMap.keys).distinct()
+            val allBookIds = (localBooksMap.keys + remoteBooksMap.keys)
+                .filterNot { it in pendingDeleteBookIds }
+                .distinct()
             val pendingContentDownloads = mutableSetOf<String>()
 
             allBookIds.forEach { bookId ->
@@ -5470,6 +5433,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             val finalMergedBooks = withContext(Dispatchers.IO) {
                 bookStore.getAllFilesForSync()
             }.filterNot { it.isManualOnlyReaderFile() }
+                .filterNot { it.bookId in pendingDeleteBookIds }
             val remoteFiles = withContext(Dispatchers.IO) {
                 googleDriveRepository.getFilesOrThrow(accessToken).files.associateBy { it.name }
             }
@@ -5563,6 +5527,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     it.copy(isLoading = false, errorMessage = appContext.getString(R.string.error_sync_library_failed))
                 }
             }
+        }
         }
     }
 
@@ -7918,18 +7883,21 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun deleteContextualItemsPermanently() {
-        val itemsToRemove = _internalState.value.contextualActionItems
+        val requestState = _internalState.value
+        val itemsToRemove = requestState.contextualActionItems
+        // Capture the account at click time. Reading currentUser only after
+        // launching work can associate an old selection with a newly signed-in
+        // account.
+        val requestedSyncEnabled = requestState.isSyncEnabled
+        val requestedAccountId = requestState.currentUser?.uid?.trim()
+            ?.takeIf { it.isNotBlank() }
         if (itemsToRemove.isNotEmpty()) {
             _internalState.update { it.withClearedLibraryBookSelection() }
 
             viewModelScope.launch {
-                val canSync =
-                    uiState.value.isSyncEnabled && googleDriveRepository.hasDrivePermissions(
-                        appContext
-                    )
-
                 val (folderBooks, managedBooks) = itemsToRemove.partition { it.sourceFolderUri != null }
                 var managedDeletionSucceeded = true
+                var remoteDeletionQueued = false
 
                 withContext(Dispatchers.IO) {
                     if (folderBooks.isNotEmpty()) {
@@ -7984,9 +7952,13 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     }
 
                     if (managedBooks.isNotEmpty()) {
-                        val currentUser = uiState.value.currentUser
+                        val cloudRequestStillValid = requestedSyncEnabled &&
+                            requestedAccountId != null &&
+                            _internalState.value.isSyncEnabled &&
+                            _internalState.value.currentUser?.uid?.trim() == requestedAccountId &&
+                            authRepository.getSignedInUser()?.uid?.trim() == requestedAccountId
 
-                        if (canSync && currentUser == null) {
+                        if (requestedSyncEnabled && !cloudRequestStillValid) {
                             managedDeletionSucceeded = false
                             _internalState.update {
                                 it.copy(
@@ -7994,50 +7966,69 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                                     errorMessage = appContext.getString(R.string.error_clear_all_data),
                                 )
                             }
-                        } else if (canSync && currentUser != null) {
+                        } else if (cloudRequestStillValid) {
                             _internalState.update {
                                 it.copy(
-                                    isLoading = true,
                                     bannerMessage = BannerMessage(appContext.getString(R.string.banner_deleting_all_devices))
                                 )
                             }
                             try {
-                                val accessToken =
-                                    googleDriveRepository.getAccessToken(appContext) ?: throw Exception(
-                                        "No token"
-                                    )
-                                val cloudItems = managedBooks.filterNot(RecentFileItem::isManualOnlyReaderFile)
-                                val localOnlyItems = managedBooks.filter(RecentFileItem::isManualOnlyReaderFile)
-                                if (localOnlyItems.isNotEmpty()) {
-                                    localOnlyItems.forEach { item ->
-                                        cleanupBookDataLocally(item.bookId)
-                                        bookStore.deleteFilePermanently(listOf(item.bookId))
+                                // Revalidate after waiting for the account
+                                // barrier; a sign-out/account switch while a
+                                // full sync was in progress must not retarget
+                                // this selection.
+                                val accountId = requireNotNull(requestedAccountId)
+                                CloudBookSyncBarrier.withAccountLock(accountId) {
+                                    check(
+                                        _internalState.value.isSyncEnabled &&
+                                            _internalState.value.currentUser?.uid?.trim() == requestedAccountId &&
+                                            authRepository.getSignedInUser()?.uid?.trim() == requestedAccountId
+                                    ) { "Account changed while deleting cloud books" }
+
+                                    val cloudItems = managedBooks.filterNot(RecentFileItem::isManualOnlyReaderFile)
+                                    val localOnlyItems = managedBooks.filter(RecentFileItem::isManualOnlyReaderFile)
+                                    if (localOnlyItems.isNotEmpty()) {
+                                        localOnlyItems.forEach { item ->
+                                            cleanupBookDataLocally(item.bookId)
+                                            bookStore.deleteFilePermanently(listOf(item.bookId))
+                                        }
                                     }
-                                }
-                                if (cloudItems.isNotEmpty()) {
-                                    // Persist before touching the local row. A
-                                    // crash or network failure leaves these
-                                    // shared tombstones available for retry.
-                                    cloudBookDeleteOutbox.enqueue(
-                                        currentUser.uid,
-                                        cloudItems.map { item ->
-                                            CloudBookTombstone(
-                                                bookId = item.bookId,
-                                                type = item.type.name,
-                                                deletedAt = System.currentTimeMillis(),
+                                    if (cloudItems.isNotEmpty()) {
+                                        // Persist before touching the local rows. A
+                                        // crash, process death, or missing token
+                                        // leaves these account-scoped intents for
+                                        // the WorkManager retry path.
+                                        check(
+                                            cloudBookDeletePersistence.enqueue(
+                                                accountId,
+                                                cloudItems.map { item ->
+                                                    CloudBookTombstone(
+                                                        bookId = item.bookId,
+                                                        type = item.type.name,
+                                                        deletedAt = System.currentTimeMillis(),
+                                                    )
+                                                },
                                             )
-                                        },
-                                    )
-                                    retryPendingCloudBookDeletes(
-                                        accessToken = accessToken,
-                                        userId = currentUser.uid,
-                                    )
+                                        ) { "Unable to persist cloud-book deletion intent" }
+                                        remoteDeletionQueued = true
+                                        // Local visibility is intentionally
+                                        // finalized immediately while the
+                                        // remote worker runs asynchronously.
+                                        bookStore.deleteFilePermanently(cloudItems.map { it.bookId })
+
+                                        runCatching {
+                                            CloudBookDeleteWorker.enqueue(appContext, accountId)
+                                        }.onFailure { error ->
+                                            // The queue remains durable; the
+                                            // next sync/startup pass schedules it.
+                                            Timber.e(error, "Unable to schedule cloud-book deletion worker")
+                                        }
+                                    }
                                 }
 
                                 _internalState.update {
                                     it.copy(
-                                        isLoading = false,
-                                        bannerMessage = BannerMessage(appContext.getString(R.string.banner_deletion_complete))
+                                        bannerMessage = BannerMessage(appContext.getString(R.string.banner_deleting_all_devices))
                                     )
                                 }
                             } catch (e: Exception) {
@@ -8045,7 +8036,6 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                                 managedDeletionSucceeded = false
                                 _internalState.update {
                                     it.copy(
-                                        isLoading = false,
                                         errorMessage = appContext.getString(R.string.error_cloud_delete_pending)
                                     )
                                 }
@@ -8063,8 +8053,11 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     val totalRemoved = folderBooks.size + managedBooks.size
                     _internalState.update {
                         it.copy(
-                            isLoading = false,
-                            bannerMessage = BannerMessage(appContext.resources.getQuantityString(R.plurals.banner_books_removed_library, totalRemoved, totalRemoved))
+                            bannerMessage = if (remoteDeletionQueued) {
+                                BannerMessage(appContext.getString(R.string.banner_deleting_all_devices))
+                            } else {
+                                BannerMessage(appContext.resources.getQuantityString(R.plurals.banner_books_removed_library, totalRemoved, totalRemoved))
+                            }
                         )
                     }
                 }
