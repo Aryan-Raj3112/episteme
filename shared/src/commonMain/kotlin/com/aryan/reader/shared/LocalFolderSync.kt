@@ -264,6 +264,24 @@ data class LocalFolderSyncResult(
     val stats: LocalFolderSyncStats
 )
 
+/**
+ * Describes how trustworthy a physical folder enumeration is.
+ *
+ * A provider can return a subset of children before failing (or can simply
+ * return null for a query).  Treating that subset as the complete folder is
+ * unsafe because the reconciliation step would infer deletions.  Callers
+ * must use [COMPLETE] only after the whole tree has been enumerated.
+ */
+enum class LocalFolderScanStatus {
+    COMPLETE,
+    PARTIAL,
+    UNAVAILABLE,
+    NOT_SCANNED;
+
+    val canReconcileMissingBooks: Boolean
+        get() = this == COMPLETE
+}
+
 object LocalFolderSyncEngine {
     fun buildStableBookId(name: String, relativePath: String): String {
         val normalizedRelativePath = relativePath.toSyncRelativePath().ifBlank { name }
@@ -280,7 +298,8 @@ object LocalFolderSyncEngine {
         files: List<SharedFolderScannedFile>,
         remoteMetadata: Map<String, SharedFolderBookMetadata>,
         nowMillis: Long = currentTimestamp(),
-        metadataOnly: Boolean = false
+        metadataOnly: Boolean = false,
+        scanStatus: LocalFolderScanStatus = LocalFolderScanStatus.COMPLETE
     ): LocalFolderSyncResult {
         if (!folder.localSyncEnabled) {
             return LocalFolderSyncResult(
@@ -401,15 +420,22 @@ object LocalFolderSyncEngine {
                     }
                 }
 
-            removedIds = existingFolderBookIds
-                .map { idMigrations[it] ?: it }
-                .filter { it !in foundBookIds }
-                .toSet()
-            removedIds.forEach(booksById::remove)
-            stats = stats.copy(removedBooks = removedIds.size)
+            if (scanStatus.canReconcileMissingBooks) {
+                removedIds = existingFolderBookIds
+                    .map { idMigrations[it] ?: it }
+                    .filter { it !in foundBookIds }
+                    .toSet()
+                removedIds.forEach(booksById::remove)
+                stats = stats.copy(removedBooks = removedIds.size)
+            }
         }
 
-        val syncedFolder = folder.copy(lastScanTime = nowMillis)
+        // A metadata-only pass, a partial enumeration, or an unavailable
+        // provider must not advance the scan watermark.  Keeping the old
+        // value makes the UI and cloud merge accurately reflect the last
+        // complete physical scan.
+        val shouldRecordScan = !metadataOnly && scanStatus == LocalFolderScanStatus.COMPLETE
+        val syncedFolder = if (shouldRecordScan) folder.copy(lastScanTime = nowMillis) else folder
         val syncedFolders = (state.syncedFolders.filterNot { it.uriString == folderRoot } + syncedFolder)
             .sortedBy { it.name.lowercase() }
         val migratedState = state
@@ -419,7 +445,7 @@ object LocalFolderSyncEngine {
             .copy(
                 rawLibraryBooks = booksById.values.toList(),
                 syncedFolders = syncedFolders,
-                lastFolderScanTime = nowMillis
+                lastFolderScanTime = if (shouldRecordScan) nowMillis else state.lastFolderScanTime
             )
 
         return LocalFolderSyncResult(

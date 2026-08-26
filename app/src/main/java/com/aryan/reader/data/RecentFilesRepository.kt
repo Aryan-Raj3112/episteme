@@ -351,14 +351,14 @@ class RecentFilesRepository(private val context: Context) :
         Timber.d("Updated highlights for $bookId")
     }
 
-    override suspend fun syncLocalMetadataToFolder(bookId: String, force: Boolean) = withContext(Dispatchers.IO) {
-        val entity = recentFileDao.getFileByBookId(bookId) ?: return@withContext
+    override suspend fun syncLocalMetadataToFolder(bookId: String, force: Boolean): Boolean = withContext(Dispatchers.IO) {
+        val entity = recentFileDao.getFileByBookId(bookId) ?: return@withContext true
         val folderUriString = entity.sourceFolderUri
 
         if (folderUriString != null) {
             if (!isLocalFolderSyncEnabled(folderUriString)) {
                 Timber.d("SyncDebug: Folder sync disabled for $folderUriString. Skipping metadata sidecar.")
-                return@withContext
+                return@withContext true
             }
 
             val hasProgress = (entity.progressPercentage != null && entity.progressPercentage > 0f)
@@ -368,7 +368,7 @@ class RecentFilesRepository(private val context: Context) :
 
             if (!force && !isDirty) {
                 Timber.d("SyncDebug: Book $bookId is 'Clean' (Unread/Not Recent). Skipping JSON creation.")
-                return@withContext
+                return@withContext true
             }
 
             Timber.d("Syncing metadata to local folder for book: $bookId")
@@ -400,12 +400,13 @@ class RecentFilesRepository(private val context: Context) :
                 originalDescription = entity.originalDescription
             )
 
-            LocalSyncUtils.saveMetadataToFolder(
+            return@withContext LocalSyncUtils.saveMetadataToFolder(
                 context = context,
                 sourceFolderUri = folderUriString.toUri(),
                 metadata = metadata
             )
         }
+        true
     }
 
     override suspend fun syncLocalAnnotationsToFolder(bookId: String): Boolean = withContext(Dispatchers.IO) {

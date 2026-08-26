@@ -2164,7 +2164,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         val remoteFontsMap = remoteFonts.associateBy { it.id }
         val allFontIds = (localFontsMap.keys + remoteFontsMap.keys).distinct()
         val driveFiles =
-            googleDriveRepository.getFiles(accessToken)?.files.orEmpty().associateBy { it.name }
+            googleDriveRepository.getFilesOrThrow(accessToken).files.associateBy { it.name }
 
         allFontIds.forEach { fontId ->
             val local = localFontsMap[fontId]
@@ -2359,8 +2359,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     ) {
         val pending = cloudBookDeleteOutbox.pending()
         if (pending.isEmpty()) return
-        val remoteFiles = googleDriveRepository.getFiles(accessToken)?.files
-            ?: throw IllegalStateException("Unable to list Drive files for pending deletion")
+        val remoteFiles = googleDriveRepository.getFilesOrThrow(accessToken).files
         val remoteFilesByName = remoteFiles.associateBy(DriveFile::name)
         val deviceId = getInstallationId()
         val failures = mutableListOf<Exception>()
@@ -2986,9 +2985,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         val remote = loadRemoteBookForUpload()
                         remoteAnnotationDriveTimestamp = if (remote?.hasAnnotations == true) {
                             googleDriveRepository.getAccessToken(appContext)?.let { accessToken ->
-                                googleDriveRepository.getFiles(accessToken)
-                                    ?.files
-                                    .orEmpty()
+                                googleDriveRepository.getFilesOrThrow(accessToken)
+                                    .files
                                     .firstOrNull { it.name == cloudPdfAnnotationDriveFileName(book.bookId) }
                                     ?.modifiedTimeMillis
                             } ?: 0L
@@ -3545,7 +3543,12 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     if (it.sourceFolderUri != null) {
                         Timber.tag("FolderAnnotationSync")
                             .d("Book closed (Folder Linked), syncing metadata and scheduling annotations: ${it.bookId}")
-                        folderMirrorStore.syncLocalMetadataToFolder(it.bookId)
+                        val metadataSaved = folderMirrorStore.syncLocalMetadataToFolder(it.bookId)
+                        if (!metadataSaved) {
+                            Timber.tag("FolderAnnotationSync").w(
+                                "Book close metadata sidecar write failed; keeping local state for retry: ${it.bookId}"
+                            )
+                        }
                         FolderAnnotationExportWorker.markPending(
                             context = appContext,
                             bookId = it.bookId,
@@ -3991,7 +3994,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 val accessToken = googleDriveRepository.getAccessToken(appContext)
                     ?: throw Exception("Not signed in or missing permissions")
                 val remoteFiles =
-                    googleDriveRepository.getFiles(accessToken)?.files.orEmpty().associateBy {
+                    googleDriveRepository.getFilesOrThrow(accessToken).files.associateBy {
                         it.name
                     }
 
@@ -4297,9 +4300,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
     private suspend fun downloadCloudBookFile(accessToken: String, remote: RecentFileItem): Boolean {
         val fileName = sharedCloudBookContentFileName(remote.bookId, remote.type) ?: return false
-        val driveFileId = googleDriveRepository.getFiles(accessToken)
-            ?.files
-            .orEmpty()
+        val driveFileId = googleDriveRepository.getFilesOrThrow(accessToken)
+            .files
             .firstOrNull { it.name == fileName }
             ?.id
             ?: return false
@@ -4420,7 +4422,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 .filterNot { it.isManualOnlyReaderFile() }
             val rawRemoteShelves = remoteShelvesDeferred.await()
             val initialDriveFiles = withContext(Dispatchers.IO) {
-                googleDriveRepository.getFiles(accessToken)?.files.orEmpty().associateBy { it.name }
+                googleDriveRepository.getFilesOrThrow(accessToken).files.associateBy { it.name }
             }
             logCloudSyncTrace {
                 "android.full_sync.loaded user=${currentUser.uid} device=$deviceId " +
@@ -4787,7 +4789,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 bookStore.getAllFilesForSync()
             }.filterNot { it.isManualOnlyReaderFile() }
             val remoteFiles = withContext(Dispatchers.IO) {
-                googleDriveRepository.getFiles(accessToken)?.files.orEmpty().associateBy { it.name }
+                googleDriveRepository.getFilesOrThrow(accessToken).files.associateBy { it.name }
             }
 
             finalMergedBooks.forEach { book ->
@@ -7361,7 +7363,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                                 _internalState.update {
                                     it.copy(
                                         isLoading = false,
-                                        errorMessage = appContext.getString(R.string.error_clear_all_data)
+                                        errorMessage = appContext.getString(R.string.error_cloud_delete_pending)
                                     )
                                 }
                             }
@@ -7626,7 +7628,12 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
                 if (savedItem?.sourceFolderUri != null) {
                     launch(Dispatchers.IO) {
-                        folderMirrorStore.syncLocalMetadataToFolder(bookId, force = true)
+                        val metadataSaved = folderMirrorStore.syncLocalMetadataToFolder(bookId, force = true)
+                        if (!metadataSaved) {
+                            Timber.tag("FolderAnnotationSync").w(
+                                "Metadata sidecar write failed after rename; keeping local state for retry: $bookId"
+                            )
+                        }
                     }
                 }
             }

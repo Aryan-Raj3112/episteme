@@ -39,6 +39,10 @@ class GoogleDriveRepository {
         return DriveFileList(emptyList())
     }
 
+    suspend fun getFilesOrThrow(accessToken: String): DriveFileList {
+        return getFiles(accessToken) ?: error("Drive is unavailable in the OSS build")
+    }
+
     suspend fun uploadAnnotationFile(accessToken: String, bookId: String, file: File): DriveFile? {
         return null
     }
