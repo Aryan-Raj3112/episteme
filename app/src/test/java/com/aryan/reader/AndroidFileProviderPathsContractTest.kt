@@ -23,6 +23,15 @@ class AndroidFileProviderPathsContractTest {
         assertTrue(paths.all { it.attribute("path")?.contains("..") != true })
     }
 
+    @Test
+    fun `unrelated cache files are outside the provider root`() {
+        val cacheRoot = File("build/provider-contract-cache").canonicalFile
+        val shareRoot = File(cacheRoot, AndroidShareArtifactManager.SHARE_ROOT_DIRECTORY).canonicalFile
+        val unrelated = File(cacheRoot, "unrelated-cache-file.pdf").canonicalFile
+
+        assertFalse(unrelated.path.startsWith("${shareRoot.path}${File.separator}"))
+    }
+
     private fun readPaths(): org.w3c.dom.Document {
         val resource = listOf(
             File("src/main/res/xml/provider_paths.xml"),

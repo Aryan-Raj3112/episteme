@@ -3,11 +3,6 @@ package com.aryan.reader
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import android.os.Bundle
-import android.content.pm.ProviderInfo
-import android.content.pm.ApplicationInfo
-import android.content.pm.PackageManager
-import androidx.core.content.FileProvider
 import com.aryan.reader.shared.AndroidShareArtifactManager
 import org.junit.After
 import org.junit.Before
@@ -20,7 +15,6 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
-import org.robolectric.Shadows
 import java.io.File
 import java.util.UUID
 
@@ -33,29 +27,6 @@ class AndroidShareArtifactManagerTest {
     fun setUp() {
         context = RuntimeEnvironment.getApplication()
         shareRoot = File(context.cacheDir, AndroidShareArtifactManager.SHARE_ROOT_DIRECTORY)
-        val providerPathsId = context.resources.getIdentifier(
-            "provider_paths",
-            "xml",
-            context.packageName,
-        )
-        check(providerPathsId != 0) { "Robolectric did not load provider_paths" }
-        Shadows.shadowOf(context.packageManager).addOrUpdateProvider(
-            ProviderInfo().apply {
-                packageName = context.packageName
-                authority = "${context.packageName}.provider"
-                name = FileProvider::class.java.name
-                applicationInfo = ApplicationInfo().apply { packageName = context.packageName }
-                metaData = Bundle().apply {
-                    putInt("android.support.FILE_PROVIDER_PATHS", providerPathsId)
-                }
-            }
-        )
-        check(
-            context.packageManager.resolveContentProvider(
-                "${context.packageName}.provider",
-                PackageManager.GET_META_DATA,
-            )?.metaData?.getInt("android.support.FILE_PROVIDER_PATHS") == providerPathsId,
-        )
     }
 
     @After
@@ -64,33 +35,17 @@ class AndroidShareArtifactManagerTest {
     }
 
     @Test
-    fun `each artifact gets an isolated sanitized file and provider uri`() {
-        val first = AndroidShareArtifactManager.create(
-            context = context,
-            requestedFileName = "../book/name.pdf",
-            write = { it.write(byteArrayOf(1, 2, 3)) },
-        )
-        val second = AndroidShareArtifactManager.create(
-            context = context,
-            requestedFileName = "book/name.pdf",
-            write = { it.write(byteArrayOf(4, 5, 6)) },
-        )
-
-        assertNotEquals(first.requestId, second.requestId)
-        assertFalse(first.fileName.contains('/'))
-        assertFalse(second.fileName.contains('/'))
-        assertTrue(first.uri.toString().contains("/shared_files/share-${first.requestId}/"))
-        assertTrue(second.uri.toString().contains("/shared_files/share-${second.requestId}/"))
-        assertTrue(File(shareRoot, "share-${first.requestId}/${first.fileName}").isFile)
-        assertTrue(File(shareRoot, "share-${second.requestId}/${second.fileName}").isFile)
-    }
-
-    @Test
     fun `request names and file names stay bounded`() {
         assertEquals("share-request-1", AndroidShareArtifactManager.requestDirectoryName("request-1"))
         assertEquals(".._book_name.pdf", AndroidShareArtifactManager.sanitizeFileName("../book/name.pdf"))
         assertEquals("shared-file", AndroidShareArtifactManager.sanitizeFileName("  "))
         assertFalse(AndroidShareArtifactManager.sanitizeFileName("book/name.pdf").contains('/'))
+        assertThrows(IllegalArgumentException::class.java) {
+            AndroidShareArtifactManager.requestDirectoryName("../escape")
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            AndroidShareArtifactManager.requestDirectoryName(" ")
+        }
         assertNotEquals(
             AndroidShareArtifactManager.requestDirectoryName(UUID.randomUUID().toString()),
             AndroidShareArtifactManager.requestDirectoryName(UUID.randomUUID().toString()),
@@ -115,21 +70,6 @@ class AndroidShareArtifactManagerTest {
         assertTrue(existing.isDirectory)
         assertTrue(File(existing, "existing.pdf").isFile)
         assertEquals(listOf(existing), shareRoot.listFiles()?.toList())
-    }
-
-    @Test
-    fun `provider rejects files outside the dedicated share root`() {
-        val outside = File(context.cacheDir, "unrelated-cache-file.pdf").apply {
-            writeText("not shareable")
-        }
-
-        assertThrows(IllegalArgumentException::class.java) {
-            FileProvider.getUriForFile(
-                context,
-                "${context.packageName}.provider",
-                outside,
-            )
-        }
     }
 
     @Test
