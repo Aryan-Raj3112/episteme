@@ -459,7 +459,7 @@ private fun PdfPageBounds.intersects(other: PdfPageBounds): Boolean {
 
 data class PdfZoomSpec(
     val min: Float = 0.65f,
-    val max: Float = 3.0f,
+    val max: Float = PDF_MAX_ZOOM_SCALE,
     val default: Float = 1.35f,
     val maxRenderPixels: Int = 18_000_000
 ) {

@@ -1,5 +1,6 @@
 package com.aryan.reader.pdf
 
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import com.aryan.reader.shared.ReaderTheme
 import kotlin.test.Test
@@ -67,13 +68,16 @@ class PdfVerticalReaderPolicyTest {
     }
 
     @Test
-    fun `release invalidates camera samples queued by the completed gesture`() {
-        val gestureEpoch = nextPdfVerticalCameraEpoch(12L)
-        assertTrue(shouldApplyPdfVerticalCameraSample(gestureEpoch, gestureEpoch))
+    fun `geometry refinement only resets zoom close to landscape fit scale`() {
+        assertTrue(isPdfVerticalZoomNearFit(currentZoom = 0.54f, fitZoom = 0.5f))
+        assertFalse(isPdfVerticalZoomNearFit(currentZoom = 0.88f, fitZoom = 0.5f))
+        assertFalse(isPdfVerticalZoomNearFit(currentZoom = 1.1f, fitZoom = 0.5f))
+    }
 
-        val releaseEpoch = nextPdfVerticalCameraEpoch(gestureEpoch)
-        assertFalse(shouldApplyPdfVerticalCameraSample(gestureEpoch, releaseEpoch))
-        assertTrue(shouldApplyPdfVerticalCameraSample(releaseEpoch, releaseEpoch))
+    @Test
+    fun `geometry refinement keeps portrait fit tolerance`() {
+        assertTrue(isPdfVerticalZoomNearFit(currentZoom = 1.1f, fitZoom = 1f))
+        assertFalse(isPdfVerticalZoomNearFit(currentZoom = 1.11f, fitZoom = 1f))
     }
 
     @Test
@@ -105,6 +109,63 @@ class PdfVerticalReaderPolicyTest {
             )
         )
     }
+
+    @Test
+    fun `pan acquisition preserves only movement beyond touch slop`() {
+        assertEquals(
+            Offset(0f, -2f),
+            pdfPanAfterTouchSlop(Offset(0f, -12f), touchSlop = 10f),
+        )
+        assertEquals(
+            Offset.Zero,
+            pdfPanAfterTouchSlop(Offset(3f, 4f), touchSlop = 10f),
+        )
+    }
+
+    @Test
+    fun `fling axes remain independent when horizontal motion is clamped`() {
+        assertEquals(
+            PdfFlingVelocity(x = 0f, y = -2400f),
+            resolvePdfFlingVelocity(
+                rawX = 1800f,
+                rawY = -2400f,
+                displacementX = 80f,
+                displacementY = -160f,
+                minimumVelocity = 131f,
+                maximumVelocity = 8000f,
+                allowHorizontal = false,
+            ),
+        )
+        assertEquals(
+            PdfFlingVelocity(x = 1800f, y = -2400f),
+            resolvePdfFlingVelocity(
+                rawX = 1800f,
+                rawY = -2400f,
+                displacementX = 80f,
+                displacementY = -160f,
+                minimumVelocity = 131f,
+                maximumVelocity = 8000f,
+                allowHorizontal = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `release jitter cannot fling opposite the completed gesture`() {
+        assertEquals(
+            PdfFlingVelocity(x = 0f, y = 0f),
+            resolvePdfFlingVelocity(
+                rawX = -65f,
+                rawY = 559f,
+                displacementX = 56f,
+                displacementY = -174f,
+                minimumVelocity = 131f,
+                maximumVelocity = 8000f,
+                allowHorizontal = true,
+            ),
+        )
+    }
+
 
     private fun theme(id: String, background: Color): ReaderTheme = ReaderTheme(
         id = id,

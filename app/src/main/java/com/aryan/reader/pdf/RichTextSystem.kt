@@ -53,6 +53,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import timber.log.Timber
+import com.aryan.reader.data.writeJsonAtomically
 import java.io.File
 
 const val PAGE_BREAK_CHAR = SHARED_PDF_PAGE_BREAK_CHAR
@@ -218,13 +219,14 @@ class PdfRichTextRepository(private val context: Context) {
                     "android.repository.save start book=$bookId textLen=${document.text.length} spans=${document.spans.size}"
                 )
                 val file = getFile(bookId)
-                file.writeText(SharedPdfRichTextSerializer.encode(document))
+                file.writeJsonAtomically(SharedPdfRichTextSerializer.encode(document))
                 Timber.d(
                     "android.repository.save done book=$bookId bytes=${file.length()} path=${file.absolutePath}"
                 )
             } catch (e: Exception) {
                 Timber.e(e, "android.repository.save failed book=$bookId")
                 Timber.e(e, "Failed to save rich text doc")
+                throw e
             }
         }
     }
@@ -234,13 +236,17 @@ class PdfRichTextRepository(private val context: Context) {
 class RichTextController(
     private val repository: PdfRichTextRepository,
     private val scope: CoroutineScope,
-    private val bookId: String
+    private val bookId: String,
+    private val onCommitted: suspend (bookId: String, reason: String, immediate: Boolean) -> Unit = { _, _, _ -> },
 ) {
     private var keyboardController: SoftwareKeyboardController? = null
 
     internal val sharedDelegate = SharedPdfRichTextController(
         scope = scope,
-        onDocumentChange = { document -> repository.save(bookId, document) },
+        onDocumentChange = { document ->
+            repository.save(bookId, document)
+            onCommitted(bookId, "rich_text", false)
+        },
         documentToAnnotatedString = { document, pageHeight ->
             RichTextMapper.toAnnotatedString(document, pageHeight)
         },

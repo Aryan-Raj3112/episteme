@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.sp
 import com.aryan.reader.pdf.PdfPageIdentity
 import com.aryan.reader.pdf.buildSharedPdfPageIndexMapping
+import com.aryan.reader.shared.currentTimestamp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -55,6 +56,8 @@ const val SHARED_PDF_PAGE_BREAK_CHAR: Char = '\u000C'
 
 private const val SHARED_PDF_ZWSP = "\u200B"
 private const val SHARED_PDF_RICH_FONT_PATH_TAG = "pdf-rich-font-path"
+internal const val SHARED_PDF_RICH_TEXT_SAVE_DEBOUNCE_MILLIS = 500L
+internal const val SHARED_PDF_RICH_TEXT_MAX_SAVE_LATENCY_MILLIS = 3_000L
 
 fun sharedPdfRichTextSelectionBounds(
     selectionStart: Int,
@@ -690,6 +693,7 @@ class SharedPdfRichTextController(
     private var lastTextMeasurer: TextMeasurer? = null
     private val engine = SharedPdfRichTextPaginationEngine()
     private var saveJob: Job? = null
+    private var dirtySinceMillis: Long? = null
     private var syncJob: Job? = null
     private var isSaving = false
 
@@ -1067,6 +1071,7 @@ class SharedPdfRichTextController(
         withContext(Dispatchers.Default) {
             val document = annotatedStringToDocument(finalAnnotated, lastPageHeight)
             onDocumentChange(document)
+            dirtySinceMillis = null
         }
     }
 
@@ -1625,11 +1630,16 @@ class SharedPdfRichTextController(
     }
 
     private fun debouncedSave(tfv: TextFieldValue) {
+        val now = currentTimestamp()
+        val dirtySince = dirtySinceMillis ?: now.also { dirtySinceMillis = it }
         saveJob?.cancel()
         saveJob = scope.launch(Dispatchers.Default) {
-            delay(1000)
+            val remainingMaxDelay = (SHARED_PDF_RICH_TEXT_MAX_SAVE_LATENCY_MILLIS - (now - dirtySince))
+                .coerceAtLeast(0L)
+            delay(minOf(SHARED_PDF_RICH_TEXT_SAVE_DEBOUNCE_MILLIS, remainingMaxDelay))
             val document = annotatedStringToDocument(tfv.annotatedString, lastPageHeight)
             onDocumentChange(document)
+            dirtySinceMillis = null
         }
     }
 

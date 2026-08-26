@@ -169,6 +169,7 @@ import com.aryan.reader.shared.pdf.isZoomed
 import com.aryan.reader.shared.pdf.pdfDoubleTapTargetScale
 import com.aryan.reader.shared.pdf.pdfVerticalDoubleTapTargetScale
 import com.aryan.reader.shared.pdf.pdfZoomIndicatorPercent
+import com.aryan.reader.shared.pdf.PDF_MAX_ZOOM_SCALE
 import com.aryan.reader.shared.pdf.visiblePdfPageBounds
 import com.aryan.reader.shared.pdf.SharedPdfAnnotation
 import com.aryan.reader.shared.pdf.SharedPdfRichTextController
@@ -176,7 +177,6 @@ import com.aryan.reader.shared.pdf.SharedPdfTextDraft
 import com.aryan.reader.shared.pdf.SharedPdfTextDragState
 import com.aryan.reader.shared.pdf.sharedPdfTextDropBounds
 import com.aryan.reader.shared.pdf.containsNormalizedPoint
-import com.aryan.reader.shared.pdf.shouldReplaceLastPdfInkPoint
 import com.aryan.reader.shared.pdf.withBounds
 import com.aryan.reader.shared.pdf.withText
 import com.aryan.reader.shared.pdf.SharedPdfReaderState
@@ -677,7 +677,7 @@ internal fun SharedMobilePdfVerticalPages(
             onCameraChanged = onZoomCameraChanged,
             zoomEnabled = userScrollEnabled && state.selectedTool == PdfInkTool.NONE,
             tapGesturesEnabled = state.selectedTool == PdfInkTool.NONE || state.selectedTool == PdfInkTool.TEXT || isStylusOnlyMode,
-            maxScale = 5f,
+            maxScale = PDF_MAX_ZOOM_SCALE,
             verticalDocumentMode = true,
             onSingleTap = { onToggleChrome() },
             modifier = Modifier.fillMaxSize()
@@ -1049,7 +1049,7 @@ internal fun SharedMobilePdfPaginatedPages(
             onCameraChanged = onZoomCameraChanged,
             zoomEnabled = userScrollEnabled && state.selectedTool == PdfInkTool.NONE,
             tapGesturesEnabled = state.selectedTool == PdfInkTool.NONE || state.selectedTool == PdfInkTool.TEXT || isStylusOnlyMode,
-            maxScale = 4f,
+            maxScale = PDF_MAX_ZOOM_SCALE,
             onSingleTap = { offset ->
                 val viewportWidthForTap = paginationViewportSize.width.toFloat()
                 val edge = viewportWidthForTap * 0.25f
@@ -2048,18 +2048,7 @@ internal fun SharedMobilePdfPageSurface(
                                     if (localCanvasSize.width > 0 && localCanvasSize.height > 0) {
                                         val mutableStroke = activeStroke as? MutableList<PdfPagePoint>
                                         if (mutableStroke != null) {
-                                            val nextPoint = change.position.toSharedMobilePdfPoint(localCanvasSize)
-                                            val replaceEndpoint = shouldReplaceLastPdfInkPoint(
-                                                points = mutableStroke,
-                                                next = nextPoint,
-                                                inkTool = if (eraserOverride) PdfInkTool.ERASER else selectedTool,
-                                                strokeWidth = strokeWidth,
-                                            )
-                                            if (replaceEndpoint) {
-                                                mutableStroke[mutableStroke.lastIndex] = nextPoint
-                                            } else {
-                                                mutableStroke.add(nextPoint)
-                                            }
+                                            mutableStroke.add(change.position.toSharedMobilePdfPoint(localCanvasSize))
                                         }
                                         if (eraserOverride) eraserOverridePosition = change.position
                                     }

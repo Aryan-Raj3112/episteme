@@ -117,7 +117,7 @@
     <string name="scan_all">すべてスキャン</string>
     <string name="scanning">スキャン中…</string>
     <string name="sync_meta">メタデータを同期</string>
-    <string name="last_sync">最終同期</string>
+    <string name="last_sync">最終スキャン</string>
     <string name="books_count">本</string>
     <string name="menu_edit_filters">フィルターを編集</string>
     <string name="menu_remove_folder">フォルダーを削除</string>

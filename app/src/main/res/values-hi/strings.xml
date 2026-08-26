@@ -117,7 +117,7 @@
     <string name="scan_all">सभी स्कैन करें</string>
     <string name="scanning">स्कैन हो रहा है…</string>
     <string name="sync_meta">मेटाडेटा सिंक करें</string>
-    <string name="last_sync">अंतिम सिंक</string>
+    <string name="last_sync">अंतिम स्कैन</string>
     <string name="books_count">किताबें</string>
     <string name="menu_edit_filters">फ़िल्टर संपादित करें</string>
     <string name="menu_remove_folder">फ़ोल्डर हटाएं</string>

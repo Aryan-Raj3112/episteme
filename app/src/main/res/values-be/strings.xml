@@ -117,7 +117,7 @@
     <string name="scan_all">Сканаваць усё</string>
     <string name="scanning">Сканаванне…</string>
     <string name="sync_meta">Сінхр. метаданыя</string>
-    <string name="last_sync">АПОШНЯЯ СІНХРАНІЗАЦЫЯ</string>
+    <string name="last_sync">АПОШНЯЕ СКАНАВАННЕ</string>
     <string name="books_count">КНІГІ</string>
     <string name="menu_edit_filters">Рэдагаваць фільтры</string>
     <string name="menu_remove_folder">Выдаліць папку</string>

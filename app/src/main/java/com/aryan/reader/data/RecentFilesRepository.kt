@@ -388,19 +388,19 @@ class RecentFilesRepository(private val context: Context) :
         }
     }
 
-    override suspend fun syncLocalAnnotationsToFolder(bookId: String) = withContext(Dispatchers.IO) {
+    override suspend fun syncLocalAnnotationsToFolder(bookId: String): Boolean = withContext(Dispatchers.IO) {
         Timber.tag("FolderAnnotationSync").d("syncLocalAnnotationsToFolder called for bookId: $bookId")
         val entity = recentFileDao.getFileByBookId(bookId) ?: run {
             Timber.tag("FolderAnnotationSync").w("Entity not found for bookId: $bookId")
-            return@withContext
+            return@withContext false
         }
         val folderUriString = entity.sourceFolderUri ?: run {
             Timber.tag("FolderAnnotationSync").w("sourceFolderUri is null for bookId: $bookId")
-            return@withContext
+            return@withContext false
         }
         if (!isLocalFolderSyncEnabled(folderUriString)) {
             Timber.tag("FolderAnnotationSync").d("Folder sync disabled for $folderUriString. Skipping annotation sidecar.")
-            return@withContext
+            return@withContext false
         }
 
         val inkFile = pdfAnnotationRepository.getAnnotationFileForSync(bookId)
@@ -425,7 +425,7 @@ class RecentFilesRepository(private val context: Context) :
 
         if (!hasInk && !hasDeletedInk && !hasRichText && !hasLayout && !hasTextBoxes && !hasHighlights) {
             Timber.tag("FolderAnnotationSync").d("No annotations found locally for bookId: $bookId. Aborting sync.")
-            return@withContext
+            return@withContext true
         }
 
         val bundleJson = JSONObject()
@@ -480,13 +480,15 @@ class RecentFilesRepository(private val context: Context) :
             )
         }
 
-        LocalSyncUtils.saveAnnotationSidecar(
+        val saved = LocalSyncUtils.saveAnnotationSidecar(
             context = context,
             sourceFolderUri = folderUriString.toUri(),
             bookId = bookId,
             jsonPayload = canonicalBundleJson,
             timestamp = finalTs
         )
+
+        if (!saved) return@withContext false
 
         val savedSidecar = LocalSyncUtils.getAnnotationSidecar(
             context = context,
@@ -500,6 +502,7 @@ class RecentFilesRepository(private val context: Context) :
                 lastModifiedTimestamp = savedSidecar.first
             )
         }
+        savedSidecar != null
     }
 
     override suspend fun importAnnotationBundle(
@@ -525,7 +528,7 @@ class RecentFilesRepository(private val context: Context) :
                 if (file != null && bundle.has(key)) {
                     file.parentFile?.mkdirs()
                     val contentStr = bundle.get(key).toString()
-                    file.writeText(contentStr)
+                    file.writeJsonAtomically(contentStr)
                     lastModifiedTimestamp?.takeIf { it > 0L }?.let(file::setLastModified)
                     logCloudAnnotationSyncTrace {
                         "android.repository.import_write key=$key book=$bookId bytes=${contentStr.length} " +

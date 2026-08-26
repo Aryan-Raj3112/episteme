@@ -117,7 +117,7 @@
     <string name="scan_all">Alles scannen</string>
     <string name="scanning">Scannen…</string>
     <string name="sync_meta">Synchroniseer meta</string>
-    <string name="last_sync">LAATSTE SYNC</string>
+    <string name="last_sync">LAATSTE SCAN</string>
     <string name="books_count">BOEKEN</string>
     <string name="menu_edit_filters">Bewerk filters</string>
     <string name="menu_remove_folder">Map verwijderen</string>

@@ -59,6 +59,8 @@ class FolderSyncWorker(
 ) : CoroutineWorker(appContext, workerParams) {
 
     private val recentFilesRepository = RecentFilesRepository(appContext)
+    private val pendingAnnotationExports =
+        com.aryan.reader.data.AppDatabase.getDatabase(appContext).pendingFolderAnnotationExportDao()
 
     companion object {
         const val WORK_NAME = "FolderSyncWorker"
@@ -395,6 +397,15 @@ class FolderSyncWorker(
             if (isStopped || !isFolderStillLinked(folderUriString)) break
 
             val sidecarData = preloadedSidecars[book.bookId] ?: continue
+            val pendingLocal = pendingAnnotationExports.get(book.bookId)
+            if (pendingLocal != null) {
+                ReaderPerfLog.w(
+                    "FolderSync annotation import deferred: local revision pending " +
+                        "book=${book.bookId} revision=${pendingLocal.revision} phase=$phase"
+                )
+                FolderAnnotationExportWorker.schedulePendingNow(appContext, book.bookId)
+                continue
+            }
             val (remoteTs, jsonPayload) = sidecarData
 
             val safeSlashBookId = book.bookId.replace("/", "_")

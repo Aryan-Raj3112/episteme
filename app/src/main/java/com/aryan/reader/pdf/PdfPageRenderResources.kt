@@ -12,10 +12,9 @@ import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
-import com.aryan.reader.shared.pdf.PdfInkTool
 import com.aryan.reader.shared.pdf.PdfPagePoint
+import com.aryan.reader.shared.pdf.buildPdfInkCubicSegments
 import com.aryan.reader.shared.pdf.canPoolPdfBitmap
-import com.aryan.reader.shared.pdf.shouldReplaceLastPdfInkPoint
 import androidx.core.graphics.createBitmap
 import androidx.core.graphics.set
 import com.aryan.reader.pdf.data.PdfAnnotation
@@ -353,20 +352,17 @@ internal object PdfAnnotationRenderHelper {
                 val path = Path()
                 val first = annot.points[0]
                 path.moveTo(first.x * widthPx, first.y * heightPx)
-                for (i in 1 until annot.points.size) {
-                    val p0 = annot.points[i - 1]
-                    val p1 = annot.points[i]
-                    val p0x = p0.x * widthPx
-                    val p0y = p0.y * heightPx
-                    val p1x = p1.x * widthPx
-                    val p1y = p1.y * heightPx
-                    val midX = (p0x + p1x) / 2f
-                    val midY = (p0y + p1y) / 2f
-                    if (i == 1) path.lineTo(midX, midY)
-                    else path.quadraticTo(p0x, p0y, midX, midY)
+                buildPdfInkCubicSegments(
+                    points = annot.points.map { PdfPagePoint(it.x, it.y, it.timestamp) },
+                    scaleX = widthPx.toFloat(),
+                    scaleY = heightPx.toFloat(),
+                ).forEach { segment ->
+                    path.cubicTo(
+                        segment.control1.x, segment.control1.y,
+                        segment.control2.x, segment.control2.y,
+                        segment.end.x, segment.end.y,
+                    )
                 }
-                val last = annot.points.last()
-                path.lineTo(last.x * widthPx, last.y * heightPx)
 
                 val blendMode = when (annot.inkType) {
                     InkType.HIGHLIGHTER, InkType.HIGHLIGHTER_ROUND -> BlendMode.Multiply
@@ -416,16 +412,8 @@ class PdfDrawingState {
     }
 
     fun onDraw(point: PdfPoint) {
-        val annotation = currentAnnotation ?: return
-        val sharedTool = annotation.inkType.toSharedInkTool()
-        val sharedPoints = currentPoints.takeLast(2).map { PdfPagePoint(it.x, it.y, it.timestamp) }
-        val replaceEndpoint = shouldReplaceLastPdfInkPoint(
-            points = sharedPoints,
-            next = PdfPagePoint(point.x, point.y, point.timestamp),
-            inkTool = sharedTool,
-            strokeWidth = annotation.strokeWidth,
-        )
-        if (replaceEndpoint) currentPoints[currentPoints.lastIndex] = point else currentPoints.add(point)
+        if (currentAnnotation == null) return
+        currentPoints.add(point)
         currentAnnotation = currentAnnotation?.copy(points = currentPoints.toList())
     }
 
@@ -439,16 +427,6 @@ class PdfDrawingState {
         currentAnnotation = null
         currentPoints.clear()
         return finalAnnot
-    }
-
-    private fun InkType.toSharedInkTool(): PdfInkTool = when (this) {
-        InkType.PEN -> PdfInkTool.PEN
-        InkType.HIGHLIGHTER -> PdfInkTool.HIGHLIGHTER
-        InkType.HIGHLIGHTER_ROUND -> PdfInkTool.HIGHLIGHTER_ROUND
-        InkType.ERASER -> PdfInkTool.ERASER
-        InkType.FOUNTAIN_PEN -> PdfInkTool.FOUNTAIN_PEN
-        InkType.PENCIL -> PdfInkTool.PENCIL
-        InkType.TEXT -> PdfInkTool.TEXT
     }
 
     fun updateDrag(point: PdfPoint) {

@@ -1,5 +1,6 @@
 package com.aryan.reader.pdf
 
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.isSpecified
 import com.aryan.reader.shared.ReaderTheme
@@ -19,11 +20,45 @@ data class PdfLockedOrientationResetCamera(
     val panY: Float,
 )
 
-/** A queued drag sample is valid only while the gesture that produced it still owns the camera. */
-fun shouldApplyPdfVerticalCameraSample(sampleEpoch: Long, activeEpoch: Long): Boolean =
-    sampleEpoch == activeEpoch
+data class PdfFlingVelocity(
+    val x: Float,
+    val y: Float,
+)
 
-/** Advancing ownership invalidates every sample queued by the previous gesture or animation. */
+/** Resolves independent axis velocities without projecting one axis through the other. */
+fun resolvePdfFlingVelocity(
+    rawX: Float,
+    rawY: Float,
+    displacementX: Float,
+    displacementY: Float,
+    minimumVelocity: Float,
+    maximumVelocity: Float,
+    allowHorizontal: Boolean,
+): PdfFlingVelocity {
+    val safeMaximum = maximumVelocity.coerceAtLeast(0f)
+    val safeMinimum = minimumVelocity.coerceIn(0f, safeMaximum)
+    val x = rawX.coerceIn(-safeMaximum, safeMaximum)
+    val y = rawY.coerceIn(-safeMaximum, safeMaximum)
+    val xMatchesGesture = displacementX == 0f || x * displacementX > 0f
+    val yMatchesGesture = displacementY == 0f || y * displacementY > 0f
+    return PdfFlingVelocity(
+        x = if (
+            allowHorizontal && xMatchesGesture && kotlin.math.abs(x) > safeMinimum
+        ) x else 0f,
+        y = if (yMatchesGesture && kotlin.math.abs(y) > safeMinimum) y else 0f,
+    )
+}
+
+/** Returns only motion beyond touch slop, matching Android drag acquisition semantics. */
+fun pdfPanAfterTouchSlop(accumulatedPan: Offset, touchSlop: Float): Offset {
+    val distance = accumulatedPan.getDistance()
+    val safeSlop = touchSlop.takeIf { it.isFinite() }?.coerceAtLeast(0f) ?: 0f
+    if (!distance.isFinite() || distance <= safeSlop || distance == 0f) return Offset.Zero
+    val retainedDistance = distance - safeSlop
+    return accumulatedPan * (retainedDistance / distance)
+}
+
+/** Advancing ownership prevents a canceled animation from finishing as the current owner. */
 fun nextPdfVerticalCameraEpoch(currentEpoch: Long): Long =
     if (currentEpoch == Long.MAX_VALUE) 0L else currentEpoch + 1L
 
@@ -36,6 +71,22 @@ fun shouldShowPdfSelectionMenu(
     isPageMoving: Boolean,
     suppressedForCurrentSelection: Boolean,
 ): Boolean = hasMenu && !isPageMoving && !suppressedForCurrentSelection
+
+/**
+ * Geometry refinement may follow the initial placeholder layout. Only keep treating the camera
+ * as fitted while it is still close to the actual fit scale; an absolute threshold breaks
+ * landscape documents whose fit scale is below 1.
+ */
+fun isPdfVerticalZoomNearFit(
+    currentZoom: Float,
+    fitZoom: Float,
+    tolerance: Float = 0.1f,
+): Boolean {
+    val safeFitZoom = fitZoom.takeIf { it.isFinite() && it > 0f } ?: return false
+    val safeCurrentZoom = currentZoom.takeIf { it.isFinite() && it > 0f } ?: return false
+    val safeTolerance = tolerance.takeIf { it.isFinite() }?.coerceAtLeast(0f) ?: 0f
+    return safeCurrentZoom <= safeFitZoom * (1f + safeTolerance)
+}
 
 fun preservedPdfVerticalPanY(
     oldPanY: Float,

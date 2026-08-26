@@ -113,7 +113,7 @@
     <string name="scan_all">فحص الكل</string>
     <string name="scanning">جاري الفحص…</string>
     <string name="sync_meta">مزامنة البيانات الوصفية</string>
-    <string name="last_sync">آخر مزامنة</string>
+    <string name="last_sync">آخر فحص</string>
     <string name="books_count">كتب</string>
     <string name="menu_edit_filters">تعديل الفلاتر</string>
     <string name="menu_remove_folder">إزالة المجلد</string>

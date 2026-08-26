@@ -62,8 +62,8 @@ class LibraryProjector {
     fun sortBooks(books: List<BookItem>, sortOrder: SortOrder): List<BookItem> {
         return when (sortOrder) {
             SortOrder.RECENT -> books.sortedByDescending { it.timestamp }
-            SortOrder.DATE_ADDED_NEWEST -> books.sortedByDescending { it.dateAddedTimestamp }
-            SortOrder.DATE_ADDED_OLDEST -> books.sortedBy { it.dateAddedTimestamp }
+            SortOrder.DATE_ADDED_NEWEST -> books.sortedByDescending { it.libraryFileDateTimestamp() }
+            SortOrder.DATE_ADDED_OLDEST -> books.sortedBy { it.libraryFileDateTimestamp() }
             SortOrder.TITLE_ASC -> books.sortedBy { it.title?.lowercase() ?: it.displayName.lowercase() }
             SortOrder.AUTHOR_ASC -> books.sortedWith(compareBy(nullsLast()) { it.author?.lowercase() })
             SortOrder.PERCENT_ASC -> books.sortedBy { it.progressPercentage ?: 0f }
