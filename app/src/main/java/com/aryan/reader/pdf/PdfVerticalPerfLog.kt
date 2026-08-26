@@ -33,3 +33,12 @@ internal object PdfVerticalPerfLog {
 
     fun xy(x: Float, y: Float): String = "(${f(x)},${f(y)})"
 }
+
+internal object PdfScrollTrace {
+    const val TAG = "PdfScrollTrace"
+    const val FRAME_SAMPLE_INTERVAL_MS = 32L
+
+    fun d(message: String) {
+        Timber.tag(TAG).d(message)
+    }
+}

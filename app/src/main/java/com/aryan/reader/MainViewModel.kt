@@ -1245,6 +1245,10 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             pruneWork()
         }
 
+        viewModelScope.launch(Dispatchers.IO) {
+            FolderAnnotationExportWorker.scheduleAllPending(appContext)
+        }
+
         val locatorConverter = LocatorConverter(
             bookCacheDao,
             ProtoBuf { serializersModule = semanticBlockModule },
@@ -2491,6 +2495,19 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         queueCloudMetadataUpload(bookId, reason = "pdf_sidecar")
     }
 
+    suspend fun onPdfSidecarsCommitted(bookId: String, reason: String, immediate: Boolean) {
+        val book = bookStore.getFileByBookId(bookId)
+        if (book?.sourceFolderUri != null) {
+            FolderAnnotationExportWorker.markPending(
+                context = appContext,
+                bookId = bookId,
+                reason = reason,
+                immediate = immediate,
+            )
+        }
+        queuePdfSidecarCloudUpload(bookId)
+    }
+
     private fun uploadSingleBookMetadata(book: RecentFileItem) {
         if (!uiState.value.isSyncEnabled) {
             logCloudSyncTrace { "android.upload.skip reason=sync_disabled ${book.cloudSyncTraceSummary()}" }
@@ -3099,9 +3116,14 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
                     if (it.sourceFolderUri != null) {
                         Timber.tag("FolderAnnotationSync")
-                            .d("Book closed (Folder Linked), syncing metadata and annotations to folder: ${it.bookId}")
+                            .d("Book closed (Folder Linked), syncing metadata and scheduling annotations: ${it.bookId}")
                         folderMirrorStore.syncLocalMetadataToFolder(it.bookId)
-                        folderMirrorStore.syncLocalAnnotationsToFolder(it.bookId)
+                        FolderAnnotationExportWorker.markPending(
+                            context = appContext,
+                            bookId = it.bookId,
+                            reason = "reader_close",
+                            immediate = true,
+                        )
                     }
                 }
             }

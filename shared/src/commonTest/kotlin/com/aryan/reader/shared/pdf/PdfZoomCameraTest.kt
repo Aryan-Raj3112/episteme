@@ -31,6 +31,15 @@ class PdfZoomCameraTest {
     }
 
     @Test
+    fun panBoundsRemainCorrectAtOneThousandPercent() {
+        val camera = PdfZoomCamera(PDF_MAX_ZOOM_SCALE, PdfZoomPoint(10_000f, -10_000f))
+            .normalized(viewport, content)
+
+        assertEquals(1_800f, camera.offset.x)
+        assertEquals(-2_600f, camera.offset.y)
+    }
+
+    @Test
     fun returningToFitResetsOffset() {
         assertEquals(PdfZoomCamera(), PdfZoomCamera(1f, PdfZoomPoint(80f, 90f)).normalized(viewport, content))
     }
@@ -58,7 +67,14 @@ class PdfZoomCameraTest {
     @Test
     fun oneHandZoomDoublesOverBenchmarkDistance() {
         assertEquals(2f, pdfOneHandZoomScale(1f, 240f, 240f))
-        assertTrue(pdfOneHandZoomScale(4f, 240f, 240f) <= 4f)
+        assertEquals(8f, pdfOneHandZoomScale(4f, 240f, 240f))
+        assertEquals(PDF_MAX_ZOOM_SCALE, pdfOneHandZoomScale(8f, 240f, 240f))
+
+        val maxCamera = PdfZoomCamera(20f).normalized(
+            PdfZoomSize(100f, 100f),
+            PdfZoomSize(100f, 100f),
+        )
+        assertEquals(PDF_MAX_ZOOM_SCALE, maxCamera.scale)
     }
 
     @Test
@@ -81,5 +97,22 @@ class PdfZoomCameraTest {
             viewportBottom = 800f
         )
         assertEquals(PdfPageBounds(0.25f, 0.25f, 0.75f, 0.75f), bounds)
+    }
+
+    @Test
+    fun visibleBoundsRemainNormalizedAtOneThousandPercent() {
+        val bounds = visiblePdfPageBounds(
+            camera = PdfZoomCamera(PDF_MAX_ZOOM_SCALE),
+            transformedPageLeft = -1_800f,
+            transformedPageTop = -3_600f,
+            transformedPageRight = 2_200f,
+            transformedPageBottom = 4_400f,
+            viewportLeft = 0f,
+            viewportTop = 0f,
+            viewportRight = 400f,
+            viewportBottom = 800f,
+        )
+
+        assertEquals(PdfPageBounds(0.45f, 0.45f, 0.55f, 0.55f), bounds)
     }
 }

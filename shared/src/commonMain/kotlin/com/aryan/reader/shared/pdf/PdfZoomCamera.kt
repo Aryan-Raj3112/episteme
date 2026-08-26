@@ -3,6 +3,10 @@ package com.aryan.reader.shared.pdf
 import kotlin.math.abs
 import kotlin.math.pow
 
+const val PDF_MIN_ZOOM_SCALE = 1f
+const val PDF_MAX_ZOOM_SCALE = 10f
+const val PDF_ZOOM_RENDER_SETTLE_MILLIS = 120L
+
 data class PdfZoomPoint(val x: Float, val y: Float) {
     operator fun plus(other: PdfZoomPoint) = PdfZoomPoint(x + other.x, y + other.y)
     operator fun minus(other: PdfZoomPoint) = PdfZoomPoint(x - other.x, y - other.y)
@@ -33,8 +37,8 @@ data class PdfZoomCamera(
     fun normalized(
         viewport: PdfZoomSize,
         content: PdfZoomSize,
-        minScale: Float = 1f,
-        maxScale: Float = 4f
+        minScale: Float = PDF_MIN_ZOOM_SCALE,
+        maxScale: Float = PDF_MAX_ZOOM_SCALE
     ): PdfZoomCamera {
         val safeScale = finitePdfZoomValue(scale, minScale).coerceIn(minScale, maxScale)
         if (safeScale <= minScale + PdfZoomEpsilon) return PdfZoomCamera(minScale)
@@ -55,8 +59,8 @@ data class PdfZoomCamera(
         pivot: PdfZoomPoint,
         viewport: PdfZoomSize,
         content: PdfZoomSize,
-        minScale: Float = 1f,
-        maxScale: Float = 4f
+        minScale: Float = PDF_MIN_ZOOM_SCALE,
+        maxScale: Float = PDF_MAX_ZOOM_SCALE
     ): PdfZoomCamera {
         val oldScale = scale.takeIf { it.isFinite() && it > 0f } ?: minScale
         val nextScale = (oldScale * zoomChange).coerceIn(minScale, maxScale)
@@ -73,8 +77,8 @@ fun pdfOneHandZoomScale(
     startScale: Float,
     totalDragY: Float,
     dragDistanceForDoublePx: Float,
-    minScale: Float = 1f,
-    maxScale: Float = 4f
+    minScale: Float = PDF_MIN_ZOOM_SCALE,
+    maxScale: Float = PDF_MAX_ZOOM_SCALE
 ): Float {
     val safeStart = startScale.takeIf { it.isFinite() && it > 0f } ?: minScale
     val safeDistance = dragDistanceForDoublePx.takeIf { it.isFinite() && it > 0f } ?: 1f

@@ -117,7 +117,7 @@
     <string name="scan_all">Scansiona tutto</string>
     <string name="scanning">Scansione…</string>
     <string name="sync_meta">Sincronizza metadati</string>
-    <string name="last_sync">ULTIMA SINCRONIZZAZIONE</string>
+    <string name="last_sync">ULTIMA SCANSIONE</string>
     <string name="books_count">LIBRI</string>
     <string name="menu_edit_filters">Modifica filtri</string>
     <string name="menu_remove_folder">Rimuovi cartella</string>

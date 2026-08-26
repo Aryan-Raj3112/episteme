@@ -21,6 +21,7 @@ package com.aryan.reader.pdf.data
 
 import android.content.Context
 import com.aryan.reader.logCloudAnnotationSyncTrace
+import com.aryan.reader.data.writeJsonAtomically
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -49,7 +50,7 @@ class PdfTextBoxRepository(private val context: Context) {
                 }
                 return@withContext
             }
-            file.writeText(json)
+            file.writeJsonAtomically(json)
             logCloudAnnotationSyncTrace {
                 "android.repository.save_textboxes book=$bookId count=${textBoxes.size} " +
                     "bytes=${file.length()} ts=${file.lastModified()}"

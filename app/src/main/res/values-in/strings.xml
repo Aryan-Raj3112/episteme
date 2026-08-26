@@ -117,7 +117,7 @@
     <string name="scan_all">Pindai Semua</string>
     <string name="scanning">Memindai…</string>
     <string name="sync_meta">Sinkronkan Meta</string>
-    <string name="last_sync">SINKRONISASI TERAKHIR</string>
+    <string name="last_sync">PEMINDAIAN TERAKHIR</string>
     <string name="books_count">BUKU</string>
     <string name="menu_edit_filters">Sunting Filter</string>
     <string name="menu_remove_folder">Hapus Folder</string>

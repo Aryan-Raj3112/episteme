@@ -17,6 +17,8 @@ import com.aryan.reader.shared.localFolderSyncSidecarStem
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationSidecarCodec
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationSidecarSnapshot
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import timber.log.Timber
@@ -25,6 +27,7 @@ object LocalSyncUtils {
     private const val TAG = "FolderSync"
     private const val ANNOTATION_SUFFIX = "_annotations"
     private const val SYNC_SUBFOLDER_NAME = LOCAL_FOLDER_SYNC_DATA_DIR
+    private val annotationSidecarWriteMutex = Mutex()
 
     private data class SyncFileEntry(
         val name: String,
@@ -274,11 +277,11 @@ object LocalSyncUtils {
         bookId: String,
         jsonPayload: String,
         timestamp: Long
-    ) = withContext(Dispatchers.IO) {
+    ): Boolean = annotationSidecarWriteMutex.withLock { withContext(Dispatchers.IO) {
         Timber.tag("FolderAnnotationSync").d("saveAnnotationSidecar called for bookId: $bookId, timestamp: $timestamp")
         try {
-            val rootTree = DocumentFile.fromTreeUri(context, sourceFolderUri) ?: return@withContext
-            val syncDir = getOrCreateSyncDir(rootTree) ?: return@withContext
+            val rootTree = DocumentFile.fromTreeUri(context, sourceFolderUri) ?: return@withContext false
+            val syncDir = getOrCreateSyncDir(rootTree) ?: return@withContext false
             val currentBest = resolveAnnotationConflicts(context, syncDir, bookId)
             val targetName = localFolderSyncAnnotationFileName(bookId)
             val tempName = uniqueFolderSyncTempName(localFolderSyncAnnotationTempFileName(bookId))
@@ -287,7 +290,7 @@ object LocalSyncUtils {
                 Timber.tag("FolderAnnotationSync").w(
                     "Refusing to overwrite $targetName while a matching sidecar is unreadable."
                 )
-                return@withContext
+                return@withContext false
             }
 
             val mergedPayload = currentBest?.let { remote ->
@@ -309,7 +312,7 @@ object LocalSyncUtils {
             val tempFile = syncDir.createFile("application/json", tempName)
             if (tempFile == null) {
                 Timber.tag("FolderAnnotationSync").e("Failed to create temp sidecar file.")
-                return@withContext
+                return@withContext false
             }
 
             var writeSuccess = false
@@ -325,7 +328,7 @@ object LocalSyncUtils {
             } catch (e: Exception) {
                 Timber.tag("FolderAnnotationSync").e(e, "Error writing to temp sidecar.")
                 try { tempFile.delete() } catch (_: Exception) {}
-                return@withContext
+                return@withContext false
             }
 
             @Suppress("KotlinConstantConditions") if (writeSuccess) {
@@ -336,7 +339,7 @@ object LocalSyncUtils {
                     if (!existingMain.renameTo(backupName)) {
                         Timber.tag("FolderAnnotationSync").e("Could not preserve existing sidecar before replacement.")
                         tempFile.delete()
-                        return@withContext
+                        return@withContext false
                     }
                     previousMain = existingMain
                 }
@@ -350,23 +353,28 @@ object LocalSyncUtils {
                         )
                     }
                     if (installed == null) {
-                        Timber.tag("FolderAnnotationSync").e("Installed sidecar failed validation; preserving recovery copy.")
-                        return@withContext
+                        Timber.tag("FolderAnnotationSync").e("Installed sidecar failed validation; restoring previous copy.")
+                        syncDir.findFile(targetName)?.delete()
+                        previousMain?.renameTo(targetName)
+                        return@withContext false
                     }
                     currentBest?.files.orEmpty()
                         .filter { it.uri != previousMain?.uri && it.uri != syncDir.findFile(targetName)?.uri }
                         .forEach { candidate -> runCatching { candidate.delete() } }
                     previousMain?.delete()
                     Timber.tag("FolderAnnotationSync").d("AnnotationSync: merged save successful for $targetName")
+                    return@withContext true
                 } else {
                     Timber.tag("FolderAnnotationSync").e("AnnotationSync: Failed to rename temp sidecar to $targetName")
                     previousMain?.renameTo(targetName)
                 }
             }
-
+            false
         } catch (e: Exception) {
             Timber.tag("FolderAnnotationSync").e(e, "Failed to save annotation sidecar for $bookId")
+            false
         }
+    }
     }
 
     suspend fun preloadAnnotationSidecars(

@@ -697,44 +697,16 @@ fun SharedMobilePdfReaderScreen(
             activeStroke.clear()
             return
         }
-        val kind = if (effectiveTool == PdfInkTool.HIGHLIGHTER || effectiveTool == PdfInkTool.HIGHLIGHTER_ROUND) {
-            PdfAnnotationKind.HIGHLIGHT
-        } else {
-            PdfAnnotationKind.INK
-        }
-        val annotation = if (kind == PdfAnnotationKind.HIGHLIGHT) {
-            val xs = activeStroke.map { it.x }
-            val ys = activeStroke.map { it.y }
-            SharedPdfAnnotation(
-                id = "ios_pdf_annotation_${currentTimestamp()}_${readerState.annotations.size}",
-                pageIndex = pageIndex,
-                kind = PdfAnnotationKind.HIGHLIGHT,
-                tool = effectiveTool,
-                boundsList = listOf(
-                    PdfPageBounds(
-                        left = xs.minOrNull()?.coerceIn(0f, 1f) ?: 0f,
-                        top = (ys.minOrNull()?.minus(0.015f))?.coerceIn(0f, 1f) ?: 0f,
-                        right = xs.maxOrNull()?.coerceIn(0f, 1f) ?: 0f,
-                        bottom = (ys.maxOrNull()?.plus(0.015f))?.coerceIn(0f, 1f) ?: 0f
-                    )
-                ),
-                colorArgb = readerState.selectedColorArgb,
-                highlightStyle = HighlightStyle.BACKGROUND,
-                strokeWidth = readerState.strokeWidth,
-                createdAt = currentTimestamp()
-            )
-        } else {
-            SharedPdfAnnotation(
-                id = "ios_pdf_annotation_${currentTimestamp()}_${readerState.annotations.size}",
-                pageIndex = pageIndex,
-                kind = PdfAnnotationKind.INK,
-                tool = effectiveTool,
-                points = activeStroke.toList(),
-                colorArgb = readerState.selectedColorArgb,
-                strokeWidth = readerState.strokeWidth,
-                createdAt = currentTimestamp()
-            )
-        }
+        val annotation = SharedPdfAnnotation(
+            id = "ios_pdf_annotation_${currentTimestamp()}_${readerState.annotations.size}",
+            pageIndex = pageIndex,
+            kind = PdfAnnotationKind.INK,
+            tool = effectiveTool,
+            points = activeStroke.toList(),
+            colorArgb = readerState.selectedColorArgb,
+            strokeWidth = readerState.strokeWidth,
+            createdAt = currentTimestamp()
+        )
         dispatch(SharedPdfReaderAction.AnnotationAdded(annotation))
         activeStroke.clear()
     }

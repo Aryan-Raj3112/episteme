@@ -118,7 +118,7 @@
     <string name="scan_all">Skanni kõik</string>
     <string name="scanning">Skannimine…</string>
     <string name="sync_meta">Sünkrooni meta</string>
-    <string name="last_sync">VIIMANE SÜNKROON</string>
+    <string name="last_sync">VIIMANE SKANNIMINE</string>
     <string name="books_count">RAAMATUD</string>
     <string name="menu_edit_filters">Redigeeri filtreid</string>
     <string name="menu_remove_folder">Eemalda kaust</string>

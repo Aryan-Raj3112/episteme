@@ -5,6 +5,8 @@
 package com.aryan.reader.pdf
 
 import com.aryan.reader.shared.ReaderTheme
+import com.aryan.reader.shared.pdf.PDF_MAX_ZOOM_SCALE
+import com.aryan.reader.shared.pdf.pdfZoomRenderScale
 
 import android.graphics.Bitmap
 import android.graphics.Rect
@@ -132,8 +134,8 @@ private fun Throwable.readablePdfErrorDetail(): String {
 }
 
 private const val PDF_TILE_SIZE_DP = 256
-private const val PDF_MAX_TILE_BITMAP_SIZE_PX = 3072
-private const val PDF_TILE_SCALE_TOLERANCE = 0.03f
+private const val PDF_TARGET_TILE_BITMAP_SIZE_PX = 768
+private const val PDF_MAX_VISIBLE_TILE_COUNT = 12
 private const val PDF_TILE_IDLE_RENDER_DELAY_MS = 60L
 private const val PDF_TILE_RENDER_IDLE_COOLDOWN_MS = 220L
 private const val PDF_PAGINATION_PAN_FLING_MIN_VELOCITY = 600f
@@ -1102,7 +1104,7 @@ internal fun PdfPageComposable(
                     val qLeft = rect.left / (tileSizePx / 2)
                     val qBottom = rect.bottom / (tileSizePx / 2)
                     val qRight = rect.right / (tileSizePx / 2)
-                    listOf(qTop, qLeft, qBottom, qRight, (observedScale * 10f).roundToInt(), pauseMarker)
+                    listOf(qTop, qLeft, qBottom, qRight, (pdfZoomRenderScale(observedScale) * 10f).roundToInt(), pauseMarker)
                 } else if (!isVerticalScroll) {
                     val observedOffset = latestEffectiveOffset
                     val pivotX = screenWidth / 2f
@@ -1116,7 +1118,7 @@ internal fun PdfPageComposable(
                     val qLeft = pxTl.toInt() / (tileSizePx / 2)
                     val qBottom = pyBr.toInt() / (tileSizePx / 2)
                     val qRight = pxBr.toInt() / (tileSizePx / 2)
-                    listOf(qTop, qLeft, qBottom, qRight, (observedScale * 10f).roundToInt(), pauseMarker)
+                    listOf(qTop, qLeft, qBottom, qRight, (pdfZoomRenderScale(observedScale) * 10f).roundToInt(), pauseMarker)
                 } else {
                     null
                 }
@@ -1125,8 +1127,12 @@ internal fun PdfPageComposable(
                 val tileCalcStart = System.nanoTime()
                 if (!isActive) return@collectLatest
 
-                val renderScale = latestEffectiveScale
+                val renderScale = pdfZoomRenderScale(latestEffectiveScale)
                 val renderOffset = latestEffectiveOffset
+                val logicalTileSizePx = minOf(
+                    tileSizePx,
+                    (PDF_TARGET_TILE_BITMAP_SIZE_PX / renderScale).toInt().coerceAtLeast(64)
+                )
 
                 val currentVisibleRect = visibleScreenRect()
 
@@ -1162,28 +1168,39 @@ internal fun PdfPageComposable(
                 }
 
                 val visibleBitmapRect = Rect(pxTl.toInt(), pyTl.toInt(), pxBr.toInt(), pyBr.toInt())
-                val inset = if (renderScale > 2f) 0 else -tileSizePx
+                val inset = if (renderScale > 2f) 0 else -logicalTileSizePx
                 visibleBitmapRect.inset(inset, inset)
 
-                val requiredTileIds = mutableSetOf<Int>()
-                val cols = (actualBitmapWidthPx + tileSizePx - 1) / tileSizePx
-                val startCol = (visibleBitmapRect.left / tileSizePx).coerceAtLeast(0)
-                val endCol = ((visibleBitmapRect.right + tileSizePx - 1) / tileSizePx).coerceAtMost(cols)
-                val startRow = (visibleBitmapRect.top / tileSizePx).coerceAtLeast(0)
-                val endRow = ((visibleBitmapRect.bottom + tileSizePx - 1) / tileSizePx).coerceAtMost(
-                    (actualBitmapHeightPx + tileSizePx - 1) / tileSizePx
+                val candidateTileIds = mutableSetOf<Int>()
+                val cols = (actualBitmapWidthPx + logicalTileSizePx - 1) / logicalTileSizePx
+                val startCol = (visibleBitmapRect.left / logicalTileSizePx).coerceAtLeast(0)
+                val endCol = ((visibleBitmapRect.right + logicalTileSizePx - 1) / logicalTileSizePx).coerceAtMost(cols)
+                val startRow = (visibleBitmapRect.top / logicalTileSizePx).coerceAtLeast(0)
+                val endRow = ((visibleBitmapRect.bottom + logicalTileSizePx - 1) / logicalTileSizePx).coerceAtMost(
+                    (actualBitmapHeightPx + logicalTileSizePx - 1) / logicalTileSizePx
                 )
 
                 for (row in startRow until endRow) {
                     for (col in startCol until endCol) {
-                        requiredTileIds.add(row * cols + col)
+                        candidateTileIds.add(row * cols + col)
                     }
                 }
+                val visibleCenterX = visibleBitmapRect.exactCenterX()
+                val visibleCenterY = visibleBitmapRect.exactCenterY()
+                val requiredTileIds = candidateTileIds
+                    .sortedBy { tileId ->
+                        val row = tileId / cols
+                        val col = tileId % cols
+                        val dx = (col * logicalTileSizePx + logicalTileSizePx / 2f) - visibleCenterX
+                        val dy = (row * logicalTileSizePx + logicalTileSizePx / 2f) - visibleCenterY
+                        dx * dx + dy * dy
+                    }
+                    .take(PDF_MAX_VISIBLE_TILE_COUNT)
+                    .toSet()
 
                 val currentTileIds = tiles.map { it.tileId }.toSet()
 
-                val scaleTolerance = PDF_TILE_SCALE_TOLERANCE
-                val validCurrentTileIds = tiles.filter { abs(it.renderScale - renderScale) <= scaleTolerance }.map { it.tileId }.toSet()
+                val validCurrentTileIds = tiles.filter { it.renderScale == renderScale }.map { it.tileId }.toSet()
                 val tilesToRenderIds = requiredTileIds - validCurrentTileIds
                 val tilesToRecycleIds = currentTileIds - requiredTileIds
 
@@ -1241,7 +1258,7 @@ internal fun PdfPageComposable(
                             }
                             return@collectLatest
                         }
-                        if (abs(latestEffectiveScale - renderScale) > PDF_TILE_SCALE_TOLERANCE) {
+                        if (pdfZoomRenderScale(latestEffectiveScale) != renderScale) {
                             if (shouldLogHighResTile) {
                                 PdfVerticalPerfLog.d(
                                     "tile-render-canceled mode=$tileLogMode page=$pageIndex reason=scale-changed-before-native missing=${tilesToRenderIds.size} queuedScale=${PdfVerticalPerfLog.f(renderScale)} latestScale=${PdfVerticalPerfLog.f(latestEffectiveScale)}"
@@ -1261,23 +1278,21 @@ internal fun PdfPageComposable(
                                 val row = tileId / cols
                                 val col = tileId % cols
                                 val tileRect = Rect(
-                                    col * tileSizePx,
-                                    row * tileSizePx,
-                                    (col + 1) * tileSizePx,
-                                    (row + 1) * tileSizePx
+                                    col * logicalTileSizePx,
+                                    row * logicalTileSizePx,
+                                    minOf((col + 1) * logicalTileSizePx, actualBitmapWidthPx),
+                                    minOf((row + 1) * logicalTileSizePx, actualBitmapHeightPx)
                                 )
-                                val tileRenderScale = min(
-                                    renderScale,
-                                    PDF_MAX_TILE_BITMAP_SIZE_PX.toFloat() / tileSizePx.toFloat()
-                                )
-                                val tileRenderSize = (tileSizePx * tileRenderScale).toInt().coerceAtLeast(1)
+                                val tileRenderScale = renderScale
+                                val tileRenderWidth = (tileRect.width() * tileRenderScale).toInt().coerceAtLeast(1)
+                                val tileRenderHeight = (tileRect.height() * tileRenderScale).toInt().coerceAtLeast(1)
 
-                                val tileBitmap = PdfBitmapPool.get(tileRenderSize)
+                                val tileBitmap = PdfBitmapPool.get(tileRenderWidth, tileRenderHeight)
 
                                 val fullPageRenderWidth = (actualBitmapWidthPx * tileRenderScale).toInt()
                                 val fullPageRenderHeight = (actualBitmapHeightPx * tileRenderScale).toInt()
-                                val tileRenderX = (col * tileSizePx * tileRenderScale).toInt()
-                                val tileRenderY = (row * tileSizePx * tileRenderScale).toInt()
+                                val tileRenderX = (col * logicalTileSizePx * tileRenderScale).toInt()
+                                val tileRenderY = (row * logicalTileSizePx * tileRenderScale).toInt()
 
                                 val tilePage = page
                                 if (tilePage == null) {
@@ -1304,7 +1319,7 @@ internal fun PdfPageComposable(
                                         }
                                         return@withLock
                                     }
-                                    if (abs(latestEffectiveScale - renderScale) > PDF_TILE_SCALE_TOLERANCE) {
+                                    if (pdfZoomRenderScale(latestEffectiveScale) != renderScale) {
                                         if (shouldLogHighResTile) {
                                             PdfVerticalPerfLog.d(
                                                 "tile-render-canceled mode=$tileLogMode page=$pageIndex reason=scale-changed-at-native tile=$tileId queuedScale=${PdfVerticalPerfLog.f(renderScale)} latestScale=${PdfVerticalPerfLog.f(latestEffectiveScale)}"
@@ -1364,7 +1379,7 @@ internal fun PdfPageComposable(
                             }
                             return@collectLatest
                         }
-                        if (renderedTiles.isNotEmpty() && abs(latestEffectiveScale - renderScale) > PDF_TILE_SCALE_TOLERANCE) {
+                        if (renderedTiles.isNotEmpty() && pdfZoomRenderScale(latestEffectiveScale) != renderScale) {
                             if (shouldLogHighResTile) {
                                 PdfVerticalPerfLog.d(
                                     "tile-render-discarded mode=$tileLogMode page=$pageIndex reason=scale-changed-before-commit rendered=${renderedTiles.size} queuedScale=${PdfVerticalPerfLog.f(renderScale)} latestScale=${PdfVerticalPerfLog.f(latestEffectiveScale)}"
@@ -2556,8 +2571,7 @@ internal fun PdfPageComposable(
                 detectPdfTapAndOneHandZoomGestures(
                     viewConfiguration = viewConfiguration,
                     canStartOneHandZoom = {
-                        (isZoomEnabled && !isVerticalScroll && !isScrollLocked && actualBitmapWidthPx > 0) ||
-                            (isVerticalScroll && !isScrollLocked && currentOnDoubleTapDragZoom != null)
+                        isZoomEnabled && !isVerticalScroll && !isScrollLocked && actualBitmapWidthPx > 0
                     },
                     canHandleQuickDoubleTap = { canZoomByDoubleTap() },
                     consumeSingleTap = true,
@@ -2788,6 +2802,10 @@ internal fun PdfPageComposable(
                     }
                 },
                     onQuickDoubleTap = quickDoubleTap@{ tapOffset ->
+                    pdfZoomDiagnostic(
+                        "page=$pageIndex quickDoubleTap received vertical=$isVerticalScroll " +
+                            "local=$tapOffset canZoom=${canZoomByDoubleTap()} scale=$latestScale"
+                    )
                     if (!canZoomByDoubleTap()) {
                         Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
                             "page.quickDoubleTap.blocked page=$pageIndex vertical=$isVerticalScroll " +
@@ -2850,7 +2868,14 @@ internal fun PdfPageComposable(
                             }
                         }
                     } else if (isVerticalScroll && !isScrollLocked && currentOnDoubleTap != null) {
-                        currentOnDoubleTap!!(tapOffset)
+                        // The vertical camera is expressed in reader-root coordinates, while this
+                        // recognizer receives a point local to an individual page.
+                        val readerOffset = layoutCoordinates?.localToRoot(tapOffset) ?: tapOffset
+                        pdfZoomDiagnostic(
+                            "page=$pageIndex verticalDoubleTap forward local=$tapOffset root=$readerOffset " +
+                                "hasCoordinates=${layoutCoordinates != null}"
+                        )
+                        currentOnDoubleTap!!(readerOffset)
                     }
                 },
                     onOneHandZoomHoldStart = { _ ->
@@ -2877,7 +2902,7 @@ internal fun PdfPageComposable(
                                 totalDragY = totalDragY,
                                 dragDistanceForDoublePx = oneHandZoomDistancePx,
                                 minScale = 1f,
-                                maxScale = 4f
+                                maxScale = PDF_MAX_ZOOM_SCALE
                             )
                             val viewportSize = Size(size.width.toFloat(), size.height.toFloat())
                             val contentSize = Size(
@@ -3045,7 +3070,7 @@ internal fun PdfPageComposable(
                                     }
                                 } else if (mode == 2 && pointerCount > 1) {
                                     val oldScale = scale
-                                    val newScale = (scale * zoomChange).coerceIn(1f, 4f)
+                                    val newScale = (scale * zoomChange).coerceIn(1f, PDF_MAX_ZOOM_SCALE)
                                     Timber.tag("PdfZoomIssue").v("Gesture Scaling: old=$oldScale, new=$newScale, zoomChange=$zoomChange")
 
                                     val previousCentroid = event.calculateCentroid(useCurrent = false)
@@ -3090,7 +3115,7 @@ internal fun PdfPageComposable(
                                     if (mode == 2) {
                                         val oldScale = scale
                                         val newScale = (scale * zoomChange).coerceIn(
-                                            1f, 4f
+                                            1f, PDF_MAX_ZOOM_SCALE
                                         )
                                         val previousCentroid = event.calculateCentroid(
                                             useCurrent = false
@@ -3936,6 +3961,15 @@ internal fun PdfPageComposable(
                     val stableImageRects = remember(imageScreenRects) { StableHolder(imageScreenRects) }
                     val shouldDrawHighResTiles = !shouldPauseHighResTileRendering && needsTilingNow
                     LaunchedEffect(shouldDrawHighResTiles, stableTiles.item.size, effectiveScale) {
+                        if (needsTilingNow || stableTiles.item.isNotEmpty()) {
+                            pdfZoomDiagnostic(
+                                "page=$pageIndex tileVisibility draw=$shouldDrawHighResTiles " +
+                                    "tiles=${stableTiles.item.size} scale=$effectiveScale " +
+                                    "pause=$shouldPauseHighResTileRendering scrolling=$isScrolling " +
+                                    "transforming=$isTransforming pageGesture=$isPaginationPageGestureActive " +
+                                    "fling=${paginationPanFlingJob != null} cooldown=$isPageTileRenderIdleCooldownActive"
+                            )
+                        }
                         if (stableTiles.item.isNotEmpty() && shouldDrawHighResTiles) {
                             PdfVerticalPerfLog.d(
                                 "tile-display mode=${if (isVerticalScroll) "vertical" else "pagination"} page=$pageIndex " +

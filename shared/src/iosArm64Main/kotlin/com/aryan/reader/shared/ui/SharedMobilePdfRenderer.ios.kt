@@ -12,6 +12,9 @@ import androidx.compose.ui.graphics.toComposeImageBitmap
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.pdf.PdfPageBounds
 import com.aryan.reader.shared.pdf.PdfZoomTileRequest
+import com.aryan.reader.shared.pdf.PDF_ZOOM_RENDER_SETTLE_MILLIS
+import com.aryan.reader.shared.pdf.PDF_ZOOM_TILE_CACHE_MAX_BYTES
+import com.aryan.reader.shared.pdf.PdfTileLruCache
 import com.aryan.reader.shared.pdf.planPdfZoomTiles
 import com.aryan.reader.shared.pdf.IosPdfiumRuntime
 import com.aryan.reader.shared.pdfium.c.FPDFBitmap_Create
@@ -39,6 +42,8 @@ import kotlinx.cinterop.plus
 import kotlinx.cinterop.useContents
 import kotlinx.cinterop.usePinned
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import org.jetbrains.skia.ColorAlphaType
 import org.jetbrains.skia.ColorType
 import org.jetbrains.skia.Image
@@ -61,6 +66,7 @@ import platform.Vision.VNRequest
 import platform.Vision.VNRequestTextRecognitionLevelAccurate
 import platform.posix.memcpy
 import kotlin.math.roundToInt
+import kotlin.coroutines.coroutineContext
 
 @Composable
 internal actual fun rememberSharedMobilePdfPageRender(
@@ -110,30 +116,37 @@ internal actual fun rememberSharedMobilePdfTileRenders(
     visibleBounds: PdfPageBounds?,
     password: String?,
 ): List<SharedMobilePdfTileRender> {
-    val requests = remember(pageAspectRatio, zoomScale, visibleBounds) {
-        visibleBounds?.let { planPdfZoomTiles(pageAspectRatio, zoomScale, it) }.orEmpty()
+    var settledZoomScale by remember(book.path, pageIndex, password) { mutableStateOf(zoomScale) }
+    var zoomIsSettling by remember(book.path, pageIndex, password) { mutableStateOf(false) }
+    LaunchedEffect(zoomScale) {
+        zoomIsSettling = true
+        delay(PDF_ZOOM_RENDER_SETTLE_MILLIS)
+        settledZoomScale = zoomScale
+        zoomIsSettling = false
+    }
+    val requests = remember(pageAspectRatio, settledZoomScale, visibleBounds) {
+        visibleBounds?.let { planPdfZoomTiles(pageAspectRatio, settledZoomScale, it) }.orEmpty()
     }
     var tiles by remember(book.path, pageIndex, password) { mutableStateOf<List<SharedMobilePdfTileRender>>(emptyList()) }
-    LaunchedEffect(book.path, pageIndex, requests, password) {
+    LaunchedEffect(book.path, pageIndex, requests, password, zoomIsSettling) {
+        if (zoomIsSettling) return@LaunchedEffect
         if (requests.isEmpty()) {
             tiles = emptyList()
             return@LaunchedEffect
         }
-        val requestedIds = requests.mapTo(mutableSetOf()) { it.id }
-        val renderScale = requests.first().renderScale
-        val retained = tiles.filter { it.request.id in requestedIds && it.request.renderScale == renderScale }
-        val retainedIds = retained.mapTo(mutableSetOf()) { it.request.id }
-        val missing = requests.filterNot { it.id in retainedIds }
+        val cached = IosPdfTileCache.get(book, pageIndex, password, requests)
+        val cachedIds = cached.mapTo(mutableSetOf()) { it.request.id }
+        val missing = requests.filterNot { it.id in cachedIds }
         if (missing.isEmpty()) {
-            tiles = retained
+            tiles = cached
             return@LaunchedEffect
         }
-        kotlinx.coroutines.delay(60)
-        tiles = retained + IosPdfiumRenderer.renderTiles(book.path, pageIndex, missing, password)
+        val rendered = IosPdfiumRenderer.renderTiles(book.path, pageIndex, missing, password)
+        coroutineContext.ensureActive()
+        IosPdfTileCache.put(book, pageIndex, password, rendered)
+        tiles = cached + rendered
     }
-    val activeScale = requests.firstOrNull()?.renderScale
-    val activeIds = requests.mapTo(mutableSetOf()) { it.id }
-    return tiles.filter { it.request.renderScale == activeScale && it.request.id in activeIds }
+    return tiles
 }
 
 private object IosPdfThumbnailCache {
@@ -153,6 +166,32 @@ private object IosPdfThumbnailCache {
 
     private fun key(path: String?, pageIndex: Int, password: String?): String =
         "${path.orEmpty()}|$pageIndex|${password.orEmpty()}"
+}
+
+private object IosPdfTileCache {
+    private val entries = PdfTileLruCache<SharedMobilePdfTileRender>(PDF_ZOOM_TILE_CACHE_MAX_BYTES)
+
+    fun get(
+        book: BookItem,
+        pageIndex: Int,
+        password: String?,
+        requests: List<PdfZoomTileRequest>,
+    ): List<SharedMobilePdfTileRender> = requests.mapNotNull { request ->
+        val key = key(book, pageIndex, password, request)
+        entries.get(key)
+    }
+
+    fun put(book: BookItem, pageIndex: Int, password: String?, renders: List<SharedMobilePdfTileRender>) {
+        renders.forEach { render ->
+            val key = key(book, pageIndex, password, render.request)
+            val bytes = render.request.widthPx.toLong() * render.request.heightPx * 4L
+            entries.put(key, render, bytes)
+        }
+    }
+
+    private fun key(book: BookItem, pageIndex: Int, password: String?, request: PdfZoomTileRequest) =
+        "${book.path.orEmpty()}|${book.fileContentModifiedTimestamp}|$pageIndex|${password.orEmpty()}|" +
+            "${request.fullWidthPx}x${request.fullHeightPx}|${request.id}"
 }
 
 private object IosPdfiumRenderer {

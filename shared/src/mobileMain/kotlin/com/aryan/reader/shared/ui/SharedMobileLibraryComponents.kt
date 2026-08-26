@@ -1655,7 +1655,7 @@ internal fun SharedMobileFolderCard(
             Row(Modifier.fillMaxWidth()) {
                 Column(Modifier.weight(1f)) {
                     Text(
-                        readerString("last_sync", "LAST SYNC"),
+                        readerString("last_sync", "LAST SCAN"),
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,

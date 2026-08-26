@@ -22,6 +22,7 @@ package com.aryan.reader.pdf.data
 import android.content.Context
 import com.aryan.reader.logCloudAnnotationSyncTrace
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationSidecarCodec
+import com.aryan.reader.data.writeJsonAtomically
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import timber.log.Timber
@@ -64,7 +65,7 @@ class PdfAnnotationRepository(private val context: Context) {
                     Timber.tag("AnnotationSync").d("Skipping unchanged annotation JSON for $bookId.")
                     return@withContext
                 }
-                file.writeText(json)
+                file.writeJsonAtomically(json)
                 logCloudAnnotationSyncTrace {
                     "android.repository.save_ink book=$bookId count=${annotations.values.sumOf { it.size }} " +
                         "bytes=${file.length()} ts=${file.lastModified()}"
@@ -73,6 +74,7 @@ class PdfAnnotationRepository(private val context: Context) {
                 Timber.tag("AnnotationSync").d("Finished saving local JSON for $bookId. Path: ${file.absolutePath}, Size: ${file.length()}")
             } catch (e: Exception) {
                 Timber.tag("AnnotationSync").e(e, "Failed to save local annotations")
+                throw e
             }
         }
     }
@@ -124,7 +126,7 @@ class PdfAnnotationRepository(private val context: Context) {
             ids.forEach { id -> next[id] = maxOf(next[id] ?: 0L, deletedAt) }
             val json = SharedPdfAnnotationSidecarCodec.annotationDeletionsJson(next)
             if (file.isFile && file.readText() == json) return@withContext
-            file.writeText(json)
+            file.writeJsonAtomically(json)
             logCloudAnnotationSyncTrace {
                 "android.repository.mark_deleted_ink book=$bookId ids=${ids.sorted()} " +
                     "bytes=${file.length()} ts=${file.lastModified()}"
@@ -145,7 +147,7 @@ class PdfAnnotationRepository(private val context: Context) {
             }
             val json = SharedPdfAnnotationSidecarCodec.annotationDeletionsJson(deletions)
             if (!file.isFile || file.readText() != json) {
-                file.writeText(json)
+                file.writeJsonAtomically(json)
             }
             timestamp?.takeIf { it > 0L }?.let(file::setLastModified)
             logCloudAnnotationSyncTrace {

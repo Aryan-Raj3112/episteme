@@ -13,12 +13,18 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.pdf.PdfPageBounds
+import com.aryan.reader.shared.pdf.PDF_ZOOM_RENDER_SETTLE_MILLIS
+import com.aryan.reader.shared.pdf.PDF_ZOOM_TILE_CACHE_MAX_BYTES
+import com.aryan.reader.shared.pdf.PdfTileLruCache
 import com.aryan.reader.shared.pdf.planPdfZoomTiles
 import io.legere.pdfiumandroid.suspend.PdfiumCoreKt
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlin.coroutines.coroutineContext
 import kotlin.math.roundToInt
 
 internal object AndroidSharedPdfiumRuntime {
@@ -74,29 +80,41 @@ internal actual fun rememberSharedMobilePdfTileRenders(
 ): List<SharedMobilePdfTileRender> {
     val context = LocalContext.current.applicationContext
     registerSharedAndroidMobileApplicationContext(context)
-    val requests = remember(pageAspectRatio, zoomScale, visibleBounds) {
-        visibleBounds?.let { planPdfZoomTiles(pageAspectRatio, zoomScale, it) }.orEmpty()
+    var settledZoomScale by remember(book.path, pageIndex, password) { mutableStateOf(zoomScale) }
+    var zoomIsSettling by remember(book.path, pageIndex, password) { mutableStateOf(false) }
+    LaunchedEffect(zoomScale) {
+        zoomIsSettling = true
+        delay(PDF_ZOOM_RENDER_SETTLE_MILLIS)
+        settledZoomScale = zoomScale
+        zoomIsSettling = false
+    }
+    val requests = remember(pageAspectRatio, settledZoomScale, visibleBounds) {
+        visibleBounds?.let { planPdfZoomTiles(pageAspectRatio, settledZoomScale, it) }.orEmpty()
     }
     var tiles by remember(book.path, pageIndex, password) {
         mutableStateOf<List<SharedMobilePdfTileRender>>(emptyList())
     }
-    LaunchedEffect(book.path, pageIndex, requests, password) {
+    LaunchedEffect(book.path, pageIndex, requests, password, zoomIsSettling) {
+        if (zoomIsSettling) return@LaunchedEffect
         if (requests.isEmpty()) {
             tiles = emptyList()
             return@LaunchedEffect
         }
-        val requestedIds = requests.mapTo(mutableSetOf()) { it.id }
-        val renderScale = requests.first().renderScale
-        val retained = tiles.filter { it.request.id in requestedIds && it.request.renderScale == renderScale }
-        val retainedIds = retained.mapTo(mutableSetOf()) { it.request.id }
-        val missing = requests.filterNot { it.id in retainedIds }
-        tiles = retained + AndroidSharedPdfiumRenderer.renderTiles(
+        val cached = AndroidPdfTileCache.get(book, pageIndex, password, requests)
+        val cachedIds = cached.mapTo(mutableSetOf()) { it.request.id }
+        val missing = requests.filterNot { it.id in cachedIds }
+        if (missing.isEmpty()) {
+            tiles = cached
+            return@LaunchedEffect
+        }
+        val rendered = AndroidSharedPdfiumRenderer.renderTiles(
             context, book, pageIndex, missing, password,
         )
+        coroutineContext.ensureActive()
+        AndroidPdfTileCache.put(book, pageIndex, password, rendered)
+        tiles = cached + rendered
     }
-    val activeScale = requests.firstOrNull()?.renderScale
-    val activeIds = requests.mapTo(mutableSetOf()) { it.id }
-    return tiles.filter { it.request.renderScale == activeScale && it.request.id in activeIds }
+    return tiles
 }
 
 internal actual suspend fun sharedMobilePdfOcrTextBounds(
@@ -144,6 +162,37 @@ private object AndroidPdfThumbnailCache {
 
     private fun key(book: BookItem, pageIndex: Int, password: String?) =
         "${book.path.orEmpty()}|${book.fileContentModifiedTimestamp}|$pageIndex|${password.hashCode()}"
+}
+
+private object AndroidPdfTileCache {
+    private val entries = PdfTileLruCache<SharedMobilePdfTileRender>(PDF_ZOOM_TILE_CACHE_MAX_BYTES)
+
+    fun get(
+        book: BookItem,
+        pageIndex: Int,
+        password: String?,
+        requests: List<com.aryan.reader.shared.pdf.PdfZoomTileRequest>,
+    ): List<SharedMobilePdfTileRender> = synchronized(this) {
+        requests.mapNotNull { entries.get(key(book, pageIndex, password, it)) }
+    }
+
+    fun put(book: BookItem, pageIndex: Int, password: String?, renders: List<SharedMobilePdfTileRender>) {
+        synchronized(this) {
+            renders.forEach { render ->
+                val key = key(book, pageIndex, password, render.request)
+                val bytes = render.request.widthPx.toLong() * render.request.heightPx * 4L
+                entries.put(key, render, bytes)
+            }
+        }
+    }
+
+    private fun key(
+        book: BookItem,
+        pageIndex: Int,
+        password: String?,
+        request: com.aryan.reader.shared.pdf.PdfZoomTileRequest,
+    ) = "${book.path.orEmpty()}|${book.fileContentModifiedTimestamp}|$pageIndex|${password.hashCode()}|" +
+        "${request.fullWidthPx}x${request.fullHeightPx}|${request.id}"
 }
 
 private object AndroidSharedPdfiumRenderer {

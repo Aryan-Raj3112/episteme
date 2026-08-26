@@ -113,7 +113,7 @@
     <string name="scan_all">Hepsini Tara</string>
     <string name="scanning">Taranıyor…</string>
     <string name="sync_meta">Üstveri Eşitle</string>
-    <string name="last_sync">SON EŞİTLEME</string>
+    <string name="last_sync">SON TARAMA</string>
     <string name="books_count">KİTAPLAR</string>
     <string name="menu_edit_filters">Filtreleri Düzenle</string>
     <string name="menu_remove_folder">Klasör Kaldır</string>

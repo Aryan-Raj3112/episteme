@@ -389,23 +389,13 @@ private fun List<PdfPagePoint>.toSmoothPath(widthPx: Float, heightPx: Float): Pa
     val path = Path()
     val first = first()
     path.moveTo(first.x * widthPx, first.y * heightPx)
-    for (i in 1 until size) {
-        val p0 = this[i - 1]
-        val p1 = this[i]
-        val p0x = p0.x * widthPx
-        val p0y = p0.y * heightPx
-        val p1x = p1.x * widthPx
-        val p1y = p1.y * heightPx
-        val midX = (p0x + p1x) / 2f
-        val midY = (p0y + p1y) / 2f
-        if (i == 1) {
-            path.lineTo(midX, midY)
-        } else {
-            path.quadraticTo(p0x, p0y, midX, midY)
-        }
+    buildPdfInkCubicSegments(this, widthPx, heightPx).forEach { segment ->
+        path.cubicTo(
+            segment.control1.x, segment.control1.y,
+            segment.control2.x, segment.control2.y,
+            segment.end.x, segment.end.y,
+        )
     }
-    val last = last()
-    path.lineTo(last.x * widthPx, last.y * heightPx)
     return path
 }
 
