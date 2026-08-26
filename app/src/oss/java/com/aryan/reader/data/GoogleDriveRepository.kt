@@ -3,7 +3,11 @@ package com.aryan.reader.data
 
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import com.aryan.reader.FileType
+import com.aryan.reader.shared.CloudFolderManifest
+import java.io.InputStream
+import java.io.OutputStream
 import java.io.File
 
 data class DriveFileList(
@@ -57,6 +61,51 @@ class GoogleDriveRepository {
 
     suspend fun uploadFile(accessToken: String, bookId: String, file: File, type: FileType): DriveFile? {
         return null
+    }
+
+    suspend fun uploadCloudFolderFile(
+        accessToken: String,
+        rootId: String,
+        nodeId: String,
+        relativePath: String,
+        mimeType: String?,
+        input: InputStream,
+        sizeBytes: Long = -1L,
+        revision: Long = 0L,
+        contentHash: String? = null,
+    ): DriveFile? {
+        input.close()
+        return null
+    }
+
+    suspend fun uploadCloudFolderFileFromContentResolver(
+        context: Context,
+        accessToken: String,
+        rootId: String,
+        nodeId: String,
+        relativePath: String,
+        mimeType: String?,
+        sourceUri: Uri,
+        revision: Long = 0L,
+        contentHash: String? = null,
+    ): DriveFile? = null
+
+    suspend fun uploadCloudFolderManifest(
+        accessToken: String,
+        manifest: CloudFolderManifest,
+    ): DriveFile? = null
+
+    suspend fun downloadCloudFolderManifest(
+        accessToken: String,
+        rootId: String,
+    ): CloudFolderManifestReadResult = CloudFolderManifestReadResult.NotFound
+
+    suspend fun downloadCloudFolderFileTo(
+        accessToken: String,
+        fileId: String,
+        output: OutputStream,
+    ) {
+        throw UnsupportedOperationException("Drive is unavailable in the OSS build")
     }
 
     suspend fun downloadFile(accessToken: String, fileId: String, destination: File): Boolean {

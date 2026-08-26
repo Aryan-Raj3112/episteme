@@ -40,8 +40,13 @@ import com.aryan.reader.audiobook.BookTtsListeningProgressEntity
         AudiobookEntity::class,
         BookTtsListeningProgressEntity::class,
         PendingFolderAnnotationExportEntity::class,
+        CloudFolderRootEntity::class,
+        CloudFolderDeviceBindingEntity::class,
+        CloudFolderNodeEntity::class,
+        CloudFolderTombstoneEntity::class,
+        CloudFolderOutboxEntity::class,
     ],
-    version = 28,
+    version = 29,
     exportSchema = false
 )
 @TypeConverters(FileTypeConverter::class)
@@ -53,6 +58,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun audiobookDao(): AudiobookDao
     abstract fun bookTtsListeningProgressDao(): BookTtsListeningProgressDao
     abstract fun pendingFolderAnnotationExportDao(): PendingFolderAnnotationExportDao
+    abstract fun cloudFolderSyncDao(): CloudFolderSyncDao
 
     companion object {
         @Volatile
@@ -391,6 +397,110 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_28_29 = object : Migration(28, 29) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `cloud_folder_roots` (
+                        `rootId` TEXT NOT NULL,
+                        `name` TEXT NOT NULL,
+                        `createdAt` INTEGER NOT NULL,
+                        `createdByDeviceId` TEXT NOT NULL,
+                        `updatedAt` INTEGER NOT NULL,
+                        `manifestRevision` INTEGER NOT NULL,
+                        `fileCount` INTEGER NOT NULL,
+                        `directoryCount` INTEGER NOT NULL,
+                        `totalBytes` INTEGER NOT NULL,
+                        `scannedAt` INTEGER NOT NULL,
+                        `scanComplete` INTEGER NOT NULL,
+                        `isDeleted` INTEGER NOT NULL,
+                        PRIMARY KEY(`rootId`)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `cloud_folder_bindings` (
+                        `rootId` TEXT NOT NULL,
+                        `deviceId` TEXT NOT NULL,
+                        `localUri` TEXT,
+                        `permissionState` TEXT NOT NULL,
+                        `materializationMode` TEXT NOT NULL,
+                        `lastAcknowledgedRevision` INTEGER NOT NULL,
+                        `lastScanAt` INTEGER NOT NULL,
+                        `lastError` TEXT,
+                        PRIMARY KEY(`rootId`, `deviceId`)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_cloud_folder_bindings_rootId` ON `cloud_folder_bindings` (`rootId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_cloud_folder_bindings_deviceId` ON `cloud_folder_bindings` (`deviceId`)")
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `cloud_folder_nodes` (
+                        `rootId` TEXT NOT NULL,
+                        `nodeId` TEXT NOT NULL,
+                        `relativePath` TEXT NOT NULL,
+                        `kind` TEXT NOT NULL,
+                        `contentHash` TEXT,
+                        `sizeBytes` INTEGER NOT NULL,
+                        `mimeType` TEXT,
+                        `fileModifiedAt` INTEGER NOT NULL,
+                        `revision` INTEGER NOT NULL,
+                        `modifiedAt` INTEGER NOT NULL,
+                        `modifiedByDeviceId` TEXT NOT NULL,
+                        `contentObjectId` TEXT,
+                        PRIMARY KEY(`rootId`, `nodeId`)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_cloud_folder_nodes_rootId` ON `cloud_folder_nodes` (`rootId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_cloud_folder_nodes_rootId_relativePath` ON `cloud_folder_nodes` (`rootId`, `relativePath`)")
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `cloud_folder_tombstones` (
+                        `rootId` TEXT NOT NULL,
+                        `nodeId` TEXT NOT NULL,
+                        `relativePath` TEXT NOT NULL,
+                        `kind` TEXT NOT NULL,
+                        `deletedAt` INTEGER NOT NULL,
+                        `deletedRevision` INTEGER NOT NULL,
+                        `deletedByDeviceId` TEXT NOT NULL,
+                        `lastKnownContentHash` TEXT,
+                        `lastKnownSizeBytes` INTEGER NOT NULL,
+                        PRIMARY KEY(`rootId`, `nodeId`)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_cloud_folder_tombstones_rootId` ON `cloud_folder_tombstones` (`rootId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_cloud_folder_tombstones_rootId_relativePath` ON `cloud_folder_tombstones` (`rootId`, `relativePath`)")
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `cloud_folder_outbox` (
+                        `operationId` TEXT NOT NULL,
+                        `rootId` TEXT NOT NULL,
+                        `nodeId` TEXT NOT NULL,
+                        `operationKind` TEXT NOT NULL,
+                        `direction` TEXT NOT NULL,
+                        `relativePath` TEXT NOT NULL,
+                        `previousRelativePath` TEXT,
+                        `contentHash` TEXT,
+                        `sizeBytes` INTEGER NOT NULL,
+                        `revision` INTEGER NOT NULL,
+                        `state` TEXT NOT NULL,
+                        `attempts` INTEGER NOT NULL,
+                        `nextAttemptAt` INTEGER NOT NULL,
+                        `lastAttemptAt` INTEGER NOT NULL,
+                        `lastError` TEXT,
+                        PRIMARY KEY(`operationId`)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_cloud_folder_outbox_rootId_state_nextAttemptAt` ON `cloud_folder_outbox` (`rootId`, `state`, `nextAttemptAt`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_cloud_folder_outbox_rootId_nodeId` ON `cloud_folder_outbox` (`rootId`, `nodeId`)")
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -405,7 +515,8 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16,
                         MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20,
                         MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24,
-                        MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28
+                        MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28,
+                        MIGRATION_28_29
                     )
                     .fallbackToDestructiveMigration(false)
                     .build()
