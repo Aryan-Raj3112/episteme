@@ -25,11 +25,11 @@ import timber.log.Timber
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.io.FileOutputStream
-import java.io.InputStream
 import java.util.UUID
+import kotlin.coroutines.cancellation.CancellationException
 import androidx.core.net.toUri
 import com.aryan.reader.shared.SharedFileCapabilities
+import com.aryan.reader.shared.SharedTransferPlan
 
 private const val BOOKS_DIR = "books"
 
@@ -49,29 +49,32 @@ class BookImporter(private val context: Context) {
      * @return The [File] object for the imported book, or null if the import failed.
      */
     suspend fun importBook(sourceUri: Uri): File? = withContext(Dispatchers.IO) {
-        var inputStream: InputStream? = null
-        var outputStream: FileOutputStream? = null
         try {
             val fileExtension = getFileExtension(sourceUri)
             val destinationFileName = "${UUID.randomUUID()}.$fileExtension"
             val destinationFile = File(booksDir, destinationFileName)
+            val transfer = SharedTransferPlan.appOwnedAtomic(
+                transferId = UUID.randomUUID().toString(),
+                destinationName = destinationFileName,
+            )
+            val staged = File(booksDir, ".${transfer.transferId}.stage")
 
-            inputStream = context.contentResolver.openInputStream(sourceUri)
+            val inputStream = context.contentResolver.openInputStream(sourceUri)
                 ?: throw Exception("Could not open input stream for URI: $sourceUri")
-
-            outputStream = FileOutputStream(destinationFile)
-
-            inputStream.copyTo(outputStream)
+            inputStream.use { input ->
+                writeAndReplaceAppOwnedFileAtomically(staged, destinationFile) { output ->
+                    input.copyTo(output)
+                }
+            }
 
             Timber.i("Successfully imported book to: ${destinationFile.absolutePath}")
             return@withContext destinationFile
 
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Timber.e(e, "Failed to import book from URI: $sourceUri")
             return@withContext null
-        } finally {
-            inputStream?.close()
-            outputStream?.close()
         }
     }
 

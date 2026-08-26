@@ -883,7 +883,24 @@ class ReaderIosBridge internal constructor(
 
     fun shareFile(path: String): Boolean {
         if (path.isBlank() || !NSFileManager.defaultManager.fileExistsAtPath(path)) return false
-        return presentIosShareSheet(NSURL.fileURLWithPath(path))
+        return presentIosFileTransfer(
+            NSURL.fileURLWithPath(path),
+            iosFileTransferPresentation(IosFileTransferIntent.USER_SHARE),
+        )
+    }
+
+    /**
+     * Exports an app-owned file through Files, matching Android's
+     * CreateDocument flow. This is intentionally separate from shareFile:
+     * the document picker owns the destination selection while the share
+     * sheet offers another app a transient copy.
+     */
+    fun exportFile(path: String): Boolean {
+        if (path.isBlank() || !NSFileManager.defaultManager.fileExistsAtPath(path)) return false
+        return presentIosFileTransfer(
+            NSURL.fileURLWithPath(path),
+            iosFileTransferPresentation(IosFileTransferIntent.LIBRARY_EXPORT),
+        )
     }
 
     fun exportAnnotations(book: BookItem, format: AnnotationExportFormat): Boolean {
@@ -898,7 +915,10 @@ class ReaderIosBridge internal constructor(
         val fileName = AnnotationExportFormatter.suggestedFileName(document.bookTitle, format)
         val path = NSTemporaryDirectory() + fileName
         if (!writeIosUtf8File(path, AnnotationExportFormatter.render(document, format))) return false
-        return presentIosShareSheet(NSURL.fileURLWithPath(path))
+        return presentIosFileTransfer(
+            NSURL.fileURLWithPath(path),
+            iosFileTransferPresentation(IosFileTransferIntent.ANNOTATION_EXPORT),
+        )
     }
 
     /**
@@ -935,7 +955,10 @@ class ReaderIosBridge internal constructor(
         recordNativeEvent(
             "Diagnostic log export prepared entries=${entries.size} unifiedEntries=${unifiedEntries.size}",
         )
-        return presentIosShareSheet(NSURL.fileURLWithPath(path))
+        return presentIosFileTransfer(
+            NSURL.fileURLWithPath(path),
+            iosFileTransferPresentation(IosFileTransferIntent.DIAGNOSTIC_EXPORT),
+        )
     }
 
     fun setKeepScreenOn(enabled: Boolean) {
@@ -4874,7 +4897,7 @@ private fun ReaderIosApp(
                                         bridge.consumeImportedCover()
                                     }
                                     override fun saveBook(book: BookItem) {
-                                        if (!bridge.shareFile(book.path.orEmpty())) {
+                                        if (!bridge.exportFile(book.path.orEmpty())) {
                                             showMessage("The original file is not available to save")
                                         }
                                     }
@@ -5011,7 +5034,7 @@ private fun ReaderIosApp(
                                     bridge.consumeImportedCover()
                                 },
                                 onSaveBook = { book ->
-                                    if (!bridge.shareFile(book.path.orEmpty())) {
+                                    if (!bridge.exportFile(book.path.orEmpty())) {
                                         showMessage("The original file is not available to save")
                                     }
                                 },
@@ -5302,7 +5325,7 @@ private fun ReaderIosApp(
                                     }
 
                                     override fun saveBook(book: BookItem) {
-                                        if (!bridge.shareFile(book.path.orEmpty())) {
+                                        if (!bridge.exportFile(book.path.orEmpty())) {
                                             showMessage("The original file is not available to save")
                                         }
                                     }
@@ -6543,17 +6566,16 @@ private fun performIosPdfNativeAction(
 ): Boolean {
     val path = book.path?.takeIf(NSFileManager.defaultManager::fileExistsAtPath) ?: return false
     val url = NSURL.fileURLWithPath(path)
-    val presenter = UIApplication.sharedApplication.keyWindow?.rootViewController ?: return false
+    UIApplication.sharedApplication.keyWindow?.rootViewController ?: return false
     return when (action) {
-        SharedMobilePdfNativeAction.SHARE -> presentIosShareSheet(url)
-        SharedMobilePdfNativeAction.SAVE_COPY -> {
-            presenter.presentViewController(
-                UIDocumentPickerViewController(forExportingURLs = listOf(url), asCopy = true),
-                animated = true,
-                completion = null,
-            )
-            true
-        }
+        SharedMobilePdfNativeAction.SHARE -> presentIosFileTransfer(
+            url,
+            iosFileTransferPresentation(IosFileTransferIntent.USER_SHARE),
+        )
+        SharedMobilePdfNativeAction.SAVE_COPY -> presentIosFileTransfer(
+            url,
+            iosFileTransferPresentation(IosFileTransferIntent.PDF_SAVE_COPY),
+        )
         SharedMobilePdfNativeAction.PRINT -> {
             if (!UIPrintInteractionController.canPrintURL(url)) return false
             UIPrintInteractionController.sharedPrintController().apply {
@@ -6575,6 +6597,24 @@ private fun presentIosShareSheet(url: NSURL): Boolean {
     controller.modalPresentationStyle = UIModalPresentationFullScreen
     presenter.presentViewController(controller, animated = true, completion = null)
     return true
+}
+
+private fun presentIosDocumentExport(url: NSURL): Boolean {
+    val presenter = UIApplication.sharedApplication.keyWindow?.rootViewController ?: return false
+    presenter.presentViewController(
+        UIDocumentPickerViewController(forExportingURLs = listOf(url), asCopy = true),
+        animated = true,
+        completion = null,
+    )
+    return true
+}
+
+private fun presentIosFileTransfer(
+    url: NSURL,
+    presentation: IosFileTransferPresentation,
+): Boolean = when (presentation) {
+    IosFileTransferPresentation.DOCUMENT_PICKER_EXPORT -> presentIosDocumentExport(url)
+    IosFileTransferPresentation.SHARE_SHEET -> presentIosShareSheet(url)
 }
 
 private fun writeIosUtf8File(path: String, content: String): Boolean {

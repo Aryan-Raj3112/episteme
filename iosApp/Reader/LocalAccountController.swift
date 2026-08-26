@@ -1884,10 +1884,7 @@ final class LocalAccountController: NSObject, ObservableObject {
                     accessToken: accessToken
                 )
                 try data.write(to: temporary, options: .atomic)
-                if FileManager.default.fileExists(atPath: destination.path) {
-                    try FileManager.default.removeItem(at: destination)
-                }
-                try FileManager.default.moveItem(at: temporary, to: destination)
+                try commitStagedCloudFile(temporary, to: destination)
                 if book.fileContentModifiedTimestamp > 0 {
                     try? FileManager.default.setAttributes(
                         [.modificationDate: Date(timeIntervalSince1970: Double(book.fileContentModifiedTimestamp) / 1000)],
@@ -2004,10 +2001,7 @@ final class LocalAccountController: NSObject, ObservableObject {
             do {
                 let data = try await downloadDriveFile(fileID: driveFile.id, accessToken: accessToken)
                 try data.write(to: temporary, options: .atomic)
-                if FileManager.default.fileExists(atPath: destination.path) {
-                    try FileManager.default.removeItem(at: destination)
-                }
-                try FileManager.default.moveItem(at: temporary, to: destination)
+                try commitStagedCloudFile(temporary, to: destination)
                 if font.timestamp > 0 {
                     try? FileManager.default.setAttributes(
                         [.modificationDate: Date(timeIntervalSince1970: Double(font.timestamp) / 1000)],
@@ -2022,6 +2016,24 @@ final class LocalAccountController: NSObject, ObservableObject {
         }
         syncLogger.info("cloud_sync.font_downloads count=\(downloaded.count)")
         return downloaded
+    }
+
+    /// Commits an app-owned cloud download without deleting the previous
+    /// destination first. Foundation's replacement operation is atomic for
+    /// sibling files; if it rejects the commit, the old readable file stays
+    /// in place and the caller removes only the staged path.
+    private func commitStagedCloudFile(_ staged: URL, to destination: URL) throws {
+        let fileManager = FileManager.default
+        if fileManager.fileExists(atPath: destination.path) {
+            _ = try fileManager.replaceItemAt(
+                destination,
+                withItemAt: staged,
+                backupItemName: nil,
+                options: []
+            )
+        } else {
+            try fileManager.moveItem(at: staged, to: destination)
+        }
     }
 
     private func uploadCloudFontContents(
