@@ -505,7 +505,7 @@ class CloudFolderSyncRepository(
      * not attached to the first account that signs in.  The UI can show these
      * records and ask the user to explicitly recover or dismiss each one.
      */
-    fun pendingMigrationRecovery(): List<CloudFolderMigrationRecovery> =
+    suspend fun pendingMigrationRecovery(): List<CloudFolderMigrationRecovery> =
         privateDao.getPendingRecovery().map(CloudFolderMigrationRecoveryEntity::toModel)
 
     /**
@@ -586,7 +586,7 @@ class CloudFolderSyncRepository(
         return binding
     }
 
-    fun dismissMigrationRecovery(
+    suspend fun dismissMigrationRecovery(
         legacyRootId: String,
         legacyDeviceId: String,
         now: Long = System.currentTimeMillis(),
@@ -603,7 +603,7 @@ class CloudFolderSyncRepository(
 
     fun isIncluded(rootId: String): Boolean = selection().includes(rootId)
 
-    private fun persistOutboxSource(operationId: String, sourceUri: String?) {
+    private suspend fun persistOutboxSource(operationId: String, sourceUri: String?) {
         val normalized = sourceUri?.trim()?.takeIf { it.isNotBlank() }
         if (normalized == null) {
             privateDao.deleteOutboxSource(accountId, operationId)
@@ -618,7 +618,7 @@ class CloudFolderSyncRepository(
         }
     }
 
-    private fun enrichOutbox(rows: List<CloudFolderOutboxEntity>): List<CloudFolderOutboxEntity> =
+    private suspend fun enrichOutbox(rows: List<CloudFolderOutboxEntity>): List<CloudFolderOutboxEntity> =
         rows.map { row ->
             row.copy().apply {
                 sourceUri = privateDao.getOutboxSource(accountId, row.operationId)?.sourceUri

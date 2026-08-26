@@ -92,13 +92,13 @@ abstract class CloudFolderPrivateDao {
         "SELECT * FROM cloud_folder_binding_uris " +
             "WHERE accountId = :accountId AND rootId = :rootId AND deviceId = :deviceId LIMIT 1"
     )
-    abstract fun getBindingUri(accountId: String, rootId: String, deviceId: String): CloudFolderBindingUriEntity?
+    abstract suspend fun getBindingUri(accountId: String, rootId: String, deviceId: String): CloudFolderBindingUriEntity?
 
     @Query(
         "SELECT * FROM cloud_folder_binding_uris " +
             "WHERE accountId = :accountId AND deviceId = :deviceId AND localUri = :localUri LIMIT 1"
     )
-    abstract fun getBindingForLocalUri(
+    abstract suspend fun getBindingForLocalUri(
         accountId: String,
         deviceId: String,
         localUri: String,
@@ -108,49 +108,49 @@ abstract class CloudFolderPrivateDao {
         "SELECT * FROM cloud_folder_binding_uris " +
             "WHERE accountId = :accountId AND deviceId = :deviceId ORDER BY rootId"
     )
-    abstract fun getBindingUrisForDevice(accountId: String, deviceId: String): List<CloudFolderBindingUriEntity>
+    abstract suspend fun getBindingUrisForDevice(accountId: String, deviceId: String): List<CloudFolderBindingUriEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    abstract fun upsertBindingUri(binding: CloudFolderBindingUriEntity)
+    abstract suspend fun upsertBindingUri(binding: CloudFolderBindingUriEntity)
 
     @Query(
         "DELETE FROM cloud_folder_binding_uris " +
             "WHERE accountId = :accountId AND rootId = :rootId AND deviceId = :deviceId"
     )
-    abstract fun deleteBindingUri(accountId: String, rootId: String, deviceId: String): Int
+    abstract suspend fun deleteBindingUri(accountId: String, rootId: String, deviceId: String): Int
 
     @Query(
         "SELECT * FROM cloud_folder_outbox_sources " +
             "WHERE accountId = :accountId AND operationId = :operationId LIMIT 1"
     )
-    abstract fun getOutboxSource(accountId: String, operationId: String): CloudFolderOutboxSourceEntity?
+    abstract suspend fun getOutboxSource(accountId: String, operationId: String): CloudFolderOutboxSourceEntity?
 
     @Query(
         "SELECT * FROM cloud_folder_outbox_sources " +
             "WHERE accountId = :accountId ORDER BY operationId"
     )
-    abstract fun getOutboxSources(accountId: String): List<CloudFolderOutboxSourceEntity>
+    abstract suspend fun getOutboxSources(accountId: String): List<CloudFolderOutboxSourceEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    abstract fun upsertOutboxSource(source: CloudFolderOutboxSourceEntity)
+    abstract suspend fun upsertOutboxSource(source: CloudFolderOutboxSourceEntity)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    abstract fun upsertOutboxSources(sources: List<CloudFolderOutboxSourceEntity>)
+    abstract suspend fun upsertOutboxSources(sources: List<CloudFolderOutboxSourceEntity>)
 
     @Query("DELETE FROM cloud_folder_outbox_sources WHERE accountId = :accountId AND operationId = :operationId")
-    abstract fun deleteOutboxSource(accountId: String, operationId: String): Int
+    abstract suspend fun deleteOutboxSource(accountId: String, operationId: String): Int
 
     @Query("DELETE FROM cloud_folder_binding_uris WHERE accountId = :accountId")
-    abstract fun deleteBindingUrisForAccount(accountId: String): Int
+    abstract suspend fun deleteBindingUrisForAccount(accountId: String): Int
 
     @Query("DELETE FROM cloud_folder_outbox_sources WHERE accountId = :accountId")
-    abstract fun deleteOutboxSourcesForAccount(accountId: String): Int
+    abstract suspend fun deleteOutboxSourcesForAccount(accountId: String): Int
 
     @Query(
         "SELECT * FROM cloud_folder_migration_recovery " +
             "WHERE state = :state ORDER BY createdAt, legacyRootId, legacyDeviceId"
     )
-    abstract fun getPendingRecovery(
+    abstract suspend fun getPendingRecovery(
         state: String = CloudFolderMigrationRecoveryEntity.STATE_PENDING,
     ): List<CloudFolderMigrationRecoveryEntity>
 
@@ -158,17 +158,17 @@ abstract class CloudFolderPrivateDao {
         "SELECT * FROM cloud_folder_migration_recovery " +
             "WHERE legacyRootId = :rootId AND legacyDeviceId = :deviceId LIMIT 1"
     )
-    abstract fun getRecovery(rootId: String, deviceId: String): CloudFolderMigrationRecoveryEntity?
+    abstract suspend fun getRecovery(rootId: String, deviceId: String): CloudFolderMigrationRecoveryEntity?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    abstract fun upsertRecovery(recovery: CloudFolderMigrationRecoveryEntity)
+    abstract suspend fun upsertRecovery(recovery: CloudFolderMigrationRecoveryEntity)
 
     @Query(
         "UPDATE cloud_folder_migration_recovery SET state = :state, " +
             "claimedAccountId = :accountId, claimedAt = :claimedAt " +
             "WHERE legacyRootId = :rootId AND legacyDeviceId = :deviceId AND state = :pendingState"
     )
-    abstract fun claimRecovery(
+    abstract suspend fun claimRecovery(
         rootId: String,
         deviceId: String,
         accountId: String,
@@ -181,7 +181,7 @@ abstract class CloudFolderPrivateDao {
         "UPDATE cloud_folder_migration_recovery SET state = :state, claimedAt = :dismissedAt " +
             "WHERE legacyRootId = :rootId AND legacyDeviceId = :deviceId AND state = :pendingState"
     )
-    abstract fun dismissRecovery(
+    abstract suspend fun dismissRecovery(
         rootId: String,
         deviceId: String,
         dismissedAt: Long,
@@ -193,16 +193,16 @@ abstract class CloudFolderPrivateDao {
         "SELECT * FROM cloud_folder_binding_uris " +
             "WHERE accountId = :accountId AND rootId = :rootId ORDER BY deviceId"
     )
-    abstract fun getBindingUrisForRoot(accountId: String, rootId: String): List<CloudFolderBindingUriEntity>
+    abstract suspend fun getBindingUrisForRoot(accountId: String, rootId: String): List<CloudFolderBindingUriEntity>
 
     @Query(
         "SELECT * FROM cloud_folder_outbox_sources " +
             "WHERE accountId = :accountId ORDER BY operationId"
     )
-    abstract fun getAllOutboxSources(accountId: String): List<CloudFolderOutboxSourceEntity>
+    abstract suspend fun getAllOutboxSources(accountId: String): List<CloudFolderOutboxSourceEntity>
 
     @Transaction
-    open fun clearAccount(accountId: String) {
+    open suspend fun clearAccount(accountId: String) {
         deleteBindingUrisForAccount(accountId)
         deleteOutboxSourcesForAccount(accountId)
     }

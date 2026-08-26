@@ -194,7 +194,11 @@ class CloudFolderSyncAccountIsolationTest {
         legacyHelper.close()
 
         val migrated = Room.databaseBuilder(context, AppDatabase::class.java, databaseName)
-            .addMigrations(AppDatabase.MIGRATION_29_30, AppDatabase.MIGRATION_30_31)
+            .addMigrations(
+                AppDatabase.MIGRATION_29_30,
+                AppDatabase.MIGRATION_30_31,
+                AppDatabase.MIGRATION_31_32,
+            )
             .allowMainThreadQueries()
             .build()
         try {
