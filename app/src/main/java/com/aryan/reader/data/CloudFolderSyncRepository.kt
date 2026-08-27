@@ -432,6 +432,31 @@ class CloudFolderSyncRepository(
         dao.deleteLocalInventory(accountId, rootId.trim(), deviceId.trim())
     }
 
+    /**
+     * Record a committed local sidecar write.  One row is kept per
+     * account/root/book and generations are monotonic, so rapid reader saves
+     * collapse into one upload while a transfer in flight cannot consume a
+     * newer edit accidentally.
+     */
+    suspend fun markMetadataOutboxPending(
+        rootId: String,
+        bookId: String,
+        dirtyKinds: String,
+        now: Long = System.currentTimeMillis(),
+    ): CloudFolderMetadataOutboxEntity? {
+        val normalizedRoot = rootId.trim().takeIf { it.isNotBlank() } ?: return null
+        val normalizedBook = bookId.trim().takeIf { it.isNotBlank() } ?: return null
+        // The read/merge/write lives in one Room transaction so two reader
+        // callbacks cannot allocate the same generation and lose one wake-up.
+        return dao.markMetadataOutboxPending(
+            accountId = accountId,
+            rootId = normalizedRoot,
+            bookId = normalizedBook,
+            dirtyKinds = dirtyKinds,
+            now = now,
+        )
+    }
+
     suspend fun saveProgress(progress: CloudFolderSyncProgress) {
         require(progress.normalizedRootId.isNotBlank()) { "Cloud-folder progress requires a root ID" }
         dao.upsertProgress(progress.toEntity(accountId))
@@ -613,6 +638,69 @@ class CloudFolderSyncRepository(
     }
 
     suspend fun getOutbox(rootId: String): List<CloudFolderOutboxEntity> = enrichOutbox(dao.getOutbox(accountId, rootId))
+
+    suspend fun claimDueMetadataOutbox(
+        rootId: String,
+        now: Long = System.currentTimeMillis(),
+        limit: Int = 100,
+    ): List<CloudFolderMetadataOutboxEntity> {
+        val normalizedRoot = rootId.trim().takeIf { it.isNotBlank() } ?: return emptyList()
+        val rows = dao.getDueMetadataOutbox(
+            accountId = accountId,
+            rootId = normalizedRoot,
+            now = now,
+            limit = limit.coerceIn(1, 500),
+        )
+        return rows.mapNotNull { row ->
+            if (dao.claimMetadataOutbox(
+                    accountId = accountId,
+                    rootId = normalizedRoot,
+                    bookId = row.bookId,
+                    generation = row.generation,
+                    now = now,
+                ) == 1
+            ) {
+                row.copy(
+                    state = CloudFolderMetadataOutboxEntity.STATE_RUNNING,
+                    attempts = row.attempts + 1,
+                    lastAttemptAt = now,
+                )
+            } else {
+                null
+            }
+        }
+    }
+
+    /** Delete only the generation that was actually processed. */
+    suspend fun completeMetadataOutbox(row: CloudFolderMetadataOutboxEntity): Boolean =
+        dao.deleteMetadataOutboxGeneration(
+            accountId = accountId,
+            rootId = row.rootId,
+            bookId = row.bookId,
+            generation = row.generation,
+        ) == 1
+
+    suspend fun failMetadataOutbox(
+        row: CloudFolderMetadataOutboxEntity,
+        error: String,
+        retryAt: Long,
+    ) {
+        dao.failMetadataOutbox(
+            accountId = accountId,
+            rootId = row.rootId,
+            bookId = row.bookId,
+            generation = row.generation,
+            nextAttemptAt = retryAt,
+            error = error.take(500),
+        )
+    }
+
+    suspend fun resetRunningMetadataOutbox(
+        now: Long = System.currentTimeMillis(),
+        error: String? = "Worker restarted",
+    ) {
+        dao.resetRunningMetadataOutbox(accountId, now, error?.take(500))
+    }
 
     /** Return durable conflicts for settings/recovery UI in deterministic order. */
     suspend fun getConflicts(rootId: String): List<CloudFolderConflictRecord> =

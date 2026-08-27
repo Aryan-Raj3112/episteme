@@ -74,17 +74,27 @@ class FolderSyncWorker(
         private val syncMutex = Mutex()
 
         /** Index a completed app-private cloud materialization after download. */
-        fun enqueueCloudFolderIndex(context: Context, accountId: String, rootId: String) {
+        fun enqueueCloudFolderIndex(
+            context: Context,
+            accountId: String,
+            rootId: String,
+            metadataOnly: Boolean = false,
+            localUri: String? = null,
+        ) {
             val normalizedAccount = accountId.trim().takeIf { it.isNotBlank() } ?: return
             val normalizedRoot = rootId.trim().takeIf { it.isNotBlank() } ?: return
-            val root = runCatching {
-                cloudFolderAppRootDirectory(context.applicationContext.filesDir, normalizedRoot)
-            }.getOrNull() ?: return
+            val targetUri = localUri?.trim()?.takeIf { it.isNotBlank() }
+                ?: runCatching {
+                    cloudFolderAppRootDirectory(context.applicationContext.filesDir, normalizedRoot)
+                        .toURI()
+                        .toString()
+                }.getOrNull()
+                ?: return
             val request = OneTimeWorkRequestBuilder<FolderSyncWorker>()
                 .setInputData(
                     androidx.work.Data.Builder()
-                        .putBoolean(KEY_METADATA_ONLY, false)
-                        .putString(KEY_TARGET_FOLDER_URI, root.toURI().toString())
+                        .putBoolean(KEY_METADATA_ONLY, metadataOnly)
+                        .putString(KEY_TARGET_FOLDER_URI, targetUri)
                         .putString(KEY_CLOUD_ACCOUNT_ID, normalizedAccount)
                         .build()
                 )
@@ -848,15 +858,43 @@ class FolderSyncWorker(
         val mappedHighlightsJson = readerHighlights
             .takeIf { it.isNotEmpty() }
             ?.let(EpubAnnotationSerializer::highlightsToJson)
-        val bookmarksJson = if (appliedMetadata != null || existing == null) {
-            mappedBookmarksJson ?: appliedMetadata?.bookmarksJson ?: existing?.bookmarksJson
-        } else {
-            existing.bookmarksJson
+        val metadataHas = { name: String -> appliedMetadata?.hasExplicitField(name) == true }
+        val bookmarksJson = when {
+            appliedMetadata == null && existing != null -> existing.bookmarksJson
+            metadataHas("bookmarksJson") -> appliedMetadata?.bookmarksJson
+            mappedBookmarksJson != null -> mappedBookmarksJson
+            else -> appliedMetadata?.bookmarksJson ?: existing?.bookmarksJson
         }
-        val highlightsJson = if (appliedMetadata != null || existing == null) {
-            mappedHighlightsJson ?: appliedMetadata?.highlightsJson ?: existing?.highlightsJson
-        } else {
-            existing.highlightsJson
+        val highlightsJson = when {
+            appliedMetadata == null && existing != null -> existing.highlightsJson
+            metadataHas("highlightsJson") && mappedHighlightsJson == null -> appliedMetadata?.highlightsJson
+            mappedHighlightsJson != null -> mappedHighlightsJson
+            else -> appliedMetadata?.highlightsJson ?: existing?.highlightsJson
+        }
+        val lastChapterIndex = when {
+            legacyPosition?.chapterIndex != null -> legacyPosition.chapterIndex
+            metadataHas("lastChapterIndex") -> appliedMetadata?.lastChapterIndex
+            else -> appliedMetadata?.lastChapterIndex ?: existing?.lastChapterIndex
+        }
+        val lastPage = when {
+            legacyPosition?.pageIndex != null -> legacyPosition.pageIndex
+            metadataHas("lastPage") -> appliedMetadata?.lastPage
+            else -> appliedMetadata?.lastPage ?: existing?.lastPage
+        }
+        val lastPositionCfi = when {
+            legacyPosition?.cfi != null -> legacyPosition.cfi
+            metadataHas("lastPositionCfi") -> appliedMetadata?.lastPositionCfi
+            else -> appliedMetadata?.lastPositionCfi ?: existing?.lastPositionCfi
+        }
+        val locatorBlockIndex = when {
+            legacyPosition?.blockIndex != null -> legacyPosition.blockIndex
+            metadataHas("locatorBlockIndex") -> appliedMetadata?.locatorBlockIndex
+            else -> appliedMetadata?.locatorBlockIndex ?: existing?.locatorBlockIndex
+        }
+        val locatorCharOffset = when {
+            legacyPosition?.charOffset != null -> legacyPosition.charOffset
+            metadataHas("locatorCharOffset") -> appliedMetadata?.locatorCharOffset
+            else -> appliedMetadata?.locatorCharOffset ?: existing?.locatorCharOffset
         }
 
         return RecentFileItem(
@@ -872,11 +910,11 @@ class FolderSyncWorker(
             coverImagePath = coverImagePath,
             title = title,
             author = author,
-            lastChapterIndex = legacyPosition?.chapterIndex ?: appliedMetadata?.lastChapterIndex ?: existing?.lastChapterIndex,
-            lastPage = legacyPosition?.pageIndex ?: lastPageIndex ?: appliedMetadata?.lastPage ?: existing?.lastPage,
-            lastPositionCfi = legacyPosition?.cfi ?: appliedMetadata?.lastPositionCfi ?: existing?.lastPositionCfi,
-            locatorBlockIndex = legacyPosition?.blockIndex ?: appliedMetadata?.locatorBlockIndex ?: existing?.locatorBlockIndex,
-            locatorCharOffset = legacyPosition?.charOffset ?: appliedMetadata?.locatorCharOffset ?: existing?.locatorCharOffset,
+            lastChapterIndex = lastChapterIndex ?: if (metadataHas("lastChapterIndex")) null else lastPageIndex ?: existing?.lastChapterIndex,
+            lastPage = lastPage ?: if (metadataHas("lastPage")) null else lastPageIndex ?: existing?.lastPage,
+            lastPositionCfi = lastPositionCfi ?: if (metadataHas("lastPositionCfi")) null else existing?.lastPositionCfi,
+            locatorBlockIndex = locatorBlockIndex,
+            locatorCharOffset = locatorCharOffset,
             progressPercentage = progressPercentage,
             isRecent = isRecent,
             isAvailable = true,
@@ -885,7 +923,7 @@ class FolderSyncWorker(
             bookmarksJson = bookmarksJson,
             sourceFolderUri = sourceFolder,
             isReflowPreferred = existing?.isReflowPreferred ?: false,
-            customName = appliedMetadata?.customName ?: existing?.customName,
+            customName = if (metadataHas("customName")) appliedMetadata?.customName else appliedMetadata?.customName ?: existing?.customName,
             highlightsJson = highlightsJson,
             fileSize = fileSize,
             fileContentModifiedTimestamp = fileContentModifiedTimestamp,

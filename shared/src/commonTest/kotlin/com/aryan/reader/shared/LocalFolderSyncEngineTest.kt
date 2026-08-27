@@ -458,7 +458,7 @@ class LocalFolderSyncEngineTest {
     }
 
     @Test
-    fun `metadata sidecar ignores legacy editable metadata`() {
+    fun `metadata sidecar carries editable metadata and keeps v1 compatibility`() {
         val local = book(id = "local_Book.pdf")
             .copy(
                 isRecent = true,
@@ -476,16 +476,18 @@ class LocalFolderSyncEngineTest {
 
         val metadata = local.toSharedFolderBookMetadata() ?: error("Expected sidecar")
         val legacyMetadata = metadata.copy(
-            title = "Legacy Sidecar Title",
-            author = "Legacy Sidecar Author",
-            seriesName = "Legacy Sidecar Series",
-            seriesIndex = 2.0,
-            description = "<p>Legacy summary</p>",
-            originalTitle = "Legacy Original Title",
-            originalAuthor = "Legacy Original Author",
-            originalSeriesName = "Legacy Original Series",
-            originalSeriesIndex = 1.0,
-            originalDescription = "Legacy original summary"
+            schemaVersion = 1,
+            presentFields = emptySet(),
+            title = null,
+            author = null,
+            seriesName = null,
+            seriesIndex = null,
+            description = null,
+            originalTitle = null,
+            originalAuthor = null,
+            originalSeriesName = null,
+            originalSeriesIndex = null,
+            originalDescription = null,
         )
         val restored = metadata.toBookItem(
             file = scannedFile("Book.pdf", "Book.pdf"),
@@ -498,15 +500,59 @@ class LocalFolderSyncEngineTest {
             nowMillis = 2_000L
         )
 
-        assertNull(metadata.title)
-        assertNull(metadata.description)
-        assertNull(metadata.originalTitle)
-        assertEquals("Stale", restored.title)
-        assertNull(restored.author)
-        assertNull(restored.seriesName)
-        assertNull(restored.description)
+        assertEquals("Edited Title", metadata.title)
+        assertEquals("Edited Author", metadata.author)
+        assertEquals("Edited Series", metadata.seriesName)
+        assertEquals("<p>Edited summary</p>", metadata.description)
+        assertEquals("Original Title", metadata.originalTitle)
+        assertEquals("Edited Title", restored.title)
+        assertEquals("Edited Author", restored.author)
+        assertEquals("Edited Series", restored.seriesName)
+        assertEquals("<p>Edited summary</p>", restored.description)
         assertEquals("Stale", restoredFromLegacy.title)
         assertNull(restoredFromLegacy.author)
+    }
+
+    @Test
+    fun `v2 metadata sidecar preserves explicit editable clears`() {
+        val existing = book(
+            id = "local_Book.pdf",
+            title = "Old title",
+            progress = 65f,
+        ).copy(
+            author = "Old author",
+            seriesName = "Old series",
+            titleSortKey = "Custom name",
+        )
+        val metadata = SharedFolderBookMetadata(
+            bookId = existing.id,
+            title = null,
+            author = null,
+            displayName = existing.displayName,
+            type = existing.type.name,
+            lastChapterIndex = null,
+            lastPage = null,
+            lastPositionCfi = null,
+            progressPercentage = 0f,
+            isRecent = true,
+            lastModifiedTimestamp = 99L,
+            bookmarksJson = null,
+            locatorBlockIndex = null,
+            locatorCharOffset = null,
+            customName = null,
+            highlightsJson = null,
+            seriesName = null,
+        )
+        val restored = SharedFolderBookMetadata.fromJsonString(metadata.toJsonString())
+            ?.toBookItem(scannedFile("Book.pdf", "Book.pdf"), existing = existing, nowMillis = 100L)
+            ?: error("Expected metadata")
+
+        assertNull(restored.title)
+        assertNull(restored.author)
+        assertNull(restored.seriesName)
+        assertNull(restored.titleSortKey)
+        assertEquals(0f, restored.progressPercentage)
+        assertNull(restored.readerPosition)
     }
 
     @Test

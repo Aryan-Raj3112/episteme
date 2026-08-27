@@ -176,6 +176,7 @@ import com.aryan.reader.shared.LibraryAction as SharedLibraryAction
 import com.aryan.reader.shared.NavigationEvent
 import com.aryan.reader.shared.reduce
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
@@ -309,6 +310,14 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     private var temporaryExternalSessionBookId: String? = null
     private var cloudContentRetryJob: Job? = null
     private val cloudMetadataUploadJobs = ConcurrentHashMap<String, Job>()
+    /**
+     * Reader callbacks are intentionally fire-and-forget, but closing a
+     * reader must take a durable snapshot only after the final Room write has
+     * committed.  Lazy jobs are registered before starting so close cannot
+     * race the bookkeeping itself.
+     */
+    private val pendingReaderStateSaveJobs = ConcurrentHashMap<String, Job>()
+    private val pendingBookmarkSaveJobs = ConcurrentHashMap<String, Job>()
     private val bookmarkSaveMutex = Mutex()
     private val bookmarkSaveRevisions = mutableMapOf<String, Long>()
 
@@ -3596,6 +3605,11 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
         if (uriString != null && !removesExternalFileOnClose) {
             viewModelScope.launch {
+                // Reader callbacks save position/bookmarks asynchronously.
+                // Await the writes queued before close, then read a fresh
+                // Room row for both the main sync payload and the folder
+                // sidecar snapshot.
+                awaitReaderStateWrites(uriString, closingBookId)
                 val freshBook = bookStore.getFileByUri(uriString)
                 freshBook?.let {
                     if (uiState.value.uploadingBookIds.contains(it.bookId)) {
@@ -3613,7 +3627,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     if (it.sourceFolderUri != null) {
                         Timber.tag("FolderAnnotationSync")
                             .d("Book closed (Folder Linked), syncing metadata and scheduling annotations: ${it.bookId}")
-                        val metadataSaved = folderMirrorStore.syncLocalMetadataToFolder(it.bookId)
+                        val metadataSaved = folderMirrorStore.syncLocalMetadataToFolder(it.bookId, force = true)
                         if (!metadataSaved) {
                             Timber.tag("FolderAnnotationSync").w(
                                 "Book close metadata sidecar write failed; keeping local state for retry: ${it.bookId}"
@@ -7576,7 +7590,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         uri: Uri, locator: Locator, cfiForWebView: String?, progress: Float
     ) {
         Timber.d("Saving EPUB position locally: URI=$uri, Locator=$locator")
-        viewModelScope.launch {
+        enqueueReaderStateSave(uri.toString()) {
             bookStore.getFileByUri(uri.toString())?.let { existing ->
                 logCloudSyncTrace {
                     "android.reader.position_save_start book=${existing.bookId} beforeTs=${existing.lastModifiedTimestamp} " +
@@ -7596,6 +7610,43 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 }
                 queueCloudMetadataUpload(existing.bookId, reason = "epub_position")
             }
+        }
+    }
+
+    /**
+     * Reader engines report position/bookmark changes from callbacks whose
+     * jobs are not awaited by the close action. Chain writes by stable URI so
+     * the final close snapshot cannot read Room before the last callback has
+     * committed. The chain is deliberately in-memory; Room remains the
+     * durable source of truth if the process is killed before a callback runs.
+     */
+    private fun enqueueReaderStateSave(
+        uriString: String,
+        block: suspend () -> Unit,
+    ): Job {
+        val stableUri = uriString.trim()
+        if (stableUri.isBlank()) return viewModelScope.launch { }
+        val previous = pendingReaderStateSaveJobs[stableUri]
+        val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
+            previous?.join()
+            block()
+        }
+        pendingReaderStateSaveJobs[stableUri] = job
+        job.invokeOnCompletion {
+            if (pendingReaderStateSaveJobs[stableUri] == job) {
+                pendingReaderStateSaveJobs.remove(stableUri)
+            }
+        }
+        job.start()
+        return job
+    }
+
+    private suspend fun awaitReaderStateWrites(uriString: String?, bookId: String?) {
+        uriString?.trim()?.takeIf { it.isNotBlank() }?.let { stableUri ->
+            pendingReaderStateSaveJobs[stableUri]?.join()
+        }
+        bookId?.trim()?.takeIf { it.isNotBlank() }?.let { stableBookId ->
+            pendingBookmarkSaveJobs[stableBookId]?.join()
         }
     }
 
@@ -7638,7 +7689,12 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             "Queueing bookmark save bookId=$bookId revision=$revision " +
                 "documentUri=${documentUri?.toString()}"
         )
-        viewModelScope.launch {
+        val previous = pendingBookmarkSaveJobs[bookId]
+        val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
+            // Serialize callbacks for one book. The revision check below
+            // still coalesces rapid edits, while the chain makes close() able
+            // to await every callback that was queued before it.
+            previous?.join()
             bookmarkSaveMutex.withLock {
                 val latestRevision = synchronized(bookmarkSaveRevisions) {
                     bookmarkSaveRevisions[bookId]
@@ -7653,6 +7709,13 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 bookStore.updateBookmarks(bookId, bookmarksJson)
             }
         }
+        pendingBookmarkSaveJobs[bookId] = job
+        job.invokeOnCompletion {
+            if (pendingBookmarkSaveJobs[bookId] == job) {
+                pendingBookmarkSaveJobs.remove(bookId)
+            }
+        }
+        job.start()
     }
 
     suspend fun savePdfReadingPosition(uri: Uri, page: Int, totalPages: Int) {
@@ -7660,23 +7723,28 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         Timber.tag("PdfPositionDebug").i(
             "ViewModel: Save request triggered | Page: $page | Total: $totalPages | Progress: $progress | URI: ${uri.lastPathSegment}"
         )
-        bookStore.getFileByUri(uri.toString())?.let { existing ->
-            logCloudSyncTrace {
-                "android.reader.pdf_position_save_start book=${existing.bookId} beforeTs=${existing.lastModifiedTimestamp} " +
-                    "beforeReadTs=${existing.effectiveReadingPositionModifiedTimestamp()} page=$page progress=$progress"
+        val job = enqueueReaderStateSave(uri.toString()) {
+            bookStore.getFileByUri(uri.toString())?.let { existing ->
+                logCloudSyncTrace {
+                    "android.reader.pdf_position_save_start book=${existing.bookId} beforeTs=${existing.lastModifiedTimestamp} " +
+                        "beforeReadTs=${existing.effectiveReadingPositionModifiedTimestamp()} page=$page progress=$progress"
+                }
+                bookStore.updatePdfReadingPosition(
+                    uriString = uri.toString(), page = page, progress = progress
+                )
+                val updated = bookStore.getFileByBookId(existing.bookId)
+                logCloudSyncTrace {
+                    "android.reader.pdf_position_save_done beforeTs=${existing.lastModifiedTimestamp} " +
+                        (updated?.cloudSyncTraceSummary("after") ?: "after=null")
+                }
+                queueCloudMetadataUpload(existing.bookId, reason = "pdf_position")
+            } ?: run {
+                Timber.tag("PdfPositionDebug").e("ViewModel: Save aborted. Could not resolve file item from URI in DB.")
             }
-            bookStore.updatePdfReadingPosition(
-                uriString = uri.toString(), page = page, progress = progress
-            )
-            val updated = bookStore.getFileByBookId(existing.bookId)
-            logCloudSyncTrace {
-                "android.reader.pdf_position_save_done beforeTs=${existing.lastModifiedTimestamp} " +
-                    (updated?.cloudSyncTraceSummary("after") ?: "after=null")
-            }
-            queueCloudMetadataUpload(existing.bookId, reason = "pdf_position")
-        } ?: run {
-            Timber.tag("PdfPositionDebug").e("ViewModel: Save aborted. Could not resolve file item from URI in DB.")
         }
+        // Preserve the method's existing suspend contract: callers that await
+        // a PDF save still observe the committed Room write before returning.
+        job.join()
     }
 
     fun exportLogsToFile(activityContext: Context) {

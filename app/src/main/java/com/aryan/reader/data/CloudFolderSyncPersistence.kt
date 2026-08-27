@@ -249,6 +249,55 @@ data class CloudFolderLocalInventoryEntity(
     }
 }
 
+/**
+ * Durable notification that a folder metadata sidecar changed locally.
+ *
+ * The row is deliberately account/root/book scoped and stores one coalesced
+ * generation for both metadata and annotation sidecars.  The bytes remain in
+ * the folder; this table is only the durable wake-up/retry signal.  A worker
+ * deletes an exact generation after the manifest commit, so an edit arriving
+ * while a transfer is running is never lost.
+ */
+@Entity(
+    tableName = "cloud_folder_metadata_outbox",
+    primaryKeys = ["accountId", "rootId", "bookId"],
+    indices = [
+        Index(value = ["accountId", "rootId", "state", "nextAttemptAt"]),
+        Index(value = ["accountId", "updatedAt"]),
+    ],
+)
+data class CloudFolderMetadataOutboxEntity(
+    val accountId: String,
+    val rootId: String,
+    val bookId: String,
+    val generation: Long,
+    val dirtyKinds: String,
+    val dirtySince: Long,
+    val updatedAt: Long,
+    val state: String = STATE_PENDING,
+    val attempts: Int = 0,
+    val nextAttemptAt: Long = 0L,
+    val lastAttemptAt: Long = 0L,
+    val lastError: String? = null,
+) {
+    companion object {
+        const val STATE_PENDING = "PENDING"
+        const val STATE_RUNNING = "RUNNING"
+        const val STATE_QUARANTINED = "QUARANTINED"
+        const val KIND_METADATA = "METADATA"
+        const val KIND_ANNOTATIONS = "ANNOTATIONS"
+
+        fun mergeKinds(first: String, second: String): String =
+            (first.split(',') + second.split(','))
+                .map { it.trim().uppercase() }
+                .filter { it == KIND_METADATA || it == KIND_ANNOTATIONS }
+                .toSet()
+                .sorted()
+                .joinToString(",")
+                .ifBlank { KIND_METADATA }
+    }
+}
+
 @Dao
 abstract class CloudFolderSyncDao {
     @Query("SELECT * FROM cloud_folder_roots WHERE accountId = :accountId AND rootId = :rootId LIMIT 1")
@@ -311,6 +360,129 @@ abstract class CloudFolderSyncDao {
 
     @Query("DELETE FROM cloud_folder_local_inventory WHERE accountId = :accountId")
     abstract suspend fun deleteLocalInventoriesForAccount(accountId: String): Int
+
+    @Query(
+        "SELECT * FROM cloud_folder_metadata_outbox " +
+            "WHERE accountId = :accountId AND rootId = :rootId AND state = :pendingState " +
+            "AND nextAttemptAt <= :now ORDER BY updatedAt, bookId LIMIT :limit"
+    )
+    abstract suspend fun getDueMetadataOutbox(
+        accountId: String,
+        rootId: String,
+        now: Long,
+        limit: Int,
+        pendingState: String = CloudFolderMetadataOutboxEntity.STATE_PENDING,
+    ): List<CloudFolderMetadataOutboxEntity>
+
+    @Query(
+        "SELECT * FROM cloud_folder_metadata_outbox " +
+            "WHERE accountId = :accountId AND rootId = :rootId AND bookId = :bookId LIMIT 1"
+    )
+    abstract suspend fun getMetadataOutbox(
+        accountId: String,
+        rootId: String,
+        bookId: String,
+    ): CloudFolderMetadataOutboxEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    abstract suspend fun upsertMetadataOutbox(row: CloudFolderMetadataOutboxEntity)
+
+    @Transaction
+    open suspend fun markMetadataOutboxPending(
+        accountId: String,
+        rootId: String,
+        bookId: String,
+        dirtyKinds: String,
+        now: Long,
+    ): CloudFolderMetadataOutboxEntity {
+        val existing = getMetadataOutbox(accountId, rootId, bookId)
+        val generation = when {
+            existing == null -> 1L
+            existing.generation == Long.MAX_VALUE -> Long.MAX_VALUE
+            else -> existing.generation + 1L
+        }
+        val row = CloudFolderMetadataOutboxEntity(
+            accountId = accountId,
+            rootId = rootId,
+            bookId = bookId,
+            generation = generation,
+            dirtyKinds = CloudFolderMetadataOutboxEntity.mergeKinds(
+                existing?.dirtyKinds.orEmpty(),
+                dirtyKinds,
+            ),
+            dirtySince = existing?.dirtySince?.takeIf { it > 0L } ?: now,
+            updatedAt = now,
+            state = CloudFolderMetadataOutboxEntity.STATE_PENDING,
+            attempts = 0,
+            nextAttemptAt = 0L,
+            lastAttemptAt = 0L,
+            lastError = null,
+        )
+        upsertMetadataOutbox(row)
+        return row
+    }
+
+    @Query(
+        "UPDATE cloud_folder_metadata_outbox SET state = :runningState, attempts = attempts + 1, " +
+            "lastAttemptAt = :now WHERE accountId = :accountId AND rootId = :rootId AND bookId = :bookId " +
+            "AND generation = :generation AND state = :pendingState AND nextAttemptAt <= :now"
+    )
+    abstract suspend fun claimMetadataOutbox(
+        accountId: String,
+        rootId: String,
+        bookId: String,
+        generation: Long,
+        now: Long,
+        pendingState: String = CloudFolderMetadataOutboxEntity.STATE_PENDING,
+        runningState: String = CloudFolderMetadataOutboxEntity.STATE_RUNNING,
+    ): Int
+
+    @Query(
+        "DELETE FROM cloud_folder_metadata_outbox WHERE accountId = :accountId AND rootId = :rootId " +
+            "AND bookId = :bookId AND generation = :generation"
+    )
+    abstract suspend fun deleteMetadataOutboxGeneration(
+        accountId: String,
+        rootId: String,
+        bookId: String,
+        generation: Long,
+    ): Int
+
+    @Query(
+        "UPDATE cloud_folder_metadata_outbox SET state = :pendingState, nextAttemptAt = :nextAttemptAt, " +
+            "lastError = :error WHERE accountId = :accountId AND rootId = :rootId AND bookId = :bookId " +
+            "AND generation = :generation AND state = :runningState"
+    )
+    abstract suspend fun failMetadataOutbox(
+        accountId: String,
+        rootId: String,
+        bookId: String,
+        generation: Long,
+        nextAttemptAt: Long,
+        error: String?,
+        pendingState: String = CloudFolderMetadataOutboxEntity.STATE_PENDING,
+        runningState: String = CloudFolderMetadataOutboxEntity.STATE_RUNNING,
+    ): Int
+
+    @Query(
+        "UPDATE cloud_folder_metadata_outbox SET state = :pendingState, nextAttemptAt = :nextAttemptAt, " +
+            "lastError = :error WHERE accountId = :accountId AND state = :runningState"
+    )
+    abstract suspend fun resetRunningMetadataOutbox(
+        accountId: String,
+        nextAttemptAt: Long,
+        error: String?,
+        runningState: String = CloudFolderMetadataOutboxEntity.STATE_RUNNING,
+        pendingState: String = CloudFolderMetadataOutboxEntity.STATE_PENDING,
+    ): Int
+
+    @Query(
+        "DELETE FROM cloud_folder_metadata_outbox WHERE accountId = :accountId AND rootId = :rootId"
+    )
+    abstract suspend fun deleteMetadataOutboxForRoot(accountId: String, rootId: String): Int
+
+    @Query("DELETE FROM cloud_folder_metadata_outbox WHERE accountId = :accountId")
+    abstract suspend fun deleteMetadataOutboxForAccount(accountId: String): Int
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     abstract suspend fun upsertRoot(root: CloudFolderRootEntity)
@@ -508,6 +680,7 @@ abstract class CloudFolderSyncDao {
     @Transaction
     open suspend fun clearAccountState(accountId: String) {
         deleteOutboxForAccount(accountId)
+        deleteMetadataOutboxForAccount(accountId)
         deleteProgressForAccount(accountId)
         deleteLocalInventoriesForAccount(accountId)
         deleteConflictsForAccount(accountId)

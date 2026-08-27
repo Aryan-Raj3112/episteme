@@ -49,9 +49,10 @@ import com.aryan.reader.audiobook.BookTtsListeningProgressEntity
         CloudFolderPendingMaterializationEntity::class,
         CloudFolderSyncProgressEntity::class,
         CloudFolderLocalInventoryEntity::class,
+        CloudFolderMetadataOutboxEntity::class,
         CloudBookDeleteIntentEntity::class,
     ],
-    version = 38,
+    version = 39,
     exportSchema = false
 )
 @TypeConverters(FileTypeConverter::class)
@@ -950,6 +951,39 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** Durable, coalesced folder metadata/annotation upload wake-ups. */
+        val MIGRATION_38_39 = object : Migration(38, 39) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `cloud_folder_metadata_outbox` (
+                        `accountId` TEXT NOT NULL,
+                        `rootId` TEXT NOT NULL,
+                        `bookId` TEXT NOT NULL,
+                        `generation` INTEGER NOT NULL,
+                        `dirtyKinds` TEXT NOT NULL,
+                        `dirtySince` INTEGER NOT NULL,
+                        `updatedAt` INTEGER NOT NULL,
+                        `state` TEXT NOT NULL,
+                        `attempts` INTEGER NOT NULL,
+                        `nextAttemptAt` INTEGER NOT NULL,
+                        `lastAttemptAt` INTEGER NOT NULL,
+                        `lastError` TEXT,
+                        PRIMARY KEY(`accountId`, `rootId`, `bookId`)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_cloud_folder_metadata_outbox_accountId_rootId_state_nextAttemptAt` " +
+                        "ON `cloud_folder_metadata_outbox` (`accountId`, `rootId`, `state`, `nextAttemptAt`)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_cloud_folder_metadata_outbox_accountId_updatedAt` " +
+                        "ON `cloud_folder_metadata_outbox` (`accountId`, `updatedAt`)"
+                )
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 CloudFolderPrivateStateMigrator.importLegacyState(context.applicationContext)
@@ -968,7 +1002,7 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28,
                         MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32,
                         MIGRATION_32_33, MIGRATION_33_34, MIGRATION_34_35, MIGRATION_35_36,
-                        MIGRATION_36_37, MIGRATION_37_38
+                        MIGRATION_36_37, MIGRATION_37_38, MIGRATION_38_39
                     )
                     .fallbackToDestructiveMigration(false)
                     .build()

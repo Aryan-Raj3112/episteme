@@ -410,6 +410,39 @@ class CloudFolderSyncTest {
     }
 
     @Test
+    fun `sidecar conflicts never create a generic keep both copy`() {
+        val original = file("EpistemeSyncData/.book_abc.json", hash = "a".repeat(64), size = 10L, revision = 1L)
+        val base = manifest(revision = 1L, nodes = listOf(original))
+        val local = base.copy(
+            revision = 2L,
+            nodes = listOf(original.copy(contentHash = "b".repeat(64), sizeBytes = 11L, revision = 2L)),
+        )
+        val remote = base.copy(
+            revision = 3L,
+            nodes = listOf(original.copy(contentHash = "c".repeat(64), sizeBytes = 12L, revision = 3L)),
+        )
+
+        val plan = planCloudFolderSync(base, local, remote)
+
+        assertEquals(CloudFolderConflictType.SIDECAR_CHANGED_BOTH, plan.conflicts.single().type)
+        assertFalse(plan.conflicts.single().type.supportsKeepBoth())
+        assertEquals(
+            CloudFolderConflictResolution.KEEP_LOCAL,
+            plan.conflicts.single().type.effectiveResolution(CloudFolderConflictResolution.KEEP_BOTH),
+        )
+        val resolved = resolveCloudFolderSync(
+            base = base,
+            local = local,
+            remote = remote,
+            plan = plan,
+            resolutions = mapOf(plan.conflicts.single().conflictId to CloudFolderConflictResolution.KEEP_BOTH),
+        )
+        assertTrue(resolved.canCommit)
+        assertEquals(1, resolved.mergedManifest.activeFiles().count { it.pathKey == original.pathKey })
+        assertEquals("b".repeat(64), resolved.mergedManifest.activeFiles().single().contentHash)
+    }
+
+    @Test
     fun `delete versus unchanged update is safe and emits one directional deletion`() {
         val original = file("Book.pdf", hash = "a".repeat(64), size = 10L, revision = 1L)
         val base = manifest(revision = 1L, nodes = listOf(original))

@@ -37,6 +37,7 @@ import timber.log.Timber
 import com.aryan.reader.BookImporter
 import com.aryan.reader.AuthRepository
 import com.aryan.reader.CloudFolderAppStoragePrefs
+import com.aryan.reader.CloudFolderMetadataSyncScheduler
 import com.aryan.reader.cloudFolderAppRootDirectory
 import com.aryan.reader.cloudSyncAnnotationSummary
 import com.aryan.reader.paginatedreader.Locator
@@ -407,7 +408,7 @@ class RecentFilesRepository(
                 originalDescription = entity.originalDescription
             )
 
-            return@withContext if (appStorageRoot != null) {
+            val saved = if (appStorageRoot != null) {
                 LocalSyncUtils.saveMetadataToAppStorage(appStorageRoot, metadata)
             } else {
                 LocalSyncUtils.saveMetadataToFolder(
@@ -416,6 +417,15 @@ class RecentFilesRepository(
                     metadata = metadata,
                 )
             }
+            if (saved) {
+                CloudFolderMetadataSyncScheduler.onSidecarCommitted(
+                    context = context,
+                    sourceFolderUri = folderUriString,
+                    bookId = bookId,
+                    kind = CloudFolderMetadataSyncScheduler.METADATA_KIND,
+                )
+            }
+            return@withContext saved
         }
         true
     }
@@ -456,9 +466,40 @@ class RecentFilesRepository(
                 "richBytes=${if (hasRichText) richTextFile.length() else 0L} folder=$folderUriString"
         )
 
+        val existingSidecarBeforeClear = if (
+            !hasInk && !hasDeletedInk && !hasRichText && !hasLayout && !hasTextBoxes && !hasHighlights
+        ) {
+            if (appStorageRoot != null) {
+                LocalSyncUtils.getAnnotationSidecarFromAppStorage(appStorageRoot, bookId)
+            } else {
+                LocalSyncUtils.getAnnotationSidecar(
+                    context = context,
+                    sourceFolderUri = folderUriString.toUri(),
+                    bookId = bookId,
+                )
+            }
+        } else {
+            null
+        }
+        val existingSidecarHasAnnotationState = existingSidecarBeforeClear?.second?.let { payload ->
+            val hasExplicitPayload = SharedPdfAnnotationSidecarCodec.hasExplicitAnnotationPayload(payload)
+            val hasDeletionTombstones =
+                SharedPdfAnnotationSidecarCodec.annotationDeletionsFromJson(payload).isNotEmpty()
+            val alreadyCleared =
+                SharedPdfAnnotationSidecarCodec.hasExplicitEmptyAnnotationPayload(payload)
+            (hasExplicitPayload || hasDeletionTombstones) && !alreadyCleared
+        } == true
+
         if (!hasInk && !hasDeletedInk && !hasRichText && !hasLayout && !hasTextBoxes && !hasHighlights) {
-            Timber.tag("FolderAnnotationSync").d("No annotations found locally for bookId: $bookId. Aborting sync.")
-            return@withContext true
+            if (!existingSidecarHasAnnotationState) {
+                Timber.tag("FolderAnnotationSync").d(
+                    "No annotations found locally for bookId: $bookId and no remote annotation state needs clearing."
+                )
+                return@withContext true
+            }
+            Timber.tag("FolderAnnotationSync").i(
+                "Local annotation payload is empty; committing explicit clear for bookId=$bookId"
+            )
         }
 
         val bundleJson = JSONObject()
@@ -501,12 +542,28 @@ class RecentFilesRepository(
         val tsBox = if(hasTextBoxes) textBoxFile.lastModified() else 0L
         val tsHighlight = if(hasHighlights) highlightFile.lastModified() else 0L
 
+        val hasLocalPayload =
+            hasInk || hasDeletedInk || hasRichText || hasLayout || hasTextBoxes || hasHighlights
         val maxFileTs = maxOf(tsInk, tsDeletedInk, tsText, tsLayout, tsBox, tsHighlight)
-        val finalTs = maxOf(maxFileTs, System.currentTimeMillis())
+        val nextClearTimestamp = if (!hasLocalPayload) {
+            existingSidecarBeforeClear?.first?.let { previousTimestamp ->
+                if (previousTimestamp == Long.MAX_VALUE) Long.MAX_VALUE else previousTimestamp + 1L
+            } ?: 0L
+        } else {
+            0L
+        }
+        val finalTs = maxOf(maxFileTs, System.currentTimeMillis(), nextClearTimestamp)
 
         Timber.tag("FolderAnnotationSync").d("Pushing annotation bundle for $bookId to folder. finalTs=$finalTs")
 
-        val canonicalBundleJson = SharedPdfAnnotationSidecarCodec.canonicalizeDataJson(bundleJson.toString())
+        val canonicalBundleJson = if (!hasLocalPayload) {
+            SharedPdfAnnotationSidecarCodec.clearAllAnnotationsDataJson(
+                previousDataJson = existingSidecarBeforeClear?.second,
+                deletedAt = finalTs,
+            )
+        } else {
+            SharedPdfAnnotationSidecarCodec.canonicalizeDataJson(bundleJson.toString())
+        }
         if (hasRichText) {
             Timber.d(
                 "android.folder.export.saveSidecar book=$bookId timestamp=$finalTs canonicalLen=${canonicalBundleJson.length}"
@@ -531,6 +588,13 @@ class RecentFilesRepository(
         }
 
         if (!saved) return@withContext false
+
+        CloudFolderMetadataSyncScheduler.onSidecarCommitted(
+            context = context,
+            sourceFolderUri = folderUriString,
+            bookId = bookId,
+            kind = CloudFolderMetadataSyncScheduler.ANNOTATIONS_KIND,
+        )
 
         val savedSidecar = if (appStorageRoot != null) {
             LocalSyncUtils.getAnnotationSidecarFromAppStorage(appStorageRoot, bookId)

@@ -12,6 +12,7 @@ import com.aryan.reader.cloudFolderSafeUri
 import com.aryan.reader.shared.CloudFolderNode
 import com.aryan.reader.shared.CloudFolderNodeKind
 import com.aryan.reader.shared.cloudFolderNodeId
+import com.aryan.reader.shared.LOCAL_FOLDER_SIDECAR_HASH_PREFIX
 import com.aryan.reader.shared.normalizeCloudFolderRelativePath
 import java.io.IOException
 import java.io.File
@@ -109,6 +110,7 @@ object CloudFolderSafScanner {
                 }
                 for (child in children) {
                     currentCoroutineContext().ensureActive()
+                    if (isCloudFolderTransferStagingFile(child.name)) continue
                     when {
                         child.isDirectory -> {
                             directoryCount++
@@ -204,6 +206,7 @@ object CloudFolderSafScanner {
             }
             for (child in children) {
                 currentCoroutineContext().ensureActive()
+                if (isCloudFolderTransferStagingFile(child.name.orEmpty())) continue
                 when {
                     child.isDirectory -> {
                         directoryCount++
@@ -322,6 +325,7 @@ object CloudFolderSafScanner {
                     firstError = firstError ?: "SAF returned an unnamed entry"
                     continue
                 }
+                if (isCloudFolderTransferStagingFile(name)) continue
                 val path = if (parentPath.isBlank()) name else "$parentPath/$name"
                 val normalizedPath = normalizeCloudFolderRelativePath(path)
                 if (normalizedPath == null) {
@@ -448,4 +452,10 @@ object CloudFolderSafScanner {
 
     private const val BUFFER_SIZE = 128 * 1024
     private const val MAX_DEPTH = 128
+
+    private fun isCloudFolderTransferStagingFile(name: String): Boolean =
+        name.endsWith(".part") ||
+            name.endsWith(".bak") ||
+            name.startsWith(".cloud-folder-") ||
+            (name.startsWith(".$LOCAL_FOLDER_SIDECAR_HASH_PREFIX") && name.endsWith(".tmp"))
 }

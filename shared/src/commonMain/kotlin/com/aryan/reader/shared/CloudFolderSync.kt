@@ -898,6 +898,8 @@ data class CloudFolderSyncOperation(
 enum class CloudFolderConflictType {
     INVALID_MANIFEST,
     CONTENT_CHANGED_BOTH,
+    /** A metadata/annotation sidecar changed on both sides. */
+    SIDECAR_CHANGED_BOTH,
     METADATA_CHANGED_BOTH,
     MOVE_CHANGED_BOTH,
     DELETE_VS_UPDATE,
@@ -947,6 +949,11 @@ fun CloudFolderConflictType.effectiveResolution(
     resolution != CloudFolderConflictResolution.KEEP_BOTH -> resolution
     this == CloudFolderConflictType.DELETE_VS_UPDATE -> CloudFolderConflictResolution.KEEP_REMOTE
     this == CloudFolderConflictType.UPDATE_VS_DELETE -> CloudFolderConflictResolution.KEEP_LOCAL
+    // Sidecars are keyed by book ID and are consumed by a fixed filename.
+    // A conflict copy would either be ignored or be imported as a second,
+    // ambiguous state, so KEEP_BOTH means preserve the local sidecar and
+    // require an explicit KEEP_REMOTE choice to replace it.
+    this == CloudFolderConflictType.SIDECAR_CHANGED_BOTH -> CloudFolderConflictResolution.KEEP_LOCAL
     else -> resolution
 }
 
@@ -958,6 +965,7 @@ fun CloudFolderConflictType.supportsKeepBoth(): Boolean = when (this) {
     CloudFolderConflictType.TYPE_CHANGED,
     CloudFolderConflictType.PATH_COLLISION -> true
     CloudFolderConflictType.INVALID_MANIFEST,
+    CloudFolderConflictType.SIDECAR_CHANGED_BOTH,
     CloudFolderConflictType.DELETE_VS_UPDATE,
     CloudFolderConflictType.UPDATE_VS_DELETE,
     CloudFolderConflictType.ROOT_METADATA_CHANGED_BOTH,
@@ -1085,6 +1093,10 @@ private fun cloudFolderNodesEquivalent(first: CloudFolderNode, second: CloudFold
     }
     if (first.kind == CloudFolderNodeKind.DIRECTORY) return true
     if (!cloudFolderNodeContentEquivalent(first, second)) return false
+    // Sidecar mtimes are provider/atomic-write artifacts. Their authenticated
+    // bytes are the logical metadata record, so a same-byte rewrite on both
+    // devices must not become a spurious conflict.
+    if (isCloudFolderMetadataSidecarPath(first.relativePath)) return true
     return cloudFolderNodeMetadataEquivalent(first, second)
 }
 
@@ -1157,6 +1169,21 @@ private fun conflictType(
         return CloudFolderConflictType.UNAVAILABLE_STATE
     }
     return CloudFolderConflictType.METADATA_CHANGED_BOTH
+}
+
+/**
+ * Sidecars are logical records, not user documents.  Their filenames are
+ * derived from the book ID and the importer only accepts that exact path;
+ * creating a generic conflict copy would therefore either be ignored or
+ * imported ambiguously.  Keep this classification in the shared planner so
+ * Android and iOS make the same conflict decision.
+ */
+fun isCloudFolderMetadataSidecarPath(path: String): Boolean {
+    val normalized = normalizeCloudFolderRelativePath(path) ?: return false
+    val leaf = normalized.substringAfterLast('/')
+    return normalized.substringBeforeLast('/', missingDelimiterValue = "") == LOCAL_FOLDER_SYNC_DATA_DIR &&
+        leaf.startsWith(".$LOCAL_FOLDER_SIDECAR_HASH_PREFIX") &&
+        leaf.endsWith(".json")
 }
 
 private fun cloudFolderConflictId(
@@ -1463,7 +1490,18 @@ object CloudFolderSyncPlanner {
                 entryStatesEquivalent(localState, remoteState) -> chosen = choosePreferredState(localState, remoteState)
                 else -> {
                     chosen = baseState
-                    val type = conflictType(localState, remoteState)
+                    val detectedType = conflictType(localState, remoteState)
+                    val type = if (
+                        isCloudFolderMetadataSidecarPath(path) &&
+                        detectedType in setOf(
+                            CloudFolderConflictType.CONTENT_CHANGED_BOTH,
+                            CloudFolderConflictType.METADATA_CHANGED_BOTH,
+                        )
+                    ) {
+                        CloudFolderConflictType.SIDECAR_CHANGED_BOTH
+                    } else {
+                        detectedType
+                    }
                     val conflict = CloudFolderConflict(
                         conflictId = cloudFolderConflictId(rootId, listOf(nodeId), type, path),
                         rootId = rootId,

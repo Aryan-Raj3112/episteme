@@ -65,6 +65,80 @@ object SharedPdfAnnotationSidecarCodec {
         return json.encodeToString(JsonElement.serializer(), withCanonicalAnnotations(data))
     }
 
+    /**
+     * Returns whether the payload explicitly represents annotation state.  An
+     * empty canonical array and empty legacy arrays are meaningful state too:
+     * they are different from a sidecar which predates annotation support.
+     */
+    fun hasExplicitAnnotationPayload(rawDataJson: String?): Boolean {
+        val data = parseObjectOrNull(rawDataJson.orEmpty())?.sidecarDataObject() ?: return false
+        return data[KEY_PDF_ANNOTATIONS] != null || data.hasLegacyAndroidAnnotationPayload()
+    }
+
+    /**
+     * Returns whether an explicit clear has already been persisted.  Legacy
+     * arrays are checked as well so a malformed canonical/legacy combination
+     * cannot suppress a repair write and resurrect stale annotations in an
+     * older Android reader.
+     */
+    fun hasExplicitEmptyAnnotationPayload(rawDataJson: String?): Boolean {
+        val data = parseObjectOrNull(rawDataJson.orEmpty())?.sidecarDataObject() ?: return false
+        val annotationsEmpty = runCatching { annotationsFromData(data).isEmpty() }.getOrDefault(false)
+        if (!annotationsEmpty) return false
+
+        if (data[KEY_PDF_ANNOTATIONS] != null) {
+            return listOf(
+                data[KEY_LEGACY_INK],
+                data[KEY_LEGACY_TEXT_BOXES],
+                data[KEY_LEGACY_HIGHLIGHTS]
+            ).all { it == null || it.jsonArrayOrNull()?.isEmpty() == true }
+        }
+        return data.hasLegacyAndroidAnnotationPayload()
+    }
+
+    /**
+     * Creates an explicit empty annotation snapshot from the last known
+     * sidecar.  Every still-live annotation in that snapshot becomes a
+     * deletion tombstone, so merging this clear with the previous remote
+     * snapshot cannot reintroduce those annotations.  Unknown concurrent
+     * additions are intentionally left untouched and are handled by the
+     * normal conflict/merge semantics.
+     */
+    fun clearAllAnnotationsDataJson(
+        previousDataJson: String?,
+        deletedAt: Long
+    ): String {
+        val previousData = parseObjectOrNull(previousDataJson.orEmpty())
+            ?.sidecarDataObject()
+            ?: JsonObject(emptyMap())
+        val deletionTimestamp = deletedAt.coerceAtLeast(1L)
+        val deletions = annotationDeletionsFromData(previousData).toMutableMap()
+        annotationsFromData(previousData).forEach { annotation ->
+            deletions[annotation.id] = maxOf(
+                deletions[annotation.id] ?: 0L,
+                deletionTimestamp
+            )
+        }
+
+        val cleared = previousData.toMutableMap().apply {
+            this[KEY_PDF_ANNOTATIONS] = encodeAnnotationsElement(emptyList())
+            if (deletions.isEmpty()) {
+                remove(KEY_PDF_ANNOTATION_DELETIONS)
+            } else {
+                this[KEY_PDF_ANNOTATION_DELETIONS] = encodeAnnotationDeletionsElement(deletions)
+            }
+        }
+
+        // Keep old Android readers in sync with the canonical clear.  In
+        // particular, do not leave stale legacy arrays beside pdfAnnotations=[]
+        // because old readers do not know which representation is authoritative.
+        val legacyCompatible = legacyAndroidDataFromAnnotations(
+            annotations = emptyList(),
+            existingData = JsonObject(cleared)
+        )
+        return json.encodeToString(JsonElement.serializer(), legacyCompatible)
+    }
+
     fun mergeAnnotationDataJson(
         localDataJson: String,
         remoteDataJson: String,

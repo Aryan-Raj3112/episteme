@@ -358,6 +358,53 @@ class SharedPdfAnnotationSerializerTest {
     }
 
     @Test
+    fun `clearing final annotations emits tombstones and cannot resurrect previous remote state`() {
+        val previous = SharedPdfAnnotation(
+            id = "previous-ink",
+            pageIndex = 1,
+            kind = PdfAnnotationKind.INK,
+            points = listOf(PdfPagePoint(0.1f, 0.2f, 10L)),
+            colorArgb = 0xFF000000.toInt(),
+            createdAt = 10L
+        )
+        val previousSidecar = testJson.encodeToString(
+            JsonElement.serializer(),
+            JsonObject(
+                mapOf(
+                    SharedPdfAnnotationSidecarCodec.KEY_PDF_ANNOTATIONS to
+                        SharedPdfAnnotationSidecarCodec.encodeAnnotationsElement(listOf(previous)),
+                    "layout" to testJson.parseToJsonElement("{\"mode\":\"continuous\"}")
+                )
+            )
+        )
+
+        val cleared = SharedPdfAnnotationSidecarCodec.clearAllAnnotationsDataJson(
+            previousDataJson = previousSidecar,
+            deletedAt = 100L
+        )
+        val clearedObject = testJson.parseToJsonElement(cleared).jsonObject
+
+        assertEquals(0, SharedPdfAnnotationSidecarCodec.annotationCountFromDataJson(cleared))
+        assertEquals(
+            mapOf(previous.id to 100L),
+            SharedPdfAnnotationSidecarCodec.annotationDeletionsFromJson(cleared)
+        )
+        assertEquals(0, clearedObject.getValue("ink").jsonArray.size)
+        assertNotNull(clearedObject["layout"])
+
+        val merged = SharedPdfAnnotationSidecarCodec.mergeAnnotationDataJson(
+            localDataJson = cleared,
+            remoteDataJson = previousSidecar,
+            preferRemoteOnConflict = false
+        )
+        assertEquals(0, SharedPdfAnnotationSidecarCodec.annotationCountFromDataJson(merged))
+        assertEquals(
+            mapOf(previous.id to 100L),
+            SharedPdfAnnotationSidecarCodec.annotationDeletionsFromJson(merged)
+        )
+    }
+
+    @Test
     fun `sidecar snapshot merge preserves concurrent additions at equal timestamps`() {
         fun annotation(id: String, createdAt: Long) = SharedPdfAnnotation(
             id = id,
