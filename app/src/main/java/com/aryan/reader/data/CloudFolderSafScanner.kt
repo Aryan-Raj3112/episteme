@@ -14,6 +14,7 @@ import com.aryan.reader.shared.CloudFolderNodeKind
 import com.aryan.reader.shared.cloudFolderNodeId
 import com.aryan.reader.shared.normalizeCloudFolderRelativePath
 import java.io.IOException
+import java.io.File
 import java.io.InputStream
 import java.security.MessageDigest
 import kotlinx.coroutines.currentCoroutineContext
@@ -58,6 +59,102 @@ data class CloudFolderSafInventoryResult(
  * replacement manifest.
  */
 object CloudFolderSafScanner {
+    /**
+     * Inventory an app-private cloud materialization without routing its
+     * file:// URI through SAF. The latter returns no tree for app storage and
+     * was the reason downloaded roots could remain stuck in "Scanning".
+     */
+    suspend fun scanAppStorageInventory(
+        root: File,
+        rootId: String,
+        now: Long = System.currentTimeMillis(),
+    ): CloudFolderSafInventoryResult {
+        val startedAt = System.currentTimeMillis()
+        val safeRoot = cloudFolderSafeId(rootId)
+        cloudFolderLogD("event=app_inventory_start root=$safeRoot")
+        if (!root.exists() || !root.isDirectory) {
+            val message = "App-private cloud folder is unavailable"
+            cloudFolderLogD(
+                "event=app_inventory_end root=$safeRoot complete=false files=0 directories=0 " +
+                    "sizeComplete=false errorStatus=unavailable " +
+                    "durationMs=${(System.currentTimeMillis() - startedAt).coerceAtLeast(0L)}",
+            )
+            return CloudFolderSafInventoryResult(0, 0, 0L, false, false, now, message)
+        }
+
+        var fileCount = 0
+        var directoryCount = 0
+        var totalBytes = 0L
+        var sizeComplete = true
+        var complete = true
+        var firstError: String? = null
+        val pending = ArrayDeque<File>()
+        val visited = mutableSetOf<String>()
+        pending.add(root)
+        try {
+            while (pending.isNotEmpty()) {
+                currentCoroutineContext().ensureActive()
+                val directory = pending.removeFirst()
+                val key = runCatching { directory.canonicalPath }.getOrDefault(directory.absolutePath)
+                if (!visited.add(key)) {
+                    complete = false
+                    firstError = firstError ?: "App-private folder contains a directory cycle"
+                    continue
+                }
+                val children = directory.listFiles()
+                if (children == null) {
+                    complete = false
+                    firstError = firstError ?: "App-private folder could not be listed"
+                    continue
+                }
+                for (child in children) {
+                    currentCoroutineContext().ensureActive()
+                    when {
+                        child.isDirectory -> {
+                            directoryCount++
+                            pending.add(child)
+                        }
+                        child.isFile -> {
+                            fileCount++
+                            val length = child.length()
+                            if (length < 0L) {
+                                sizeComplete = false
+                            } else {
+                                totalBytes = (totalBytes + length).coerceAtLeast(totalBytes)
+                            }
+                        }
+                        else -> {
+                            complete = false
+                            firstError = firstError ?: "App-private folder returned an unknown entry type"
+                        }
+                    }
+                }
+            }
+        } catch (error: kotlinx.coroutines.CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            complete = false
+            firstError = firstError ?: "App-private inventory failed (${cloudFolderErrorStatus(error)})"
+            cloudFolderLogError("app_inventory_exception", error, "root=$safeRoot")
+        }
+        val result = CloudFolderSafInventoryResult(
+            fileCount = fileCount,
+            directoryCount = directoryCount,
+            totalBytes = totalBytes,
+            sizeComplete = sizeComplete,
+            complete = complete,
+            scannedAt = now,
+            errorMessage = firstError,
+        )
+        cloudFolderLogD(
+            "event=app_inventory_end root=$safeRoot complete=${result.complete} " +
+                "files=${result.fileCount} directories=${result.directoryCount} " +
+                "sizeComplete=${result.sizeComplete} errorStatus=${cloudFolderErrorStatus(result.errorMessage)} " +
+                "durationMs=${(System.currentTimeMillis() - startedAt).coerceAtLeast(0L)}",
+        )
+        return result
+    }
+
     suspend fun scanInventory(
         context: Context,
         rootUri: Uri,

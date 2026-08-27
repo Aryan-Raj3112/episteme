@@ -93,6 +93,9 @@ data class SharedAndroidFolderSyncStrings(
     val cloudSyncOn: String = "Cloud backup on",
     val cloudSyncOff: String = "Cloud sync off",
     val cloudDeviceOnly: String = "Device only",
+    val cloudDownloaded: String = "Downloaded from Drive",
+    val cloudAvailable: String = "Available in Drive",
+    val cloudChooseAction: String = "Choose download option",
 )
 
 /** Exact Android folder-sync screen; storage/scanning/date formatting remain platform adapters. */
@@ -116,15 +119,17 @@ fun SharedAndroidFolderSyncScreen(
     cloudSyncEnabled: Boolean = false,
     isProUser: Boolean = false,
     onCloudFolderSettingsClick: (() -> Unit)? = null,
+    onOpenIncomingCloudFolder: ((String) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     var editingFolder by remember { mutableStateOf<SyncedFolder?>(null) }
     var disablingFolder by remember { mutableStateOf<SyncedFolder?>(null) }
-    val hasEnabledFolders = folders.any { it.localSyncEnabled }
+    val hasEnabledFolders = folders.any { it.localSyncEnabled && !it.isCloudPlaceholder }
+    val canAddFolder = folders.count { !it.isAppManaged && !it.isCloudPlaceholder } < 10
     Scaffold(
         modifier = modifier,
         floatingActionButton = {
-            if (folders.size < 10) {
+            if (canAddFolder) {
                 ExtendedFloatingActionButton(
                     text = { Text(strings.addFolder) },
                     icon = { Icon(Icons.Default.Add, strings.addDescription) },
@@ -200,6 +205,8 @@ fun SharedAndroidFolderSyncScreen(
                         onRemove = { onRemoveFolder(folder) },
                         onToggle = { if (folder.localSyncEnabled) disablingFolder = folder else onLocalSyncChange(folder, true, false) },
                         onEdit = { editingFolder = folder },
+                        onOpenCloudSettings = onCloudFolderSettingsClick,
+                        onOpenIncomingCloudFolder = onOpenIncomingCloudFolder,
                     )
                 }
             }
@@ -247,6 +254,8 @@ private fun SharedAndroidFolderCard(
     onRemove: () -> Unit,
     onToggle: () -> Unit,
     onEdit: () -> Unit,
+    onOpenCloudSettings: (() -> Unit)?,
+    onOpenIncomingCloudFolder: ((String) -> Unit)?,
 ) {
     var showMenu by remember { mutableStateOf(false) }
     ElevatedCard(
@@ -260,7 +269,15 @@ private fun SharedAndroidFolderCard(
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
                         Text(folder.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        if (!folder.localSyncEnabled) Text(strings.localSyncDisabled, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                        if (folder.isCloudPlaceholder) {
+                            Text(
+                                "Choose where to keep this folder",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        } else if (!folder.localSyncEnabled) {
+                            Text(strings.localSyncDisabled, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                        }
                         cloudStatus?.let { status ->
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
@@ -281,38 +298,65 @@ private fun SharedAndroidFolderCard(
                         }
                     }
                 }
-                Box {
-                    IconButton(onClick = { showMenu = true }) { Icon(Icons.Default.MoreVert, strings.optionsDescription) }
-                    DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
-                        DropdownMenuItem(text = { Text(strings.editFilters) }, onClick = { showMenu = false; onEdit() })
-                        DropdownMenuItem(
-                            text = { Text(if (folder.localSyncEnabled) strings.disableLocalSync else strings.enableLocalSync) },
-                            onClick = { showMenu = false; onToggle() },
-                        )
-                        DropdownMenuItem(
-                            text = { Text(strings.removeFolder) },
-                            onClick = { showMenu = false; onRemove() },
-                            colors = MenuDefaults.itemColors(textColor = MaterialTheme.colorScheme.error),
-                        )
+                if (!folder.isAppManaged && !folder.isCloudPlaceholder) {
+                    Box {
+                        IconButton(onClick = { showMenu = true }) { Icon(Icons.Default.MoreVert, strings.optionsDescription) }
+                        DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+                            DropdownMenuItem(text = { Text(strings.editFilters) }, onClick = { showMenu = false; onEdit() })
+                            DropdownMenuItem(
+                                text = { Text(if (folder.localSyncEnabled) strings.disableLocalSync else strings.enableLocalSync) },
+                                onClick = { showMenu = false; onToggle() },
+                            )
+                            DropdownMenuItem(
+                                text = { Text(strings.removeFolder) },
+                                onClick = { showMenu = false; onRemove() },
+                                colors = MenuDefaults.itemColors(textColor = MaterialTheme.colorScheme.error),
+                            )
+                        }
                     }
                 }
             }
-            HorizontalDivider(Modifier.padding(vertical = 12.dp))
-            Row(Modifier.fillMaxWidth()) {
-                Column(Modifier.weight(1f)) {
-                    Text(strings.lastSync, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold)
-                    Text(lastScanText, style = MaterialTheme.typography.bodySmall)
+            if (folder.isCloudPlaceholder) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "This folder is in Drive. Choose Keep in Episteme to add its books here.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                val rootId = folder.cloudRootId?.trim().orEmpty()
+                val openIncomingCloudFolder = onOpenIncomingCloudFolder
+                val openCloudSettings = onOpenCloudSettings
+                if (rootId.isNotBlank() && openIncomingCloudFolder != null) {
+                    TextButton(onClick = { openIncomingCloudFolder(rootId) }) {
+                        Icon(Icons.Default.Cloud, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(strings.cloudChooseAction)
+                    }
+                } else if (openCloudSettings != null) {
+                    TextButton(onClick = openCloudSettings) {
+                        Icon(Icons.Default.Cloud, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(strings.cloudSettings)
+                    }
                 }
-                Column(Modifier.weight(1f), horizontalAlignment = Alignment.End) {
-                    Text(strings.booksCount, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold)
-                    Text(stats.totalBooks.toString(), style = MaterialTheme.typography.bodyMedium)
+            } else {
+                HorizontalDivider(Modifier.padding(vertical = 12.dp))
+                Row(Modifier.fillMaxWidth()) {
+                    Column(Modifier.weight(1f)) {
+                        Text(strings.lastSync, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold)
+                        Text(lastScanText, style = MaterialTheme.typography.bodySmall)
+                    }
+                    Column(Modifier.weight(1f), horizontalAlignment = Alignment.End) {
+                        Text(strings.booksCount, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold)
+                        Text(stats.totalBooks.toString(), style = MaterialTheme.typography.bodyMedium)
+                    }
                 }
-            }
-            if (stats.countsByType.isNotEmpty()) {
-                Spacer(Modifier.height(12.dp))
-                FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    stats.countsByType.forEach { (type, count) ->
-                        AssistChip(onClick = {}, label = { Text(strings.filterCount(type, count)) })
+                if (stats.countsByType.isNotEmpty()) {
+                    Spacer(Modifier.height(12.dp))
+                    FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        stats.countsByType.forEach { (type, count) ->
+                            AssistChip(onClick = {}, label = { Text(strings.filterCount(type, count)) })
+                        }
                     }
                 }
             }
@@ -328,6 +372,8 @@ private fun cloudFolderStatus(
     strings: SharedAndroidFolderSyncStrings,
 ): String? {
     if (!isProUser || selection == null) return null
+    if (folder.isCloudPlaceholder) return strings.cloudAvailable
+    if (folder.isAppManaged) return strings.cloudDownloaded
     if (!cloudSyncEnabled) return strings.cloudSyncOff
     val rootId = folder.cloudRootId?.trim().orEmpty()
     return if (rootId.isNotBlank() && selection.includes(rootId)) {

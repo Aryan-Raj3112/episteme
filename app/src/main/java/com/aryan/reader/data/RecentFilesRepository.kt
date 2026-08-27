@@ -35,6 +35,9 @@ import com.aryan.reader.logCloudSyncTrace
 import com.aryan.reader.scaledToCanvasLimit
 import timber.log.Timber
 import com.aryan.reader.BookImporter
+import com.aryan.reader.AuthRepository
+import com.aryan.reader.CloudFolderAppStoragePrefs
+import com.aryan.reader.cloudFolderAppRootDirectory
 import com.aryan.reader.cloudSyncAnnotationSummary
 import com.aryan.reader.paginatedreader.Locator
 import com.aryan.reader.paginatedreader.data.BookCacheDatabase
@@ -80,6 +83,7 @@ class RecentFilesRepository(
     private val pdfHighlightRepository = com.aryan.reader.pdf.data.PdfHighlightRepository(context)
     private val pdfTextRepository by lazy { PdfTextRepository(context) }
     private val bookCacheDao by lazy { BookCacheDatabase.getDatabase(context).bookCacheDao() }
+    private val authRepository by lazy { AuthRepository(context) }
 
     init {
         if (!coverCacheDir.exists()) {
@@ -358,7 +362,8 @@ class RecentFilesRepository(
         val folderUriString = entity.sourceFolderUri
 
         if (folderUriString != null) {
-            if (!isLocalFolderSyncEnabled(folderUriString)) {
+            val appStorageRoot = appStorageRootForFolderUri(folderUriString)
+            if (appStorageRoot == null && !isLocalFolderSyncEnabled(folderUriString)) {
                 Timber.d("SyncDebug: Folder sync disabled for $folderUriString. Skipping metadata sidecar.")
                 return@withContext true
             }
@@ -402,11 +407,15 @@ class RecentFilesRepository(
                 originalDescription = entity.originalDescription
             )
 
-            return@withContext LocalSyncUtils.saveMetadataToFolder(
-                context = context,
-                sourceFolderUri = folderUriString.toUri(),
-                metadata = metadata
-            )
+            return@withContext if (appStorageRoot != null) {
+                LocalSyncUtils.saveMetadataToAppStorage(appStorageRoot, metadata)
+            } else {
+                LocalSyncUtils.saveMetadataToFolder(
+                    context = context,
+                    sourceFolderUri = folderUriString.toUri(),
+                    metadata = metadata,
+                )
+            }
         }
         true
     }
@@ -421,7 +430,8 @@ class RecentFilesRepository(
             Timber.tag("FolderAnnotationSync").w("sourceFolderUri is null for bookId: $bookId")
             return@withContext false
         }
-        if (!isLocalFolderSyncEnabled(folderUriString)) {
+        val appStorageRoot = appStorageRootForFolderUri(folderUriString)
+        if (appStorageRoot == null && !isLocalFolderSyncEnabled(folderUriString)) {
             Timber.tag("FolderAnnotationSync").d("Folder sync disabled for $folderUriString. Skipping annotation sidecar.")
             return@withContext false
         }
@@ -503,21 +513,34 @@ class RecentFilesRepository(
             )
         }
 
-        val saved = LocalSyncUtils.saveAnnotationSidecar(
-            context = context,
-            sourceFolderUri = folderUriString.toUri(),
-            bookId = bookId,
-            jsonPayload = canonicalBundleJson,
-            timestamp = finalTs
-        )
+        val saved = if (appStorageRoot != null) {
+            LocalSyncUtils.saveAnnotationSidecarToAppStorage(
+                root = appStorageRoot,
+                bookId = bookId,
+                jsonPayload = canonicalBundleJson,
+                timestamp = finalTs,
+            )
+        } else {
+            LocalSyncUtils.saveAnnotationSidecar(
+                context = context,
+                sourceFolderUri = folderUriString.toUri(),
+                bookId = bookId,
+                jsonPayload = canonicalBundleJson,
+                timestamp = finalTs,
+            )
+        }
 
         if (!saved) return@withContext false
 
-        val savedSidecar = LocalSyncUtils.getAnnotationSidecar(
-            context = context,
-            sourceFolderUri = folderUriString.toUri(),
-            bookId = bookId
-        )
+        val savedSidecar = if (appStorageRoot != null) {
+            LocalSyncUtils.getAnnotationSidecarFromAppStorage(appStorageRoot, bookId)
+        } else {
+            LocalSyncUtils.getAnnotationSidecar(
+                context = context,
+                sourceFolderUri = folderUriString.toUri(),
+                bookId = bookId,
+            )
+        }
         if (savedSidecar != null && savedSidecar.second != canonicalBundleJson) {
             importAnnotationBundle(
                 bookId = bookId,
@@ -687,6 +710,19 @@ class RecentFilesRepository(
             legacyUri = prefs.getString(SyncedFolderPrefs.KEY_LEGACY_SYNCED_FOLDER_URI, null),
             folderUriString = folderUriString
         )
+    }
+
+    private fun appStorageRootForFolderUri(folderUriString: String): File? {
+        val accountId = authRepository.getSignedInUser()?.uid?.trim()
+            ?.takeIf { it.isNotBlank() } ?: return null
+        val rootId = CloudFolderAppStoragePrefs.rootIdForUri(
+            context = context,
+            accountId = accountId,
+            uriString = folderUriString,
+        ) ?: return null
+        return runCatching { cloudFolderAppRootDirectory(context.filesDir, rootId) }
+            .getOrNull()
+            ?.takeIf { it.isDirectory }
     }
 
     override suspend fun updateBookmarks(bookId: String, bookmarksJson: String) = withContext(Dispatchers.IO) {

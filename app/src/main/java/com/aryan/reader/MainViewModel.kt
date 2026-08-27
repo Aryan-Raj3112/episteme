@@ -228,6 +228,17 @@ private data class CachedSpeechBubble(
     val maskBitmap: Bitmap?
 )
 
+/**
+ * Result of checking a folder-backed book before opening it. A malformed or
+ * unregistered app-private URI is deliberately not treated as a missing file:
+ * deleting the library row would hide an account/path-integrity problem.
+ */
+private data class FolderBookLocation(
+    val uri: Uri?,
+    val canConfirmMissing: Boolean,
+    val accountId: String? = null,
+)
+
 private const val BANNER_AUTO_DISMISS_MILLIS = 3_000L
 private const val CLOUD_CONTENT_RETRY_DELAY_MILLIS = 10_000L
 private const val CLOUD_METADATA_UPLOAD_DEBOUNCE_MILLIS = 1_500L
@@ -3736,14 +3747,27 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 remove(SyncedFolderPrefs.KEY_LEGACY_LAST_FOLDER_SCAN_TIME)
             }
         }
-        return folders
+        val appManagedFolders = authRepository.getSignedInUser()?.uid
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?.let { accountId ->
+                CloudFolderAppStoragePrefs.load(appContext, accountId)
+                    .map { it.toSyncedFolder(appContext.filesDir) }
+            }
+            .orEmpty()
+        return (folders + appManagedFolders).distinctBy { it.uriString }
     }
 
     private fun saveSyncedFoldersToPrefs(folders: List<SyncedFolder>) {
         prefs.edit {
             putString(
                 SyncedFolderPrefs.KEY_SYNCED_FOLDERS_JSON,
-                SyncedFolderPrefs.encodeSyncedFolders(folders)
+                // App-private cloud materializations have a separate
+                // account-scoped registry. Keeping them out of this legacy
+                // JSON means older builds continue to see only SAF folders.
+                SyncedFolderPrefs.encodeSyncedFolders(
+                    folders.filterNot { it.isAppManaged || it.isCloudPlaceholder }
+                )
             )
         }
     }
@@ -3797,6 +3821,69 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 // A sign-in transition can race this refresh. Never publish
                 // state belonging to the account that is no longer active.
                 if (_internalState.value.currentUser?.uid?.trim() != accountId) return@launch
+                // A KEEP_OFFLINE binding has no SAF URI, so its folder-tab
+                // entry is held in a separate account-scoped registry. The
+                // existence check also repairs entries created by an older
+                // build that materialized the app-private tree before the
+                // folder-tab projection existed.
+                bindings.values
+                    .filter { it.materializationMode == CloudFolderMaterializationMode.KEEP_OFFLINE }
+                    .forEach { binding ->
+                        val root = runCatching {
+                            cloudFolderAppRootDirectory(appContext.filesDir, binding.rootId)
+                        }.getOrNull()
+                        if (root?.isDirectory == true &&
+                            roots.any { it.rootId == binding.rootId } &&
+                            !CloudFolderAppStoragePrefs.contains(appContext, accountId, binding.rootId)
+                        ) {
+                            val rootName = roots.firstOrNull { it.rootId == binding.rootId }?.name
+                                ?: "Cloud folder"
+                            CloudFolderAppStoragePrefs.upsert(
+                                context = appContext,
+                                accountId = accountId,
+                                rootId = binding.rootId,
+                                name = rootName,
+                            )
+                        }
+                    }
+                val appManagedFolders = CloudFolderAppStoragePrefs.load(appContext, accountId)
+                    .map { it.toSyncedFolder(appContext.filesDir) }
+                val appManagedRootIds = appManagedFolders
+                    .mapNotNullTo(hashSetOf()) { it.cloudRootId?.trim()?.takeIf { id -> id.isNotBlank() } }
+                val userFolders = _internalState.value.syncedFolders
+                    .filterNot { it.isAppManaged || it.isCloudPlaceholder }
+                val placeholderRootIds = (
+                    CloudFolderSyncPrefs.discoveredIncomingRootIds(
+                        context = appContext,
+                        accountId = accountId,
+                    ) + pendingRootIds
+                ).distinct()
+                val placeholderFolders = placeholderRootIds.asSequence()
+                    .mapNotNull { rootId ->
+                        val root = roots.firstOrNull { it.rootId == rootId } ?: return@mapNotNull null
+                        if (rootId in appManagedRootIds || userFolders.any { it.cloudRootId == rootId }) {
+                            return@mapNotNull null
+                        }
+                        SyncedFolder(
+                            uriString = "cloud-folder-placeholder:$rootId",
+                            name = root.name,
+                            lastScanTime = 0L,
+                            allowedFileTypes = ANDROID_SYNCABLE_FILE_TYPES,
+                            localSyncEnabled = false,
+                            cloudRootId = rootId,
+                            isCloudPlaceholder = true,
+                        )
+                    }
+                    .toList()
+                val configuredFolders = (userFolders + appManagedFolders + placeholderFolders)
+                    .distinctBy { it.uriString }
+                _internalState.update { current ->
+                    if (current.currentUser?.uid?.trim() == accountId) {
+                        current.copy(syncedFolders = configuredFolders)
+                    } else {
+                        current
+                    }
+                }
                 _cloudFolderRootStats.value = stats
                 _cloudFolderLocalInventories.value = localInventories
                 _cloudFolderRoots.value = roots.sortedWith(
@@ -3813,7 +3900,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 }
                 scheduleLocalCloudFolderInventories(
                     accountId = accountId,
-                    folders = _internalState.value.syncedFolders,
+                    folders = configuredFolders,
                     roots = roots,
                     localInventories = localInventories,
                 )
@@ -3838,6 +3925,10 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         val rootIds = roots.mapTo(hashSetOf()) { it.rootId }
         val now = System.currentTimeMillis()
         folders.forEach { folder ->
+            // A ghost entry is an account inventory marker only. It has no
+            // local URI and must never trigger SAF enumeration or a local
+            // inventory row before the user materializes it.
+            if (folder.isCloudPlaceholder) return@forEach
             val rootId = folder.cloudRootId?.trim()?.takeIf { it.isNotBlank() } ?: return@forEach
             val localUri = folder.uriString.trim().takeIf { it.isNotBlank() } ?: return@forEach
             if (rootId !in rootIds) return@forEach
@@ -3872,12 +3963,35 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         )
                     )
                     CloudFolderSyncEvents.notifyStateChanged()
-                    val result = CloudFolderSafScanner.scanInventory(
-                        context = appContext,
-                        rootUri = Uri.parse(localUri),
-                        rootId = rootId,
-                        now = System.currentTimeMillis(),
-                    )
+                    val result = if (folder.isAppManaged) {
+                        val appRoot = runCatching {
+                            cloudFolderAppRootDirectory(appContext.filesDir, rootId)
+                        }.getOrNull()
+                        if (appRoot == null) {
+                            com.aryan.reader.data.CloudFolderSafInventoryResult(
+                                fileCount = 0,
+                                directoryCount = 0,
+                                totalBytes = 0L,
+                                sizeComplete = false,
+                                complete = false,
+                                scannedAt = System.currentTimeMillis(),
+                                errorMessage = "App-private cloud folder has an invalid root ID",
+                            )
+                        } else {
+                            CloudFolderSafScanner.scanAppStorageInventory(
+                                root = appRoot,
+                                rootId = rootId,
+                                now = System.currentTimeMillis(),
+                            )
+                        }
+                    } else {
+                        CloudFolderSafScanner.scanInventory(
+                            context = appContext,
+                            rootUri = Uri.parse(localUri),
+                            rootId = rootId,
+                            now = System.currentTimeMillis(),
+                        )
+                    }
                     val completedAt = System.currentTimeMillis()
                     if (result.complete) {
                         repository.saveLocalInventory(
@@ -3943,6 +4057,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    /** Hide the global prompt for now; keep an unmaterialized Folders entry. */
     fun dismissIncomingCloudFolderPrompt(
         rootId: String,
         onPersisted: (Boolean) -> Unit = {},
@@ -3962,7 +4077,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     reportIncomingCloudFolderPersistence(onPersisted, succeeded = false)
                     return@launch
                 }
-                CloudFolderSyncPrefs.dismissIncomingPrompt(
+                CloudFolderSyncPrefs.snoozeIncomingPrompt(
                     context = appContext,
                     accountId = accountId,
                     rootId = root.rootId,
@@ -3983,7 +4098,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
     private suspend fun registerLocalCloudFolders(accountId: String) {
         val repository = CloudFolderSyncRepository(appContext, accountId)
-        _internalState.value.syncedFolders.forEach { folder ->
+        _internalState.value.syncedFolders
+            .filterNot { it.isAppManaged || it.isCloudPlaceholder }
+            .forEach { folder ->
             val rootId = folder.cloudRootId?.trim()?.takeIf { it.isNotBlank() } ?: return@forEach
             try {
                 repository.registerLocalFolder(
@@ -4078,12 +4195,28 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     (indexInLibrary || isCloudFolderSyncAvailableFor(accountId))
                 ) {
                     try {
-                        CloudFolderSyncRepository(appContext, accountId).registerLocalFolder(
+                        val cloudRepository = CloudFolderSyncRepository(appContext, accountId)
+                        cloudRepository.registerLocalFolder(
                             localUri = newFolder.uriString,
                             name = newFolder.name,
                             rootId = newFolder.cloudRootId,
                             materializationMode = com.aryan.reader.shared.CloudFolderMaterializationMode.LOCAL_MIRROR,
                         )
+                        if (!indexInLibrary) {
+                            // The cloud-folder picker is an explicit opt-in.
+                            // Select the new logical root immediately, while
+                            // converting legacy EXCLUDED/ALL values to the
+                            // new per-folder representation so the first
+                            // upload cannot be silently skipped.
+                            val newRootId = requireNotNull(newFolder.cloudRootId)
+                            val knownRootIds = cloudRepository.getRoots().map { it.rootId } + newRootId
+                            val nextSelection = CloudFolderSyncPrefs
+                                .load(appContext, accountId)
+                                .toExplicitSelection(knownRootIds)
+                                .withRootIncluded(newRootId)
+                            CloudFolderSyncPrefs.save(appContext, accountId, nextSelection)
+                            CloudFolderSyncEvents.notifyStateChanged()
+                        }
                     } catch (error: Exception) {
                         // Keep the local configuration usable; sign-in/startup
                         // registration retries the account-owned binding.
@@ -4223,9 +4356,11 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     ) {
         val allFolders = _internalState.value.syncedFolders
         val folders = if (targetFolderUriString.isNullOrBlank()) {
-            allFolders.filter { it.localSyncEnabled }
+            allFolders.filter { it.localSyncEnabled && !it.isCloudPlaceholder }
         } else {
-            allFolders.filter { it.uriString == targetFolderUriString && it.localSyncEnabled }
+            allFolders.filter {
+                it.uriString == targetFolderUriString && it.localSyncEnabled && !it.isCloudPlaceholder
+            }
         }
         if (folders.isEmpty()) {
             if (showFeedback) {
@@ -5736,11 +5871,28 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 }
             }
         } catch (e: Exception) {
-            logCloudSyncError(e) { "android.full_sync.failed user=${currentUser.uid}" }
-            Timber.tag("AnnotationSync").e(e, "Error during cloud sync")
-            if (showBanner) {
-                _internalState.update {
-                    it.copy(isLoading = false, errorMessage = appContext.getString(R.string.error_sync_library_failed))
+            if (isCloudFolderTransferFailure(e)) {
+                // Folder transfers own their durable progress/error state. Do
+                // not turn a background folder problem into a misleading
+                // global "Library sync failed" banner; the folder settings
+                // surface and the common cloud-folder log tag are the source
+                // of truth for that pipeline.
+                cloudFolderLogError(
+                    event = "library_sync_error_suppressed",
+                    error = e,
+                    details = "reason=cloud_folder_transfer",
+                )
+                if (showBanner) {
+                    _internalState.update { it.copy(isLoading = false) }
+                }
+                refreshCloudFolderSyncState()
+            } else {
+                logCloudSyncError(e) { "android.full_sync.failed user=${currentUser.uid}" }
+                Timber.tag("AnnotationSync").e(e, "Error during cloud sync")
+                if (showBanner) {
+                    _internalState.update {
+                        it.copy(isLoading = false, errorMessage = appContext.getString(R.string.error_sync_library_failed))
+                    }
                 }
             }
         }
@@ -7624,28 +7776,38 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         } else {
             if (item.sourceFolderUri != null && item.uriString != null) {
                 viewModelScope.launch {
-                    val exists = try {
-                        val uri = item.uriString.toUri()
-                        DocumentFile.fromSingleUri(appContext, uri)?.exists() == true
-                    } catch (_: Exception) {
-                        false
+                    val location = withContext(Dispatchers.IO) {
+                        resolveFolderBookLocation(item)
                     }
 
-                    if (!exists) {
+                    if (location.accountId != null &&
+                        (authRepository.getSignedInUser()?.uid?.trim() != location.accountId ||
+                            _internalState.value.currentUser?.uid?.trim() != location.accountId)
+                    ) {
+                        Timber.tag(CLOUD_FOLDER_SYNC_LOG_TAG)
+                            .w("event=book_open_blocked reason=account_changed")
+                        return@launch
+                    }
+
+                    if (location.uri == null && location.canConfirmMissing) {
                         Timber.tag("FolderSync")
                             .i("LazyCleanup: File ${item.displayName} missing. Removing.")
                         bookStore.deleteFilePermanently(listOf(item.bookId))
                         showBanner(appContext.getString(R.string.banner_file_deleted_from_folder))
                         return@launch
                     }
+                    if (location.uri == null) {
+                        Timber.tag(CLOUD_FOLDER_SYNC_LOG_TAG)
+                            .w("event=book_open_blocked reason=unverified_folder_uri")
+                        _internalState.update {
+                            it.copy(errorMessage = appContext.getString(R.string.error_file_location_not_found))
+                        }
+                        return@launch
+                    }
 
                     Timber.d("Recent file clicked (opening): ${item.displayName}")
                     if (item.isAvailable) {
-                        item.getUri()?.let { uri ->
-                            openBook(uri, item.bookId, item.type, item.displayName)
-                        } ?: run {
-                            _internalState.update { it.copy(errorMessage = appContext.getString(R.string.error_file_location_not_found)) }
-                        }
+                        openBook(location.uri, item.bookId, item.type, item.displayName)
                     } else {
                         downloadBook(item, openWhenComplete = true)
                     }
@@ -7664,6 +7826,57 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             } else {
                 downloadBook(item, openWhenComplete = true)
             }
+        }
+    }
+
+    /**
+     * Resolve a folder-backed book without asking DocumentFile to interpret a
+     * `file://` URI. App-private cloud roots are account-scoped and must stay
+     * beneath the registered cloud-folder directory; SAF roots retain the
+     * provider existence check used by older builds.
+     */
+    private fun resolveFolderBookLocation(item: RecentFileItem): FolderBookLocation {
+        val sourceFolderUriString = item.sourceFolderUri ?: return FolderBookLocation(null, false)
+        val fileUriString = item.uriString ?: return FolderBookLocation(null, true)
+        val sourceFolderUri = runCatching { sourceFolderUriString.toUri() }.getOrNull()
+            ?: return FolderBookLocation(null, true)
+
+        if (sourceFolderUri.scheme.equals("file", ignoreCase = true)) {
+            val accountId = authRepository.getSignedInUser()?.uid?.trim()
+                ?.takeIf { it.isNotBlank() }
+                ?: return FolderBookLocation(null, false)
+            // A file-backed source folder is an app-private cloud root. If it
+            // is not registered for the active account, do not fall through to
+            // an arbitrary File/DocumentFile path and do not delete the row.
+            if (CloudFolderAppStoragePrefs.rootIdForUri(appContext, accountId, sourceFolderUriString) == null) {
+                return FolderBookLocation(null, false)
+            }
+            val managedFile = CloudFolderAppStoragePrefs.resolveManagedFile(
+                context = appContext,
+                accountId = accountId,
+                sourceFolderUri = sourceFolderUriString,
+                fileUriString = fileUriString,
+            ) ?: return FolderBookLocation(null, false)
+            if (managedFile.exists() && !managedFile.isFile) {
+                // A path-type mismatch is not proof that the indexed book was
+                // deleted. Keep the row so a later repair can report/fix it.
+                return FolderBookLocation(null, false)
+            }
+            return FolderBookLocation(
+                uri = managedFile.takeIf { it.isFile }?.toUri(),
+                canConfirmMissing = true,
+                accountId = accountId,
+            )
+        }
+
+        val fileUri = runCatching { fileUriString.toUri() }.getOrNull()
+            ?: return FolderBookLocation(null, true)
+        val document = runCatching { DocumentFile.fromSingleUri(appContext, fileUri) }
+            .getOrNull()
+        return when {
+            document?.exists() == true && document.isFile -> FolderBookLocation(fileUri, true)
+            document?.exists() == true -> FolderBookLocation(null, false)
+            else -> FolderBookLocation(null, true)
         }
     }
 

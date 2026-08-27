@@ -34,7 +34,12 @@ internal fun cloudFolderSyncFolderOptions(
         }
         .groupBy({ it.first }, { it.second })
 
-    val localOptions = folders.map { folder ->
+    val localOptions = folders
+        // A discovered remote root is represented in Folders as a ghost
+        // entry until the user chooses how to materialize it. It is not a
+        // local binding and must not appear as a zero-file selectable folder.
+        .filterNot { it.isCloudPlaceholder }
+        .map { folder ->
         val sizes = statsByUri[folder.uriString].orEmpty()
         val mappedRootId = folder.cloudRootId?.trim()?.takeIf { it.isNotBlank() }
         val repositoryStat = mappedRootId?.let(repositoryStats::get)

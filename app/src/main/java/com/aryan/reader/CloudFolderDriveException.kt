@@ -28,3 +28,32 @@ class CloudFolderDriveException(
     "Cloud Drive request failed ($statusCategory)",
     cause,
 )
+
+/**
+ * Safe context for a failure outside the Drive API itself (for example a
+ * local temp-file or payload-verification failure).  The message deliberately
+ * contains only bounded diagnostic categories; callers must not put paths,
+ * filenames, URIs, or Drive IDs in this exception.
+ */
+class CloudFolderTransferException(
+    stage: String,
+    category: String,
+    statusCategory: String = "unknown",
+    cause: Throwable? = null,
+) : IOException(
+    "Cloud-folder transfer failed (stage=${sanitizeTransferDiagnosticValue(stage)} " +
+        "category=${sanitizeTransferDiagnosticValue(category)} status=${sanitizeTransferDiagnosticValue(statusCategory)})",
+    cause,
+) {
+    val stage: String = sanitizeTransferDiagnosticValue(stage)
+    val category: String = sanitizeTransferDiagnosticValue(category)
+    val statusCategory: String = sanitizeTransferDiagnosticValue(statusCategory)
+}
+
+private fun sanitizeTransferDiagnosticValue(value: String): String =
+    value.trim()
+        .lowercase()
+        .replace(Regex("[^a-z0-9_]+"), "_")
+        .trim('_')
+        .take(64)
+        .ifBlank { "unknown" }

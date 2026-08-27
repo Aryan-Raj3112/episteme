@@ -260,6 +260,9 @@
     <string name="folder_sync_cloud_backup_on">Cloud backup on</string>
     <string name="folder_sync_cloud_sync_off">Cloud sync off</string>
     <string name="folder_sync_device_only">Device only</string>
+    <string name="folder_sync_cloud_downloaded">Downloaded from Drive</string>
+    <string name="folder_sync_cloud_available">Available in Drive</string>
+    <string name="folder_sync_cloud_choose_action">Choose download option</string>
     <!-- Small uppercase label on a folder sync card, followed by a date/time stamp. -->
     <string name="last_sync">LAST SCAN</string>
     <!-- Small uppercase label on a folder sync card, followed by the count of synced books. -->

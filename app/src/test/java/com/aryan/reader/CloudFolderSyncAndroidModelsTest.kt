@@ -106,6 +106,70 @@ class CloudFolderSyncAndroidModelsTest {
     }
 
     @Test
+    fun `downloaded app-managed roots remain visible as local cloud folders`() {
+        val rootId = "remote-books"
+        val uri = "file:///data/user/0/com.aryan.reader/files/cloud-folder-sync/$rootId"
+        val options = cloudFolderSyncFolderOptions(
+            folders = listOf(
+                SyncedFolder(
+                    uriString = uri,
+                    name = "Shared books",
+                    lastScanTime = 20L,
+                    cloudRootId = rootId,
+                    isAppManaged = true,
+                )
+            ),
+            indexedFiles = listOf(
+                RecentFileItem(
+                    bookId = "book",
+                    uriString = "$uri/book.epub",
+                    type = FileType.EPUB,
+                    displayName = "book.epub",
+                    timestamp = 20L,
+                    sourceFolderUri = uri,
+                    fileSize = 128L,
+                )
+            ),
+            deviceBindings = mapOf(
+                rootId to CloudFolderDeviceBinding(
+                    rootId = rootId,
+                    deviceId = "device-2",
+                    materializationMode = CloudFolderMaterializationMode.KEEP_OFFLINE,
+                )
+            ),
+        )
+
+        assertEquals(1, options.size)
+        assertEquals(rootId, options.single().rootId)
+        assertEquals(1, options.single().fileCount)
+        assertEquals(128L, options.single().totalBytes)
+        assertEquals(CloudFolderMaterializationMode.KEEP_OFFLINE, options.single().materializationMode)
+    }
+
+    @Test
+    fun `unmaterialized incoming roots stay out of local selection options`() {
+        val options = cloudFolderSyncFolderOptions(
+            folders = listOf(
+                SyncedFolder(
+                    uriString = "cloud-folder-placeholder:remote-books",
+                    name = "Shared books",
+                    lastScanTime = 0L,
+                    localSyncEnabled = false,
+                    cloudRootId = "remote-books",
+                    isCloudPlaceholder = true,
+                ),
+            ),
+            indexedFiles = emptyList(),
+            repositoryRoots = listOf(
+                CloudFolderRoot(rootId = "remote-books", name = "Shared books"),
+            ),
+        )
+
+        assertTrue(options.single().isRemote)
+        assertFalse(options.single().isSelectable)
+    }
+
+    @Test
     fun `cloud-only choice remains visible as a configured remote root`() {
         val root = CloudFolderRoot(rootId = "remote-books", name = "Shared books")
         val options = cloudFolderSyncFolderOptions(

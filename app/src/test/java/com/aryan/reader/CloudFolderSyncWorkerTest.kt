@@ -32,6 +32,7 @@ import io.mockk.unmockkObject
 import io.mockk.verify
 import kotlinx.coroutines.runBlocking
 import java.io.File
+import java.security.MessageDigest
 
 @RunWith(RobolectricTestRunner::class)
 class CloudFolderSyncWorkerTest {
@@ -152,6 +153,79 @@ class CloudFolderSyncWorkerTest {
         }.exceptionOrNull()
 
         assertTrue(failure is IllegalArgumentException)
+    }
+
+    @Test
+    fun appManagedFileResolverKeepsFileUrisInsideTheActiveAccountRoot() {
+        val context = RuntimeEnvironment.getApplication()
+        val accountId = "resolver-account-${System.nanoTime()}"
+        val rootId = "resolver-root-${System.nanoTime()}"
+        val root = cloudFolderAppRootDirectory(context.filesDir, rootId)
+        val file = root.resolve("nested/book.epub").apply {
+            parentFile?.mkdirs()
+            writeText("book")
+        }
+        val outside = root.parentFile!!.resolve("outside-${System.nanoTime()}.epub")
+        try {
+            CloudFolderAppStoragePrefs.upsert(context, accountId, rootId, "Books")
+
+            assertEquals(
+                file.canonicalFile,
+                CloudFolderAppStoragePrefs.resolveManagedFile(
+                    context = context,
+                    accountId = accountId,
+                    sourceFolderUri = Uri.fromFile(root).toString(),
+                    fileUriString = Uri.fromFile(file).toString(),
+                ),
+            )
+            val missing = root.resolve("nested/missing.epub")
+            assertEquals(
+                missing.canonicalFile,
+                CloudFolderAppStoragePrefs.resolveManagedFile(
+                    context = context,
+                    accountId = accountId,
+                    sourceFolderUri = Uri.fromFile(root).toString(),
+                    fileUriString = Uri.fromFile(missing).toString(),
+                ),
+            )
+            assertNull(
+                CloudFolderAppStoragePrefs.resolveManagedFile(
+                    context = context,
+                    accountId = accountId,
+                    sourceFolderUri = root.toURI().toString(),
+                    fileUriString = outside.toURI().toString(),
+                ),
+            )
+            assertNull(
+                CloudFolderAppStoragePrefs.resolveManagedFile(
+                    context = context,
+                    accountId = accountId,
+                    sourceFolderUri = Uri.fromFile(root).toString(),
+                    fileUriString = "content://provider/outside",
+                ),
+            )
+        } finally {
+            CloudFolderAppStoragePrefs.remove(context, accountId, rootId)
+            root.deleteRecursively()
+            outside.delete()
+        }
+    }
+
+    @Test
+    fun verifiedAppFileCanBeReusedOnlyWhenHashAndSizeMatch() = runBlocking {
+        val file = RuntimeEnvironment.getApplication().filesDir
+            .resolve("cloud-folder-match-${System.nanoTime()}.epub")
+            .apply { writeText("verified content") }
+        val hash = MessageDigest.getInstance("SHA-256")
+            .digest("verified content".toByteArray())
+            .joinToString("") { byte -> "%02x".format(byte) }
+        try {
+            assertTrue(cloudFolderAppFileMatches(file, "sha256:$hash", file.length()))
+            assertFalse(cloudFolderAppFileMatches(file, "sha256:${"0".repeat(64)}", file.length()))
+            assertFalse(cloudFolderAppFileMatches(file, "sha256:$hash", file.length() + 1L))
+        } finally {
+            file.delete()
+        }
     }
 
     @Test

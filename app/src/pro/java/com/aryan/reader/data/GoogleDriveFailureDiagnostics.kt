@@ -71,6 +71,17 @@ internal fun cloudFolderDriveSizeBucket(sizeBytes: Long): String = when {
     else -> "gte_100mib"
 }
 
+/**
+ * Drive's one-shot media request avoids the resumable-session handshake. Keep
+ * it bounded to 1 MiB so a transient failure only has to replay a small
+ * payload; unknown sizes stay resumable because direct upload needs a known
+ * content length.
+ */
+internal const val CLOUD_FOLDER_DIRECT_UPLOAD_MAX_BYTES: Long = 1L * 1024L * 1024L
+
+internal fun cloudFolderUploadMode(sizeBytes: Long): String =
+    if (sizeBytes in 0L..CLOUD_FOLDER_DIRECT_UPLOAD_MAX_BYTES) "multipart" else "resumable"
+
 internal data class RetryAfterDiagnostic(
     val kind: String,
     val seconds: Long?,

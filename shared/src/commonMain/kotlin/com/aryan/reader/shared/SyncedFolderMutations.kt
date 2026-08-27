@@ -14,7 +14,7 @@ fun syncedFolderAddDecision(
     val normalizedUri = uriString.trim()
     return when {
         normalizedUri.isBlank() -> SyncedFolderAddDecision.INVALID_URI
-        folders.size >= MAX_SYNCED_FOLDER_COUNT -> SyncedFolderAddDecision.LIMIT_REACHED
+        folders.count { !it.isAppManaged && !it.isCloudPlaceholder } >= MAX_SYNCED_FOLDER_COUNT -> SyncedFolderAddDecision.LIMIT_REACHED
         folders.any { it.uriString == normalizedUri } -> SyncedFolderAddDecision.ALREADY_SYNCED
         else -> SyncedFolderAddDecision.ALLOWED
     }

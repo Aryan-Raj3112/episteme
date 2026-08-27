@@ -38,7 +38,23 @@ private fun cloudFolderErrorChain(error: Throwable): Sequence<Throwable> = seque
     }
 }
 
+/**
+ * Identifies failures owned by the cloud-folder transfer pipeline. Keep this
+ * narrow: the main library sync must continue surfacing its own failures to
+ * the user even though both paths use Drive.
+ */
+internal fun isCloudFolderTransferFailure(error: Throwable): Boolean =
+    cloudFolderErrorChain(error).any {
+        it is CloudFolderTransferException || it is CloudFolderDriveException
+    }
+
 internal fun cloudFolderErrorStatus(error: Throwable): String {
+    cloudFolderErrorChain(error)
+        .filterIsInstance<CloudFolderTransferException>()
+        .firstOrNull()
+        ?.statusCategory
+        ?.takeIf { it.isNotBlank() && it != "unknown" }
+        ?.let { return it }
     // Drive reports this as HTTP 403, but it is a permanent request-shape
     // failure, not an account permission or transient quota failure.  The
     // offending metadata must be corrected before retrying can succeed.
@@ -54,7 +70,10 @@ internal fun cloudFolderErrorStatus(error: Throwable): String {
 
 /** The provider reason is useful in persisted progress, but not for retry policy. */
 internal fun cloudFolderPersistedErrorStatus(error: Throwable): String =
-    (error as? CloudFolderDriveException)?.driveReason
+    cloudFolderErrorChain(error)
+        .filterIsInstance<CloudFolderDriveException>()
+        .firstOrNull()
+        ?.driveReason
         ?.takeIf { it.isNotBlank() && it != "unknown" }
         ?: cloudFolderErrorStatus(error)
 
@@ -81,6 +100,22 @@ internal fun cloudFolderErrorStatus(message: String?): String {
         normalized.contains("unsupported") -> "unsupported"
         else -> "unknown"
     }
+}
+
+/** Wrap a transfer failure with only bounded, non-user-data diagnostics. */
+internal fun cloudFolderTransferFailure(
+    error: Throwable,
+    stage: String,
+    category: String,
+): CloudFolderTransferException {
+    if (error is CloudFolderTransferException) return error
+    val status = cloudFolderErrorStatus(error)
+    return CloudFolderTransferException(
+        stage = stage,
+        category = category,
+        statusCategory = status,
+        cause = error,
+    )
 }
 
 /** Only failures that are safe to stop retrying without user intervention. */
@@ -113,7 +148,10 @@ internal fun cloudFolderLogError(
     details: String = "",
 ) {
     val suffix = details.trim().takeIf { it.isNotBlank() }?.let { " $it" }.orEmpty()
-    val driveDetails = (error as? CloudFolderDriveException)?.let {
+    val driveDetails = cloudFolderErrorChain(error)
+        .filterIsInstance<CloudFolderDriveException>()
+        .firstOrNull()
+        ?.let {
         " httpStatus=${it.httpStatusCode ?: "none"} bodyCategory=${it.bodyCategory} " +
             "driveReason=${it.driveReason} driveDomain=${it.driveDomain} " +
             "driveCode=${it.driveErrorCode ?: "none"} retryAfter=${it.retryAfterKind}:" +
@@ -122,10 +160,15 @@ internal fun cloudFolderLogError(
             "stage=${it.operationStage ?: "unknown"} operation=${it.operationType ?: "unknown"} " +
             "uploadMode=${it.uploadMode ?: "unknown"} sizeBucket=${it.sizeBucket ?: "unknown"} " +
             "attempt=${it.attempt ?: "unknown"}"
-    }.orEmpty()
+        }.orEmpty()
+    val transferDetails = cloudFolderErrorChain(error)
+        .filterIsInstance<CloudFolderTransferException>()
+        .firstOrNull()
+        ?.let { " transferStage=${it.stage} transferCategory=${it.category}" }
+        .orEmpty()
     Timber.tag(CLOUD_FOLDER_SYNC_LOG_TAG).e(
         "event=$event errorClass=${cloudFolderErrorClass(error)} " +
-            "errorStatus=${cloudFolderErrorStatus(error)}$driveDetails$suffix",
+            "errorStatus=${cloudFolderErrorStatus(error)}$driveDetails$transferDetails$suffix",
     )
 }
 

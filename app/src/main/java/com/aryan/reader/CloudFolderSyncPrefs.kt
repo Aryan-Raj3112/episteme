@@ -14,6 +14,7 @@ object CloudFolderSyncPrefs {
     private const val KEY_SELECTION_PREFIX = "selection_v1_"
     private const val KEY_INCOMING_PENDING_PREFIX = "incoming_pending_v1_"
     private const val KEY_INCOMING_DISMISSED_PREFIX = "incoming_dismissed_v1_"
+    private const val KEY_INCOMING_DISCOVERED_PREFIX = "incoming_discovered_v1_"
 
     private val json = Json {
         encodeDefaults = true
@@ -44,6 +45,7 @@ object CloudFolderSyncPrefs {
             remove(keys.selection)
             remove(keys.incomingPending)
             remove(keys.incomingDismissed)
+            remove(keys.incomingDiscovered)
         }
     }
 
@@ -56,6 +58,14 @@ object CloudFolderSyncPrefs {
     fun pendingIncomingRootIds(context: Context, accountId: String): Set<String> =
         loadIncomingRevisions(context, accountId, incomingPendingKey = true).keys
 
+    /**
+     * Roots discovered from another device remain visible in Folders even
+     * after the user taps "Not now". They are placeholders only: no local
+     * files or books are exposed until a materialization choice completes.
+     */
+    fun discoveredIncomingRootIds(context: Context, accountId: String): Set<String> =
+        loadIncomingDiscovered(context, accountId).keys
+
     fun markIncomingPromptPending(
         context: Context,
         accountId: String,
@@ -66,11 +76,31 @@ object CloudFolderSyncPrefs {
         if (normalizedRootId.isBlank()) return
         val pending = loadIncomingRevisions(context, accountId, incomingPendingKey = true).toMutableMap()
         val dismissed = loadIncomingRevisions(context, accountId, incomingPendingKey = false)
+        val discovered = loadIncomingDiscovered(context, accountId).toMutableMap()
         if ((dismissed[normalizedRootId] ?: Long.MIN_VALUE) >= revision) {
             return
         }
+        discovered[normalizedRootId] = maxOf(discovered[normalizedRootId] ?: Long.MIN_VALUE, revision.coerceAtLeast(0L))
+        saveIncomingDiscovered(context, accountId, discovered)
         pending[normalizedRootId] = maxOf(pending[normalizedRootId] ?: Long.MIN_VALUE, revision.coerceAtLeast(0L))
         saveIncomingRevisions(context, accountId, incomingPendingKey = true, pending)
+    }
+
+    /** Hide the global prompt for now while retaining a Folders placeholder. */
+    fun snoozeIncomingPrompt(
+        context: Context,
+        accountId: String,
+        rootId: String,
+        revision: Long,
+    ) {
+        val normalizedRootId = rootId.trim()
+        if (normalizedRootId.isBlank()) return
+        val pending = loadIncomingRevisions(context, accountId, incomingPendingKey = true).toMutableMap()
+        pending.remove(normalizedRootId)
+        saveIncomingRevisions(context, accountId, incomingPendingKey = true, pending)
+        val discovered = loadIncomingDiscovered(context, accountId).toMutableMap()
+        discovered[normalizedRootId] = maxOf(discovered[normalizedRootId] ?: Long.MIN_VALUE, revision.coerceAtLeast(0L))
+        saveIncomingDiscovered(context, accountId, discovered)
     }
 
     fun dismissIncomingPrompt(
@@ -85,6 +115,10 @@ object CloudFolderSyncPrefs {
         pending.remove(normalizedRootId)
         saveIncomingRevisions(context, accountId, incomingPendingKey = true, pending)
 
+        val discovered = loadIncomingDiscovered(context, accountId).toMutableMap()
+        discovered.remove(normalizedRootId)
+        saveIncomingDiscovered(context, accountId, discovered)
+
         val dismissed = loadIncomingRevisions(context, accountId, incomingPendingKey = false).toMutableMap()
         dismissed[normalizedRootId] = maxOf(dismissed[normalizedRootId] ?: Long.MIN_VALUE, revision.coerceAtLeast(0L))
         saveIncomingRevisions(context, accountId, incomingPendingKey = false, dismissed)
@@ -95,6 +129,7 @@ object CloudFolderSyncPrefs {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit(commit = true) {
             remove(keys.incomingPending)
             remove(keys.incomingDismissed)
+            remove(keys.incomingDiscovered)
         }
     }
 
@@ -106,6 +141,7 @@ object CloudFolderSyncPrefs {
         val selection: String,
         val incomingPending: String,
         val incomingDismissed: String,
+        val incomingDiscovered: String,
     )
 
     private fun accountKeys(accountId: String): AccountKeys? {
@@ -118,7 +154,25 @@ object CloudFolderSyncPrefs {
             selection = KEY_SELECTION_PREFIX + suffix,
             incomingPending = KEY_INCOMING_PENDING_PREFIX + suffix,
             incomingDismissed = KEY_INCOMING_DISMISSED_PREFIX + suffix,
+            incomingDiscovered = KEY_INCOMING_DISCOVERED_PREFIX + suffix,
         )
+    }
+
+    private fun loadIncomingDiscovered(context: Context, accountId: String): Map<String, Long> {
+        val keys = accountKeys(accountId) ?: return emptyMap()
+        return loadIncomingMap(
+            context = context,
+            key = keys.incomingDiscovered,
+        )
+    }
+
+    private fun saveIncomingDiscovered(
+        context: Context,
+        accountId: String,
+        revisions: Map<String, Long>,
+    ) {
+        val keys = accountKeys(accountId) ?: return
+        saveIncomingMap(context, keys.incomingDiscovered, revisions)
     }
 
     private fun loadIncomingRevisions(
@@ -128,6 +182,10 @@ object CloudFolderSyncPrefs {
     ): Map<String, Long> {
         val keys = accountKeys(accountId) ?: return emptyMap()
         val key = if (incomingPendingKey) keys.incomingPending else keys.incomingDismissed
+        return loadIncomingMap(context, key)
+    }
+
+    private fun loadIncomingMap(context: Context, key: String): Map<String, Long> {
         val raw = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString(key, null)
             ?: return emptyMap()
         return runCatching {
@@ -147,6 +205,14 @@ object CloudFolderSyncPrefs {
     ) {
         val keys = accountKeys(accountId) ?: return
         val key = if (incomingPendingKey) keys.incomingPending else keys.incomingDismissed
+        saveIncomingMap(context, key, revisions)
+    }
+
+    private fun saveIncomingMap(
+        context: Context,
+        key: String,
+        revisions: Map<String, Long>,
+    ) {
         val json = JSONObject()
         revisions
             .asSequence()

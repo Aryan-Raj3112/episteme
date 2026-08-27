@@ -39,13 +39,13 @@ import com.aryan.reader.shared.CloudFolderSyncProgress
 import com.aryan.reader.shared.CloudFolderConflictResolution
 import com.aryan.reader.shared.CloudFolderTombstone
 import com.aryan.reader.shared.canonicalCloudFolderContentHash
+import com.aryan.reader.shared.isCloudFolderSha256
 import com.aryan.reader.shared.normalizeCloudFolderRelativePath
 import com.aryan.reader.shared.planCloudFolderSync
 import com.aryan.reader.shared.resolveCloudFolderSync
 import java.io.File
 import java.io.FileOutputStream
 import java.io.FilterInputStream
-import java.io.FilterOutputStream
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
@@ -53,6 +53,7 @@ import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -132,6 +133,20 @@ class CloudFolderSyncWorker(
                 } else if (requestedRootId.isNotBlank()) {
                     if (direction == Direction.PULL) {
                         pullRoot(accessToken, requestedRootId)
+                        if (repository.isIncluded(requestedRootId) &&
+                            repository.getBinding(requestedRootId) != null
+                        ) {
+                            val progress = repository.getProgress(requestedRootId)
+                            val stats = repository.getRoot(requestedRootId)?.stats
+                            saveRootProgress(
+                                rootId = requestedRootId,
+                                phase = CloudFolderSyncPhase.SUCCEEDED,
+                                completedFiles = progress?.totalFiles ?: stats?.fileCount ?: 0,
+                                totalFiles = progress?.totalFiles ?: stats?.fileCount ?: 0,
+                                completedBytes = progress?.totalBytes ?: stats?.totalBytes ?: 0L,
+                                totalBytes = progress?.totalBytes ?: stats?.totalBytes ?: 0L,
+                            )
+                        }
                     } else {
                         syncRoot(accessToken, requestedRootId, direction)
                     }
@@ -1154,12 +1169,14 @@ class CloudFolderSyncWorker(
             compareBy<CloudFolderNode> { pathDepth(it.relativePath) }.thenBy { it.pathKey }
         )
         for (directory in directories) {
+            currentCoroutineContext().ensureActive()
             ensureDirectory(root, directory.relativePath)
         }
         val files = manifest.activeFiles().sortedWith(
             compareBy<CloudFolderNode> { pathDepth(it.relativePath) }.thenBy { it.pathKey }
         )
         for (node in files) {
+            currentCoroutineContext().ensureActive()
             val objectId = node.contentObjectId?.takeIf { it.isNotBlank() }
                 ?: throw IOException("Cloud object is missing for ${node.relativePath}")
             val parent = ensureDirectory(root, parentPath(node.relativePath))
@@ -1191,6 +1208,7 @@ class CloudFolderSyncWorker(
                 .thenBy { it.pathKey }
                 .thenBy { it.nodeId }
         )) {
+            currentCoroutineContext().ensureActive()
             ensureAccountStillActive()
             val target = findDocument(root, tombstone.relativePath) ?: continue
             if (tombstone.kind == CloudFolderNodeKind.FILE) {
@@ -1235,6 +1253,7 @@ class CloudFolderSyncWorker(
                 val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
                 var count = 0L
                 while (true) {
+                    currentCoroutineContext().ensureActive()
                     val read = stream.read(buffer)
                     if (read < 0) break
                     if (read == 0) continue
@@ -1250,33 +1269,146 @@ class CloudFolderSyncWorker(
         accessToken: String,
         manifest: CloudFolderManifest,
     ) = withContext(Dispatchers.IO) {
-        val root = cloudFolderAppRootDirectory(applicationContext.filesDir, manifest.rootId)
-        if (!root.exists() && !root.mkdirs()) throw IOException("Unable to create offline folder")
-        if (!root.isDirectory) throw IOException("Offline folder is not a directory")
+        val safeRoot = cloudFolderSafeId(manifest.rootId)
+        val directories = manifest.activeDirectories().sortedWith(
+            compareBy<CloudFolderNode> { pathDepth(it.relativePath) }.thenBy { it.pathKey }
+        )
+        val files = manifest.activeFiles().sortedWith(
+            compareBy<CloudFolderNode> { pathDepth(it.relativePath) }.thenBy { it.pathKey }
+        )
+        val totalBytes = files.sumOf { it.sizeBytes.coerceAtLeast(0L) }
+        val startedAt = System.currentTimeMillis()
+        cloudFolderLogI(
+            "event=materialize_start root=$safeRoot mode=app_storage " +
+                "directories=${directories.size} files=${files.size} bytes=$totalBytes",
+        )
+        try {
+            val root = cloudFolderAppRootDirectory(applicationContext.filesDir, manifest.rootId)
+            if (!root.exists() && !root.mkdirs()) throw IOException("Unable to create offline folder")
+            if (!root.isDirectory) throw IOException("Offline folder is not a directory")
 
-        for (directory in manifest.activeDirectories().sortedWith(
-            compareBy<CloudFolderNode> { pathDepth(it.relativePath) }.thenBy { it.pathKey }
-        )) {
-            val target = safeAppPath(root, directory.relativePath)
-            if (target.exists() && !target.isDirectory) {
-                throw IOException("Offline path is a file: ${directory.relativePath}")
+            for ((index, directory) in directories.withIndex()) {
+                currentCoroutineContext().ensureActive()
+                val safeNode = cloudFolderSafeId(directory.nodeId)
+                cloudFolderLogD(
+                    "event=materialize_directory_start root=$safeRoot node=$safeNode " +
+                        "ordinal=${index + 1} totalDirectories=${directories.size}",
+                )
+                val target = safeAppPath(root, directory.relativePath)
+                if (target.exists() && !target.isDirectory) {
+                    throw IOException("Offline path is a file: ${directory.relativePath}")
+                }
+                if (!target.exists() && !target.mkdirs()) {
+                    throw IOException("Unable to create offline directory: ${directory.relativePath}")
+                }
+                cloudFolderLogD(
+                    "event=materialize_directory_end root=$safeRoot node=$safeNode result=success",
+                )
             }
-            if (!target.exists() && !target.mkdirs()) {
-                throw IOException("Unable to create offline directory: ${directory.relativePath}")
+
+            // The existing progress schema has no DOWNLOADING phase. Reuse
+            // its determinate transfer phase for this local materialization;
+            // this changes only the persisted progress projection, not sync
+            // or retry behavior.
+            saveRootProgress(
+                rootId = manifest.rootId,
+                phase = CloudFolderSyncPhase.UPLOADING,
+                totalFiles = files.size,
+                totalBytes = totalBytes,
+            )
+            var completedFiles = 0
+            var completedBytes = 0L
+            for ((index, node) in files.withIndex()) {
+                currentCoroutineContext().ensureActive()
+                val ordinal = index + 1
+                val safeNode = cloudFolderSafeId(node.nodeId)
+                val objectId = node.contentObjectId?.takeIf { it.isNotBlank() }
+                    ?: throw cloudFolderTransferFailure(
+                        error = IOException("Cloud object is missing"),
+                        stage = "manifest_validate",
+                        category = "missing_content_object",
+                    )
+                cloudFolderLogD(
+                    "event=materialize_file_start root=$safeRoot node=$safeNode " +
+                        "ordinal=$ordinal totalFiles=${files.size} bytes=${node.sizeBytes} " +
+                        "transfer=download",
+                )
+                val target = safeAppPath(root, node.relativePath)
+                target.parentFile?.let { parent ->
+                    if (!parent.exists() && !parent.mkdirs()) throw IOException("Unable to create offline parent")
+                }
+                try {
+                    writeAppFileAtomically(accessToken, target, node, objectId)
+                    completedFiles = ordinal
+                    completedBytes = (completedBytes + node.sizeBytes.coerceAtLeast(0L))
+                        .coerceAtMost(totalBytes)
+                    saveRootProgress(
+                        rootId = manifest.rootId,
+                        phase = CloudFolderSyncPhase.UPLOADING,
+                        completedFiles = completedFiles,
+                        totalFiles = files.size,
+                        completedBytes = completedBytes,
+                        totalBytes = totalBytes,
+                    )
+                    cloudFolderLogD(
+                        "event=materialize_file_end root=$safeRoot node=$safeNode result=success " +
+                            "ordinal=$ordinal totalFiles=${files.size} bytes=${node.sizeBytes}",
+                    )
+                } catch (error: kotlinx.coroutines.CancellationException) {
+                    throw error
+                } catch (error: Exception) {
+                    val safe = cloudFolderTransferFailure(
+                        error = error,
+                        stage = "materialize_file",
+                        category = "file_transfer_failure",
+                    )
+                    cloudFolderLogError(
+                        event = "materialize_file_end",
+                        error = safe,
+                        details = "root=$safeRoot node=$safeNode result=failure " +
+                            "ordinal=$ordinal totalFiles=${files.size} bytes=${node.sizeBytes} " +
+                            "stage=${safe.stage}",
+                    )
+                    throw safe
+                }
             }
+            applyAppTombstones(root, manifest.tombstones)
+            // Keep the folder tab and the legacy local index in step with a
+            // completed download. The registry is separate from the SAF
+            // folder list so older builds simply ignore this app-private
+            // materialization.
+            CloudFolderAppStoragePrefs.ensure(
+                context = applicationContext,
+                accountId = repository.accountId,
+                rootId = manifest.rootId,
+                name = manifest.root.name,
+            )
+            FolderSyncWorker.enqueueCloudFolderIndex(
+                context = applicationContext,
+                accountId = repository.accountId,
+                rootId = manifest.rootId,
+            )
+            cloudFolderLogI(
+                "event=materialize_end root=$safeRoot mode=app_storage result=success " +
+                    "files=$completedFiles bytes=$completedBytes durationMs=" +
+                    "${(System.currentTimeMillis() - startedAt).coerceAtLeast(0L)}",
+            )
+        } catch (error: kotlinx.coroutines.CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            val safe = cloudFolderTransferFailure(
+                error = error,
+                stage = "materialize_app_storage",
+                category = "materialization_failure",
+            )
+            cloudFolderLogError(
+                event = "materialize_end",
+                error = safe,
+                details = "root=$safeRoot mode=app_storage result=failure durationMs=" +
+                    "${(System.currentTimeMillis() - startedAt).coerceAtLeast(0L)} stage=${safe.stage}",
+            )
+            throw safe
         }
-        for (node in manifest.activeFiles().sortedWith(
-            compareBy<CloudFolderNode> { pathDepth(it.relativePath) }.thenBy { it.pathKey }
-        )) {
-            val objectId = node.contentObjectId?.takeIf { it.isNotBlank() }
-                ?: throw IOException("Cloud object is missing for ${node.relativePath}")
-            val target = safeAppPath(root, node.relativePath)
-            target.parentFile?.let { parent ->
-                if (!parent.exists() && !parent.mkdirs()) throw IOException("Unable to create offline parent")
-            }
-            writeAppFileAtomically(accessToken, target, node, objectId)
-        }
-        applyAppTombstones(root, manifest.tombstones)
     }
 
     private fun safeAppPath(root: File, relativePath: String): File {
@@ -1296,17 +1428,51 @@ class CloudFolderSyncWorker(
         node: CloudFolderNode,
         objectId: String,
     ) {
+        val safeRoot = cloudFolderSafeId(node.rootId)
+        val safeNode = cloudFolderSafeId(node.nodeId)
         ensureAccountStillActive()
         if (target.isDirectory) throw IOException("Offline path is a directory: ${node.relativePath}")
         val suffix = stableTempSuffix(node.nodeId)
         val temp = File(target.parentFile, ".${target.name}.$suffix.part")
         val backup = File(target.parentFile, ".${target.name}.$suffix.bak")
+        val expectedHash = canonicalCloudFolderContentHash(node.contentHash)
+        if (expectedHash != null && cloudFolderAppFileMatches(target, expectedHash, node.sizeBytes)) {
+            ensureAccountStillActive()
+            // A previous cancelled attempt may have left hidden staging
+            // files behind. The verified target is authoritative, so clean
+            // only this node's deterministic staging names before returning.
+            temp.delete()
+            backup.delete()
+            cloudFolderLogD(
+                "event=materialize_file_skip root=$safeRoot node=$safeNode " +
+                    "reason=verified_existing bytes=${node.sizeBytes}",
+            )
+            return
+        }
+        cloudFolderLogD(
+            "event=materialize_fs_temp_start root=$safeRoot node=$safeNode " +
+                "tempExists=${temp.exists()} targetExists=${target.exists()}",
+        )
         temp.delete()
         backup.delete()
-        val output = FileOutputStream(temp)
+        val output = try {
+            FileOutputStream(temp)
+        } catch (error: Exception) {
+            val safe = cloudFolderTransferFailure(error, "temp_open", "filesystem_temp_open")
+            cloudFolderLogError(
+                event = "materialize_fs_temp_end",
+                error = safe,
+                details = "root=$safeRoot node=$safeNode result=failure stage=${safe.stage}",
+            )
+            throw safe
+        }
+        cloudFolderLogD(
+            "event=materialize_fs_temp_end root=$safeRoot node=$safeNode result=success",
+        )
+        var stage = "drive_download"
         try {
             val digest = MessageDigest.getInstance("SHA-256")
-            val hashingOutput = DigestCountingOutputStream(output, digest)
+            val hashingOutput = CloudFolderDigestCountingOutputStream(output, digest)
             try {
                 driveRepository.downloadCloudFolderFileTo(
                     accessToken = accessToken,
@@ -1326,18 +1492,37 @@ class CloudFolderSyncWorker(
             if (actualHash != canonicalCloudFolderContentHash(node.contentHash) ||
                 hashingOutput.count != node.sizeBytes
             ) {
-                throw IOException("Offline file verification failed: ${node.relativePath}")
+                stage = "payload_verify"
+                throw CloudFolderTransferException(
+                    stage = stage,
+                    category = "offline_payload_mismatch",
+                    statusCategory = "unknown",
+                )
             }
             var stagedExisting = false
             if (target.exists()) {
                 ensureAccountStillActive()
+                stage = "backup_stage"
+                cloudFolderLogD(
+                    "event=materialize_fs_backup_start root=$safeRoot node=$safeNode",
+                )
                 if (!target.renameTo(backup)) throw IOException("Unable to stage offline file")
                 stagedExisting = true
+                cloudFolderLogD(
+                    "event=materialize_fs_backup_end root=$safeRoot node=$safeNode result=success",
+                )
             }
             try {
                 ensureAccountStillActive()
+                stage = "temp_commit"
+                cloudFolderLogD(
+                    "event=materialize_fs_commit_start root=$safeRoot node=$safeNode",
+                )
                 if (!temp.renameTo(target)) throw IOException("Unable to commit offline file")
                 backup.delete()
+                cloudFolderLogD(
+                    "event=materialize_fs_commit_end root=$safeRoot node=$safeNode result=success",
+                )
             } catch (error: Exception) {
                 temp.delete()
                 if (stagedExisting) backup.renameTo(target)
@@ -1345,7 +1530,13 @@ class CloudFolderSyncWorker(
             }
         } catch (error: Exception) {
             temp.delete()
-            throw error
+            val safe = cloudFolderTransferFailure(error, stage, "filesystem_materialization_failure")
+            cloudFolderLogError(
+                event = "materialize_fs_end",
+                error = safe,
+                details = "root=$safeRoot node=$safeNode result=failure stage=${safe.stage}",
+            )
+            throw safe
         }
     }
 
@@ -1355,6 +1546,7 @@ class CloudFolderSyncWorker(
                 .thenBy { it.pathKey }
                 .thenBy { it.nodeId }
         )) {
+            currentCoroutineContext().ensureActive()
             ensureAccountStillActive()
             val target = safeAppPath(root, tombstone.relativePath)
             if (!target.exists()) continue
@@ -1366,6 +1558,7 @@ class CloudFolderSyncWorker(
                     val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
                     var count = 0L
                     while (true) {
+                        currentCoroutineContext().ensureActive()
                         val read = stream.read(buffer)
                         if (read < 0) break
                         if (read == 0) continue
@@ -1417,6 +1610,16 @@ class CloudFolderSyncWorker(
         val name = node.relativePath.substringAfterLast('/')
         val existing = parent.findFile(name)
         if (existing?.isDirectory == true) throw IOException("Local path is a directory: ${node.relativePath}")
+        if (allowAlreadyMaterialized && existing?.isFile == true &&
+            cloudFolderDocumentMatches(existing, node)
+        ) {
+            ensureAccountStillActive()
+            cloudFolderLogD(
+                "event=materialize_file_skip root=${cloudFolderSafeId(node.rootId)} " +
+                    "node=${cloudFolderSafeId(node.nodeId)} reason=verified_existing bytes=${node.sizeBytes}",
+            )
+            return
+        }
         val tempName = ".cloud-folder-${stableTempSuffix(node.nodeId)}.part"
         val temp = parent.createFile(node.mimeType ?: "application/octet-stream", tempName)
             ?: throw IOException("Unable to create temporary SAF file: ${node.relativePath}")
@@ -1424,7 +1627,7 @@ class CloudFolderSyncWorker(
             val output = applicationContext.contentResolver.openOutputStream(temp.uri, "wt")
                 ?: throw IOException("Unable to open temporary SAF output: ${node.relativePath}")
             val digest = MessageDigest.getInstance("SHA-256")
-            val hashingOutput = DigestCountingOutputStream(output, digest)
+            val hashingOutput = CloudFolderDigestCountingOutputStream(output, digest)
             try {
                 driveRepository.downloadCloudFolderFileTo(
                     accessToken = accessToken,
@@ -1464,6 +1667,23 @@ class CloudFolderSyncWorker(
         } catch (error: Exception) {
             temp.delete()
             throw error
+        }
+    }
+
+    /** Hash an existing SAF target only for resumable/pull materialization. */
+    private suspend fun cloudFolderDocumentMatches(
+        document: DocumentFile,
+        node: CloudFolderNode,
+    ): Boolean {
+        val expectedHash = canonicalCloudFolderContentHash(node.contentHash)
+        if (!isCloudFolderSha256(expectedHash) || node.sizeBytes < 0L) return false
+        return try {
+            val (actualHash, actualSize) = hashDocument(document)
+            actualHash == expectedHash && actualSize == node.sizeBytes
+        } catch (error: kotlinx.coroutines.CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            false
         }
     }
 
@@ -1603,26 +1823,6 @@ class CloudFolderSyncWorker(
                 count += read
             }
             return read
-        }
-    }
-
-    private class DigestCountingOutputStream(
-        output: OutputStream,
-        private val digest: MessageDigest,
-    ) : FilterOutputStream(output) {
-        var count: Long = 0L
-            private set
-
-        override fun write(value: Int) {
-            super.write(value)
-            digest.update(value.toByte())
-            count++
-        }
-
-        override fun write(buffer: ByteArray, offset: Int, length: Int) {
-            super.write(buffer, offset, length)
-            digest.update(buffer, offset, length)
-            count += length
         }
     }
 
@@ -1824,6 +2024,44 @@ internal fun cloudFolderAppRootDirectory(filesDir: File, rootId: String): File {
     val prefix = base.path + File.separator
     require(target.path.startsWith(prefix)) { "Cloud-folder root escapes app storage" }
     return target
+}
+
+/**
+ * Verify an app-private materialized file before re-downloading it. A size
+ * check alone is insufficient because a local file can be replaced in place;
+ * only the authenticated SHA-256 and exact byte count permit a safe skip.
+ */
+internal suspend fun cloudFolderAppFileMatches(
+    target: File,
+    expectedHash: String?,
+    expectedSizeBytes: Long,
+): Boolean = withContext(Dispatchers.IO) {
+    val canonicalHash = canonicalCloudFolderContentHash(expectedHash)
+    if (!isCloudFolderSha256(canonicalHash) || expectedSizeBytes < 0L || !target.isFile) {
+        return@withContext false
+    }
+    if (target.length() != expectedSizeBytes) return@withContext false
+    return@withContext try {
+        val digest = MessageDigest.getInstance("SHA-256")
+        var count = 0L
+        target.inputStream().buffered().use { input ->
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            while (true) {
+                currentCoroutineContext().ensureActive()
+                val read = input.read(buffer)
+                if (read < 0) break
+                if (read == 0) continue
+                digest.update(buffer, 0, read)
+                count += read
+            }
+        }
+        count == expectedSizeBytes &&
+            "sha256:" + digest.digest().joinToString("") { byte -> "%02x".format(byte) } == canonicalHash
+    } catch (error: kotlinx.coroutines.CancellationException) {
+        throw error
+    } catch (_: Exception) {
+        false
+    }
 }
 
 internal fun buildLocalManifest(

@@ -619,22 +619,18 @@ internal fun CloudFolderIncomingFolderPromptDialog(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Text(
-                    "Choose whether this device should keep the folder in the cloud, download a complete local copy, or bind an existing local folder.",
+                    "Choose where Episteme should keep this folder. Its folder structure stays intact.",
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 IncomingFolderChoiceButton(
-                    title = "Keep cloud-only",
-                    summary = "Keep metadata only; files stay in Drive until you choose a copy.",
-                    onClick = { onChoice(CloudFolderIncomingChoice.CLOUD_ONLY) },
-                )
-                IncomingFolderChoiceButton(
-                    title = "Download all files",
-                    summary = "Create an app-managed offline copy of the complete tree.",
+                    title = "Keep in Episteme",
+                    summary = "Recommended · Download an offline copy to this device.",
                     onClick = { onChoice(CloudFolderIncomingChoice.DOWNLOAD_ALL) },
+                    primary = true,
                 )
                 IncomingFolderChoiceButton(
-                    title = "Bind a local folder",
-                    summary = "Choose a local folder and mirror the remote structure into it.",
+                    title = "Choose device folder",
+                    summary = "Optional · Store the folder in a location you choose.",
                     onClick = {
                         onChoice(CloudFolderIncomingChoice.BIND_LOCAL_FOLDER)
                         onBindLocalFolder()
@@ -653,15 +649,27 @@ private fun IncomingFolderChoiceButton(
     title: String,
     summary: String,
     onClick: () -> Unit,
+    primary: Boolean = false,
 ) {
-    Button(
-        modifier = Modifier.fillMaxWidth(),
-        onClick = onClick,
-    ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(title)
-            Text(summary, style = MaterialTheme.typography.labelSmall)
+    if (primary) {
+        Button(modifier = Modifier.fillMaxWidth(), onClick = onClick) {
+            IncomingFolderChoiceContent(title = title, summary = summary)
         }
+    } else {
+        OutlinedButton(modifier = Modifier.fillMaxWidth(), onClick = onClick) {
+            IncomingFolderChoiceContent(title = title, summary = summary)
+        }
+    }
+}
+
+@Composable
+private fun IncomingFolderChoiceContent(
+    title: String,
+    summary: String,
+) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(title)
+        Text(summary, style = MaterialTheme.typography.labelSmall)
     }
 }
 

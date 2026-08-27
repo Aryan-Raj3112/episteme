@@ -642,6 +642,9 @@ fun UnifiedLibraryScreen(
                             navController.navigateIfReady(com.aryan.reader.shared.ui.SharedMobileAppDestination.FOLDER_SYNC_SETTINGS)
                         }
                     } else null,
+                    onIncomingCloudFolder = if (canUseCloudFolderSync) {
+                        { rootId -> viewModel.showIncomingCloudFolderPrompt(rootId) }
+                    } else null,
                 )
                 UnifiedLibrarySection.CATALOGS -> if (!BuildConfig.IS_OFFLINE) {
                     Box(modifier = Modifier.fillMaxSize().padding(padding)) {
@@ -1200,6 +1203,7 @@ private fun UnifiedFoldersSection(
     cloudSyncEnabled: Boolean = false,
     isProUser: Boolean = false,
     onCloudFolderSettings: (() -> Unit)? = null,
+    onIncomingCloudFolder: ((String) -> Unit)? = null,
 ) {
     Box(modifier = modifier.fillMaxSize()) {
         FolderSyncScreen(
@@ -1216,6 +1220,7 @@ private fun UnifiedFoldersSection(
             cloudSyncEnabled = cloudSyncEnabled,
             isProUser = isProUser,
             onCloudFolderSettingsClick = onCloudFolderSettings,
+            onIncomingCloudFolderClick = onIncomingCloudFolder,
         )
     }
 }

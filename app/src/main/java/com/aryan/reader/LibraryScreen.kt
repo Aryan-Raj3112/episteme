@@ -482,6 +482,9 @@ fun LibraryScreen(
             onCloudFolderSettingsClick = if (canUseCloudFolderSync) {
                 { navController.navigateIfReady(com.aryan.reader.shared.ui.SharedMobileAppDestination.FOLDER_SYNC_SETTINGS) }
             } else null,
+            onIncomingCloudFolderClick = if (canUseCloudFolderSync) {
+                { rootId -> viewModel.showIncomingCloudFolderPrompt(rootId) }
+            } else null,
         )
 
 
@@ -785,6 +788,7 @@ fun LibraryScreenContent(
     cloudSyncEnabled: Boolean = false,
     isProUser: Boolean = false,
     onCloudFolderSettingsClick: (() -> Unit)? = null,
+    onIncomingCloudFolderClick: ((String) -> Unit)? = null,
 ) {
     val selectedBookIds = remember(selectedItems) { selectedItems.mapTo(mutableSetOf()) { it.bookId } }
     com.aryan.reader.shared.ui.SharedAndroidLibraryScaffold(
@@ -908,6 +912,7 @@ fun LibraryScreenContent(
                     cloudSyncEnabled = cloudSyncEnabled,
                     isProUser = isProUser,
                     onCloudFolderSettingsClick = onCloudFolderSettingsClick,
+                    onIncomingCloudFolderClick = onIncomingCloudFolderClick,
                 )
                 3 -> if (!BuildConfig.IS_OFFLINE) OpdsTab(
                     localLibraryFiles = rawLibraryFiles,
@@ -1483,6 +1488,7 @@ internal fun FolderSyncScreen(
     cloudSyncEnabled: Boolean = false,
     isProUser: Boolean = false,
     onCloudFolderSettingsClick: (() -> Unit)? = null,
+    onIncomingCloudFolderClick: ((String) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val dateFormat = remember { SimpleDateFormat("MMM d, h:mm a", Locale.getDefault()) }
@@ -1533,6 +1539,9 @@ internal fun FolderSyncScreen(
             cloudSyncOn = stringResource(R.string.folder_sync_cloud_backup_on),
             cloudSyncOff = stringResource(R.string.folder_sync_cloud_sync_off),
             cloudDeviceOnly = stringResource(R.string.folder_sync_device_only),
+            cloudDownloaded = stringResource(R.string.folder_sync_cloud_downloaded),
+            cloudAvailable = stringResource(R.string.folder_sync_cloud_available),
+            cloudChooseAction = stringResource(R.string.folder_sync_cloud_choose_action),
         ),
         onAddFolder = onAddFolderClick,
         onRemoveFolder = onRemoveFolderClick,
@@ -1546,6 +1555,7 @@ internal fun FolderSyncScreen(
         cloudSyncEnabled = cloudSyncEnabled,
         isProUser = isProUser,
         onCloudFolderSettingsClick = onCloudFolderSettingsClick,
+        onOpenIncomingCloudFolder = onIncomingCloudFolderClick,
     )
 }
 

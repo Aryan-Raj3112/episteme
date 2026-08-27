@@ -69,7 +69,32 @@ class FolderSyncWorker(
         const val WORK_NAME_ONETIME = "FolderSyncWorker_OneTime"
         const val KEY_METADATA_ONLY = "key_metadata_only"
         const val KEY_TARGET_FOLDER_URI = "key_target_folder_uri"
+        private const val KEY_CLOUD_ACCOUNT_ID = "key_cloud_account_id"
+        private const val CLOUD_INDEX_WORK_PREFIX = "FolderSyncWorker_CloudIndex"
         private val syncMutex = Mutex()
+
+        /** Index a completed app-private cloud materialization after download. */
+        fun enqueueCloudFolderIndex(context: Context, accountId: String, rootId: String) {
+            val normalizedAccount = accountId.trim().takeIf { it.isNotBlank() } ?: return
+            val normalizedRoot = rootId.trim().takeIf { it.isNotBlank() } ?: return
+            val root = runCatching {
+                cloudFolderAppRootDirectory(context.applicationContext.filesDir, normalizedRoot)
+            }.getOrNull() ?: return
+            val request = OneTimeWorkRequestBuilder<FolderSyncWorker>()
+                .setInputData(
+                    androidx.work.Data.Builder()
+                        .putBoolean(KEY_METADATA_ONLY, false)
+                        .putString(KEY_TARGET_FOLDER_URI, root.toURI().toString())
+                        .putString(KEY_CLOUD_ACCOUNT_ID, normalizedAccount)
+                        .build()
+                )
+                .build()
+            WorkManager.getInstance(context.applicationContext).enqueueUniqueWork(
+                "$CLOUD_INDEX_WORK_PREFIX:$normalizedRoot",
+                ExistingWorkPolicy.REPLACE,
+                request,
+            )
+        }
     }
 
     override suspend fun doWork(): Result {
@@ -79,11 +104,25 @@ class FolderSyncWorker(
         val prefs = appContext.getSharedPreferences("reader_user_prefs", Context.MODE_PRIVATE)
 
         val jsonString = prefs.getString(SyncedFolderPrefs.KEY_SYNCED_FOLDERS_JSON, null)
-        val folders = SyncedFolderPrefs.decodeSyncedFolders(
+        val requestedCloudAccount = inputData.getString(KEY_CLOUD_ACCOUNT_ID)?.trim()
+            ?.takeIf { it.isNotBlank() }
+        val currentAccount = AuthRepository(appContext).getSignedInUser()?.uid?.trim()
+            ?.takeIf { it.isNotBlank() }
+        if (requestedCloudAccount != null && requestedCloudAccount != currentAccount) {
+            ReaderPerfLog.w("FolderSync cloud index aborted: account changed")
+            return Result.success()
+        }
+        val configuredFolders = SyncedFolderPrefs.decodeSyncedFolders(
             jsonString = jsonString,
             legacyUri = prefs.getString(SyncedFolderPrefs.KEY_LEGACY_SYNCED_FOLDER_URI, null),
             syncableTypes = ANDROID_SYNCABLE_FILE_TYPES
         )
+        val accountId = requestedCloudAccount ?: currentAccount
+        val appManagedFolders = accountId?.let { id ->
+            CloudFolderAppStoragePrefs.load(appContext, id)
+                .map { it.toSyncedFolder(appContext.filesDir) }
+        }.orEmpty()
+        val folders = configuredFolders + appManagedFolders
 
         if (folders.isEmpty()) {
             ReaderPerfLog.w("FolderSync worker aborted: no linked folders")
@@ -134,6 +173,22 @@ class FolderSyncWorker(
                         prefs.edit { putString(SyncedFolderPrefs.KEY_SYNCED_FOLDERS_JSON, array.toString()) }
                     } catch (_: Exception) {}
                 }
+                val completedAppRoots = foldersToProcess
+                    .filter { it.isAppManaged && it.uriString in completedScanUris }
+                if (completedAppRoots.isNotEmpty() && accountId != null) {
+                    val now = System.currentTimeMillis()
+                    completedAppRoots.forEach { folder ->
+                        folder.cloudRootId?.let { rootId ->
+                            CloudFolderAppStoragePrefs.updateLastScanTime(
+                                context = appContext,
+                                accountId = accountId,
+                                rootId = rootId,
+                                timestamp = now,
+                            )
+                        }
+                    }
+                    CloudFolderSyncEvents.notifyStateChanged()
+                }
 
                 val elapsed = ReaderPerfLog.elapsedMs(workerStart)
                 ReaderPerfLog.i(
@@ -163,6 +218,14 @@ class FolderSyncWorker(
         val allowedFileTypes = folderConfig.allowedFileTypes
         if (folderUriString.isBlank()) return FolderSyncOutcome(success = true, completedScan = false)
         val folderUri = folderUriString.toUri()
+        val appStorageRoot = if (folderConfig.isAppManaged) {
+            val rootId = folderConfig.cloudRootId?.trim()?.takeIf { it.isNotBlank() }
+                ?: return FolderSyncOutcome(success = false, completedScan = false)
+            runCatching { cloudFolderAppRootDirectory(appContext.filesDir, rootId) }.getOrNull()
+                ?: return FolderSyncOutcome(success = false, completedScan = false)
+        } else {
+            null
+        }
         val folderStart = ReaderPerfLog.nowNanos()
         var dirsScanned = 0
         var filesSeen = 0
@@ -172,33 +235,49 @@ class FolderSyncWorker(
         var stoppedForUnlinkedFolder = false
 
         try {
-            if (!isFolderStillLinked(folderUriString)) {
+            if (!isFolderStillLinked(folderConfig)) {
                 ReaderPerfLog.w("FolderSync folder skipped: no longer linked folder=$folderUriString")
                 return FolderSyncOutcome(success = true, completedScan = false)
             }
 
-            try {
-                appContext.contentResolver.takePersistableUriPermission(
-                    folderUri,
-                    android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
-                )
-            } catch (_: SecurityException) {
-                return FolderSyncOutcome(success = false, completedScan = false)
+            val documentTree = if (appStorageRoot == null) {
+                try {
+                    appContext.contentResolver.takePersistableUriPermission(
+                        folderUri,
+                        android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    )
+                } catch (_: SecurityException) {
+                    return FolderSyncOutcome(success = false, completedScan = false)
+                }
+                DocumentFile.fromTreeUri(appContext, folderUri)
+                    ?.takeIf { it.isDirectory }
+                    ?: return FolderSyncOutcome(success = false, completedScan = false)
+            } else {
+                if (!appStorageRoot.isDirectory) {
+                    // A registry entry is created only after a complete cloud
+                    // materialization. A missing directory is therefore a
+                    // transient recovery condition, not an empty folder that
+                    // should reconcile and delete indexed books.
+                    return FolderSyncOutcome(success = false, completedScan = false)
+                }
+                null
             }
 
-            val documentTree = DocumentFile.fromTreeUri(appContext, folderUri)
-            if (documentTree == null || !documentTree.isDirectory) {
-                return FolderSyncOutcome(success = false, completedScan = false)
-            }
-
-            ReaderPerfLog.d("FolderSync phase legacy-sidecar-migration mapped-to-shared")
+            ReaderPerfLog.d(
+                "FolderSync phase legacy-sidecar-migration mapped-to-shared " +
+                    "appManaged=${folderConfig.isAppManaged}"
+            )
 
             val folderMetadataMap = ReaderPerfLog.measureSuspend(
                 name = "FolderSync phase metadata-sidecars",
                 minLogMs = 25L,
                 details = { "metadataOnly=$metadataOnly" }
             ) {
-                LocalSyncUtils.getAllFolderMetadata(appContext, folderUri).toMutableMap()
+                if (appStorageRoot != null) {
+                    LocalSyncUtils.getAllFolderMetadataFromAppStorage(appStorageRoot).toMutableMap()
+                } else {
+                    LocalSyncUtils.getAllFolderMetadata(appContext, folderUri).toMutableMap()
+                }
             }
             ReaderPerfLog.d(
                 "FolderSync metadata-sidecars records=${folderMetadataMap.size} metadataOnly=$metadataOnly folder=$folderUriString"
@@ -219,11 +298,19 @@ class FolderSyncWorker(
                     name = "FolderSync phase scan-folder",
                     minLogMs = 25L
                 ) {
-                    scanFolderFiles(
-                        folderUri = folderUri,
-                        folderUriString = folderUriString,
-                        allowedFileTypes = allowedFileTypes
-                    )
+                    if (appStorageRoot != null) {
+                        scanAppStorageFiles(
+                            root = appStorageRoot,
+                            folderUriString = folderUriString,
+                            allowedFileTypes = allowedFileTypes,
+                        )
+                    } else {
+                        scanFolderFiles(
+                            folderUri = folderUri,
+                            folderUriString = folderUriString,
+                            allowedFileTypes = allowedFileTypes
+                        )
+                    }
                 }
             }
             dirsScanned = scanResult.dirsScanned
@@ -250,10 +337,12 @@ class FolderSyncWorker(
             val nowMillis = System.currentTimeMillis()
             val folder = SyncedFolder(
                 uriString = folderUriString,
-                name = documentTree.name ?: folderConfig.name,
+                name = documentTree?.name ?: folderConfig.name,
                 lastScanTime = folderConfig.lastScanTime,
                 allowedFileTypes = allowedFileTypes,
-                localSyncEnabled = true
+                localSyncEnabled = true,
+                cloudRootId = folderConfig.cloudRootId,
+                isAppManaged = folderConfig.isAppManaged,
             )
             val sharedState = SharedReaderScreenState(
                 rawLibraryBooks = existingFolderBooks.map { it.toFolderSyncSharedBookItem() },
@@ -274,7 +363,11 @@ class FolderSyncWorker(
                     name = "FolderSync phase migration-sidecars",
                     minLogMs = 25L
                 ) {
-                    LocalSyncUtils.preloadAnnotationSidecars(appContext, folderUri).toMutableMap()
+                    if (appStorageRoot != null) {
+                        LocalSyncUtils.preloadAnnotationSidecarsFromAppStorage(appStorageRoot).toMutableMap()
+                    } else {
+                        LocalSyncUtils.preloadAnnotationSidecars(appContext, folderUri).toMutableMap()
+                    }
                 }
                 val migrationsSucceeded = syncResult.idMigrations.all { (oldId, newId) ->
                     Timber.tag("FolderSync").i("Migrating folder book ID via shared engine $oldId -> $newId")
@@ -284,7 +377,8 @@ class FolderSyncWorker(
                         newId = newId,
                         folderMetadataMap = folderMetadataMap,
                         preloadedSidecars = preloadedSidecars,
-                        existingItemsMap = existingItemsMap
+                        existingItemsMap = existingItemsMap,
+                        appStorageRoot = appStorageRoot,
                     )
                 }
                 if (!migrationsSucceeded) {
@@ -295,7 +389,7 @@ class FolderSyncWorker(
                 }
             }
 
-            if (!isFolderStillLinked(folderUriString)) {
+            if (!isFolderStillLinked(folderConfig)) {
                 ReaderPerfLog.w("FolderSync folder abort: folder unlinked before DB write folder=$folderUriString")
                 stoppedForUnlinkedFolder = true
                 return FolderSyncOutcome(success = true, completedScan = false)
@@ -352,7 +446,8 @@ class FolderSyncWorker(
                 folderUri = folderUri,
                 folderUriString = folderUriString,
                 books = booksForAnnotationSync,
-                phase = if (metadataOnly) "metadata-only" else "post-scan"
+                phase = if (metadataOnly) "metadata-only" else "post-scan",
+                appStorageRoot = appStorageRoot,
             )
 
             val elapsed = ReaderPerfLog.elapsedMs(folderStart)
@@ -406,7 +501,8 @@ class FolderSyncWorker(
         folderUri: android.net.Uri,
         folderUriString: String,
         books: List<RecentFileItem>,
-        phase: String
+        phase: String,
+        appStorageRoot: File? = null,
     ): Int {
         if (books.isEmpty()) {
             ReaderPerfLog.d("FolderSync phase annotation-sidecars skipped phase=$phase reason=no-books folder=$folderUriString")
@@ -418,7 +514,11 @@ class FolderSyncWorker(
             minLogMs = 25L,
             details = { "phase=$phase" }
         ) {
-            LocalSyncUtils.preloadAnnotationSidecars(appContext, folderUri)
+            if (appStorageRoot != null) {
+                LocalSyncUtils.preloadAnnotationSidecarsFromAppStorage(appStorageRoot)
+            } else {
+                LocalSyncUtils.preloadAnnotationSidecars(appContext, folderUri)
+            }
         }
 
         ReaderPerfLog.d(
@@ -430,7 +530,7 @@ class FolderSyncWorker(
         var imported = 0
         Timber.tag("FolderAnnotationSync").d("Checking annotation sidecars phase=$phase for ${books.size} books...")
         for (book in books) {
-            if (isStopped || !isFolderStillLinked(folderUriString)) break
+            if (isStopped || !isFolderStillLinkedByUri(folderUriString)) break
 
             val sidecarData = preloadedSidecars[book.bookId] ?: continue
             val pendingLocal = pendingAnnotationExports.get(book.bookId)
@@ -480,6 +580,98 @@ class FolderSyncWorker(
         val stoppedForUnlinkedFolder: Boolean = false,
         val scanStatus: LocalFolderScanStatus = LocalFolderScanStatus.COMPLETE
     )
+
+    /**
+     * Scan a completed DOWNLOAD_ALL tree using java.io. App-private roots do
+     * not have a DocumentsProvider tree URI, so sending them through the SAF
+     * scanner would produce an empty/unavailable result and could reconcile
+     * away valid indexed books.
+     */
+    private fun scanAppStorageFiles(
+        root: File,
+        folderUriString: String,
+        allowedFileTypes: Set<FileType>,
+    ): AndroidFolderScanResult {
+        val scannedFiles = mutableListOf<SharedFolderScannedFile>()
+        val directories = ArrayDeque<Pair<File, String>>()
+        directories.add(root to "")
+        var dirsScanned = 0
+        var filesSeen = 0
+        var stoppedForUnlinkedFolder = false
+        var scanStatus = LocalFolderScanStatus.COMPLETE
+
+        while (directories.isNotEmpty()) {
+            if (isStopped) {
+                scanStatus = LocalFolderScanStatus.PARTIAL
+                break
+            }
+            if (!isFolderStillLinkedByUri(folderUriString)) {
+                stoppedForUnlinkedFolder = true
+                scanStatus = LocalFolderScanStatus.PARTIAL
+                break
+            }
+            val (directory, parentPath) = directories.removeFirst()
+            dirsScanned++
+            val children = directory.listFiles()
+            if (children == null) {
+                scanStatus = LocalFolderScanStatus.PARTIAL
+                Timber.tag("FolderSync").w("App-private folder could not be listed: ${directory.path}")
+                continue
+            }
+            for (child in children) {
+                if (isStopped || stoppedForUnlinkedFolder) break
+                filesSeen++
+                val name = child.name.orEmpty()
+                if (name.isBlank()) {
+                    scanStatus = LocalFolderScanStatus.PARTIAL
+                    continue
+                }
+                val relativePath = if (parentPath.isBlank()) name else "$parentPath/$name"
+                when {
+                    child.isDirectory -> {
+                        if (!name.startsWith(".") && name != LOCAL_FOLDER_SYNC_DATA_DIR) {
+                            directories.add(child to relativePath)
+                        }
+                    }
+                    child.isFile -> {
+                        val type = getFileType(name, null)
+                        if (
+                            type == null ||
+                            type !in allowedFileTypes ||
+                            !isLocalFolderSyncEligibleFile(name, null) ||
+                            name.endsWith(".json", ignoreCase = true) ||
+                            name.startsWith(".")
+                        ) {
+                            continue
+                        }
+                        scannedFiles += SharedFolderScannedFile(
+                            name = name,
+                            path = child.toURI().toString(),
+                            sourceFolder = folderUriString,
+                            relativePath = relativePath,
+                            type = type,
+                            size = child.length().coerceAtLeast(0L),
+                            lastModified = child.lastModified().coerceAtLeast(0L),
+                        )
+                    }
+                    else -> scanStatus = LocalFolderScanStatus.PARTIAL
+                }
+            }
+            if (!isFolderStillLinkedByUri(folderUriString)) {
+                stoppedForUnlinkedFolder = true
+                scanStatus = LocalFolderScanStatus.PARTIAL
+            }
+        }
+
+        if (isStopped || stoppedForUnlinkedFolder) scanStatus = LocalFolderScanStatus.PARTIAL
+        return AndroidFolderScanResult(
+            files = scannedFiles,
+            dirsScanned = dirsScanned,
+            filesSeen = filesSeen,
+            stoppedForUnlinkedFolder = stoppedForUnlinkedFolder,
+            scanStatus = scanStatus,
+        )
+    }
 
     private fun scanFolderFiles(
         folderUri: android.net.Uri,
@@ -789,14 +981,32 @@ class FolderSyncWorker(
         return sizeChanged || modifiedChanged
     }
 
+    private fun isFolderStillLinked(folder: SyncedFolder): Boolean {
+        if (!folder.isAppManaged) return isFolderStillLinked(folder.uriString)
+        val accountId = AuthRepository(appContext).getSignedInUser()?.uid?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?: return false
+        val rootId = folder.cloudRootId?.trim()?.takeIf { it.isNotBlank() } ?: return false
+        return CloudFolderAppStoragePrefs.contains(appContext, accountId, rootId)
+    }
+
+    private fun isFolderStillLinkedByUri(folderUriString: String): Boolean {
+        return isFolderStillLinked(folderUriString)
+    }
+
     private fun isFolderStillLinked(folderUriString: String): Boolean {
         val prefs = appContext.getSharedPreferences("reader_user_prefs", Context.MODE_PRIVATE)
-        return SyncedFolderPrefs.isLocalSyncEnabled(
+        if (SyncedFolderPrefs.isLocalSyncEnabled(
             jsonString = prefs.getString(SyncedFolderPrefs.KEY_SYNCED_FOLDERS_JSON, null),
             legacyUri = prefs.getString(SyncedFolderPrefs.KEY_LEGACY_SYNCED_FOLDER_URI, null),
             folderUriString = folderUriString,
             syncableTypes = ANDROID_SYNCABLE_FILE_TYPES
-        )
+        )) return true
+        val accountId = AuthRepository(appContext).getSignedInUser()?.uid?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?: return false
+        return CloudFolderAppStoragePrefs.load(appContext, accountId)
+            .any { it.toSyncedFolder(appContext.filesDir).uriString == folderUriString }
     }
 
     private fun getFileType(name: String, mimeType: String?): FileType? {
@@ -821,7 +1031,8 @@ class FolderSyncWorker(
         newId: String,
         folderMetadataMap: MutableMap<String, FolderBookMetadata>,
         preloadedSidecars: MutableMap<String, Pair<Long, String>>,
-        existingItemsMap: MutableMap<String, RecentFileItem>
+        existingItemsMap: MutableMap<String, RecentFileItem>,
+        appStorageRoot: File? = null,
     ): Boolean {
         if (oldId == newId) return true
 
@@ -830,7 +1041,12 @@ class FolderSyncWorker(
         val oldMetadata = folderMetadataMap.remove(oldId)
         if (oldMetadata != null && newId !in folderMetadataMap) {
             val migratedMetadata = oldMetadata.copy(bookId = newId)
-            if (!LocalSyncUtils.saveMetadataToFolder(appContext, folderUriString.toUri(), migratedMetadata)) {
+            val saved = if (appStorageRoot != null) {
+                LocalSyncUtils.saveMetadataToAppStorage(appStorageRoot, migratedMetadata)
+            } else {
+                LocalSyncUtils.saveMetadataToFolder(appContext, folderUriString.toUri(), migratedMetadata)
+            }
+            if (!saved) {
                 Timber.tag("FolderSync").w("Failed to migrate metadata sidecar $oldId -> $newId")
                 return false
             }
@@ -839,13 +1055,22 @@ class FolderSyncWorker(
 
         val oldSidecar = preloadedSidecars.remove(oldId)
         if (oldSidecar != null && newId !in preloadedSidecars) {
-            val saved = LocalSyncUtils.saveAnnotationSidecar(
-                context = appContext,
-                sourceFolderUri = folderUriString.toUri(),
-                bookId = newId,
-                jsonPayload = oldSidecar.second,
-                timestamp = oldSidecar.first
-            )
+            val saved = if (appStorageRoot != null) {
+                LocalSyncUtils.saveAnnotationSidecarToAppStorage(
+                    root = appStorageRoot,
+                    bookId = newId,
+                    jsonPayload = oldSidecar.second,
+                    timestamp = oldSidecar.first,
+                )
+            } else {
+                LocalSyncUtils.saveAnnotationSidecar(
+                    context = appContext,
+                    sourceFolderUri = folderUriString.toUri(),
+                    bookId = newId,
+                    jsonPayload = oldSidecar.second,
+                    timestamp = oldSidecar.first,
+                )
+            }
             if (!saved) {
                 Timber.tag("FolderSync").w("Failed to migrate annotation sidecar $oldId -> $newId")
                 return false
@@ -853,7 +1078,11 @@ class FolderSyncWorker(
             preloadedSidecars[newId] = oldSidecar
         }
 
-        LocalSyncUtils.deleteBookSidecars(appContext, folderUriString.toUri(), oldId)
+        if (appStorageRoot != null) {
+            LocalSyncUtils.deleteBookSidecarsFromAppStorage(appStorageRoot, oldId)
+        } else {
+            LocalSyncUtils.deleteBookSidecars(appContext, folderUriString.toUri(), oldId)
+        }
 
         existingItemsMap.remove(oldId)
         recentFilesRepository.getFileByBookId(newId)?.let {
