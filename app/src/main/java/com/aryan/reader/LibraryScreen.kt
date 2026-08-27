@@ -148,6 +148,7 @@ import coil.decode.SvgDecoder
 import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.data.TagEntity
 import com.aryan.reader.shared.AnnotationExportFormat
+import com.aryan.reader.shared.CloudFolderSyncSelection
 import com.aryan.reader.opds.OpdsAcquisition
 import com.aryan.reader.opds.OpdsCatalog
 import com.aryan.reader.opds.OpdsDownloadState
@@ -169,6 +170,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import org.jsoup.Jsoup
 import timber.log.Timber
@@ -194,6 +196,18 @@ fun LibraryScreen(
     }
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val canUseCloudFolderSync = uiState.canUseCloudFolderSync()
+    var cloudFolderSelection by remember(uiState.currentUser?.uid) {
+        mutableStateOf(viewModel.cloudFolderSyncSelection())
+    }
+    LaunchedEffect(uiState.currentUser?.uid) {
+        cloudFolderSelection = viewModel.cloudFolderSyncSelection()
+    }
+    LaunchedEffect(Unit) {
+        CloudFolderSyncEvents.stateChanged.collect {
+            cloudFolderSelection = viewModel.cloudFolderSyncSelection()
+        }
+    }
     val selectedItems = uiState.contextualActionItems
     val isContextualModeActive = selectedItems.isNotEmpty()
     val selectedShelves = uiState.contextualActionShelfIds
@@ -461,7 +475,13 @@ fun LibraryScreen(
             onDeleteCatalogStreams = viewModel::deleteStreamedBooksForCatalog,
             onShowBanner = viewModel::showBanner,
             onSettingsClick = { navController.navigateIfReady(com.aryan.reader.shared.ui.SharedMobileAppDestination.SETTINGS) },
-            usePdfFileNameAsDisplayName = uiState.usePdfFileNameAsDisplayName
+            usePdfFileNameAsDisplayName = uiState.usePdfFileNameAsDisplayName,
+            cloudFolderSelection = cloudFolderSelection.takeIf { canUseCloudFolderSync },
+            cloudSyncEnabled = uiState.isSyncEnabled,
+            isProUser = canUseCloudFolderSync,
+            onCloudFolderSettingsClick = if (canUseCloudFolderSync) {
+                { navController.navigateIfReady(com.aryan.reader.shared.ui.SharedMobileAppDestination.FOLDER_SYNC_SETTINGS) }
+            } else null,
         )
 
 
@@ -761,6 +781,10 @@ fun LibraryScreenContent(
     onShowBanner: (String) -> Unit,
     onSettingsClick: () -> Unit,
     usePdfFileNameAsDisplayName: Boolean,
+    cloudFolderSelection: CloudFolderSyncSelection? = null,
+    cloudSyncEnabled: Boolean = false,
+    isProUser: Boolean = false,
+    onCloudFolderSettingsClick: (() -> Unit)? = null,
 ) {
     val selectedBookIds = remember(selectedItems) { selectedItems.mapTo(mutableSetOf()) { it.bookId } }
     com.aryan.reader.shared.ui.SharedAndroidLibraryScaffold(
@@ -880,6 +904,10 @@ fun LibraryScreenContent(
                     syncedFolders, rawLibraryFiles, onSelectSyncFolderClick, onRemoveFolderClick,
                     onFolderLocalSyncChange, onEditFolderFiltersClick, onScanNowClick, onSyncMetadataClick,
                     isLoading || isRefreshing,
+                    cloudFolderSelection = cloudFolderSelection,
+                    cloudSyncEnabled = cloudSyncEnabled,
+                    isProUser = isProUser,
+                    onCloudFolderSettingsClick = onCloudFolderSettingsClick,
                 )
                 3 -> if (!BuildConfig.IS_OFFLINE) OpdsTab(
                     localLibraryFiles = rawLibraryFiles,
@@ -1450,7 +1478,11 @@ internal fun FolderSyncScreen(
     onEditFolderFiltersClick: (SyncedFolder, Set<FileType>) -> Unit,
     onScanNowClick: () -> Unit,
     onSyncMetadataClick: () -> Unit,
-    isLoading: Boolean
+    isLoading: Boolean,
+    cloudFolderSelection: CloudFolderSyncSelection? = null,
+    cloudSyncEnabled: Boolean = false,
+    isProUser: Boolean = false,
+    onCloudFolderSettingsClick: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val dateFormat = remember { SimpleDateFormat("MMM d, h:mm a", Locale.getDefault()) }
@@ -1497,6 +1529,10 @@ internal fun FolderSyncScreen(
             disableDialogDescription = stringResource(R.string.dialog_disable_folder_local_sync_desc, LOCAL_FOLDER_SYNC_DATA_DIR),
             disableRemoveData = stringResource(R.string.action_disable_remove_sync_data),
             disableKeepData = stringResource(R.string.action_disable_keep_sync_data),
+            cloudSettings = stringResource(R.string.folder_sync_settings_title),
+            cloudSyncOn = stringResource(R.string.folder_sync_cloud_backup_on),
+            cloudSyncOff = stringResource(R.string.folder_sync_cloud_sync_off),
+            cloudDeviceOnly = stringResource(R.string.folder_sync_device_only),
         ),
         onAddFolder = onAddFolderClick,
         onRemoveFolder = onRemoveFolderClick,
@@ -1506,6 +1542,10 @@ internal fun FolderSyncScreen(
         onSyncMetadata = onSyncMetadataClick,
         formatLastScan = { dateFormat.format(Date(it)) },
         syncIcon = { Icon(painterResource(R.drawable.sync), null, Modifier.size(18.dp)) },
+        cloudFolderSelection = cloudFolderSelection,
+        cloudSyncEnabled = cloudSyncEnabled,
+        isProUser = isProUser,
+        onCloudFolderSettingsClick = onCloudFolderSettingsClick,
     )
 }
 

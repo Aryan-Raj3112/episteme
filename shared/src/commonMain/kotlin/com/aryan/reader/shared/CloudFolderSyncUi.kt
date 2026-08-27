@@ -3,6 +3,58 @@ package com.aryan.reader.shared
 import kotlinx.serialization.Serializable
 
 /**
+ * Durable phase of a local cloud-folder transfer.  The Android executor
+ * persists this projection so the settings surface can recover a truthful
+ * status after WorkManager recreates the process.
+ */
+@Serializable
+enum class CloudFolderSyncPhase {
+    SCANNING,
+    UPLOADING,
+    FINALIZING,
+    SUCCEEDED,
+    FAILED,
+}
+
+@Serializable
+data class CloudFolderSyncProgress(
+    val rootId: String,
+    val phase: CloudFolderSyncPhase,
+    val completedFiles: Int = 0,
+    val totalFiles: Int = 0,
+    val completedBytes: Long = 0L,
+    val totalBytes: Long = 0L,
+    val updatedAt: Long = 0L,
+    /** A safe category such as network, forbidden, quota, or unknown. */
+    val errorStatus: String? = null,
+) {
+    val normalizedRootId: String get() = rootId.trim()
+
+    val fileFraction: Float?
+        get() = totalFiles.takeIf { it > 0 }?.let {
+            (completedFiles.coerceIn(0, it).toFloat() / it.toFloat()).coerceIn(0f, 1f)
+        }
+
+    val byteFraction: Float?
+        get() = totalBytes.takeIf { it > 0 }?.let {
+            (completedBytes.coerceIn(0L, it).toFloat() / it.toFloat()).coerceIn(0f, 1f)
+        }
+
+    val fraction: Float?
+        get() = byteFraction ?: fileFraction
+
+    fun sanitized(): CloudFolderSyncProgress = copy(
+        rootId = normalizedRootId,
+        completedFiles = completedFiles.coerceAtLeast(0).coerceAtMost(totalFiles.coerceAtLeast(0)),
+        totalFiles = totalFiles.coerceAtLeast(0),
+        completedBytes = completedBytes.coerceAtLeast(0L).coerceAtMost(totalBytes.coerceAtLeast(0L)),
+        totalBytes = totalBytes.coerceAtLeast(0L),
+        updatedAt = updatedAt.coerceAtLeast(0L),
+        errorStatus = errorStatus?.trim()?.lowercase()?.takeIf { it.isNotBlank() },
+    )
+}
+
+/**
  * The small, device-neutral projection used by folder-sync settings screens.
  * A folder option is deliberately not a [SyncedFolder]: a local SAF/bookmark
  * URI is a device binding and must never become the account-level identity.
@@ -12,6 +64,13 @@ data class CloudFolderSyncFolderOption(
     val displayName: String,
     val fileCount: Int = 0,
     val totalBytes: Long = 0L,
+    /** False when the provider could enumerate a file but not report its size. */
+    val sizeKnown: Boolean = true,
+    /** True only when the count/size came from a completed or persisted scan. */
+    val hasKnownStats: Boolean = true,
+    /** A remote scan can be incomplete; its partial totals must not look final. */
+    val scanComplete: Boolean = true,
+    val statsUpdatedAt: Long = 0L,
     val isAvailable: Boolean = true,
     /** How this logical root is currently represented on this device. */
     val materializationMode: CloudFolderMaterializationMode = CloudFolderMaterializationMode.CLOUD_ONLY,
@@ -22,6 +81,7 @@ data class CloudFolderSyncFolderOption(
     /** Remote roots without an explicit choice are inventory-only and cannot be selected directly. */
     val isSelectable: Boolean = true,
     val lastError: String? = null,
+    val syncProgress: CloudFolderSyncProgress? = null,
 ) {
     val normalizedRootId: String get() = rootId.trim()
     val normalizedDisplayName: String get() = displayName.trim().ifBlank { normalizedRootId }
@@ -31,6 +91,8 @@ data class CloudFolderSyncFolderOption(
         displayName = normalizedDisplayName,
         fileCount = fileCount.coerceAtLeast(0),
         totalBytes = totalBytes.coerceAtLeast(0L),
+        statsUpdatedAt = statsUpdatedAt.coerceAtLeast(0L),
+        syncProgress = syncProgress?.sanitized(),
     )
 }
 
@@ -53,13 +115,8 @@ data class CloudFolderConflictUiItem(
     val normalizedPath: String get() = relativePath.trim().ifBlank { "/" }
 }
 
-/**
- * Pure state for the Android folder-sync settings surface.  The local-folder
- * library switch is intentionally separate from account-level cloud
- * selection: turning local indexing on must not silently upload anything.
- */
+/** Pure state for the Android folder-sync settings surface. */
 data class CloudFolderSyncSettingsUiState(
-    val localFolderIndexingEnabled: Boolean = false,
     val selection: CloudFolderSyncSelection = CloudFolderSyncSelection.Default,
     val folders: List<CloudFolderSyncFolderOption> = emptyList(),
     val conflicts: List<CloudFolderConflictUiItem> = emptyList(),
@@ -91,9 +148,10 @@ data class CloudFolderSyncSettingsUiState(
     fun normalized(): CloudFolderSyncSettingsUiState {
         val options = normalizedFolders
         return copy(
-            // Keep account-selected roots that are not bound on this device;
-            // they may be remote roots awaiting the incoming-folder prompt.
-            selection = selection.normalized(),
+            // Render old EXCLUDED/ALL values as an explicit list. This keeps
+            // the new UI to one concept (selected folders) while preserving
+            // the old serialized enum values for older app versions.
+            selection = selection.toExplicitSelection(options.map { it.normalizedRootId }),
             folders = options,
             conflicts = conflicts
                 .map { it.copy(rootId = it.normalizedRootId, folderName = it.normalizedFolderName) }
@@ -101,9 +159,6 @@ data class CloudFolderSyncSettingsUiState(
                 .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.normalizedPath }),
         )
     }
-
-    fun withLocalFolderIndexing(enabled: Boolean): CloudFolderSyncSettingsUiState =
-        copy(localFolderIndexingEnabled = enabled)
 
     fun withSelection(next: CloudFolderSyncSelection): CloudFolderSyncSettingsUiState =
         copy(selection = next).normalized()

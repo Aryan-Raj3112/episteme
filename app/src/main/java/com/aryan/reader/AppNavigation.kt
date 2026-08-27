@@ -598,8 +598,22 @@ fun AppNavigation(
                 viewModel = viewModel,
                 navController = navController,
                 onBackClick = { navController.popBackStackIfReady() },
-                onManageIncomingFolder = viewModel::showIncomingCloudFolderPrompt,
             )
+        }
+        composable(route = SharedMobileAppDestination.FOLDER_SYNC_SETTINGS.route) {
+            if (uiState.canUseCloudFolderSync()) {
+                CloudFolderSyncSettingsScreen(
+                    viewModel = viewModel,
+                    onBackClick = { navController.popBackStackIfReady() },
+                )
+            } else {
+                // A stale/deep-linked route must not expose cloud-folder
+                // mutations after sign-out or entitlement loss.
+                LaunchedEffect(Unit) {
+                    navController.awaitReadyForBackStackChange()
+                    navController.popBackStackIfReady()
+                }
+            }
         }
         }
 

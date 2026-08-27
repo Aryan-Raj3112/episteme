@@ -122,12 +122,14 @@ import com.aryan.reader.data.AppDatabase
 import com.aryan.reader.data.AudiobookImporter
 import com.aryan.reader.audiobook.AudiobookController
 import com.aryan.reader.shared.AnnotationExportFormat
+import com.aryan.reader.shared.CloudFolderSyncSelection
 import com.aryan.reader.shared.ui.MobileUnifiedLibraryDrawerAppearance
 import com.aryan.reader.shared.ui.MobileUnifiedLibraryDrawerCapabilities
 import com.aryan.reader.shared.ui.MobileUnifiedLibraryDrawerDestination
 import com.aryan.reader.shared.ui.mobileUnifiedLibraryDrawerModel
 import com.aryan.reader.shared.ui.SharedAnnotationExportFormatDialog
 import com.aryan.reader.shared.ui.sharedAnnotationExportFormatOptions
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 
 internal typealias UnifiedLibrarySection = com.aryan.reader.shared.ui.MobileUnifiedLibrarySection
@@ -196,6 +198,19 @@ fun UnifiedLibraryScreen(
         mutableStateOf(false)
     }
     var audiobookPlayerItem by remember { mutableStateOf<AudiobookUiItem?>(null) }
+    val canUseCloudFolderSync = uiState.canUseCloudFolderSync()
+    var cloudFolderSelection by remember(uiState.currentUser?.uid) {
+        mutableStateOf(viewModel.cloudFolderSyncSelection())
+    }
+
+    LaunchedEffect(uiState.currentUser?.uid) {
+        cloudFolderSelection = viewModel.cloudFolderSyncSelection()
+    }
+    LaunchedEffect(Unit) {
+        CloudFolderSyncEvents.stateChanged.collect {
+            cloudFolderSelection = viewModel.cloudFolderSyncSelection()
+        }
+    }
 
     val filePicker = rememberFilePickerLauncher(viewModel::onFilesSelected)
     val folderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
@@ -368,7 +383,12 @@ fun UnifiedLibraryScreen(
                             navController.navigateIfReady(com.aryan.reader.shared.ui.SharedMobileAppDestination.SETTINGS)
                         },
                         navController = navController,
-                        onFolderSyncToggle = viewModel::setFolderSyncEnabled,
+                        onFolderSyncSettingsClick = {
+                            scope.launch {
+                                accountDrawerState.close()
+                                navController.navigateIfReady(com.aryan.reader.shared.ui.SharedMobileAppDestination.FOLDER_SYNC_SETTINGS)
+                            }
+                        },
                         onAboutClick = {
                             scope.launch { accountDrawerState.close() }
                             showAboutDialog = true
@@ -613,7 +633,15 @@ fun UnifiedLibraryScreen(
                     onSyncMetadata = viewModel::syncFolderMetadata,
                     onToggleLocalSync = viewModel::setFolderLocalSyncEnabled,
                     onEditFolderFilters = viewModel::updateFolderFilters,
-                    onRemove = viewModel::removeSyncedFolder
+                    onRemove = viewModel::removeSyncedFolder,
+                    cloudFolderSelection = cloudFolderSelection.takeIf { canUseCloudFolderSync },
+                    cloudSyncEnabled = uiState.isSyncEnabled,
+                    isProUser = canUseCloudFolderSync,
+                    onCloudFolderSettings = if (canUseCloudFolderSync) {
+                        {
+                            navController.navigateIfReady(com.aryan.reader.shared.ui.SharedMobileAppDestination.FOLDER_SYNC_SETTINGS)
+                        }
+                    } else null,
                 )
                 UnifiedLibrarySection.CATALOGS -> if (!BuildConfig.IS_OFFLINE) {
                     Box(modifier = Modifier.fillMaxSize().padding(padding)) {
@@ -994,9 +1022,14 @@ private fun UnifiedLibraryTopBar(
 
 @Composable
 private fun UnifiedProfileAvatar(uiState: ReaderScreenState) {
+    val user = uiState.currentUser
     when {
         BuildConfig.FLAVOR != "pro" -> AsyncImage(model = R.mipmap.ic_launcher, contentDescription = stringResource(R.string.content_desc_app_icon), modifier = Modifier.size(32.dp).clip(CircleShape))
-        !uiState.currentUser?.photoUrl.isNullOrBlank() -> AsyncImage(model = ImageRequest.Builder(LocalContext.current).data(uiState.currentUser.photoUrl).crossfade(true).build(), contentDescription = stringResource(R.string.content_desc_profile_picture), contentScale = ContentScale.Crop, modifier = Modifier.size(32.dp).clip(CircleShape))
+        user != null -> AndroidAccountAvatar(
+            user = user,
+            modifier = Modifier.size(32.dp),
+            contentDescription = stringResource(R.string.content_desc_profile_picture),
+        )
         else -> Icon(
             Icons.Outlined.AccountCircle,
             contentDescription = stringResource(R.string.content_desc_profile),
@@ -1163,6 +1196,10 @@ private fun UnifiedFoldersSection(
     onToggleLocalSync: (SyncedFolder, Boolean, Boolean) -> Unit,
     onEditFolderFilters: (SyncedFolder, Set<FileType>) -> Unit,
     onRemove: (SyncedFolder) -> Unit,
+    cloudFolderSelection: CloudFolderSyncSelection? = null,
+    cloudSyncEnabled: Boolean = false,
+    isProUser: Boolean = false,
+    onCloudFolderSettings: (() -> Unit)? = null,
 ) {
     Box(modifier = modifier.fillMaxSize()) {
         FolderSyncScreen(
@@ -1174,7 +1211,11 @@ private fun UnifiedFoldersSection(
             onEditFolderFiltersClick = onEditFolderFilters,
             onScanNowClick = onScan,
             onSyncMetadataClick = onSyncMetadata,
-            isLoading = isLoading
+            isLoading = isLoading,
+            cloudFolderSelection = cloudFolderSelection,
+            cloudSyncEnabled = cloudSyncEnabled,
+            isProUser = isProUser,
+            onCloudFolderSettingsClick = onCloudFolderSettings,
         )
     }
 }

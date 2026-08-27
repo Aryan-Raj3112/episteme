@@ -42,10 +42,22 @@ class AndroidBackupRulesContractTest {
 
     private fun assertPolicy(root: Element, includeOriginals: Boolean) {
         val includes = root.elements("include").map { it.getAttribute("domain") to it.getAttribute("path") }.toSet()
-        val excludes = root.elements("exclude").map { it.getAttribute("domain") to it.getAttribute("path") }.toSet()
 
         REQUIRED_INCLUDES.forEach { assertTrue("missing include $it", it in includes) }
-        REQUIRED_EXCLUDES.forEach { assertTrue("missing exclude $it", it in excludes) }
+        // The policy is an allowlist: only included paths are backed up, so
+        // <exclude> entries would be dead config that lint-vital rejects.
+        assertTrue(
+            "allowlist policy must not contain exclude entries",
+            root.elements("exclude").isEmpty()
+        )
+        NEVER_BACKED_UP.forEach { path ->
+            assertFalse(
+                "sensitive or generated path $path must never be included",
+                ("file" to path) in includes ||
+                    ("sharedpref" to path) in includes ||
+                    ("database" to path) in includes
+            )
+        }
         ORIGINALS.forEach { path ->
             val entry = "file" to path
             assertEquals("original include mismatch for $path", includeOriginals, entry in includes)
@@ -92,17 +104,17 @@ class AndroidBackupRulesContractTest {
             "file" to "reader_textures",
         )
 
-        val REQUIRED_EXCLUDES = setOf(
-            "sharedpref" to "ai_byok_prefs.xml",
-            "sharedpref" to "reader_opds_prefs.xml",
-            "sharedpref" to "reader_user_prefs.xml",
-            "database" to "book_cache_database",
-            "database" to "pdf_text_cache_db",
-            "database" to "androidx.work.workdb",
-            "file" to "cover_cache",
-            "file" to "TTS_Cache",
-            "file" to "derived",
-            "external" to ".",
+        /** Paths that must stay out of every backup section. */
+        val NEVER_BACKED_UP = setOf(
+            "ai_byok_prefs.xml",
+            "reader_opds_prefs.xml",
+            "reader_user_prefs.xml",
+            "book_cache_database",
+            "pdf_text_cache_db",
+            "androidx.work.workdb",
+            "cover_cache",
+            "TTS_Cache",
+            "derived",
         )
 
         val ORIGINALS = setOf("books", "audiobooks", "metadata_backups")

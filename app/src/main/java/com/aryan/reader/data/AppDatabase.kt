@@ -47,9 +47,11 @@ import com.aryan.reader.audiobook.BookTtsListeningProgressEntity
         CloudFolderOutboxEntity::class,
         CloudFolderConflictEntity::class,
         CloudFolderPendingMaterializationEntity::class,
+        CloudFolderSyncProgressEntity::class,
+        CloudFolderLocalInventoryEntity::class,
         CloudBookDeleteIntentEntity::class,
     ],
-    version = 36,
+    version = 38,
     exportSchema = false
 )
 @TypeConverters(FileTypeConverter::class)
@@ -890,6 +892,64 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** Persist account/root cloud-folder transfer progress for UI recovery. */
+        val MIGRATION_36_37 = object : Migration(36, 37) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `cloud_folder_sync_progress` (
+                        `accountId` TEXT NOT NULL,
+                        `rootId` TEXT NOT NULL,
+                        `phase` TEXT NOT NULL,
+                        `completedFiles` INTEGER NOT NULL,
+                        `totalFiles` INTEGER NOT NULL,
+                        `completedBytes` INTEGER NOT NULL,
+                        `totalBytes` INTEGER NOT NULL,
+                        `updatedAt` INTEGER NOT NULL,
+                        `errorStatus` TEXT,
+                        PRIMARY KEY(`accountId`, `rootId`)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_cloud_folder_sync_progress_accountId_updatedAt` " +
+                        "ON `cloud_folder_sync_progress` (`accountId`, `updatedAt`)"
+                )
+            }
+        }
+
+        /** Persist per-device SAF counts independently from cloud selection. */
+        val MIGRATION_37_38 = object : Migration(37, 38) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `cloud_folder_local_inventory` (
+                        `accountId` TEXT NOT NULL,
+                        `rootId` TEXT NOT NULL,
+                        `deviceId` TEXT NOT NULL,
+                        `state` TEXT NOT NULL,
+                        `fileCount` INTEGER NOT NULL,
+                        `directoryCount` INTEGER NOT NULL,
+                        `totalBytes` INTEGER NOT NULL,
+                        `sizeComplete` INTEGER NOT NULL,
+                        `scannedAt` INTEGER NOT NULL,
+                        `updatedAt` INTEGER NOT NULL,
+                        `errorStatus` TEXT,
+                        PRIMARY KEY(`accountId`, `rootId`, `deviceId`)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_cloud_folder_local_inventory_accountId_deviceId` " +
+                        "ON `cloud_folder_local_inventory` (`accountId`, `deviceId`)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_cloud_folder_local_inventory_accountId_updatedAt` " +
+                        "ON `cloud_folder_local_inventory` (`accountId`, `updatedAt`)"
+                )
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 CloudFolderPrivateStateMigrator.importLegacyState(context.applicationContext)
@@ -907,7 +967,8 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24,
                         MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28,
                         MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32,
-                        MIGRATION_32_33, MIGRATION_33_34, MIGRATION_34_35, MIGRATION_35_36
+                        MIGRATION_32_33, MIGRATION_33_34, MIGRATION_34_35, MIGRATION_35_36,
+                        MIGRATION_36_37, MIGRATION_37_38
                     )
                     .fallbackToDestructiveMigration(false)
                     .build()

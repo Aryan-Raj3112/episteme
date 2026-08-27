@@ -15,7 +15,6 @@ class CloudFolderSyncUiTest {
             ),
         )
 
-        assertFalse(state.localFolderIndexingEnabled)
         assertEquals(CloudFolderSyncSelectionMode.EXCLUDED, state.selection.mode)
         assertEquals(0, state.selectedFolderCount)
         assertEquals(0, state.selectedFileCount)
@@ -47,13 +46,15 @@ class CloudFolderSyncUiTest {
         )
 
         val all = state.selectAllRoots()
-        assertEquals(CloudFolderSyncSelectionMode.ALL, all.selection.mode)
+        assertEquals(CloudFolderSyncSelectionMode.SELECTED, all.selection.mode)
+        assertEquals(setOf("root-a", "root-b"), all.selection.selectedRootIds)
         assertEquals(2, all.selectedFolderCount)
         assertEquals(3, all.selectedFileCount)
         assertEquals(30L, all.selectedTotalBytes)
 
         val none = all.excludeAllRoots()
-        assertEquals(CloudFolderSyncSelectionMode.EXCLUDED, none.selection.mode)
+        assertEquals(CloudFolderSyncSelectionMode.SELECTED, none.selection.mode)
+        assertTrue(none.selection.selectedRootIds.isEmpty())
         assertEquals(0, none.selectedFolderCount)
     }
 

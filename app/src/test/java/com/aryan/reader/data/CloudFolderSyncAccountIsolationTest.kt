@@ -17,6 +17,8 @@ import com.aryan.reader.shared.CloudFolderRoot
 import com.aryan.reader.shared.CloudFolderSyncDirection
 import com.aryan.reader.shared.CloudFolderSyncOperation
 import com.aryan.reader.shared.CloudFolderSyncOperationKind
+import com.aryan.reader.shared.CloudFolderSyncPhase
+import com.aryan.reader.shared.CloudFolderSyncProgress
 import com.aryan.reader.shared.CloudFolderSyncSelection
 import com.aryan.reader.shared.CloudFolderSyncSelectionMode
 import com.aryan.reader.shared.cloudFolderRootId
@@ -94,6 +96,25 @@ class CloudFolderSyncAccountIsolationTest {
             repositoryB.saveBinding(binding)
             val operationIdA = repositoryA.enqueue(root.rootId, operation)
             val operationIdB = repositoryB.enqueue(root.rootId, operation)
+            repositoryA.saveProgress(
+                CloudFolderSyncProgress(
+                    rootId = root.rootId,
+                    phase = CloudFolderSyncPhase.UPLOADING,
+                    completedFiles = 2,
+                    totalFiles = 4,
+                    completedBytes = 20L,
+                    totalBytes = 40L,
+                    updatedAt = 10L,
+                )
+            )
+            repositoryB.saveProgress(
+                CloudFolderSyncProgress(
+                    rootId = root.rootId,
+                    phase = CloudFolderSyncPhase.FAILED,
+                    errorStatus = "network",
+                    updatedAt = 11L,
+                )
+            )
             repositoryA.setSelection(
                 CloudFolderSyncSelection(
                     mode = CloudFolderSyncSelectionMode.SELECTED,
@@ -111,6 +132,8 @@ class CloudFolderSyncAccountIsolationTest {
             assertEquals(1, repositoryB.getOutbox(root.rootId).size)
             assertNotNull(repositoryA.getOutbox(root.rootId).single { it.operationId == operationIdA })
             assertNotNull(repositoryB.getOutbox(root.rootId).single { it.operationId == operationIdB })
+            assertEquals(2, repositoryA.getProgress(root.rootId)?.completedFiles)
+            assertEquals(CloudFolderSyncPhase.FAILED, repositoryB.getProgress(root.rootId)?.phase)
             assertTrue(repositoryA.selection().includes(root.rootId))
             assertFalse(repositoryB.selection().includes(root.rootId))
             assertNotEquals(operationIdA, operationIdB)
@@ -121,11 +144,13 @@ class CloudFolderSyncAccountIsolationTest {
             assertNull(repositoryA.getPendingMaterialization(root.rootId))
             assertNull(repositoryA.getBinding(root.rootId))
             assertTrue(repositoryA.getOutbox(root.rootId).isEmpty())
+            assertNull(repositoryA.getProgress(root.rootId))
             assertEquals(CloudFolderSyncSelection.Default, repositoryA.selection())
             assertNotNull(repositoryB.getManifest(root.rootId))
             assertNull(repositoryB.getPendingMaterialization(root.rootId))
             assertNotNull(repositoryB.getBinding(root.rootId))
             assertEquals(1, repositoryB.getOutbox(root.rootId).size)
+            assertEquals(CloudFolderSyncPhase.FAILED, repositoryB.getProgress(root.rootId)?.phase)
             assertFalse(repositoryB.selection().includes(root.rootId))
         } finally {
             database.close()
@@ -285,6 +310,7 @@ class CloudFolderSyncAccountIsolationTest {
                 AppDatabase.MIGRATION_33_34,
                 AppDatabase.MIGRATION_34_35,
                 AppDatabase.MIGRATION_35_36,
+                AppDatabase.MIGRATION_36_37,
             )
             .allowMainThreadQueries()
             .build()
@@ -296,6 +322,24 @@ class CloudFolderSyncAccountIsolationTest {
             assertEquals(1, dao.getTombstones("", "legacy-root").size)
             assertEquals(1, dao.getOutbox("", "legacy-root").size)
             assertEquals(1, dao.getBindingsForDevice("", "legacy-device").size)
+
+            // The newest migration creates the durable progress projection;
+            // inserting a row here also verifies all of its columns exist.
+            dao.upsertProgress(
+                CloudFolderSyncProgressEntity(
+                    accountId = "",
+                    rootId = "legacy-root",
+                    phase = CloudFolderSyncPhase.SCANNING.name,
+                    completedFiles = 0,
+                    totalFiles = 2,
+                    completedBytes = 0L,
+                    totalBytes = 20L,
+                    updatedAt = 2L,
+                    errorStatus = null,
+                )
+            )
+            assertEquals(2, dao.getProgress("", "legacy-root")?.totalFiles)
+            assertTrue(dao.getProgress(accountA, "legacy-root") == null)
 
             // Provider URIs are intentionally absent from the backup-eligible
             // database after 31 -> 32; recovery requires an explicit rebind in
@@ -347,6 +391,7 @@ private class LegacyCloudFolderCallback : SupportSQLiteOpenHelper.Callback(29) {
             "cloud_folder_outbox",
             "cloud_folder_conflicts",
             "cloud_folder_pending_materializations",
+            "cloud_folder_sync_progress",
             "cloud_book_delete_intents",
         ).forEach { table -> db.execSQL("DROP TABLE IF EXISTS `$table`") }
         db.execSQL(

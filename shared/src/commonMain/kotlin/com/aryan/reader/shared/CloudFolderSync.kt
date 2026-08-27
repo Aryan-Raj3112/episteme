@@ -76,6 +76,32 @@ data class CloudFolderSyncSelection(
         }
     }
 
+    /**
+     * Return the policy in the explicit-root form used by the current Android
+     * settings surface.  Older releases persisted EXCLUDED and ALL, so those
+     * values remain valid and readable; converting them only needs the roots
+     * currently visible to the caller.  ALL is retained when there is no
+     * inventory yet so an empty/still-loading screen cannot accidentally turn
+     * an existing opt-in policy into an empty selection.
+     */
+    fun toExplicitSelection(knownRootIds: Collection<String>): CloudFolderSyncSelection {
+        val known = knownRootIds
+            .mapTo(linkedSetOf()) { it.trim() }
+            .filterTo(linkedSetOf()) { it.isNotBlank() }
+        if (mode == CloudFolderSyncSelectionMode.ALL && known.isEmpty()) {
+            return normalized()
+        }
+        val selected = when (mode) {
+            CloudFolderSyncSelectionMode.EXCLUDED -> emptySet()
+            CloudFolderSyncSelectionMode.SELECTED -> selectedRootIds
+            CloudFolderSyncSelectionMode.ALL -> known
+        }
+        return CloudFolderSyncSelection(
+            mode = CloudFolderSyncSelectionMode.SELECTED,
+            selectedRootIds = selected,
+        ).normalized(known)
+    }
+
     fun withRootIncluded(rootId: String): CloudFolderSyncSelection {
         val id = rootId.trim()
         if (id.isBlank()) return this

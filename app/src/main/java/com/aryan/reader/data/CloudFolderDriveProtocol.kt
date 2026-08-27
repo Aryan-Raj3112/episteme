@@ -75,7 +75,11 @@ internal fun cloudFolderDriveMetadata(
     put("cloudFolderRootId", rootId)
     put("cloudFolderNodeId", nodeId)
     put("cloudFolderRevision", revision.toString())
-    relativePath?.takeIf { it.isNotBlank() }?.let { put("cloudFolderRelativePath", it) }
+    // Drive custom appProperties are capped at 124 UTF-8 bytes per key/value
+    // pair.  A relative path is unbounded user/provider data and therefore
+    // must remain in the manifest, where it is already authenticated and
+    // validated.  Older objects may still contain this property; all readers
+    // intentionally ignore unknown/extra properties for compatibility.
     contentHash?.takeIf { it.isNotBlank() }?.let { put("cloudFolderContentHash", it) }
     contentSizeBytes?.takeIf { it >= 0L }?.let { put("cloudFolderContentSize", it.toString()) }
 }

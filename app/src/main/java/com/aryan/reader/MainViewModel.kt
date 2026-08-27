@@ -59,6 +59,9 @@ import com.aryan.reader.data.CloudBookDeletePersistence
 import com.aryan.reader.data.CloudflareRepository
 import com.aryan.reader.data.AppDatabase
 import com.aryan.reader.data.CloudFolderSyncRepository
+import com.aryan.reader.data.CloudFolderSafScanner
+import com.aryan.reader.data.CloudFolderLocalInventory
+import com.aryan.reader.data.CloudFolderLocalInventoryState
 import com.aryan.reader.data.DriveFile
 import com.aryan.reader.data.CustomFontEntity
 import com.aryan.reader.data.FeedbackRepository
@@ -129,6 +132,7 @@ import com.aryan.reader.shared.CloudFolderPermissionState
 import com.aryan.reader.shared.CloudFolderRoot
 import com.aryan.reader.shared.CloudFolderRootStats
 import com.aryan.reader.shared.CloudFolderSyncDirection
+import com.aryan.reader.shared.CloudFolderSyncProgress
 import com.aryan.reader.shared.CloudFolderSyncSelection
 import com.aryan.reader.shared.CloudMaintenanceCoordinator
 import com.aryan.reader.shared.CloudMaintenanceIntent
@@ -227,6 +231,9 @@ private data class CachedSpeechBubble(
 private const val BANNER_AUTO_DISMISS_MILLIS = 3_000L
 private const val CLOUD_CONTENT_RETRY_DELAY_MILLIS = 10_000L
 private const val CLOUD_METADATA_UPLOAD_DEBOUNCE_MILLIS = 1_500L
+private const val LOCAL_FOLDER_INVENTORY_REFRESH_MILLIS = 5L * 60L * 1_000L
+private const val LOCAL_FOLDER_INVENTORY_RETRY_MILLIS = 30L * 1_000L
+private const val LOCAL_FOLDER_INVENTORY_STALE_MILLIS = 60L * 1_000L
 
 @kotlin.OptIn(ExperimentalSerializationApi::class)
 @UnstableApi
@@ -685,6 +692,13 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     private val _cloudFolderRootStats = MutableStateFlow<Map<String, CloudFolderRootStats>>(emptyMap())
     val cloudFolderRootStats: StateFlow<Map<String, CloudFolderRootStats>> = _cloudFolderRootStats.asStateFlow()
 
+    /** Device-local SAF counts; never used as the account-level manifest stats. */
+    private val _cloudFolderLocalInventories = MutableStateFlow<Map<String, CloudFolderLocalInventory>>(emptyMap())
+    val cloudFolderLocalInventories: StateFlow<Map<String, CloudFolderLocalInventory>> =
+        _cloudFolderLocalInventories.asStateFlow()
+
+    private val activeLocalInventoryScans = ConcurrentHashMap.newKeySet<String>()
+
     /**
      * Account-level roots and this device's materialization state are kept as
      * first-class UI state.  This is what lets settings show a remote
@@ -697,6 +711,11 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     private val _cloudFolderBindings = MutableStateFlow<Map<String, CloudFolderDeviceBinding>>(emptyMap())
     val cloudFolderBindings: StateFlow<Map<String, CloudFolderDeviceBinding>> =
         _cloudFolderBindings.asStateFlow()
+
+    /** Durable per-root transfer state used by the folder-sync surface. */
+    private val _cloudFolderSyncProgress = MutableStateFlow<Map<String, CloudFolderSyncProgress>>(emptyMap())
+    val cloudFolderSyncProgress: StateFlow<Map<String, CloudFolderSyncProgress>> =
+        _cloudFolderSyncProgress.asStateFlow()
 
     private val _cloudFolderConflicts = MutableStateFlow<List<CloudFolderConflictUiItem>>(emptyList())
     val cloudFolderConflicts: StateFlow<List<CloudFolderConflictUiItem>> =
@@ -1869,6 +1888,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         }
                 } else {
                     _cloudFolderRootStats.value = emptyMap()
+                    _cloudFolderLocalInventories.value = emptyMap()
                     _cloudFolderRoots.value = emptyList()
                     _cloudFolderBindings.value = emptyMap()
                     _cloudFolderConflicts.value = emptyList()
@@ -3728,14 +3748,29 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    /**
+     * Cloud-folder mutations require both the Pro build and the current
+     * account entitlement. UI checks protect normal taps; these helpers are
+     * the final guard for picker/work callbacks that may outlive a session.
+     */
+    private fun activeCloudFolderSyncAccountId(): String? {
+        if (!BuildConfig.IS_PRO || !_internalState.value.isProUser) return null
+        return _internalState.value.currentUser?.uid?.trim()?.takeIf { it.isNotBlank() }
+    }
+
+    private fun isCloudFolderSyncAvailableFor(accountId: String): Boolean =
+        activeCloudFolderSyncAccountId() == accountId.trim().takeIf { it.isNotBlank() }
+
     /** Refresh repository-backed folder counts and any durable incoming prompt. */
     fun refreshCloudFolderSyncState() {
         val accountId = _internalState.value.currentUser?.uid?.trim()
             ?.takeIf { it.isNotBlank() }
         if (accountId == null) {
             _cloudFolderRootStats.value = emptyMap()
+            _cloudFolderLocalInventories.value = emptyMap()
             _cloudFolderRoots.value = emptyList()
             _cloudFolderBindings.value = emptyMap()
+            _cloudFolderSyncProgress.value = emptyMap()
             _cloudFolderConflicts.value = emptyList()
             _incomingCloudFolderPrompt.value = null
             return
@@ -3746,6 +3781,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 val roots = repository.getRoots().filterNot { it.isDeleted }
                 val bindings = repository.getBindingsForDevice()
                     .associateBy { it.rootId }
+                val localInventories = repository.getLocalInventoriesForDevice()
+                val syncProgress = repository.getProgressForAccount()
                 val pendingRootIds = CloudFolderSyncPrefs.pendingIncomingRootIds(appContext, accountId)
                 val promptRoot = roots
                     .asSequence()
@@ -3761,10 +3798,12 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 // state belonging to the account that is no longer active.
                 if (_internalState.value.currentUser?.uid?.trim() != accountId) return@launch
                 _cloudFolderRootStats.value = stats
+                _cloudFolderLocalInventories.value = localInventories
                 _cloudFolderRoots.value = roots.sortedWith(
                     compareBy<CloudFolderRoot> { it.name.lowercase() }.thenBy { it.rootId },
                 )
                 _cloudFolderBindings.value = bindings
+                _cloudFolderSyncProgress.value = syncProgress
                 _cloudFolderConflicts.value = repository.getConflictUiItems()
                 _incomingCloudFolderPrompt.value = promptRoot?.let {
                     CloudFolderIncomingFolderPrompt(
@@ -3772,8 +3811,134 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         sourceDeviceName = it.createdByDeviceId.takeIf { device -> device.isNotBlank() },
                     )
                 }
+                scheduleLocalCloudFolderInventories(
+                    accountId = accountId,
+                    folders = _internalState.value.syncedFolders,
+                    roots = roots,
+                    localInventories = localInventories,
+                )
             } catch (error: Exception) {
                 Timber.w(error, "Unable to refresh cloud-folder repository state")
+            }
+        }
+    }
+
+    /**
+     * Refresh local folder facts independently of cloud selection and library
+     * indexing. The inventory is metadata-only (no hashing or file copies),
+     * runs off the UI dispatcher, and has a durable terminal state so a
+     * failed provider does not leave the screen saying "Scanning" forever.
+     */
+    private fun scheduleLocalCloudFolderInventories(
+        accountId: String,
+        folders: List<SyncedFolder>,
+        roots: List<CloudFolderRoot>,
+        localInventories: Map<String, CloudFolderLocalInventory>,
+    ) {
+        val rootIds = roots.mapTo(hashSetOf()) { it.rootId }
+        val now = System.currentTimeMillis()
+        folders.forEach { folder ->
+            val rootId = folder.cloudRootId?.trim()?.takeIf { it.isNotBlank() } ?: return@forEach
+            val localUri = folder.uriString.trim().takeIf { it.isNotBlank() } ?: return@forEach
+            if (rootId !in rootIds) return@forEach
+            val existing = localInventories[rootId]
+            val shouldRefresh = when {
+                existing == null -> true
+                existing.state == CloudFolderLocalInventoryState.SCANNING ->
+                    now - existing.updatedAt > LOCAL_FOLDER_INVENTORY_STALE_MILLIS
+                existing.state == CloudFolderLocalInventoryState.FAILED ->
+                    now - existing.updatedAt > LOCAL_FOLDER_INVENTORY_RETRY_MILLIS
+                else -> now - existing.scannedAt > LOCAL_FOLDER_INVENTORY_REFRESH_MILLIS
+            }
+            if (!shouldRefresh) return@forEach
+            val key = "$accountId\u0000$rootId"
+            if (!activeLocalInventoryScans.add(key)) return@forEach
+            viewModelScope.launch(Dispatchers.IO) {
+                val repository = CloudFolderSyncRepository(appContext, accountId)
+                try {
+                    val previous = repository.getLocalInventory(rootId)
+                    val scanStartedAt = System.currentTimeMillis()
+                    repository.saveLocalInventory(
+                        CloudFolderLocalInventory(
+                            rootId = rootId,
+                            deviceId = repository.deviceId,
+                            state = CloudFolderLocalInventoryState.SCANNING,
+                            fileCount = previous?.fileCount ?: 0,
+                            directoryCount = previous?.directoryCount ?: 0,
+                            totalBytes = previous?.totalBytes ?: 0L,
+                            sizeComplete = previous?.sizeComplete ?: true,
+                            scannedAt = previous?.scannedAt ?: 0L,
+                            updatedAt = scanStartedAt,
+                        )
+                    )
+                    CloudFolderSyncEvents.notifyStateChanged()
+                    val result = CloudFolderSafScanner.scanInventory(
+                        context = appContext,
+                        rootUri = Uri.parse(localUri),
+                        rootId = rootId,
+                        now = System.currentTimeMillis(),
+                    )
+                    val completedAt = System.currentTimeMillis()
+                    if (result.complete) {
+                        repository.saveLocalInventory(
+                            CloudFolderLocalInventory(
+                                rootId = rootId,
+                                deviceId = repository.deviceId,
+                                state = CloudFolderLocalInventoryState.READY,
+                                fileCount = result.fileCount,
+                                directoryCount = result.directoryCount,
+                                totalBytes = result.totalBytes,
+                                sizeComplete = result.sizeComplete,
+                                scannedAt = result.scannedAt,
+                                updatedAt = completedAt,
+                            )
+                        )
+                    } else {
+                        // Preserve the last known totals, but expose a
+                        // terminal failure state so the UI can offer a retry
+                        // instead of presenting an endless spinner.
+                        repository.saveLocalInventory(
+                            CloudFolderLocalInventory(
+                                rootId = rootId,
+                                deviceId = repository.deviceId,
+                                state = CloudFolderLocalInventoryState.FAILED,
+                                fileCount = previous?.fileCount ?: result.fileCount,
+                                directoryCount = previous?.directoryCount ?: result.directoryCount,
+                                totalBytes = previous?.totalBytes ?: result.totalBytes,
+                                sizeComplete = previous?.sizeComplete ?: result.sizeComplete,
+                                scannedAt = previous?.scannedAt ?: 0L,
+                                updatedAt = completedAt,
+                                errorStatus = cloudFolderErrorStatus(result.errorMessage),
+                            )
+                        )
+                    }
+                    CloudFolderSyncEvents.notifyStateChanged()
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Exception) {
+                    val previous = runCatching { repository.getLocalInventory(rootId) }.getOrNull()
+                    runCatching {
+                        repository.saveLocalInventory(
+                            CloudFolderLocalInventory(
+                                rootId = rootId,
+                                deviceId = repository.deviceId,
+                                state = CloudFolderLocalInventoryState.FAILED,
+                                fileCount = previous?.fileCount ?: 0,
+                                directoryCount = previous?.directoryCount ?: 0,
+                                totalBytes = previous?.totalBytes ?: 0L,
+                                sizeComplete = previous?.sizeComplete ?: true,
+                                scannedAt = previous?.scannedAt ?: 0L,
+                                updatedAt = System.currentTimeMillis(),
+                                errorStatus = cloudFolderErrorStatus(error),
+                            )
+                        )
+                        CloudFolderSyncEvents.notifyStateChanged()
+                    }.onFailure { persistError ->
+                        Timber.w(persistError, "Unable to persist local folder inventory failure")
+                    }
+                } finally {
+                    activeLocalInventoryScans.remove(key)
+                }
             }
         }
     }
@@ -3782,16 +3947,17 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         rootId: String,
         onPersisted: (Boolean) -> Unit = {},
     ) {
-        val accountId = _internalState.value.currentUser?.uid?.trim()
-            ?.takeIf { it.isNotBlank() } ?: run {
-                reportIncomingCloudFolderPersistence(onPersisted, succeeded = false)
-                return
-            }
+        val accountId = activeCloudFolderSyncAccountId() ?: run {
+            reportIncomingCloudFolderPersistence(onPersisted, succeeded = false)
+            return
+        }
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val repository = CloudFolderSyncRepository(appContext, accountId)
                 val root = repository.getRoot(rootId)?.takeUnless { it.isDeleted }
-                if (root == null || _internalState.value.currentUser?.uid?.trim() != accountId) {
+                if (root == null || !isCloudFolderSyncAvailableFor(accountId) ||
+                    authRepository.getSignedInUser()?.uid?.trim() != accountId
+                ) {
                     refreshCloudFolderSyncState()
                     reportIncomingCloudFolderPersistence(onPersisted, succeeded = false)
                     return@launch
@@ -3802,6 +3968,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     rootId = root.rootId,
                     revision = root.manifestRevision,
                 )
+                CloudFolderSyncEvents.notifyStateChanged()
                 refreshCloudFolderSyncState()
                 reportIncomingCloudFolderPersistence(onPersisted, succeeded = true)
             } catch (error: Exception) {
@@ -3839,6 +4006,14 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
      * imports files into the Reader library as a side effect.
      */
     fun addSyncedFolder(folderUri: Uri, indexInLibrary: Boolean = true) {
+        // The cloud-settings picker uses indexInLibrary=false. Keep legacy
+        // local-folder setup available, but reject that cloud path if the
+        // account/build entitlement changed while the picker was open.
+        val cloudAccountId = if (!indexInLibrary) activeCloudFolderSyncAccountId() else null
+        if (!indexInLibrary && cloudAccountId == null) {
+            Timber.w("Ignoring cloud-folder add without an entitled Pro account")
+            return
+        }
         val currentFolders = _internalState.value.syncedFolders
         when (syncedFolderAddDecision(currentFolders, folderUri.toString())) {
             SyncedFolderAddDecision.LIMIT_REACHED -> {
@@ -3858,6 +4033,12 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
         viewModelScope.launch {
             try {
+                if (!indexInLibrary &&
+                    (cloudAccountId == null || !isCloudFolderSyncAvailableFor(cloudAccountId))
+                ) {
+                    Timber.w("Ignoring stale cloud-folder picker result")
+                    return@launch
+                }
                 appContext.contentResolver.takePersistableUriPermission(
                     folderUri,
                     Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
@@ -3873,6 +4054,17 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     cloudRootId = cloudFolderRootId("android-root:${UUID.randomUUID()}"),
                 )
                 val newStats = currentFolders.withSyncedFolder(newFolder)
+                val accountId = if (!indexInLibrary) {
+                    cloudAccountId
+                } else {
+                    _internalState.value.currentUser?.uid?.trim()?.takeIf { it.isNotBlank() }
+                }
+                if (!indexInLibrary &&
+                    (accountId == null || !isCloudFolderSyncAvailableFor(accountId))
+                ) {
+                    Timber.w("Ignoring cloud-folder add after account entitlement changed")
+                    return@launch
+                }
 
                 saveSyncedFoldersToPrefs(newStats)
 
@@ -3882,9 +4074,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     )
                 }
 
-                val accountId = _internalState.value.currentUser?.uid?.trim()
-                    ?.takeIf { it.isNotBlank() }
-                if (accountId != null) {
+                if (accountId != null &&
+                    (indexInLibrary || isCloudFolderSyncAvailableFor(accountId))
+                ) {
                     try {
                         CloudFolderSyncRepository(appContext, accountId).registerLocalFolder(
                             localUri = newFolder.uriString,
@@ -3906,7 +4098,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         showFeedback = true,
                         targetFolderUriString = newFolder.uriString
                     )
-                } else if (accountId != null && uiState.value.isSyncEnabled &&
+                } else if (accountId != null &&
+                    isCloudFolderSyncAvailableFor(accountId) &&
+                    uiState.value.isSyncEnabled &&
                     newFolder.cloudRootId?.let { CloudFolderSyncPrefs.load(appContext, accountId).includes(it) } == true
                 ) {
                     // Direct-cloud mode scans/uploads the SAF tree without
@@ -4369,7 +4563,17 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         )
                     }
                 } else {
-                    _internalState.update { it.copy(isLoading = false) }
+                    // AuthStateListener normally publishes the account, but
+                    // the sign-in repository can also enrich it with the
+                    // Google credential's profile photo before Firebase's
+                    // listener callback runs. Publish the returned snapshot
+                    // so the UI does not lose that photo during the handoff.
+                    _internalState.update {
+                        it.copy(
+                            currentUser = user,
+                            isLoading = false,
+                        )
+                    }
                 }
             } catch (_: GetCredentialCancellationException) {
                 Timber.d("Sign-in flow was cancelled by the user.")
@@ -4515,7 +4719,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             return
         }
 
-        if (!uiState.value.isProUser) {
+        if (!BuildConfig.IS_PRO || !uiState.value.isProUser) {
             Timber.d("Sync toggle blocked for free user.")
             _internalState.update { it.copy(errorMessage = appContext.getString(R.string.error_sync_pro_feature)) }
             return
@@ -4560,14 +4764,13 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             ?: CloudFolderSyncSelection.Default
 
     fun setCloudFolderSyncSelection(selection: CloudFolderSyncSelection) {
-        val accountId = _internalState.value.currentUser?.uid?.trim()
-            ?.takeIf { it.isNotBlank() }
-            ?: run {
-                Timber.w("Ignoring cloud-folder selection without a signed-in account")
-                return
-            }
+        val accountId = activeCloudFolderSyncAccountId() ?: run {
+            Timber.w("Ignoring cloud-folder selection without an entitled Pro account")
+            return
+        }
         val normalized = selection.normalized()
         CloudFolderSyncPrefs.save(appContext, accountId, normalized)
+        CloudFolderSyncEvents.notifyStateChanged()
 
         // Queue a durable folder pass so the persisted policy is observed by
         // the worker even if the process is killed after the dialog closes.
@@ -4592,13 +4795,14 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         conflict: CloudFolderConflictUiItem,
         resolution: CloudFolderConflictResolution,
     ) {
-        val accountId = _internalState.value.currentUser?.uid?.trim()
-            ?.takeIf { it.isNotBlank() } ?: return
+        val accountId = activeCloudFolderSyncAccountId() ?: return
         val rootId = conflict.normalizedRootId.takeIf { it.isNotBlank() } ?: return
         val conflictId = conflict.conflictId.trim().takeIf { it.isNotBlank() } ?: return
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                if (authRepository.getSignedInUser()?.uid?.trim() != accountId) return@launch
+                if (!isCloudFolderSyncAvailableFor(accountId) ||
+                    authRepository.getSignedInUser()?.uid?.trim() != accountId
+                ) return@launch
                 val repository = CloudFolderSyncRepository(appContext, accountId)
                 val persisted = repository.resolveConflict(
                     rootId = rootId,
@@ -4612,7 +4816,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     refreshCloudFolderSyncState()
                     return@launch
                 }
-                if (uiState.value.isSyncEnabled &&
+                if (isCloudFolderSyncAvailableFor(accountId) &&
+                    uiState.value.isSyncEnabled &&
                     authRepository.getSignedInUser()?.uid?.trim() == accountId
                 ) {
                     // NONE maps to the normal SYNC planner. It can upload
@@ -4641,15 +4846,16 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
      * AppNavigation remains the single owner of the prompt surface.
      */
     fun showIncomingCloudFolderPrompt(rootId: String) {
-        val accountId = _internalState.value.currentUser?.uid?.trim()
-            ?.takeIf { it.isNotBlank() } ?: return
+        val accountId = activeCloudFolderSyncAccountId() ?: return
         val normalizedRootId = rootId.trim().takeIf { it.isNotBlank() } ?: return
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val repository = CloudFolderSyncRepository(appContext, accountId)
                 val root = repository.getRoot(normalizedRootId)?.takeUnless { it.isDeleted }
                     ?: return@launch
-                if (_internalState.value.currentUser?.uid?.trim() != accountId) return@launch
+                if (!isCloudFolderSyncAvailableFor(accountId) ||
+                    authRepository.getSignedInUser()?.uid?.trim() != accountId
+                ) return@launch
                 _incomingCloudFolderPrompt.value = CloudFolderIncomingFolderPrompt(
                     root = root,
                     sourceDeviceName = root.createdByDeviceId.takeIf { it.isNotBlank() },
@@ -4676,12 +4882,13 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             Timber.w("Ignoring local-mirror mode without a SAF folder root=$rootId")
             return
         }
-        val accountId = _internalState.value.currentUser?.uid?.trim()
-            ?.takeIf { it.isNotBlank() } ?: return
+        val accountId = activeCloudFolderSyncAccountId() ?: return
         val normalizedRootId = rootId.trim().takeIf { it.isNotBlank() } ?: return
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                if (authRepository.getSignedInUser()?.uid?.trim() != accountId) return@launch
+                if (!isCloudFolderSyncAvailableFor(accountId) ||
+                    authRepository.getSignedInUser()?.uid?.trim() != accountId
+                ) return@launch
                 val repository = CloudFolderSyncRepository(appContext, accountId)
                 val root = repository.getRoot(normalizedRootId)?.takeUnless { it.isDeleted }
                     ?: return@launch
@@ -4717,7 +4924,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         return@launch
                     }
                 }
-                if (authRepository.getSignedInUser()?.uid?.trim() != accountId) return@launch
+                if (!isCloudFolderSyncAvailableFor(accountId) ||
+                    authRepository.getSignedInUser()?.uid?.trim() != accountId
+                ) return@launch
                 repository.saveBinding(
                     (existing ?: CloudFolderDeviceBinding(
                         rootId = normalizedRootId,
@@ -4797,16 +5006,16 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             reportIncomingCloudFolderPersistence(onPersisted, succeeded = false)
             return
         }
-        val accountId = _internalState.value.currentUser?.uid?.trim()
-            ?.takeIf { it.isNotBlank() }
-            ?: run {
-                Timber.w("Ignoring incoming cloud-folder choice without a signed-in account")
-                reportIncomingCloudFolderPersistence(onPersisted, succeeded = false)
-                return
-            }
+        val accountId = activeCloudFolderSyncAccountId() ?: run {
+            Timber.w("Ignoring incoming cloud-folder choice without an entitled Pro account")
+            reportIncomingCloudFolderPersistence(onPersisted, succeeded = false)
+            return
+        }
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                if (authRepository.getSignedInUser()?.uid?.trim() != accountId) {
+                if (!isCloudFolderSyncAvailableFor(accountId) ||
+                    authRepository.getSignedInUser()?.uid?.trim() != accountId
+                ) {
                     Timber.i("Ignoring stale incoming cloud-folder choice for account $accountId")
                     reportIncomingCloudFolderPersistence(onPersisted, succeeded = false)
                     return@launch
@@ -4819,7 +5028,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     )
                 }
                 val materialization = choice.materializationMode
-                if (authRepository.getSignedInUser()?.uid?.trim() != accountId) {
+                if (!isCloudFolderSyncAvailableFor(accountId) ||
+                    authRepository.getSignedInUser()?.uid?.trim() != accountId
+                ) {
                     Timber.i("Ignoring account-switched incoming cloud-folder choice for $accountId")
                     reportIncomingCloudFolderPersistence(onPersisted, succeeded = false)
                     return@launch
@@ -4860,7 +5071,12 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     rootId = prompt.rootId,
                     revision = prompt.root.manifestRevision,
                 )
-                if (choice.shouldIncludeInLocalSyncSelection && uiState.value.isSyncEnabled) {
+                CloudFolderSyncEvents.notifyStateChanged()
+                if (choice.shouldIncludeInLocalSyncSelection &&
+                    isCloudFolderSyncAvailableFor(accountId) &&
+                    authRepository.getSignedInUser()?.uid?.trim() == accountId &&
+                    uiState.value.isSyncEnabled
+                ) {
                     // An incoming choice is a pull. Using the default
                     // LOCAL_TO_CLOUD direction here would only scan a local
                     // mirror and would never materialize DOWNLOAD_ALL (which

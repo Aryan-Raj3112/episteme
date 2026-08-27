@@ -1,10 +1,13 @@
 package com.aryan.reader
 
 import com.aryan.reader.data.RecentFileItem
+import com.aryan.reader.data.CloudFolderLocalInventory
+import com.aryan.reader.data.CloudFolderLocalInventoryState
 import com.aryan.reader.shared.CloudFolderDeviceBinding
 import com.aryan.reader.shared.CloudFolderMaterializationMode
 import com.aryan.reader.shared.CloudFolderRoot
 import com.aryan.reader.shared.CloudFolderSyncFolderOption
+import com.aryan.reader.shared.CloudFolderSyncProgress
 import com.aryan.reader.shared.CloudFolderRootStats
 import com.aryan.reader.shared.cloudFolderRootId
 
@@ -19,6 +22,8 @@ internal fun cloudFolderSyncFolderOptions(
     repositoryStats: Map<String, CloudFolderRootStats> = emptyMap(),
     repositoryRoots: List<CloudFolderRoot> = emptyList(),
     deviceBindings: Map<String, CloudFolderDeviceBinding> = emptyMap(),
+    syncProgress: Map<String, CloudFolderSyncProgress> = emptyMap(),
+    localInventories: Map<String, CloudFolderLocalInventory> = emptyMap(),
 ): List<CloudFolderSyncFolderOption> {
     val statsByUri = indexedFiles
         .asSequence()
@@ -33,7 +38,16 @@ internal fun cloudFolderSyncFolderOptions(
         val sizes = statsByUri[folder.uriString].orEmpty()
         val mappedRootId = folder.cloudRootId?.trim()?.takeIf { it.isNotBlank() }
         val repositoryStat = mappedRootId?.let(repositoryStats::get)
+        val localInventory = mappedRootId?.let(localInventories::get)
         val binding = mappedRootId?.let(deviceBindings::get)
+        val repositoryStatsKnown = repositoryStat?.let { stat ->
+            stat.scanComplete && stat.scannedAt > 0L
+        } == true
+        val localStatsKnown = localInventory?.hasKnownStats == true
+        // Indexed rows can be stale/partial while a scan is in progress. The
+        // persisted scan watermark is the only completion signal for this
+        // device-local fallback inventory.
+        val fallbackStatsKnown = folder.lastScanTime > 0L
         CloudFolderSyncFolderOption(
             // A logical root ID is a persisted device-local mapping. Legacy
             // URI-only entries remain visible but unavailable until that
@@ -45,15 +59,29 @@ internal fun cloudFolderSyncFolderOptions(
             // Repository manifests are authoritative even when this device
             // has local indexing disabled. Indexed rows remain a fallback for
             // legacy entries that have not completed a cloud scan yet.
-            fileCount = repositoryStat?.fileCount ?: sizes.size,
-            totalBytes = repositoryStat?.totalBytes ?: sizes.sum(),
+            fileCount = localInventory?.fileCount ?: repositoryStat?.fileCount ?: sizes.size,
+            totalBytes = localInventory?.totalBytes ?: repositoryStat?.totalBytes ?: sizes.sum(),
+            sizeKnown = localInventory?.sizeComplete ?: true,
+            hasKnownStats = localStatsKnown || repositoryStatsKnown || fallbackStatsKnown,
+            scanComplete = when {
+                localInventory != null -> localInventory.state == CloudFolderLocalInventoryState.READY
+                repositoryStat != null -> repositoryStat.scanComplete && repositoryStat.scannedAt > 0L
+                else -> folder.lastScanTime > 0L
+            },
+            statsUpdatedAt = localInventory?.scannedAt?.takeIf { it > 0L }
+                ?: repositoryStat?.scannedAt?.takeIf { it > 0L } ?: folder.lastScanTime,
             isAvailable = mappedRootId != null,
             materializationMode = binding?.materializationMode
                 ?: CloudFolderMaterializationMode.LOCAL_MIRROR,
             isBoundLocally = binding?.localUri?.isNotBlank() == true || mappedRootId != null,
             isRemote = false,
             isSelectable = mappedRootId != null,
-            lastError = binding?.lastError,
+            lastError = when {
+                localInventory?.state == CloudFolderLocalInventoryState.FAILED ->
+                    "Local folder scan unavailable"
+                else -> binding?.lastError
+            },
+            syncProgress = mappedRootId?.let(syncProgress::get),
         )
     }
 
@@ -69,6 +97,10 @@ internal fun cloudFolderSyncFolderOptions(
                 displayName = normalizedRoot.name,
                 fileCount = normalizedRoot.stats.fileCount,
                 totalBytes = normalizedRoot.stats.totalBytes,
+                sizeKnown = true,
+                hasKnownStats = normalizedRoot.stats.scanComplete && normalizedRoot.stats.scannedAt > 0L,
+                scanComplete = normalizedRoot.stats.scanComplete && normalizedRoot.stats.scannedAt > 0L,
+                statsUpdatedAt = normalizedRoot.stats.scannedAt,
                 isAvailable = true,
                 materializationMode = binding?.materializationMode
                     ?: CloudFolderMaterializationMode.CLOUD_ONLY,
@@ -84,6 +116,7 @@ internal fun cloudFolderSyncFolderOptions(
                 isSelectable = binding != null &&
                     binding.materializationMode != CloudFolderMaterializationMode.CLOUD_ONLY,
                 lastError = binding?.lastError,
+                syncProgress = normalizedRoot.rootId.let(syncProgress::get),
             )
         }
         .filterNot { it.normalizedRootId in localRootIds }

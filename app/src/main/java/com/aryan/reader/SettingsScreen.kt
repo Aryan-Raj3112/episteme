@@ -1,9 +1,6 @@
 package com.aryan.reader
 
-import android.content.ActivityNotFoundException
 import androidx.activity.compose.BackHandler
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.navigationBars
@@ -165,7 +162,7 @@ private fun androidSettingsLiteralResource(context: Context, literal: String): I
     "Connect sync and account features" -> R.string.settings_hub_literal_73
     "Cloud library sync" -> R.string.settings_hub_literal_74
     "Folder backup and sync" -> R.string.settings_hub_literal_75
-    "Keep selected local folders represented in the library" -> R.string.settings_hub_literal_76
+    "Choose which local folders to back up to Drive" -> R.string.settings_hub_literal_76
     "Device management" -> R.string.settings_hub_literal_77
     "Inspect registered devices for this account" -> R.string.settings_hub_literal_78
     "AI keys and models" -> R.string.settings_hub_literal_79
@@ -223,14 +220,15 @@ fun SettingsScreen(
     navController: NavHostController,
     onBackClick: () -> Unit,
     modifier: Modifier = Modifier,
-    onManageIncomingFolder: (String) -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val cloudFolderRootStats by viewModel.cloudFolderRootStats.collectAsStateWithLifecycle()
+    val cloudFolderLocalInventories by viewModel.cloudFolderLocalInventories.collectAsStateWithLifecycle()
     val cloudFolderRoots by viewModel.cloudFolderRoots.collectAsStateWithLifecycle()
     val cloudFolderBindings by viewModel.cloudFolderBindings.collectAsStateWithLifecycle()
+    val cloudFolderSyncProgress by viewModel.cloudFolderSyncProgress.collectAsStateWithLifecycle()
     val cloudFolderConflicts by viewModel.cloudFolderConflicts.collectAsStateWithLifecycle()
     val customFonts by viewModel.customFonts.collectAsStateWithLifecycle()
     val ttsState by viewModel.ttsController.ttsState.collectAsStateWithLifecycle()
@@ -278,18 +276,6 @@ fun SettingsScreen(
         }
     }
 
-    val addCloudFolderLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocumentTree(),
-    ) { uri ->
-        if (uri != null) {
-            // Cloud-folder settings owns cloud registration; preserve the
-            // legacy local-library indexing switch as an explicit choice.
-            viewModel.addSyncedFolder(uri, indexInLibrary = false)
-            // Reopen the secondary surface after the picker so the newly
-            // added folder and its computed inventory are immediately visible.
-            showCloudFolderSyncDialog = true
-        }
-    }
     LaunchedEffect(uiState.renderMode) {
         epubReaderDefaults = loadAndroidEpubReaderDefaultSettings(context, uiState.renderMode)
     }
@@ -310,15 +296,19 @@ fun SettingsScreen(
         uiState.syncedFolders,
         uiState.rawLibraryFiles,
         cloudFolderRootStats,
+        cloudFolderLocalInventories,
         cloudFolderRoots,
         cloudFolderBindings,
+        cloudFolderSyncProgress,
     ) {
         cloudFolderSyncFolderOptions(
             folders = uiState.syncedFolders,
             indexedFiles = uiState.rawLibraryFiles,
             repositoryStats = cloudFolderRootStats,
+            localInventories = cloudFolderLocalInventories,
             repositoryRoots = cloudFolderRoots,
             deviceBindings = cloudFolderBindings,
+            syncProgress = cloudFolderSyncProgress,
         )
     }
 
@@ -488,33 +478,13 @@ fun SettingsScreen(
         CloudFolderSyncSettingsDialog(
             folders = cloudFolderOptions,
             selection = cloudFolderSelection,
-            localFolderIndexingEnabled = uiState.isFolderSyncEnabled,
             conflicts = cloudFolderConflicts,
             onSelectionChange = { selection ->
                 val normalized = selection.normalized()
                 cloudFolderSelection = normalized
                 viewModel.setCloudFolderSyncSelection(normalized)
             },
-            onLocalFolderIndexingChange = viewModel::setFolderSyncEnabled,
             onConflictResolution = viewModel::resolveCloudFolderConflict,
-            onAddFolder = {
-                showCloudFolderSyncDialog = false
-                try {
-                    addCloudFolderLauncher.launch(null)
-                } catch (_: ActivityNotFoundException) {
-                    viewModel.showBanner(
-                        context.getString(R.string.error_folder_selection_unsupported),
-                        isError = true,
-                    )
-                }
-            },
-            onSetMaterializationMode = { rootId, mode ->
-                viewModel.setCloudFolderMaterializationMode(rootId, mode)
-            },
-            onManageIncomingFolder = { rootId ->
-                showCloudFolderSyncDialog = false
-                onManageIncomingFolder(rootId)
-            },
             onDismiss = { showCloudFolderSyncDialog = false },
         )
     }

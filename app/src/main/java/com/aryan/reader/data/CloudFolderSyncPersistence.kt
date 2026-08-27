@@ -193,6 +193,62 @@ data class CloudFolderPendingMaterializationEntity(
     val updatedAt: Long,
 )
 
+/**
+ * Account/root scoped transfer progress. It contains no provider URI or
+ * filename and is safe to retain across a WorkManager retry/process restart.
+ */
+@Entity(
+    tableName = "cloud_folder_sync_progress",
+    primaryKeys = ["accountId", "rootId"],
+    indices = [
+        Index(value = ["accountId", "updatedAt"]),
+    ],
+)
+data class CloudFolderSyncProgressEntity(
+    val accountId: String,
+    val rootId: String,
+    val phase: String,
+    val completedFiles: Int,
+    val totalFiles: Int,
+    val completedBytes: Long,
+    val totalBytes: Long,
+    val updatedAt: Long,
+    val errorStatus: String?,
+)
+
+/**
+ * Device-local SAF inventory. This is deliberately separate from the
+ * account-level root/manifest stats: an empty or partially scanned folder on
+ * one device must not overwrite the committed inventory from another device.
+ */
+@Entity(
+    tableName = "cloud_folder_local_inventory",
+    primaryKeys = ["accountId", "rootId", "deviceId"],
+    indices = [
+        Index(value = ["accountId", "deviceId"]),
+        Index(value = ["accountId", "updatedAt"]),
+    ],
+)
+data class CloudFolderLocalInventoryEntity(
+    val accountId: String,
+    val rootId: String,
+    val deviceId: String,
+    val state: String,
+    val fileCount: Int,
+    val directoryCount: Int,
+    val totalBytes: Long,
+    val sizeComplete: Boolean,
+    val scannedAt: Long,
+    val updatedAt: Long,
+    val errorStatus: String?,
+) {
+    companion object {
+        const val STATE_SCANNING = "SCANNING"
+        const val STATE_READY = "READY"
+        const val STATE_FAILED = "FAILED"
+    }
+}
+
 @Dao
 abstract class CloudFolderSyncDao {
     @Query("SELECT * FROM cloud_folder_roots WHERE accountId = :accountId AND rootId = :rootId LIMIT 1")
@@ -200,6 +256,61 @@ abstract class CloudFolderSyncDao {
 
     @Query("SELECT * FROM cloud_folder_roots WHERE accountId = :accountId ORDER BY name COLLATE NOCASE, rootId")
     abstract suspend fun getRoots(accountId: String): List<CloudFolderRootEntity>
+
+    @Query(
+        "SELECT * FROM cloud_folder_sync_progress " +
+            "WHERE accountId = :accountId AND rootId = :rootId LIMIT 1"
+    )
+    abstract suspend fun getProgress(accountId: String, rootId: String): CloudFolderSyncProgressEntity?
+
+    @Query(
+        "SELECT * FROM cloud_folder_sync_progress " +
+            "WHERE accountId = :accountId ORDER BY updatedAt DESC, rootId"
+    )
+    abstract suspend fun getProgressForAccount(accountId: String): List<CloudFolderSyncProgressEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    abstract suspend fun upsertProgress(progress: CloudFolderSyncProgressEntity)
+
+    @Query(
+        "DELETE FROM cloud_folder_sync_progress " +
+            "WHERE accountId = :accountId AND rootId = :rootId"
+    )
+    abstract suspend fun clearProgress(accountId: String, rootId: String): Int
+
+    @Query("DELETE FROM cloud_folder_sync_progress WHERE accountId = :accountId")
+    abstract suspend fun deleteProgressForAccount(accountId: String): Int
+
+    @Query(
+        "SELECT * FROM cloud_folder_local_inventory " +
+            "WHERE accountId = :accountId AND rootId = :rootId AND deviceId = :deviceId LIMIT 1"
+    )
+    abstract suspend fun getLocalInventory(
+        accountId: String,
+        rootId: String,
+        deviceId: String,
+    ): CloudFolderLocalInventoryEntity?
+
+    @Query(
+        "SELECT * FROM cloud_folder_local_inventory " +
+            "WHERE accountId = :accountId AND deviceId = :deviceId ORDER BY rootId"
+    )
+    abstract suspend fun getLocalInventoriesForDevice(
+        accountId: String,
+        deviceId: String,
+    ): List<CloudFolderLocalInventoryEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    abstract suspend fun upsertLocalInventory(inventory: CloudFolderLocalInventoryEntity)
+
+    @Query(
+        "DELETE FROM cloud_folder_local_inventory " +
+            "WHERE accountId = :accountId AND rootId = :rootId AND deviceId = :deviceId"
+    )
+    abstract suspend fun deleteLocalInventory(accountId: String, rootId: String, deviceId: String): Int
+
+    @Query("DELETE FROM cloud_folder_local_inventory WHERE accountId = :accountId")
+    abstract suspend fun deleteLocalInventoriesForAccount(accountId: String): Int
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     abstract suspend fun upsertRoot(root: CloudFolderRootEntity)
@@ -397,6 +508,8 @@ abstract class CloudFolderSyncDao {
     @Transaction
     open suspend fun clearAccountState(accountId: String) {
         deleteOutboxForAccount(accountId)
+        deleteProgressForAccount(accountId)
+        deleteLocalInventoriesForAccount(accountId)
         deleteConflictsForAccount(accountId)
         deletePendingMaterializationsForAccount(accountId)
         deleteTombstonesForAccount(accountId)

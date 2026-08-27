@@ -50,6 +50,31 @@ class CloudFolderSyncTest {
     }
 
     @Test
+    fun `legacy policies can be represented as an explicit selection`() {
+        val roots = listOf("root-a", "root-b")
+
+        val excluded = CloudFolderSyncSelection(
+            mode = CloudFolderSyncSelectionMode.EXCLUDED,
+        ).toExplicitSelection(roots)
+        assertEquals(CloudFolderSyncSelectionMode.SELECTED, excluded.mode)
+        assertTrue(excluded.selectedRootIds.isEmpty())
+
+        val all = CloudFolderSyncSelection(
+            mode = CloudFolderSyncSelectionMode.ALL,
+        ).toExplicitSelection(roots)
+        assertEquals(CloudFolderSyncSelectionMode.SELECTED, all.mode)
+        assertEquals(roots.toSet(), all.selectedRootIds)
+
+        // Do not turn a still-loading ALL policy into an empty selection.
+        assertEquals(
+            CloudFolderSyncSelectionMode.ALL,
+            CloudFolderSyncSelection(mode = CloudFolderSyncSelectionMode.ALL)
+                .toExplicitSelection(emptyList())
+                .mode,
+        )
+    }
+
+    @Test
     fun `portable binding omits local provider uri`() {
         val binding = CloudFolderDeviceBinding(
             rootId = "root-a",

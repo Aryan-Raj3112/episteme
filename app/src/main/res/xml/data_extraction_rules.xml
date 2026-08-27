@@ -1,5 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Android 12+ (targetSdk 31+) cloud and device-transfer policy. -->
+<!-- Android 12+ (targetSdk 31+) cloud and device-transfer policy.
+
+     Allowlist mode: only the paths below are ever backed up, so <exclude>
+     entries would be dead config (and lint-vital fails on them). Never broaden
+     these includes to a whole domain: credentials live in reader_user_prefs.xml
+     and AI keys in ai_byok_prefs.xml, while cover_cache, TTS_Cache, derived,
+     book_cache_database, pdf_text_cache_db and androidx.work.workdb are
+     generated or device-specific and must stay out of backups.
+     AndroidBackupRulesContractTest enforces this. -->
 <data-extraction-rules>
     <cloud-backup disableIfNoEncryptionCapabilities="true">
         <include domain="sharedpref" path="reader_prefs.xml" />
@@ -18,20 +26,6 @@
         <include domain="file" path="pdf_highlights" />
         <include domain="file" path="custom_fonts" />
         <include domain="file" path="reader_textures" />
-
-        <exclude domain="sharedpref" path="ai_byok_prefs.xml" />
-        <exclude domain="sharedpref" path="reader_opds_prefs.xml" />
-        <exclude domain="sharedpref" path="reader_user_prefs.xml" />
-        <exclude domain="database" path="book_cache_database" />
-        <exclude domain="database" path="pdf_text_cache_db" />
-        <exclude domain="database" path="androidx.work.workdb" />
-        <exclude domain="file" path="books" />
-        <exclude domain="file" path="audiobooks" />
-        <exclude domain="file" path="metadata_backups" />
-        <exclude domain="file" path="cover_cache" />
-        <exclude domain="file" path="TTS_Cache" />
-        <exclude domain="file" path="derived" />
-        <exclude domain="external" path="." />
     </cloud-backup>
 
     <device-transfer>
@@ -54,16 +48,5 @@
         <include domain="file" path="books" />
         <include domain="file" path="audiobooks" />
         <include domain="file" path="metadata_backups" />
-
-        <exclude domain="sharedpref" path="ai_byok_prefs.xml" />
-        <exclude domain="sharedpref" path="reader_opds_prefs.xml" />
-        <exclude domain="sharedpref" path="reader_user_prefs.xml" />
-        <exclude domain="database" path="book_cache_database" />
-        <exclude domain="database" path="pdf_text_cache_db" />
-        <exclude domain="database" path="androidx.work.workdb" />
-        <exclude domain="file" path="cover_cache" />
-        <exclude domain="file" path="TTS_Cache" />
-        <exclude domain="file" path="derived" />
-        <exclude domain="external" path="." />
     </device-transfer>
 </data-extraction-rules>

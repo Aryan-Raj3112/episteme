@@ -73,6 +73,7 @@ class GoogleDriveRepository {
         sizeBytes: Long = -1L,
         revision: Long = 0L,
         contentHash: String? = null,
+        attempt: Int? = null,
     ): DriveFile? {
         input.close()
         return null
@@ -88,6 +89,7 @@ class GoogleDriveRepository {
         sourceUri: Uri,
         revision: Long = 0L,
         contentHash: String? = null,
+        attempt: Int? = null,
     ): DriveFile? = null
 
     suspend fun uploadCloudFolderManifest(

@@ -818,11 +818,11 @@ fun sharedSettingsHubModel(input: SharedSettingsHubInput): SharedSettingsHubMode
                         SharedSettingsItemModel(
                             action = SharedSettingsAction.FOLDER_SYNC,
                             title = "Folder backup and sync",
-                            summary = "Choose local folders and how they are represented across devices",
-                            // Folder sync has multiple policies (local
-                            // indexing, selected roots, and all roots), so it
-                            // opens a secondary surface rather than behaving
-                            // like the single cloud-library switch.
+                            summary = "Choose which local folders to back up to Drive",
+                            // Folder sync is an explicit folder selection
+                            // surface, so it opens a secondary screen rather
+                            // than behaving like the single cloud-library
+                            // switch.
                             kind = SharedSettingsItemKind.CONTROL,
                         )
                     )

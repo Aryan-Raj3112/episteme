@@ -5,30 +5,43 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aryan.reader.shared.CloudFolderIncomingChoice
 import com.aryan.reader.shared.CloudFolderIncomingFolderPrompt
 import com.aryan.reader.shared.CloudFolderConflictResolution
@@ -42,6 +55,172 @@ import com.aryan.reader.shared.CloudFolderSyncSelectionMode
 import com.aryan.reader.shared.CloudFolderSyncSettingsUiState
 import com.aryan.reader.shared.effectiveResolution
 import com.aryan.reader.shared.supportsKeepBoth
+import kotlinx.coroutines.flow.collect
+
+/** Cloud-folder settings are available only in the Pro build and for a
+ * currently signed-in account whose entitlement is still valid. */
+internal fun ReaderScreenState.canUseCloudFolderSync(): Boolean =
+    BuildConfig.IS_PRO &&
+        currentUser?.uid?.trim()?.isNotBlank() == true &&
+        isProUser
+
+/**
+ * Full-screen folder policy surface used by Home, Library Beta, and the
+ * Folders tab.  Keeping this as a route (rather than another nested dialog)
+ * gives the inventory enough room to remain readable as roots and conflicts
+ * are added, while the existing Settings entry can continue using the compact
+ * dialog wrapper.
+ */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+internal fun CloudFolderSyncSettingsScreen(
+    viewModel: MainViewModel,
+    onBackClick: () -> Unit,
+) {
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val cloudFolderRootStats by viewModel.cloudFolderRootStats.collectAsStateWithLifecycle()
+    val cloudFolderLocalInventories by viewModel.cloudFolderLocalInventories.collectAsStateWithLifecycle()
+    val cloudFolderRoots by viewModel.cloudFolderRoots.collectAsStateWithLifecycle()
+    val cloudFolderBindings by viewModel.cloudFolderBindings.collectAsStateWithLifecycle()
+    val cloudFolderSyncProgress by viewModel.cloudFolderSyncProgress.collectAsStateWithLifecycle()
+    val cloudFolderConflicts by viewModel.cloudFolderConflicts.collectAsStateWithLifecycle()
+    val canUseCloudFolderSync = uiState.canUseCloudFolderSync()
+    var cloudFolderSelection by remember(uiState.currentUser?.uid) {
+        mutableStateOf(viewModel.cloudFolderSyncSelection())
+    }
+
+    if (!canUseCloudFolderSync) {
+        LaunchedEffect(Unit) { onBackClick() }
+        return
+    }
+
+    LaunchedEffect(uiState.currentUser?.uid) {
+        cloudFolderSelection = viewModel.cloudFolderSyncSelection()
+        viewModel.refreshCloudFolderSyncState()
+    }
+    LaunchedEffect(Unit) {
+        CloudFolderSyncEvents.stateChanged.collect {
+            cloudFolderSelection = viewModel.cloudFolderSyncSelection()
+            viewModel.refreshCloudFolderSyncState()
+        }
+    }
+
+    val cloudFolderOptions = remember(
+        uiState.syncedFolders,
+        uiState.rawLibraryFiles,
+        cloudFolderRootStats,
+        cloudFolderLocalInventories,
+        cloudFolderRoots,
+        cloudFolderBindings,
+        cloudFolderSyncProgress,
+    ) {
+        cloudFolderSyncFolderOptions(
+            folders = uiState.syncedFolders,
+            indexedFiles = uiState.rawLibraryFiles,
+            repositoryStats = cloudFolderRootStats,
+            localInventories = cloudFolderLocalInventories,
+            repositoryRoots = cloudFolderRoots,
+            deviceBindings = cloudFolderBindings,
+            syncProgress = cloudFolderSyncProgress,
+        )
+    }
+
+    Scaffold(
+        modifier = Modifier.fillMaxSize(),
+        topBar = {
+            TopAppBar(
+                title = { Text(stringResource(R.string.folder_sync_settings_title)) },
+                navigationIcon = {
+                    IconButton(onClick = onBackClick) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = stringResource(R.string.action_back),
+                        )
+                    }
+                },
+            )
+        },
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding),
+        ) {
+            CloudFolderLibrarySyncHeader(
+                enabled = uiState.isSyncEnabled,
+                enabledForAccount = canUseCloudFolderSync,
+                onEnabledChange = { enabled ->
+                    if (viewModel.uiState.value.canUseCloudFolderSync()) {
+                        viewModel.setSyncEnabled(enabled)
+                    }
+                },
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            )
+            HorizontalDivider()
+            CloudFolderSyncSettingsContent(
+                state = CloudFolderSyncSettingsUiState(
+                    selection = cloudFolderSelection,
+                    folders = cloudFolderOptions,
+                    conflicts = cloudFolderConflicts,
+                ).normalized(),
+                onSelectionChange = { selection ->
+                    if (viewModel.uiState.value.canUseCloudFolderSync()) {
+                        val normalized = selection.normalized()
+                        cloudFolderSelection = normalized
+                        viewModel.setCloudFolderSyncSelection(normalized)
+                    }
+                },
+                onConflictResolution = { conflict, resolution ->
+                    if (viewModel.uiState.value.canUseCloudFolderSync()) {
+                        viewModel.resolveCloudFolderConflict(conflict, resolution)
+                    }
+                },
+                fullScreen = true,
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(horizontal = 16.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun CloudFolderLibrarySyncHeader(
+    enabled: Boolean,
+    enabledForAccount: Boolean,
+    onEnabledChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        shape = MaterialTheme.shapes.large,
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    stringResource(R.string.folder_sync_library_sync_title),
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    if (enabled) stringResource(R.string.folder_sync_library_sync_on)
+                    else stringResource(R.string.folder_sync_library_sync_off),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Switch(
+                checked = enabled,
+                enabled = enabledForAccount,
+                onCheckedChange = onEnabledChange,
+            )
+        }
+    }
+}
 
 /**
  * Folder-sync settings are intentionally a separate surface from the simple
@@ -52,19 +231,13 @@ import com.aryan.reader.shared.supportsKeepBoth
 internal fun CloudFolderSyncSettingsDialog(
     folders: List<CloudFolderSyncFolderOption>,
     selection: CloudFolderSyncSelection,
-    localFolderIndexingEnabled: Boolean,
     conflicts: List<CloudFolderConflictUiItem> = emptyList(),
     onSelectionChange: (CloudFolderSyncSelection) -> Unit,
-    onLocalFolderIndexingChange: (Boolean) -> Unit,
     onConflictResolution: (CloudFolderConflictUiItem, CloudFolderConflictResolution) -> Unit = { _, _ -> },
-    onAddFolder: () -> Unit,
-    onSetMaterializationMode: (String, CloudFolderMaterializationMode) -> Unit = { _, _ -> },
-    onManageIncomingFolder: (String) -> Unit = {},
     onDismiss: () -> Unit,
 ) {
-    val state = remember(folders, selection, localFolderIndexingEnabled, conflicts) {
+    val state = remember(folders, selection, conflicts) {
         CloudFolderSyncSettingsUiState(
-            localFolderIndexingEnabled = localFolderIndexingEnabled,
             selection = selection,
             folders = folders,
             conflicts = conflicts,
@@ -73,16 +246,12 @@ internal fun CloudFolderSyncSettingsDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Folder backup and sync") },
+        title = { Text(stringResource(R.string.folder_sync_settings_title)) },
         text = {
             CloudFolderSyncSettingsContent(
                 state = state,
                 onSelectionChange = onSelectionChange,
-                onLocalFolderIndexingChange = onLocalFolderIndexingChange,
                 onConflictResolution = onConflictResolution,
-                onAddFolder = onAddFolder,
-                onSetMaterializationMode = onSetMaterializationMode,
-                onManageIncomingFolder = onManageIncomingFolder,
             )
         },
         confirmButton = {
@@ -92,64 +261,40 @@ internal fun CloudFolderSyncSettingsDialog(
 }
 
 @Composable
-private fun CloudFolderSyncSettingsContent(
+internal fun CloudFolderSyncSettingsContent(
     state: CloudFolderSyncSettingsUiState,
     onSelectionChange: (CloudFolderSyncSelection) -> Unit,
-    onLocalFolderIndexingChange: (Boolean) -> Unit,
     onConflictResolution: (CloudFolderConflictUiItem, CloudFolderConflictResolution) -> Unit = { _, _ -> },
-    onAddFolder: () -> Unit,
-    onSetMaterializationMode: (String, CloudFolderMaterializationMode) -> Unit = { _, _ -> },
-    onManageIncomingFolder: (String) -> Unit = {},
+    fullScreen: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val folders = state.normalizedFolders
     val selectedCount = state.selectedFolderCount
-    val selection = state.selection
-    val mode = state.selection.mode
+    val selection = state.selection.toExplicitSelection(folders.map { it.normalizedRootId })
     val selectableFolderCount = folders.count { it.isAvailable && it.isSelectable }
+    val selectableRootIds = folders
+        .filter { it.isAvailable && it.isSelectable }
+        .map { it.normalizedRootId }
 
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .heightIn(max = 560.dp)
+            .then(if (fullScreen) Modifier else Modifier.heightIn(max = 560.dp))
             .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Text(
-            "Local folders are opt-in for cloud sync. The app uploads the folder manifest and files directly; it does not first import them into the library.",
+            "Select the local folders you want to back up to Drive. Their folder structure is preserved on other devices.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { onLocalFolderIndexingChange(!state.localFolderIndexingEnabled) },
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text("Show local folders in library", fontWeight = FontWeight.SemiBold)
-                Text(
-                    "Keep local-folder metadata available on this device. This does not select a folder for cloud upload.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Switch(
-                checked = state.localFolderIndexingEnabled,
-                onCheckedChange = onLocalFolderIndexingChange,
-            )
-        }
-
-        HorizontalDivider()
-
-        Text("Folders and cloud roots", fontWeight = FontWeight.SemiBold)
+        Text("Folders", fontWeight = FontWeight.SemiBold)
         Text(
-            when (mode) {
-                CloudFolderSyncSelectionMode.EXCLUDED -> "No local folder is uploaded."
-                CloudFolderSyncSelectionMode.SELECTED -> "$selectedCount of $selectableFolderCount local folders selected."
-                CloudFolderSyncSelectionMode.ALL -> "All current and future local folders are selected."
+            if (selectableFolderCount == 0) {
+                "Add folders from the Folders tab, then choose which ones to sync here."
+            } else {
+                "$selectedCount of $selectableFolderCount selected"
             },
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -171,26 +316,9 @@ private fun CloudFolderSyncSettingsContent(
             }
         }
 
-        CloudFolderSyncSelectionMode.entries.forEach { option ->
-            CloudFolderSyncModeRow(
-                mode = option,
-                selected = mode == option,
-                onClick = {
-                    val next = when (option) {
-                        CloudFolderSyncSelectionMode.EXCLUDED -> selection.excludeAllRoots()
-                        CloudFolderSyncSelectionMode.SELECTED -> selection.copy(
-                            mode = CloudFolderSyncSelectionMode.SELECTED,
-                        ).normalized()
-                        CloudFolderSyncSelectionMode.ALL -> selection.includeAllRoots()
-                    }
-                    onSelectionChange(next)
-                },
-            )
-        }
-
         if (folders.isEmpty()) {
             Text(
-                "No local or cloud folders have been added yet.",
+                "No local folders available.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -201,18 +329,31 @@ private fun CloudFolderSyncSettingsContent(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 Text(
-                    "Folder inventory",
+                    "Folders",
                     modifier = Modifier.weight(1f),
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 TextButton(
-                    enabled = folders.isNotEmpty() && mode != CloudFolderSyncSelectionMode.ALL,
-                    onClick = { onSelectionChange(selection.includeAllRoots()) },
+                    enabled = selectableFolderCount > 0 && selectedCount < selectableFolderCount,
+                    onClick = {
+                        onSelectionChange(
+                            CloudFolderSyncSelection(
+                                mode = CloudFolderSyncSelectionMode.SELECTED,
+                                selectedRootIds = selectableRootIds.toSet(),
+                            )
+                        )
+                    },
                 ) { Text("Select all") }
                 TextButton(
-                    enabled = mode != CloudFolderSyncSelectionMode.EXCLUDED,
-                    onClick = { onSelectionChange(selection.excludeAllRoots()) },
+                    enabled = selectedCount > 0,
+                    onClick = {
+                        onSelectionChange(
+                            CloudFolderSyncSelection(
+                                mode = CloudFolderSyncSelectionMode.SELECTED,
+                            )
+                        )
+                    },
                 ) { Text("Clear all") }
             }
 
@@ -222,34 +363,22 @@ private fun CloudFolderSyncSettingsContent(
                 CloudFolderSyncFolderRow(
                     folder = folder,
                     checked = included,
-                    // ALL is a default for current and future roots, but an
-                    // individual row must remain actionable so a user can
-                    // exclude just this root without accidentally clearing
-                    // every other folder.
-                    enabled = folder.isAvailable && folder.isSelectable &&
-                        mode != CloudFolderSyncSelectionMode.EXCLUDED,
+                    enabled = folder.isAvailable && folder.isSelectable,
                     onCheckedChange = { checked ->
-                        val next = if (checked) {
-                            selection.withRootIncluded(folder.normalizedRootId)
+                        val nextIds = if (checked) {
+                            selection.selectedRootIds + folder.normalizedRootId
                         } else {
-                            selection.withoutRoot(
-                                rootId = folder.normalizedRootId,
-                                knownRootIds = folders.map { it.normalizedRootId },
-                            )
+                            selection.selectedRootIds - folder.normalizedRootId
                         }
-                        onSelectionChange(next)
+                        onSelectionChange(
+                            CloudFolderSyncSelection(
+                                mode = CloudFolderSyncSelectionMode.SELECTED,
+                                selectedRootIds = nextIds,
+                            ).normalized(folders.map { it.normalizedRootId })
+                        )
                     },
-                    onSetMaterializationMode = onSetMaterializationMode,
-                    onManageIncomingFolder = onManageIncomingFolder,
                 )
             }
-        }
-
-        OutlinedButton(
-            modifier = Modifier.fillMaxWidth(),
-            onClick = onAddFolder,
-        ) {
-            Text("Add or manage local folders")
         }
     }
 }
@@ -331,46 +460,11 @@ private fun CloudFolderConflictAction(
 }
 
 @Composable
-private fun CloudFolderSyncModeRow(
-    mode: CloudFolderSyncSelectionMode,
-    selected: Boolean,
-    onClick: () -> Unit,
-) {
-    val (title, summary) = when (mode) {
-        CloudFolderSyncSelectionMode.EXCLUDED ->
-            "Don't sync local folders" to "Local folders remain device-only."
-        CloudFolderSyncSelectionMode.SELECTED ->
-            "Selected folders only" to "Choose individual folders below."
-        CloudFolderSyncSelectionMode.ALL ->
-            "All local folders" to "Newly added folders are included automatically."
-    }
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        RadioButton(selected = selected, onClick = onClick)
-        Column(Modifier.weight(1f)) {
-            Text(title, fontWeight = FontWeight.Medium)
-            Text(
-                summary,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-    }
-}
-
-@Composable
 private fun CloudFolderSyncFolderRow(
     folder: CloudFolderSyncFolderOption,
     checked: Boolean,
     enabled: Boolean,
     onCheckedChange: (Boolean) -> Unit,
-    onSetMaterializationMode: (String, CloudFolderMaterializationMode) -> Unit,
-    onManageIncomingFolder: (String) -> Unit,
 ) {
     Row(
         modifier = Modifier
@@ -398,7 +492,7 @@ private fun CloudFolderSyncFolderRow(
             )
             folder.lastError?.takeIf { it.isNotBlank() }?.let { error ->
                 Text(
-                    error,
+                    cloudFolderDisplayError(error, folder.syncProgress),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.error,
                     maxLines = 2,
@@ -406,42 +500,80 @@ private fun CloudFolderSyncFolderRow(
                 )
             }
         }
-        if (folder.isRemote) {
-            when (folder.materializationMode) {
-                CloudFolderMaterializationMode.CLOUD_ONLY -> {
-                    TextButton(onClick = {
-                        onSetMaterializationMode(
-                            folder.normalizedRootId,
-                            CloudFolderMaterializationMode.KEEP_OFFLINE,
-                        )
-                    }) {
-                        Text("Download all")
-                    }
-                }
-                CloudFolderMaterializationMode.KEEP_OFFLINE -> {
-                    TextButton(onClick = {
-                        onSetMaterializationMode(
-                            folder.normalizedRootId,
-                            CloudFolderMaterializationMode.CLOUD_ONLY,
-                        )
-                    }) {
-                        Text("Cloud only")
-                    }
-                }
-                CloudFolderMaterializationMode.LOCAL_MIRROR -> {
-                    TextButton(onClick = {
-                        onManageIncomingFolder(folder.normalizedRootId)
-                    }) {
-                        Text("Manage")
-                    }
+        CloudFolderSyncProgressIndicator(folder.syncProgress)
+    }
+}
+
+@Composable
+private fun CloudFolderSyncProgressIndicator(progress: com.aryan.reader.shared.CloudFolderSyncProgress?) {
+    val current = progress ?: return
+    when (current.phase) {
+        com.aryan.reader.shared.CloudFolderSyncPhase.SCANNING -> {
+            // SAF enumeration has no reliable total until it completes.
+            CircularProgressIndicator(
+                modifier = Modifier.size(24.dp),
+                strokeWidth = 2.dp,
+            )
+        }
+        com.aryan.reader.shared.CloudFolderSyncPhase.UPLOADING -> {
+            val fraction = current.fraction
+            if (fraction == null) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(24.dp),
+                    strokeWidth = 2.dp,
+                )
+            } else {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    CircularProgressIndicator(
+                        progress = { fraction },
+                        modifier = Modifier.size(24.dp),
+                        strokeWidth = 2.dp,
+                    )
+                    Text(
+                        "${current.completedFiles}/${current.totalFiles}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         }
+        com.aryan.reader.shared.CloudFolderSyncPhase.FINALIZING -> {
+            CircularProgressIndicator(
+                modifier = Modifier.size(24.dp),
+                strokeWidth = 2.dp,
+            )
+        }
+        com.aryan.reader.shared.CloudFolderSyncPhase.SUCCEEDED,
+        com.aryan.reader.shared.CloudFolderSyncPhase.FAILED -> Unit
+    }
+}
+
+private fun cloudFolderDisplayError(
+    fallback: String,
+    progress: com.aryan.reader.shared.CloudFolderSyncProgress?,
+): String {
+    val status = progress?.errorStatus
+    return when (status) {
+        "forbidden", "permission_denied" -> "Drive denied access"
+        "unauthorized", "unauthenticated" -> "Drive authorization expired"
+        "quota" -> "Drive quota or rate limit reached"
+        "network", "timeout" -> "Network problem; will retry"
+        "not_found" -> "Drive item was not found"
+        "invalid_data" -> "Drive rejected the folder data"
+        "unsupported" -> "Drive does not support this item"
+        "unknown" -> "Cloud upload failed; will retry"
+        else -> fallback
     }
 }
 
 private fun buildCloudFolderRowSummary(folder: CloudFolderSyncFolderOption): String {
-    val inventory = "${folder.fileCount.coerceAtLeast(0)} files · ${formatCloudFolderBytes(folder.totalBytes)}"
+    val inventory = when {
+        !folder.isAvailable -> "Needs local folder access"
+        !folder.hasKnownStats -> "Not scanned yet"
+        !folder.scanComplete -> "Scanning…"
+        else -> "${folder.fileCount.coerceAtLeast(0)} files · " +
+            if (folder.sizeKnown) formatCloudFolderBytes(folder.totalBytes) else "size unavailable"
+    }
     if (!folder.isRemote) return inventory
     val status = when {
         !folder.isBoundLocally -> "Available in cloud"
@@ -556,7 +688,6 @@ private fun CloudFolderSyncSettingsPreview() {
         Surface {
             CloudFolderSyncSettingsContent(
                 state = CloudFolderSyncSettingsUiState(
-                    localFolderIndexingEnabled = true,
                     selection = CloudFolderSyncSelection(
                         mode = CloudFolderSyncSelectionMode.SELECTED,
                         selectedRootIds = setOf("root-books"),
@@ -564,8 +695,6 @@ private fun CloudFolderSyncSettingsPreview() {
                     folders = previewFolders,
                 ),
                 onSelectionChange = {},
-                onLocalFolderIndexingChange = {},
-                onAddFolder = {},
                 modifier = Modifier.padding(16.dp),
             )
         }

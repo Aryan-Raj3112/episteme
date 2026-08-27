@@ -19,6 +19,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.FolderSpecial
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
@@ -53,6 +54,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.aryan.reader.shared.FileType
+import com.aryan.reader.shared.CloudFolderSyncSelection
 import com.aryan.reader.shared.SyncedFolder
 
 data class SharedAndroidFolderStats(
@@ -87,6 +89,10 @@ data class SharedAndroidFolderSyncStrings(
     val disableDialogDescription: String,
     val disableRemoveData: String,
     val disableKeepData: String,
+    val cloudSettings: String = "Cloud settings",
+    val cloudSyncOn: String = "Cloud backup on",
+    val cloudSyncOff: String = "Cloud sync off",
+    val cloudDeviceOnly: String = "Device only",
 )
 
 /** Exact Android folder-sync screen; storage/scanning/date formatting remain platform adapters. */
@@ -106,6 +112,10 @@ fun SharedAndroidFolderSyncScreen(
     onSyncMetadata: () -> Unit,
     formatLastScan: (Long) -> String,
     syncIcon: @Composable () -> Unit,
+    cloudFolderSelection: CloudFolderSyncSelection? = null,
+    cloudSyncEnabled: Boolean = false,
+    isProUser: Boolean = false,
+    onCloudFolderSettingsClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     var editingFolder by remember { mutableStateOf<SyncedFolder?>(null) }
@@ -128,6 +138,17 @@ fun SharedAndroidFolderSyncScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             if (folders.isNotEmpty()) {
+                if (isProUser && onCloudFolderSettingsClick != null) {
+                    OutlinedButton(
+                        onClick = { onCloudFolderSettingsClick() },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = MaterialTheme.shapes.small,
+                    ) {
+                        Icon(Icons.Default.Cloud, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(strings.cloudSettings)
+                    }
+                }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     FilledTonalButton(
                         onClick = onScanAll,
@@ -157,6 +178,8 @@ fun SharedAndroidFolderSyncScreen(
                     message = strings.emptyMessage,
                     actionLabel = strings.selectFolder,
                     onAction = onAddFolder,
+                    secondaryActionLabel = if (isProUser && onCloudFolderSettingsClick != null) strings.cloudSettings else null,
+                    onSecondaryAction = { onCloudFolderSettingsClick?.invoke() },
                     modifier = Modifier.fillMaxSize(),
                 )
             }
@@ -167,6 +190,13 @@ fun SharedAndroidFolderSyncScreen(
                         stats = statsByFolderUri[folder.uriString] ?: SharedAndroidFolderStats(),
                         strings = strings,
                         lastScanText = if (folder.lastScanTime == 0L) strings.never else formatLastScan(folder.lastScanTime),
+                        cloudStatus = cloudFolderStatus(
+                            folder = folder,
+                            selection = cloudFolderSelection,
+                            cloudSyncEnabled = cloudSyncEnabled,
+                            isProUser = isProUser,
+                            strings = strings,
+                        ),
                         onRemove = { onRemoveFolder(folder) },
                         onToggle = { if (folder.localSyncEnabled) disablingFolder = folder else onLocalSyncChange(folder, true, false) },
                         onEdit = { editingFolder = folder },
@@ -213,6 +243,7 @@ private fun SharedAndroidFolderCard(
     stats: SharedAndroidFolderStats,
     strings: SharedAndroidFolderSyncStrings,
     lastScanText: String,
+    cloudStatus: String?,
     onRemove: () -> Unit,
     onToggle: () -> Unit,
     onEdit: () -> Unit,
@@ -230,6 +261,24 @@ private fun SharedAndroidFolderCard(
                     Column(Modifier.weight(1f)) {
                         Text(folder.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         if (!folder.localSyncEnabled) Text(strings.localSyncDisabled, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                        cloudStatus?.let { status ->
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                Icon(
+                                    Icons.Default.Cloud,
+                                    contentDescription = status,
+                                    modifier = Modifier.size(14.dp),
+                                    tint = MaterialTheme.colorScheme.primary,
+                                )
+                                Text(
+                                    status,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                            }
+                        }
                     }
                 }
                 Box {
@@ -268,6 +317,23 @@ private fun SharedAndroidFolderCard(
                 }
             }
         }
+    }
+}
+
+private fun cloudFolderStatus(
+    folder: SyncedFolder,
+    selection: CloudFolderSyncSelection?,
+    cloudSyncEnabled: Boolean,
+    isProUser: Boolean,
+    strings: SharedAndroidFolderSyncStrings,
+): String? {
+    if (!isProUser || selection == null) return null
+    if (!cloudSyncEnabled) return strings.cloudSyncOff
+    val rootId = folder.cloudRootId?.trim().orEmpty()
+    return if (rootId.isNotBlank() && selection.includes(rootId)) {
+        strings.cloudSyncOn
+    } else {
+        strings.cloudDeviceOnly
     }
 }
 

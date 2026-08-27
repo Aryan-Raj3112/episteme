@@ -21,6 +21,8 @@ import com.aryan.reader.shared.CloudFolderSyncDirection
 import com.aryan.reader.shared.CloudFolderSyncSelection
 import com.aryan.reader.shared.CloudFolderTombstone
 import com.aryan.reader.shared.CloudFolderConflictUiItem
+import com.aryan.reader.shared.CloudFolderSyncPhase
+import com.aryan.reader.shared.CloudFolderSyncProgress
 import com.aryan.reader.shared.cloudFolderRootId
 import com.aryan.reader.shared.validationIssues
 import java.nio.charset.StandardCharsets
@@ -173,6 +175,86 @@ internal fun CloudFolderDeviceBindingEntity.toModel(localUri: String? = null): C
     )
 }.getOrNull()
 
+internal fun CloudFolderSyncProgressEntity.toModel(): CloudFolderSyncProgress? = runCatching {
+    CloudFolderSyncProgress(
+        rootId = rootId,
+        phase = CloudFolderSyncPhase.valueOf(phase),
+        completedFiles = completedFiles,
+        totalFiles = totalFiles,
+        completedBytes = completedBytes,
+        totalBytes = totalBytes,
+        updatedAt = updatedAt,
+        errorStatus = errorStatus,
+    ).sanitized()
+}.getOrNull()
+
+internal fun CloudFolderSyncProgress.toEntity(accountId: String): CloudFolderSyncProgressEntity {
+    val normalized = sanitized()
+    return CloudFolderSyncProgressEntity(
+        accountId = accountId,
+        rootId = normalized.normalizedRootId,
+        phase = normalized.phase.name,
+        completedFiles = normalized.completedFiles,
+        totalFiles = normalized.totalFiles,
+        completedBytes = normalized.completedBytes,
+        totalBytes = normalized.totalBytes,
+        updatedAt = normalized.updatedAt,
+        errorStatus = normalized.errorStatus,
+    )
+}
+
+enum class CloudFolderLocalInventoryState {
+    SCANNING,
+    READY,
+    FAILED,
+}
+
+data class CloudFolderLocalInventory(
+    val rootId: String,
+    val deviceId: String,
+    val state: CloudFolderLocalInventoryState,
+    val fileCount: Int,
+    val directoryCount: Int,
+    val totalBytes: Long,
+    val sizeComplete: Boolean,
+    val scannedAt: Long,
+    val updatedAt: Long,
+    val errorStatus: String? = null,
+) {
+    val hasKnownStats: Boolean
+        get() = scannedAt > 0L && state != CloudFolderLocalInventoryState.SCANNING
+}
+
+internal fun CloudFolderLocalInventoryEntity.toModel(): CloudFolderLocalInventory? = runCatching {
+    CloudFolderLocalInventory(
+        rootId = rootId,
+        deviceId = deviceId,
+        state = CloudFolderLocalInventoryState.valueOf(state),
+        fileCount = fileCount.coerceAtLeast(0),
+        directoryCount = directoryCount.coerceAtLeast(0),
+        totalBytes = totalBytes.coerceAtLeast(0L),
+        sizeComplete = sizeComplete,
+        scannedAt = scannedAt.coerceAtLeast(0L),
+        updatedAt = updatedAt.coerceAtLeast(0L),
+        errorStatus = errorStatus?.trim()?.takeIf { it.isNotBlank() },
+    )
+}.getOrNull()
+
+internal fun CloudFolderLocalInventory.toEntity(accountId: String): CloudFolderLocalInventoryEntity =
+    CloudFolderLocalInventoryEntity(
+        accountId = accountId,
+        rootId = rootId.trim(),
+        deviceId = deviceId.trim(),
+        state = state.name,
+        fileCount = fileCount.coerceAtLeast(0),
+        directoryCount = directoryCount.coerceAtLeast(0),
+        totalBytes = totalBytes.coerceAtLeast(0L),
+        sizeComplete = sizeComplete,
+        scannedAt = scannedAt.coerceAtLeast(0L),
+        updatedAt = updatedAt.coerceAtLeast(0L),
+        errorStatus = errorStatus?.trim()?.takeIf { it.isNotBlank() },
+    )
+
 internal fun cloudFolderOutboxOperationId(
     operation: CloudFolderSyncOperation,
     accountId: String,
@@ -322,6 +404,42 @@ class CloudFolderSyncRepository(
     suspend fun getRoot(rootId: String): CloudFolderRoot? = dao.getRoot(accountId, rootId)?.toModel()
 
     suspend fun getRoots(): List<CloudFolderRoot> = dao.getRoots(accountId).map { it.toModel() }
+
+    suspend fun getProgress(rootId: String): CloudFolderSyncProgress? =
+        dao.getProgress(accountId, rootId)?.toModel()
+
+    suspend fun getProgressForAccount(): Map<String, CloudFolderSyncProgress> =
+        dao.getProgressForAccount(accountId)
+            .mapNotNull { row -> row.toModel()?.let { it.normalizedRootId to it } }
+            .toMap()
+
+    suspend fun getLocalInventory(rootId: String, deviceId: String = this.deviceId): CloudFolderLocalInventory? =
+        dao.getLocalInventory(accountId, rootId.trim(), deviceId.trim())?.toModel()
+
+    suspend fun getLocalInventoriesForDevice(deviceId: String = this.deviceId): Map<String, CloudFolderLocalInventory> =
+        dao.getLocalInventoriesForDevice(accountId, deviceId.trim())
+            .mapNotNull { row -> row.toModel()?.let { it.rootId to it } }
+            .toMap()
+
+    suspend fun saveLocalInventory(inventory: CloudFolderLocalInventory) {
+        require(inventory.rootId.isNotBlank() && inventory.deviceId.isNotBlank()) {
+            "Cloud-folder local inventory requires root and device IDs"
+        }
+        dao.upsertLocalInventory(inventory.toEntity(accountId))
+    }
+
+    suspend fun clearLocalInventory(rootId: String, deviceId: String = this.deviceId) {
+        dao.deleteLocalInventory(accountId, rootId.trim(), deviceId.trim())
+    }
+
+    suspend fun saveProgress(progress: CloudFolderSyncProgress) {
+        require(progress.normalizedRootId.isNotBlank()) { "Cloud-folder progress requires a root ID" }
+        dao.upsertProgress(progress.toEntity(accountId))
+    }
+
+    suspend fun clearProgress(rootId: String) {
+        dao.clearProgress(accountId, rootId.trim())
+    }
 
     suspend fun getBinding(rootId: String, deviceId: String = this.deviceId): CloudFolderDeviceBinding? =
         dao.getBinding(accountId, rootId, deviceId)?.toModel(

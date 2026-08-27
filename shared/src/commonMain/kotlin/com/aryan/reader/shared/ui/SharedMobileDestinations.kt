@@ -10,7 +10,9 @@ enum class SharedMobileAppDestination(val route: String) {
     SUPPORT_PROJECT("support_project_screen_route"),
     FONTS("fonts_screen_route"),
     AI_SETTINGS("ai_settings_screen_route"),
-    SETTINGS("settings_screen_route");
+    SETTINGS("settings_screen_route"),
+    /** Dedicated cloud-folder policy surface reachable from Home and Library Beta. */
+    FOLDER_SYNC_SETTINGS("folder_sync_settings_route");
 
     val isReader: Boolean
         get() = this == PDF_VIEWER || this == EPUB_READER

@@ -179,6 +179,8 @@
     <!-- "Episteme Pro" is a product tier name — do not translate "Episteme". -->
     <string name="drawer_upgrade_pro">Upgrade to Episteme Pro</string>
     <string name="drawer_sync_library">Sync Library</string>
+    <string name="drawer_folder_sync">Folder sync</string>
+    <string name="drawer_folder_sync_desc">Choose which folders are backed up to Drive.</string>
     <!-- "Google Drive" is a brand name — do not translate. -->
     <string name="drawer_backup_local_folders">Cloud sync for Local Folders</string>
     <!-- "Google Drive" is a brand name — do not translate. -->
@@ -251,6 +253,13 @@
     <string name="scanning">Scanning…</string>
     <!-- Button label on a folder sync card — triggers syncing only the metadata (not the actual files). -->
     <string name="sync_meta">Sync Meta</string>
+    <string name="folder_sync_settings_title">Folder sync</string>
+    <string name="folder_sync_library_sync_title">Library sync</string>
+    <string name="folder_sync_library_sync_on">Cloud sync is on</string>
+    <string name="folder_sync_library_sync_off">Cloud sync is off</string>
+    <string name="folder_sync_cloud_backup_on">Cloud backup on</string>
+    <string name="folder_sync_cloud_sync_off">Cloud sync off</string>
+    <string name="folder_sync_device_only">Device only</string>
     <!-- Small uppercase label on a folder sync card, followed by a date/time stamp. -->
     <string name="last_sync">LAST SCAN</string>
     <!-- Small uppercase label on a folder sync card, followed by the count of synced books. -->
@@ -1215,7 +1224,7 @@
     <string name="settings_hub_literal_73">Connect sync and account features</string>
     <string name="settings_hub_literal_74">Cloud library sync</string>
     <string name="settings_hub_literal_75">Folder backup and sync</string>
-    <string name="settings_hub_literal_76">Keep selected local folders represented in the library</string>
+    <string name="settings_hub_literal_76">Choose which local folders to back up to Drive</string>
     <string name="settings_hub_literal_77">Device management</string>
     <string name="settings_hub_literal_78">Inspect registered devices for this account</string>
     <string name="settings_hub_literal_79">AI keys and models</string>
