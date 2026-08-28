@@ -43,6 +43,10 @@ class MyApplication : Application(), ImageLoaderFactory {
         )
         installSharedAndroidPdfOcrAdapter(SharedMobilePdfOcrAdapter)
         AndroidBackupRestoreCoordinator.start(this)
+        // The coordinator uses application lifecycle callbacks only; it never
+        // retains an Activity.  MainViewModel supplies the signed-in Pro and
+        // sync-enabled eligibility once Firebase entitlement is known.
+        CloudFolderHeadListenerCoordinator.install(this)
         if (BuildConfig.DEBUG) {
             Timber.plant(Timber.DebugTree())
             WebView.setWebContentsDebuggingEnabled(true)

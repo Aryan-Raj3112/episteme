@@ -40,6 +40,7 @@ import kotlinx.coroutines.withContext
 import androidx.core.content.edit
 import com.aryan.reader.data.LocalSyncUtils
 import com.aryan.reader.data.FolderBookMetadata
+import com.aryan.reader.data.effectiveReadingPositionModifiedTimestamp
 import com.aryan.reader.data.toSharedFolderBookMetadata
 import com.aryan.reader.shared.BookItem as SharedBookItem
 import com.aryan.reader.shared.EpubAnnotationSerializer
@@ -128,6 +129,23 @@ class FolderSyncWorker(
             syncableTypes = ANDROID_SYNCABLE_FILE_TYPES
         )
         val accountId = requestedCloudAccount ?: currentAccount
+        val workerOperation = cloudFolderOperationId(
+            "folder-index-worker",
+            accountId.orEmpty(),
+            targetFolderUri.orEmpty(),
+            isMetadataOnly,
+            runAttemptCount,
+        )
+        val workerCorrelation = cloudFolderSyncCorrelationId(
+            "folder-index-worker",
+            accountId.orEmpty(),
+            targetFolderUri.orEmpty(),
+        )
+        cloudFolderLogD(
+            "event=folder_index_worker_start operation=$workerOperation correlation=$workerCorrelation " +
+                "account=${cloudFolderSafeId(accountId)} target=${cloudFolderSafeUri(targetFolderUri?.toUri())} " +
+                "metadataOnly=$isMetadataOnly attempt=$runAttemptCount",
+        )
         val appManagedFolders = accountId?.let { id ->
             CloudFolderAppStoragePrefs.load(appContext, id)
                 .map { it.toSyncedFolder(appContext.filesDir) }
@@ -135,6 +153,10 @@ class FolderSyncWorker(
         val folders = configuredFolders + appManagedFolders
 
         if (folders.isEmpty()) {
+            cloudFolderLogD(
+                "event=folder_index_worker_end operation=$workerOperation correlation=$workerCorrelation " +
+                    "result=skipped reason=no_folders",
+            )
             ReaderPerfLog.w("FolderSync worker aborted: no linked folders")
             return Result.success()
         }
@@ -147,9 +169,19 @@ class FolderSyncWorker(
         }
 
         if (foldersToProcess.isEmpty()) {
+            cloudFolderLogD(
+                "event=folder_index_worker_end operation=$workerOperation correlation=$workerCorrelation " +
+                    "result=skipped reason=no_target_folder",
+            )
             ReaderPerfLog.w("FolderSync worker aborted: target folder not linked or disabled target=$targetFolderUri")
             return Result.success()
         }
+
+        cloudFolderLogI(
+            "event=folder_index_start operation=$workerOperation correlation=$workerCorrelation " +
+                "account=${cloudFolderSafeId(accountId)} folders=${foldersToProcess.size} " +
+                "metadataOnly=$isMetadataOnly",
+        )
 
         ReaderPerfLog.d(
             "FolderSync worker start folders=${foldersToProcess.size}/${folders.size} " +
@@ -205,6 +237,11 @@ class FolderSyncWorker(
                     "FolderSync worker finished status=${if (allSuccess) "success" else "failure"} " +
                         "folders=${foldersToProcess.size} elapsed=${elapsed}ms"
                 )
+                cloudFolderLogI(
+                    "event=folder_index_end operation=$workerOperation correlation=$workerCorrelation " +
+                        "result=${if (allSuccess) "success" else "retry"} folders=${foldersToProcess.size} " +
+                        "elapsedMs=$elapsed",
+                )
 
                 // A provider outage/partial enumeration is transient from the
                 // worker's perspective.  Retry so a later complete scan can
@@ -228,6 +265,23 @@ class FolderSyncWorker(
         val allowedFileTypes = folderConfig.allowedFileTypes
         if (folderUriString.isBlank()) return FolderSyncOutcome(success = true, completedScan = false)
         val folderUri = folderUriString.toUri()
+        val safeRoot = cloudFolderSafeId(folderConfig.cloudRootId ?: folderUriString)
+        val operation = cloudFolderOperationId(
+            "folder-index",
+            inputData.getString(KEY_CLOUD_ACCOUNT_ID).orEmpty(),
+            folderConfig.cloudRootId ?: folderUriString,
+            metadataOnly,
+        )
+        val correlation = cloudFolderSyncCorrelationId(
+            "folder-index",
+            inputData.getString(KEY_CLOUD_ACCOUNT_ID).orEmpty(),
+            folderConfig.cloudRootId ?: folderUriString,
+        )
+        cloudFolderLogD(
+            "event=folder_index_folder_start operation=$operation correlation=$correlation " +
+                "root=$safeRoot folder=${cloudFolderSafeUri(folderUri)} metadataOnly=$metadataOnly " +
+                "appManaged=${folderConfig.isAppManaged}",
+        )
         val appStorageRoot = if (folderConfig.isAppManaged) {
             val rootId = folderConfig.cloudRootId?.trim()?.takeIf { it.isNotBlank() }
                 ?: return FolderSyncOutcome(success = false, completedScan = false)
@@ -367,6 +421,13 @@ class FolderSyncWorker(
                 metadataOnly = metadataOnly,
                 scanStatus = scanResult.scanStatus
             )
+            cloudFolderLogD(
+                "event=folder_index_apply operation=$operation correlation=$correlation root=$safeRoot " +
+                    "result=success metadataOnly=$metadataOnly scanStatus=${scanResult.scanStatus.name} " +
+                    "scanned=${scanResult.files.size} new=${syncResult.stats.newBooks} " +
+                    "updated=${syncResult.stats.updatedBooks} remoteMetadataUpdates=${syncResult.stats.remoteMetadataUpdates} " +
+                    "removed=${syncResult.stats.removedBooks} migrations=${syncResult.idMigrations.size}",
+            )
 
             if (syncResult.idMigrations.isNotEmpty()) {
                 val preloadedSidecars = ReaderPerfLog.measureSuspend(
@@ -420,6 +481,22 @@ class FolderSyncWorker(
                     nowMillis = nowMillis
                 )
             }
+            folderMetadataMap.forEach { (bookId, metadata) ->
+                val before = existingItemsMap[bookId]
+                val after = syncedItems.firstOrNull { it.bookId == bookId } ?: return@forEach
+                cloudFolderLogD(
+                    "event=folder_metadata_apply operation=$operation correlation=$correlation " +
+                        "root=$safeRoot book=${cloudFolderSafeId(bookId)} " +
+                        "remoteTs=${metadata.lastModifiedTimestamp} " +
+                        "beforeReadTs=${before?.effectiveReadingPositionModifiedTimestamp() ?: 0L} " +
+                        "afterReadTs=${after.effectiveReadingPositionModifiedTimestamp()} " +
+                        "beforePage=${before?.lastPage ?: "none"} afterPage=${after.lastPage ?: "none"} " +
+                        "beforeChapter=${before?.lastChapterIndex ?: "none"} afterChapter=${after.lastChapterIndex ?: "none"} " +
+                        "beforeProgress=${before?.progressPercentage ?: "none"} afterProgress=${after.progressPercentage ?: "none"} " +
+                        "beforeBookmarks=${before?.bookmarksJson?.let { "present(${it.length})" } ?: "none"} " +
+                        "afterBookmarks=${after.bookmarksJson?.let { "present(${it.length})" } ?: "none"}",
+                )
+            }
             val changedItems = syncedItems.filter { item -> existingItemsMap[item.bookId] != item }
 
             changedItems
@@ -458,6 +535,12 @@ class FolderSyncWorker(
                 books = booksForAnnotationSync,
                 phase = if (metadataOnly) "metadata-only" else "post-scan",
                 appStorageRoot = appStorageRoot,
+                rootId = folderConfig.cloudRootId,
+            )
+            cloudFolderLogD(
+                "event=folder_index_sidecars operation=$operation correlation=$correlation root=$safeRoot " +
+                    "phase=${if (metadataOnly) "metadata_only" else "post_scan"} " +
+                    "imported=$sidecarsImported",
             )
 
             val elapsed = ReaderPerfLog.elapsedMs(folderStart)
@@ -478,6 +561,10 @@ class FolderSyncWorker(
                         .setInputData(
                             androidx.work.Data.Builder()
                                 .putString(MetadataExtractionWorker.KEY_SOURCE_FOLDER_URI, folderUriString)
+                                .putString(
+                                    MetadataExtractionWorker.KEY_CLOUD_ROOT_ID,
+                                    folderConfig.cloudRootId.orEmpty(),
+                                )
                                 .build()
                         )
                         .setBackoffCriteria(
@@ -491,6 +578,10 @@ class FolderSyncWorker(
                         ExistingWorkPolicy.APPEND_OR_REPLACE,
                         metaRequest
                     )
+                    cloudFolderLogI(
+                        "event=metadata_extraction_enqueue operation=$operation correlation=$correlation " +
+                            "root=$safeRoot result=queued reason=folder_index",
+                    )
                 } else {
                     ReaderPerfLog.d("FolderSync metadata extraction skipped: no pending books folder=$folderUriString")
                 }
@@ -502,6 +593,12 @@ class FolderSyncWorker(
             )
 
         } catch (e: Exception) {
+            cloudFolderLogError(
+                event = "folder_index_folder_end",
+                error = e,
+                details = "operation=$operation correlation=$correlation root=$safeRoot result=failure " +
+                    "metadataOnly=$metadataOnly",
+            )
             Timber.tag("FolderSync").e(e, "Error during folder sync worker execution.")
             return FolderSyncOutcome(success = false, completedScan = false)
         }
@@ -513,8 +610,16 @@ class FolderSyncWorker(
         books: List<RecentFileItem>,
         phase: String,
         appStorageRoot: File? = null,
+        rootId: String? = null,
     ): Int {
+        val safeRoot = cloudFolderSafeId(rootId ?: folderUriString)
+        val operation = cloudFolderOperationId("annotation-import", rootId ?: folderUriString, phase)
+        val correlation = cloudFolderSyncCorrelationId("annotation-import", rootId ?: folderUriString)
         if (books.isEmpty()) {
+            cloudFolderLogD(
+                "event=annotation_sidecar_import operation=$operation correlation=$correlation " +
+                    "root=$safeRoot phase=${phase.replace('-', '_')} result=skipped reason=no_books",
+            )
             ReaderPerfLog.d("FolderSync phase annotation-sidecars skipped phase=$phase reason=no-books folder=$folderUriString")
             return 0
         }
@@ -535,7 +640,14 @@ class FolderSyncWorker(
             "FolderSync annotation-sidecars records=${preloadedSidecars.size} books=${books.size} phase=$phase folder=$folderUriString"
         )
 
-        if (preloadedSidecars.isEmpty()) return 0
+        if (preloadedSidecars.isEmpty()) {
+            cloudFolderLogD(
+                "event=annotation_sidecar_import_end operation=$operation correlation=$correlation " +
+                    "root=$safeRoot phase=${phase.replace('-', '_')} imported=0 records=0 books=${books.size} " +
+                    "result=success",
+            )
+            return 0
+        }
 
         var imported = 0
         Timber.tag("FolderAnnotationSync").d("Checking annotation sidecars phase=$phase for ${books.size} books...")
@@ -545,6 +657,11 @@ class FolderSyncWorker(
             val sidecarData = preloadedSidecars[book.bookId] ?: continue
             val pendingLocal = pendingAnnotationExports.get(book.bookId)
             if (pendingLocal != null) {
+                cloudFolderLogW(
+                    "event=annotation_sidecar_import operation=$operation correlation=$correlation " +
+                        "root=$safeRoot book=${cloudFolderSafeId(book.bookId)} phase=${phase.replace('-', '_')} " +
+                        "result=deferred reason=local_export_pending revision=${pendingLocal.revision}",
+                )
                 ReaderPerfLog.w(
                     "FolderSync annotation import deferred: local revision pending " +
                         "book=${book.bookId} revision=${pendingLocal.revision} phase=$phase"
@@ -565,6 +682,11 @@ class FolderSyncWorker(
             val localTs = localFiles.maxOfOrNull { if (it.exists()) it.lastModified() else 0L } ?: 0L
 
             if (remoteTs > (localTs + 1000)) {
+                cloudFolderLogD(
+                    "event=annotation_sidecar_import operation=$operation correlation=$correlation " +
+                        "root=$safeRoot book=${cloudFolderSafeId(book.bookId)} phase=${phase.replace('-', '_')} " +
+                        "result=applied remoteTs=$remoteTs localTs=$localTs bytes=${jsonPayload.toByteArray(Charsets.UTF_8).size}",
+                )
                 Timber.tag("FolderAnnotationSync").i(">>> Newer sidecar found for ${book.displayName}. Importing.")
                 recentFilesRepository.importAnnotationBundle(
                     bookId = book.bookId,
@@ -573,9 +695,20 @@ class FolderSyncWorker(
                 )
                 imported++
             } else {
+                cloudFolderLogD(
+                    "event=annotation_sidecar_import operation=$operation correlation=$correlation " +
+                        "root=$safeRoot book=${cloudFolderSafeId(book.bookId)} phase=${phase.replace('-', '_')} " +
+                        "result=skipped reason=not_newer remoteTs=$remoteTs localTs=$localTs",
+                )
                 Timber.tag("FolderAnnotationSync").v("Sidecar for ${book.displayName} is not newer. Skipping.")
             }
         }
+
+        cloudFolderLogI(
+            "event=annotation_sidecar_import_end operation=$operation correlation=$correlation " +
+                "root=$safeRoot phase=${phase.replace('-', '_')} imported=$imported " +
+                "records=${preloadedSidecars.size} books=${books.size}",
+        )
 
         ReaderPerfLog.i(
             "FolderSync annotation-sidecars imported=$imported records=${preloadedSidecars.size} phase=$phase folder=$folderUriString"

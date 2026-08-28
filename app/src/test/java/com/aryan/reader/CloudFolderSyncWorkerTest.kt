@@ -2,6 +2,8 @@ package com.aryan.reader
 
 import android.net.Uri
 import androidx.work.ListenableWorker
+import androidx.work.ExistingWorkPolicy
+import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.aryan.reader.data.CloudFolderSafEntry
@@ -36,6 +38,66 @@ import java.security.MessageDigest
 
 @RunWith(RobolectricTestRunner::class)
 class CloudFolderSyncWorkerTest {
+    @Test
+    fun metadataWakeReplacesARequestThatIsAlreadyRetrying() {
+        assertEquals(
+            ExistingWorkPolicy.REPLACE,
+            cloudFolderMetadataWorkPolicy(
+                listOf(
+                    CloudFolderMetadataWorkState(
+                        state = WorkInfo.State.ENQUEUED,
+                        runAttemptCount = 4,
+                    ),
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun metadataWakeReplacesARequestThatIsCurrentlyRetrying() {
+        assertEquals(
+            ExistingWorkPolicy.REPLACE,
+            cloudFolderMetadataWorkPolicy(
+                listOf(
+                    CloudFolderMetadataWorkState(
+                        state = WorkInfo.State.RUNNING,
+                        runAttemptCount = 2,
+                    ),
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun metadataWakeAppendsAfterAHealthyActiveRequest() {
+        assertEquals(
+            ExistingWorkPolicy.APPEND_OR_REPLACE,
+            cloudFolderMetadataWorkPolicy(
+                listOf(
+                    CloudFolderMetadataWorkState(
+                        state = WorkInfo.State.RUNNING,
+                        runAttemptCount = 0,
+                    ),
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun metadataWakeKeepsNoUnfinishedRequestAndStartsAfterTerminalWork() {
+        assertEquals(
+            ExistingWorkPolicy.KEEP,
+            cloudFolderMetadataWorkPolicy(
+                listOf(
+                    CloudFolderMetadataWorkState(
+                        state = WorkInfo.State.SUCCEEDED,
+                        runAttemptCount = 1,
+                    ),
+                ),
+            ),
+        )
+    }
+
     @Test
     fun legacyDriveManifestProducesBootstrapHeadOnlyWhenFirestoreHeadIsAbsent() {
         val manifest = manifest(revision = 4L)
@@ -317,6 +379,68 @@ class CloudFolderSyncWorkerTest {
         )
         assertEquals(CloudFolderSyncDirection.LOCAL_TO_CLOUD, operation.direction)
         assertTrue(operation.kind == CloudFolderSyncOperationKind.UPLOAD_FILE)
+    }
+
+    @Test
+    fun fullPullSelectsOnlyLiveIncludedBoundRoots() {
+        assertTrue(
+            shouldPullBoundCloudFolderRoot(
+                isDeleted = false,
+                isIncluded = true,
+                hasBinding = true,
+            ),
+        )
+        assertFalse(
+            shouldPullBoundCloudFolderRoot(
+                isDeleted = true,
+                isIncluded = true,
+                hasBinding = true,
+            ),
+        )
+        assertFalse(
+            shouldPullBoundCloudFolderRoot(
+                isDeleted = false,
+                isIncluded = false,
+                hasBinding = true,
+            ),
+        )
+        assertFalse(
+            shouldPullBoundCloudFolderRoot(
+                isDeleted = false,
+                isIncluded = true,
+                hasBinding = false,
+            ),
+        )
+    }
+
+    @Test
+    fun remoteChangeQueuesPullOnlyForCurrentSelectedBinding() {
+        val eligible = shouldQueueCloudFolderPullAfterRemoteChange(
+            hasCloudToLocalOperations = true,
+            isSelected = true,
+            hasBinding = true,
+            isSignedIn = true,
+            syncEnabled = true,
+        )
+        assertTrue(eligible)
+        assertFalse(
+            shouldQueueCloudFolderPullAfterRemoteChange(
+                hasCloudToLocalOperations = true,
+                isSelected = false,
+                hasBinding = true,
+                isSignedIn = true,
+                syncEnabled = true,
+            ),
+        )
+        assertFalse(
+            shouldQueueCloudFolderPullAfterRemoteChange(
+                hasCloudToLocalOperations = false,
+                isSelected = true,
+                hasBinding = true,
+                isSignedIn = true,
+                syncEnabled = true,
+            ),
+        )
     }
 
     private fun scan(vararg nodes: CloudFolderNode): CloudFolderSafScanResult =

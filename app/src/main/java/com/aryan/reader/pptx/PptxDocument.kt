@@ -60,6 +60,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 import java.io.File
+import java.io.InputStream
+import java.net.URI
+import java.net.URLDecoder
 import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
@@ -606,7 +609,7 @@ internal class PptxCoverGenerator(context: Context) {
     suspend fun generateCover(uri: Uri, targetHeight: Int = 800): Bitmap? = withContext(Dispatchers.IO) {
         val cacheFile = File(appContext.cacheDir, "pptx_cover_${System.currentTimeMillis()}.pptx")
         try {
-            appContext.contentResolver.openInputStream(uri)?.use { input ->
+            openInputStream(uri)?.use { input ->
                 cacheFile.outputStream().use { output -> input.copyTo(output) }
             } ?: return@withContext null
 
@@ -628,6 +631,29 @@ internal class PptxCoverGenerator(context: Context) {
         } finally {
             runCatching { cacheFile.delete() }
         }
+    }
+
+    private fun openInputStream(uri: Uri): InputStream? {
+        return if (uri.scheme.equals("file", ignoreCase = true)) {
+            fileFromUri(uri)?.takeIf(File::isFile)?.inputStream()
+        } else {
+            appContext.contentResolver.openInputStream(uri)
+        }
+    }
+
+    private fun fileFromUri(uri: Uri): File? {
+        if (!uri.scheme.equals("file", ignoreCase = true)) return null
+        runCatching { File(URI(uri.toString())) }.getOrNull()?.let { return it }
+        uri.path?.takeIf { it.isNotBlank() }?.let { return File(it) }
+        val rawPath = uri.toString().removePrefix("file:").takeIf { it.isNotBlank() } ?: return null
+        val normalizedPath = when {
+            rawPath.startsWith("///") -> rawPath.drop(3)
+            rawPath.length > 2 && rawPath[0] == '/' && rawPath[2] == ':' -> rawPath.drop(1)
+            else -> rawPath
+        }
+        return runCatching {
+            File(URLDecoder.decode(normalizedPath, Charsets.UTF_8.name()))
+        }.getOrNull()
     }
 }
 

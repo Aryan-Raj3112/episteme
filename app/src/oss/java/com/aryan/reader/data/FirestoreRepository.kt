@@ -3,6 +3,7 @@
 
 package com.aryan.reader.data
 
+import com.aryan.reader.CloudFolderHeadSnapshot
 import java.util.Date
 
 // --- Data Classes used by ViewModel ---
@@ -90,6 +91,13 @@ class FirestoreRepository {
         userId: String,
         rootId: String,
     ): CloudFolderManifestHead? = null
+
+    /** OSS has no Firebase dependency; keep the API source-compatible. */
+    internal fun listenToCloudFolderHeads(
+        userId: String,
+        onUpdate: (CloudFolderHeadSnapshot) -> Unit,
+        onError: (Exception) -> Unit,
+    ): Any? = null
 
     suspend fun bootstrapCloudFolderManifestHead(
         userId: String,

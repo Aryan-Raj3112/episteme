@@ -1776,6 +1776,31 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             }
         }
 
+        // Foreground folder-head invalidation is application-scoped, while
+        // entitlement and the main sync switch are owned by this ViewModel.
+        // Keep the two concerns separate so a stale account or a downgrade
+        // detaches the Firestore listener immediately.
+        CloudFolderHeadListenerCoordinator.install(appContext)
+        viewModelScope.launch {
+            _internalState
+                .map { state ->
+                    Triple(
+                        state.currentUser?.uid?.trim()?.takeIf { it.isNotBlank() },
+                        state.isProUser,
+                        state.isSyncEnabled,
+                    )
+                }
+                .distinctUntilChanged()
+                .collect { (accountId, isPro, syncEnabled) ->
+                    CloudFolderHeadListenerCoordinator.updateEligibility(
+                        context = appContext,
+                        accountId = accountId,
+                        isPro = isPro,
+                        syncEnabled = syncEnabled,
+                    )
+                }
+        }
+
         viewModelScope.launch {
             _internalState
                 .map { it.bannerMessage }
@@ -3535,6 +3560,12 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         logCloudSyncTrace {
             "android.reader.close_request book=$closingBookId uri=${uriString.cloudSyncPreview()} sync=${uiState.value.isSyncEnabled}"
         }
+        cloudFolderLogD(
+            "event=reader_close_start operation=${cloudFolderOperationId("reader-close", closingBookId.orEmpty(), uriString.orEmpty())} " +
+                "correlation=${cloudFolderSyncCorrelationId("reader-close", closingBookId.orEmpty(), uriString.orEmpty())} " +
+                "book=${cloudFolderSafeId(closingBookId)} source=${cloudFolderSafeUri(uriString?.toUri())} " +
+                "syncEnabled=${uiState.value.isSyncEnabled}",
+        )
 
         val ttsState = ttsController.ttsState.value
         val isTtsActive = ttsState.playbackSource == "READER" &&
@@ -3609,9 +3640,27 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 // Await the writes queued before close, then read a fresh
                 // Room row for both the main sync payload and the folder
                 // sidecar snapshot.
+                val closeOperation = cloudFolderOperationId("reader-close", closingBookId.orEmpty(), uriString)
+                val closeCorrelation = cloudFolderSyncCorrelationId("reader-close", closingBookId.orEmpty(), uriString)
+                cloudFolderLogD(
+                    "event=reader_state_wait_start operation=$closeOperation correlation=$closeCorrelation " +
+                        "book=${cloudFolderSafeId(closingBookId)} source=${cloudFolderSafeUri(uriString.toUri())}",
+                )
                 awaitReaderStateWrites(uriString, closingBookId)
+                cloudFolderLogD(
+                    "event=reader_state_wait_end operation=$closeOperation correlation=$closeCorrelation " +
+                        "book=${cloudFolderSafeId(closingBookId)} result=complete",
+                )
                 val freshBook = bookStore.getFileByUri(uriString)
                 freshBook?.let {
+                    cloudFolderLogD(
+                        "event=reader_close_snapshot operation=$closeOperation correlation=$closeCorrelation " +
+                            "book=${cloudFolderSafeId(it.bookId)} source=${cloudFolderSafeUri(it.sourceFolderUri?.toUri())} " +
+                            "readTs=${it.effectiveReadingPositionModifiedTimestamp()} page=${it.lastPage ?: "none"} " +
+                            "chapter=${it.lastChapterIndex ?: "none"} block=${it.locatorBlockIndex ?: "none"} " +
+                            "char=${it.locatorCharOffset ?: "none"} progress=${it.progressPercentage ?: "none"} " +
+                            "folderBook=${it.sourceFolderUri != null}",
+                    )
                     if (uiState.value.uploadingBookIds.contains(it.bookId)) {
                         logCloudSyncTrace { "android.reader.close_upload_skip reason=already_uploading ${it.cloudSyncTraceSummary()}" }
                         return@launch
@@ -3628,6 +3677,10 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         Timber.tag("FolderAnnotationSync")
                             .d("Book closed (Folder Linked), syncing metadata and scheduling annotations: ${it.bookId}")
                         val metadataSaved = folderMirrorStore.syncLocalMetadataToFolder(it.bookId, force = true)
+                        cloudFolderLogD(
+                            "event=reader_close_sidecar_commit operation=$closeOperation correlation=$closeCorrelation " +
+                                "book=${cloudFolderSafeId(it.bookId)} result=${if (metadataSaved) "success" else "failure"}",
+                        )
                         if (!metadataSaved) {
                             Timber.tag("FolderAnnotationSync").w(
                                 "Book close metadata sidecar write failed; keeping local state for retry: ${it.bookId}"
@@ -4356,11 +4409,62 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun syncFolderMetadata(showFeedback: Boolean = false) {
+        // The legacy folder worker updates local-library sidecars, while the
+        // account-scoped cloud-folder worker owns Drive manifests and
+        // app-managed/KEEP_OFFLINE roots. Keep this visible action useful for
+        // both kinds of folders without adding another user-facing banner.
+        enqueueCloudFolderManualRefresh(reason = "folder_metadata")
         triggerFolderSyncWorker(metadataOnly = true, showFeedback = showFeedback)
     }
 
     fun scanSyncedFolder() {
+        // A full local scan can discover file additions/deletions that must
+        // also reach Drive. The cloud worker performs its own authenticated
+        // inventory and keeps the same three-way conflict rules.
+        enqueueCloudFolderManualRefresh(reason = "folder_scan")
         triggerFolderSyncWorker(metadataOnly = false, showFeedback = true)
+    }
+
+    /**
+     * Schedule the account-level cloud-folder receive and send passes for a
+     * user-visible manual refresh. These workers have no UI banner of their
+     * own; folder status/progress remains the single cloud-folder feedback
+     * surface, while the legacy worker keeps its existing banner behavior.
+     *
+     * PULL and PUSH use distinct account/root unique-work names. Replacing a
+     * prior manual request makes an explicit refresh recover a stale/backoff
+     * request, while WorkManager still coalesces duplicate requests of the
+     * same direction and account scope.
+     */
+    private fun enqueueCloudFolderManualRefresh(reason: String) {
+        val accountId = activeCloudFolderSyncAccountId() ?: run {
+            cloudFolderLogD(
+                "event=manual_refresh_skip reason=cloud_folder_unavailable trigger=$reason",
+            )
+            return
+        }
+        if (!isCloudFolderSyncEnabled(appContext)) {
+            cloudFolderLogD(
+                "event=manual_refresh_skip account=${cloudFolderSafeId(accountId)} " +
+                    "reason=sync_disabled trigger=$reason",
+            )
+            return
+        }
+        cloudFolderLogI(
+            "event=manual_refresh_enqueue account=${cloudFolderSafeId(accountId)} " +
+                "trigger=$reason passes=pull,push",
+        )
+        CloudFolderSyncWorker.enqueuePull(
+            context = appContext,
+            accountId = accountId,
+            replace = true,
+        )
+        CloudFolderSyncWorker.enqueue(
+            context = appContext,
+            accountId = accountId,
+            direction = CloudFolderSyncDirection.LOCAL_TO_CLOUD,
+            replace = true,
+        )
     }
 
     private fun triggerFolderSyncWorker(
@@ -7597,6 +7701,14 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         "locator={chapter=${locator.chapterIndex} block=${locator.blockIndex} char=${locator.charOffset}} " +
                         "progress=$progress cfi=${cfiForWebView.cloudSyncPreview()}"
                 }
+                val positionOperation = cloudFolderOperationId("reader-position", existing.bookId, "epub")
+                val positionCorrelation = cloudFolderSyncCorrelationId("reader-position", existing.bookId, "epub")
+                cloudFolderLogD(
+                    "event=reader_position_save_start operation=$positionOperation correlation=$positionCorrelation " +
+                        "book=${cloudFolderSafeId(existing.bookId)} kind=epub " +
+                        "beforeReadTs=${existing.effectiveReadingPositionModifiedTimestamp()} " +
+                        "chapter=${locator.chapterIndex} block=${locator.blockIndex} char=${locator.charOffset} progress=$progress",
+                )
                 bookStore.updateEpubReadingPosition(
                     uriString = uri.toString(),
                     locator = locator,
@@ -7608,6 +7720,13 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     "android.reader.position_save_done beforeTs=${existing.lastModifiedTimestamp} " +
                         (updated?.cloudSyncTraceSummary("after") ?: "after=null")
                 }
+                cloudFolderLogD(
+                    "event=reader_position_save_end operation=$positionOperation correlation=$positionCorrelation " +
+                        "book=${cloudFolderSafeId(existing.bookId)} kind=epub result=${if (updated != null) "success" else "missing"} " +
+                        "afterReadTs=${updated?.effectiveReadingPositionModifiedTimestamp() ?: 0L} " +
+                        "afterChapter=${updated?.lastChapterIndex ?: "none"} afterBlock=${updated?.locatorBlockIndex ?: "none"} " +
+                        "afterChar=${updated?.locatorCharOffset ?: "none"} afterProgress=${updated?.progressPercentage ?: "none"}",
+                )
                 queueCloudMetadataUpload(existing.bookId, reason = "epub_position")
             }
         }
@@ -7729,6 +7848,13 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     "android.reader.pdf_position_save_start book=${existing.bookId} beforeTs=${existing.lastModifiedTimestamp} " +
                         "beforeReadTs=${existing.effectiveReadingPositionModifiedTimestamp()} page=$page progress=$progress"
                 }
+                val positionOperation = cloudFolderOperationId("reader-position", existing.bookId, "pdf")
+                val positionCorrelation = cloudFolderSyncCorrelationId("reader-position", existing.bookId, "pdf")
+                cloudFolderLogD(
+                    "event=reader_position_save_start operation=$positionOperation correlation=$positionCorrelation " +
+                        "book=${cloudFolderSafeId(existing.bookId)} kind=pdf " +
+                        "beforeReadTs=${existing.effectiveReadingPositionModifiedTimestamp()} page=$page progress=$progress",
+                )
                 bookStore.updatePdfReadingPosition(
                     uriString = uri.toString(), page = page, progress = progress
                 )
@@ -7737,6 +7863,12 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     "android.reader.pdf_position_save_done beforeTs=${existing.lastModifiedTimestamp} " +
                         (updated?.cloudSyncTraceSummary("after") ?: "after=null")
                 }
+                cloudFolderLogD(
+                    "event=reader_position_save_end operation=$positionOperation correlation=$positionCorrelation " +
+                        "book=${cloudFolderSafeId(existing.bookId)} kind=pdf result=${if (updated != null) "success" else "missing"} " +
+                        "afterReadTs=${updated?.effectiveReadingPositionModifiedTimestamp() ?: 0L} " +
+                        "afterPage=${updated?.lastPage ?: "none"} afterProgress=${updated?.progressPercentage ?: "none"}",
+                )
                 queueCloudMetadataUpload(existing.bookId, reason = "pdf_position")
             } ?: run {
                 Timber.tag("PdfPositionDebug").e("ViewModel: Save aborted. Could not resolve file item from URI in DB.")
@@ -7787,7 +7919,12 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun refreshLibrary() {
         val syncEnabled = _internalState.value.isSyncEnabled
-        val hasFolder = _internalState.value.syncedFolders.any { it.localSyncEnabled }
+        // Cloud placeholders/app-managed roots are reconciled by the
+        // account-scoped worker and must not make the legacy folder worker
+        // show a misleading "no enabled folder" banner.
+        val hasFolder = _internalState.value.syncedFolders.any {
+            it.localSyncEnabled && !it.isCloudPlaceholder
+        }
 
         if (!syncEnabled && !hasFolder) {
             Timber.d("Refresh skipped: No sync methods active.")
@@ -7801,6 +7938,12 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             try {
                 if (syncEnabled) {
                     syncWithCloud(showBanner = false).join()
+                    if (!hasFolder) {
+                        // If no legacy folder worker will be started below,
+                        // still refresh selected/bound cloud-folder roots and
+                        // discover deferred incoming roots from Drive.
+                        enqueueCloudFolderManualRefresh(reason = "library_refresh")
+                    }
                 }
 
                 if (hasFolder) {
@@ -8571,6 +8714,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
     override fun onCleared() {
         super.onCleared()
+        CloudFolderHeadListenerCoordinator.clearEligibility(appContext)
         prefs.unregisterOnSharedPreferenceChangeListener(prefsListener)
         firestoreRepository.removeListener(feedbackListener)
         panelDetector?.close()

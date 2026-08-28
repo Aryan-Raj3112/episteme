@@ -4,6 +4,12 @@ import android.content.Context
 import android.provider.Settings
 import androidx.core.content.edit
 import com.aryan.reader.CloudFolderSyncPrefs
+import com.aryan.reader.cloudFolderErrorStatus
+import com.aryan.reader.cloudFolderLogD
+import com.aryan.reader.cloudFolderLogW
+import com.aryan.reader.cloudFolderOperationId
+import com.aryan.reader.cloudFolderSafeId
+import com.aryan.reader.cloudFolderSyncCorrelationId
 import com.aryan.reader.shared.CloudFolderDeviceBinding
 import com.aryan.reader.shared.CloudFolderConflict
 import com.aryan.reader.shared.CloudFolderConflictRecord
@@ -448,13 +454,35 @@ class CloudFolderSyncRepository(
         val normalizedBook = bookId.trim().takeIf { it.isNotBlank() } ?: return null
         // The read/merge/write lives in one Room transaction so two reader
         // callbacks cannot allocate the same generation and lose one wake-up.
-        return dao.markMetadataOutboxPending(
+        val previous = dao.getMetadataOutbox(accountId, normalizedRoot, normalizedBook)
+        val row = dao.markMetadataOutboxPending(
             accountId = accountId,
             rootId = normalizedRoot,
             bookId = normalizedBook,
             dirtyKinds = dirtyKinds,
             now = now,
         )
+        val operation = cloudFolderOperationId(
+            "metadata-sidecar",
+            accountId,
+            normalizedRoot,
+            normalizedBook,
+            row.generation,
+        )
+        val correlation = cloudFolderSyncCorrelationId(
+            "metadata-sidecar",
+            accountId,
+            normalizedRoot,
+            normalizedBook,
+            row.generation,
+        )
+        cloudFolderLogD(
+            "event=metadata_outbox_coalesce root=${cloudFolderSafeId(normalizedRoot)} " +
+                "book=${cloudFolderSafeId(normalizedBook)} operation=$operation correlation=$correlation " +
+                "generation=${row.generation} previousGeneration=${previous?.generation ?: "none"} " +
+                "kinds=${row.dirtyKinds} state=${row.state} action=${if (previous == null) "insert" else "replace"}",
+        )
+        return row
     }
 
     suspend fun saveProgress(progress: CloudFolderSyncProgress) {
@@ -651,41 +679,71 @@ class CloudFolderSyncRepository(
             now = now,
             limit = limit.coerceIn(1, 500),
         )
-        return rows.mapNotNull { row ->
+        cloudFolderLogD(
+            "event=metadata_outbox_claim_start root=${cloudFolderSafeId(normalizedRoot)} " +
+                "dueRows=${rows.size} limit=${limit.coerceIn(1, 500)}",
+        )
+        val claimed = rows.mapNotNull { row ->
             if (dao.claimMetadataOutbox(
                     accountId = accountId,
                     rootId = normalizedRoot,
                     bookId = row.bookId,
                     generation = row.generation,
                     now = now,
-                ) == 1
+            ) == 1
             ) {
-                row.copy(
+                val claimedRow = row.copy(
                     state = CloudFolderMetadataOutboxEntity.STATE_RUNNING,
                     attempts = row.attempts + 1,
                     lastAttemptAt = now,
                 )
+                cloudFolderLogD(
+                    "event=metadata_outbox_claim root=${cloudFolderSafeId(normalizedRoot)} " +
+                        "book=${cloudFolderSafeId(row.bookId)} " +
+                        "operation=${cloudFolderOperationId("metadata-sidecar", accountId, normalizedRoot, row.bookId, row.generation)} " +
+                        "correlation=${cloudFolderSyncCorrelationId("metadata-sidecar", accountId, normalizedRoot, row.bookId, row.generation)} " +
+                        "generation=${row.generation} attempt=${claimedRow.attempts} result=claimed kinds=${row.dirtyKinds}",
+                )
+                claimedRow
             } else {
+                cloudFolderLogD(
+                    "event=metadata_outbox_claim root=${cloudFolderSafeId(normalizedRoot)} " +
+                        "book=${cloudFolderSafeId(row.bookId)} generation=${row.generation} result=lost_race",
+                )
                 null
             }
         }
+        cloudFolderLogD(
+            "event=metadata_outbox_claim_end root=${cloudFolderSafeId(normalizedRoot)} " +
+                "claimedRows=${claimed.size}",
+        )
+        return claimed
     }
 
     /** Delete only the generation that was actually processed. */
-    suspend fun completeMetadataOutbox(row: CloudFolderMetadataOutboxEntity): Boolean =
-        dao.deleteMetadataOutboxGeneration(
+    suspend fun completeMetadataOutbox(row: CloudFolderMetadataOutboxEntity): Boolean {
+        val deleted = dao.deleteMetadataOutboxGeneration(
             accountId = accountId,
             rootId = row.rootId,
             bookId = row.bookId,
             generation = row.generation,
         ) == 1
+        cloudFolderLogD(
+            "event=metadata_outbox_complete root=${cloudFolderSafeId(row.rootId)} " +
+                "book=${cloudFolderSafeId(row.bookId)} " +
+                "operation=${cloudFolderOperationId("metadata-sidecar", accountId, row.rootId, row.bookId, row.generation)} " +
+                "correlation=${cloudFolderSyncCorrelationId("metadata-sidecar", accountId, row.rootId, row.bookId, row.generation)} " +
+                "generation=${row.generation} result=${if (deleted) "removed" else "newer_generation"}",
+        )
+        return deleted
+    }
 
     suspend fun failMetadataOutbox(
         row: CloudFolderMetadataOutboxEntity,
         error: String,
         retryAt: Long,
     ) {
-        dao.failMetadataOutbox(
+        val updated = dao.failMetadataOutbox(
             accountId = accountId,
             rootId = row.rootId,
             bookId = row.bookId,
@@ -693,13 +751,49 @@ class CloudFolderSyncRepository(
             nextAttemptAt = retryAt,
             error = error.take(500),
         )
+        cloudFolderLogW(
+            "event=metadata_outbox_retry root=${cloudFolderSafeId(row.rootId)} " +
+                "book=${cloudFolderSafeId(row.bookId)} " +
+                "operation=${cloudFolderOperationId("metadata-sidecar", accountId, row.rootId, row.bookId, row.generation)} " +
+                "correlation=${cloudFolderSyncCorrelationId("metadata-sidecar", accountId, row.rootId, row.bookId, row.generation)} " +
+                "generation=${row.generation} result=${if (updated == 1) "scheduled" else "stale"} " +
+                "errorStatus=${cloudFolderErrorStatus(error)} retryAt=$retryAt",
+        )
     }
 
     suspend fun resetRunningMetadataOutbox(
         now: Long = System.currentTimeMillis(),
         error: String? = "Worker restarted",
     ) {
-        dao.resetRunningMetadataOutbox(accountId, now, error?.take(500))
+        val reset = dao.resetRunningMetadataOutbox(accountId, now, error?.take(500))
+        cloudFolderLogW(
+            "event=metadata_outbox_recovery account=${cloudFolderSafeId(accountId)} " +
+                "rows=$reset result=reset errorStatus=${cloudFolderErrorStatus(error)}",
+        )
+    }
+
+    /**
+     * Requeue only one root's claimed metadata rows when a PUSH discovers a
+     * newer remote manifest.  Keeping this scoped prevents a remote change in
+     * one folder from perturbing unrelated folder transfers under the same
+     * account, while retaining every generation for a later rebase.
+     */
+    suspend fun resetRunningMetadataOutboxForRoot(
+        rootId: String,
+        now: Long = System.currentTimeMillis(),
+        error: String? = "Remote folder changed; pull scheduled",
+    ) {
+        val normalizedRoot = rootId.trim().takeIf { it.isNotBlank() } ?: return
+        val reset = dao.resetRunningMetadataOutboxForRoot(
+            accountId = accountId,
+            rootId = normalizedRoot,
+            nextAttemptAt = now,
+            error = error?.take(500),
+        )
+        cloudFolderLogW(
+            "event=metadata_outbox_recovery root=${cloudFolderSafeId(normalizedRoot)} " +
+                "rows=$reset result=reset errorStatus=${cloudFolderErrorStatus(error)}",
+        )
     }
 
     /** Return durable conflicts for settings/recovery UI in deterministic order. */
@@ -756,6 +850,11 @@ class CloudFolderSyncRepository(
     ): List<CloudFolderConflictRecord> {
         if (plan.conflicts.isEmpty()) {
             dao.clearConflicts(accountId, plan.rootId)
+            cloudFolderLogD(
+                "event=conflict_reconcile root=${cloudFolderSafeId(plan.rootId)} " +
+                    "baseRevision=${plan.baseRevision} localRevision=${plan.localRevision} " +
+                    "remoteRevision=${plan.remoteRevision} count=0 result=clear",
+            )
             return emptyList()
         }
         val existing = dao.getConflicts(accountId, plan.rootId).mapNotNull { entity ->
@@ -793,6 +892,16 @@ class CloudFolderSyncRepository(
         }
         dao.clearConflicts(accountId, plan.rootId)
         dao.upsertConflicts(records.map { it.toEntity(accountId, now) })
+        records.forEach { record ->
+            cloudFolderLogD(
+                "event=conflict_reconcile root=${cloudFolderSafeId(plan.rootId)} " +
+                    "conflict=${cloudFolderSafeId(record.conflictId)} " +
+                    "path=${cloudFolderSafeId(record.conflict.relativePath)} " +
+                    "type=${record.conflict.type.name} resolution=${record.resolution.name} " +
+                    "baseRevision=${record.baseRevision} localRevision=${record.localRevision} " +
+                    "remoteRevision=${record.remoteRevision}",
+            )
+        }
         return records
     }
 
@@ -804,9 +913,26 @@ class CloudFolderSyncRepository(
         now: Long = System.currentTimeMillis(),
     ): Boolean {
         val rows = dao.getConflicts(accountId, rootId)
-        val row = rows.firstOrNull { it.conflictId == conflictId } ?: return false
+        val row = rows.firstOrNull { it.conflictId == conflictId } ?: run {
+            cloudFolderLogW(
+                "event=conflict_resolution root=${cloudFolderSafeId(rootId)} " +
+                    "conflict=${cloudFolderSafeId(conflictId)} resolution=${resolution.name} result=missing",
+            )
+            return false
+        }
         val updated = row.copy(resolution = resolution.name, updatedAt = now)
         dao.upsertConflict(updated)
+        cloudFolderLogD(
+            "event=conflict_resolution root=${cloudFolderSafeId(rootId)} " +
+                "conflict=${cloudFolderSafeId(conflictId)} " +
+                "type=${runCatching {
+                    cloudFolderConflictJson.decodeFromString(
+                        CloudFolderConflict.serializer(),
+                        row.conflictJson,
+                    ).type.name
+                }.getOrDefault("unknown")} " +
+                "resolution=${resolution.name} result=stored",
+        )
         return true
     }
 
@@ -819,15 +945,47 @@ class CloudFolderSyncRepository(
         now: Long = System.currentTimeMillis(),
         limit: Int = 50,
     ): List<CloudFolderOutboxEntity> {
-        val rows = dao.getDueOutbox(accountId, rootId, now, limit.coerceIn(1, 500))
-        return enrichOutbox(rows.filter {
-            dao.claimOutbox(accountId, it.operationId, now) == 1
-        }.map { it.copy(state = CloudFolderOutboxEntity.STATE_RUNNING, attempts = it.attempts + 1, lastAttemptAt = now) })
+        val normalizedLimit = limit.coerceIn(1, 500)
+        val rows = dao.getDueOutbox(accountId, rootId, now, normalizedLimit)
+        val claimed = enrichOutbox(rows.mapNotNull { row ->
+            if (dao.claimOutbox(accountId, row.operationId, now) != 1) {
+                cloudFolderLogD(
+                    "event=content_outbox_claim root=${cloudFolderSafeId(rootId)} " +
+                        "operation=${cloudFolderSafeId(row.operationId)} node=${cloudFolderSafeId(row.nodeId)} " +
+                        "generation=${row.revision} result=lost_race",
+                )
+                return@mapNotNull null
+            }
+            val claimedRow = row.copy(
+                state = CloudFolderOutboxEntity.STATE_RUNNING,
+                attempts = row.attempts + 1,
+                lastAttemptAt = now,
+            )
+            cloudFolderLogD(
+                "event=content_outbox_claim root=${cloudFolderSafeId(rootId)} " +
+                    "operation=${cloudFolderSafeId(row.operationId)} node=${cloudFolderSafeId(row.nodeId)} " +
+                    "attempt=${claimedRow.attempts} revision=${row.revision} result=claimed",
+            )
+            claimedRow
+        })
+        if (rows.isNotEmpty() || claimed.isNotEmpty()) {
+            cloudFolderLogD(
+                "event=content_outbox_claim_end root=${cloudFolderSafeId(rootId)} " +
+                    "dueRows=${rows.size} claimedRows=${claimed.size} limit=$normalizedLimit",
+            )
+        }
+        return claimed
     }
 
     suspend fun completeOutbox(operationId: String) {
+        val row = dao.getOutboxByOperation(accountId, operationId)
         privateDao.deleteOutboxSource(accountId, operationId)
         dao.deleteOutbox(accountId, operationId)
+        cloudFolderLogD(
+            "event=content_outbox_complete root=${cloudFolderSafeId(row?.rootId)} " +
+                "operation=${cloudFolderSafeId(operationId)} node=${cloudFolderSafeId(row?.nodeId)} " +
+                "result=${if (row == null) "missing" else "removed"}",
+        )
     }
 
     suspend fun failOutbox(
@@ -835,7 +993,7 @@ class CloudFolderSyncRepository(
         error: String,
         retryAt: Long,
     ) {
-        dao.recordOutboxAttempt(
+        val updated = dao.recordOutboxAttempt(
             accountId = accountId,
             operationId = operationId,
             state = CloudFolderOutboxEntity.STATE_PENDING,
@@ -843,22 +1001,39 @@ class CloudFolderSyncRepository(
             nextAttemptAt = retryAt,
             error = error.take(500),
         )
+        val row = dao.getOutboxByOperation(accountId, operationId)
+        cloudFolderLogW(
+            "event=content_outbox_retry root=${cloudFolderSafeId(row?.rootId)} " +
+                "operation=${cloudFolderSafeId(operationId)} node=${cloudFolderSafeId(row?.nodeId)} " +
+                "result=${if (updated == 1) "scheduled" else "stale"} " +
+                "errorStatus=${cloudFolderErrorStatus(error)} retryAt=$retryAt",
+        )
     }
 
     suspend fun quarantineOutbox(operationId: String, error: String) {
-        check(
-            dao.quarantineOutbox(
+        val updated = dao.quarantineOutbox(
                 accountId = accountId,
                 operationId = operationId,
                 attemptedAt = System.currentTimeMillis(),
                 nextAttemptAt = Long.MAX_VALUE,
                 error = error.take(500),
-            ) == 1
-        ) { "Cloud-folder outbox row is no longer available: $operationId" }
+            )
+        val row = dao.getOutboxByOperation(accountId, operationId)
+        cloudFolderLogW(
+            "event=content_outbox_quarantine root=${cloudFolderSafeId(row?.rootId)} " +
+                "operation=${cloudFolderSafeId(operationId)} node=${cloudFolderSafeId(row?.nodeId)} " +
+                "result=${if (updated == 1) "quarantined" else "missing"} " +
+                "errorStatus=${cloudFolderErrorStatus(error)}",
+        )
+        check(updated == 1) { "Cloud-folder outbox row is no longer available: $operationId" }
     }
 
     suspend fun resetRunningOutbox(now: Long = System.currentTimeMillis(), error: String? = "Worker restarted") {
-        dao.resetRunningOutbox(accountId = accountId, nextAttemptAt = now, error = error)
+        val reset = dao.resetRunningOutbox(accountId = accountId, nextAttemptAt = now, error = error)
+        cloudFolderLogW(
+            "event=content_outbox_recovery account=${cloudFolderSafeId(accountId)} " +
+                "rows=$reset result=reset errorStatus=${cloudFolderErrorStatus(error)}",
+        )
     }
 
     /** Remove account-owned folder metadata and pending transfers on sign-out. */

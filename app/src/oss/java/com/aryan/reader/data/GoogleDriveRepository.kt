@@ -74,6 +74,8 @@ class GoogleDriveRepository {
         revision: Long = 0L,
         contentHash: String? = null,
         attempt: Int? = null,
+        operationId: String? = null,
+        correlationId: String? = null,
     ): DriveFile? {
         input.close()
         return null
@@ -90,11 +92,15 @@ class GoogleDriveRepository {
         revision: Long = 0L,
         contentHash: String? = null,
         attempt: Int? = null,
+        operationId: String? = null,
+        correlationId: String? = null,
     ): DriveFile? = null
 
     suspend fun uploadCloudFolderManifest(
         accessToken: String,
         manifest: CloudFolderManifest,
+        operationId: String? = null,
+        correlationId: String? = null,
     ): DriveFile? = null
 
     suspend fun listCloudFolderManifestRefs(accessToken: String): List<CloudFolderManifestRef> = emptyList()
@@ -111,6 +117,8 @@ class GoogleDriveRepository {
     suspend fun downloadCloudFolderManifest(
         accessToken: String,
         rootId: String,
+        operationId: String? = null,
+        correlationId: String? = null,
     ): CloudFolderManifestReadResult = CloudFolderManifestReadResult.NotFound
 
     suspend fun downloadCloudFolderFileTo(
@@ -122,6 +130,8 @@ class GoogleDriveRepository {
         expectedRevision: Long,
         expectedContentHash: String,
         expectedSizeBytes: Long,
+        operationId: String? = null,
+        correlationId: String? = null,
     ) {
         throw UnsupportedOperationException("Drive is unavailable in the OSS build")
     }

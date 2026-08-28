@@ -10,6 +10,7 @@ import androidx.work.Data
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.aryan.reader.data.CloudFolderManifestReadResult
@@ -71,6 +72,44 @@ private const val CLOUD_FOLDER_GC_RETENTION_MILLIS = 30L * 24L * 60L * 60L * 1_0
 private const val METADATA_CONFLICT_RETRY_DELAY_MILLIS = 5L * 60L * 1_000L
 
 /**
+ * The small amount of WorkManager state needed to choose a metadata wake-up
+ * policy.  Keeping this decision pure makes the retry/revival contract easy
+ * to test without depending on WorkManager's database.
+ */
+internal data class CloudFolderMetadataWorkState(
+    val state: WorkInfo.State,
+    val runAttemptCount: Int,
+)
+
+/**
+ * Select a policy for a newly committed metadata sidecar.
+ *
+ * A fresh active request is allowed to finish and the new request is appended
+ * so the durable Room row remains the coalescing source of truth.  A request
+ * that has already retried is different: appending behind it can leave the
+ * newer generation waiting forever in its backoff chain, so replace that
+ * request.  The worker's exact-generation delete and startup recovery make
+ * cancellation safe for a transfer that was already in flight.
+ */
+internal fun cloudFolderMetadataWorkPolicy(
+    existing: List<CloudFolderMetadataWorkState>,
+): ExistingWorkPolicy {
+    val unfinished = existing.filter { state ->
+        state.state == WorkInfo.State.RUNNING ||
+            state.state == WorkInfo.State.ENQUEUED ||
+            state.state == WorkInfo.State.BLOCKED
+    }
+    return when {
+        unfinished.any { it.runAttemptCount > 0 } -> ExistingWorkPolicy.REPLACE
+        unfinished.any {
+            it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED
+        } -> ExistingWorkPolicy.APPEND_OR_REPLACE
+        unfinished.isNotEmpty() -> ExistingWorkPolicy.REPLACE
+        else -> ExistingWorkPolicy.KEEP
+    }
+}
+
+/**
  * Durable Android executor for the shared cloud-folder protocol. A full SAF
  * scan and every file upload happen before the manifest is published. A
  * partial scan, failed stream, invalid hash, or failed manifest publication
@@ -86,6 +125,11 @@ class CloudFolderSyncWorker(
     // an initialized Firebase app (and before doing any network setup).
     private val driveRepository by lazy { GoogleDriveRepository() }
     private val firestoreRepository by lazy { FirestoreRepository() }
+    /** Set once per WorkManager request; included in every detailed event. */
+    private var activeOperationId: String = "none"
+    private var activeCorrelationId: String = "none"
+    /** Last durable pipeline boundary reached by this request. */
+    private var activeStage: String = "worker_start"
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         GLOBAL_MUTEX.withLock {
@@ -101,11 +145,27 @@ class CloudFolderSyncWorker(
             val requestedRootId = inputData.getString(KEY_ROOT_ID)?.trim().orEmpty()
             val metadataOnly = inputData.getBoolean(KEY_METADATA_ONLY, false)
             val requestedAccountId = inputData.getString(KEY_ACCOUNT_ID)?.trim().orEmpty()
+            activeOperationId = cloudFolderOperationId(
+                "folder-worker",
+                id.toString(),
+                requestedAccountId,
+                requestedRootId,
+                direction.name,
+                metadataOnly,
+            )
+            activeCorrelationId = cloudFolderSyncCorrelationId(
+                "folder-worker",
+                requestedAccountId,
+                requestedRootId,
+                direction.name,
+            )
+            activeStage = "account_gate"
             val currentAccountId = AuthRepository(applicationContext).getSignedInUser()?.uid?.trim().orEmpty()
             cloudFolderLogI(
                 "event=worker_start direction=${direction.name} " +
+                    "operation=$activeOperationId correlation=$activeCorrelationId " +
                     "account=${cloudFolderSafeId(requestedAccountId)} " +
-                    "root=${cloudFolderSafeId(requestedRootId)}",
+                    "root=${cloudFolderSafeId(requestedRootId)} metadataOnly=$metadataOnly attempt=$runAttemptCount",
             )
 
             // WorkManager can outlive a Firebase session. Never touch the
@@ -124,10 +184,14 @@ class CloudFolderSyncWorker(
 
             // Reset rows claimed by a process that was killed before it could
             // complete them. WorkManager may recreate this worker later.
+            activeStage = "outbox_recovery"
             repository.resetRunningOutbox(now = System.currentTimeMillis())
             repository.resetRunningMetadataOutbox(now = System.currentTimeMillis())
-            cloudFolderLogD("event=outbox_recovery result=reset root=${cloudFolderSafeId(requestedRootId)}")
+            cloudFolderLogD(
+                "event=outbox_recovery ${traceFields(requestedRootId)} result=reset",
+            )
 
+            activeStage = "drive_token"
             val accessToken = repositoryAccessToken() ?: run {
                 cloudFolderLogW(
                     "event=worker_gate gate=drive_token result=missing " +
@@ -139,9 +203,11 @@ class CloudFolderSyncWorker(
 
             try {
                 if (direction == Direction.GC) {
+                    activeStage = "garbage_collection"
                     runGarbageCollection(accessToken)
                 } else if (requestedRootId.isNotBlank()) {
                     if (direction == Direction.PULL) {
+                        activeStage = "pull_root"
                         pullRoot(accessToken, requestedRootId)
                         if (repository.isIncluded(requestedRootId) &&
                             repository.getBinding(requestedRootId) != null
@@ -158,17 +224,39 @@ class CloudFolderSyncWorker(
                             )
                         }
                     } else {
-                    syncRoot(accessToken, requestedRootId, direction, metadataOnly)
+                        activeStage = "sync_root"
+                        syncRoot(accessToken, requestedRootId, direction, metadataOnly)
                     }
                 } else if (direction == Direction.PULL) {
+                    // A pull pass has two independent responsibilities:
+                    // discover unbound roots for the incoming-folder prompt,
+                    // and reconcile roots this device has already selected.
+                    // The old discovery-only path did the former and silently
+                    // skipped the latter, making manual/startup pulls appear
+                    // successful while never importing remote sidecars.
+                    activeStage = "pull_discovery"
                     discoverAndPull(accessToken)
                 } else {
                     // A normal cloud sync also performs a metadata-only
                     // discovery pass. This makes device-2 roots visible to
                     // settings even when no local folder is indexed, while
                     // keeping byte materialization behind an explicit choice.
-                    discoverAndPull(accessToken)
-                    syncSelectedRoots(accessToken, direction)
+                    activeStage = "sync_discovery"
+                    val discoveryFailure = discoverIncomingRoots(accessToken)
+                    activeStage = "sync_selected_roots"
+                    var selectedRootsFailure: Throwable? = null
+                    try {
+                        syncSelectedRoots(accessToken, direction)
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (error: Exception) {
+                        selectedRootsFailure = error
+                    }
+                    // Discovery and selected-root reconciliation are
+                    // independent account operations. Preserve the first
+                    // failure for WorkManager retry after both have had a
+                    // chance to make progress.
+                    (discoveryFailure ?: selectedRootsFailure)?.let { throw it }
                 }
                 // Wake an already-running ViewModel so a newly discovered
                 // device-2 root is visible immediately, even when Settings
@@ -177,7 +265,7 @@ class CloudFolderSyncWorker(
                 CloudFolderSyncEvents.notifyStateChanged()
                 cloudFolderLogI(
                     "event=worker_end result=success direction=${direction.name} " +
-                        "root=${cloudFolderSafeId(requestedRootId)} " +
+                        "${traceFields(requestedRootId)} " +
                         "durationMs=${(System.currentTimeMillis() - startedAt).coerceAtLeast(0L)}",
                 )
                 Result.success()
@@ -201,13 +289,64 @@ class CloudFolderSyncWorker(
                 cloudFolderLogError(
                     event = "worker_end",
                     error = error,
-                    details = "result=${if (cloudFolderFailureIsDeterministic(error)) "failure" else "retry"} " +
-                        "direction=${direction.name} root=${cloudFolderSafeId(requestedRootId)} " +
+                    details = "${traceFields(requestedRootId)} " +
+                        "result=${if (cloudFolderFailureIsDeterministic(error)) "failure" else "retry"} " +
+                        "direction=${direction.name} metadataOnly=$metadataOnly stage=$activeStage " +
+                        "category=${cloudFolderStageCategory(activeStage, metadataOnly)} " +
                         "durationMs=${(System.currentTimeMillis() - startedAt).coerceAtLeast(0L)}",
                 )
                 if (cloudFolderFailureIsDeterministic(error)) Result.failure() else Result.retry()
             }
         }
+    }
+
+    private fun traceFields(
+        rootId: String? = null,
+        bookId: String? = null,
+        generation: Long? = null,
+    ): String {
+        val accountId = if (::repository.isInitialized) repository.accountId else "none"
+        val correlation = if (!bookId.isNullOrBlank() && generation != null && !rootId.isNullOrBlank()) {
+            cloudFolderSyncCorrelationId(
+                "metadata-sidecar",
+                accountId,
+                rootId,
+                bookId,
+                generation,
+            )
+        } else {
+            cloudFolderSyncCorrelationId(activeCorrelationId, rootId.orEmpty())
+        }
+        return "operation=$activeOperationId correlation=$correlation " +
+            "root=${cloudFolderSafeId(rootId)} " +
+            (bookId?.let { "book=${cloudFolderSafeId(it)} " }.orEmpty()) +
+            (generation?.let { "generation=$it " }.orEmpty())
+    }
+
+    private fun cloudFolderStageCategory(stage: String, metadataOnly: Boolean): String = when (stage) {
+        "metadata_outbox_claim" -> "metadata_outbox_claim"
+        "metadata_target_resolution" -> "metadata_sidecar_resolution"
+        "metadata_local_scan" -> "metadata_local_scan"
+        "manifest_read" -> if (metadataOnly) "metadata_manifest_read" else "manifest_read"
+        "resume_materialization" -> "materialization_recovery"
+        else -> if (metadataOnly) "metadata_pipeline" else "folder_pipeline"
+    }
+
+    private fun logMetadataStageFailure(
+        rootId: String,
+        stage: String,
+        category: String,
+        error: Throwable,
+        details: String = "",
+    ) {
+        if (error is CancellationException) return
+        val safe = cloudFolderTransferFailure(error, stage, category)
+        cloudFolderLogError(
+            event = "metadata_stage_failure",
+            error = safe,
+            details = "${traceFields(rootId)} stage=$stage category=$category " +
+                "result=failure ${details.trim()}".trim(),
+        )
     }
 
     private suspend fun markRootFailure(rootId: String, error: Throwable) {
@@ -331,12 +470,35 @@ class CloudFolderSyncWorker(
         }
     }
 
-    private suspend fun discoverAndPull(accessToken: String) {
+    /**
+     * Discover incoming roots without materializing them.  Existing bindings
+     * are intentionally ignored here; the caller decides separately whether
+     * selected bindings should be pulled.
+     *
+     * Returning the first failure lets a full PULL still process bound roots
+     * when an unrelated manifest is temporarily unavailable.
+     */
+    private suspend fun discoverIncomingRoots(accessToken: String): Throwable? {
         val startedAt = System.currentTimeMillis()
         cloudFolderLogD("event=discovery_start account=${cloudFolderSafeId(repository.accountId)}")
-        val refs = driveRepository.listCloudFolderManifestRefs(accessToken)
-        cloudFolderLogD("event=discovery_refs count=${refs.size}")
         var failure: Throwable? = null
+        val refs = try {
+            driveRepository.listCloudFolderManifestRefs(accessToken)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            // A failed account-wide listing must not starve roots that are
+            // already bound. discoverAndPull() will still run their targeted
+            // pulls and return this error after that work is attempted.
+            failure = error
+            cloudFolderLogError(
+                event = "discovery_refs",
+                error = error,
+                details = "result=${if (cloudFolderFailureIsDeterministic(error)) "failure" else "retry"}",
+            )
+            emptyList()
+        }
+        cloudFolderLogD("event=discovery_refs count=${refs.size}")
         for (ref in refs) {
             try {
                 // Discovery is metadata-only. In particular, do not call the
@@ -378,7 +540,70 @@ class CloudFolderSyncWorker(
             "event=discovery_end roots=${refs.size} result=${if (failure == null) "success" else "error"} " +
                 "durationMs=${(System.currentTimeMillis() - startedAt).coerceAtLeast(0L)}",
         )
-        failure?.let { throw it }
+        return failure
+    }
+
+    /**
+     * Pull every root that is both bound on this device and explicitly
+     * included in its account-scoped selection.  The binding/mode checks in
+     * [pullRoot] remain the final authority, so a selection or sign-in change
+     * racing this pass cannot materialize an excluded root.
+     */
+    private suspend fun pullIncludedRoots(accessToken: String): Throwable? {
+        val roots = repository.getRoots()
+            .filter { root ->
+                shouldPullBoundCloudFolderRoot(
+                    isDeleted = root.isDeleted,
+                    isIncluded = repository.isIncluded(root.rootId),
+                    hasBinding = repository.getBinding(root.rootId) != null,
+                )
+            }
+        cloudFolderLogI(
+            "event=bound_pull_start account=${cloudFolderSafeId(repository.accountId)} roots=${roots.size}",
+        )
+        var failure: Throwable? = null
+        for (root in roots) {
+            try {
+                ensureAccountStillActive()
+                cloudFolderLogD(
+                    "event=bound_pull_root_start ${traceFields(root.rootId)} " +
+                        "root=${cloudFolderSafeId(root.rootId)}",
+                )
+                pullRoot(accessToken, root.rootId)
+                cloudFolderLogD(
+                    "event=bound_pull_root_end ${traceFields(root.rootId)} " +
+                        "root=${cloudFolderSafeId(root.rootId)} result=success",
+                )
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                failure = failure ?: error
+                markRootFailure(root.rootId, error)
+                cloudFolderLogError(
+                    event = "bound_pull_root_end",
+                    error = error,
+                    details = "${traceFields(root.rootId)} " +
+                        "root=${cloudFolderSafeId(root.rootId)} " +
+                        "result=${if (cloudFolderFailureIsDeterministic(error)) "failure" else "retry"}",
+                )
+            }
+        }
+        cloudFolderLogI(
+            "event=bound_pull_end account=${cloudFolderSafeId(repository.accountId)} " +
+                "roots=${roots.size} result=${if (failure == null) "success" else "error"}",
+        )
+        return failure
+    }
+
+    /**
+     * Full PULL combines non-materializing discovery with reconciliation of
+     * already-bound roots.  Both passes run even if one root fails so a
+     * transient problem cannot starve unrelated roots or incoming prompts.
+     */
+    private suspend fun discoverAndPull(accessToken: String) {
+        val discoveryFailure = discoverIncomingRoots(accessToken)
+        val boundPullFailure = pullIncludedRoots(accessToken)
+        (discoveryFailure ?: boundPullFailure)?.let { throw it }
     }
 
     /** Drive objects are authenticated by the gateway; Pro also authenticates
@@ -391,7 +616,12 @@ class CloudFolderSyncWorker(
         val safeRoot = cloudFolderSafeId(rootId)
         cloudFolderLogD("event=manifest_read_start root=$safeRoot")
         ensureAccountStillActive()
-        val result = driveRepository.downloadCloudFolderManifest(accessToken, rootId)
+        val result = driveRepository.downloadCloudFolderManifest(
+            accessToken = accessToken,
+            rootId = rootId,
+            operationId = activeOperationId,
+            correlationId = activeCorrelationId,
+        )
         if (!BuildConfig.IS_PRO) {
             cloudFolderLogD(
                 "event=manifest_read_end root=$safeRoot source=drive " +
@@ -530,6 +760,16 @@ class CloudFolderSyncWorker(
             if (!repository.isIncluded(rootId)) return
         }
         val remoteResult = readRemoteManifest(accessToken, rootId)
+        if (remoteResult is CloudFolderManifestReadResult.Found) {
+            val remoteManifest = remoteResult.manifest.normalized()
+            logPullManifestPlan(
+                rootId = rootId,
+                remote = remoteManifest,
+                local = repository.getManifest(rootId),
+                binding = existingBinding,
+                hasPendingMaterialization = repository.getPendingMaterialization(rootId) != null,
+            )
+        }
         if (existingBinding != null &&
             resumePendingMaterialization(accessToken, rootId, existingBinding, remoteResult)
         ) return
@@ -614,6 +854,44 @@ class CloudFolderSyncWorker(
                 CloudFolderSyncEvents.notifyStateChanged()
             }
         }
+    }
+
+    /**
+     * Emit one privacy-safe summary before a pull is compared or resumed.
+     * This deliberately compares manifest state rather than the local file
+     * tree: the latter may be a SAF provider or app-private path and is not
+     * needed to diagnose whether a remote revision is sidecar-only.
+     */
+    private fun logPullManifestPlan(
+        rootId: String,
+        remote: CloudFolderManifest,
+        local: CloudFolderManifest?,
+        binding: com.aryan.reader.shared.CloudFolderDeviceBinding?,
+        hasPendingMaterialization: Boolean,
+    ) {
+        val delta = classifyCloudFolderPullDelta(local, remote)
+        val selectedPath = selectedCloudFolderPullPath(
+            binding = binding,
+            classification = delta.classification,
+            hasPendingMaterialization = hasPendingMaterialization,
+        )
+        cloudFolderLogI(
+            "event=pull_manifest_plan ${traceFields(rootId)} " +
+                "root=${cloudFolderSafeId(rootId)} " +
+                "localManifestPresent=${local != null} " +
+                "localRevision=${local?.revision ?: 0L} " +
+                "remoteRevision=${remote.revision} " +
+                "metadataAdded=${delta.metadataAdded} " +
+                "metadataChanged=${delta.metadataChanged} " +
+                "metadataDeleted=${delta.metadataDeleted} " +
+                "contentAdded=${delta.contentAdded} " +
+                "contentChanged=${delta.contentChanged} " +
+                "contentDeleted=${delta.contentDeleted} " +
+                "classification=${delta.classification} " +
+                "materializationMode=${binding?.materializationMode?.name ?: "DISCOVERY"} " +
+                "pendingMaterialization=$hasPendingMaterialization " +
+                "selectedPath=$selectedPath",
+        )
     }
 
     /**
@@ -706,6 +984,7 @@ class CloudFolderSyncWorker(
     ) {
         val startedAt = System.currentTimeMillis()
         val safeRoot = cloudFolderSafeId(rootId)
+        activeStage = "root_selection"
         if (!repository.isIncluded(rootId)) {
             cloudFolderLogD("event=root_gate root=$safeRoot gate=selection result=excluded")
             return
@@ -715,13 +994,31 @@ class CloudFolderSyncWorker(
             return
         }
         cloudFolderLogD(
-            "event=sync_root_start root=$safeRoot direction=${direction.name} " +
-                "mode=${binding.materializationMode.name}",
+            "event=sync_root_start ${traceFields(rootId)} direction=${direction.name} " +
+                "mode=${binding.materializationMode.name} metadataOnly=$metadataOnly",
         )
+        if (metadataOnly) {
+            cloudFolderLogI(
+                "event=metadata_worker_start ${traceFields(rootId)} direction=${direction.name} " +
+                    "mode=${binding.materializationMode.name}",
+            )
+        }
+        activeStage = "progress"
         saveRootProgress(rootId, CloudFolderSyncPhase.SCANNING)
         val appStorageRoot = if (binding.materializationMode == CloudFolderMaterializationMode.KEEP_OFFLINE) {
-            runCatching { cloudFolderAppRootDirectory(applicationContext.filesDir, rootId) }
+            runCatching {
+                activeStage = "app_storage_root"
+                cloudFolderAppRootDirectory(applicationContext.filesDir, rootId)
+            }
                 .getOrElse { error ->
+                    if (metadataOnly) {
+                        logMetadataStageFailure(
+                            rootId = rootId,
+                            stage = "app_storage_root",
+                            category = "metadata_app_storage_root",
+                            error = error,
+                        )
+                    }
                     throw IOException("Offline folder is unavailable: ${error.message}")
                 }
         } else {
@@ -730,6 +1027,7 @@ class CloudFolderSyncWorker(
         if (appStorageRoot != null && direction == Direction.PULL) {
             // KEEP_OFFLINE pulls are handled by the materializer. PUSH/SYNC
             // below use the same three-way planner and CAS as SAF mirrors.
+            activeStage = "pull_app_storage"
             pullRoot(accessToken, rootId)
             saveRootProgress(
                 rootId = rootId,
@@ -739,8 +1037,34 @@ class CloudFolderSyncWorker(
             cloudFolderLogD("event=sync_root_end root=$safeRoot result=offline_pull")
             return
         }
-        val remoteResult = readRemoteManifest(accessToken, rootId)
-        val resumedPendingMaterialization = resumePendingMaterialization(accessToken, rootId, binding, remoteResult)
+        activeStage = "manifest_read"
+        val remoteResult = try {
+            readRemoteManifest(accessToken, rootId)
+        } catch (error: Exception) {
+            if (metadataOnly) {
+                logMetadataStageFailure(
+                    rootId = rootId,
+                    stage = "manifest_read",
+                    category = "metadata_manifest_read",
+                    error = error,
+                )
+            }
+            throw error
+        }
+        activeStage = "resume_materialization"
+        val resumedPendingMaterialization = try {
+            resumePendingMaterialization(accessToken, rootId, binding, remoteResult)
+        } catch (error: Exception) {
+            if (metadataOnly) {
+                logMetadataStageFailure(
+                    rootId = rootId,
+                    stage = "resume_materialization",
+                    category = "metadata_materialization_recovery",
+                    error = error,
+                )
+            }
+            throw error
+        }
         if (resumedPendingMaterialization && !metadataOnly) {
             val progress = repository.getProgress(rootId)
             saveRootProgress(
@@ -754,6 +1078,7 @@ class CloudFolderSyncWorker(
             return
         }
         if (binding.materializationMode == CloudFolderMaterializationMode.CLOUD_ONLY) {
+            activeStage = "cloud_only"
             val stats = repository.getRoot(rootId)?.stats
             saveRootProgress(
                 rootId = rootId,
@@ -766,17 +1091,62 @@ class CloudFolderSyncWorker(
             return
         }
         val localUri = binding.localUri?.takeIf { it.isNotBlank() }
-        val rootUri = localUri?.let(Uri::parse)
-        val pendingMetadata = repository.claimDueMetadataOutbox(rootId, limit = 500)
-        val pendingBooks = pendingMetadata.map { it.bookId }.toSet()
-        val committedBase = repository.getManifest(rootId)
-        val targetedMetadataSync = metadataOnly && committedBase != null && (
-            pendingBooks.isEmpty() || when {
-                appStorageRoot != null -> appStorageMetadataTargetsAvailable(appStorageRoot, pendingBooks)
-                rootUri != null -> safMetadataTargetsAvailable(rootUri, pendingBooks)
-                else -> false
+        val rootUri = try {
+            localUri?.let(Uri::parse)
+        } catch (error: Exception) {
+            if (metadataOnly) {
+                logMetadataStageFailure(
+                    rootId = rootId,
+                    stage = "local_uri_parse",
+                    category = "metadata_local_uri_resolution",
+                    error = error,
+                )
             }
-        )
+            throw error
+        }
+        activeStage = "metadata_outbox_claim"
+        val pendingMetadata = try {
+            repository.claimDueMetadataOutbox(rootId, limit = 500)
+        } catch (error: Exception) {
+            if (metadataOnly) {
+                logMetadataStageFailure(
+                    rootId = rootId,
+                    stage = "metadata_outbox_claim",
+                    category = "metadata_outbox_claim",
+                    error = error,
+                )
+            }
+            throw error
+        }
+        val pendingBooks = pendingMetadata.map { it.bookId }.toSet()
+        if (metadataOnly) {
+            cloudFolderLogD(
+                "event=metadata_batch_claimed ${traceFields(rootId)} rows=${pendingMetadata.size} " +
+                    "books=${pendingBooks.size} kinds=${pendingMetadata.flatMap { it.dirtyKinds.split(',') }.distinct().sorted().joinToString(",")}",
+            )
+        }
+        val committedBase = repository.getManifest(rootId)
+        activeStage = "metadata_target_resolution"
+        val targetedMetadataSync = if (metadataOnly && committedBase != null) {
+            try {
+                pendingBooks.isEmpty() || when {
+                    appStorageRoot != null -> appStorageMetadataTargetsAvailable(appStorageRoot, pendingBooks)
+                    rootUri != null -> safMetadataTargetsAvailable(rootUri, rootId, pendingBooks)
+                    else -> false
+                }
+            } catch (error: Exception) {
+                logMetadataStageFailure(
+                    rootId = rootId,
+                    stage = "metadata_target_resolution",
+                    category = "metadata_sidecar_resolution",
+                    error = error,
+                    details = "mode=${if (appStorageRoot != null) "app_storage" else "saf"} books=${pendingBooks.size}",
+                )
+                false
+            }
+        } else {
+            false
+        }
         if (metadataOnly && pendingBooks.isNotEmpty() && !targetedMetadataSync) {
             // A sidecar may have been removed externally since the durable
             // wake-up was recorded. Fall back to a complete inventory so the
@@ -787,7 +1157,12 @@ class CloudFolderSyncWorker(
                     "books=${pendingBooks.size}",
             )
         }
+        activeStage = "metadata_local_scan"
         val scan = if (appStorageRoot != null && targetedMetadataSync) {
+            cloudFolderLogD(
+                "event=metadata_local_scan_start ${traceFields(rootId)} mode=app_storage " +
+                    "targeted=true books=${pendingBooks.size}",
+            )
             scanAppStorageForSync(
                 root = appStorageRoot,
                 rootId = rootId,
@@ -797,6 +1172,10 @@ class CloudFolderSyncWorker(
                 pendingBooks = pendingBooks,
             )
         } else if (appStorageRoot == null && targetedMetadataSync) {
+            cloudFolderLogD(
+                "event=metadata_local_scan_start ${traceFields(rootId)} mode=saf " +
+                    "targeted=true books=${pendingBooks.size}",
+            )
             scanSafStorageForMetadata(
                 rootUri = requireNotNull(rootUri),
                 rootId = rootId,
@@ -824,6 +1203,13 @@ class CloudFolderSyncWorker(
                 )
             }
         }
+        if (metadataOnly) {
+            cloudFolderLogD(
+                "event=metadata_local_scan_end ${traceFields(rootId)} targeted=$targetedMetadataSync " +
+                    "complete=${scan.complete} files=${scan.files.size} directories=${scan.directories.size} " +
+                    "errorStatus=${cloudFolderErrorStatus(scan.errorMessage)}",
+            )
+        }
         if (!scan.complete) {
             val message = scan.errorMessage ?: "SAF scan was incomplete"
             repository.markBindingError(rootId, message)
@@ -838,6 +1224,7 @@ class CloudFolderSyncWorker(
             "event=sync_root_scan root=$safeRoot result=complete files=${scan.files.size} " +
                 "directories=${scan.directories.size}",
         )
+        activeStage = "manifest_plan"
         val totalFiles = scan.files.size
         val totalBytes = scan.files.sumOf { it.node.sizeBytes.coerceAtLeast(0L) }
         saveRootProgress(
@@ -866,6 +1253,7 @@ class CloudFolderSyncWorker(
             is CloudFolderManifestReadResult.Found -> result.manifest
         }
         if (direction == Direction.PULL) {
+            activeStage = "pull_materialization"
             saveRootProgress(
                 rootId = rootId,
                 phase = CloudFolderSyncPhase.FINALIZING,
@@ -893,10 +1281,22 @@ class CloudFolderSyncWorker(
             deviceId = repository.deviceId,
         )
         cloudFolderLogD(
-            "event=sync_plan root=$safeRoot operations=${plan.operations.size} " +
-                "conflicts=${plan.conflicts.size} revision=${plan.mergedManifest.revision}",
+            "event=sync_plan ${traceFields(rootId)} operations=${plan.operations.size} " +
+                "conflicts=${plan.conflicts.size} revision=${plan.mergedManifest.revision} " +
+                "baseRevision=${plan.baseRevision} localRevision=${plan.localRevision} " +
+                "remoteRevision=${plan.remoteRevision} localToCloud=${plan.operations.count { it.direction == CloudFolderSyncDirection.LOCAL_TO_CLOUD }} " +
+                "cloudToLocal=${plan.operations.count { it.direction == CloudFolderSyncDirection.CLOUD_TO_LOCAL }}",
         )
         if (plan.conflicts.isNotEmpty()) {
+            plan.conflicts.forEach { conflict ->
+                cloudFolderLogW(
+                    "event=conflict_classified ${traceFields(rootId)} " +
+                        "conflict=${cloudFolderSafeId(conflict.conflictId)} " +
+                        "path=${cloudFolderSafeId(conflict.relativePath)} type=${conflict.type.name} " +
+                        "related=${conflict.relatedNodeIds.size} baseRevision=${plan.baseRevision} " +
+                        "localRevision=${plan.localRevision} remoteRevision=${plan.remoteRevision}",
+                )
+            }
             val records = repository.reconcileConflicts(plan, now)
             val resolutions = records.associate { it.conflictId to it.resolution }
             plan = resolveCloudFolderSync(
@@ -907,6 +1307,11 @@ class CloudFolderSyncWorker(
                 resolutions = resolutions,
                 nowMillis = now,
                 deviceId = repository.deviceId,
+            )
+            cloudFolderLogD(
+                "event=conflict_resolution_apply ${traceFields(rootId)} " +
+                    "requested=${resolutions.size} remaining=${plan.conflicts.size} " +
+                    "result=${if (plan.conflicts.isEmpty()) "resolved" else "deferred"}",
             )
             if (plan.conflicts.isNotEmpty()) {
                 // Conflicts are durable user-action state, not a transient
@@ -924,7 +1329,7 @@ class CloudFolderSyncWorker(
                 }
                 CloudFolderSyncEvents.notifyStateChanged()
                 cloudFolderLogW(
-                    "event=sync_root_end root=$safeRoot result=conflict " +
+                    "event=sync_root_end ${traceFields(rootId)} result=conflict " +
                         "conflicts=${plan.conflicts.size}",
                 )
                 return
@@ -936,20 +1341,67 @@ class CloudFolderSyncWorker(
         }
 
         // A PUSH request never silently folds a remote-only change into the
-        // local inventory. The caller can enqueue PULL/SYNC to materialize it;
-        // this prevents a stale local file from being treated as authoritative.
-        if (direction == Direction.PUSH && plan.operations.any {
-                it.direction == CloudFolderSyncDirection.CLOUD_TO_LOCAL
-            }) {
-            repository.markBindingError(rootId, "Remote folder changed; pull before pushing local changes")
+        // local inventory. Queue a separate idempotent PULL instead. Its
+        // unique-work identity is different from this PUSH, so it cannot
+        // recurse; pullRoot() revalidates account, binding, selection, and
+        // local changes before materializing anything.
+        val hasCloudToLocalOperations = plan.operations.any {
+            it.direction == CloudFolderSyncDirection.CLOUD_TO_LOCAL
+        }
+        if (direction == Direction.PUSH && hasCloudToLocalOperations) {
+            val remoteChangeMessage = "Remote folder changed; pull queued"
+            repository.resetRunningMetadataOutboxForRoot(
+                rootId = rootId,
+                now = System.currentTimeMillis(),
+                error = remoteChangeMessage,
+            )
+            val stillSelected = repository.isIncluded(rootId)
+            val stillBound = repository.getBinding(rootId) != null
+            val stillSignedIn = runCatching {
+                ensureAccountStillActive()
+                true
+            }.getOrDefault(false)
+            val canQueuePull = shouldQueueCloudFolderPullAfterRemoteChange(
+                hasCloudToLocalOperations = hasCloudToLocalOperations,
+                isSelected = stillSelected,
+                hasBinding = stillBound,
+                isSignedIn = stillSignedIn,
+                syncEnabled = isCloudFolderSyncEnabled(applicationContext),
+            )
+            if (canQueuePull) {
+                enqueuePull(
+                    context = applicationContext,
+                    accountId = repository.accountId,
+                    rootId = rootId,
+                    replace = true,
+                )
+                cloudFolderLogI(
+                    "event=remote_change_pull_enqueue ${traceFields(rootId)} " +
+                        "root=${cloudFolderSafeId(rootId)} result=queued replace=true " +
+                        "cloudToLocal=${plan.operations.count { it.direction == CloudFolderSyncDirection.CLOUD_TO_LOCAL }} " +
+                        "localToCloud=${plan.operations.count { it.direction == CloudFolderSyncDirection.LOCAL_TO_CLOUD }}",
+                )
+                repository.markBindingError(rootId, remoteChangeMessage)
+            } else {
+                cloudFolderLogW(
+                    "event=remote_change_pull_skip ${traceFields(rootId)} " +
+                        "root=${cloudFolderSafeId(rootId)} result=not_queued " +
+                        "selected=$stillSelected bound=$stillBound signedIn=$stillSignedIn " +
+                        "syncEnabled=${isCloudFolderSyncEnabled(applicationContext)}",
+                )
+            }
             CloudFolderSyncEvents.notifyStateChanged()
-            cloudFolderLogW("event=sync_root_end root=$safeRoot result=remote_changed")
+            cloudFolderLogW(
+                "event=sync_root_end ${traceFields(rootId)} result=remote_changed " +
+                    "pull=${if (canQueuePull) "queued" else "skipped"}",
+            )
             return
         }
 
         val localOperations = plan.operations.filter {
             it.direction == CloudFolderSyncDirection.LOCAL_TO_CLOUD
         }
+        activeStage = "outbox_upload"
         repository.enqueueAll(
             rootId = rootId,
             operations = localOperations,
@@ -992,6 +1444,7 @@ class CloudFolderSyncWorker(
             !cloudFolderRootsEquivalentForPublish(published.root, remote.root)
         val targetManifest = if (shouldPublish) published else remote
         if (shouldPublish) {
+            activeStage = "manifest_publish"
             publishManifestWithCas(
                 accessToken = accessToken,
                 rootId = rootId,
@@ -1011,6 +1464,7 @@ class CloudFolderSyncWorker(
         }
 
         if (shouldMaterialize) {
+            activeStage = "materialization"
             // The remote commit may succeed before local writes do. Keep the
             // target separate from the committed local base so a killed or
             // failed materialization is resumed before the next scan.
@@ -1042,7 +1496,11 @@ class CloudFolderSyncWorker(
         }
         repository.clearConflicts(rootId)
         pendingMetadata.forEach { pending ->
-            repository.completeMetadataOutbox(pending)
+            val completed = repository.completeMetadataOutbox(pending)
+            cloudFolderLogD(
+                "event=metadata_worker_item_end ${traceFields(rootId, pending.bookId, pending.generation)} " +
+                    "result=${if (completed) "complete" else "newer_generation"} kinds=${pending.dirtyKinds}",
+            )
         }
         ensureAccountStillActive()
         repository.saveBinding(
@@ -1063,9 +1521,16 @@ class CloudFolderSyncWorker(
         )
         CloudFolderSyncEvents.notifyStateChanged()
         cloudFolderLogI(
-            "event=sync_root_end root=$safeRoot result=success revision=${targetManifest.revision} " +
+            "event=sync_root_end ${traceFields(rootId)} result=success revision=${targetManifest.revision} " +
                 "durationMs=${(System.currentTimeMillis() - startedAt).coerceAtLeast(0L)}",
         )
+        if (metadataOnly) {
+            cloudFolderLogI(
+                "event=metadata_worker_end ${traceFields(rootId)} result=success " +
+                    "revision=${targetManifest.revision} rows=${pendingMetadata.size} " +
+                    "durationMs=${(System.currentTimeMillis() - startedAt).coerceAtLeast(0L)}",
+            )
+        }
     }
 
     /**
@@ -1084,7 +1549,8 @@ class CloudFolderSyncWorker(
         val startedAt = System.currentTimeMillis()
         val safeRoot = cloudFolderSafeId(rootId)
         cloudFolderLogD(
-            "event=manifest_publish_start root=$safeRoot revision=${manifest.revision} " +
+            "event=manifest_publish_start ${traceFields(rootId)} " +
+                "root=$safeRoot revision=${manifest.revision} " +
                 "pro=${BuildConfig.IS_PRO}",
         )
         ensureAccountStillActive()
@@ -1103,15 +1569,22 @@ class CloudFolderSyncWorker(
                 )
             ) {
                 is CloudFolderManifestLeaseResult.Acquired -> {
-                    cloudFolderLogD("event=firestore_reserve root=$safeRoot result=acquired revision=${manifest.revision}")
+                    cloudFolderLogD(
+                        "event=firestore_reserve ${traceFields(rootId)} root=$safeRoot " +
+                            "result=acquired revision=${manifest.revision}",
+                    )
                     reservation.lease
                 }
                 CloudFolderManifestLeaseResult.Conflict -> {
-                    cloudFolderLogW("event=firestore_reserve root=$safeRoot result=conflict")
+                    cloudFolderLogW(
+                        "event=firestore_reserve ${traceFields(rootId)} root=$safeRoot result=conflict",
+                    )
                     throw IOException("Cloud-folder manifest revision was claimed; replan before publishing")
                 }
                 CloudFolderManifestLeaseResult.Unsupported -> {
-                    cloudFolderLogW("event=firestore_reserve root=$safeRoot result=unsupported")
+                    cloudFolderLogW(
+                        "event=firestore_reserve ${traceFields(rootId)} root=$safeRoot result=unsupported",
+                    )
                     throw IOException("Cloud-folder manifest CAS is unavailable")
                 }
             }
@@ -1121,10 +1594,16 @@ class CloudFolderSyncWorker(
         var committed = false
         try {
             ensureAccountStillActive()
-            val uploadedManifest = driveRepository.uploadCloudFolderManifest(accessToken, manifest)
+            val uploadedManifest = driveRepository.uploadCloudFolderManifest(
+                accessToken = accessToken,
+                manifest = manifest,
+                operationId = activeOperationId,
+                correlationId = activeCorrelationId,
+            )
                 ?: throw IOException("Unable to publish cloud-folder manifest")
             cloudFolderLogD(
-                "event=manifest_drive_upload root=$safeRoot result=success revision=${manifest.revision}",
+                "event=manifest_drive_upload ${traceFields(rootId)} root=$safeRoot " +
+                    "result=success revision=${manifest.revision}",
             )
             ensureAccountStillActive()
             if (lease != null) {
@@ -1137,7 +1616,10 @@ class CloudFolderSyncWorker(
                     throw IOException("Cloud-folder manifest CAS was lost; replan before publishing")
                 }
                 committed = true
-                cloudFolderLogD("event=firestore_commit root=$safeRoot result=success revision=${manifest.revision}")
+                cloudFolderLogD(
+                    "event=firestore_commit ${traceFields(rootId)} root=$safeRoot " +
+                        "result=success revision=${manifest.revision}",
+                )
             }
             if (persistLocalManifest) {
                 ensureAccountStillActive()
@@ -1147,19 +1629,22 @@ class CloudFolderSyncWorker(
             if (lease != null && !committed) {
                 runCatching { firestoreRepository.releaseCloudFolderManifest(lease) }
                     .onSuccess { released ->
-                        cloudFolderLogW("event=firestore_release root=$safeRoot result=$released")
+                        cloudFolderLogW(
+                            "event=firestore_release ${traceFields(rootId)} root=$safeRoot result=$released",
+                        )
                     }
                     .onFailure { error ->
                         cloudFolderLogError(
                             event = "firestore_release",
                             error = error,
-                            details = "root=$safeRoot",
+                            details = "${traceFields(rootId)} root=$safeRoot",
                         )
                     }
             }
         }
         cloudFolderLogI(
-            "event=manifest_publish_end root=$safeRoot result=success revision=${manifest.revision} " +
+            "event=manifest_publish_end ${traceFields(rootId)} root=$safeRoot " +
+                "result=success revision=${manifest.revision} " +
                 "durationMs=${(System.currentTimeMillis() - startedAt).coerceAtLeast(0L)}",
         )
     }
@@ -1286,8 +1771,9 @@ class CloudFolderSyncWorker(
         val safeRoot = cloudFolderSafeId(rootId)
         val safeNode = cloudFolderSafeId(node.nodeId)
         cloudFolderLogD(
-            "event=drive_upload_start root=$safeRoot node=$safeNode revision=${node.revision} " +
-                "bytes=${node.sizeBytes} sizeBucket=${com.aryan.reader.data.cloudFolderDriveSizeBucket(node.sizeBytes)} " +
+            "event=drive_upload_start ${cloudFolderTraceFields(activeOperationId, activeCorrelationId)} " +
+                "root=$safeRoot node=$safeNode revision=${node.revision} " +
+                "bytes=${node.sizeBytes} sizeBucket=${cloudFolderSizeBucket(node.sizeBytes)} " +
                 "uploadMode=resumable attempt=$attempt",
         )
         ensureAccountStillActive()
@@ -1310,6 +1796,8 @@ class CloudFolderSyncWorker(
                 revision = node.revision,
                 contentHash = node.contentHash,
                 attempt = attempt,
+                operationId = activeOperationId,
+                correlationId = activeCorrelationId,
             )
         } ?: throw IOException("Drive rejected ${node.relativePath}")
         ensureAccountStillActive()
@@ -1322,7 +1810,8 @@ class CloudFolderSyncWorker(
             throw IOException("SAF size changed while uploading ${node.relativePath}")
         }
         cloudFolderLogD(
-            "event=drive_upload_end root=$safeRoot node=$safeNode result=success " +
+            "event=drive_upload_end ${cloudFolderTraceFields(activeOperationId, activeCorrelationId)} " +
+                "root=$safeRoot node=$safeNode result=success " +
                 "bytes=${hashingInput.count} durationMs=${(System.currentTimeMillis() - startedAt).coerceAtLeast(0L)}",
         )
         return uploaded
@@ -1816,9 +2305,36 @@ class CloudFolderSyncWorker(
         pendingBooks: Set<String>,
         now: Long = System.currentTimeMillis(),
     ): CloudFolderSafScanResult = withContext(Dispatchers.IO) {
-        val root = DocumentFile.fromTreeUri(applicationContext, rootUri)
-            ?: return@withContext CloudFolderSafScanResult(emptyList(), false, now, "SAF root is unavailable")
+        val safeRoot = cloudFolderSafeId(rootId)
+        cloudFolderLogD(
+            "event=saf_targeted_scan_start root=$safeRoot mode=saf " +
+                "pendingBooks=${pendingBooks.size}",
+        )
+        val root = try {
+            DocumentFile.fromTreeUri(applicationContext, rootUri)
+        } catch (error: Exception) {
+            logMetadataStageFailure(
+                rootId = rootId,
+                stage = "metadata_local_scan",
+                category = "metadata_saf_root_lookup",
+                error = error,
+                details = "mode=saf pendingBooks=${pendingBooks.size}",
+            )
+            throw error
+        }
+        if (root == null) {
+            cloudFolderLogW(
+                "event=saf_targeted_scan_end root=$safeRoot mode=saf result=failure " +
+                    "category=metadata_saf_root_missing pendingBooks=${pendingBooks.size}",
+            )
+            return@withContext CloudFolderSafScanResult(emptyList(), false, now, "SAF root is unavailable")
+        }
         if (!root.isDirectory || base == null) {
+            cloudFolderLogW(
+                "event=saf_targeted_scan_end root=$safeRoot mode=saf result=failure " +
+                    "category=${if (!root.isDirectory) "metadata_saf_root_not_directory" else "metadata_base_missing"} " +
+                    "pendingBooks=${pendingBooks.size}",
+            )
             return@withContext CloudFolderSafScanResult(
                 emptyList(),
                 false,
@@ -1826,7 +2342,6 @@ class CloudFolderSyncWorker(
                 "Cannot target sidecar sync without a committed folder inventory",
             )
         }
-        val safeRoot = cloudFolderSafeId(rootId)
         val targetPaths = pendingBooks.flatMap { bookId ->
             listOf(
                 "$LOCAL_FOLDER_SYNC_DATA_DIR/${localFolderSyncMetadataFileName(bookId)}",
@@ -1837,12 +2352,34 @@ class CloudFolderSyncWorker(
         val entries = linkedMapOf<String, CloudFolderSafEntry>()
 
         base.activeNodes().forEach { node ->
-            val existing = findDocument(root, node.relativePath)
+            val existing = try {
+                findDocument(root, node.relativePath)
+            } catch (error: Exception) {
+                logMetadataStageFailure(
+                    rootId = rootId,
+                    stage = "metadata_local_scan",
+                    category = "metadata_saf_node_resolution",
+                    error = error,
+                    details = "mode=saf node=${cloudFolderSafeId(node.nodeId)}",
+                )
+                throw error
+            }
             val uri = existing?.uri ?: Uri.EMPTY
             if (node.isDirectory) {
                 entries[node.relativePath] = CloudFolderSafEntry(uri, node.copy(modifiedAt = now))
             } else if (node.pathKey in targetPaths && existing?.isFile == true) {
-                val (hash, size) = hashDocument(existing)
+                val (hash, size) = try {
+                    hashDocument(existing)
+                } catch (error: Exception) {
+                    logMetadataStageFailure(
+                        rootId = rootId,
+                        stage = "metadata_local_scan",
+                        category = "metadata_saf_sidecar_hash",
+                        error = error,
+                        details = "mode=saf node=${cloudFolderSafeId(node.nodeId)}",
+                    )
+                    throw error
+                }
                 entries[node.relativePath] = CloudFolderSafEntry(
                     uri,
                     node.copy(
@@ -1866,9 +2403,31 @@ class CloudFolderSyncWorker(
                 "$LOCAL_FOLDER_SYNC_DATA_DIR/${localFolderSyncMetadataFileName(bookId)}",
                 "$LOCAL_FOLDER_SYNC_DATA_DIR/${localFolderSyncAnnotationFileName(bookId)}",
             ).forEach { path ->
-                val existing = findDocument(root, path)
+                val existing = try {
+                    findDocument(root, path)
+                } catch (error: Exception) {
+                    logMetadataStageFailure(
+                        rootId = rootId,
+                        stage = "metadata_local_scan",
+                        category = "metadata_saf_sidecar_resolution",
+                        error = error,
+                        details = "mode=saf book=${cloudFolderSafeId(bookId)}",
+                    )
+                    throw error
+                }
                 if (existing?.isFile == true && path !in entries) {
-                    val (hash, size) = hashDocument(existing)
+                    val (hash, size) = try {
+                        hashDocument(existing)
+                    } catch (error: Exception) {
+                        logMetadataStageFailure(
+                            rootId = rootId,
+                            stage = "metadata_local_scan",
+                            category = "metadata_saf_sidecar_hash",
+                            error = error,
+                            details = "mode=saf book=${cloudFolderSafeId(bookId)}",
+                        )
+                        throw error
+                    }
                     val old = baseByPath[cloudFolderPathKey(path)]
                     val node = CloudFolderNode(
                         nodeId = old?.nodeId ?: com.aryan.reader.shared.cloudFolderNodeId(rootId, path),
@@ -1900,16 +2459,87 @@ class CloudFolderSyncWorker(
         }
     }
 
-    private fun safMetadataTargetsAvailable(rootUri: Uri, bookIds: Set<String>): Boolean {
+    private fun safMetadataTargetsAvailable(
+        rootUri: Uri,
+        rootId: String,
+        bookIds: Set<String>,
+    ): Boolean {
         if (bookIds.isEmpty()) return false
-        val root = DocumentFile.fromTreeUri(applicationContext, rootUri) ?: return false
-        if (!root.isDirectory) return false
-        val dataDir = root.findFile(LOCAL_FOLDER_SYNC_DATA_DIR)
-            ?.takeIf { it.isDirectory }
-            ?: return false
+        cloudFolderLogD(
+            "event=metadata_target_resolution root=${cloudFolderSafeId(rootId)} mode=saf " +
+                "result=start books=${bookIds.size}",
+        )
+        val root = try {
+            DocumentFile.fromTreeUri(applicationContext, rootUri)
+        } catch (error: Exception) {
+            logMetadataStageFailure(
+                rootId = rootId,
+                stage = "metadata_target_resolution",
+                category = "metadata_saf_root_lookup",
+                error = error,
+                details = "mode=saf books=${bookIds.size}",
+            )
+            throw error
+        }
+        if (root == null || !root.isDirectory) {
+            cloudFolderLogW(
+                "event=metadata_target_resolution root=${cloudFolderSafeId(rootId)} mode=saf " +
+                    "result=unavailable category=metadata_saf_root_missing books=${bookIds.size}",
+            )
+            return false
+        }
+        val dataDir = try {
+            root.findFile(LOCAL_FOLDER_SYNC_DATA_DIR)?.takeIf { it.isDirectory }
+        } catch (error: Exception) {
+            logMetadataStageFailure(
+                rootId = rootId,
+                stage = "metadata_target_resolution",
+                category = "metadata_saf_sidecar_directory_lookup",
+                error = error,
+                details = "mode=saf books=${bookIds.size}",
+            )
+            throw error
+        }
+        if (dataDir == null) {
+            cloudFolderLogW(
+                "event=metadata_target_resolution root=${cloudFolderSafeId(rootId)} mode=saf " +
+                    "result=missing category=metadata_sidecar_directory_missing books=${bookIds.size}",
+            )
+            return false
+        }
         return bookIds.all { bookId ->
-            dataDir.findFile(localFolderSyncMetadataFileName(bookId))?.isFile == true &&
+            val metadata = try {
+                dataDir.findFile(localFolderSyncMetadataFileName(bookId))?.isFile == true
+            } catch (error: Exception) {
+                logMetadataStageFailure(
+                    rootId = rootId,
+                    stage = "metadata_target_resolution",
+                    category = "metadata_saf_sidecar_lookup",
+                    error = error,
+                    details = "mode=saf kind=metadata book=${cloudFolderSafeId(bookId)}",
+                )
+                throw error
+            }
+            val annotations = try {
                 dataDir.findFile(localFolderSyncAnnotationFileName(bookId))?.isFile == true
+            } catch (error: Exception) {
+                logMetadataStageFailure(
+                    rootId = rootId,
+                    stage = "metadata_target_resolution",
+                    category = "metadata_saf_sidecar_lookup",
+                    error = error,
+                    details = "mode=saf kind=annotations book=${cloudFolderSafeId(bookId)}",
+                )
+                throw error
+            }
+            if (!metadata || !annotations) {
+                cloudFolderLogW(
+                    "event=metadata_target_resolution root=${cloudFolderSafeId(rootId)} mode=saf " +
+                        "result=missing category=metadata_sidecar_missing " +
+                        "book=${cloudFolderSafeId(bookId)} metadata=$metadata annotations=$annotations",
+                )
+            }
+            metadata && annotations
         }
     }
 
@@ -1992,6 +2622,8 @@ class CloudFolderSyncWorker(
                     expectedContentHash = canonicalCloudFolderContentHash(node.contentHash)
                         ?: throw IOException("Cloud file has no authenticated hash: ${node.relativePath}"),
                     expectedSizeBytes = node.sizeBytes,
+                    operationId = activeOperationId,
+                    correlationId = activeCorrelationId,
                 )
             } finally {
                 hashingOutput.close()
@@ -2153,6 +2785,8 @@ class CloudFolderSyncWorker(
                     expectedContentHash = canonicalCloudFolderContentHash(node.contentHash)
                         ?: throw IOException("Cloud file has no authenticated hash: ${node.relativePath}"),
                     expectedSizeBytes = node.sizeBytes,
+                    operationId = activeOperationId,
+                    correlationId = activeCorrelationId,
                 )
             } finally {
                 hashingOutput.close()
@@ -2418,11 +3052,116 @@ class CloudFolderSyncWorker(
                     TimeUnit.SECONDS,
                 )
                 .build()
-            WorkManager.getInstance(context.applicationContext).enqueueUniqueWork(
+            val workManager = WorkManager.getInstance(context.applicationContext)
+            val policy = when {
+                metadataOnly && !replace -> {
+                    metadataWorkPolicyForExisting(
+                        workManager = workManager,
+                        workName = workName,
+                        rootId = normalizedRootId,
+                    )
+                }
+                workerDirection == Direction.PULL && !replace -> {
+                    // A foreground head event must not cancel an active
+                    // transfer, but it must be able to revive a request
+                    // stranded in exponential backoff.  The worker rereads
+                    // the authoritative Firestore/Drive head, so replacing a
+                    // retrying request is safe and idempotent.
+                    pullWorkPolicyForExisting(
+                        workManager = workManager,
+                        workName = workName,
+                        rootId = normalizedRootId,
+                    )
+                }
+                replace -> ExistingWorkPolicy.REPLACE
+                else -> ExistingWorkPolicy.KEEP
+            }
+            if (metadataOnly) {
+                cloudFolderLogD(
+                    "event=metadata_worker_policy root=${cloudFolderSafeId(normalizedRootId)} " +
+                        "result=selected policy=${policy.name} forcedReplace=$replace",
+                )
+            }
+            workManager.enqueueUniqueWork(
                 workName,
-                if (replace) ExistingWorkPolicy.REPLACE else ExistingWorkPolicy.KEEP,
+                policy,
                 request,
             )
+        }
+
+        private fun metadataWorkPolicyForExisting(
+            workManager: WorkManager,
+            workName: String,
+            rootId: String,
+        ): ExistingWorkPolicy {
+            val infos = runCatching {
+                // Metadata wakes are issued from an IO coroutine after a
+                // sidecar commit. Querying here lets us distinguish an active
+                // first attempt from a retrying request in backoff without
+                // putting an unbounded wait on the UI thread.
+                workManager.getWorkInfosForUniqueWork(workName).get()
+            }.getOrElse { error ->
+                // If WorkManager's state database cannot be read, ensuring a
+                // durable wake is safer than KEEP, which could swallow it.
+                cloudFolderLogError(
+                    event = "metadata_worker_state",
+                    error = error,
+                    details = "root=${cloudFolderSafeId(rootId)} result=unavailable policy=replace",
+                )
+                return ExistingWorkPolicy.REPLACE
+            }
+            val states = infos.map { info ->
+                CloudFolderMetadataWorkState(
+                    state = info.state,
+                    runAttemptCount = info.runAttemptCount,
+                )
+            }
+            val policy = cloudFolderMetadataWorkPolicy(states)
+            cloudFolderLogD(
+                "event=metadata_worker_state root=${cloudFolderSafeId(rootId)} " +
+                    "result=read requests=${states.size} " +
+                    "active=${states.count { it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED }} " +
+                    "retrying=${states.count { it.runAttemptCount > 0 }} policy=${policy.name}",
+            )
+            return policy
+        }
+
+        private fun pullWorkPolicyForExisting(
+            workManager: WorkManager,
+            workName: String,
+            rootId: String,
+        ): ExistingWorkPolicy {
+            val infos = runCatching {
+                workManager.getWorkInfosForUniqueWork(workName).get()
+            }.getOrElse { error ->
+                // KEEP is safer when WorkManager cannot answer: an active
+                // transfer must never be cancelled because its state is
+                // temporarily unavailable. The next head/foreground/startup
+                // trigger can retry the enqueue decision.
+                cloudFolderLogError(
+                    event = "head_pull_work_state",
+                    error = error,
+                    details = "root=${cloudFolderSafeId(rootId)} result=unavailable policy=keep",
+                )
+                return ExistingWorkPolicy.KEEP
+            }
+            val unfinished = infos.filter { info ->
+                info.state == WorkInfo.State.RUNNING ||
+                    info.state == WorkInfo.State.ENQUEUED ||
+                    info.state == WorkInfo.State.BLOCKED
+            }
+            val policy = when {
+                unfinished.any { it.state == WorkInfo.State.RUNNING } -> ExistingWorkPolicy.KEEP
+                unfinished.any { it.runAttemptCount > 0 } -> ExistingWorkPolicy.REPLACE
+                unfinished.isNotEmpty() -> ExistingWorkPolicy.KEEP
+                else -> ExistingWorkPolicy.KEEP
+            }
+            cloudFolderLogD(
+                "event=head_pull_work_state root=${cloudFolderSafeId(rootId)} " +
+                    "requests=${infos.size} active=${unfinished.size} " +
+                    "retrying=${unfinished.count { it.runAttemptCount > 0 }} policy=${policy.name}",
+            )
+            return policy
         }
 
         fun enqueuePull(
@@ -2508,6 +3247,180 @@ class CloudFolderSyncWorker(
             CloudFolderSyncDirection.CLOUD_TO_LOCAL -> Direction.PULL
             CloudFolderSyncDirection.NONE -> Direction.SYNC
         }
+    }
+}
+
+/** A manifest-only view of one node used for pull diagnostics. */
+private data class CloudFolderPullNodeState(
+    val nodeId: String,
+    val relativePath: String,
+    val kind: CloudFolderNodeKind,
+    val isActive: Boolean,
+    val contentHash: String?,
+    val sizeBytes: Long,
+    val mimeType: String?,
+    val fileModifiedAt: Long,
+)
+
+private data class CloudFolderPullDeltaCounts(
+    val metadataAdded: Int = 0,
+    val metadataChanged: Int = 0,
+    val metadataDeleted: Int = 0,
+    val contentAdded: Int = 0,
+    val contentChanged: Int = 0,
+    val contentDeleted: Int = 0,
+) {
+    val classification: String
+        get() {
+            val hasMetadataChanges = metadataAdded + metadataChanged + metadataDeleted > 0
+            val hasContentChanges = contentAdded + contentChanged + contentDeleted > 0
+            return when {
+                !hasMetadataChanges && !hasContentChanges -> "no_change"
+                hasMetadataChanges && hasContentChanges -> "mixed"
+                hasMetadataChanges -> "sidecar_only"
+                else -> "content_only"
+            }
+        }
+}
+
+/**
+ * A root can be pulled automatically only after the device has both made a
+ * binding decision and included that root in its account-scoped selection.
+ * Keeping this predicate explicit prevents discovery from accidentally
+ * materializing a dismissed/unconfigured incoming root.
+ */
+internal fun shouldPullBoundCloudFolderRoot(
+    isDeleted: Boolean,
+    isIncluded: Boolean,
+    hasBinding: Boolean,
+): Boolean = !isDeleted && isIncluded && hasBinding
+
+/**
+ * A PUSH that observes cloud-to-local operations must hand off to PULL. The
+ * worker's caller additionally owns the unique-work key, so this predicate is
+ * deliberately limited to eligibility and never decides the WorkManager
+ * replacement policy.
+ */
+internal fun shouldQueueCloudFolderPullAfterRemoteChange(
+    hasCloudToLocalOperations: Boolean,
+    isSelected: Boolean,
+    hasBinding: Boolean,
+    isSignedIn: Boolean,
+    syncEnabled: Boolean,
+): Boolean = hasCloudToLocalOperations && isSelected && hasBinding && isSignedIn && syncEnabled
+
+private fun classifyCloudFolderPullDelta(
+    local: CloudFolderManifest?,
+    remote: CloudFolderManifest,
+): CloudFolderPullDeltaCounts {
+    val localStates = local?.pullNodeStates().orEmpty()
+    val remoteStates = remote.pullNodeStates()
+    val nodeIds = localStates.keys + remoteStates.keys
+    var metadataAdded = 0
+    var metadataChanged = 0
+    var metadataDeleted = 0
+    var contentAdded = 0
+    var contentChanged = 0
+    var contentDeleted = 0
+
+    fun isMetadata(state: CloudFolderPullNodeState): Boolean =
+        isCloudFolderMetadataSidecarPath(state.relativePath)
+
+    fun add(state: CloudFolderPullNodeState, changed: String) {
+        val metadata = isMetadata(state)
+        when (changed) {
+            "added" -> if (metadata) metadataAdded++ else contentAdded++
+            "changed" -> if (metadata) metadataChanged++ else contentChanged++
+            "deleted" -> if (metadata) metadataDeleted++ else contentDeleted++
+        }
+    }
+
+    for (nodeId in nodeIds) {
+        val before = localStates[nodeId]
+        val after = remoteStates[nodeId]
+        when {
+            before == null && after != null -> {
+                // A remote tombstone is a deletion even when the local
+                // device has never observed the corresponding live node.
+                add(after, if (after.isActive) "added" else "deleted")
+            }
+            before != null && after == null -> {
+                // A remote tombstone may have expired after the local base
+                // retained it. Garbage collection is not a live-node change.
+                if (before.isActive) add(before, "deleted")
+            }
+            before != null && after != null && before != after -> {
+                when {
+                    before.isActive && !after.isActive -> add(after, "deleted")
+                    !before.isActive && after.isActive -> add(after, "added")
+                    else -> add(after, "changed")
+                }
+            }
+        }
+    }
+    return CloudFolderPullDeltaCounts(
+        metadataAdded = metadataAdded,
+        metadataChanged = metadataChanged,
+        metadataDeleted = metadataDeleted,
+        contentAdded = contentAdded,
+        contentChanged = contentChanged,
+        contentDeleted = contentDeleted,
+    )
+}
+
+private fun CloudFolderManifest.pullNodeStates(): Map<String, CloudFolderPullNodeState> {
+    val states = activeNodes().associate { node ->
+        node.nodeId to CloudFolderPullNodeState(
+            nodeId = node.nodeId,
+            relativePath = node.relativePath,
+            kind = node.kind,
+            isActive = true,
+            contentHash = canonicalCloudFolderContentHash(node.contentHash),
+            sizeBytes = node.sizeBytes,
+            mimeType = node.mimeType,
+            fileModifiedAt = node.fileModifiedAt,
+        )
+    }.toMutableMap()
+    tombstones
+        .filter { it.rootId == rootId }
+        .forEach { tombstone ->
+            // An active node is authoritative if malformed/legacy data ever
+            // contains both records for the same logical ID.
+            if (tombstone.nodeId !in states) {
+                states[tombstone.nodeId] = CloudFolderPullNodeState(
+                    nodeId = tombstone.nodeId,
+                    relativePath = tombstone.relativePath,
+                    kind = tombstone.kind,
+                    isActive = false,
+                    contentHash = canonicalCloudFolderContentHash(tombstone.lastKnownContentHash),
+                    sizeBytes = tombstone.lastKnownSizeBytes,
+                    mimeType = null,
+                    fileModifiedAt = 0L,
+                )
+            }
+        }
+    return states
+}
+
+private fun selectedCloudFolderPullPath(
+    binding: com.aryan.reader.shared.CloudFolderDeviceBinding?,
+    classification: String,
+    hasPendingMaterialization: Boolean,
+): String {
+    if (binding == null) return "incoming_discovery_manifest_only"
+    if (binding.materializationMode == CloudFolderMaterializationMode.CLOUD_ONLY) {
+        return "cloud_only_manifest_only"
+    }
+    val prefix = when (binding.materializationMode) {
+        CloudFolderMaterializationMode.KEEP_OFFLINE -> "app_storage"
+        CloudFolderMaterializationMode.LOCAL_MIRROR -> "saf_mirror"
+        CloudFolderMaterializationMode.CLOUD_ONLY -> "cloud_only"
+    }
+    if (hasPendingMaterialization) return "${prefix}_resume"
+    return when (classification) {
+        "content_only", "mixed" -> "${prefix}_full_materialization"
+        "sidecar_only" -> "${prefix}_metadata_only"
+        else -> "${prefix}_verify"
     }
 }
 

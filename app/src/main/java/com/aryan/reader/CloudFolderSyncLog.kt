@@ -3,6 +3,7 @@ package com.aryan.reader
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.util.Locale
+import org.json.JSONObject
 import timber.log.Timber
 
 /**
@@ -13,6 +14,8 @@ import timber.log.Timber
  * exposed by this file rather than interpolating those values directly.
  */
 internal const val CLOUD_FOLDER_SYNC_LOG_TAG = "EpistemeCloudFolderSync"
+private val CLOUD_FOLDER_OPERATION_TOKEN_REGEX = Regex("op_[0-9a-f]{16}")
+private val CLOUD_FOLDER_CORRELATION_TOKEN_REGEX = Regex("[0-9a-f]{16}")
 
 internal fun cloudFolderSafeId(value: String?, length: Int = 12): String {
     val normalized = value?.trim().orEmpty()
@@ -25,6 +28,98 @@ internal fun cloudFolderSafeId(value: String?, length: Int = 12): String {
 
 internal fun cloudFolderSafeUri(uri: android.net.Uri?, length: Int = 12): String =
     cloudFolderSafeId(uri?.toString(), length)
+
+/**
+ * A source-set-independent size bucket for worker diagnostics. The Drive
+ * adapter has a matching helper in the Pro source set, but workers are shared
+ * by OSS and Pro and must not depend on a Pro-only symbol.
+ */
+internal fun cloudFolderSizeBucket(sizeBytes: Long): String = when {
+    sizeBytes < 0L -> "unknown"
+    sizeBytes < 1L * 1024L -> "lt_1kib"
+    sizeBytes < 1L * 1024L * 1024L -> "lt_1mib"
+    sizeBytes < 5L * 1024L * 1024L -> "lt_5mib"
+    sizeBytes < 100L * 1024L * 1024L -> "lt_100mib"
+    else -> "gte_100mib"
+}
+
+/**
+ * A deterministic, privacy-safe correlation value for one logical cloud
+ * operation.  The input is never logged; only its SHA-256-derived token is
+ * returned.  Keeping this in the common logging helper makes it difficult for
+ * a future call site to accidentally put an account, URI, path, or book ID in
+ * logcat while still allowing two devices to correlate the same generation.
+ */
+internal fun cloudFolderSyncCorrelationId(vararg values: Any?): String =
+    cloudFolderSafeId(
+        values.joinToString("\u0000") { value -> value?.toString().orEmpty() },
+        length = 16,
+    )
+
+internal fun cloudFolderOperationId(vararg values: Any?): String =
+    "op_${cloudFolderSyncCorrelationId(*values)}"
+
+/**
+ * Preserve IDs produced by [cloudFolderOperationId] and
+ * [cloudFolderSyncCorrelationId] while hashing anything else before it can
+ * reach a Drive diagnostic. This keeps the low-level Pro Drive adapter safe
+ * even when a future caller passes an untrusted value.
+ */
+internal fun cloudFolderTraceFields(
+    operationId: String?,
+    correlationId: String?,
+): String {
+    fun safeToken(value: String?, operation: Boolean): String {
+        val normalized = value?.trim().orEmpty()
+        if (normalized.isBlank()) return "none"
+        val expected = if (operation) {
+            CLOUD_FOLDER_OPERATION_TOKEN_REGEX
+        } else {
+            CLOUD_FOLDER_CORRELATION_TOKEN_REGEX
+        }
+        return normalized.takeIf(expected::matches)
+            ?: cloudFolderSafeId(normalized, length = 16)
+    }
+    return "operation=${safeToken(operationId, operation = true)} " +
+        "correlation=${safeToken(correlationId, operation = false)}"
+}
+
+/**
+ * Compact payload diagnostics for a metadata/annotation sidecar.  Sidecar
+ * contents may contain titles, notes, or annotations, so only byte count,
+ * schema/version, and a SHA-256 integrity token are exposed.
+ */
+internal data class CloudFolderSidecarPayloadInfo(
+    val bytes: Int,
+    val sha256: String,
+    val schema: Int?,
+)
+
+internal fun cloudFolderSidecarPayloadInfo(payload: String?): CloudFolderSidecarPayloadInfo? {
+    val value = payload ?: return null
+    val bytes = value.toByteArray(StandardCharsets.UTF_8)
+    val digest = MessageDigest.getInstance("SHA-256")
+        .digest(bytes)
+        .joinToString("") { byte -> "%02x".format(Locale.US, byte) }
+    val schema = runCatching {
+        JSONObject(value).let { root ->
+            when {
+                root.has("schemaVersion") -> root.optInt("schemaVersion")
+                root.has("version") -> root.optInt("version")
+                else -> null
+            }
+        }
+    }.getOrNull()
+    return CloudFolderSidecarPayloadInfo(
+        bytes = bytes.size,
+        sha256 = "sha256:$digest",
+        schema = schema,
+    )
+}
+
+internal fun CloudFolderSidecarPayloadInfo?.toLogFields(): String =
+    "schema=${this?.schema ?: "unknown"} bytes=${this?.bytes ?: "unknown"} " +
+        "hash=${this?.sha256 ?: "none"}"
 
 internal fun cloudFolderErrorClass(error: Throwable): String =
     error::class.java.simpleName.takeIf { it.isNotBlank() } ?: "Unknown"

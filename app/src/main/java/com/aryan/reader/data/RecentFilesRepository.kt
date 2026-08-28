@@ -39,6 +39,12 @@ import com.aryan.reader.AuthRepository
 import com.aryan.reader.CloudFolderAppStoragePrefs
 import com.aryan.reader.CloudFolderMetadataSyncScheduler
 import com.aryan.reader.cloudFolderAppRootDirectory
+import com.aryan.reader.cloudFolderLogD
+import com.aryan.reader.cloudFolderSafeId
+import com.aryan.reader.cloudFolderSafeUri
+import com.aryan.reader.cloudFolderSidecarPayloadInfo
+import com.aryan.reader.cloudFolderLogW
+import com.aryan.reader.toLogFields
 import com.aryan.reader.cloudSyncAnnotationSummary
 import com.aryan.reader.paginatedreader.Locator
 import com.aryan.reader.paginatedreader.data.BookCacheDatabase
@@ -407,6 +413,21 @@ class RecentFilesRepository(
                 originalSeriesIndex = entity.originalSeriesIndex,
                 originalDescription = entity.originalDescription
             )
+            // Keep the exact canonical bytes available for the durable cloud
+            // wake-up diagnostics.  The sidecar writer still owns the atomic
+            // commit; this value is never uploaded directly from here.
+            val metadataJson = metadata.toJsonString()
+            val accountId = authRepository.getSignedInUser()?.uid?.trim()
+                ?.takeIf { it.isNotBlank() }
+            val rootId = accountId?.let { id ->
+                CloudFolderAppStoragePrefs.rootIdForUri(context, id, folderUriString)
+            }
+            cloudFolderLogD(
+                "event=metadata_sidecar_write_start root=${cloudFolderSafeId(rootId ?: folderUriString)} " +
+                    "book=${cloudFolderSafeId(bookId)} source=${cloudFolderSafeUri(folderUriString.toUri())} " +
+                    "schema=${metadata.schemaVersion} bytes=${metadataJson.toByteArray(Charsets.UTF_8).size} " +
+                    "hash=${cloudFolderSidecarPayloadInfo(metadataJson)?.sha256 ?: "none"} force=$force",
+            )
 
             val saved = if (appStorageRoot != null) {
                 LocalSyncUtils.saveMetadataToAppStorage(appStorageRoot, metadata)
@@ -423,8 +444,14 @@ class RecentFilesRepository(
                     sourceFolderUri = folderUriString,
                     bookId = bookId,
                     kind = CloudFolderMetadataSyncScheduler.METADATA_KIND,
+                    payload = metadataJson,
                 )
             }
+            cloudFolderLogD(
+                "event=metadata_sidecar_write_end root=${cloudFolderSafeId(rootId ?: folderUriString)} " +
+                    "book=${cloudFolderSafeId(bookId)} result=${if (saved) "success" else "failure"} " +
+                    "source=${cloudFolderSafeUri(folderUriString.toUri())}",
+            )
             return@withContext saved
         }
         true
@@ -570,6 +597,16 @@ class RecentFilesRepository(
             )
         }
 
+        val annotationPayloadInfo = cloudFolderSidecarPayloadInfo(canonicalBundleJson)
+        val annotationRootId = authRepository.getSignedInUser()?.uid?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?.let { id -> CloudFolderAppStoragePrefs.rootIdForUri(context, id, folderUriString) }
+        cloudFolderLogD(
+            "event=annotation_sidecar_write_start root=${cloudFolderSafeId(annotationRootId ?: folderUriString)} " +
+                "book=${cloudFolderSafeId(bookId)} source=${cloudFolderSafeUri(folderUriString.toUri())} " +
+                "${annotationPayloadInfo.toLogFields()} finalTs=$finalTs",
+        )
+
         val saved = if (appStorageRoot != null) {
             LocalSyncUtils.saveAnnotationSidecarToAppStorage(
                 root = appStorageRoot,
@@ -587,6 +624,12 @@ class RecentFilesRepository(
             )
         }
 
+        cloudFolderLogD(
+            "event=annotation_sidecar_write_end root=${cloudFolderSafeId(annotationRootId ?: folderUriString)} " +
+                "book=${cloudFolderSafeId(bookId)} result=${if (saved) "success" else "failure"} " +
+                "source=${cloudFolderSafeUri(folderUriString.toUri())} " +
+                "${annotationPayloadInfo.toLogFields()}",
+        )
         if (!saved) return@withContext false
 
         CloudFolderMetadataSyncScheduler.onSidecarCommitted(
@@ -594,6 +637,7 @@ class RecentFilesRepository(
             sourceFolderUri = folderUriString,
             bookId = bookId,
             kind = CloudFolderMetadataSyncScheduler.ANNOTATIONS_KIND,
+            payload = canonicalBundleJson,
         )
 
         val savedSidecar = if (appStorageRoot != null) {
@@ -703,6 +747,15 @@ class RecentFilesRepository(
         val item = recentFileDao.getFileByUri(uriString)
         if (item != null) {
             val currentTime = System.currentTimeMillis()
+            val operation = com.aryan.reader.cloudFolderOperationId("reader-position", item.bookId, currentTime)
+            val correlation = com.aryan.reader.cloudFolderSyncCorrelationId("reader-position", item.bookId, currentTime)
+            cloudFolderLogD(
+                "event=room_position_write_start operation=$operation correlation=$correlation " +
+                    "book=${cloudFolderSafeId(item.bookId)} kind=epub " +
+                    "beforeReadTs=${item.toRecentFileItem().effectiveReadingPositionModifiedTimestamp()} " +
+                    "chapter=${locator.chapterIndex} block=${locator.blockIndex} char=${locator.charOffset} " +
+                    "progress=$progress",
+            )
             recentFileDao.updateEpubReadingPosition(
                 bookId = item.bookId,
                 cfi = cfiForWebView,
@@ -712,7 +765,20 @@ class RecentFilesRepository(
                 progress = progress,
                 timestamp = currentTime
             )
+            val updated = recentFileDao.getFileByBookId(item.bookId)
+            cloudFolderLogD(
+                "event=room_position_write_end operation=$operation correlation=$correlation " +
+                    "book=${cloudFolderSafeId(item.bookId)} kind=epub result=${if (updated != null) "success" else "missing"} " +
+                    "afterReadTs=${updated?.toRecentFileItem()?.effectiveReadingPositionModifiedTimestamp() ?: 0L} " +
+                    "afterChapter=${updated?.lastChapterIndex ?: "none"} afterBlock=${updated?.locatorBlockIndex ?: "none"} " +
+                    "afterChar=${updated?.locatorCharOffset ?: "none"} afterProgress=${updated?.progressPercentage ?: "none"}",
+            )
             Timber.d("Updated EPUB reading position for ${item.bookId} to Locator: $locator, Progress: $progress%")
+        } else {
+            cloudFolderLogW(
+                "event=room_position_write_end book=${cloudFolderSafeId(uriString)} kind=epub " +
+                    "result=skipped reason=book_not_found",
+            )
         }
     }
 
@@ -791,7 +857,22 @@ class RecentFilesRepository(
 
     override suspend fun updateBookmarks(bookId: String, bookmarksJson: String) = withContext(Dispatchers.IO) {
         val currentTime = System.currentTimeMillis()
+        val before = recentFileDao.getFileByBookId(bookId)
+        val operation = com.aryan.reader.cloudFolderOperationId("reader-bookmarks", bookId, currentTime)
+        val correlation = com.aryan.reader.cloudFolderSyncCorrelationId("reader-bookmarks", bookId, currentTime)
+        cloudFolderLogD(
+            "event=room_bookmarks_write_start operation=$operation correlation=$correlation " +
+                "book=${cloudFolderSafeId(bookId)} beforeTs=${before?.lastModifiedTimestamp ?: 0L} " +
+                "beforeBytes=${before?.bookmarks?.toByteArray(Charsets.UTF_8)?.size ?: 0} " +
+                "afterBytes=${bookmarksJson.toByteArray(Charsets.UTF_8).size}",
+        )
         recentFileDao.updateBookmarks(bookId, bookmarksJson, currentTime)
+        val after = recentFileDao.getFileByBookId(bookId)
+        cloudFolderLogD(
+            "event=room_bookmarks_write_end operation=$operation correlation=$correlation " +
+                "book=${cloudFolderSafeId(bookId)} result=${if (after != null) "success" else "missing"} " +
+                "afterTs=${after?.lastModifiedTimestamp ?: 0L}",
+        )
         Timber.d("Updated bookmarks for $bookId")
     }
 
@@ -799,12 +880,31 @@ class RecentFilesRepository(
         val item = recentFileDao.getFileByUri(uriString)
         if (item != null) {
             val currentTime = System.currentTimeMillis()
+            val operation = com.aryan.reader.cloudFolderOperationId("reader-position", item.bookId, currentTime)
+            val correlation = com.aryan.reader.cloudFolderSyncCorrelationId("reader-position", item.bookId, currentTime)
+            cloudFolderLogD(
+                "event=room_position_write_start operation=$operation correlation=$correlation " +
+                    "book=${cloudFolderSafeId(item.bookId)} kind=pdf " +
+                    "beforeReadTs=${item.toRecentFileItem().effectiveReadingPositionModifiedTimestamp()} " +
+                    "page=$page progress=$progress",
+            )
             recentFileDao.updatePdfReadingPosition(item.bookId, page, progress, currentTime)
+            val updated = recentFileDao.getFileByBookId(item.bookId)
+            cloudFolderLogD(
+                "event=room_position_write_end operation=$operation correlation=$correlation " +
+                    "book=${cloudFolderSafeId(item.bookId)} kind=pdf result=${if (updated != null) "success" else "missing"} " +
+                    "afterReadTs=${updated?.toRecentFileItem()?.effectiveReadingPositionModifiedTimestamp() ?: 0L} " +
+                    "afterPage=${updated?.lastPage ?: "none"} afterProgress=${updated?.progressPercentage ?: "none"}",
+            )
             Timber.tag("PdfPositionDebug").i("Repository: Executed DB update for ${item.bookId} to Page $page, Progress $progress% at TS: $currentTime")
             logCloudSyncTrace {
                 "android.repository.pdf_position_update book=${item.bookId} page=$page progress=$progress ts=$currentTime"
             }
         } else {
+            cloudFolderLogW(
+                "event=room_position_write_end book=${cloudFolderSafeId(uriString)} kind=pdf " +
+                    "result=skipped reason=book_not_found",
+            )
             Timber.tag("PdfPositionDebug").e("Repository: DB Update Failed! No recent file found matching URI: $uriString")
         }
     }

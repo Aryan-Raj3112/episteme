@@ -477,6 +477,20 @@ abstract class CloudFolderSyncDao {
     ): Int
 
     @Query(
+        "UPDATE cloud_folder_metadata_outbox SET state = :pendingState, nextAttemptAt = :nextAttemptAt, " +
+            "lastError = :error WHERE accountId = :accountId AND rootId = :rootId " +
+            "AND state = :runningState"
+    )
+    abstract suspend fun resetRunningMetadataOutboxForRoot(
+        accountId: String,
+        rootId: String,
+        nextAttemptAt: Long,
+        error: String?,
+        runningState: String = CloudFolderMetadataOutboxEntity.STATE_RUNNING,
+        pendingState: String = CloudFolderMetadataOutboxEntity.STATE_PENDING,
+    ): Int
+
+    @Query(
         "DELETE FROM cloud_folder_metadata_outbox WHERE accountId = :accountId AND rootId = :rootId"
     )
     abstract suspend fun deleteMetadataOutboxForRoot(accountId: String, rootId: String): Int
