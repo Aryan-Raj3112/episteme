@@ -17,6 +17,12 @@ class ReaderDefaultSettingsStateTest {
     }
 
     @Test
+    fun `pdf defaults to sync system ui while epub defaults to system default`() {
+        assertEquals(SystemUiMode.SYNC, DefaultPdfReaderSettings.systemUiMode)
+        assertEquals(SystemUiMode.DEFAULT, ReaderSettings().systemUiMode)
+    }
+
+    @Test
     fun `reader default settings reducer updates shared state`() {
         val defaults = ReaderSettings(
             fontSize = 24,

@@ -918,17 +918,27 @@ class CloudFolderSyncWorker(
                         ) {
                             return
                         }
-                        verifyAppStorageIsPullSafe(
-                            rootId = rootId,
-                            remote = manifest,
-                            localRoot = cloudFolderAppRootDirectory(applicationContext.filesDir, rootId),
-                        )
+                        try {
+                            verifyAppStorageIsPullSafe(
+                                rootId = rootId,
+                                remote = manifest,
+                                localRoot = cloudFolderAppRootDirectory(applicationContext.filesDir, rootId),
+                            )
+                        } catch (error: CloudFolderPullUnsafeException) {
+                            handoffToLocalChangeSync(rootId, error)
+                            return
+                        }
                         repository.savePendingMaterialization(manifest)
                         materializeManifestToAppStorage(accessToken, manifest)
                     }
                     CloudFolderMaterializationMode.LOCAL_MIRROR -> {
                         val localUri = binding.localUri?.takeIf { it.isNotBlank() } ?: return
-                        verifyLocalMirrorIsPullSafe(rootId, manifest, Uri.parse(localUri))
+                        try {
+                            verifyLocalMirrorIsPullSafe(rootId, manifest, Uri.parse(localUri))
+                        } catch (error: CloudFolderPullUnsafeException) {
+                            handoffToLocalChangeSync(rootId, error)
+                            return
+                        }
                         repository.savePendingMaterialization(manifest)
                         val contentFilesChanged = materializeManifest(
                             accessToken = accessToken,
@@ -959,6 +969,51 @@ class CloudFolderSyncWorker(
                 CloudFolderSyncEvents.notifyStateChanged()
             }
         }
+    }
+
+    /**
+     * A PULL that observes uncommitted local changes cannot proceed without
+     * overwriting them, and retrying the PULL can never make progress. Hand
+     * the root to the three-way SYNC planner instead: it merges both sides,
+     * auto-resolves decidable conflicts (sidecars keep the local device's
+     * view by default), publishes the local change, and materializes the
+     * remote one. The SYNC unique-work identity is separate from PULL's, so
+     * the hand-off can neither cancel nor recurse into this request.
+     */
+    private suspend fun handoffToLocalChangeSync(
+        rootId: String,
+        error: CloudFolderPullUnsafeException,
+    ) {
+        val message = cloudFolderSafeErrorReason(error)
+        val stillSelected = repository.isIncluded(rootId)
+        val stillSignedIn = runCatching {
+            ensureAccountStillActive()
+            true
+        }.getOrDefault(false)
+        val canQueueSync = stillSelected && stillSignedIn &&
+            isCloudFolderSyncEnabled(applicationContext)
+        if (canQueueSync) {
+            enqueue(
+                context = applicationContext,
+                accountId = repository.accountId,
+                rootId = rootId,
+                direction = CloudFolderSyncDirection.NONE,
+                replace = false,
+            )
+            cloudFolderLogI(
+                "event=pull_local_change_handoff ${traceFields(rootId)} " +
+                    "root=${cloudFolderSafeId(rootId)} result=queued reason=$message",
+            )
+            repository.markBindingError(rootId, message)
+        } else {
+            cloudFolderLogW(
+                "event=pull_local_change_handoff ${traceFields(rootId)} " +
+                    "root=${cloudFolderSafeId(rootId)} result=not_queued " +
+                    "selected=$stillSelected signedIn=$stillSignedIn " +
+                    "syncEnabled=${isCloudFolderSyncEnabled(applicationContext)} reason=$message",
+            )
+        }
+        CloudFolderSyncEvents.notifyStateChanged()
     }
 
     /**
@@ -1023,7 +1078,10 @@ class CloudFolderSyncWorker(
     /**
      * A direct PULL must not overwrite edits made after the last committed
      * local snapshot. The normal SYNC planner performs this check as part of
-     * its merge; this guard gives explicit PULL the same protection.
+     * its merge; this guard gives explicit PULL the same protection. Instead
+     * of failing the request, the caller converts this into a hand-off to
+     * the three-way SYNC planner: only SYNC can reconcile and publish the
+     * local change, so a plain retry would loop forever.
      */
     private suspend fun verifyLocalMirrorIsPullSafe(
         rootId: String,
@@ -1055,10 +1113,14 @@ class CloudFolderSyncWorker(
             deviceId = repository.deviceId,
         )
         if (plan.conflicts.isNotEmpty()) {
-            throw IOException("Local and remote folder changes conflict; pull skipped")
+            throw CloudFolderPullUnsafeException(
+                "Local and remote folder changes conflict; sync queued",
+            )
         }
         if (plan.operations.any { it.direction == CloudFolderSyncDirection.LOCAL_TO_CLOUD }) {
-            throw IOException("Local folder changed; sync before pulling remote changes")
+            throw CloudFolderPullUnsafeException(
+                "Local folder changed; sync before pulling remote changes",
+            )
         }
     }
 
@@ -1095,10 +1157,14 @@ class CloudFolderSyncWorker(
             deviceId = repository.deviceId,
         )
         if (plan.conflicts.isNotEmpty()) {
-            throw IOException("Local and remote folder changes conflict; pull skipped")
+            throw CloudFolderPullUnsafeException(
+                "Local and remote folder changes conflict; sync queued",
+            )
         }
         if (plan.operations.any { it.direction == CloudFolderSyncDirection.LOCAL_TO_CLOUD }) {
-            throw IOException("Local folder changed; sync before pulling remote changes")
+            throw CloudFolderPullUnsafeException(
+                "Local folder changed; sync before pulling remote changes",
+            )
         }
     }
 
@@ -2106,6 +2172,7 @@ class CloudFolderSyncWorker(
             ?: throw IOException("Local SAF root is unavailable")
         if (!root.isDirectory) throw IOException("Local SAF root is not a directory")
         var contentFilesChanged = false
+        var skippedFiles = 0
         val directories = manifest.activeDirectories().sortedWith(
             compareBy<CloudFolderNode> { pathDepth(it.relativePath) }.thenBy { it.pathKey }
         )
@@ -2118,29 +2185,19 @@ class CloudFolderSyncWorker(
                 "bytes=${manifest.activeFiles().sumOf { it.sizeBytes.coerceAtLeast(0L) }}",
         )
         try {
+            // Directory creation and verified-file skips are the steady-state
+            // case; keep them quiet and summarize at the end so a no-op pull
+            // stays readable in logcat.
             for (directory in directories) {
                 currentCoroutineContext().ensureActive()
-                val safeNode = cloudFolderSafeId(directory.nodeId)
-                cloudFolderLogD(
-                    "event=materialize_directory_start root=$safeRoot node=$safeNode mode=saf",
-                )
                 ensureDirectory(root, directory.relativePath)
-                cloudFolderLogD(
-                    "event=materialize_directory_end root=$safeRoot node=$safeNode mode=saf result=success",
-                )
             }
             for ((index, node) in files.withIndex()) {
                 currentCoroutineContext().ensureActive()
                 val ordinal = index + 1
-                val safeNode = cloudFolderSafeId(node.nodeId)
                 // Verified local bytes take precedence; only a download needs
                 // the immutable object pointer. See writeRemoteFileAtomically.
                 val objectId = node.contentObjectId?.trim()?.takeIf(String::isNotBlank)
-                cloudFolderLogD(
-                    "event=materialize_file_start root=$safeRoot node=$safeNode mode=saf " +
-                        "ordinal=$ordinal totalFiles=${files.size} bytes=${node.sizeBytes} " +
-                        "objectIdMissing=${objectId == null} transfer=download",
-                )
                 val parent = ensureDirectory(root, parentPath(node.relativePath))
                 val expectedLocalNode = expectedBase?.activeNodes()?.firstOrNull { baseNode ->
                     baseNode.nodeId == node.nodeId && baseNode.relativePath == node.relativePath
@@ -2157,11 +2214,15 @@ class CloudFolderSyncWorker(
                     if (changed && !isCloudFolderMetadataSidecarPath(node.relativePath)) {
                         contentFilesChanged = true
                     }
-                    cloudFolderLogD(
-                        "event=materialize_file_end root=$safeRoot node=$safeNode mode=saf " +
-                            "result=success ordinal=$ordinal totalFiles=${files.size} " +
-                            "changed=$changed",
-                    )
+                    if (changed) {
+                        cloudFolderLogD(
+                            "event=materialize_file_end root=$safeRoot node=${cloudFolderSafeId(node.nodeId)} mode=saf " +
+                                "result=success ordinal=$ordinal totalFiles=${files.size} " +
+                                "changed=true",
+                        )
+                    } else {
+                        skippedFiles++
+                    }
                 } catch (error: kotlinx.coroutines.CancellationException) {
                     throw error
                 } catch (error: Exception) {
@@ -2173,7 +2234,7 @@ class CloudFolderSyncWorker(
                     cloudFolderLogError(
                         event = "materialize_file_end",
                         error = safe,
-                        details = "root=$safeRoot node=$safeNode mode=saf result=failure " +
+                        details = "root=$safeRoot node=${cloudFolderSafeId(node.nodeId)} mode=saf result=failure " +
                             "ordinal=$ordinal totalFiles=${files.size} stage=${safe.stage}",
                     )
                     throw safe
@@ -2200,7 +2261,8 @@ class CloudFolderSyncWorker(
         }
         cloudFolderLogI(
             "event=materialize_end root=$safeRoot mode=saf result=success " +
-                "files=${files.size} durationMs=" +
+                "files=${files.size} downloaded=${files.size - skippedFiles} " +
+                "verifiedSkips=$skippedFiles durationMs=" +
                 "${(System.currentTimeMillis() - startedAt).coerceAtLeast(0L)}",
         )
         return contentFilesChanged
@@ -2303,13 +2365,8 @@ class CloudFolderSyncWorker(
             if (!root.exists() && !root.mkdirs()) throw IOException("Unable to create offline folder")
             if (!root.isDirectory) throw IOException("Offline folder is not a directory")
 
-            for ((index, directory) in directories.withIndex()) {
+            for (directory in directories) {
                 currentCoroutineContext().ensureActive()
-                val safeNode = cloudFolderSafeId(directory.nodeId)
-                cloudFolderLogD(
-                    "event=materialize_directory_start root=$safeRoot node=$safeNode " +
-                        "ordinal=${index + 1} totalDirectories=${directories.size}",
-                )
                 val target = safeAppPath(root, directory.relativePath)
                 if (target.exists() && !target.isDirectory) {
                     throw IOException("Offline path is a file: ${directory.relativePath}")
@@ -2317,9 +2374,6 @@ class CloudFolderSyncWorker(
                 if (!target.exists() && !target.mkdirs()) {
                     throw IOException("Unable to create offline directory: ${directory.relativePath}")
                 }
-                cloudFolderLogD(
-                    "event=materialize_directory_end root=$safeRoot node=$safeNode result=success",
-                )
             }
 
             // The existing progress schema has no DOWNLOADING phase. Reuse
@@ -2335,6 +2389,7 @@ class CloudFolderSyncWorker(
             var completedFiles = 0
             var completedBytes = 0L
             var contentFilesChanged = false
+            var skippedFiles = 0
             for ((index, node) in files.withIndex()) {
                 currentCoroutineContext().ensureActive()
                 val ordinal = index + 1
@@ -2344,11 +2399,6 @@ class CloudFolderSyncWorker(
                 // against the authenticated hash and only downloads when
                 // they differ. Only then is the object ID required.
                 val objectId = node.contentObjectId?.trim()?.takeIf(String::isNotBlank)
-                cloudFolderLogD(
-                    "event=materialize_file_start root=$safeRoot node=$safeNode " +
-                        "ordinal=$ordinal totalFiles=${files.size} bytes=${node.sizeBytes} " +
-                        "objectIdMissing=${objectId == null} transfer=download",
-                )
                 val target = safeAppPath(root, node.relativePath)
                 target.parentFile?.let { parent ->
                     if (!parent.exists() && !parent.mkdirs()) throw IOException("Unable to create offline parent")
@@ -2369,10 +2419,15 @@ class CloudFolderSyncWorker(
                         completedBytes = completedBytes,
                         totalBytes = totalBytes,
                     )
-                    cloudFolderLogD(
-                        "event=materialize_file_end root=$safeRoot node=$safeNode result=success " +
-                            "ordinal=$ordinal totalFiles=${files.size} bytes=${node.sizeBytes}",
-                    )
+                    if (materialized) {
+                        cloudFolderLogD(
+                            "event=materialize_file_end root=$safeRoot node=$safeNode result=success " +
+                                "ordinal=$ordinal totalFiles=${files.size} bytes=${node.sizeBytes} " +
+                                "transfer=downloaded",
+                        )
+                    } else {
+                        skippedFiles++
+                    }
                 } catch (error: kotlinx.coroutines.CancellationException) {
                     throw error
                 } catch (error: Exception) {
@@ -2411,7 +2466,8 @@ class CloudFolderSyncWorker(
             )
             cloudFolderLogI(
                 "event=materialize_end root=$safeRoot mode=app_storage result=success " +
-                    "files=$completedFiles bytes=$completedBytes durationMs=" +
+                    "files=$completedFiles downloaded=${completedFiles - skippedFiles} " +
+                    "verifiedSkips=$skippedFiles bytes=$completedBytes durationMs=" +
                     "${(System.currentTimeMillis() - startedAt).coerceAtLeast(0L)}",
             )
         } catch (error: kotlinx.coroutines.CancellationException) {
@@ -2920,12 +2976,10 @@ class CloudFolderSyncWorker(
             // A previous cancelled attempt may have left hidden staging
             // files behind. The verified target is authoritative, so clean
             // only this node's deterministic staging names before returning.
+            // The skip is counted in the materialize_end summary; logging it
+            // per file made every steady-state pull dozens of lines long.
             temp.delete()
             backup.delete()
-            cloudFolderLogD(
-                "event=materialize_file_skip root=$safeRoot node=$safeNode " +
-                    "reason=verified_existing bytes=${node.sizeBytes}",
-            )
             return false
         }
         // The local bytes could not be verified, so the missing content is
@@ -2938,8 +2992,8 @@ class CloudFolderSyncWorker(
                 category = "missing_content_object",
             )
         cloudFolderLogD(
-            "event=materialize_fs_temp_start root=$safeRoot node=$safeNode " +
-                "tempExists=${temp.exists()} targetExists=${target.exists()}",
+            "event=materialize_fs_download_start root=$safeRoot node=$safeNode " +
+                "bytes=${node.sizeBytes} objectIdMissing=${objectId == null}",
         )
         temp.delete()
         backup.delete()
@@ -2954,9 +3008,6 @@ class CloudFolderSyncWorker(
             )
             throw safe
         }
-        cloudFolderLogD(
-            "event=materialize_fs_temp_end root=$safeRoot node=$safeNode result=success",
-        )
         var stage = "drive_download"
         try {
             val digest = MessageDigest.getInstance("SHA-256")
@@ -2993,26 +3044,21 @@ class CloudFolderSyncWorker(
             if (target.exists()) {
                 ensureAccountStillActive()
                 stage = "backup_stage"
-                cloudFolderLogD(
-                    "event=materialize_fs_backup_start root=$safeRoot node=$safeNode",
-                )
                 if (!target.renameTo(backup)) throw IOException("Unable to stage offline file")
                 stagedExisting = true
-                cloudFolderLogD(
-                    "event=materialize_fs_backup_end root=$safeRoot node=$safeNode result=success",
-                )
             }
             try {
                 ensureAccountStillActive()
                 stage = "temp_commit"
-                cloudFolderLogD(
-                    "event=materialize_fs_commit_start root=$safeRoot node=$safeNode",
-                )
                 if (!temp.renameTo(target)) throw IOException("Unable to commit offline file")
+                // Restore the manifest's logical mtime so a later scan does
+                // not mistake the download clock for a local edit. Sidecars
+                // are already exempt from mtime equivalence; content files
+                // still need a stable provider timestamp across devices.
+                if (node.fileModifiedAt > 0L) {
+                    runCatching { target.setLastModified(node.fileModifiedAt) }
+                }
                 backup.delete()
-                cloudFolderLogD(
-                    "event=materialize_fs_commit_end root=$safeRoot node=$safeNode result=success",
-                )
             } catch (error: Exception) {
                 temp.delete()
                 if (stagedExisting) backup.renameTo(target)
@@ -3110,10 +3156,8 @@ class CloudFolderSyncWorker(
             cloudFolderDocumentMatches(existing, node)
         ) {
             ensureAccountStillActive()
-            cloudFolderLogD(
-                "event=materialize_file_skip root=${cloudFolderSafeId(node.rootId)} " +
-                    "node=${cloudFolderSafeId(node.nodeId)} reason=verified_existing bytes=${node.sizeBytes}",
-            )
+            // Verified local bytes; counted in the materialize_end summary
+            // rather than logged per file.
             return false
         }
         // Verified local bytes take precedence; only an actual download
@@ -3124,6 +3168,11 @@ class CloudFolderSyncWorker(
                 stage = "drive_download",
                 category = "missing_content_object",
             )
+        cloudFolderLogD(
+            "event=materialize_fs_download_start root=${cloudFolderSafeId(node.rootId)} " +
+                "node=${cloudFolderSafeId(node.nodeId)} bytes=${node.sizeBytes} " +
+                "objectIdMissing=${objectId == null}",
+        )
         val tempName = ".cloud-folder-${stableTempSuffix(node.nodeId)}.part"
         val temp = parent.createFile(node.mimeType ?: "application/octet-stream", tempName)
             ?: throw IOException("Unable to create temporary SAF file: ${node.relativePath}")
@@ -3990,12 +4039,31 @@ internal fun buildLocalManifest(
     ).normalized()
 }
 
-internal fun localNodesEquivalent(first: CloudFolderNode, second: CloudFolderNode): Boolean =
-    first.rootId == second.rootId &&
-        first.kind == second.kind &&
-        first.relativePath == second.relativePath &&
-        first.sizeBytes == second.sizeBytes &&
-        canonicalCloudFolderContentHash(first.contentHash) ==
-            canonicalCloudFolderContentHash(second.contentHash) &&
-        first.mimeType == second.mimeType &&
+/**
+ * Local-snapshot equivalence for merge decisions. Sidecars are logical
+ * records, not user documents: the shared planner deliberately ignores
+ * their provider mtimes and MIME types (atomic temp-then-rename writes
+ * always churn both), so a same-byte rewrite must not be promoted into a
+ * local edit that every device would then re-publish in a loop.
+ */
+internal fun localNodesEquivalent(first: CloudFolderNode, second: CloudFolderNode): Boolean {
+    if (first.rootId != second.rootId ||
+        first.kind != second.kind ||
+        first.relativePath != second.relativePath ||
+        first.sizeBytes != second.sizeBytes ||
+        canonicalCloudFolderContentHash(first.contentHash) !=
+            canonicalCloudFolderContentHash(second.contentHash)
+    ) {
+        return false
+    }
+    if (isCloudFolderMetadataSidecarPath(first.relativePath)) return true
+    return first.mimeType == second.mimeType &&
         first.fileModifiedAt == second.fileModifiedAt
+}
+
+/**
+ * Raised by the direct-PULL no-overwrite guards when the local tree has
+ * edits the pull cannot apply. The pull caller converts this into a SYNC
+ * hand-off instead of a WorkManager retry loop.
+ */
+internal class CloudFolderPullUnsafeException(message: String) : IOException(message)

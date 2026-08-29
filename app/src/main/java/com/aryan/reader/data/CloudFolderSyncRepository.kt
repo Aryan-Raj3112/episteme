@@ -795,10 +795,12 @@ class CloudFolderSyncRepository(
         error: String? = "Worker restarted",
     ) {
         val reset = dao.resetRunningMetadataOutbox(accountId, now, error?.take(500))
-        cloudFolderLogW(
-            "event=metadata_outbox_recovery account=${cloudFolderSafeId(accountId)} " +
-                "rows=$reset result=reset errorStatus=${cloudFolderErrorStatus(error)}",
-        )
+        if (reset > 0) {
+            cloudFolderLogW(
+                "event=metadata_outbox_recovery account=${cloudFolderSafeId(accountId)} " +
+                    "rows=$reset result=reset errorStatus=${cloudFolderErrorStatus(error)}",
+            )
+        }
     }
 
     /**
@@ -819,10 +821,12 @@ class CloudFolderSyncRepository(
             nextAttemptAt = now,
             error = error?.take(500),
         )
-        cloudFolderLogW(
-            "event=metadata_outbox_recovery root=${cloudFolderSafeId(normalizedRoot)} " +
-                "rows=$reset result=reset errorStatus=${cloudFolderErrorStatus(error)}",
-        )
+        if (reset > 0) {
+            cloudFolderLogW(
+                "event=metadata_outbox_recovery root=${cloudFolderSafeId(normalizedRoot)} " +
+                    "rows=$reset result=reset errorStatus=${cloudFolderErrorStatus(error)}",
+            )
+        }
     }
 
     /** Return durable conflicts for settings/recovery UI in deterministic order. */
@@ -1059,10 +1063,14 @@ class CloudFolderSyncRepository(
 
     suspend fun resetRunningOutbox(now: Long = System.currentTimeMillis(), error: String? = "Worker restarted") {
         val reset = dao.resetRunningOutbox(accountId = accountId, nextAttemptAt = now, error = error)
-        cloudFolderLogW(
-            "event=content_outbox_recovery account=${cloudFolderSafeId(accountId)} " +
-                "rows=$reset result=reset errorStatus=${cloudFolderErrorStatus(error)}",
-        )
+        // The steady-state case has nothing to recover; keep a clean logcat
+        // and reserve the warning for an actual interrupted transfer.
+        if (reset > 0) {
+            cloudFolderLogW(
+                "event=content_outbox_recovery account=${cloudFolderSafeId(accountId)} " +
+                    "rows=$reset result=reset errorStatus=${cloudFolderErrorStatus(error)}",
+            )
+        }
     }
 
     /** Remove account-owned folder metadata and pending transfers on sign-out. */

@@ -12,23 +12,31 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.material3.Scaffold
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.RadioButton
@@ -48,11 +56,17 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.platform.Font
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.ComposeUIViewController
 import com.aryan.reader.shared.AppAction
+import com.aryan.reader.shared.parentDestination
 import com.aryan.reader.shared.AddBooksSource
 import com.aryan.reader.shared.AnnotationExportFormat
 import com.aryan.reader.shared.AnnotationExportFormatter
@@ -204,7 +218,13 @@ import com.aryan.reader.shared.pdf.SharedPdfReaderSessionKey
 import com.aryan.reader.shared.pdf.PdfAutoScrollProfile
 import com.aryan.reader.shared.pdf.generateIosPdfReflowHtml
 import com.aryan.reader.shared.ui.SharedAppTheme
-import com.aryan.reader.shared.ui.SharedAppThemeSettingsDialog
+import com.aryan.reader.shared.ui.SharedAppThemeBottomSheet
+import com.aryan.reader.shared.ui.SharedGoogleFontsBottomSheet
+import com.aryan.reader.shared.ui.SharedGoogleFontsLabels
+import com.aryan.reader.shared.ui.SharedMobileFontsScreen
+import com.aryan.reader.shared.ui.SharedMobileFontsStrings
+import com.aryan.reader.shared.ui.SharedMobileTopAppBar
+import com.aryan.reader.shared.ui.resolveSharedAppDarkTheme
 import com.aryan.reader.shared.ui.SharedAboutScreen
 import com.aryan.reader.shared.ui.SharedAnnotationExportFormatDialog
 import com.aryan.reader.shared.ui.SharedCustomFontsScreen
@@ -268,12 +288,15 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.usePinned
+import platform.posix.memcpy
 import platform.Foundation.NSApplicationSupportDirectory
 import platform.Foundation.NSBundle
+import platform.Foundation.NSData
 import platform.Foundation.NSDocumentDirectory
 import platform.Foundation.NSFileManager
 import platform.Foundation.NSTemporaryDirectory
 import platform.Foundation.NSUserDefaults
+import platform.Foundation.dataWithContentsOfFile
 import platform.Foundation.NSUserDomainMask
 import platform.Foundation.NSURL
 import platform.Foundation.NSFileSize
@@ -318,8 +341,9 @@ class ReaderIosBridge internal constructor(
         pdfNativeActionPresenter = IosPdfNativeActionPresenter(::performIosPdfNativeAction),
     )
 
-    private var systemUiHandler: ((statusHidden: Boolean, navigationHidden: Boolean, lightContent: Boolean, backgroundArgb: Long, edgeToEdge: Boolean) -> Unit)? = null
+    private var systemUiHandler: ((statusHidden: Boolean, navigationHidden: Boolean, lightContent: Boolean, backgroundArgb: Long) -> Unit)? = null
     private var latestSystemUiState: IosSystemUiState? = null
+    private var latestAppSystemUiState: IosAppSystemUiState? = null
     private var originalReaderBrightness: Double? = null
     private var orientationHandler: ((mode: Int) -> Unit)? = null
     private var handoffEnvelope: MobileHandoffEnvelope = IosMobileHandoffStore.load()
@@ -1001,26 +1025,60 @@ class ReaderIosBridge internal constructor(
         orientationHandler?.invoke(mode.ordinal)
     }
 
-    fun setSystemUiHandler(handler: (statusHidden: Boolean, navigationHidden: Boolean, lightContent: Boolean, backgroundArgb: Long, edgeToEdge: Boolean) -> Unit) {
+    fun setSystemUiHandler(handler: (statusHidden: Boolean, navigationHidden: Boolean, lightContent: Boolean, backgroundArgb: Long) -> Unit) {
         systemUiHandler = handler
-        latestSystemUiState?.let { state ->
-            handler(state.statusHidden, state.navigationHidden, state.lightContent, state.backgroundArgb, state.edgeToEdge)
+        val readerState = latestSystemUiState
+        if (readerState != null) {
+            handler(readerState.statusHidden, readerState.navigationHidden, readerState.lightContent, readerState.backgroundArgb)
+        } else if (latestAppSystemUiState != null) {
+            emitAppSystemUi()
         }
     }
 
-    fun updateSystemUi(hidden: Boolean, lightContent: Boolean, backgroundArgb: Long, edgeToEdge: Boolean) {
-        updateReaderSystemUi(hidden, hidden, lightContent, backgroundArgb, edgeToEdge)
-    }
-
+    /**
+     * Reader screens drive the system bars while they own them, matching
+     * Android's reader behavior of syncing bar visibility and icon appearance
+     * to the reading theme.
+     */
     fun updateReaderSystemUi(
         statusHidden: Boolean,
         navigationHidden: Boolean,
         lightContent: Boolean,
-        backgroundArgb: Long,
-        edgeToEdge: Boolean
+        backgroundArgb: Long
     ) {
-        latestSystemUiState = IosSystemUiState(statusHidden, navigationHidden, lightContent, backgroundArgb, edgeToEdge)
-        systemUiHandler?.invoke(statusHidden, navigationHidden, lightContent, backgroundArgb, edgeToEdge)
+        latestSystemUiState = IosSystemUiState(statusHidden, navigationHidden, lightContent, backgroundArgb)
+        systemUiHandler?.invoke(statusHidden, navigationHidden, lightContent, backgroundArgb)
+    }
+
+    /**
+     * Publishes the app-level default system bar appearance derived from the
+     * app theme, mirroring Android where AppTheme paints the window background
+     * beneath edge-to-edge bars and the bar icons contrast with it.
+     */
+    fun setAppSystemUi(darkTheme: Boolean, backgroundArgb: Long) {
+        latestAppSystemUiState = IosAppSystemUiState(darkTheme, backgroundArgb)
+        if (latestSystemUiState == null) {
+            emitAppSystemUi()
+        }
+    }
+
+    /**
+     * Restores the published app default after a reader stops owning the
+     * system bars, so home and library always return to the app theme's
+     * appearance instead of a stale reader state.
+     */
+    fun releaseReaderSystemUi() {
+        latestSystemUiState = null
+        if (latestAppSystemUiState != null) {
+            emitAppSystemUi()
+        } else {
+            systemUiHandler?.invoke(false, false, false, 0L)
+        }
+    }
+
+    private fun emitAppSystemUi() {
+        val appState = latestAppSystemUiState ?: return
+        systemUiHandler?.invoke(false, false, appState.darkTheme, appState.backgroundArgb)
     }
 
     fun setLocalStoreKitHandlers(
@@ -1319,8 +1377,12 @@ private data class IosSystemUiState(
     val statusHidden: Boolean,
     val navigationHidden: Boolean,
     val lightContent: Boolean,
-    val backgroundArgb: Long,
-    val edgeToEdge: Boolean
+    val backgroundArgb: Long
+)
+
+private data class IosAppSystemUiState(
+    val darkTheme: Boolean,
+    val backgroundArgb: Long
 )
 
 private enum class IosUtilityScreen {
@@ -2584,10 +2646,23 @@ private fun ReaderIosApp(
         )
     }
     var utilityScreen by remember { mutableStateOf<IosUtilityScreen?>(null) }
+    var settingsDestination by remember { mutableStateOf(SharedSettingsDestination.ROOT) }
     var pendingCloudSyncSetup by remember { mutableStateOf(false) }
     var languageReturnScreen by remember { mutableStateOf<IosUtilityScreen?>(null) }
-    var settingsDestination by remember { mutableStateOf(SharedSettingsDestination.ROOT) }
     var settingsQuery by remember { mutableStateOf("") }
+
+    fun navigateIosSettingsUp() {
+        if (settingsQuery.isNotBlank()) {
+            settingsQuery = ""
+            return
+        }
+        val parent = settingsDestination.parentDestination()
+        if (parent != null) {
+            settingsDestination = parent
+        } else {
+            utilityScreen = null
+        }
+    }
     var showAppThemePanel by remember { mutableStateOf(false) }
     var showRecentLimitDialog by remember { mutableStateOf(false) }
     var annotationExportBook by remember { mutableStateOf<BookItem?>(null) }
@@ -3232,6 +3307,102 @@ private fun ReaderIosApp(
         }
     }
 
+    @Composable
+    fun IosAppDrawerContent(
+        capabilities: MobileAppDrawerCapabilities,
+        closeDrawer: () -> Unit,
+    ) {
+        fun runAction(action: () -> Unit) {
+            action()
+            closeDrawer()
+        }
+        SharedMobileAppDrawerContent(
+            account = MobileAccountPresentation(
+                currentUser = state.currentUser,
+                providers = bridge.accountState.providers,
+                supportedSignInProviders = setOf(
+                    AccountAuthProvider.APPLE,
+                    AccountAuthProvider.GOOGLE,
+                ),
+                isProUser = state.isProUser,
+                credits = state.credits,
+                // StoreKit catalog availability is transient service state,
+                // not an edition signal. Keep edition unknown until the
+                // host exposes a real build-time capability.
+                edition = null,
+                signInLabel = readerString(
+                    "account_sign_in",
+                    "Sign in with Apple or Google",
+                ),
+                signedOutDescription = readerString(
+                    "drawer_signed_out_desc",
+                    "Sync account, Pro features, and credits.",
+                ),
+                legalDisclosure = if (state.currentUser == null) {
+                    MobileAccountLegalDisclosure(
+                        text = readerString(
+                            "legal_agreement_full",
+                            "%1\$s you agree to our %2\$s and acknowledge you have read our %3\$s.",
+                            readerString(
+                                "account_drawer_by_signing_in",
+                                "By signing in with Apple or Google,",
+                            ),
+                            readerString("legal_terms_of_service", "Terms of Service"),
+                            readerString("legal_privacy_policy", "Privacy Policy"),
+                        ),
+                        termsLabel = readerString("legal_terms_of_service", "Terms of Service"),
+                        privacyLabel = readerString("legal_privacy_policy", "Privacy Policy"),
+                    )
+                } else {
+                    null
+                },
+            ),
+            accountAvatar = { user, modifier -> IosAccountAvatar(user, modifier) },
+            drawerCapabilities = capabilities,
+            isSyncEnabled = state.isSyncEnabled,
+            isFolderSyncEnabled = state.isFolderSyncEnabled,
+            onSignInClick = { runAction { utilityScreen = IosUtilityScreen.ACCOUNT } },
+            onSignOutClick = { runAction { showSignOutConfirmation = true } },
+            onSyncToggle = { enabled ->
+                if (!enabled || canUseCloudSync(
+                        providers = bridge.accountState.providers,
+                        hasGoogleDrivePermission = bridge.accountState.googleDriveAuthorized,
+                        isProUser = state.isProUser,
+                    )
+                ) {
+                    state = state.reduce(AppAction.SyncEnabledChanged(enabled))
+                    if (enabled) requestCloudSyncIfEligible()
+                } else if (!state.isProUser) {
+                    showMessage("Cloud sync requires Pro")
+                } else {
+                    showMessage("Sync requires a linked Google account and Google Drive permission")
+                }
+            },
+            onFolderSyncToggle = { enabled ->
+                setFolderSyncEnabled(enabled)
+            },
+            onProClick = { runAction { utilityScreen = IosUtilityScreen.PRO } },
+            onFontsClick = { runAction { utilityScreen = IosUtilityScreen.FONTS } },
+            onAiSettingsClick = { runAction { utilityScreen = IosUtilityScreen.AI_SETTINGS } },
+            onSettingsClick = { runAction { utilityScreen = IosUtilityScreen.SETTINGS } },
+            onAppThemeClick = { runAction { showAppThemePanel = true } },
+            onAboutClick = { runAction { utilityScreen = IosUtilityScreen.ABOUT } },
+            onSupportProjectClick = { runAction { utilityScreen = IosUtilityScreen.SUPPORT } },
+            onFeedbackClick = { runAction { utilityScreen = IosUtilityScreen.FEEDBACK } },
+            onPrivacyPolicyClick = {
+                runAction { openSharedMobileExternalUrl(IosLegalLinks.privacyPolicyUrl) }
+            },
+            onTermsClick = {
+                runAction { openSharedMobileExternalUrl(IosLegalLinks.termsUrl) }
+            },
+            onLicensesClick = {
+                runAction { openSharedMobileExternalUrl(IosLegalLinks.licensesUrl) }
+            },
+        )
+    }
+
+
+
     fun refreshFolders() {
         state = state.copy(isRefreshing = true)
         onRefreshFolders()
@@ -3702,6 +3873,7 @@ private fun ReaderIosApp(
     fun renderIosPdfHost(
         paneBook: BookItem,
         onBack: () -> Unit,
+        onOpenSplit: (() -> Unit)? = null,
         hostConfig: SharedPdfReaderHostConfig,
         pdfTabsEnabled: Boolean,
     ) {
@@ -3735,6 +3907,7 @@ private fun ReaderIosApp(
         SharedMobilePdfReaderHost(
             book = paneBook,
             onBack = onBack,
+            onOpenSplit = onOpenSplit,
             readerAiAvailable = readerAiAvailable,
             readerExtrasState = readerExtrasState.copy(cloudTts = readerCloudTts.state),
             cloudTts = readerCloudTts,
@@ -3971,7 +4144,10 @@ private fun ReaderIosApp(
                 if (activeReaderBook?.id == paneBook.id) activeReaderBook = updated
             },
             onKeepScreenOnChange = bridge::setKeepScreenOn,
-            onSystemUiAppearanceChange = bridge::updateSystemUi,
+            onSystemUiAppearanceChange = { hidden, lightContent, backgroundArgb, _ ->
+                bridge.updateReaderSystemUi(hidden, hidden, lightContent, backgroundArgb)
+            },
+            onSystemUiRelease = bridge::releaseReaderSystemUi,
             modifier = Modifier.fillMaxSize(),
             hostConfig = effectiveHostConfig,
         )
@@ -3984,14 +4160,19 @@ private fun ReaderIosApp(
         appTextDimFactorDark = state.appTextDimFactorDark,
         appSeedColor = state.appSeedColor
     ) {
+        val appDarkTheme = resolveSharedAppDarkTheme(state.appThemeMode, isSystemInDarkTheme())
+        val appBackgroundArgb = MaterialTheme.colorScheme.background.toArgb().toLong()
+        LaunchedEffect(appDarkTheme, appBackgroundArgb) {
+            bridge.setAppSystemUi(appDarkTheme, appBackgroundArgb)
+        }
         CompositionLocalProvider(
             LocalSharedStringResolver provides stringResolver,
             LocalUsePdfFileNameAsDisplayName provides state.usePdfFileNameAsDisplayName,
         ) {
         Box(Modifier.fillMaxSize()) {
-        Surface(modifier = Modifier.fillMaxSize()) {
+        Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             if (showAppThemePanel) {
-                SharedAppThemeSettingsDialog(
+                SharedAppThemeBottomSheet(
                     appThemeMode = state.appThemeMode,
                     appContrastOption = state.appContrastOption,
                     appTextDimFactorLight = state.appTextDimFactorLight,
@@ -4125,22 +4306,13 @@ private fun ReaderIosApp(
                                 },
                             )
                         } else {
-                            Box(Modifier.fillMaxSize()) {
-                                renderIosPdfHost(
-                                    paneBook = book,
-                                    onBack = { closeActiveReader(book) },
-                                    hostConfig = SharedPdfReaderHostConfig.fullScreen(book.id),
-                                    pdfTabsEnabled = state.isTabsEnabled,
-                                )
-                                TextButton(
-                                    onClick = { showIosPdfSplitPicker(PdfSplitPane.SECONDARY) },
-                                    modifier = Modifier
-                                        .align(Alignment.TopEnd)
-                                        .padding(8.dp),
-                                ) {
-                                    Text(readerString("pdf_split_reader_open", "Open in split reader"))
-                                }
-                            }
+                            renderIosPdfHost(
+                                paneBook = book,
+                                onBack = { closeActiveReader(book) },
+                                onOpenSplit = { showIosPdfSplitPicker(PdfSplitPane.SECONDARY) },
+                                hostConfig = SharedPdfReaderHostConfig.fullScreen(book.id),
+                                pdfTabsEnabled = state.isTabsEnabled,
+                            )
                         }
                     }
                     FileType.EPUB,
@@ -4216,10 +4388,10 @@ private fun ReaderIosApp(
                                     statusHidden,
                                     navigationHidden,
                                     lightContent,
-                                    backgroundArgb,
-                                    edgeToEdge = true
+                                    backgroundArgb
                                 )
                             },
+                            onSystemUiRelease = bridge::releaseReaderSystemUi,
                             customReaderThemes = state.customReaderThemes,
                             onCustomReaderThemesChange = { themes ->
                                 state = state.reduce(AppAction.CustomReaderThemesChanged(themes))
@@ -4409,11 +4581,26 @@ private fun ReaderIosApp(
                                 hideReaderAi = state.hideReaderAi,
                                 languageSummary = sharedAppLanguageLabel(state.appLanguageTag),
                             )
-                        )
-                        SharedSettingsHub(
+                         )
+                         Scaffold(
+                             topBar = {
+                                 SharedMobileTopAppBar(
+                                     title = { Text(readerLiteral(settingsModel.page(settingsDestination).title)) },
+                                     navigationIcon = {
+                                         IconButton(onClick = ::navigateIosSettingsUp) {
+                                             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = readerString("action_back", "Back"))
+                                         }
+                                     },
+                                 )
+                             },
+                             contentWindowInsets = WindowInsets.navigationBars
+                         ) { settingsPadding ->
+                         SharedSettingsHub(
                             model = settingsModel,
                             query = settingsQuery,
                             onQueryChange = { settingsQuery = it },
+                            showTopBar = false,
+                            modifier = Modifier.fillMaxSize().padding(settingsPadding),
                             readerDefaultSettings = state.readerDefaultSettings,
                             onReaderDefaultSettingsChange = {
                                 state = state.reduce(AppAction.ReaderDefaultSettingsChanged(it))
@@ -4437,11 +4624,7 @@ private fun ReaderIosApp(
                             },
                             destination = settingsDestination,
                             onDestinationChange = { settingsDestination = it },
-                            onBack = {
-                                settingsDestination = SharedSettingsDestination.ROOT
-                                settingsQuery = ""
-                                utilityScreen = null
-                            },
+                            onBack = { navigateIosSettingsUp() },
                             onAction = { action ->
                                 val portableMutation = planMobileSettingsMutation(
                                     action = action,
@@ -4560,26 +4743,95 @@ private fun ReaderIosApp(
                                     }
                                 }
                             },
-                            modifier = Modifier.fillMaxSize(),
-                        )
+                         )
+                         }
                     }
-                    IosUtilityScreen.FONTS -> IosUtilityPage(onBack = { utilityScreen = null }) {
-                        SharedCustomFontsScreen(
+                    IosUtilityScreen.FONTS -> {
+                        val selectedCountLabel = readerString("items_selected_count", "%1\$d selected")
+                        val fileCountLabel = readerString("file_count_one", "%1\$d file")
+                        val fileCountLabelPlural = readerString("file_count_other", "%1\$d files")
+                        val deleteSingleBodyLabel = readerString("desktop_delete_font_desc", "Delete %1\$s? Books using it will fall back to the default font.")
+                        val deleteMultipleBodyLabel = readerString("dialog_delete_fonts_desc", "Delete %1\$d fonts? Books using them will fall back to the default font.")
+                        SharedMobileFontsScreen(
                             fonts = state.customFonts,
                             appFontPreference = state.appFontPreference,
+                            showGoogleFontsOption = true,
+                            isLoading = false,
+                            strings = SharedMobileFontsStrings(
+                                title = readerString("custom_fonts", "Custom fonts"),
+                                backDescription = readerString("action_back", "Back"),
+                                selectAllDescription = readerString("select_all", "Select all"),
+                                selectedCount = { count -> selectedCountLabel.replace("%1\$d", count.toString()) },
+                                clearSelectionDescription = readerString("clear_selection", "Clear selection"),
+                                deleteDescription = readerString("action_delete", "Delete"),
+                                googleFonts = readerString("google_fonts", "Google Fonts"),
+                                importFont = readerString("import_font", "Import font"),
+                                emptyTitle = readerString("no_custom_fonts", "No custom fonts"),
+                                emptyMessage = readerString("import_fonts_desc", "Import TTF, OTF, or WOFF2 files to use them in books."),
+                                selectFile = readerString("empty_select_file", "Select file"),
+                                browseGoogleFonts = readerString("action_browse_google_fonts", "Browse Google Fonts"),
+                                previewText = readerString("font_preview_text", "The quick brown fox jumps over the lazy dog"),
+                                previewError = readerString("font_preview_error", "Preview unavailable"),
+                                variableWeight = readerString("font_variable_weight", "Variable weight"),
+                                fileCount = { count ->
+                                    (if (count == 1) fileCountLabel else fileCountLabelPlural).replace("%1\$d", count.toString())
+                                },
+                                deleteSingleTitle = readerString("dialog_delete_font", "Delete font?"),
+                                deleteMultipleTitle = readerString("dialog_delete_fonts", "Delete fonts?"),
+                                deleteSingleBody = { name -> deleteSingleBodyLabel.replace("%1\$s", name) },
+                                deleteMultipleBody = { count -> deleteMultipleBodyLabel.replace("%1\$d", count.toString()) },
+                                cancelAction = readerString("action_cancel", "Cancel"),
+                            ),
+                            onBackClick = { utilityScreen = null },
+                            onImportFonts = onImportFonts,
+                            onDeleteFonts = { fontIds ->
+                                val fontsToDelete = state.customFonts.filter { it.id in fontIds }
+                                fontsToDelete.forEach { font ->
+                                    bridge.deleteImportedFont(font.path)
+                                }
+                                state = state.reduce(
+                                    AppAction.CustomFontsChanged(state.customFonts.filterNot { it.id in fontIds })
+                                )
+                            },
                             onAppFontPreferenceChange = {
                                 state = state.reduce(AppAction.AppFontPreferenceChanged(it))
                             },
-                            onImportFont = onImportFonts,
-                            onDeleteFont = { font ->
-                                bridge.deleteImportedFont(font.path)
-                                state = state.reduce(
-                                    AppAction.CustomFontsChanged(state.customFonts.filterNot { it.id == font.id })
+                            fontFamilyForPreview = { font ->
+                                font?.path?.let { path ->
+                                    runCatching {
+                                        val family = FontFamily(
+                                            Font(identity = "app-font-${font.id}", getData = {
+                                                NSData.dataWithContentsOfFile(path)?.toByteArray()
+                                                    ?: error("font file unavailable: $path")
+                                            })
+                                        )
+                                        family
+                                    }.getOrNull()
+                                }
+                            },
+                            googleFontsSheet = { onDismiss ->
+                                val noMatchesLabel = readerString("google_fonts_no_matches", "No fonts match \"%1\$s\"")
+                                SharedGoogleFontsBottomSheet(
+                                    onDismiss = onDismiss,
+                                    existingFontNames = state.customFonts.filterNot { it.isDeleted }.map { it.displayName },
+                                    getFullFontList = { googleFontNames },
+                                    onDownloadFont = { fontName, onComplete ->
+                                        downloadGoogleFont(fontName, onComplete)
+                                    },
+                                    labels = SharedGoogleFontsLabels(
+                                        title = readerString("action_browse_google_fonts", "Browse Google Fonts"),
+                                        searchPlaceholder = readerString("google_fonts_search_placeholder", "Search fonts"),
+                                        popularChoices = readerString("google_fonts_popular_choices", "Popular choices"),
+                                        noMatches = { query -> noMatchesLabel.replace("%1\$s", query) },
+                                        alreadyDownloadedContentDescription = readerString(
+                                            "content_desc_already_downloaded",
+                                            "Already downloaded",
+                                        ),
+                                        downloadContentDescription = readerString("action_download", "Download"),
+                                    ),
                                 )
                             },
-                            googleFontsAvailable = true,
-                            getGoogleFonts = { googleFontNames },
-                            onDownloadGoogleFont = ::downloadGoogleFont,
+                            platformBackHandler = { _, _ -> },
                             modifier = Modifier.fillMaxSize(),
                         )
                     }
@@ -4656,9 +4908,9 @@ private fun ReaderIosApp(
                         },
                         cloudCacheSummary = readerCloudTts.state.cacheSummary,
                         onClearCloudTtsCache = readerCloudTts::clearCache,
-                        modifier = Modifier.fillMaxSize(),
+                        modifier = Modifier.fillMaxSize().statusBarsPadding(),
                     )
-                    IosUtilityScreen.LANGUAGE -> IosUtilityPage(onBack = { utilityScreen = languageReturnScreen }) {
+                    IosUtilityScreen.LANGUAGE -> IosUtilityPage(title = readerString("options_language", "Language"), onBack = { utilityScreen = languageReturnScreen }) {
                         LazyColumn(modifier = Modifier.fillMaxSize()) {
                             items(sharedAppLanguages, key = { it.tag ?: "system" }) { language ->
                                 TextButton(
@@ -4679,7 +4931,7 @@ private fun ReaderIosApp(
                             }
                         }
                     }
-                    IosUtilityScreen.FEEDBACK -> IosUtilityPage(onBack = { utilityScreen = null }) {
+                    IosUtilityScreen.FEEDBACK -> IosUtilityPage(title = readerString("feedback_title", "Feedback"), onBack = { utilityScreen = null }) {
                         SharedHelpFeedbackScreen(
                             onOpenGitHubIssues = {
                                 openSharedMobileExternalUrl("https://github.com/Aryan-Raj3112/episteme/issues")
@@ -4690,7 +4942,7 @@ private fun ReaderIosApp(
                             modifier = Modifier.fillMaxSize(),
                         )
                     }
-                    IosUtilityScreen.SUPPORT -> IosUtilityPage(onBack = { utilityScreen = null }) {
+                    IosUtilityScreen.SUPPORT -> IosUtilityPage(title = readerString("support_project", "Support the project"), onBack = { utilityScreen = null }) {
                         SharedSupportProjectScreen(
                             onOpenGitHubSponsors = {
                                 openSharedMobileExternalUrl("https://github.com/sponsors/Aryan-Raj3112")
@@ -4701,7 +4953,7 @@ private fun ReaderIosApp(
                             modifier = Modifier.fillMaxSize(),
                         )
                     }
-                    IosUtilityScreen.ABOUT -> IosUtilityPage(onBack = { utilityScreen = null }) {
+                    IosUtilityScreen.ABOUT -> IosUtilityPage(title = readerString("about_title", "About"), onBack = { utilityScreen = null }) {
                         SharedAboutScreen(
                             versionName = iosAppVersionName(),
                             buildLabel = iosAppBuildLabel(),
@@ -4728,100 +4980,10 @@ private fun ReaderIosApp(
                 return@Surface
             }
 
-            val appDrawerCapabilities = if (selectedPage == SharedMobileMainDestination.UNIFIED_LIBRARY) {
-                MobileAppDrawerCapabilities.UNIFIED_LIBRARY_ACCOUNT
-            } else {
-                MobileAppDrawerCapabilities.GLOBAL
-            }
+            val appDrawerCapabilities = MobileAppDrawerCapabilities.GLOBAL
 
-            ModalNavigationDrawer(
-                drawerState = drawerState,
-                drawerContent = {
-                    SharedMobileAppDrawerContent(
-                        account = MobileAccountPresentation(
-                            currentUser = state.currentUser,
-                            providers = bridge.accountState.providers,
-                            supportedSignInProviders = setOf(
-                                AccountAuthProvider.APPLE,
-                                AccountAuthProvider.GOOGLE,
-                            ),
-                            isProUser = state.isProUser,
-                            credits = state.credits,
-                            // StoreKit catalog availability is transient service state,
-                            // not an edition signal. Keep edition unknown until the
-                            // host exposes a real build-time capability.
-                            edition = null,
-                            signInLabel = readerString(
-                                "account_sign_in",
-                                "Sign in with Apple or Google",
-                            ),
-                            signedOutDescription = readerString(
-                                "drawer_signed_out_desc",
-                                "Sync account, Pro features, and credits.",
-                            ),
-                            legalDisclosure = if (state.currentUser == null) {
-                                MobileAccountLegalDisclosure(
-                                    text = readerString(
-                                        "legal_agreement_full",
-                                        "%1\$s you agree to our %2\$s and acknowledge you have read our %3\$s.",
-                                        readerString(
-                                            "account_drawer_by_signing_in",
-                                            "By signing in with Apple or Google,",
-                                        ),
-                                        readerString("legal_terms_of_service", "Terms of Service"),
-                                        readerString("legal_privacy_policy", "Privacy Policy"),
-                                    ),
-                                    termsLabel = readerString("legal_terms_of_service", "Terms of Service"),
-                                    privacyLabel = readerString("legal_privacy_policy", "Privacy Policy"),
-                                )
-                            } else {
-                                null
-                            },
-                        ),
-                        accountAvatar = { user, modifier -> IosAccountAvatar(user, modifier) },
-                        drawerCapabilities = appDrawerCapabilities,
-                        isSyncEnabled = state.isSyncEnabled,
-                        isFolderSyncEnabled = state.isFolderSyncEnabled,
-                        onSignInClick = { runDrawerAction { utilityScreen = IosUtilityScreen.ACCOUNT } },
-                        onSignOutClick = { runDrawerAction { showSignOutConfirmation = true } },
-                        onSyncToggle = { enabled ->
-                            if (!enabled || canUseCloudSync(
-                                    providers = bridge.accountState.providers,
-                                    hasGoogleDrivePermission = bridge.accountState.googleDriveAuthorized,
-                                    isProUser = state.isProUser,
-                                )
-                            ) {
-                                state = state.reduce(AppAction.SyncEnabledChanged(enabled))
-                                if (enabled) requestCloudSyncIfEligible()
-                            } else if (!state.isProUser) {
-                                showMessage("Cloud sync requires Pro")
-                            } else {
-                                showMessage("Sync requires a linked Google account and Google Drive permission")
-                            }
-                        },
-                        onFolderSyncToggle = { enabled ->
-                            setFolderSyncEnabled(enabled)
-                        },
-                        onProClick = { runDrawerAction { utilityScreen = IosUtilityScreen.PRO } },
-                        onFontsClick = { runDrawerAction { utilityScreen = IosUtilityScreen.FONTS } },
-                        onAiSettingsClick = { runDrawerAction { utilityScreen = IosUtilityScreen.AI_SETTINGS } },
-                        onSettingsClick = { runDrawerAction { utilityScreen = IosUtilityScreen.SETTINGS } },
-                        onAppThemeClick = { runDrawerAction { showAppThemePanel = true } },
-                        onAboutClick = { runDrawerAction { utilityScreen = IosUtilityScreen.ABOUT } },
-                        onSupportProjectClick = { runDrawerAction { utilityScreen = IosUtilityScreen.SUPPORT } },
-                        onFeedbackClick = { runDrawerAction { utilityScreen = IosUtilityScreen.FEEDBACK } },
-                        onPrivacyPolicyClick = {
-                            runDrawerAction { openSharedMobileExternalUrl(IosLegalLinks.privacyPolicyUrl) }
-                        },
-                        onTermsClick = {
-                            runDrawerAction { openSharedMobileExternalUrl(IosLegalLinks.termsUrl) }
-                        },
-                        onLicensesClick = {
-                            runDrawerAction { openSharedMobileExternalUrl(IosLegalLinks.licensesUrl) }
-                        },
-                    )
-                }
-            ) {
+            @Composable
+            fun MainScaffoldContent() {
                 SharedMobileMainScaffold(
                     selectedDestination = selectedPage,
                     onDestinationSelected = { page ->
@@ -5278,7 +5440,25 @@ private fun ReaderIosApp(
                                 modifier = Modifier.fillMaxSize()
                             )
 
-                            SharedMobileMainDestination.UNIFIED_LIBRARY -> SharedMobileUnifiedLibraryScreen(
+                            // Material drawers are leading by default. Mirroring only the
+                            // account drawer makes this surface open from the right while
+                            // the app content stays LTR, matching Android's unified library.
+                            SharedMobileMainDestination.UNIFIED_LIBRARY -> {
+                                val accountDrawerState = rememberDrawerState(DrawerValue.Closed)
+                                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+                                    ModalNavigationDrawer(
+                                        drawerState = accountDrawerState,
+                                        drawerContent = {
+                                            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                                                IosAppDrawerContent(
+                                                    capabilities = MobileAppDrawerCapabilities.UNIFIED_LIBRARY_ACCOUNT,
+                                                    closeDrawer = { scope.launch { accountDrawerState.close() } },
+                                                )
+                                            }
+                                        }
+                                    ) {
+                                        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                                            SharedMobileUnifiedLibraryScreen(
                                 state = state,
                                 onOpenBook = ::openLibraryBook,
                                 onLongPressBook = { book -> state = state.toggleBookSelection(book.id) },
@@ -5405,7 +5585,7 @@ private fun ReaderIosApp(
                                 onOpenSettings = { utilityScreen = IosUtilityScreen.SETTINGS },
                                 onOpenAppTheme = { showAppThemePanel = true },
                                 onOpenFonts = { utilityScreen = IosUtilityScreen.FONTS },
-                                onOpenAccountDrawer = { scope.launch { drawerState.open() } },
+                                onOpenAccountDrawer = { scope.launch { accountDrawerState.open() } },
                                 accountAvatar = {
                                     IosAccountAvatar(state.currentUser, Modifier.size(32.dp))
                                 },
@@ -5608,8 +5788,30 @@ private fun ReaderIosApp(
                                 onStopTtsPlayback = ttsListenController::stop,
                                 modifier = Modifier.fillMaxSize(),
                             )
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
+                }
+            }
+
+            if (selectedPage == SharedMobileMainDestination.LIBRARY) {
+                // Android's Library screen has no navigation drawer; its tab
+                // pager owns horizontal gestures so edge swipes page the tabs.
+                MainScaffoldContent()
+            } else {
+                ModalNavigationDrawer(
+                    drawerState = drawerState,
+                    drawerContent = {
+                        IosAppDrawerContent(
+                            capabilities = appDrawerCapabilities,
+                            closeDrawer = { scope.launch { drawerState.close() } },
+                        )
+                    }
+                ) {
+                    MainScaffoldContent()
                 }
             }
         }
@@ -5921,7 +6123,7 @@ private fun IosDeviceManagementScreen(
 ) {
     var pendingRevoke by remember { mutableStateOf<com.aryan.reader.shared.DeviceItem?>(null) }
     LaunchedEffect(Unit) { onRefresh() }
-    IosUtilityPage(onBack = onBack) {
+    IosUtilityPage(title = readerString("settings_device_management_title", "Device management"), onBack = onBack) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -6154,7 +6356,7 @@ private fun IosAccountScreen(
     onAuthenticate: (String) -> Unit,
     onSignOut: () -> Unit,
 ) {
-    IosUtilityPage(onBack = onBack) {
+    IosUtilityPage(title = readerString("account_title", "Episteme Account"), onBack = onBack) {
         Column(modifier = Modifier.fillMaxSize().padding(24.dp)) {
             Text(readerString("account_title", "Episteme Account"))
             Text(
@@ -6235,7 +6437,7 @@ private fun IosLocalStoreKitScreen(
     onPurchase: (String) -> Unit,
     onRestore: () -> Unit,
 ) {
-    IosUtilityPage(onBack = onBack) {
+    IosUtilityPage(title = readerString("storekit_title", "Pro and Credits"), onBack = onBack) {
         Column(
             modifier = Modifier.fillMaxSize().padding(24.dp),
         ) {
@@ -6308,15 +6510,35 @@ private fun IosLocalStoreKitScreen(
     }
 }
 
+private fun NSData.toByteArray(): ByteArray {
+    val size = length.toInt()
+    if (size == 0) return ByteArray(0)
+    val result = ByteArray(size)
+    result.usePinned { pinned ->
+        memcpy(pinned.addressOf(0), bytes, length)
+    }
+    return result
+}
+
 @Composable
 private fun IosUtilityPage(
+    title: String,
     onBack: () -> Unit,
     content: @Composable () -> Unit,
 ) {
-    Column(modifier = Modifier.fillMaxSize()) {
-        TextButton(onClick = onBack, modifier = Modifier.padding(horizontal = 8.dp)) {
-            Text(readerString("action_back", "Back"))
-        }
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .statusBarsPadding()
+    ) {
+        SharedMobileTopAppBar(
+            title = { Text(title) },
+            navigationIcon = {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = readerString("action_back", "Back"))
+                }
+            },
+        )
         androidx.compose.foundation.layout.Box(
             modifier = Modifier
                 .weight(1f)

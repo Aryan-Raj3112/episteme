@@ -3652,6 +3652,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         "book=${cloudFolderSafeId(closingBookId)} result=complete",
                 )
                 val freshBook = bookStore.getFileByUri(uriString)
+                    ?: selectedBookRowForManagedFile(uriString.toUri())
                 freshBook?.let {
                     cloudFolderLogD(
                         "event=reader_close_snapshot operation=$closeOperation correlation=$closeCorrelation " +
@@ -7761,39 +7762,41 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     ) {
         Timber.d("Saving EPUB position locally: URI=$uri, Locator=$locator")
         enqueueReaderStateSave(uri.toString()) {
-            bookStore.getFileByUri(uri.toString())?.let { existing ->
+            val existing = bookStore.getFileByUri(uri.toString())
+                ?: selectedBookRowForManagedFile(uri)
+            existing?.let { book ->
                 logCloudSyncTrace {
-                    "android.reader.position_save_start book=${existing.bookId} beforeTs=${existing.lastModifiedTimestamp} " +
+                    "android.reader.position_save_start book=${book.bookId} beforeTs=${book.lastModifiedTimestamp} " +
                         "locator={chapter=${locator.chapterIndex} block=${locator.blockIndex} char=${locator.charOffset}} " +
                         "progress=$progress cfi=${cfiForWebView.cloudSyncPreview()}"
                 }
-                val positionOperation = cloudFolderOperationId("reader-position", existing.bookId, "epub")
-                val positionCorrelation = cloudFolderSyncCorrelationId("reader-position", existing.bookId, "epub")
+                val positionOperation = cloudFolderOperationId("reader-position", book.bookId, "epub")
+                val positionCorrelation = cloudFolderSyncCorrelationId("reader-position", book.bookId, "epub")
                 cloudFolderLogD(
                     "event=reader_position_save_start operation=$positionOperation correlation=$positionCorrelation " +
-                        "book=${cloudFolderSafeId(existing.bookId)} kind=epub " +
-                        "beforeReadTs=${existing.effectiveReadingPositionModifiedTimestamp()} " +
+                        "book=${cloudFolderSafeId(book.bookId)} kind=epub " +
+                        "beforeReadTs=${book.effectiveReadingPositionModifiedTimestamp()} " +
                         "chapter=${locator.chapterIndex} block=${locator.blockIndex} char=${locator.charOffset} progress=$progress",
                 )
                 bookStore.updateEpubReadingPosition(
-                    uriString = uri.toString(),
+                    uriString = book.uriString ?: uri.toString(),
                     locator = locator,
                     cfiForWebView = cfiForWebView,
                     progress = progress
                 )
-                val updated = bookStore.getFileByBookId(existing.bookId)
+                val updated = bookStore.getFileByBookId(book.bookId)
                 logCloudSyncTrace {
-                    "android.reader.position_save_done beforeTs=${existing.lastModifiedTimestamp} " +
+                    "android.reader.position_save_done beforeTs=${book.lastModifiedTimestamp} " +
                         (updated?.cloudSyncTraceSummary("after") ?: "after=null")
                 }
                 cloudFolderLogD(
                     "event=reader_position_save_end operation=$positionOperation correlation=$positionCorrelation " +
-                        "book=${cloudFolderSafeId(existing.bookId)} kind=epub result=${if (updated != null) "success" else "missing"} " +
+                        "book=${cloudFolderSafeId(book.bookId)} kind=epub result=${if (updated != null) "success" else "missing"} " +
                         "afterReadTs=${updated?.effectiveReadingPositionModifiedTimestamp() ?: 0L} " +
                         "afterChapter=${updated?.lastChapterIndex ?: "none"} afterBlock=${updated?.locatorBlockIndex ?: "none"} " +
                         "afterChar=${updated?.locatorCharOffset ?: "none"} afterProgress=${updated?.progressPercentage ?: "none"}",
                 )
-                queueCloudMetadataUpload(existing.bookId, reason = "epub_position")
+                queueCloudMetadataUpload(book.bookId, reason = "epub_position")
             }
         }
     }
@@ -7909,34 +7912,44 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             "ViewModel: Save request triggered | Page: $page | Total: $totalPages | Progress: $progress | URI: ${uri.lastPathSegment}"
         )
         val job = enqueueReaderStateSave(uri.toString()) {
-            bookStore.getFileByUri(uri.toString())?.let { existing ->
+            // App-managed cloud books resolve through the canonical Room URI;
+            // legacy rows may carry a differently-encoded file URI for the same
+            // path, so fall back to the selected book when both decode to the
+            // same canonical file before giving up.
+            val existing = bookStore.getFileByUri(uri.toString())
+                ?: selectedBookRowForManagedFile(uri)
+            existing?.let { book ->
                 logCloudSyncTrace {
-                    "android.reader.pdf_position_save_start book=${existing.bookId} beforeTs=${existing.lastModifiedTimestamp} " +
-                        "beforeReadTs=${existing.effectiveReadingPositionModifiedTimestamp()} page=$page progress=$progress"
+                    "android.reader.pdf_position_save_start book=${book.bookId} beforeTs=${book.lastModifiedTimestamp} " +
+                        "beforeReadTs=${book.effectiveReadingPositionModifiedTimestamp()} page=$page progress=$progress"
                 }
-                val positionOperation = cloudFolderOperationId("reader-position", existing.bookId, "pdf")
-                val positionCorrelation = cloudFolderSyncCorrelationId("reader-position", existing.bookId, "pdf")
+                val positionOperation = cloudFolderOperationId("reader-position", book.bookId, "pdf")
+                val positionCorrelation = cloudFolderSyncCorrelationId("reader-position", book.bookId, "pdf")
                 cloudFolderLogD(
                     "event=reader_position_save_start operation=$positionOperation correlation=$positionCorrelation " +
-                        "book=${cloudFolderSafeId(existing.bookId)} kind=pdf " +
-                        "beforeReadTs=${existing.effectiveReadingPositionModifiedTimestamp()} page=$page progress=$progress",
+                        "book=${cloudFolderSafeId(book.bookId)} kind=pdf " +
+                        "beforeReadTs=${book.effectiveReadingPositionModifiedTimestamp()} page=$page progress=$progress",
                 )
                 bookStore.updatePdfReadingPosition(
-                    uriString = uri.toString(), page = page, progress = progress
+                    uriString = book.uriString ?: uri.toString(), page = page, progress = progress
                 )
-                val updated = bookStore.getFileByBookId(existing.bookId)
+                val updated = bookStore.getFileByBookId(book.bookId)
                 logCloudSyncTrace {
-                    "android.reader.pdf_position_save_done beforeTs=${existing.lastModifiedTimestamp} " +
+                    "android.reader.pdf_position_save_done beforeTs=${book.lastModifiedTimestamp} " +
                         (updated?.cloudSyncTraceSummary("after") ?: "after=null")
                 }
                 cloudFolderLogD(
                     "event=reader_position_save_end operation=$positionOperation correlation=$positionCorrelation " +
-                        "book=${cloudFolderSafeId(existing.bookId)} kind=pdf result=${if (updated != null) "success" else "missing"} " +
+                        "book=${cloudFolderSafeId(book.bookId)} kind=pdf result=${if (updated != null) "success" else "missing"} " +
                         "afterReadTs=${updated?.effectiveReadingPositionModifiedTimestamp() ?: 0L} " +
                         "afterPage=${updated?.lastPage ?: "none"} afterProgress=${updated?.progressPercentage ?: "none"}",
                 )
-                queueCloudMetadataUpload(existing.bookId, reason = "pdf_position")
+                queueCloudMetadataUpload(book.bookId, reason = "pdf_position")
             } ?: run {
+                cloudFolderLogW(
+                    "event=reader_position_save_skip kind=pdf reason=book_not_found " +
+                        "book=${cloudFolderSafeId(uri.lastPathSegment.orEmpty())} page=$page",
+                )
                 Timber.tag("PdfPositionDebug").e("ViewModel: Save aborted. Could not resolve file item from URI in DB.")
             }
         }
@@ -8155,6 +8168,24 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             document?.exists() == true -> FolderBookLocation(null, false)
             else -> FolderBookLocation(null, true)
         }
+    }
+
+    /**
+     * Fallback row for URI-keyed reader writes when the raw reader URI does
+     * not string-match Room's stored uriString. Older builds stored app-managed
+     * cloud-folder files under a differently-encoded file URI for the same
+     * path; comparing canonical paths keeps position saves attached to the
+     * right book instead of silently no-opping.
+     */
+    private suspend fun selectedBookRowForManagedFile(uri: Uri): RecentFileItem? {
+        if (!uri.scheme.equals("file", ignoreCase = true)) return null
+        val selectedBookId = _internalState.value.selectedBookId ?: return null
+        val candidate = bookStore.getFileByBookId(selectedBookId) ?: return null
+        val candidateUri = candidate.uriString?.toUri() ?: return null
+        if (!candidateUri.scheme.equals("file", ignoreCase = true)) return null
+        val readerPath = runCatching { File(uri.path!!).canonicalPath }.getOrNull() ?: return null
+        val storedPath = runCatching { File(candidateUri.path!!).canonicalPath }.getOrNull() ?: return null
+        return candidate.takeIf { readerPath == storedPath }
     }
 
     private fun uploadNewBookAndMetadata(book: RecentFileItem) {

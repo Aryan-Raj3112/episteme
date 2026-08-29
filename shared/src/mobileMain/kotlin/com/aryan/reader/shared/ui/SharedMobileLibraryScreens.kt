@@ -1,8 +1,10 @@
 package com.aryan.reader.shared.ui
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -90,6 +92,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -111,6 +114,7 @@ import com.aryan.reader.shared.FileType
 import com.aryan.reader.shared.LibraryFilters
 import com.aryan.reader.shared.IN_APP_STORAGE_SOURCE
 import com.aryan.reader.shared.ReadStatusFilter
+import com.aryan.reader.shared.currentTimestamp
 import com.aryan.reader.shared.ReaderPlatform
 import com.aryan.reader.shared.SharedAudiobook
 import com.aryan.reader.shared.SharedAudiobookPlaybackState
@@ -136,6 +140,8 @@ import com.aryan.reader.shared.opds.OpdsEntry
 import com.aryan.reader.shared.opds.SharedOpdsDownloadLocation
 import com.aryan.reader.shared.opds.SharedOpdsScreenState
 import com.aryan.reader.shared.sortBooks
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.isActive
 import kotlin.math.roundToInt
@@ -440,7 +446,6 @@ fun SharedMobileUnifiedLibraryScreen(
                     searchPlaceholder = readerString("unified_library_search_books", "Search your books"),
                     clearSearchDescription = readerString("content_desc_clear_query", "Clear search"),
                     onSearchQueryChange = { query = it },
-                    autoFocusSearch = section == MobileUnifiedLibrarySection.HOME,
                 )
             }
         },
@@ -491,7 +496,6 @@ fun SharedMobileUnifiedLibraryScreen(
                                     onClick = { if (selectedIds.isEmpty()) onOpenBook(book) else onLongPressBook(book) },
                                     onLongClick = { if (shouldSelectBookOnLongPress(book.id, selectedIds)) onLongPressBook(book) },
                                     onTogglePinned = { onTogglePinned(book) },
-                                    onShowBookInfo = { infoBook = book },
                                     modifier = Modifier.fillMaxWidth(),
                                 )
                             },
@@ -561,7 +565,6 @@ fun SharedMobileUnifiedLibraryScreen(
                                     onClick = { if (selectedIds.isEmpty()) onOpenBook(book) else onLongPressBook(book) },
                                     onLongClick = { if (shouldSelectBookOnLongPress(book.id, selectedIds)) onLongPressBook(book) },
                                     onTogglePinned = { onTogglePinned(book) },
-                                    onShowBookInfo = { infoBook = book },
                                     modifier = Modifier.fillMaxWidth(),
                                 )
                             },
@@ -574,7 +577,6 @@ fun SharedMobileUnifiedLibraryScreen(
                                     onClick = { if (selectedIds.isEmpty()) onOpenBook(book) else onLongPressBook(book) },
                                     onLongClick = { if (shouldSelectBookOnLongPress(book.id, selectedIds)) onLongPressBook(book) },
                                     onTogglePinned = { onTogglePinned(book) },
-                                    onShowBookInfo = { infoBook = book },
                                 )
                             },
                             modifier = Modifier.padding(padding),
@@ -602,7 +604,6 @@ fun SharedMobileUnifiedLibraryScreen(
                                 onClick = { if (selectedIds.isEmpty()) onOpenBook(book) else onLongPressBook(book) },
                                 onLongClick = { if (shouldSelectBookOnLongPress(book.id, selectedIds)) onLongPressBook(book) },
                                 onTogglePinned = { onTogglePinned(book) },
-                                onShowBookInfo = { infoBook = book },
                                 modifier = Modifier.fillMaxWidth(),
                             )
                         },
@@ -852,7 +853,6 @@ private fun SharedMobileUnifiedShelvesSection(
     onOpenBook: (BookItem) -> Unit,
     onLongPressBook: (BookItem) -> Unit,
     onTogglePinned: (BookItem) -> Unit,
-    onShowBookInfo: (BookItem) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val selectedShelf = shelves.firstOrNull { it.id == selectedShelfId }
@@ -893,7 +893,6 @@ private fun SharedMobileUnifiedShelvesSection(
                     onOpenBook = { book -> if (selectedBookIds.isEmpty()) onOpenBook(book) else onLongPressBook(book) },
                     onLongPressBook = onLongPressBook,
                     onTogglePinned = onTogglePinned,
-                    onShowBookInfo = onShowBookInfo,
                 )
             }
         }
@@ -1076,8 +1075,7 @@ fun SharedMobileHomeScreen(
                                         actions.longPressBook(book)
                                     }
                                 },
-                                onTogglePinned = actions::togglePinned,
-                                onShowBookInfo = { infoBook = it }
+                                onTogglePinned = actions::togglePinned
                             )
                         }
                     }
@@ -1339,251 +1337,264 @@ fun SharedMobileLibraryScreen(
         return
     }
 
-    Scaffold(
-        modifier = modifier,
-        topBar = {
-            Column {
-                when {
-                    isBookContextualMode -> SharedMobileContextualTopBar(
-                        selectedCount = selectedIds.size,
-                        onClose = onClearSelection,
-                        onSelectAll = {
-                            onSelectAll(sortedSearchedBooks.mapTo(linkedSetOf()) { it.id })
-                        },
-                        onPin = { onToggleSelectedPins(selectedIds) },
-                        onAddToShelf = { showAddToShelf = true },
-                        onTag = { showTagDialog = true },
-                        onShare = selectedIds.singleOrNull()?.let { id ->
-                            state.libraryBooks.firstOrNull { it.id == id }
-                                ?.takeIf { it.canExportOriginalFile() }
-                                ?.let { book ->
-                                { onShareBook(book) }
-                            }
-                        },
-                        onExportAnnotations = selectedIds.singleOrNull()?.let { id ->
-                            state.libraryBooks.firstOrNull { it.id == id }?.let { book ->
-                                { onExportAnnotations(book) }
-                            }
-                        },
-                        onInfo = selectedIds.singleOrNull()?.let { id ->
-                            state.libraryBooks.firstOrNull { it.id == id }?.let { book ->
-                                { infoBook = book }
-                            }
-                        },
-                        onSave = selectedIds.singleOrNull()?.let { id ->
-                            state.libraryBooks.firstOrNull { it.id == id }
-                                ?.takeIf { it.canExportOriginalFile() }
-                                ?.let { book ->
-                                { onSaveBook(book) }
-                            }
-                        },
-                        onDelete = { showDeleteBooks = true }
-                    )
-
-                    isShelfContextualMode -> SharedMobileContextualTopBar(
-                        selectedCount = selectedShelves.size,
-                        onClose = onClearSelection,
-                        onSelectAll = null,
-                        onPin = null,
-                        onDelete = { showDeleteShelves = true }
-                    )
-
-                    state.isSearchActive -> SharedMobileSearchTopBar(
-                        query = state.searchQuery,
-                        onQueryChange = onSearchQueryChange,
-                        onClose = { onSearchActiveChange(false) }
-                    )
-
-                    else -> SharedMobileLibraryTopBar(
-                        selectedTab = selectedTab,
-                        sortOrder = state.sortOrder,
-                        isFilterActive = state.libraryFilters.isActive,
-                        onFilterClick = { showFilters = true; onFilterClick() },
-                        onSortOrderChange = onSortOrderChange,
-                        onSearchClick = { onSearchActiveChange(true) },
-                        onSettingsClick = onSettingsClick
-                    )
-                }
-                if (!state.isSearchActive && !isBookContextualMode && !isShelfContextualMode) {
-                    TabRow(selectedTabIndex = selectedTab.ordinal) {
-                        SharedMobileLibraryTab.entries.forEach { tab ->
-                            Tab(
-                                selected = selectedTab == tab,
-                                onClick = { onTabChange(tab) },
-                                text = { Text(tab.sharedMobileLabel()) }
-                            )
-                        }
-                    }
-                    if (selectedTab == SharedMobileLibraryTab.BOOKS && state.libraryFilters.isActive) {
-                        SharedMobileLibraryFilterChips(
-                            filters = state.libraryFilters,
-                            fileTypesLabel = readerString(
-                                "filter_types",
-                                "Types: %1\$s",
-                                state.libraryFilters.fileTypes.joinToString { it.name },
-                            ),
-                            foldersLabel = readerString(
-                                "filter_folders",
-                                "Folders: %1\$s",
-                                state.libraryFilters.sourceFolders.size,
-                            ),
-                            statusLabel = readerString(
-                                "filter_status",
-                                "Status: %1\$s",
-                                state.libraryFilters.readStatus.sharedMobileLabel(),
-                            ),
-                            tagsLabel = readerString(
-                                "filter_tags",
-                                "Tags: %1\$s",
-                                state.libraryFilters.tagIds.size,
-                            ),
-                            clearContentDescription = readerString("action_clear", "Clear"),
-                            onRemoveFilters = onRemoveFilters,
-                        )
-                    }
-                }
+    val tabTitles = SharedMobileLibraryTab.entries.map { it.sharedMobileLabel() }
+    val pagerState = rememberPagerState(
+        initialPage = selectedTab.ordinal.coerceIn(0, SharedMobileLibraryTab.entries.lastIndex),
+        pageCount = { SharedMobileLibraryTab.entries.size },
+    )
+    val pagerScope = rememberCoroutineScope()
+    LaunchedEffect(pagerState) {
+        snapshotFlow { pagerState.settledPage }
+            .drop(1)
+            .distinctUntilChanged()
+            .collect { page ->
+                SharedMobileLibraryTab.entries.getOrNull(page)?.let(onTabChange)
             }
-        },
-        floatingActionButton = {
-            if (!isBookContextualMode && !isShelfContextualMode) {
-                when (selectedTab) {
-                    SharedMobileLibraryTab.BOOKS -> if (sortedSearchedBooks.isNotEmpty()) {
-                        ExtendedFloatingActionButton(
-                            text = { Text(readerString("select_file", "Add file")) },
-                            icon = { Icon(Icons.Default.Add, contentDescription = null) },
-                            onClick = onImportBooks
-                        )
-                    }
-
-                    SharedMobileLibraryTab.SHELVES -> ExtendedFloatingActionButton(
-                        text = { Text(readerString("fab_new_shelf", "New shelf")) },
-                        icon = { Icon(Icons.Default.Add, contentDescription = null) },
-                        onClick = { showCreateShelf = true; onNewShelfClick() }
-                    )
-
-                    else -> Unit
-                }
-            }
-        }
-    ) { padding ->
-        when (selectedTab) {
-            SharedMobileLibraryTab.BOOKS -> when (
-                mobileLibraryBooksState(sortedSearchedBooks.size, state.searchQuery)
-            ) {
-                SharedMobileLibraryBooksState.CONTENT -> SharedMobileBookList(
-                    books = sortedSearchedBooks,
-                    selectedBookIds = state.selectedBookIds,
-                    pinnedBookIds = state.pinnedLibraryBookIds,
-                    downloadingBookIds = state.downloadingBookIds,
-                    onOpenBook = { book ->
-                        when (mobileBookTapIntent(selectedIds)) {
-                            SharedMobileBookTapIntent.OPEN -> onOpenBook(book)
-                            SharedMobileBookTapIntent.TOGGLE_SELECTION -> onLongPressBook(book)
-                        }
-                    },
-                    onLongPressBook = onLongPressBook,
-                    onTogglePinned = onTogglePinned,
-                    onShowBookInfo = { infoBook = it },
-                    empty = {},
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(padding)
-                )
-
-                SharedMobileLibraryBooksState.SEARCH_NO_RESULTS -> Box(
-                    modifier = Modifier.fillMaxSize().padding(padding),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        readerString(
-                            "no_results_found",
-                            "No results found for \"%1\$s\"",
-                            state.searchQuery.trim(),
-                        )
-                    )
-                }
-
-                SharedMobileLibraryBooksState.EMPTY_LIBRARY -> SharedMobileEmptyLibrary(
-                    title = readerString("library_empty_title", "Your library is empty"),
-                    message = readerString("library_empty_desc", "Select a PDF, EPUB, comic, or document to start reading."),
-                    actionLabel = readerString("select_file", "Select file"),
-                    onAction = onImportBooks,
-                    modifier = Modifier.fillMaxSize().padding(padding),
-                )
-            }
-
-            SharedMobileLibraryTab.SHELVES -> SharedMobileShelfList(
-                shelves = topLevelMobileShelves(state.shelves),
-                onOpenShelf = { shelf ->
-                    when (mobileShelfTapIntent(selectedShelves)) {
-                        SharedMobileShelfTapIntent.OPEN -> onOpenShelf(shelf)
-                        SharedMobileShelfTapIntent.TOGGLE_SELECTION -> onLongPressShelf(shelf)
-                    }
-                },
-                onLongPressShelf = { shelf ->
-                    if (
-                        shelf.type == ShelfType.MANUAL &&
-                        shelf.id != "unshelved" &&
-                        shouldSelectShelfOnLongPress(shelf.id, selectedShelves)
-                    ) {
-                        onLongPressShelf(shelf)
-                    }
-                },
-                selectedShelfIds = state.selectedShelfIds,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding)
-            )
-
-            SharedMobileLibraryTab.FOLDERS -> SharedMobileFolderSyncScreen(
-                folders = state.syncedFolders,
-                books = state.rawLibraryBooks,
-                isLoading = state.isRefreshing,
-                onAddFolder = onAddFolder,
-                onScanAll = onScanFolders,
-                onSyncMetadata = onSyncFolderMetadata,
-                onLocalSyncChange = onFolderLocalSyncChange,
-                onFileTypesChange = onFolderFileTypesChange,
-                onRemoveFolder = onRemoveFolder,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding)
-            )
-
-            SharedMobileLibraryTab.CATALOGS -> {
-                val catalogModifier = Modifier.fillMaxSize().padding(padding)
-                if (opdsCoverContent == null) {
-                    SharedOpdsScreen(
-                        state = opdsState, localLibraryBooks = state.rawLibraryBooks,
-                        onOpenCatalog = onOpenCatalog, onOpenFeedUrl = onOpenFeedUrl,
-                        onNavigateBack = onOpdsNavigateBack, onSearch = onOpdsSearch,
-                        onLoadNextPage = onOpdsLoadNextPage, onAddCatalog = onAddCatalog,
-                        onUpdateCatalog = onUpdateCatalog, onRemoveCatalog = onRemoveCatalog,
-                        onDeleteCatalogStreams = onDeleteCatalogStreams,
-                        onDownloadBook = onDownloadOpdsBook, onReadBook = onOpenBook,
-                        onStreamBook = onStreamOpdsBook, onClearError = onClearOpdsError,
-                        onDownloadLocationChange = onOpdsDownloadLocationChange,
-                        syncedFolders = state.syncedFolders,
-                        mobileLayout = true, modifier = catalogModifier,
-                    )
-                } else {
-                    SharedOpdsScreen(
-                        state = opdsState, localLibraryBooks = state.rawLibraryBooks,
-                        onOpenCatalog = onOpenCatalog, onOpenFeedUrl = onOpenFeedUrl,
-                        onNavigateBack = onOpdsNavigateBack, onSearch = onOpdsSearch,
-                        onLoadNextPage = onOpdsLoadNextPage, onAddCatalog = onAddCatalog,
-                        onUpdateCatalog = onUpdateCatalog, onRemoveCatalog = onRemoveCatalog,
-                        onDeleteCatalogStreams = onDeleteCatalogStreams,
-                        onDownloadBook = onDownloadOpdsBook, onReadBook = onOpenBook,
-                        onStreamBook = onStreamOpdsBook, onClearError = onClearOpdsError,
-                        onDownloadLocationChange = onOpdsDownloadLocationChange,
-                        syncedFolders = state.syncedFolders,
-                        coverContent = opdsCoverContent, mobileLayout = true, modifier = catalogModifier,
-                    )
-                }
-            }
+    }
+    LaunchedEffect(selectedTab) {
+        if (!pagerState.isScrollInProgress && pagerState.currentPage != selectedTab.ordinal) {
+            pagerScope.launch { pagerState.animateScrollToPage(selectedTab.ordinal) }
         }
     }
+
+    SharedAndroidLibraryScaffold(
+        pagerState = pagerState,
+        scope = pagerScope,
+        tabTitles = tabTitles,
+        hasBookSelection = isBookContextualMode,
+        hasShelfSelection = isShelfContextualMode,
+        isSearchActive = state.isSearchActive,
+        searchQuery = state.searchQuery,
+        showAddFileFab = sortedSearchedBooks.isNotEmpty(),
+        strings = SharedAndroidLibraryScaffoldStrings(
+            title = readerString("library_title", "Library"),
+            searchPlaceholder = readerString("search_placeholder", "Search books"),
+            closeSearchDescription = readerString("content_desc_close_search", "Close search"),
+            clearQueryDescription = readerString("content_desc_clear_query", "Clear search"),
+            addFile = readerString("select_file", "Add file"),
+            newShelf = readerString("fab_new_shelf", "New shelf"),
+        ),
+        onSearchQueryChange = onSearchQueryChange,
+        onSearchActiveChange = onSearchActiveChange,
+        onSelectFile = onImportBooks,
+        onNewShelf = { showCreateShelf = true; onNewShelfClick() },
+        onTabAnimationStarted = { _, _ -> },
+        onTabAnimationFinished = { _, _ -> },
+        nowNanos = { currentTimestamp() },
+        bookContextualTopBar = {
+            SharedMobileContextualTopBar(
+                selectedCount = selectedIds.size,
+                onClose = onClearSelection,
+                onSelectAll = {
+                    onSelectAll(sortedSearchedBooks.mapTo(linkedSetOf()) { it.id })
+                },
+                onPin = { onToggleSelectedPins(selectedIds) },
+                onAddToShelf = { showAddToShelf = true },
+                onTag = { showTagDialog = true },
+                onShare = selectedIds.singleOrNull()?.let { id ->
+                    state.libraryBooks.firstOrNull { it.id == id }
+                        ?.takeIf { it.canExportOriginalFile() }
+                        ?.let { book -> { onShareBook(book) } }
+                },
+                onExportAnnotations = selectedIds.singleOrNull()?.let { id ->
+                    state.libraryBooks.firstOrNull { it.id == id }?.let { book ->
+                        { onExportAnnotations(book) }
+                    }
+                },
+                onInfo = selectedIds.singleOrNull()?.let { id ->
+                    state.libraryBooks.firstOrNull { it.id == id }?.let { book -> { infoBook = book } }
+                },
+                onSave = selectedIds.singleOrNull()?.let { id ->
+                    state.libraryBooks.firstOrNull { it.id == id }
+                        ?.takeIf { it.canExportOriginalFile() }
+                        ?.let { book -> { onSaveBook(book) } }
+                },
+                onDelete = { showDeleteBooks = true },
+            )
+        },
+        shelfContextualTopBar = {
+            SharedMobileContextualTopBar(
+                selectedCount = selectedShelves.size,
+                onClose = onClearSelection,
+                onSelectAll = null,
+                onPin = null,
+                onDelete = { showDeleteShelves = true },
+            )
+        },
+        normalTopBarActions = {
+            if (pagerState.currentPage == 0) {
+                IconButton(onClick = { showFilters = true; onFilterClick() }, modifier = Modifier.testTag("MobileLibraryFilter")) {
+                    Icon(
+                        Icons.Default.FilterList,
+                        contentDescription = readerString("content_desc_filter", "Filter"),
+                        tint = if (state.libraryFilters.isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                SharedMobileLibrarySortControl(
+                    sortOrder = state.sortOrder,
+                    labels = SortOrder.entries.associateWith { it.sharedMobileLabel() },
+                    selectedContentDescription = readerString("content_desc_selected", "Selected"),
+                    onSortOrderChange = onSortOrderChange,
+                    icon = {
+                        Icon(
+                            Icons.Default.Sort,
+                            contentDescription = readerString("content_desc_sort", "Sort"),
+                            modifier = Modifier.size(20.dp),
+                        )
+                    },
+                )
+                IconButton(onClick = { onSearchActiveChange(true) }, modifier = Modifier.testTag("MobileLibrarySearch")) {
+                    Icon(Icons.Default.Search, contentDescription = readerString("action_search", "Search"))
+                }
+            }
+            IconButton(onClick = onSettingsClick, modifier = Modifier.testTag("MobileLibrarySettings")) {
+                Icon(Icons.Default.Settings, contentDescription = readerString("settings", "Settings"))
+            }
+        },
+        filterChips = {
+            AnimatedVisibility(visible = state.libraryFilters.isActive && pagerState.currentPage == 0) {
+                SharedMobileLibraryFilterChips(
+                    filters = state.libraryFilters,
+                    fileTypesLabel = readerString(
+                        "filter_types",
+                        "Types: %1\$s",
+                        state.libraryFilters.fileTypes.joinToString { it.name },
+                    ),
+                    foldersLabel = readerString(
+                        "filter_folders",
+                        "Folders: %1\$s",
+                        state.libraryFilters.sourceFolders.size,
+                    ),
+                    statusLabel = readerString(
+                        "filter_status",
+                        "Status: %1\$s",
+                        state.libraryFilters.readStatus.sharedMobileLabel(),
+                    ),
+                    tagsLabel = readerString(
+                        "filter_tags",
+                        "Tags: %1\$s",
+                        state.libraryFilters.tagIds.size,
+                    ),
+                    clearContentDescription = readerString("action_clear", "Clear"),
+                    onRemoveFilters = onRemoveFilters,
+                )
+            }
+        },
+        pageContent = { page ->
+            when (SharedMobileLibraryTab.entries.getOrNull(page)) {
+                SharedMobileLibraryTab.BOOKS -> when (
+                    mobileLibraryBooksState(sortedSearchedBooks.size, state.searchQuery)
+                ) {
+                    SharedMobileLibraryBooksState.CONTENT -> SharedMobileBookList(
+                        books = sortedSearchedBooks,
+                        selectedBookIds = state.selectedBookIds,
+                        pinnedBookIds = state.pinnedLibraryBookIds,
+                        downloadingBookIds = state.downloadingBookIds,
+                        onOpenBook = { book ->
+                            when (mobileBookTapIntent(selectedIds)) {
+                                SharedMobileBookTapIntent.OPEN -> onOpenBook(book)
+                                SharedMobileBookTapIntent.TOGGLE_SELECTION -> onLongPressBook(book)
+                            }
+                        },
+                        onLongPressBook = onLongPressBook,
+                        onTogglePinned = onTogglePinned,
+                        empty = {},
+                        modifier = Modifier.fillMaxSize()
+                    )
+
+                    SharedMobileLibraryBooksState.SEARCH_NO_RESULTS -> Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            readerString(
+                                "no_results_found",
+                                "No results found for \"%1\$s\"",
+                                state.searchQuery.trim(),
+                            )
+                        )
+                    }
+
+                    SharedMobileLibraryBooksState.EMPTY_LIBRARY -> SharedMobileEmptyLibrary(
+                        title = readerString("library_empty_title", "Your library is empty"),
+                        message = readerString("library_empty_desc", "Select a PDF, EPUB, comic, or document to start reading."),
+                        actionLabel = readerString("select_file", "Select file"),
+                        onAction = onImportBooks,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
+
+                SharedMobileLibraryTab.SHELVES -> SharedMobileShelfList(
+                    shelves = topLevelMobileShelves(state.shelves),
+                    onOpenShelf = { shelf ->
+                        when (mobileShelfTapIntent(selectedShelves)) {
+                            SharedMobileShelfTapIntent.OPEN -> onOpenShelf(shelf)
+                            SharedMobileShelfTapIntent.TOGGLE_SELECTION -> onLongPressShelf(shelf)
+                        }
+                    },
+                    onLongPressShelf = { shelf ->
+                        if (
+                            shelf.type == ShelfType.MANUAL &&
+                            shelf.id != "unshelved" &&
+                            shouldSelectShelfOnLongPress(shelf.id, selectedShelves)
+                        ) {
+                            onLongPressShelf(shelf)
+                        }
+                    },
+                    selectedShelfIds = state.selectedShelfIds,
+                    modifier = Modifier.fillMaxSize()
+                )
+
+                SharedMobileLibraryTab.FOLDERS -> SharedMobileFolderSyncScreen(
+                    folders = state.syncedFolders,
+                    books = state.rawLibraryBooks,
+                    isLoading = state.isRefreshing,
+                    onAddFolder = onAddFolder,
+                    onScanAll = onScanFolders,
+                    onSyncMetadata = onSyncFolderMetadata,
+                    onLocalSyncChange = onFolderLocalSyncChange,
+                    onFileTypesChange = onFolderFileTypesChange,
+                    onRemoveFolder = onRemoveFolder,
+                    modifier = Modifier.fillMaxSize()
+                )
+
+                SharedMobileLibraryTab.CATALOGS -> {
+                    val catalogModifier = Modifier.fillMaxSize()
+                    if (opdsCoverContent == null) {
+                        SharedOpdsScreen(
+                            state = opdsState, localLibraryBooks = state.rawLibraryBooks,
+                            onOpenCatalog = onOpenCatalog, onOpenFeedUrl = onOpenFeedUrl,
+                            onNavigateBack = onOpdsNavigateBack, onSearch = onOpdsSearch,
+                            onLoadNextPage = onOpdsLoadNextPage, onAddCatalog = onAddCatalog,
+                            onUpdateCatalog = onUpdateCatalog, onRemoveCatalog = onRemoveCatalog,
+                            onDeleteCatalogStreams = onDeleteCatalogStreams,
+                            onDownloadBook = onDownloadOpdsBook, onReadBook = onOpenBook,
+                            onStreamBook = onStreamOpdsBook, onClearError = onClearOpdsError,
+                            onDownloadLocationChange = onOpdsDownloadLocationChange,
+                            syncedFolders = state.syncedFolders,
+                            mobileLayout = true, modifier = catalogModifier,
+                        )
+                    } else {
+                        SharedOpdsScreen(
+                            state = opdsState, localLibraryBooks = state.rawLibraryBooks,
+                            onOpenCatalog = onOpenCatalog, onOpenFeedUrl = onOpenFeedUrl,
+                            onNavigateBack = onOpdsNavigateBack, onSearch = onOpdsSearch,
+                            onLoadNextPage = onOpdsLoadNextPage, onAddCatalog = onAddCatalog,
+                            onUpdateCatalog = onUpdateCatalog, onRemoveCatalog = onRemoveCatalog,
+                            onDeleteCatalogStreams = onDeleteCatalogStreams,
+                            onDownloadBook = onDownloadOpdsBook, onReadBook = onOpenBook,
+                            onStreamBook = onStreamOpdsBook, onClearError = onClearOpdsError,
+                            onDownloadLocationChange = onOpdsDownloadLocationChange,
+                            syncedFolders = state.syncedFolders,
+                            coverContent = opdsCoverContent, mobileLayout = true, modifier = catalogModifier,
+                        )
+                    }
+                }
+
+                null -> Unit
+            }
+        },
+    )
 
     if (showFilters) {
         SharedMobileLibraryFilterDialog(
@@ -2016,7 +2027,6 @@ private fun SharedMobileShelfDetail(
                             }
                         },
                         onTogglePinned = { onTogglePinned(book) },
-                        onShowBookInfo = { infoBook = book },
                     )
                 }
             }

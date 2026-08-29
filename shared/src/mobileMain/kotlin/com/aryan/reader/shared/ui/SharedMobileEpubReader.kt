@@ -168,6 +168,7 @@ fun SharedMobileEpubReaderScreen(
     initialKeepScreenOn: Boolean = false,
     onKeepScreenOnPreferenceChange: (Boolean) -> Unit = {},
     onSystemUiAppearanceChange: (statusHidden: Boolean, navigationHidden: Boolean, lightContent: Boolean, backgroundArgb: Long) -> Unit = { _, _, _, _ -> },
+    onSystemUiRelease: () -> Unit = {},
     customReaderThemes: List<ReaderTheme> = emptyList(),
     onCustomReaderThemesChange: (List<ReaderTheme>) -> Unit = {},
     customFonts: List<CustomFontItem> = emptyList(),
@@ -527,7 +528,7 @@ fun SharedMobileEpubReaderScreen(
     DisposableEffect(book.id) {
         onDispose {
             onKeepScreenOnChange(false)
-            onSystemUiAppearanceChange(false, false, false, 0xFFFFFFFFL)
+            onSystemUiRelease()
         }
     }
     LaunchedEffect(autoScroll, autoScrollProfile.speed, autoScrollTemporarilyPaused, useNativeVerticalRenderer) {

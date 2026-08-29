@@ -101,7 +101,8 @@ fun MainScreen(
                         )
                         SharedMobileMainDestination.UNIFIED_LIBRARY -> UnifiedLibraryScreen(
                             viewModel = viewModel,
-                            navController = navController
+                            navController = navController,
+                            widthSizeClass = windowSizeClass.widthSizeClass
                         )
                     }
                 }

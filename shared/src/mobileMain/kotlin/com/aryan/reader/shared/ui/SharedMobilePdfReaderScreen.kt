@@ -70,6 +70,7 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Search
@@ -227,6 +228,7 @@ import com.aryan.reader.shared.pdf.sharedPdfKeyboardNavigationAction
 import com.aryan.reader.shared.pdf.loadSharedPdfCustomFontFamilies
 import com.aryan.reader.shared.reader.ReaderPageSpreadMode
 import com.aryan.reader.shared.reader.ReaderSettings
+import com.aryan.reader.shared.reader.mobilePdfSystemBarsVisibility
 import com.aryan.reader.shared.reader.captureCurrentPdfHistoryPage
 import com.aryan.reader.shared.reader.capturePdfJumpHistoryOrigin
 import com.aryan.reader.shared.SystemUiMode
@@ -264,6 +266,7 @@ data class SharedMobilePdfReflowUiState(
 fun SharedMobilePdfReaderScreen(
     book: BookItem,
     onBack: () -> Unit,
+    onOpenSplit: (() -> Unit)? = null,
     onNativePdfAction: (BookItem, SharedMobilePdfNativeAction, password: String?, SharedPdfExportSnapshot) -> Unit,
     pdfReflowUiState: SharedMobilePdfReflowUiState = SharedMobilePdfReflowUiState(),
     pdfTabsEnabled: Boolean = false,
@@ -328,11 +331,13 @@ fun SharedMobilePdfReaderScreen(
     onPdfAutoScrollBookChange: (BookItem) -> Unit = {},
     onKeepScreenOnChange: (Boolean) -> Unit = {},
     onSystemUiAppearanceChange: (hidden: Boolean, lightContent: Boolean, backgroundArgb: Long, edgeToEdge: Boolean) -> Unit = { _, _, _, _ -> },
+    onSystemUiRelease: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     SharedMobilePdfReaderHost(
         book = book,
         onBack = onBack,
+        onOpenSplit = onOpenSplit,
         onNativePdfAction = onNativePdfAction,
         pdfReflowUiState = pdfReflowUiState,
         pdfTabsEnabled = pdfTabsEnabled,
@@ -397,6 +402,7 @@ fun SharedMobilePdfReaderScreen(
         onPdfAutoScrollBookChange = onPdfAutoScrollBookChange,
         onKeepScreenOnChange = onKeepScreenOnChange,
         onSystemUiAppearanceChange = onSystemUiAppearanceChange,
+        onSystemUiRelease = onSystemUiRelease,
         modifier = modifier,
         hostConfig = SharedPdfReaderHostConfig.fullScreen(book.id),
     )
@@ -413,6 +419,7 @@ fun SharedMobilePdfReaderScreen(
 fun SharedMobilePdfReaderHost(
     book: BookItem,
     onBack: () -> Unit,
+    onOpenSplit: (() -> Unit)? = null,
     onNativePdfAction: (BookItem, SharedMobilePdfNativeAction, password: String?, SharedPdfExportSnapshot) -> Unit,
     pdfReflowUiState: SharedMobilePdfReflowUiState = SharedMobilePdfReflowUiState(),
     pdfTabsEnabled: Boolean = false,
@@ -478,6 +485,7 @@ fun SharedMobilePdfReaderHost(
     onPdfAutoScrollBookChange: (BookItem) -> Unit = {},
     onKeepScreenOnChange: (Boolean) -> Unit = {},
     onSystemUiAppearanceChange: (hidden: Boolean, lightContent: Boolean, backgroundArgb: Long, edgeToEdge: Boolean) -> Unit = { _, _, _, _ -> },
+    onSystemUiRelease: () -> Unit = {},
     modifier: Modifier = Modifier,
     hostConfig: SharedPdfReaderHostConfig = SharedPdfReaderHostConfig.fullScreen(book.id),
 ) {
@@ -828,6 +836,7 @@ fun SharedMobilePdfReaderHost(
             cloudTtsState.isLoading || cloudTtsState.isPlaying || cloudTtsState.isPaused
     val pdfSliderBottomPadding = pdfBottomChromePadding + if (isJumpHistoryVisible) 40.dp else 0.dp
     val latestSystemUiAppearanceChange = rememberUpdatedState(onSystemUiAppearanceChange)
+    val latestSystemUiRelease = rememberUpdatedState(onSystemUiRelease)
     LaunchedEffect(readerSessionKey, hideSystemUi, systemBarColor, edgeToEdgeSystemUi, ownsSystemUi) {
         if (ownsSystemUi) {
             latestSystemUiAppearanceChange.value(
@@ -841,7 +850,7 @@ fun SharedMobilePdfReaderHost(
     DisposableEffect(readerSessionKey) {
         onDispose {
             if (latestOwnsSystemUi.value) {
-                latestSystemUiAppearanceChange.value(false, false, 0xFFFFFFFFL, false)
+                latestSystemUiRelease.value()
             }
         }
     }
@@ -1409,6 +1418,7 @@ fun SharedMobilePdfReaderHost(
                             searchQuery = readerState.searchQuery,
                             isBookmarked = readerState.bookmarks.any { it.pageIndex == currentPdfIndex },
                             onBack = closeReader,
+                            onOpenSplit = onOpenSplit,
                             onOpenDrawer = { scope.launch { drawerState.open() } },
                             onSearch = { dispatch(SharedPdfReaderAction.SearchOpened) },
                             onSearchQueryChange = { query ->
@@ -1519,7 +1529,7 @@ fun SharedMobilePdfReaderHost(
                             topTools = pdfTopTools,
                             toolbarPreferences = sanitizedPdfToolbarPreferences,
                             onCustomizeToolbar = { if (ownsGlobalModal) showToolbarCustomization = true },
-                            applySystemBarInsets = systemUiMode == SharedMobilePdfSystemUiMode.SYNC_WITH_MENUS
+                            applySystemBarInsets = mobilePdfSystemBarsVisibility(systemUiMode.toReaderSystemUiMode(), showChrome).statusBarsVisible
                         )
                         if (
                             pdfTabsEnabled &&
@@ -1594,7 +1604,7 @@ fun SharedMobilePdfReaderHost(
                         showAllTextHighlights = showAllTextHighlights,
                         isAllTextHighlightLoading = isAllTextHighlightLoading,
                         onToggleHighlights = ::toggleAllTextHighlights,
-                        applySystemBarInsets = systemUiMode == SharedMobilePdfSystemUiMode.SYNC_WITH_MENUS,
+                        applySystemBarInsets = systemUiMode != SharedMobilePdfSystemUiMode.ALWAYS_HIDE,
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
@@ -2468,6 +2478,7 @@ private fun SharedMobilePdfReaderTopBar(
     searchQuery: String,
     isBookmarked: Boolean,
     onBack: () -> Unit,
+    onOpenSplit: (() -> Unit)? = null,
     onOpenDrawer: () -> Unit,
     onSearch: () -> Unit,
     onSearchQueryChange: (String) -> Unit,
@@ -2548,6 +2559,14 @@ private fun SharedMobilePdfReaderTopBar(
         ) {
             IconButton(onClick = onBack) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = readerString("tooltip_back", "Back"))
+            }
+            if (onOpenSplit != null) {
+                SharedMobilePdfTopToolButton(
+                    label = readerString("pdf_split_reader_open", "Open in split reader"),
+                    onClick = onOpenSplit,
+                ) {
+                    Icon(Icons.Default.OpenInNew, contentDescription = readerString("pdf_split_reader_open", "Open in split reader"))
+                }
             }
             if (isSearchActive) {
                 OutlinedTextField(

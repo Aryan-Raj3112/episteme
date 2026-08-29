@@ -789,7 +789,12 @@ class FolderSyncWorker(
                         }
                         scannedFiles += SharedFolderScannedFile(
                             name = name,
-                            path = child.toURI().toString(),
+                            // Canonical androidx file URI. File.toURI() emits a
+                            // different encoding (single slash + percent-escape)
+                            // than Uri.fromFile, which the reader uses when
+                            // opening a managed book; URI-keyed Room writes
+                            // (reading position on close) must match that form.
+                            path = android.net.Uri.fromFile(child).toString(),
                             sourceFolder = folderUriString,
                             relativePath = relativePath,
                             type = type,

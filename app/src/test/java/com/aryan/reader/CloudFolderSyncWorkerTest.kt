@@ -275,6 +275,45 @@ class CloudFolderSyncWorkerTest {
     }
 
     @Test
+    fun appManagedRootAndScanUseCanonicalReaderFileUris() {
+        val context = RuntimeEnvironment.getApplication()
+        val accountId = "canonical-account-${System.nanoTime()}"
+        val rootId = "canonical-root-${System.nanoTime()}"
+        val root = cloudFolderAppRootDirectory(context.filesDir, rootId)
+        val file = root.resolve("Book One.epub").apply {
+            parentFile?.mkdirs()
+            writeText("book")
+        }
+        try {
+            CloudFolderAppStoragePrefs.upsert(context, accountId, rootId, "Books")
+            val entry = CloudFolderAppStoragePrefs.load(context, accountId).single()
+
+            // The folder URI the index/Room uses must be the exact string the
+            // reader produces when opening a managed book. File.toURI() emits
+            // "file:/..." while Uri.fromFile emits "file:///..."; a mismatch
+            // silently drops every URI-keyed Room write (position on close).
+            val folderUri = entry.toSyncedFolder(context.filesDir).uriString
+            assertEquals(Uri.fromFile(root).toString(), folderUri)
+
+            // A scanned file URI from that folder must round-trip through the
+            // managed-file resolver used by the reader's open path.
+            val scannedPath = Uri.fromFile(file).toString()
+            assertEquals(
+                file.canonicalFile,
+                CloudFolderAppStoragePrefs.resolveManagedFile(
+                    context = context,
+                    accountId = accountId,
+                    sourceFolderUri = folderUri,
+                    fileUriString = scannedPath,
+                ),
+            )
+        } finally {
+            CloudFolderAppStoragePrefs.remove(context, accountId, rootId)
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun verifiedAppFileCanBeReusedOnlyWhenHashAndSizeMatch() = runBlocking {
         val file = RuntimeEnvironment.getApplication().filesDir
             .resolve("cloud-folder-match-${System.nanoTime()}.epub")
@@ -289,6 +328,123 @@ class CloudFolderSyncWorkerTest {
         } finally {
             file.delete()
         }
+    }
+
+    @Test
+    fun sidecarRewriteIsNotALocalChangeWhenHashAndSizeMatch() {
+        val baseNode = fileNode(
+            nodeId = "sidecar",
+            path = "EpistemeSyncData/.book_abc123def456.json",
+            hash = "sha256:${"a".repeat(64)}",
+            revision = 3L,
+            objectId = "drive-object",
+            modifiedAt = 10L,
+        )
+        val base = manifest(revision = 3L, nodes = listOf(baseNode))
+        // An atomic temp-then-rename rewrite keeps the bytes but churns the
+        // provider mtime and can re-guess the MIME type.
+        val scan = scan(
+            fileNode(
+                nodeId = "sidecar",
+                path = "EpistemeSyncData/.book_abc123def456.json",
+                hash = requireNotNull(baseNode.contentHash),
+                revision = 0L,
+                modifiedAt = 99L,
+            ).copy(mimeType = "application/json"),
+        )
+
+        val local = buildLocalManifest(base, scan, now = 20L, deviceId = "pixel")
+
+        assertEquals(3L, local.revision)
+        assertEquals(3L, local.nodes.single().revision)
+        assertEquals("drive-object", local.nodes.single().contentObjectId)
+    }
+
+    @Test
+    fun sidecarByteChangeIsStillALocalChange() {
+        val baseNode = fileNode(
+            nodeId = "sidecar",
+            path = "EpistemeSyncData/.book_abc123def456.json",
+            hash = "sha256:${"a".repeat(64)}",
+            revision = 3L,
+            objectId = "drive-object",
+            modifiedAt = 10L,
+        )
+        val base = manifest(revision = 3L, nodes = listOf(baseNode))
+        val scan = scan(
+            fileNode(
+                nodeId = "sidecar",
+                path = "EpistemeSyncData/.book_abc123def456.json",
+                hash = "sha256:${"f".repeat(64)}",
+                revision = 0L,
+                modifiedAt = 10L,
+            ),
+        )
+
+        val local = buildLocalManifest(base, scan, now = 20L, deviceId = "pixel")
+
+        assertEquals(4L, local.revision)
+        assertEquals(4L, local.nodes.single().revision)
+        assertNull(local.nodes.single().contentObjectId)
+    }
+
+    @Test
+    fun contentFileMimeOrMtimeDriftIsStillALocalChange() {
+        val baseNode = fileNode(
+            nodeId = "book",
+            path = "Series/Book.epub",
+            hash = "sha256:${"a".repeat(64)}",
+            revision = 3L,
+            objectId = "drive-object",
+            modifiedAt = 10L,
+        )
+        val base = manifest(revision = 3L, nodes = listOf(baseNode))
+        val scan = scan(
+            fileNode(
+                nodeId = "book",
+                path = "Series/Book.epub",
+                hash = requireNotNull(baseNode.contentHash),
+                revision = 0L,
+                modifiedAt = 10L,
+            ).copy(mimeType = "application/epub+zip-different"),
+        )
+
+        val local = buildLocalManifest(base, scan, now = 20L, deviceId = "pixel")
+
+        // Non-sidecar nodes still propagate provider metadata changes.
+        assertEquals(4L, local.revision)
+        assertEquals(4L, local.nodes.single().revision)
+        assertEquals("drive-object", local.nodes.single().contentObjectId)
+    }
+
+    @Test
+    fun syncEnqueueUsesAWorkIdentitySeparateFromPull() = runBlocking {
+        val context = RuntimeEnvironment.getApplication()
+        val workManager = mockk<WorkManager>(relaxed = true)
+        mockkObject(WorkManager.Companion)
+        every { WorkManager.getInstance(any()) } returns workManager
+        try {
+            CloudFolderSyncWorker.enqueue(
+                context = context,
+                accountId = "account-1",
+                rootId = "root-1",
+                direction = CloudFolderSyncDirection.NONE,
+                replace = false,
+            )
+
+            // A SYNC hand-off must use a different unique-work identity than
+            // the PULL it replaces, so it can neither cancel nor recurse.
+            verify {
+                workManager.enqueueUniqueWork(
+                    match<String> { name -> name.endsWith(":sync") },
+                    any<ExistingWorkPolicy>(),
+                    any<androidx.work.OneTimeWorkRequest>(),
+                )
+            }
+        } finally {
+            unmockkObject(WorkManager.Companion)
+        }
+        Unit
     }
 
     @Test

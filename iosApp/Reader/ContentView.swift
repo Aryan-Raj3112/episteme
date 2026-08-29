@@ -1016,7 +1016,7 @@ private struct ReaderComposeHost: UIViewControllerRepresentable {
             onRemoveFolder: onRemoveFolder
         )
         let hostController = ReaderStatusBarHostController(content: composeController)
-        bridge.setSystemUiHandler { statusHidden, navigationHidden, lightContent, backgroundArgb, edgeToEdge in
+        bridge.setSystemUiHandler { statusHidden, navigationHidden, lightContent, backgroundArgb in
             DispatchQueue.main.async {
                 isSystemUiHidden = statusHidden.boolValue
             }
@@ -1024,8 +1024,7 @@ private struct ReaderComposeHost: UIViewControllerRepresentable {
                 statusHidden: statusHidden.boolValue,
                 navigationHidden: navigationHidden.boolValue,
                 lightContent: lightContent.boolValue,
-                backgroundArgb: backgroundArgb.int64Value,
-                edgeToEdge: edgeToEdge.boolValue
+                backgroundArgb: backgroundArgb.int64Value
             )
         }
         bridge.setOrientationHandler { mode in
@@ -1043,15 +1042,8 @@ private final class ReaderStatusBarHostController: UIViewController {
     private var hidesStatusBar = false
     private var hidesHomeIndicator = false
     private var usesLightStatusBarContent = false
-    private var contentInterfaceStyle: UIUserInterfaceStyle = .unspecified
     private var readerOrientationMode: Int32 = 0
-    private let statusBarBackdrop = UIView()
-    private let navigationBarBackdrop = UIView()
     private var pencilInteraction: UIPencilInteraction?
-    private var contentTopToSafeAreaConstraint: NSLayoutConstraint?
-    private var contentBottomToSafeAreaConstraint: NSLayoutConstraint?
-    private var contentTopToEdgeConstraint: NSLayoutConstraint?
-    private var contentBottomToEdgeConstraint: NSLayoutConstraint?
 
     init(content: UIViewController) {
         self.contentController = content
@@ -1066,43 +1058,19 @@ private final class ReaderStatusBarHostController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         IosPencilShortcutKt.resetIosPencilEraserOverride()
-        contentInterfaceStyle = traitCollection.userInterfaceStyle
-        contentController.overrideUserInterfaceStyle = contentInterfaceStyle
         addChild(contentController)
         contentController.view.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(contentController.view)
-        let topToSafeArea = contentController.view.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor)
-        let bottomToSafeArea = contentController.view.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor)
-        let topToEdge = contentController.view.topAnchor.constraint(equalTo: view.topAnchor)
-        let bottomToEdge = contentController.view.bottomAnchor.constraint(equalTo: view.bottomAnchor)
-        contentTopToSafeAreaConstraint = topToSafeArea
-        contentBottomToSafeAreaConstraint = bottomToSafeArea
-        contentTopToEdgeConstraint = topToEdge
-        contentBottomToEdgeConstraint = bottomToEdge
+        // The Compose window is always edge-to-edge like Android's
+        // enableEdgeToEdge: screens paint their own backgrounds beneath the
+        // transparent system bars instead of the host insetting the content.
         NSLayoutConstraint.activate([
             contentController.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             contentController.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            topToSafeArea,
-            bottomToSafeArea
+            contentController.view.topAnchor.constraint(equalTo: view.topAnchor),
+            contentController.view.bottomAnchor.constraint(equalTo: view.bottomAnchor)
         ])
         contentController.didMove(toParent: self)
-
-        statusBarBackdrop.isUserInteractionEnabled = false
-        navigationBarBackdrop.isUserInteractionEnabled = false
-        statusBarBackdrop.translatesAutoresizingMaskIntoConstraints = false
-        navigationBarBackdrop.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(statusBarBackdrop)
-        view.addSubview(navigationBarBackdrop)
-        NSLayoutConstraint.activate([
-            statusBarBackdrop.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            statusBarBackdrop.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            statusBarBackdrop.topAnchor.constraint(equalTo: view.topAnchor),
-            statusBarBackdrop.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            navigationBarBackdrop.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            navigationBarBackdrop.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            navigationBarBackdrop.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            navigationBarBackdrop.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor)
-        ])
 
         // UIPencilInteraction is the public UIKit surface for Pencil side
         // gestures. Installing it on the stable host (instead of the Compose
@@ -1111,11 +1079,24 @@ private final class ReaderStatusBarHostController: UIViewController {
         interaction.delegate = self
         view.addInteraction(interaction)
         pencilInteraction = interaction
+
+        // SwiftUI resolves the scene's status bar appearance before this child
+        // is attached, so the first frame renders without any bar content until
+        // an explicit appearance update is requested.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            setNeedsStatusBarAppearanceUpdate()
+            setNeedsUpdateOfHomeIndicatorAutoHidden()
+        }
     }
 
     override var prefersStatusBarHidden: Bool { hidesStatusBar }
     override var prefersHomeIndicatorAutoHidden: Bool { hidesHomeIndicator }
     override var preferredStatusBarUpdateAnimation: UIStatusBarAnimation { .fade }
+
+    // Android parity: the shared bridge always publishes an explicit style —
+    // the app theme drives it on home/library and reader themes drive it while
+    // reading — so the bar icons always contrast with the surface beneath.
     override var preferredStatusBarStyle: UIStatusBarStyle {
         usesLightStatusBarContent ? .lightContent : .darkContent
     }
@@ -1139,22 +1120,17 @@ private final class ReaderStatusBarHostController: UIViewController {
         }
     }
 
-    private func updateSystemBarLayout(edgeToEdge: Bool) {
-        let safeAreaConstraints = [contentTopToSafeAreaConstraint, contentBottomToSafeAreaConstraint].compactMap { $0 }
-        let edgeConstraints = [contentTopToEdgeConstraint, contentBottomToEdgeConstraint].compactMap { $0 }
-        NSLayoutConstraint.deactivate(safeAreaConstraints + edgeConstraints)
-        NSLayoutConstraint.activate(edgeToEdge ? edgeConstraints : safeAreaConstraints)
-        view.setNeedsLayout()
-    }
-
-    func updateSystemUi(statusHidden: Bool, navigationHidden: Bool, lightContent: Bool, backgroundArgb: Int64, edgeToEdge: Bool) {
+    func updateSystemUi(
+        statusHidden: Bool,
+        navigationHidden: Bool,
+        lightContent: Bool,
+        backgroundArgb: Int64
+    ) {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             hidesStatusBar = statusHidden
             hidesHomeIndicator = navigationHidden
             usesLightStatusBarContent = lightContent
-            overrideUserInterfaceStyle = lightContent ? .dark : .light
-            contentController.overrideUserInterfaceStyle = contentInterfaceStyle
             let bits = UInt64(bitPattern: backgroundArgb)
             let red = CGFloat((bits >> 16) & 0xFF) / 255
             let green = CGFloat((bits >> 8) & 0xFF) / 255
@@ -1162,16 +1138,7 @@ private final class ReaderStatusBarHostController: UIViewController {
             let alpha = CGFloat((bits >> 24) & 0xFF) / 255
             let themeColor = UIColor(red: red, green: green, blue: blue, alpha: alpha)
             view.backgroundColor = themeColor
-            view.window?.backgroundColor = view.backgroundColor
-            statusBarBackdrop.backgroundColor = themeColor
-            navigationBarBackdrop.backgroundColor = themeColor
-            // In edge-to-edge modes these views would sit above Compose and leave a permanent
-            // surface-colored strip after Sync hides the reader chrome. The Compose toolbar
-            // itself paints beneath the system bars while visible; when it is hidden the PDF
-            // must be allowed to draw all the way to the screen edges.
-            statusBarBackdrop.isHidden = edgeToEdge
-            navigationBarBackdrop.isHidden = edgeToEdge
-            updateSystemBarLayout(edgeToEdge: edgeToEdge)
+            view.window?.backgroundColor = themeColor
             setNeedsStatusBarAppearanceUpdate()
             setNeedsUpdateOfHomeIndicatorAutoHidden()
         }

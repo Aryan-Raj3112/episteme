@@ -65,8 +65,14 @@ fun <T> SharedAndroidUnifiedLibraryHome(
     continueCard: @Composable (T, Modifier) -> Unit,
     bookCard: @Composable (T) -> Unit,
     bookListItem: @Composable (T) -> Unit,
+    widthClass: SharedAndroidHomeWidthClass = SharedAndroidHomeWidthClass.COMPACT,
     modifier: Modifier = Modifier,
 ) {
+    val gridCells = when (widthClass) {
+        SharedAndroidHomeWidthClass.COMPACT -> GridCells.Fixed(3)
+        SharedAndroidHomeWidthClass.MEDIUM -> GridCells.Adaptive(140.dp)
+        SharedAndroidHomeWidthClass.EXPANDED -> GridCells.Adaptive(160.dp)
+    }
     Column(modifier.fillMaxSize().padding(horizontal = 20.dp)) {
         continueReading?.let { continueCard(it, Modifier.padding(top = 16.dp)) }
         LazyRow(
@@ -110,7 +116,7 @@ fun <T> SharedAndroidUnifiedLibraryHome(
                     ) { items(books, key = itemKey) { bookListItem(it) } }
                 } else {
                     LazyVerticalGrid(
-                        columns = GridCells.Adaptive(104.dp),
+                        columns = gridCells,
                         modifier = Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(12.dp, 16.dp, 12.dp, 96.dp),
                         horizontalArrangement = Arrangement.spacedBy(16.dp),

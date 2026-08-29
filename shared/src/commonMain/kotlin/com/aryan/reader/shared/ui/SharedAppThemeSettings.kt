@@ -36,10 +36,13 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ColorScheme
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -302,6 +305,68 @@ fun SharedAppThemeSettingsDialog(
             }
         }
     )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SharedAppThemeBottomSheet(
+    appThemeMode: AppThemeMode,
+    appContrastOption: AppContrastOption,
+    appTextDimFactorLight: Float,
+    appTextDimFactorDark: Float,
+    appSeedColor: Color?,
+    customAppThemes: List<CustomAppTheme>,
+    onThemeModeChanged: (AppThemeMode) -> Unit,
+    onContrastOptionChanged: (AppContrastOption) -> Unit,
+    onTextDimFactorLightChanged: (Float) -> Unit,
+    onTextDimFactorDarkChanged: (Float) -> Unit,
+    onSeedColorChanged: (Color?) -> Unit,
+    onCustomThemeAdded: (CustomAppTheme) -> Unit,
+    onCustomThemeDeleted: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = MaterialTheme.colorScheme.surface,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 24.dp)
+                .verticalScroll(rememberScrollState())
+        ) {
+            Text(
+                text = readerString("app_theme_title", "App theme"),
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(bottom = 16.dp)
+            )
+            SharedAppThemeControls(
+                appThemeMode = appThemeMode,
+                appContrastOption = appContrastOption,
+                appTextDimFactorLight = appTextDimFactorLight,
+                appTextDimFactorDark = appTextDimFactorDark,
+                appSeedColor = appSeedColor,
+                customAppThemes = customAppThemes,
+                onThemeModeChanged = onThemeModeChanged,
+                onContrastOptionChanged = onContrastOptionChanged,
+                onTextDimFactorLightChanged = onTextDimFactorLightChanged,
+                onTextDimFactorDarkChanged = onTextDimFactorDarkChanged,
+                onSeedColorChanged = onSeedColorChanged,
+                onCustomThemeAdded = onCustomThemeAdded,
+                onCustomThemeDeleted = onCustomThemeDeleted,
+            )
+            Spacer(Modifier.height(16.dp))
+            TextButton(
+                onClick = onDismiss,
+                modifier = Modifier.align(Alignment.End)
+            ) {
+                Text(readerString("action_done", "Done"))
+            }
+        }
+    }
 }
 
 @Composable

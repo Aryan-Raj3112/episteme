@@ -21,7 +21,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -52,17 +51,11 @@ fun SharedAndroidUnifiedTopBar(
     searchPlaceholder: String = "",
     clearSearchDescription: String = "",
     onSearchQueryChange: (String) -> Unit = {},
-    autoFocusSearch: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val focusManager = LocalFocusManager.current
     val focusRequester = remember { FocusRequester() }
     var searchFocused by remember { mutableStateOf(false) }
-    LaunchedEffect(autoFocusSearch, searchQuery != null, showingShelf) {
-        if (autoFocusSearch && searchQuery != null && !showingShelf) {
-            focusRequester.requestFocus()
-        }
-    }
     Surface(shadowElevation = 1.dp, modifier = modifier.fillMaxWidth()) {
         Row(
             Modifier.fillMaxWidth().statusBarsPadding().height(64.dp).padding(horizontal = 8.dp),

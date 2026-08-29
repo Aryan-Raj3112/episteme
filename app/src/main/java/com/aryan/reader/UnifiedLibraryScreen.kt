@@ -83,6 +83,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberDrawerState
+import androidx.compose.material3.windowsizeclass.WindowWidthSizeClass
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -152,6 +153,7 @@ internal fun shouldAutoStartTtsAudiobook(
 fun UnifiedLibraryScreen(
     viewModel: MainViewModel,
     navController: NavHostController,
+    widthSizeClass: WindowWidthSizeClass,
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -563,6 +565,7 @@ fun UnifiedLibraryScreen(
                     onControlsClick = { showLibraryControls = true },
                     onAdvancedFiltersClick = { showAdvancedFilters = true },
                     onListViewChange = viewModel::setUnifiedLibraryListView,
+                    widthSizeClass = widthSizeClass,
                     onBookClick = { item ->
                         if (item.type == FileType.AUDIOBOOK) {
                             importedAudiobooks.firstOrNull { it.bookId == item.bookId }?.let { audiobookPlayerItem = it.toUiItem() }
@@ -1062,6 +1065,7 @@ private fun UnifiedLibraryHome(
     onListViewChange: (Boolean) -> Unit,
     onBookClick: (RecentFileItem) -> Unit,
     onBookLongClick: (RecentFileItem) -> Unit,
+    widthSizeClass: WindowWidthSizeClass,
 ) {
     com.aryan.reader.shared.ui.SharedAndroidUnifiedLibraryHome(
         books = books,
@@ -1104,6 +1108,11 @@ private fun UnifiedLibraryHome(
                 isDownloading = item.bookId in downloadingBookIds,
                 usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName,
             )
+        },
+        widthClass = when (widthSizeClass) {
+            WindowWidthSizeClass.Compact -> com.aryan.reader.shared.ui.SharedAndroidHomeWidthClass.COMPACT
+            WindowWidthSizeClass.Medium -> com.aryan.reader.shared.ui.SharedAndroidHomeWidthClass.MEDIUM
+            else -> com.aryan.reader.shared.ui.SharedAndroidHomeWidthClass.EXPANDED
         },
         modifier = modifier,
     )

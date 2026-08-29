@@ -131,6 +131,7 @@ data class ReaderSettings(
 val DefaultPdfReaderSettings: ReaderSettings = ReaderSettings(
     themeId = "no_theme",
     tapToNavigateEnabled = false,
+    systemUiMode = SystemUiMode.SYNC,
 )
 
 data class ReaderLayoutSignature(
