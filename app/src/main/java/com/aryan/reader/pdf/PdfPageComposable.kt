@@ -6,6 +6,7 @@ package com.aryan.reader.pdf
 
 import com.aryan.reader.shared.ReaderTheme
 import com.aryan.reader.shared.pdf.PDF_MAX_ZOOM_SCALE
+import com.aryan.reader.shared.pdf.pdfDoubleTapTargetScale
 import com.aryan.reader.shared.pdf.pdfZoomRenderScale
 
 import android.graphics.Bitmap
@@ -2841,7 +2842,7 @@ internal fun PdfPageComposable(
                         if (actualBitmapWidthPx == 0) return@quickDoubleTap
                         coroutineScope.launch {
                             val startScale = latestScale
-                            val targetScale = if (startScale > 1.1f) 1f else 2.5f
+                            val targetScale = pdfDoubleTapTargetScale(startScale)
 
                             val startOffset = latestOffset
                             val viewportSize = Size(size.width.toFloat(), size.height.toFloat())

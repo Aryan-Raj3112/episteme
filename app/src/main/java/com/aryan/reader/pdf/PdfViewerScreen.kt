@@ -293,6 +293,7 @@ import com.aryan.reader.shared.pdf.RealisticPdfPageTurnAnimationSpec
 import com.aryan.reader.shared.pdf.pdfPaginatedPagePaperColor
 import com.aryan.reader.shared.pdf.shouldPlayRealisticPdfPageTurn
 import com.aryan.reader.shared.pdf.PDF_MAX_ZOOM_SCALE
+import com.aryan.reader.shared.pdf.pdfDoubleTapTargetScale
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationSessionAction
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationSessionState
 import com.aryan.reader.shared.pdf.SharedPdfJumpHistory
@@ -9820,7 +9821,7 @@ private fun PdfViewerPaginationPage(
                                     }
                                     val startScale = latestSpreadScale.value
                                     val startOffset = latestSpreadOffset.value
-                                    val targetScale = if (startScale > 1.1f) 1f else 2.5f
+                                    val targetScale = pdfDoubleTapTargetScale(startScale)
                                     Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
                                         "spread.quickDoubleTap offset=$tapOffset startScale=$startScale " +
                                             "targetScale=$targetScale startOffset=$startOffset"
