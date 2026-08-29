@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -2402,6 +2403,7 @@ private fun SharedMobilePdfReaderTabStrip(
     LazyRow(
         modifier = Modifier.fillMaxWidth().height(48.dp)
             .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
+        contentPadding = WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal).asPaddingValues(),
         verticalAlignment = Alignment.Bottom,
     ) {
         items(tabs, key = { "pdf_reader_tab_${it.id}" }) { tab ->
@@ -2539,6 +2541,7 @@ private fun SharedMobilePdfReaderTopBar(
                         Modifier
                     }
                 )
+                .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
                 .height(64.dp)
                 .padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically
@@ -3320,13 +3323,15 @@ private fun SharedMobilePdfReaderBottomBar(
         tonalElevation = 4.dp
     ) {
         Column(
-            modifier = Modifier.then(
-                if (applySystemBarInsets) {
-                    Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom))
-                } else {
-                    Modifier
-                }
-            ),
+            modifier = Modifier
+                .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
+                .then(
+                    if (applySystemBarInsets) {
+                        Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom))
+                    } else {
+                        Modifier
+                    }
+                ),
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             Row(

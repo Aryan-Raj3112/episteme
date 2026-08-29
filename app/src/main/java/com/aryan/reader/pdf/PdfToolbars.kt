@@ -641,6 +641,7 @@ internal fun PdfTopBar(
                 if (isTabsEnabled && openTabs.isNotEmpty() && effectiveFileType == FileType.PDF) {
                     LazyRow(
                         modifier = Modifier.fillMaxWidth().height(PdfTabStripHeight).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
+                        contentPadding = WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal).asPaddingValues(),
                         verticalAlignment = Alignment.Bottom
                     ) {
                         items(openTabs, key = { it.bookId }) { tab ->
