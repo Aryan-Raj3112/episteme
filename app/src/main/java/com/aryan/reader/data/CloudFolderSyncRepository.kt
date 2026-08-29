@@ -439,6 +439,35 @@ class CloudFolderSyncRepository(
     }
 
     /**
+     * Detach a bound folder from this device while keeping the remote root
+     * and the committed manifest intact, so the folder can later be
+     * re-discovered and offered again through the incoming prompt.
+     */
+    suspend fun removeBinding(rootId: String, deviceId: String = this.deviceId) {
+        val normalizedRootId = rootId.trim().takeIf { it.isNotBlank() } ?: return
+        dao.deleteBinding(accountId, normalizedRootId, deviceId.trim())
+        privateDao.deleteBindingUri(accountId, normalizedRootId, deviceId.trim())
+    }
+
+    /** Clear transfer bookkeeping for one root without touching the root/manifest. */
+    suspend fun clearTransferState(rootId: String, deviceId: String = this.deviceId) {
+        val normalizedRootId = rootId.trim().takeIf { it.isNotBlank() } ?: return
+        dao.clearOutbox(accountId, normalizedRootId)
+        dao.deleteMetadataOutboxForRoot(accountId, normalizedRootId)
+        dao.clearProgress(accountId, normalizedRootId)
+        dao.clearConflicts(accountId, normalizedRootId)
+        dao.clearPendingMaterialization(accountId, normalizedRootId)
+        dao.deleteLocalInventory(accountId, normalizedRootId, deviceId.trim())
+    }
+
+    /** Remove every durable record for one root, including root/manifest/bindings. */
+    suspend fun clearRootState(rootId: String, deviceId: String = this.deviceId) {
+        val normalizedRootId = rootId.trim().takeIf { it.isNotBlank() } ?: return
+        privateDao.deleteBindingUri(accountId, normalizedRootId, deviceId.trim())
+        dao.clearRootState(accountId, normalizedRootId)
+    }
+
+    /**
      * Record a committed local sidecar write.  One row is kept per
      * account/root/book and generations are monotonic, so rapid reader saves
      * collapse into one upload while a transfer in flight cannot consume a

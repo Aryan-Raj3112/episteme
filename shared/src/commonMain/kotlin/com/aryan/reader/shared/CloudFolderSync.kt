@@ -359,6 +359,16 @@ data class CloudFolderManifest(
 
     fun activeDirectories(): List<CloudFolderNode> = activeNodes().filter { it.isDirectory }
 
+    /**
+     * Active file nodes whose immutable cloud object pointer is missing.
+     * Publishing such nodes breaks every other device: without an object ID
+     * the bytes can be neither downloaded nor authenticated. Consumers may
+     * still satisfy them from already-verified local bytes, but the pointer
+     * must be treated as a publish-blocking defect, never a normal state.
+     */
+    fun filesMissingContentObjectIds(): List<CloudFolderNode> = activeFiles()
+        .filter { it.contentObjectId?.trim()?.takeIf(String::isNotBlank) == null }
+
     fun statistics(scannedAt: Long = generatedAt): CloudFolderRootStats {
         val active = activeNodes()
         return CloudFolderRootStats(
@@ -955,6 +965,30 @@ fun CloudFolderConflictType.effectiveResolution(
     // require an explicit KEEP_REMOTE choice to replace it.
     this == CloudFolderConflictType.SIDECAR_CHANGED_BOTH -> CloudFolderConflictResolution.KEEP_LOCAL
     else -> resolution
+}
+
+/**
+ * The resolution applied automatically when no explicit user decision has
+ * been recorded. Sync must never stall waiting on a manual choice, so every
+ * decidable conflict type gets a deterministic fallback. Content conflicts
+ * default to KEEP_BOTH (lossless: the local bytes are retained as a conflict
+ * copy), while sidecar/delete/root conflicts keep the local device's view —
+ * there is no safe generic copy for those, so the predictable choice wins.
+ */
+fun CloudFolderConflictType.defaultResolution(): CloudFolderConflictResolution = when (this) {
+    CloudFolderConflictType.DELETE_VS_UPDATE -> CloudFolderConflictResolution.KEEP_REMOTE
+    CloudFolderConflictType.CONTENT_CHANGED_BOTH,
+    CloudFolderConflictType.METADATA_CHANGED_BOTH,
+    CloudFolderConflictType.MOVE_CHANGED_BOTH,
+    CloudFolderConflictType.TYPE_CHANGED,
+    CloudFolderConflictType.PATH_COLLISION -> CloudFolderConflictResolution.KEEP_BOTH
+    CloudFolderConflictType.UPDATE_VS_DELETE,
+    CloudFolderConflictType.SIDECAR_CHANGED_BOTH,
+    CloudFolderConflictType.ROOT_METADATA_CHANGED_BOTH,
+    CloudFolderConflictType.ROOT_MISMATCH,
+    CloudFolderConflictType.INVALID_MANIFEST,
+    CloudFolderConflictType.INVALID_PATH,
+    CloudFolderConflictType.UNAVAILABLE_STATE -> CloudFolderConflictResolution.KEEP_LOCAL
 }
 
 /** Whether this conflict can actually retain two active byte streams. */

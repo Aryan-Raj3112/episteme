@@ -40,6 +40,7 @@ import com.aryan.reader.shared.CloudFolderSyncProgress
 import com.aryan.reader.shared.CloudFolderConflictResolution
 import com.aryan.reader.shared.CloudFolderTombstone
 import com.aryan.reader.shared.canonicalCloudFolderContentHash
+import com.aryan.reader.shared.defaultResolution
 import com.aryan.reader.shared.isCloudFolderSha256
 import com.aryan.reader.shared.normalizeCloudFolderRelativePath
 import com.aryan.reader.shared.cloudFolderPathKey
@@ -205,6 +206,9 @@ class CloudFolderSyncWorker(
                 if (direction == Direction.GC) {
                     activeStage = "garbage_collection"
                     runGarbageCollection(accessToken)
+                } else if (direction == Direction.DELETE) {
+                    activeStage = "delete_root"
+                    deleteRootFromCloud(accessToken, requestedRootId)
                 } else if (requestedRootId.isNotBlank()) {
                     if (direction == Direction.PULL) {
                         activeStage = "pull_root"
@@ -286,16 +290,21 @@ class CloudFolderSyncWorker(
                 if (requestedRootId.isNotBlank()) {
                     markRootFailure(requestedRootId, error)
                 }
+                // Stale Drive tokens are transient: re-run with a fresh token
+                // instead of failing permanently. Everything else in the
+                // deterministic set stops without user action.
+                val terminal = cloudFolderFailureIsDeterministic(error) &&
+                    !cloudFolderAuthFailureIsTransient(error)
                 cloudFolderLogError(
                     event = "worker_end",
                     error = error,
                     details = "${traceFields(requestedRootId)} " +
-                        "result=${if (cloudFolderFailureIsDeterministic(error)) "failure" else "retry"} " +
+                        "result=${if (terminal) "failure" else "retry"} " +
                         "direction=${direction.name} metadataOnly=$metadataOnly stage=$activeStage " +
                         "category=${cloudFolderStageCategory(activeStage, metadataOnly)} " +
                         "durationMs=${(System.currentTimeMillis() - startedAt).coerceAtLeast(0L)}",
                 )
-                if (cloudFolderFailureIsDeterministic(error)) Result.failure() else Result.retry()
+                if (terminal) Result.failure() else Result.retry()
             }
         }
     }
@@ -468,6 +477,78 @@ class CloudFolderSyncWorker(
             ensureAccountStillActive()
             driveRepository.deleteCloudFolderObject(accessToken, candidate.objectRef)
         }
+    }
+
+    /**
+     * Remove a synced folder from Drive and from this device. A tombstone
+     * revision (root deleted, no nodes) is published first so every other
+     * device observes the deletion idempotently; the orphaned content objects
+     * become unreferenced and are reclaimed by the normal garbage-collection
+     * pass. Local state is then wiped regardless of the remote outcome so the
+     * folder is always gone from this device.
+     */
+    private suspend fun deleteRootFromCloud(accessToken: String, rootId: String) {
+        val safeRoot = cloudFolderSafeId(rootId)
+        cloudFolderLogI(
+            "event=delete_root_start ${traceFields(rootId)} root=$safeRoot " +
+                "direction=DELETE",
+        )
+        val binding = repository.getBinding(rootId)
+        val knownRootIds = repository.getRoots().map { it.rootId }
+        // A delete must complete even when the remote state is already
+        // broken (e.g. the immutable manifest is gone but its Firestore
+        // pointer survived, making readRemoteManifest throw). Fall back to
+        // deleting the pointer so peers observe a clean "no such folder".
+        val remoteResult = runCatching { readRemoteManifest(accessToken, rootId) }.getOrNull()
+        if (remoteResult is CloudFolderManifestReadResult.Found) {
+            val remote = remoteResult.manifest.normalized()
+            val tombstone = remote.copy(
+                root = remote.root.copy(isDeleted = true),
+                revision = remote.revision + 1L,
+                nodes = emptyList(),
+                tombstones = emptyList(),
+            ).withUpdatedRootStats(System.currentTimeMillis())
+            publishManifestWithCas(
+                accessToken = accessToken,
+                rootId = rootId,
+                initialRemote = remoteResult,
+                manifest = tombstone,
+                persistLocalManifest = false,
+            )
+            cloudFolderLogD(
+                "event=delete_root_tombstone ${traceFields(rootId)} root=$safeRoot " +
+                    "revision=${tombstone.revision} result=published",
+            )
+        } else {
+            runCatching {
+                firestoreRepository.deleteCloudFolderManifestHead(repository.accountId, rootId)
+            }.onSuccess { deleted ->
+                cloudFolderLogD(
+                    "event=delete_root_head ${traceFields(rootId)} root=$safeRoot " +
+                        "result=${if (deleted) "deleted" else "not_found"}",
+                )
+            }.onFailure { error ->
+                cloudFolderLogError(
+                    event = "delete_root_head",
+                    error = error,
+                    details = "${traceFields(rootId)} root=$safeRoot result=failure",
+                )
+            }
+        }
+        ensureAccountStillActive()
+        if (binding?.materializationMode == CloudFolderMaterializationMode.KEEP_OFFLINE) {
+            removeCloudFolderAppStorageTree(applicationContext.filesDir, rootId)
+            CloudFolderAppStoragePrefs.remove(applicationContext, repository.accountId, rootId)
+        }
+        repository.clearRootState(rootId)
+        val selection = CloudFolderSyncPrefs.load(applicationContext, repository.accountId)
+            .withoutRoot(rootId, knownRootIds)
+        CloudFolderSyncPrefs.save(applicationContext, repository.accountId, selection)
+        CloudFolderSyncPrefs.forgetIncomingPrompt(applicationContext, repository.accountId, rootId)
+        CloudFolderSyncEvents.notifyStateChanged()
+        cloudFolderLogI(
+            "event=delete_root_end ${traceFields(rootId)} root=$safeRoot result=success",
+        )
     }
 
     /**
@@ -695,12 +776,22 @@ class CloudFolderSyncWorker(
         remoteResult: CloudFolderManifestReadResult,
     ): Boolean {
         val pending = repository.getPendingMaterialization(rootId) ?: return false
+        cloudFolderLogD(
+            "event=resume_materialization_start ${traceFields(rootId)} " +
+                "root=${cloudFolderSafeId(rootId)} mode=${binding.materializationMode.name} " +
+                "pendingRevision=${pending.revision} " +
+                "missingObjectIds=${pending.filesMissingContentObjectIds().size}",
+        )
         when (binding.materializationMode) {
             CloudFolderMaterializationMode.CLOUD_ONLY -> {
                 // The user explicitly removed local materialization while a
                 // previous transfer was pending. No local bytes are required
                 // in this mode, so discard only the pending local target.
                 repository.clearPendingMaterialization(rootId)
+                cloudFolderLogD(
+                    "event=resume_materialization_end ${traceFields(rootId)} " +
+                        "root=${cloudFolderSafeId(rootId)} result=cleared mode=CLOUD_ONLY",
+                )
                 return false
             }
             else -> {
@@ -711,7 +802,15 @@ class CloudFolderSyncWorker(
                     remote.revision >= pending.revision &&
                     (remote.revision != pending.revision ||
                         sha256CloudFolderManifest(remote) == sha256CloudFolderManifest(pending))
-                if (!canResume) return false
+                if (!canResume) {
+                    cloudFolderLogD(
+                        "event=resume_materialization_end ${traceFields(rootId)} " +
+                            "root=${cloudFolderSafeId(rootId)} result=skipped " +
+                            "remoteRevision=${remote?.revision ?: "none"} " +
+                            "pendingRevision=${pending.revision}",
+                    )
+                    return false
+                }
             }
         }
         when (binding.materializationMode) {
@@ -751,6 +850,11 @@ class CloudFolderSyncWorker(
             )
         )
         CloudFolderSyncEvents.notifyStateChanged()
+        cloudFolderLogI(
+            "event=resume_materialization_end ${traceFields(rootId)} " +
+                "root=${cloudFolderSafeId(rootId)} result=success " +
+                "mode=${binding.materializationMode.name} revision=${pending.revision}",
+        )
         return true
     }
 
@@ -769,6 +873,7 @@ class CloudFolderSyncWorker(
                 binding = existingBinding,
                 hasPendingMaterialization = repository.getPendingMaterialization(rootId) != null,
             )
+            logManifestObjectIntegrity(rootId, remoteManifest, source = "pull")
         }
         if (existingBinding != null &&
             resumePendingMaterialization(accessToken, rootId, existingBinding, remoteResult)
@@ -891,6 +996,27 @@ class CloudFolderSyncWorker(
                 "materializationMode=${binding?.materializationMode?.name ?: "DISCOVERY"} " +
                 "pendingMaterialization=$hasPendingMaterialization " +
                 "selectedPath=$selectedPath",
+        )
+    }
+
+    /**
+     * Surface a poisoned manifest before anything depends on it. A published
+     * manifest should never reference active files without an immutable
+     * object pointer; when one is seen, log the affected nodes immediately
+     * so the publishing revision can be identified from any device's logs.
+     */
+    private fun logManifestObjectIntegrity(
+        rootId: String,
+        manifest: CloudFolderManifest,
+        source: String,
+    ) {
+        val missing = manifest.filesMissingContentObjectIds()
+        if (missing.isEmpty()) return
+        cloudFolderLogW(
+            "event=manifest_object_integrity ${traceFields(rootId)} " +
+                "root=${cloudFolderSafeId(rootId)} source=$source revision=${manifest.revision} " +
+                "files=${manifest.activeFiles().size} missingObjectIds=${missing.size} " +
+                "nodes=[${missing.take(5).joinToString(",") { cloudFolderSafeId(it.nodeId) }}]",
         )
     }
 
@@ -1051,6 +1177,9 @@ class CloudFolderSyncWorker(
             }
             throw error
         }
+        if (remoteResult is CloudFolderManifestReadResult.Found) {
+            logManifestObjectIntegrity(rootId, remoteResult.manifest, source = "sync")
+        }
         activeStage = "resume_materialization"
         val resumedPendingMaterialization = try {
             resumePendingMaterialization(accessToken, rootId, binding, remoteResult)
@@ -1062,8 +1191,19 @@ class CloudFolderSyncWorker(
                     category = "metadata_materialization_recovery",
                     error = error,
                 )
+                // A failed content materialization must not block the
+                // sidecar pipeline. Reading positions and annotations ride
+                // on the committed manifest base, so defer the interrupted
+                // content target to the next full sync instead of failing
+                // this metadata-only pass.
+                cloudFolderLogW(
+                    "event=metadata_resume_deferred ${traceFields(rootId)} " +
+                        "root=$safeRoot result=deferred reason=${cloudFolderSafeErrorReason(error)}",
+                )
+                false
+            } else {
+                throw error
             }
-            throw error
         }
         if (resumedPendingMaterialization && !metadataOnly) {
             val progress = repository.getProgress(rootId)
@@ -1298,7 +1438,17 @@ class CloudFolderSyncWorker(
                 )
             }
             val records = repository.reconcileConflicts(plan, now)
-            val resolutions = records.associate { it.conflictId to it.resolution }
+            // Never stall sync on a manual decision. Fill any DEFER entry
+            // with the type's deterministic default so the plan resolves
+            // without asking the user; only fundamentally undecidable types
+            // (invalid manifest/path/mismatch) keep the conflict visible.
+            val resolutions = plan.conflicts.associate { conflict ->
+                val stored = records.firstOrNull { it.conflictId == conflict.conflictId }?.resolution
+                conflict.conflictId to (
+                    stored?.takeIf { it != CloudFolderConflictResolution.DEFER }
+                        ?: conflict.type.defaultResolution()
+                    )
+            }
             plan = resolveCloudFolderSync(
                 base = base,
                 local = local,
@@ -1310,13 +1460,15 @@ class CloudFolderSyncWorker(
             )
             cloudFolderLogD(
                 "event=conflict_resolution_apply ${traceFields(rootId)} " +
-                    "requested=${resolutions.size} remaining=${plan.conflicts.size} " +
+                    "requested=${resolutions.size} " +
+                    "autoResolved=${resolutions.values.count { it != CloudFolderConflictResolution.DEFER }} " +
+                    "remaining=${plan.conflicts.size} " +
                     "result=${if (plan.conflicts.isEmpty()) "resolved" else "deferred"}",
             )
             if (plan.conflicts.isNotEmpty()) {
-                // Conflicts are durable user-action state, not a transient
-                // network failure. Leave the last committed manifest
-                // untouched until every decision is explicit.
+                // Only fundamentally undecidable conflicts reach this point
+                // (invalid manifest/path, root mismatch). Leave the last
+                // committed manifest untouched until the data is repaired.
                 repository.reconcileConflicts(plan, now)
                 val message = "Cloud-folder sync needs conflict resolution (${plan.conflicts.size} conflict(s))"
                 repository.markBindingError(rootId, message)
@@ -1334,6 +1486,9 @@ class CloudFolderSyncWorker(
                 )
                 return
             }
+            // Every decidable conflict was auto-resolved; the durable DEFER
+            // records are stale and must not resurface in the settings UI.
+            repository.clearConflicts(rootId)
         } else {
             // Remove stale records after a later scan proves that the inputs
             // no longer conflict (for example after an external repair).
@@ -1427,11 +1582,17 @@ class CloudFolderSyncWorker(
             completedBytes = uploadProgress?.completedBytes ?: totalBytes,
             totalBytes = totalBytes,
         )
-        val published = plan.mergedManifest.copy(
+        val publishedWithOutboxIds = plan.mergedManifest.copy(
             nodes = plan.mergedManifest.nodes.map { node ->
                 node.copy(contentObjectId = uploadedObjectIds[node.nodeId] ?: node.contentObjectId)
             },
         ).withUpdatedRootStats(now)
+        val (published, repairedObjectIds) = repairMissingContentObjectIds(
+            accessToken = accessToken,
+            rootId = rootId,
+            manifest = publishedWithOutboxIds,
+            scan = scan,
+        )
 
         // The manifest is the commit record. It is deliberately uploaded last;
         // orphaned Drive objects are harmless and can be garbage-collected by a
@@ -1440,13 +1601,22 @@ class CloudFolderSyncWorker(
         val shouldMaterialize = direction == Direction.SYNC && plan.operations.any {
             it.direction == CloudFolderSyncDirection.CLOUD_TO_LOCAL
         }
-        val shouldPublish = remoteMissing || localOperations.isNotEmpty() ||
+        // A repair is a real content-identity change: other devices cannot
+        // download the affected bytes until the restored pointers publish.
+        val shouldPublish = repairedObjectIds > 0 ||
+            remoteMissing ||
+            localOperations.isNotEmpty() ||
             !cloudFolderRootsEquivalentForPublish(published.root, remote.root)
         val targetManifest = if (shouldPublish) published else remote
         if (shouldPublish) {
             activeStage = "manifest_publish"
+            // A long outbox/repair run can outlive the token fetched at
+            // worker start. Refresh before the CAS read+upload so publish
+            // never fails on a stale token at the final commit step.
+            val publishToken = runCatching { repositoryAccessToken() }.getOrNull()
+                ?: accessToken
             publishManifestWithCas(
-                accessToken = accessToken,
+                accessToken = publishToken,
                 rootId = rootId,
                 initialRemote = remoteResult,
                 manifest = published,
@@ -1760,6 +1930,112 @@ class CloudFolderSyncWorker(
         return uploadedObjectIds
     }
 
+    /**
+     * Repair manifest nodes whose immutable object pointer was lost upstream
+     * (older builds stripped it on metadata-only changes, and a source that
+     * disappeared mid-sync used to publish without it). When this device
+     * still holds bytes that match the node's authenticated hash and size,
+     * re-upload them under the node identity and restore the pointer before
+     * publishing. The repair is all-or-nothing: a single failed upload aborts
+     * the whole pass with a zero repair count so the caller never publishes a
+     * half-healed manifest. Nodes that cannot be repaired locally (no matching
+     * bytes) are logged and left for the device that owns them.
+     */
+    private suspend fun repairMissingContentObjectIds(
+        accessToken: String,
+        rootId: String,
+        manifest: CloudFolderManifest,
+        scan: CloudFolderSafScanResult,
+    ): Pair<CloudFolderManifest, Int> {
+        val missing = manifest.filesMissingContentObjectIds()
+        if (missing.isEmpty()) return manifest to 0
+        val sourceByNodeId = scan.files.associateBy { it.node.nodeId }
+        val repaired = linkedMapOf<String, String>()
+        for (node in missing) {
+            val source = sourceByNodeId[node.nodeId] ?: continue
+            // The scan just hashed this source; only identical bytes may be
+            // uploaded under the manifest node's authenticated identity.
+            val bytesMatch = source.node.contentHash == node.contentHash &&
+                source.node.sizeBytes == node.sizeBytes
+            if (!bytesMatch) continue
+            try {
+                val driveFile = uploadSafEntryWithTokenRefresh(
+                    accessToken = accessToken,
+                    rootId = rootId,
+                    source = source,
+                    node = node,
+                    attempt = 0,
+                )
+                repaired[node.nodeId] = driveFile.id
+                cloudFolderLogW(
+                    "event=manifest_object_repair ${traceFields(rootId)} " +
+                        "root=${cloudFolderSafeId(rootId)} node=${cloudFolderSafeId(node.nodeId)} " +
+                        "result=uploaded bytes=${node.sizeBytes}",
+                )
+            } catch (error: kotlinx.coroutines.CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                // A single failure (typically a token expiring mid-sequence)
+                // aborts the pass without applying the partial set. A
+                // half-healed manifest is worse than the status quo: retry
+                // with a fresh token instead of publishing it.
+                cloudFolderLogError(
+                    event = "manifest_object_repair",
+                    error = error,
+                    details = "${traceFields(rootId)} root=${cloudFolderSafeId(rootId)} " +
+                        "node=${cloudFolderSafeId(node.nodeId)} result=aborted " +
+                        "repaired=${repaired.size} remaining=${missing.size - repaired.size}",
+                )
+                return manifest to 0
+            }
+        }
+        val repairedManifest = if (repaired.isEmpty()) {
+            manifest
+        } else {
+            manifest.copy(
+                nodes = manifest.nodes.map { node ->
+                    repaired[node.nodeId]?.let { objectId -> node.copy(contentObjectId = objectId) } ?: node
+                },
+            )
+        }
+        val stillMissing = repairedManifest.filesMissingContentObjectIds()
+        cloudFolderLogW(
+            "event=manifest_publish_validate ${traceFields(rootId)} " +
+                "root=${cloudFolderSafeId(rootId)} revision=${repairedManifest.revision} " +
+                "missingObjectIds=${missing.size} repaired=${repaired.size} " +
+                "stillMissing=${stillMissing.size} " +
+                "nodes=[${stillMissing.take(5).joinToString(",") { cloudFolderSafeId(it.nodeId) }}]",
+        )
+        return repairedManifest to repaired.size
+    }
+
+    /**
+     * Upload once, and when Drive reports a stale token (HTTP 401/autherror),
+     * re-fetch the token and retry a single time before giving up. This keeps
+     * a long repair sequence from dying on a token that expired mid-run.
+     */
+    private suspend fun uploadSafEntryWithTokenRefresh(
+        accessToken: String,
+        rootId: String,
+        source: CloudFolderSafEntry,
+        node: CloudFolderNode,
+        attempt: Int,
+    ): com.aryan.reader.data.DriveFile {
+        return try {
+            uploadSafEntry(accessToken, rootId, source, node, attempt)
+        } catch (error: Exception) {
+            if (!cloudFolderAuthFailureIsTransient(error)) throw error
+            val fresh = runCatching { repositoryAccessToken() }.getOrNull()
+            if (fresh == null || fresh == accessToken) throw error
+            cloudFolderLogW(
+                "event=drive_token_refresh ${traceFields(rootId)} " +
+                    "root=${cloudFolderSafeId(rootId)} node=${cloudFolderSafeId(node.nodeId)} " +
+                    "result=retrying",
+            )
+            uploadSafEntry(fresh, rootId, source, node, attempt)
+        }
+    }
+
     private suspend fun uploadSafEntry(
         accessToken: String,
         rootId: String,
@@ -1824,6 +2100,8 @@ class CloudFolderSyncWorker(
         expectedBase: CloudFolderManifest? = null,
         allowAlreadyMaterialized: Boolean = false,
     ): Boolean {
+        val startedAt = System.currentTimeMillis()
+        val safeRoot = cloudFolderSafeId(manifest.rootId)
         val root = DocumentFile.fromTreeUri(applicationContext, localRootUri)
             ?: throw IOException("Local SAF root is unavailable")
         if (!root.isDirectory) throw IOException("Local SAF root is not a directory")
@@ -1831,36 +2109,100 @@ class CloudFolderSyncWorker(
         val directories = manifest.activeDirectories().sortedWith(
             compareBy<CloudFolderNode> { pathDepth(it.relativePath) }.thenBy { it.pathKey }
         )
-        for (directory in directories) {
-            currentCoroutineContext().ensureActive()
-            ensureDirectory(root, directory.relativePath)
-        }
         val files = manifest.activeFiles().sortedWith(
             compareBy<CloudFolderNode> { pathDepth(it.relativePath) }.thenBy { it.pathKey }
         )
-        for (node in files) {
-            currentCoroutineContext().ensureActive()
-            val objectId = node.contentObjectId?.takeIf { it.isNotBlank() }
-                ?: throw IOException("Cloud object is missing for ${node.relativePath}")
-            val parent = ensureDirectory(root, parentPath(node.relativePath))
-            val expectedLocalNode = expectedBase?.activeNodes()?.firstOrNull { baseNode ->
-                baseNode.nodeId == node.nodeId && baseNode.relativePath == node.relativePath
+        cloudFolderLogI(
+            "event=materialize_start root=$safeRoot mode=saf " +
+                "directories=${directories.size} files=${files.size} " +
+                "bytes=${manifest.activeFiles().sumOf { it.sizeBytes.coerceAtLeast(0L) }}",
+        )
+        try {
+            for (directory in directories) {
+                currentCoroutineContext().ensureActive()
+                val safeNode = cloudFolderSafeId(directory.nodeId)
+                cloudFolderLogD(
+                    "event=materialize_directory_start root=$safeRoot node=$safeNode mode=saf",
+                )
+                ensureDirectory(root, directory.relativePath)
+                cloudFolderLogD(
+                    "event=materialize_directory_end root=$safeRoot node=$safeNode mode=saf result=success",
+                )
             }
-            val changed = writeRemoteFileAtomically(
-                accessToken = accessToken,
-                parent = parent,
-                node = node,
-                objectId = objectId,
-                expectedLocalNode = expectedLocalNode,
-                allowAlreadyMaterialized = allowAlreadyMaterialized,
-            )
-            if (changed && !isCloudFolderMetadataSidecarPath(node.relativePath)) {
+            for ((index, node) in files.withIndex()) {
+                currentCoroutineContext().ensureActive()
+                val ordinal = index + 1
+                val safeNode = cloudFolderSafeId(node.nodeId)
+                // Verified local bytes take precedence; only a download needs
+                // the immutable object pointer. See writeRemoteFileAtomically.
+                val objectId = node.contentObjectId?.trim()?.takeIf(String::isNotBlank)
+                cloudFolderLogD(
+                    "event=materialize_file_start root=$safeRoot node=$safeNode mode=saf " +
+                        "ordinal=$ordinal totalFiles=${files.size} bytes=${node.sizeBytes} " +
+                        "objectIdMissing=${objectId == null} transfer=download",
+                )
+                val parent = ensureDirectory(root, parentPath(node.relativePath))
+                val expectedLocalNode = expectedBase?.activeNodes()?.firstOrNull { baseNode ->
+                    baseNode.nodeId == node.nodeId && baseNode.relativePath == node.relativePath
+                }
+                try {
+                    val changed = writeRemoteFileAtomically(
+                        accessToken = accessToken,
+                        parent = parent,
+                        node = node,
+                        objectId = objectId,
+                        expectedLocalNode = expectedLocalNode,
+                        allowAlreadyMaterialized = allowAlreadyMaterialized,
+                    )
+                    if (changed && !isCloudFolderMetadataSidecarPath(node.relativePath)) {
+                        contentFilesChanged = true
+                    }
+                    cloudFolderLogD(
+                        "event=materialize_file_end root=$safeRoot node=$safeNode mode=saf " +
+                            "result=success ordinal=$ordinal totalFiles=${files.size} " +
+                            "changed=$changed",
+                    )
+                } catch (error: kotlinx.coroutines.CancellationException) {
+                    throw error
+                } catch (error: Exception) {
+                    val safe = cloudFolderTransferFailure(
+                        error = error,
+                        stage = "materialize_file",
+                        category = "file_transfer_failure",
+                    )
+                    cloudFolderLogError(
+                        event = "materialize_file_end",
+                        error = safe,
+                        details = "root=$safeRoot node=$safeNode mode=saf result=failure " +
+                            "ordinal=$ordinal totalFiles=${files.size} stage=${safe.stage}",
+                    )
+                    throw safe
+                }
+            }
+            if (applySafTombstones(root, manifest.tombstones)) {
                 contentFilesChanged = true
             }
+        } catch (error: kotlinx.coroutines.CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            val safe = cloudFolderTransferFailure(
+                error = error,
+                stage = "materialize_saf",
+                category = "materialization_failure",
+            )
+            cloudFolderLogError(
+                event = "materialize_end",
+                error = safe,
+                details = "root=$safeRoot mode=saf result=failure durationMs=" +
+                    "${(System.currentTimeMillis() - startedAt).coerceAtLeast(0L)} stage=${safe.stage}",
+            )
+            throw safe
         }
-        if (applySafTombstones(root, manifest.tombstones)) {
-            contentFilesChanged = true
-        }
+        cloudFolderLogI(
+            "event=materialize_end root=$safeRoot mode=saf result=success " +
+                "files=${files.size} durationMs=" +
+                "${(System.currentTimeMillis() - startedAt).coerceAtLeast(0L)}",
+        )
         return contentFilesChanged
     }
 
@@ -1997,16 +2339,15 @@ class CloudFolderSyncWorker(
                 currentCoroutineContext().ensureActive()
                 val ordinal = index + 1
                 val safeNode = cloudFolderSafeId(node.nodeId)
-                val objectId = node.contentObjectId?.takeIf { it.isNotBlank() }
-                    ?: throw cloudFolderTransferFailure(
-                        error = IOException("Cloud object is missing"),
-                        stage = "manifest_validate",
-                        category = "missing_content_object",
-                    )
+                // A missing object pointer is not immediately fatal: the
+                // materializer first verifies any existing local bytes
+                // against the authenticated hash and only downloads when
+                // they differ. Only then is the object ID required.
+                val objectId = node.contentObjectId?.trim()?.takeIf(String::isNotBlank)
                 cloudFolderLogD(
                     "event=materialize_file_start root=$safeRoot node=$safeNode " +
                         "ordinal=$ordinal totalFiles=${files.size} bytes=${node.sizeBytes} " +
-                        "transfer=download",
+                        "objectIdMissing=${objectId == null} transfer=download",
                 )
                 val target = safeAppPath(root, node.relativePath)
                 target.parentFile?.let { parent ->
@@ -2564,7 +2905,7 @@ class CloudFolderSyncWorker(
         accessToken: String,
         target: File,
         node: CloudFolderNode,
-        objectId: String,
+        objectId: String?,
     ): Boolean {
         val safeRoot = cloudFolderSafeId(node.rootId)
         val safeNode = cloudFolderSafeId(node.nodeId)
@@ -2587,6 +2928,15 @@ class CloudFolderSyncWorker(
             )
             return false
         }
+        // The local bytes could not be verified, so the missing content is
+        // required. Fail with a bounded, node-identifying transfer error so
+        // the log pinpoints the poisoned manifest entry.
+        val resolvedObjectId = objectId?.trim()?.takeIf(String::isNotBlank)
+            ?: throw cloudFolderTransferFailure(
+                error = IOException("Cloud object is missing for ${node.relativePath}"),
+                stage = "drive_download",
+                category = "missing_content_object",
+            )
         cloudFolderLogD(
             "event=materialize_fs_temp_start root=$safeRoot node=$safeNode " +
                 "tempExists=${temp.exists()} targetExists=${target.exists()}",
@@ -2614,7 +2964,7 @@ class CloudFolderSyncWorker(
             try {
                 driveRepository.downloadCloudFolderFileTo(
                     accessToken = accessToken,
-                    fileId = objectId,
+                    fileId = resolvedObjectId,
                     output = hashingOutput,
                     expectedRootId = node.rootId,
                     expectedNodeId = node.nodeId,
@@ -2748,7 +3098,7 @@ class CloudFolderSyncWorker(
         accessToken: String,
         parent: DocumentFile,
         node: CloudFolderNode,
-        objectId: String,
+        objectId: String?,
         expectedLocalNode: CloudFolderNode? = null,
         allowAlreadyMaterialized: Boolean = false,
     ): Boolean {
@@ -2766,6 +3116,14 @@ class CloudFolderSyncWorker(
             )
             return false
         }
+        // Verified local bytes take precedence; only an actual download
+        // requires the immutable object pointer.
+        val resolvedObjectId = objectId?.trim()?.takeIf(String::isNotBlank)
+            ?: throw cloudFolderTransferFailure(
+                error = IOException("Cloud object is missing for ${node.relativePath}"),
+                stage = "drive_download",
+                category = "missing_content_object",
+            )
         val tempName = ".cloud-folder-${stableTempSuffix(node.nodeId)}.part"
         val temp = parent.createFile(node.mimeType ?: "application/octet-stream", tempName)
             ?: throw IOException("Unable to create temporary SAF file: ${node.relativePath}")
@@ -2777,7 +3135,7 @@ class CloudFolderSyncWorker(
             try {
                 driveRepository.downloadCloudFolderFileTo(
                     accessToken = accessToken,
-                    fileId = objectId,
+                    fileId = resolvedObjectId,
                     output = hashingOutput,
                     expectedRootId = node.rootId,
                     expectedNodeId = node.nodeId,
@@ -2980,6 +3338,7 @@ class CloudFolderSyncWorker(
         PULL,
         SYNC,
         GC,
+        DELETE,
     }
 
     companion object {
@@ -3003,16 +3362,49 @@ class CloudFolderSyncWorker(
         ) {
             GLOBAL_MUTEX.withLock {
                 withContext(Dispatchers.IO) {
-                    val root = cloudFolderAppRootDirectory(context.applicationContext.filesDir, rootId)
-                    if (!root.exists()) return@withContext
-                    if (!root.isDirectory) {
-                        throw IOException("Offline materialization is not a directory")
-                    }
-                    if (!root.deleteRecursively() || root.exists()) {
-                        throw IOException("Unable to remove offline materialization")
-                    }
+                    removeCloudFolderAppStorageTree(context.applicationContext.filesDir, rootId)
                 }
             }
+        }
+
+        /**
+         * Enqueue a destructive account-scoped "delete this folder from Drive"
+         * request. A tombstone is published so other devices observe the
+         * deletion, then all local state is removed on this device.
+         */
+        fun enqueueDeleteFolder(
+            context: Context,
+            accountId: String,
+            rootId: String,
+        ) {
+            val normalizedAccountId = accountId.trim()
+            val normalizedRootId = rootId.trim()
+            require(normalizedAccountId.isNotBlank()) { "Cloud-folder work requires an account ID" }
+            require(normalizedRootId.isNotBlank()) { "Cloud-folder delete requires a root ID" }
+            val data = Data.Builder()
+                .putString(KEY_ACCOUNT_ID, normalizedAccountId)
+                .putString(KEY_ROOT_ID, normalizedRootId)
+                .putString(KEY_DIRECTION, Direction.DELETE.name)
+                .build()
+            val request = OneTimeWorkRequestBuilder<CloudFolderSyncWorker>()
+                .setInputData(data)
+                .addTag(accountTag(normalizedAccountId))
+                .setConstraints(
+                    Constraints.Builder()
+                        .setRequiredNetworkType(NetworkType.CONNECTED)
+                        .build()
+                )
+                .setBackoffCriteria(
+                    BackoffPolicy.EXPONENTIAL,
+                    30L,
+                    TimeUnit.SECONDS,
+                )
+                .build()
+            WorkManager.getInstance(context.applicationContext).enqueueUniqueWork(
+                workName(normalizedAccountId, normalizedRootId, Direction.DELETE),
+                ExistingWorkPolicy.REPLACE,
+                request,
+            )
         }
 
         fun enqueue(
@@ -3468,6 +3860,22 @@ internal fun cloudFolderAppRootDirectory(filesDir: File, rootId: String): File {
 }
 
 /**
+ * Delete one app-managed offline tree. Idempotent when the tree is already
+ * gone; throws when a path stands in the way or removal fails. Callers must
+ * already hold the cloud-folder work mutex (or run on a single thread).
+ */
+internal fun removeCloudFolderAppStorageTree(filesDir: File, rootId: String) {
+    val root = cloudFolderAppRootDirectory(filesDir, rootId)
+    if (!root.exists()) return
+    if (!root.isDirectory) {
+        throw IOException("Offline materialization is not a directory")
+    }
+    if (!root.deleteRecursively() || root.exists()) {
+        throw IOException("Unable to remove offline materialization")
+    }
+}
+
+/**
  * Verify an app-private materialized file before re-downloading it. A size
  * check alone is insufficient because a local file can be replaced in place;
  * only the authenticated SHA-256 and exact byte count permit a safe skip.
@@ -3525,11 +3933,20 @@ internal fun buildLocalManifest(
     val nodes = scannedNodes.map { node ->
         val previous = previousById[node.nodeId]
         val same = previous != null && localNodesEquivalent(previous, node)
+        // A stale mtime or re-guessed MIME type must not strip the only
+        // pointer to the uploaded bytes: as long as the authenticated hash
+        // and size are unchanged, the provider object ID stays valid and
+        // publishing it keeps other devices able to download the content.
+        val contentUnchanged = previous != null &&
+            previous.sizeBytes == node.sizeBytes &&
+            canonicalCloudFolderContentHash(previous.contentHash) ==
+                canonicalCloudFolderContentHash(node.contentHash) &&
+            canonicalCloudFolderContentHash(node.contentHash) != null
         node.copy(
             revision = if (same) previous!!.revision else nextRevision,
             modifiedAt = now,
             modifiedByDeviceId = deviceId,
-            contentObjectId = if (same) previous!!.contentObjectId else null,
+            contentObjectId = if (same || contentUnchanged) previous?.contentObjectId else null,
         )
     }
     val scannedIds = nodes.mapTo(hashSetOf(), CloudFolderNode::nodeId)

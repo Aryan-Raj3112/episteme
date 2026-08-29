@@ -101,6 +101,12 @@ object CloudFolderSyncPrefs {
         val discovered = loadIncomingDiscovered(context, accountId).toMutableMap()
         discovered[normalizedRootId] = maxOf(discovered[normalizedRootId] ?: Long.MIN_VALUE, revision.coerceAtLeast(0L))
         saveIncomingDiscovered(context, accountId, discovered)
+        // "Not now" must survive the next discovery pass. Without a snoozed
+        // marker the same revision is re-offered on every sync, which is why
+        // the prompt kept returning after the user dismissed it.
+        val snoozed = loadIncomingRevisions(context, accountId, incomingPendingKey = false).toMutableMap()
+        snoozed[normalizedRootId] = maxOf(snoozed[normalizedRootId] ?: Long.MIN_VALUE, revision.coerceAtLeast(0L))
+        saveIncomingRevisions(context, accountId, incomingPendingKey = false, snoozed)
     }
 
     fun dismissIncomingPrompt(
@@ -131,6 +137,25 @@ object CloudFolderSyncPrefs {
             remove(keys.incomingDismissed)
             remove(keys.incomingDiscovered)
         }
+    }
+
+    /**
+     * Fully erase one root from incoming-prompt bookkeeping so it can be
+     * discovered and offered again from scratch (used when the user removes a
+     * local binding and wants the folder re-mergeable later).
+     */
+    fun forgetIncomingPrompt(context: Context, accountId: String, rootId: String) {
+        val normalizedRootId = rootId.trim()
+        if (normalizedRootId.isBlank()) return
+        val pending = loadIncomingRevisions(context, accountId, incomingPendingKey = true).toMutableMap()
+        pending.remove(normalizedRootId)
+        saveIncomingRevisions(context, accountId, incomingPendingKey = true, pending)
+        val dismissed = loadIncomingRevisions(context, accountId, incomingPendingKey = false).toMutableMap()
+        dismissed.remove(normalizedRootId)
+        saveIncomingRevisions(context, accountId, incomingPendingKey = false, dismissed)
+        val discovered = loadIncomingDiscovered(context, accountId).toMutableMap()
+        discovered.remove(normalizedRootId)
+        saveIncomingDiscovered(context, accountId, discovered)
     }
 
     private fun selectionKey(accountId: String): String? {

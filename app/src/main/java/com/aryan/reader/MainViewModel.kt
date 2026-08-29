@@ -5025,16 +5025,29 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         CloudFolderSyncPrefs.save(appContext, accountId, normalized)
         CloudFolderSyncEvents.notifyStateChanged()
 
-        // Queue a durable folder pass so the persisted policy is observed by
-        // the worker even if the process is killed after the dialog closes.
-        // The cloud-folder transfer worker consumes this same policy; the
-        // existing worker also refreshes the indexed folder inventory.
-        if (uiState.value.isSyncEnabled) {
-            CloudFolderSyncWorker.enqueue(
-                appContext,
-                accountId = accountId,
-                replace = true,
-            )
+        // Re-register local folders as logical roots before scheduling. A
+        // selection must never be a no-op: after a root row was removed (for
+        // example by "Delete from Drive") the persisted folder still carries
+        // its cloud root ID, and without this re-registration the worker
+        // would find zero selected roots and upload nothing.
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { registerLocalCloudFolders(accountId) }
+                .onFailure { error ->
+                    Timber.w(error, "Unable to register local folders for cloud selection")
+                }
+
+            // Queue a durable folder pass so the persisted policy is observed
+            // by the worker even if the process is killed after the dialog
+            // closes. The cloud-folder transfer worker consumes this same
+            // policy; the existing worker also refreshes the indexed folder
+            // inventory.
+            if (uiState.value.isSyncEnabled) {
+                CloudFolderSyncWorker.enqueue(
+                    appContext,
+                    accountId = accountId,
+                    replace = true,
+                )
+            }
         }
     }
 
@@ -5117,6 +5130,59 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 Timber.w(error, "Unable to reopen incoming cloud-folder prompt root=$normalizedRootId")
             }
         }
+    }
+
+    /**
+     * Detach a synced folder from this device only. The cloud copy is left
+     * untouched, so the folder can be re-discovered and offered again through
+     * the incoming-folder prompt later.
+     */
+    fun removeCloudFolderFromDevice(rootId: String) {
+        val accountId = activeCloudFolderSyncAccountId() ?: return
+        val normalizedRootId = rootId.trim().takeIf { it.isNotBlank() } ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                if (!isCloudFolderSyncAvailableFor(accountId) ||
+                    authRepository.getSignedInUser()?.uid?.trim() != accountId
+                ) return@launch
+                val repository = CloudFolderSyncRepository(appContext, accountId)
+                val binding = repository.getBinding(normalizedRootId)
+                if (binding?.materializationMode == CloudFolderMaterializationMode.KEEP_OFFLINE) {
+                    CloudFolderSyncWorker.clearOfflineMaterialization(appContext, normalizedRootId)
+                    CloudFolderAppStoragePrefs.remove(appContext, accountId, normalizedRootId)
+                }
+                repository.removeBinding(normalizedRootId)
+                repository.clearTransferState(normalizedRootId)
+                CloudFolderSyncPrefs.save(
+                    appContext,
+                    accountId,
+                    CloudFolderSyncPrefs.load(appContext, accountId)
+                        .withoutRoot(normalizedRootId, repository.getRoots().map { it.rootId }),
+                )
+                CloudFolderSyncPrefs.forgetIncomingPrompt(appContext, accountId, normalizedRootId)
+                CloudFolderSyncEvents.notifyStateChanged()
+                refreshCloudFolderSyncState()
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                Timber.e(error, "Unable to remove cloud-folder binding root=$normalizedRootId")
+                CloudFolderSyncEvents.notifyStateChanged()
+                refreshCloudFolderSyncState()
+            }
+        }
+    }
+
+    /**
+     * Delete a synced folder from Drive account-wide. The worker publishes a
+     * tombstone so other devices observe the deletion, then clears this
+     * device's local copy and bookkeeping.
+     */
+    fun deleteCloudFolderFromDrive(rootId: String) {
+        val accountId = activeCloudFolderSyncAccountId() ?: return
+        val normalizedRootId = rootId.trim().takeIf { it.isNotBlank() } ?: return
+        CloudFolderSyncWorker.enqueueDeleteFolder(appContext, accountId, normalizedRootId)
+        CloudFolderSyncEvents.notifyStateChanged()
+        refreshCloudFolderSyncState()
     }
 
     /**

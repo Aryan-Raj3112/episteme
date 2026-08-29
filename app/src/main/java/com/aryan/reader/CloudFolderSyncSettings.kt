@@ -175,6 +175,17 @@ internal fun CloudFolderSyncSettingsScreen(
                         viewModel.resolveCloudFolderConflict(conflict, resolution)
                     }
                 },
+                cloudFolders = cloudFolderRoots,
+                onRemoveFolderLocally = { rootId ->
+                    if (viewModel.uiState.value.canUseCloudFolderSync()) {
+                        viewModel.removeCloudFolderFromDevice(rootId)
+                    }
+                },
+                onDeleteFolderFromCloud = { rootId ->
+                    if (viewModel.uiState.value.canUseCloudFolderSync()) {
+                        viewModel.deleteCloudFolderFromDrive(rootId)
+                    }
+                },
                 fullScreen = true,
                 modifier = Modifier
                     .weight(1f)
@@ -266,6 +277,9 @@ internal fun CloudFolderSyncSettingsContent(
     onSelectionChange: (CloudFolderSyncSelection) -> Unit,
     onConflictResolution: (CloudFolderConflictUiItem, CloudFolderConflictResolution) -> Unit = { _, _ -> },
     fullScreen: Boolean = false,
+    cloudFolders: List<CloudFolderRoot> = emptyList(),
+    onRemoveFolderLocally: (String) -> Unit = {},
+    onDeleteFolderFromCloud: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val folders = state.normalizedFolders
@@ -289,6 +303,26 @@ internal fun CloudFolderSyncSettingsContent(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
+        val liveCloudFolders = cloudFolders
+            .filterNot { it.isDeleted }
+            .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.name })
+        if (liveCloudFolders.isNotEmpty()) {
+            HorizontalDivider()
+            Text("Folders in Drive", fontWeight = FontWeight.SemiBold)
+            Text(
+                "Folders currently stored in Drive. Removing from this device keeps the cloud copy; deleting from Drive removes it everywhere.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            liveCloudFolders.forEach { root ->
+                CloudFolderDriveRow(
+                    root = root,
+                    onRemoveFolderLocally = { onRemoveFolderLocally(root.rootId) },
+                    onDeleteFolderFromCloud = { onDeleteFolderFromCloud(root.rootId) },
+                )
+            }
+        }
+
         Text("Folders", fontWeight = FontWeight.SemiBold)
         Text(
             if (selectableFolderCount == 0) {
@@ -300,7 +334,8 @@ internal fun CloudFolderSyncSettingsContent(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
-        if (state.conflicts.isNotEmpty()) {
+        val unresolvedConflicts = state.conflicts.filter { it.resolution == CloudFolderConflictResolution.DEFER }
+        if (unresolvedConflicts.isNotEmpty()) {
             HorizontalDivider()
             Text("Conflicts needing review", fontWeight = FontWeight.SemiBold)
             Text(
@@ -308,7 +343,7 @@ internal fun CloudFolderSyncSettingsContent(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            state.conflicts.forEach { conflict ->
+            unresolvedConflicts.forEach { conflict ->
                 CloudFolderConflictRow(
                     conflict = conflict,
                     onResolution = { resolution -> onConflictResolution(conflict, resolution) },
@@ -377,6 +412,52 @@ internal fun CloudFolderSyncSettingsContent(
                             ).normalized(folders.map { it.normalizedRootId })
                         )
                     },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CloudFolderDriveRow(
+    root: CloudFolderRoot,
+    onRemoveFolderLocally: () -> Unit,
+    onDeleteFolderFromCloud: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    root.name.trim().ifBlank { "Cloud folder" },
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    "${root.stats.fileCount.coerceAtLeast(0)} file(s) · " +
+                        formatCloudFolderBytes(root.stats.totalBytes),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            OutlinedButton(onClick = onRemoveFolderLocally) { Text("Remove from this device") }
+            TextButton(onClick = onDeleteFolderFromCloud) {
+                Text(
+                    "Delete from Drive",
+                    color = MaterialTheme.colorScheme.error,
                 )
             }
         }

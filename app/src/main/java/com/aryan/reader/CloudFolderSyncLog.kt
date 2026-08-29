@@ -124,6 +124,32 @@ internal fun CloudFolderSidecarPayloadInfo?.toLogFields(): String =
 internal fun cloudFolderErrorClass(error: Throwable): String =
     error::class.java.simpleName.takeIf { it.isNotBlank() } ?: "Unknown"
 
+/**
+ * A bounded, privacy-safe reason string for log events. Exception messages
+ * may embed provider URIs or absolute filesystem paths, so both are redacted;
+ * the remaining first-party text (bounded stage/reason wording, relative
+ * paths) is kept because it is what makes worker failures diagnosable from
+ * logcat. Never return stack traces or Drive HTTP bodies here.
+ */
+internal fun cloudFolderSafeErrorReason(error: Throwable, limit: Int = 160): String {
+    val message = cloudFolderErrorChain(error)
+        .mapNotNull { it.message }
+        .firstOrNull { it.isNotBlank() }
+        ?: return "none"
+    val uriRedacted = message.replace(CLOUD_FOLDER_URI_REGEX, "<uri>")
+    val pathRedacted = uriRedacted.replace(CLOUD_FOLDER_ABSOLUTE_PATH_REGEX) { match ->
+        "${match.groupValues[1]}<path>"
+    }
+    return pathRedacted
+        .replace(Regex("\\s+"), " ")
+        .trim()
+        .take(limit.coerceAtLeast(16))
+        .ifBlank { "none" }
+}
+
+private val CLOUD_FOLDER_URI_REGEX = Regex("[A-Za-z][A-Za-z0-9+.-]*://\\S+")
+private val CLOUD_FOLDER_ABSOLUTE_PATH_REGEX = Regex("(^|\\s)/[^\\s]+")
+
 private fun cloudFolderErrorChain(error: Throwable): Sequence<Throwable> = sequence {
     var current: Throwable? = error
     val seen = mutableSetOf<Int>()
@@ -224,6 +250,23 @@ internal fun cloudFolderFailureIsDeterministic(error: Throwable): Boolean =
         "unsupported",
     )
 
+/**
+ * A Drive 401/autherror is a stale access token, not proof that the user
+ * revoked the app's Drive permission. Token expiry is transient and heals by
+ * re-fetching the token, so it must never be treated as a deterministic
+ * terminal failure (which skips WorkManager retry) nor abort a long repair
+ * halfway through. A genuine revocation surfaces as a permission/scope error
+ * instead.
+ */
+internal fun cloudFolderAuthFailureIsTransient(error: Throwable): Boolean =
+    cloudFolderErrorChain(error)
+        .filterIsInstance<CloudFolderDriveException>()
+        .any {
+            it.httpStatusCode == 401 ||
+                it.driveReason.equals("autherror", ignoreCase = true) ||
+                it.statusCategory.equals("unauthenticated", ignoreCase = true)
+        }
+
 internal fun cloudFolderLogD(message: String) {
     Timber.tag(CLOUD_FOLDER_SYNC_LOG_TAG).d(message)
 }
@@ -263,7 +306,8 @@ internal fun cloudFolderLogError(
         .orEmpty()
     Timber.tag(CLOUD_FOLDER_SYNC_LOG_TAG).e(
         "event=$event errorClass=${cloudFolderErrorClass(error)} " +
-            "errorStatus=${cloudFolderErrorStatus(error)}$driveDetails$transferDetails$suffix",
+            "errorStatus=${cloudFolderErrorStatus(error)} " +
+            "reason=${cloudFolderSafeErrorReason(error)}$driveDetails$transferDetails$suffix",
     )
 }
 

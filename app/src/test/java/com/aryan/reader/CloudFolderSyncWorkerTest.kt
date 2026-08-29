@@ -34,6 +34,7 @@ import io.mockk.unmockkObject
 import io.mockk.verify
 import kotlinx.coroutines.runBlocking
 import java.io.File
+import java.io.IOException
 import java.security.MessageDigest
 
 @RunWith(RobolectricTestRunner::class)
@@ -317,6 +318,122 @@ class CloudFolderSyncWorkerTest {
         assertEquals("drive-object", local.nodes.single().contentObjectId)
         assertEquals(3L, local.nodes.single().revision)
         assertEquals(20L, local.root.stats.scannedAt)
+    }
+
+    @Test
+    fun localSnapshotPreservesObjectIdWhenOnlyTheFileTimestampChanges() {
+        val baseNode = fileNode(
+            nodeId = "book",
+            path = "Series/Book.epub",
+            hash = "sha256:${"a".repeat(64)}",
+            revision = 3L,
+            objectId = "drive-object",
+            modifiedAt = 10L,
+        )
+        val base = manifest(revision = 3L, nodes = listOf(baseNode))
+        val scan = scan(
+            fileNode(
+                nodeId = "book",
+                path = "Series/Book.epub",
+                hash = requireNotNull(baseNode.contentHash),
+                revision = 0L,
+                modifiedAt = 99L,
+            )
+        )
+
+        val local = buildLocalManifest(base, scan, now = 20L, deviceId = "pixel")
+
+        // A stale provider mtime must not strip the only pointer to the
+        // uploaded bytes: publishing without it poisons every other device.
+        assertEquals("drive-object", local.nodes.single().contentObjectId)
+        assertEquals(4L, local.revision)
+        assertEquals(4L, local.nodes.single().revision)
+    }
+
+    @Test
+    fun localSnapshotStripsObjectIdOnlyWhenContentChanges() {
+        val baseNode = fileNode(
+            nodeId = "book",
+            path = "Series/Book.epub",
+            hash = "sha256:${"a".repeat(64)}",
+            revision = 3L,
+            objectId = "drive-object",
+            modifiedAt = 10L,
+        )
+        val base = manifest(revision = 3L, nodes = listOf(baseNode))
+        val scan = scan(
+            fileNode(
+                nodeId = "book",
+                path = "Series/Book.epub",
+                hash = "sha256:${"f".repeat(64)}",
+                revision = 0L,
+                modifiedAt = 10L,
+            )
+        )
+
+        val local = buildLocalManifest(base, scan, now = 20L, deviceId = "pixel")
+
+        assertNull(local.nodes.single().contentObjectId)
+        assertEquals(4L, local.nodes.single().revision)
+    }
+
+    @Test
+    fun safeErrorReasonRedactsUrisAbsolutePathsAndBoundsLength() {
+        val uriError = IOException("Unable to open content://com.provider/document/secret for Book.epub")
+        assertEquals(
+            "Unable to open <uri> for Book.epub",
+            cloudFolderSafeErrorReason(uriError),
+        )
+        val pathError = IOException("Refusing /data/user/0/app/files/Book.epub download")
+        assertEquals(
+            "Refusing <path> download",
+            cloudFolderSafeErrorReason(pathError),
+        )
+        val missingObject = IOException("Cloud object is missing for Series/Book.epub")
+        assertEquals(
+            "Cloud object is missing for Series/Book.epub",
+            cloudFolderSafeErrorReason(missingObject),
+        )
+        val long = IOException("x".repeat(500))
+        assertEquals(160, cloudFolderSafeErrorReason(long).length)
+        assertEquals("none", cloudFolderSafeErrorReason(IOException()))
+        assertEquals("none", cloudFolderSafeErrorReason(IllegalStateException("  ")))
+    }
+
+    @Test
+    fun transientAuthFailureIsRecognizedOnlyForDriveTokenErrors() {
+        assertTrue(
+            cloudFolderAuthFailureIsTransient(
+                CloudFolderDriveException(
+                    httpStatusCode = 401,
+                    bodyCategory = "unauthenticated",
+                    statusCategory = "unauthenticated",
+                    driveReason = "autherror",
+                ),
+            ),
+        )
+        assertTrue(
+            cloudFolderAuthFailureIsTransient(
+                CloudFolderDriveException(
+                    httpStatusCode = null,
+                    bodyCategory = "unauthenticated",
+                    statusCategory = "unauthenticated",
+                    driveReason = "autherror",
+                ),
+            ),
+        )
+        assertFalse(
+            cloudFolderAuthFailureIsTransient(
+                CloudFolderDriveException(
+                    httpStatusCode = 403,
+                    bodyCategory = "permission denied",
+                    statusCategory = "permission_denied",
+                    driveReason = "forbidden",
+                ),
+            ),
+        )
+        assertFalse(cloudFolderAuthFailureIsTransient(IOException("unauthenticated")))
+        assertFalse(cloudFolderAuthFailureIsTransient(IOException("network timeout")))
     }
 
     @Test

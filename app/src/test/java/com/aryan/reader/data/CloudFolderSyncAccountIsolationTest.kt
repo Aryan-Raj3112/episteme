@@ -177,6 +177,39 @@ class CloudFolderSyncAccountIsolationTest {
     }
 
     @Test
+    fun `snoozed incoming prompt remains suppressed for the same revision`() {
+        val rootId = "snoozed-root"
+
+        CloudFolderSyncPrefs.markIncomingPromptPending(context, accountA, rootId, revision = 4L)
+        assertEquals(setOf(rootId), CloudFolderSyncPrefs.pendingIncomingRootIds(context, accountA))
+
+        // "Not now" snoozes; the same revision must not be offered again.
+        CloudFolderSyncPrefs.snoozeIncomingPrompt(context, accountA, rootId, revision = 4L)
+        assertTrue(CloudFolderSyncPrefs.pendingIncomingRootIds(context, accountA).isEmpty())
+        assertTrue(CloudFolderSyncPrefs.discoveredIncomingRootIds(context, accountA).contains(rootId))
+
+        CloudFolderSyncPrefs.markIncomingPromptPending(context, accountA, rootId, revision = 4L)
+        assertTrue(CloudFolderSyncPrefs.pendingIncomingRootIds(context, accountA).isEmpty())
+
+        // A newer revision is a new decision and re-prompts.
+        CloudFolderSyncPrefs.markIncomingPromptPending(context, accountA, rootId, revision = 5L)
+        assertEquals(setOf(rootId), CloudFolderSyncPrefs.pendingIncomingRootIds(context, accountA))
+    }
+
+    @Test
+    fun `forgetting an incoming prompt clears all bookkeeping for the root`() {
+        val rootId = "forget-root"
+        CloudFolderSyncPrefs.markIncomingPromptPending(context, accountA, rootId, revision = 4L)
+        CloudFolderSyncPrefs.forgetIncomingPrompt(context, accountA, rootId)
+
+        assertTrue(CloudFolderSyncPrefs.pendingIncomingRootIds(context, accountA).isEmpty())
+        assertTrue(CloudFolderSyncPrefs.discoveredIncomingRootIds(context, accountA).isEmpty())
+        // Re-discovery of the same revision re-prompts after a forget.
+        CloudFolderSyncPrefs.markIncomingPromptPending(context, accountA, rootId, revision = 4L)
+        assertEquals(setOf(rootId), CloudFolderSyncPrefs.pendingIncomingRootIds(context, accountA))
+    }
+
+    @Test
     fun `local registration retains device persisted logical root id`() = runTest {
         val database = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
             .allowMainThreadQueries()

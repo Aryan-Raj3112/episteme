@@ -751,6 +751,62 @@ class CloudFolderSyncTest {
         assertEquals(25L, plan.mergedManifest.root.stats.totalBytes)
     }
 
+    @Test
+    fun `files missing content object ids reports only active file nodes`() {
+        val withId = file("Book.epub", id = "with-id", hash = "a".repeat(64), size = 5L)
+            .copy(contentObjectId = "drive-book")
+        val blankId = file("Blank.epub", id = "blank-id", hash = "b".repeat(64), size = 6L)
+            .copy(contentObjectId = "   ")
+        val withoutId = file("Missing.epub", id = "missing-id", hash = "c".repeat(64), size = 7L)
+        val folder = directory("Series", id = "series")
+        val manifest = manifest(
+            revision = 3L,
+            nodes = listOf(withId, blankId, withoutId, folder),
+        )
+
+        val missing = manifest.filesMissingContentObjectIds()
+
+        assertEquals(listOf("blank-id", "missing-id"), missing.map { it.nodeId })
+    }
+
+    @Test
+    fun `files missing content object ids ignores foreign roots and tombstones`() {
+        val foreign = file("Foreign.epub", id = "foreign", rootId = "root-b", hash = "a".repeat(64))
+            .copy(contentObjectId = null)
+        val manifest = manifest(revision = 2L, nodes = listOf(foreign))
+
+        assertTrue(manifest.filesMissingContentObjectIds().isEmpty())
+    }
+
+    @Test
+    fun `every decidable conflict type resolves to a non-defer default`() {
+        CloudFolderConflictType.entries.forEach { type ->
+            val default = type.defaultResolution()
+            assertTrue(
+                default == CloudFolderConflictResolution.KEEP_LOCAL ||
+                    default == CloudFolderConflictResolution.KEEP_REMOTE ||
+                    default == CloudFolderConflictResolution.KEEP_BOTH,
+                "default resolution for $type must be decidable, was $default",
+            )
+        }
+        assertEquals(
+            CloudFolderConflictResolution.KEEP_BOTH,
+            CloudFolderConflictType.CONTENT_CHANGED_BOTH.defaultResolution(),
+        )
+        assertEquals(
+            CloudFolderConflictResolution.KEEP_LOCAL,
+            CloudFolderConflictType.SIDECAR_CHANGED_BOTH.defaultResolution(),
+        )
+        assertEquals(
+            CloudFolderConflictResolution.KEEP_REMOTE,
+            CloudFolderConflictType.DELETE_VS_UPDATE.defaultResolution(),
+        )
+        assertEquals(
+            CloudFolderConflictResolution.KEEP_LOCAL,
+            CloudFolderConflictType.UPDATE_VS_DELETE.defaultResolution(),
+        )
+    }
+
     private fun root(
         rootId: String = "root-a",
         name: String = "Books",

@@ -321,6 +321,7 @@ dependencies {
     implementation("androidx.core:core-splashscreen:1.2.0")
 
     testImplementation("junit:junit:4.13.2")
+    testImplementation("com.google.truth:truth:1.4.2")
     testImplementation("io.mockk:mockk-android:1.14.9")
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation("org.json:json:20251224")

@@ -358,6 +358,12 @@ abstract class CloudFolderSyncDao {
     )
     abstract suspend fun deleteLocalInventory(accountId: String, rootId: String, deviceId: String): Int
 
+    @Query(
+        "DELETE FROM cloud_folder_local_inventory " +
+            "WHERE accountId = :accountId AND rootId = :rootId"
+    )
+    abstract suspend fun deleteLocalInventoriesForRoot(accountId: String, rootId: String): Int
+
     @Query("DELETE FROM cloud_folder_local_inventory WHERE accountId = :accountId")
     abstract suspend fun deleteLocalInventoriesForAccount(accountId: String): Int
 
@@ -515,6 +521,9 @@ abstract class CloudFolderSyncDao {
 
     @Query("DELETE FROM cloud_folder_bindings WHERE accountId = :accountId AND rootId = :rootId AND deviceId = :deviceId")
     abstract suspend fun deleteBinding(accountId: String, rootId: String, deviceId: String): Int
+
+    @Query("DELETE FROM cloud_folder_bindings WHERE accountId = :accountId AND rootId = :rootId")
+    abstract suspend fun deleteBindingsForRoot(accountId: String, rootId: String): Int
 
     @Query("SELECT * FROM cloud_folder_nodes WHERE accountId = :accountId AND rootId = :rootId ORDER BY relativePath COLLATE NOCASE, nodeId")
     abstract suspend fun getNodes(accountId: String, rootId: String): List<CloudFolderNodeEntity>
@@ -679,6 +688,9 @@ abstract class CloudFolderSyncDao {
     @Query("DELETE FROM cloud_folder_roots WHERE accountId = :accountId")
     abstract suspend fun deleteRootsForAccount(accountId: String): Int
 
+    @Query("DELETE FROM cloud_folder_roots WHERE accountId = :accountId AND rootId = :rootId")
+    abstract suspend fun deleteRoot(accountId: String, rootId: String): Int
+
     @Query("DELETE FROM cloud_folder_bindings WHERE accountId = :accountId")
     abstract suspend fun deleteBindingsForAccount(accountId: String): Int
 
@@ -703,5 +715,20 @@ abstract class CloudFolderSyncDao {
         deleteNodesForAccount(accountId)
         deleteBindingsForAccount(accountId)
         deleteRootsForAccount(accountId)
+    }
+
+    /** Remove every durable row for one root, including its manifest state. */
+    @Transaction
+    open suspend fun clearRootState(accountId: String, rootId: String) {
+        clearOutbox(accountId, rootId)
+        deleteMetadataOutboxForRoot(accountId, rootId)
+        clearProgress(accountId, rootId)
+        deleteLocalInventoriesForRoot(accountId, rootId)
+        clearConflicts(accountId, rootId)
+        clearPendingMaterialization(accountId, rootId)
+        deleteTombstones(accountId, rootId)
+        deleteNodes(accountId, rootId)
+        deleteBindingsForRoot(accountId, rootId)
+        deleteRoot(accountId, rootId)
     }
 }

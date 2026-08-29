@@ -123,6 +123,8 @@ class FirestoreRepository {
 
     suspend fun releaseCloudFolderManifest(lease: CloudFolderManifestLease): Boolean = false
 
+    suspend fun deleteCloudFolderManifestHead(userId: String, rootId: String): Boolean = false
+
     // Helper to safely ignore listener removal in ViewModel
     fun removeListener(listener: Any?) {
         // No-op
