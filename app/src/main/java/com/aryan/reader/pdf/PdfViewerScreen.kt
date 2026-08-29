@@ -3570,28 +3570,29 @@ private fun PdfViewerScreenContent(
         pdfSpreadSettings.pageSpreadMode,
         pdfSpreadSettings.pdfFirstPageStandaloneInSpread
     ) {
-        val nextPageScale = currentPageScaleAfterPdfPageChange(
-            displayMode = displayMode,
-            isScrollLocked = isScrollLocked,
-            lockedState = lockedState,
-            currentActiveScale = currentActiveScale
-        )
-        currentPageScale = nextPageScale
-        val isCurrentTwoPageSpread =
-            displayMode == DisplayMode.PAGINATION &&
+        if (displayMode == DisplayMode.PAGINATION) {
+            val nextPageScale = currentPageScaleAfterPdfPageChange(
+                displayMode = displayMode,
+                isScrollLocked = isScrollLocked,
+                lockedState = lockedState,
+                currentActiveScale = currentActiveScale
+            )
+            currentPageScale = nextPageScale
+            val isCurrentTwoPageSpread =
                 PdfSpreadLayout.visiblePageIndices(currentPage, totalDisplayPages, pdfSpreadSettings).size > 1
-        if (isCurrentTwoPageSpread) {
-            val currentLockedState = lockedState
-            val nextPageOffset = if (isScrollLocked && currentLockedState != null) {
-                Offset(currentLockedState.second, currentLockedState.third)
-            } else {
-                Offset.Zero
+            if (isCurrentTwoPageSpread) {
+                val currentLockedState = lockedState
+                val nextPageOffset = if (isScrollLocked && currentLockedState != null) {
+                    Offset(currentLockedState.second, currentLockedState.third)
+                } else {
+                    Offset.Zero
+                }
+                currentActiveScale = nextPageScale
+                currentActiveOffset = nextPageOffset
+            } else if (!isScrollLocked) {
+                currentActiveScale = 1f
+                currentActiveOffset = Offset.Zero
             }
-            currentActiveScale = nextPageScale
-            currentActiveOffset = nextPageOffset
-        } else if (displayMode == DisplayMode.PAGINATION && !isScrollLocked) {
-            currentActiveScale = 1f
-            currentActiveOffset = Offset.Zero
         }
         ocrUsedForCurrentPageTts = false
     }
@@ -6604,7 +6605,7 @@ private class PdfViewerSurfaceState {
     lateinit var lastPenTool: InkType
     lateinit var lastHighlighterTool: InkType
     lateinit var showZoomIndicator: PdfViewerMutableValue<Boolean>
-    var zoomIndicatorPercentage: Int = 0
+    var zoomIndicatorPercentage: Int by mutableStateOf(0)
     lateinit var toolSettings: AnnotationToolSettings
     lateinit var onInsertTextBox: () -> Unit
     lateinit var customFonts: List<CustomFontEntity>

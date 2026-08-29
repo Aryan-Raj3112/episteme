@@ -351,6 +351,7 @@ internal fun PdfPageComposable(
     val currentOnDoubleTapDragZoomStart by rememberUpdatedState(onDoubleTapDragZoomStart)
     val currentOnDoubleTapDragZoom by rememberUpdatedState(onDoubleTapDragZoom)
     val currentOnDoubleTapDragZoomEnd by rememberUpdatedState(onDoubleTapDragZoomEnd)
+    val currentOnTwoFingerSwipe by rememberUpdatedState(onTwoFingerSwipe)
 
     val effectiveScale = if (isZoomEnabled && !isVerticalScroll) scale else externalScale
     val effectiveOffset = if (isZoomEnabled && !isVerticalScroll) offset else Offset.Zero
@@ -2975,7 +2976,6 @@ internal fun PdfPageComposable(
                 isZoomEnabled,
                 isVerticalScroll,
                 isEditMode,
-                onTwoFingerSwipe,
                 isScrollLocked,
                 isOneHandZooming
             ) {
@@ -3175,7 +3175,7 @@ internal fun PdfPageComposable(
                                         if (abs(swipeAccumulatorX) > 70f) {
                                             val direction = if (swipeAccumulatorX > 0) -1
                                             else 1
-                                            onTwoFingerSwipe(direction)
+                                            currentOnTwoFingerSwipe(direction)
                                             mode = 4
                                         }
                                         event.changes.forEach {
