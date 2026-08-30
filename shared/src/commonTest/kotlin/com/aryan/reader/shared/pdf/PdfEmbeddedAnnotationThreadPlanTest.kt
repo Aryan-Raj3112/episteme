@@ -72,16 +72,60 @@ class PdfEmbeddedAnnotationThreadPlanTest {
         assertEquals(emptyList(), plan.displayGroups)
     }
 
+    @Test
+    fun `popup attachments never root a display group even when listed first`() {
+        val plan = buildPdfEmbeddedAnnotationThreadPlan(
+            annotations = listOf(
+                item(contents = true, left = 0f, isPopup = true),
+                item(contents = true, left = 0f),
+            ),
+            geometryTolerance = 10f,
+        )
+
+        assertEquals(
+            listOf(PdfEmbeddedAnnotationDisplayGroup(rootIndex = 1, geometricReplyIndices = emptyList())),
+            plan.displayGroups,
+        )
+    }
+
+    @Test
+    fun `popup attachments overlapping a real annotation are dropped from display`() {
+        val plan = buildPdfEmbeddedAnnotationThreadPlan(
+            annotations = listOf(
+                item(contents = true, left = 0f),
+                item(contents = true, left = 5f, isPopup = true),
+            ),
+            geometryTolerance = 10f,
+        )
+
+        assertEquals(
+            listOf(PdfEmbeddedAnnotationDisplayGroup(rootIndex = 0, geometricReplyIndices = emptyList())),
+            plan.displayGroups,
+        )
+    }
+
+    @Test
+    fun `standalone popup attachments with no parent are dropped`() {
+        val plan = buildPdfEmbeddedAnnotationThreadPlan(
+            annotations = listOf(item(contents = true, left = 200f, isPopup = true)),
+            geometryTolerance = 10f,
+        )
+
+        assertEquals(emptyList(), plan.displayGroups)
+    }
+
     private fun item(
         name: String? = null,
         inReplyTo: String? = null,
         contents: Boolean = true,
         left: Float,
         right: Float = left + 10f,
+        isPopup: Boolean = false,
     ): PdfEmbeddedAnnotationThreadItem = PdfEmbeddedAnnotationThreadItem(
         name = name,
         inReplyTo = inReplyTo,
         bounds = PdfPageBounds(left, 0f, right, 20f),
         hasVisibleText = contents,
+        isPopupAttachment = isPopup,
     )
 }

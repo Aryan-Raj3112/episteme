@@ -40,6 +40,7 @@ object PdfiumAnnotationSubtype {
     const val SQUIGGLY = 11
     const val STRIKEOUT = 12
     const val INK = 15
+    const val POPUP = 16
     const val WIDGET = 19
 }
 

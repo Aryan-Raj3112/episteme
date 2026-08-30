@@ -197,6 +197,7 @@ object SharedPdfEmbeddedAnnotationThreads {
                     bounds = annotation.bounds,
                     hasVisibleText = annotation.contents.isNotBlank(),
                     hasVisibleReply = annotation.replies.any { it.hasVisibleText },
+                    isPopupAttachment = annotation.subtype == PdfiumAnnotationSubtype.POPUP,
                 )
             },
             geometryTolerance = geometryTolerance,
@@ -234,6 +235,7 @@ data class PdfEmbeddedAnnotationThreadItem(
     val bounds: PdfPageBounds,
     val hasVisibleText: Boolean,
     val hasVisibleReply: Boolean = false,
+    val isPopupAttachment: Boolean = false,
 )
 
 data class PdfEmbeddedAnnotationReplyEdge(
@@ -277,6 +279,12 @@ fun buildPdfEmbeddedAnnotationThreadPlan(
 
     val groupedRoots = mutableListOf<MutableList<Int>>()
     orphanIndices.forEach { annotationIndex ->
+        // Popup annotations are transient comment windows, not tappable
+        // targets. Their rects sit above or beside the comment icon they
+        // belong to, so letting one root a group would displace the hitbox
+        // away from the icon while their contents merely duplicate the
+        // parent comment. Drop them from display entirely.
+        if (annotations[annotationIndex].isPopupAttachment) return@forEach
         val match = groupedRoots.firstOrNull { group ->
             annotations[group.first()].bounds
                 .inflatedBy(geometryTolerance)

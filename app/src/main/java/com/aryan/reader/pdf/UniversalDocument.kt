@@ -18,6 +18,7 @@ import com.aryan.reader.R
 import com.aryan.reader.pptx.PptxDocumentWrapper
 import com.aryan.reader.shared.opds.OpdsStreamReference
 import com.aryan.reader.shared.opds.SharedOpdsStreamRequest
+import com.aryan.reader.shared.pdf.sharedPdfEmbeddedAnnotationRichText
 import io.legere.pdfiumandroid.api.Bookmark
 import io.legere.pdfiumandroid.suspend.PdfDocumentKt
 import com.aryan.reader.shared.ui.getAndroidCompatiblePdfTableOfContents
@@ -391,7 +392,13 @@ class PdfPageWrapper(
 
                 var contents = NativePdfiumBridge.getAnnotString(pagePtr, index, "Contents")
                 if (contents.isNullOrBlank()) {
+                    // The /RC rich-content fallback is XHTML markup (often
+                    // including an XML declaration) and must never surface
+                    // raw. Strip it to plain text and keep it only when real
+                    // text remains.
                     contents = NativePdfiumBridge.getAnnotString(pagePtr, index, "RC")
+                        ?.let(::sharedPdfEmbeddedAnnotationRichText)
+                        ?.takeIf(String::isNotBlank)
                 }
 
                 val pdfRectArray = NativePdfiumBridge.getAnnotRect(pagePtr, index)
