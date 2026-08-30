@@ -162,6 +162,45 @@ class TtsLifecycleSourceTest {
         assertTrue(source.contains("LocalTtsInterruptionAction.PAUSE") || source.contains("LocalTtsInterruptionAction.RESUME"))
     }
 
+    @Test
+    fun `playback anchor runs only while local speech is active`() {
+        val managerSource = sourceFile("com/aryan/reader/tts/TtsPlaybackManager.kt").readText()
+
+        val startLocalChunkBody = managerSource.substringAfter("private fun startLocalChunk")
+            .substringBefore("private fun enqueueLocalLookahead")
+        assertTrue(startLocalChunkBody.contains("directLocalPlaybackAnchor.start()"))
+        assertTrue(
+            "anchor must start after focus is granted",
+            startLocalChunkBody.indexOf("directLocalAudioFocusManager.requestFocus()") <
+                startLocalChunkBody.indexOf("directLocalPlaybackAnchor.start()")
+        )
+
+        val pauseBody = managerSource.substringAfter("private fun pauseLocalSpeech")
+            .substringBefore("fun stopFromTransport")
+        assertTrue(pauseBody.contains("directLocalPlaybackAnchor.pause()"))
+
+        val stopBody = managerSource.substringAfter("private fun handleStopTts")
+            .substringBefore("fun stopForAppTaskRemoval")
+        assertTrue(stopBody.contains("directLocalPlaybackAnchor.pause()"))
+
+        val releaseBody = managerSource.substringAfter("fun release()")
+            .substringBefore("override fun onPlaybackStateChanged")
+        assertTrue(releaseBody.contains("directLocalPlaybackAnchor.release()"))
+
+        val anchorSource = sourceFile("com/aryan/reader/tts/DirectLocalTtsPlaybackAnchor.kt").readText()
+        assertTrue(anchorSource.contains("/* handleAudioFocus = */ false"))
+        assertTrue(anchorSource.contains("Player.REPEAT_MODE_ONE"))
+    }
+
+    @Test
+    fun `last playback service is recorded for media button resumption`() {
+        val managerSource = sourceFile("com/aryan/reader/tts/TtsPlaybackManager.kt").readText()
+        assertTrue(managerSource.contains("MediaButtonRouting.recordPlaybackService(appContext, TtsService::class.java.name)"))
+
+        val audiobookSource = sourceFile("com/aryan/reader/audiobook/AudiobookPlayback.kt").readText()
+        assertTrue(audiobookSource.contains("AudiobookPlaybackService::class.java"))
+    }
+
     private fun sourceFile(relativePath: String): File {
         val candidates = listOf(
             File("src/main/java/$relativePath"),

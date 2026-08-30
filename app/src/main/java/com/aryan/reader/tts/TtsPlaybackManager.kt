@@ -35,6 +35,7 @@ import androidx.media3.session.MediaSession
 import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionResult
 import com.aryan.reader.MainActivity
+import com.aryan.reader.MediaButtonRouting
 import com.aryan.reader.R
 import com.aryan.reader.logMediaTransport
 import com.aryan.reader.mediaButtonKeyEventDetails
@@ -425,6 +426,7 @@ class TtsPlaybackManager(
     private var pageIndex: Int? = null
     private val directLocalTtsPlayer = DirectLocalTtsPlayer(appContext, this)
     private val directLocalAudioFocusManager = DirectLocalTtsAudioFocusManager(appContext, this)
+    private val directLocalPlaybackAnchor = DirectLocalTtsPlaybackAnchor(appContext)
     private var localTtsInterruptionState = LocalTtsInterruptionState()
     private var localSpeechRate = 1f
     private var localSpeechPitch = 1f
@@ -814,6 +816,7 @@ class TtsPlaybackManager(
     private fun pauseLocalSpeech() {
         advancePlaybackGeneration()
         directLocalTtsPlayer.stop()
+        directLocalPlaybackAnchor.pause()
         localQueuedThrough = -1
         localResumeOffset = localLatestRangeOffset
         _ttsState.value = _ttsState.value.copy(isPlaying = false, isLoading = false)
@@ -1121,6 +1124,7 @@ class TtsPlaybackManager(
             publishLocalChunkState(chunkIndex, isLoading = false, isPlaying = false)
             return
         }
+        directLocalPlaybackAnchor.start()
         publishLocalChunkState(chunkIndex, isLoading = true, isPlaying = false)
         updateLocalMediaItem(chunkIndex)
         val id = localTtsUtteranceId(generation, chunkIndex, safeOffset)
@@ -1142,6 +1146,7 @@ class TtsPlaybackManager(
         val chunk = textChunks.getOrNull(target) ?: return
         val spokenText = chunk.spokenText.ifBlank { chunk.text }
         localQueuedThrough = target
+        directLocalPlaybackAnchor.start()
         directLocalTtsPlayer.speak(
             text = spokenText,
             utteranceId = localTtsUtteranceId(generation, target, 0),
@@ -1253,6 +1258,7 @@ class TtsPlaybackManager(
             localLatestRangeOffset = 0
             localQueuedThrough = -1
             directLocalAudioFocusManager.abandonFocus()
+            directLocalPlaybackAnchor.pause()
             _ttsState.value = _ttsState.value.copy(
                 isLoading = false,
                 isPlaying = false,
@@ -1404,6 +1410,7 @@ class TtsPlaybackManager(
             Timber.tag(TTS_NOTIFICATION_DIAG_TAG).w("handleStartTts aborted because chunks is empty.")
             return
         }
+        MediaButtonRouting.recordPlaybackService(appContext, TtsService::class.java.name)
 
         // --- YOUR SNIPPET START ---
         val authToken = args.getString(KEY_AUTH_TOKEN)
@@ -1945,6 +1952,7 @@ class TtsPlaybackManager(
         wordTrackingJob?.cancel()
         if (userInitiated) directLocalTtsPlayer.shutdown() else directLocalTtsPlayer.stop()
         directLocalAudioFocusManager.abandonFocus()
+        directLocalPlaybackAnchor.pause()
         localTtsInterruptionState = LocalTtsInterruptionState()
         localResumeOffset = 0
         localLatestRangeOffset = 0
@@ -2941,6 +2949,7 @@ class TtsPlaybackManager(
         player.removeListener(this)
         handleStopTts(userInitiated = true)
         directLocalAudioFocusManager.abandonFocus()
+        directLocalPlaybackAnchor.release()
         directLocalTtsPlayer.shutdown()
         Timber.d("TtsPlaybackManager released.")
     }

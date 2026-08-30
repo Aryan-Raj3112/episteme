@@ -211,6 +211,12 @@ class AudiobookPlaybackService : MediaSessionService(), Player.Listener {
             "audiobook-is-playing-changed",
             "isPlaying=$isPlaying ${playerTransportSnapshot(player)}"
         )
+        if (isPlaying) {
+            com.aryan.reader.MediaButtonRouting.recordPlaybackService(
+                this,
+                AudiobookPlaybackService::class.java
+            )
+        }
         if (!isPlaying) scope.launch { persistPosition() }
     }
 

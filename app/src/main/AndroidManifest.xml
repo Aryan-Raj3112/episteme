@@ -347,6 +347,14 @@
             </intent-filter>
         </service>
 
+        <receiver
+            android:name="com.aryan.reader.MediaButtonRoutingReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MEDIA_BUTTON"/>
+            </intent-filter>
+        </receiver>
+
         <service
             android:name="androidx.appcompat.app.AppLocalesMetadataHolderService"
             android:enabled="false"
