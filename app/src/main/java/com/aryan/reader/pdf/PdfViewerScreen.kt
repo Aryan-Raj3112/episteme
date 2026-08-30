@@ -309,6 +309,7 @@ import com.aryan.reader.shared.reader.MobilePdfReaderBackAction
 import com.aryan.reader.shared.reader.MobilePdfReaderBackState
 import com.aryan.reader.shared.reader.selectMobilePdfReaderBackAction
 import com.aryan.reader.shared.reader.mobilePdfSystemBarsVisibility
+import com.aryan.reader.shared.reader.MobileReaderSystemBarsVisibility
 import com.aryan.reader.shared.reader.MobilePdfDocumentPresentation
 import com.aryan.reader.shared.reader.selectMobilePdfDocumentPresentation
 import com.aryan.reader.shared.ui.SharedMobileReaderLoadingIndicator
@@ -3783,8 +3784,10 @@ private fun PdfViewerScreenContent(
 
     val imeHeight = WindowInsets.ime.getBottom(density)
 
-    val bottomScrollLimitPx = remember(isEditMode, imeHeight, navBarHeight, dockLocation, isDockMinimized, systemUiMode, showStandardBars) {
-        val effectiveNavBar = if (systemUiMode == SystemUiMode.DEFAULT || (systemUiMode == SystemUiMode.SYNC && showStandardBars)) navBarHeight else 0
+    val bottomScrollLimitPx = remember(isEditMode, imeHeight, navBarHeight, dockLocation, isDockMinimized, systemUiMode, showStandardBars, isSplitPane) {
+        // Split panes keep the nav bar visible at all times; the workspace
+        // below them already reserves the bar's space.
+        val effectiveNavBar = if (isSplitPane || systemUiMode == SystemUiMode.DEFAULT || (systemUiMode == SystemUiMode.SYNC && showStandardBars)) navBarHeight else 0
         if (isEditMode) {
             if (imeHeight > 0) {
                 imeHeight.toFloat()
@@ -5628,7 +5631,14 @@ private fun PdfViewerDocumentSetup(
         if (!ownsPaneGlobals) return@LaunchedEffect
         if (window != null) {
             val insetsController = WindowCompat.getInsetsController(window, view)
-            val visibility = mobilePdfSystemBarsVisibility(systemUiMode, showStandardBars)
+            // A split-workspace pane never owns the system bars: the workspace
+            // keeps both bars visible so its toolbar and pane chrome stay
+            // clear of them, regardless of the reader's visual option.
+            val visibility = if (isSplitPane) {
+                MobileReaderSystemBarsVisibility(statusBarsVisible = true, navigationBarsVisible = true)
+            } else {
+                mobilePdfSystemBarsVisibility(systemUiMode, showStandardBars)
+            }
             if (visibility.statusBarsVisible) insetsController.show(WindowInsetsCompat.Type.statusBars())
             else insetsController.hide(WindowInsetsCompat.Type.statusBars())
             if (visibility.navigationBarsVisible) insetsController.show(WindowInsetsCompat.Type.navigationBars())
@@ -5679,14 +5689,21 @@ private fun PdfViewerDocumentSetup(
         showStandardBars,
         systemUiMode,
         statusBarHeightDp,
-        isPdfTabStripVisible
+        isPdfTabStripVisible,
+        isSplitPane
     ) {
         if (!showStandardBars) {
             0.dp
         } else {
             var inset = 56.dp
-            val isStatusBarVisible =
-                systemUiMode == SystemUiMode.DEFAULT || (systemUiMode == SystemUiMode.SYNC && showStandardBars)
+            // A split pane sits below the workspace toolbar, which already
+            // pads for the status bar; adding it again would double-pad the
+            // pane's own toolbar.
+            val isStatusBarVisible = !isSplitPane &&
+                (
+                    systemUiMode == SystemUiMode.DEFAULT ||
+                        (systemUiMode == SystemUiMode.SYNC && showStandardBars)
+                    )
 
             if (isStatusBarVisible) {
                 inset += statusBarHeightDp

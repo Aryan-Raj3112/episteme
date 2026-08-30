@@ -16,9 +16,11 @@ import kotlin.math.roundToInt
  * VERTICAL means two side-by-side panes separated by a vertical divider.
  * HORIZONTAL means two stacked panes separated by a horizontal divider.
  *
- * This is the user's preferred arrangement. The adaptive layout policy may
- * temporarily resolve it to the other orientation when the available space
- * cannot satisfy both panes' minimum readable size.
+ * The arrangement is derived from the viewport instead of being stored as a
+ * user preference: portrait screens stack the panes and landscape screens
+ * place them side by side. The adaptive layout policy may still resolve the
+ * other arrangement when the available space cannot satisfy both panes'
+ * minimum readable size.
  */
 enum class PdfSplitOrientation {
     VERTICAL,
@@ -67,15 +69,14 @@ data class PdfSplitPaneState(
  * viewport state belong to the pane host that consumes this model.
  */
 data class PdfSplitWorkspaceState(
-    val orientation: PdfSplitOrientation = PdfSplitOrientation.VERTICAL,
     val primary: PdfSplitPaneState? = null,
     val secondary: PdfSplitPaneState? = null,
     val focusedPane: PdfSplitPane = PdfSplitPane.PRIMARY,
-    /** Kept as a source-compatible current-orientation value for existing UI. */
+    /** Most recently committed divider fraction; kept for legacy JSON output. */
     val dividerFraction: Float = DefaultPdfSplitDividerFraction,
-    /** Divider position used when [orientation] is [PdfSplitOrientation.VERTICAL]. */
+    /** Divider position used when the panes are arranged side by side. */
     val verticalDividerFraction: Float = dividerFraction,
-    /** Divider position used when [orientation] is [PdfSplitOrientation.HORIZONTAL]. */
+    /** Divider position used when the panes are stacked. */
     val horizontalDividerFraction: Float = dividerFraction,
     /** Monotonic in-memory revision used to reject stale workspace actions. */
     val revision: Long = 0L,
@@ -137,12 +138,7 @@ data class PdfSplitWorkspaceState(
             primary = resolvedPrimary,
             secondary = resolvedSecondary,
             focusedPane = resolvedFocusedPane,
-            dividerFraction = safeDividerFraction(
-                when (orientation) {
-                    PdfSplitOrientation.VERTICAL -> safeVertical
-                    PdfSplitOrientation.HORIZONTAL -> safeHorizontal
-                },
-            ),
+            dividerFraction = safeHorizontal,
             verticalDividerFraction = safeVertical,
             horizontalDividerFraction = safeHorizontal,
             revision = revision.coerceAtLeast(0L),
@@ -284,7 +280,6 @@ sealed interface PdfSplitWorkspaceAction {
     data class Open(
         val primary: PdfSplitPaneState,
         val secondary: PdfSplitPaneState,
-        val orientation: PdfSplitOrientation = PdfSplitOrientation.VERTICAL,
     ) : PdfSplitWorkspaceAction
 
     data class FocusChanged(
@@ -293,14 +288,9 @@ sealed interface PdfSplitWorkspaceAction {
         val expectedSessionId: Long? = null,
     ) : PdfSplitWorkspaceAction
 
-    data class OrientationChanged(
-        val orientation: PdfSplitOrientation,
-        val expectedRevision: Long? = null,
-    ) : PdfSplitWorkspaceAction
-
     data class DividerChanged(
         val fraction: Float,
-        /** Lets a gesture commit to the orientation it started in. */
+        /** Lets a gesture commit to the arrangement it started in. */
         val orientation: PdfSplitOrientation? = null,
         val expectedRevision: Long? = null,
     ) : PdfSplitWorkspaceAction
@@ -337,7 +327,6 @@ fun PdfSplitWorkspaceState.reduce(action: PdfSplitWorkspaceAction): PdfSplitWork
             val cleanSecondary = action.secondary.sanitized()
                 ?.takeUnless { it.samePdfDocument(cleanPrimary) }
             PdfSplitWorkspaceState(
-                orientation = action.orientation,
                 primary = cleanPrimary.copy(
                     sessionId = generatedPdfSplitSessionId(nextWorkspaceRevision(revision), PdfSplitPane.PRIMARY),
                 ),
@@ -361,13 +350,12 @@ fun PdfSplitWorkspaceState.reduce(action: PdfSplitWorkspaceAction): PdfSplitWork
             copy(focusedPane = action.pane)
         }
 
-        is PdfSplitWorkspaceAction.OrientationChanged -> copy(
-            orientation = action.orientation,
-            dividerFraction = dividerFractionFor(action.orientation),
-        )
-
         is PdfSplitWorkspaceAction.DividerChanged -> {
-            val changedOrientation = action.orientation ?: orientation
+            // A gesture always supplies the arrangement it started in; the
+            // fallback keeps programmatically committed divider updates
+            // applied to both arrangements so the stored value stays coherent
+            // when the viewport rotates between commits.
+            val changedOrientation = action.orientation
             val safeFraction = safeDividerFraction(action.fraction)
             when (changedOrientation) {
                 PdfSplitOrientation.VERTICAL -> copy(
@@ -377,6 +365,12 @@ fun PdfSplitWorkspaceState.reduce(action: PdfSplitWorkspaceAction): PdfSplitWork
 
                 PdfSplitOrientation.HORIZONTAL -> copy(
                     dividerFraction = safeFraction,
+                    horizontalDividerFraction = safeFraction,
+                )
+
+                null -> copy(
+                    dividerFraction = safeFraction,
+                    verticalDividerFraction = safeFraction,
                     horizontalDividerFraction = safeFraction,
                 )
             }
@@ -462,7 +456,6 @@ fun PdfSplitWorkspaceState.reduce(action: PdfSplitWorkspaceAction): PdfSplitWork
 private fun PdfSplitWorkspaceAction.acceptsRevision(currentRevision: Long): Boolean = when (this) {
     is PdfSplitWorkspaceAction.Open -> true
     is PdfSplitWorkspaceAction.FocusChanged -> expectedRevision == null || expectedRevision == currentRevision
-    is PdfSplitWorkspaceAction.OrientationChanged -> expectedRevision == null || expectedRevision == currentRevision
     is PdfSplitWorkspaceAction.DividerChanged -> expectedRevision == null || expectedRevision == currentRevision
     is PdfSplitWorkspaceAction.PaneOpened -> expectedRevision == null || expectedRevision == currentRevision
     is PdfSplitWorkspaceAction.PaneClosed -> expectedRevision == null || expectedRevision == currentRevision
@@ -521,10 +514,13 @@ data class PdfSplitLayoutPlan(
 
 /**
  * Resolves the current state into a concrete layout using actual available
- * dimensions. The preferred orientation is attempted first; if it cannot fit
- * both minimum pane sizes, the other orientation is attempted before falling
- * back to a single focused pane. This fallback is temporary and does not
- * mutate the user's preferred orientation.
+ * dimensions.
+ *
+ * The preferred arrangement is derived from the viewport: portrait stacks the
+ * panes and landscape places them side by side. When that arrangement cannot
+ * fit both minimum pane sizes, the other one is attempted before falling back
+ * to a single focused pane. This fallback is temporary and does not mutate the
+ * workspace.
  */
 fun PdfSplitWorkspaceState.resolveLayout(
     availableWidthPx: Int,
@@ -535,14 +531,15 @@ fun PdfSplitWorkspaceState.resolveLayout(
 ): PdfSplitLayoutPlan {
     val width = availableWidthPx.coerceAtLeast(0)
     val height = availableHeightPx.coerceAtLeast(0)
+    val preferredOrientation = defaultPdfSplitOrientationForViewport(width, height)
     if (!isSplit || width == 0 || height == 0) {
-        return singlePaneLayout(width = width, height = height, orientation = orientation)
+        return singlePaneLayout(width = width, height = height, orientation = preferredOrientation)
     }
 
     val safeMinWidth = minPaneWidthPx.coerceAtLeast(1)
     val safeMinHeight = minPaneHeightPx.coerceAtLeast(1)
     val safeDivider = dividerThicknessPx.coerceAtLeast(0)
-    val resolvedOrientation = sequenceOf(orientation, orientation.other())
+    val resolvedOrientation = sequenceOf(preferredOrientation, preferredOrientation.other())
         .firstOrNull { candidate ->
             val axis = if (candidate == PdfSplitOrientation.VERTICAL) width else height
             val minimum = if (candidate == PdfSplitOrientation.VERTICAL) safeMinWidth else safeMinHeight
@@ -551,7 +548,7 @@ fun PdfSplitWorkspaceState.resolveLayout(
             axis >= (minimum * 2L + safeDivider).coerceAtMost(Int.MAX_VALUE.toLong()) &&
                 crossAxis >= crossMinimum
         }
-        ?: return singlePaneLayout(width = width, height = height, orientation = orientation)
+        ?: return singlePaneLayout(width = width, height = height, orientation = preferredOrientation)
 
     val axis = if (resolvedOrientation == PdfSplitOrientation.VERTICAL) width else height
     val minimum = if (resolvedOrientation == PdfSplitOrientation.VERTICAL) safeMinWidth else safeMinHeight
@@ -571,6 +568,19 @@ fun PdfSplitWorkspaceState.resolveLayout(
             first.toFloat() / contentAxis.toFloat()
         },
     )
+}
+
+/**
+ * Portrait viewports stack the two panes; landscape viewports place them side
+ * by side. Callers pass the size of the area actually available to the panes.
+ */
+fun defaultPdfSplitOrientationForViewport(
+    availableWidthPx: Int,
+    availableHeightPx: Int,
+): PdfSplitOrientation = if (availableWidthPx > availableHeightPx) {
+    PdfSplitOrientation.VERTICAL
+} else {
+    PdfSplitOrientation.HORIZONTAL
 }
 
 private fun singlePaneLayout(
@@ -604,7 +614,6 @@ object PdfSplitWorkspaceJson {
         val root = JsonObject(
             mapOf(
                 "schemaVersion" to JsonPrimitive(SCHEMA_VERSION),
-                "orientation" to JsonPrimitive(clean.orientation.name),
                 "focusedPane" to JsonPrimitive(clean.focusedPane.name),
                 "focusedBookId" to clean.focusedDocument?.canonicalBookId.asJson(),
                 "focusedUriString" to clean.focusedDocument?.canonicalUriString.asJson(),
@@ -624,9 +633,6 @@ object PdfSplitWorkspaceJson {
         if (rawJson.isNullOrBlank()) return PdfSplitWorkspaceState()
         val root = runCatching { json.parseToJsonElement(rawJson).jsonObject }.getOrNull()
             ?: return PdfSplitWorkspaceState()
-        val orientation = root.string("orientation")
-            ?.let { runCatching { PdfSplitOrientation.valueOf(it) }.getOrNull() }
-            ?: PdfSplitOrientation.VERTICAL
         val legacyDivider = root.float("dividerFraction") ?: DefaultPdfSplitDividerFraction
         val vertical = root.float("verticalDividerFraction") ?: legacyDivider
         val horizontal = root.float("horizontalDividerFraction") ?: legacyDivider
@@ -643,7 +649,6 @@ object PdfSplitWorkspaceJson {
             null
         }
         val parsed = PdfSplitWorkspaceState(
-            orientation = orientation,
             primary = primary,
             secondary = secondary,
             focusedPane = when {
@@ -651,10 +656,7 @@ object PdfSplitWorkspaceJson {
                 focusProbe != null && secondary?.samePdfDocument(focusProbe) == true -> PdfSplitPane.SECONDARY
                 else -> parsedFocusedPane
             },
-            dividerFraction = when (orientation) {
-                PdfSplitOrientation.VERTICAL -> vertical
-                PdfSplitOrientation.HORIZONTAL -> horizontal
-            },
+            dividerFraction = horizontal,
             verticalDividerFraction = vertical,
             horizontalDividerFraction = horizontal,
         )

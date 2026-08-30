@@ -237,7 +237,6 @@ final class ReaderUITests: XCTestCase {
             candidate.tap()
         }
         XCTAssertTrue(try requireAny(["Split Reader"], in: app, timeout: 20).exists)
-        try requireAny(["Side by side", "Stacked"], in: app, timeout: 5).tap()
         try requireAny(["Swap documents"], in: app, timeout: 5).tap()
         capture("pdf-split-two-distinct-documents", app: app)
     }

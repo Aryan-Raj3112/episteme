@@ -3061,7 +3061,6 @@ private fun ReaderIosApp(
                 PdfSplitWorkspaceAction.Open(
                     primary = primary,
                     secondary = selected,
-                    orientation = pdfSplitWorkspace.orientation,
                 )
             )
         } else {
@@ -3876,6 +3875,7 @@ private fun ReaderIosApp(
         onOpenSplit: (() -> Unit)? = null,
         hostConfig: SharedPdfReaderHostConfig,
         pdfTabsEnabled: Boolean,
+        isSplitPane: Boolean = false,
     ) {
         val effectiveHostConfig = hostConfig.copy(isAppActive = bridge.appLifecycleState.isActive)
         val initialPdfReaderState = remember(effectiveHostConfig.sessionKey) {
@@ -4150,6 +4150,7 @@ private fun ReaderIosApp(
             onSystemUiRelease = bridge::releaseReaderSystemUi,
             modifier = Modifier.fillMaxSize(),
             hostConfig = effectiveHostConfig,
+            isSplitPane = isSplitPane,
         )
     }
 
@@ -4252,14 +4253,6 @@ private fun ReaderIosApp(
                                         persistIosReaderSession(focusedBook)
                                     }
                                 },
-                                onOrientationChange = { orientation ->
-                                    pdfSplitWorkspace = pdfSplitWorkspace.reduce(
-                                        PdfSplitWorkspaceAction.OrientationChanged(
-                                            orientation = orientation,
-                                            expectedRevision = pdfSplitWorkspace.revision,
-                                        )
-                                    )
-                                },
                                 onDividerChange = { fraction, orientation, revision ->
                                     pdfSplitWorkspace = pdfSplitWorkspace.reduce(
                                         PdfSplitWorkspaceAction.DividerChanged(
@@ -4301,6 +4294,7 @@ private fun ReaderIosApp(
                                                 isAppActive = bridge.appLifecycleState.isActive,
                                             ),
                                             pdfTabsEnabled = false,
+                                            isSplitPane = true,
                                         )
                                     }
                                 },

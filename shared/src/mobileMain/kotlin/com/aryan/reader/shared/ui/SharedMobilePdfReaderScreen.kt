@@ -488,6 +488,8 @@ fun SharedMobilePdfReaderHost(
     onSystemUiRelease: () -> Unit = {},
     modifier: Modifier = Modifier,
     hostConfig: SharedPdfReaderHostConfig = SharedPdfReaderHostConfig.fullScreen(book.id),
+    /** True when this reader is mounted inside a split-workspace pane. */
+    isSplitPane: Boolean = false,
 ) {
     val readerSessionKey = hostConfig.sessionKey
     val ownsSystemUi = hostConfig.owns(SharedPdfReaderGlobalResource.SYSTEM_UI)
@@ -805,12 +807,19 @@ fun SharedMobilePdfReaderHost(
             ?: BuiltInPdfReaderThemes.first()
     }
     val systemBarColor = MaterialTheme.colorScheme.surface
-    val hideSystemUi = when (systemUiMode) {
-        SharedMobilePdfSystemUiMode.ALWAYS_SHOW -> false
-        SharedMobilePdfSystemUiMode.SYNC_WITH_MENUS -> !showChrome
-        SharedMobilePdfSystemUiMode.ALWAYS_HIDE -> true
+    // A split-workspace pane never owns the system bars; the workspace host
+    // keeps the status bar visible so its controls stay below it, matching
+    // Android where the split screen keeps both system bars on screen.
+    val hideSystemUi = if (isSplitPane) {
+        false
+    } else {
+        when (systemUiMode) {
+            SharedMobilePdfSystemUiMode.ALWAYS_SHOW -> false
+            SharedMobilePdfSystemUiMode.SYNC_WITH_MENUS -> !showChrome
+            SharedMobilePdfSystemUiMode.ALWAYS_HIDE -> true
+        }
     }
-    val edgeToEdgeSystemUi = systemUiMode != SharedMobilePdfSystemUiMode.ALWAYS_SHOW
+    val edgeToEdgeSystemUi = !isSplitPane && systemUiMode != SharedMobilePdfSystemUiMode.ALWAYS_SHOW
     val density = LocalDensity.current
     val copiedTextLabel = readerString("clip_label_copied_text", "Copied Text")
     val copiedLinkLabel = readerString("clip_label_copied_link", "Copied Link")
@@ -824,12 +833,16 @@ fun SharedMobilePdfReaderHost(
     val systemNavigationInset = with(density) {
         WindowInsets.safeDrawing.getBottom(density).toDp()
     }
-    val effectiveBottomSystemInset = when (systemUiMode) {
-        SharedMobilePdfSystemUiMode.ALWAYS_SHOW -> systemNavigationInset
-        SharedMobilePdfSystemUiMode.SYNC_WITH_MENUS -> if (showChrome) systemNavigationInset else 0.dp
-        SharedMobilePdfSystemUiMode.ALWAYS_HIDE -> 0.dp
+    val effectiveBottomSystemInset = if (isSplitPane) {
+        systemNavigationInset
+    } else {
+        when (systemUiMode) {
+            SharedMobilePdfSystemUiMode.ALWAYS_SHOW -> systemNavigationInset
+            SharedMobilePdfSystemUiMode.SYNC_WITH_MENUS -> if (showChrome) systemNavigationInset else 0.dp
+            SharedMobilePdfSystemUiMode.ALWAYS_HIDE -> 0.dp
+        }
     }
-    val pdfBottomChromePadding = 56.dp + effectiveBottomSystemInset
+    val pdfBottomChromePadding = if (isSplitPane) 56.dp else 56.dp + effectiveBottomSystemInset
     val isJumpHistoryVisible = showChrome && !readerState.isSearchActive && jumpHistory.hasJumpTargets
     val isPdfTtsPlayingOrLoading =
         pdfTts.state == SharedMobileEpubLocalTtsState.SPEAKING || pendingTtsStart != null ||
@@ -1529,7 +1542,14 @@ fun SharedMobilePdfReaderHost(
                             topTools = pdfTopTools,
                             toolbarPreferences = sanitizedPdfToolbarPreferences,
                             onCustomizeToolbar = { if (ownsGlobalModal) showToolbarCustomization = true },
-                            applySystemBarInsets = mobilePdfSystemBarsVisibility(systemUiMode.toReaderSystemUiMode(), showChrome).statusBarsVisible
+                            // Panes already sit below the workspace toolbar, so
+                            // only the topmost pane's bar should inset for the
+                            // status bar; a second, stacked pane would otherwise
+                            // double-pad its toolbar.
+                            applySystemBarInsets = !isSplitPane && mobilePdfSystemBarsVisibility(
+                                systemUiMode.toReaderSystemUiMode(),
+                                showChrome,
+                            ).statusBarsVisible
                         )
                         if (
                             pdfTabsEnabled &&
@@ -1604,7 +1624,7 @@ fun SharedMobilePdfReaderHost(
                         showAllTextHighlights = showAllTextHighlights,
                         isAllTextHighlightLoading = isAllTextHighlightLoading,
                         onToggleHighlights = ::toggleAllTextHighlights,
-                        applySystemBarInsets = systemUiMode != SharedMobilePdfSystemUiMode.ALWAYS_HIDE,
+                        applySystemBarInsets = !isSplitPane && systemUiMode != SharedMobilePdfSystemUiMode.ALWAYS_HIDE,
                         modifier = Modifier.fillMaxWidth()
                     )
                 }

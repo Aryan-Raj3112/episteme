@@ -1,7 +1,9 @@
 package com.aryan.reader.shared.ios
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
@@ -10,21 +12,41 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.FilterChip
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -76,8 +98,11 @@ import platform.Foundation.NSUserDefaults
 private const val IosPdfSplitWorkspaceDefaultsKey = "reader_ios_pdf_split_workspace_v1"
 private val IosPdfSplitMinPaneWidth = 280.dp
 private val IosPdfSplitMinPaneHeight = 320.dp
-private val IosPdfSplitDividerTouchTarget = 24.dp
-private val IosPdfSplitDividerVisualThickness = 2.dp
+private val IosPdfSplitDividerTouchTarget = 20.dp
+private val IosPdfSplitDividerVisualThickness = 3.dp
+private val IosPdfSplitDividerHandleWidth = 4.dp
+private val IosPdfSplitDividerHandleHeight = 34.dp
+private val IosPdfSplitPaneHeaderHeight = 40.dp
 private const val IosPdfSplitDoubleTapTimeoutMillis = 300L
 
 internal data class IosPdfSplitPickerTarget(
@@ -181,6 +206,14 @@ internal fun restoreIosPdfSplitWorkspaceWithRecovery(
     return recovered.copy(workspace = recovered.workspace.withFreshSessions())
 }
 
+/**
+ * Hosts two reader panes with a workspace-local toolbar.
+ *
+ * The workspace owns the space between the top of the screen and the panes:
+ * it pads for the status bar so pane chrome never slides beneath it, and it
+ * keeps the divider visual separate from the stable drag target so preview
+ * moves cannot steal reader gestures.
+ */
 @Composable
 internal fun IosPdfSplitWorkspaceScreen(
     workspace: PdfSplitWorkspaceState,
@@ -189,7 +222,6 @@ internal fun IosPdfSplitWorkspaceScreen(
     onClosePane: (PdfSplitPane, Long) -> Unit,
     onCloseWorkspace: () -> Unit,
     onSwapPanes: () -> Unit,
-    onOrientationChange: (PdfSplitOrientation) -> Unit,
     onDividerChange: (Float, PdfSplitOrientation, Long) -> Unit,
     onAddDocument: (PdfSplitPane) -> Unit,
     renderPane: @Composable (PdfSplitPaneState, Boolean) -> Unit,
@@ -202,7 +234,6 @@ internal fun IosPdfSplitWorkspaceScreen(
         IosPdfSplitToolbar(
             workspace = workspace,
             onSwapPanes = onSwapPanes,
-            onOrientationChange = onOrientationChange,
             onCloseWorkspace = onCloseWorkspace,
             onAddDocument = onAddDocument,
         )
@@ -262,62 +293,69 @@ internal fun IosPdfSplitWorkspaceScreen(
     }
 }
 
+/**
+ * Compact workspace toolbar. It is a single 48dp row padded below the status
+ * bar; the panes below it already carry their own reader chrome, so this bar
+ * must not add the tall padding the full-screen reader uses.
+ */
 @Composable
 private fun IosPdfSplitToolbar(
     workspace: PdfSplitWorkspaceState,
     onSwapPanes: () -> Unit,
-    onOrientationChange: (PdfSplitOrientation) -> Unit,
     onCloseWorkspace: () -> Unit,
     onAddDocument: (PdfSplitPane) -> Unit,
 ) {
-    Surface(tonalElevation = 2.dp) {
+    Surface(tonalElevation = 3.dp) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 4.dp),
+                .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top))
+                .height(48.dp)
+                .padding(start = 16.dp, end = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             Text(
                 text = readerString("pdf_split_reader_title", "Split Reader"),
                 style = MaterialTheme.typography.titleMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
-            TextButton(onClick = {
-                onOrientationChange(
-                    if (workspace.orientation == PdfSplitOrientation.VERTICAL) {
-                        PdfSplitOrientation.HORIZONTAL
-                    } else {
-                        PdfSplitOrientation.VERTICAL
-                    },
-                )
-            }) {
-                Text(
-                    if (workspace.orientation == PdfSplitOrientation.VERTICAL) {
-                        readerString("pdf_split_reader_vertical", "Side by side")
-                    } else {
-                        readerString("pdf_split_reader_horizontal", "Stacked")
-                    },
-                    maxLines = 1,
-                )
-            }
-            TextButton(onClick = {
+            IconButton(onClick = {
                 onAddDocument(if (workspace.isSplit) workspace.focusedPane else PdfSplitPane.SECONDARY)
             }) {
-                Text(readerString("action_add", "Add"))
+                Icon(
+                    Icons.Default.Add,
+                    contentDescription = readerString("pdf_split_reader_add_document", "Add PDF to split reader"),
+                )
             }
             if (workspace.isSplit) {
-                TextButton(onClick = onSwapPanes) {
-                    Text(readerString("pdf_split_reader_swap", "Swap documents"))
+                IconButton(onClick = onSwapPanes) {
+                    Icon(
+                        Icons.Default.SwapHoriz,
+                        contentDescription = readerString("pdf_split_reader_swap", "Swap documents"),
+                    )
                 }
             }
-            TextButton(onClick = onCloseWorkspace) {
-                Text(readerString("pdf_split_reader_close", "Close split reader"))
+            IconButton(onClick = onCloseWorkspace) {
+                Icon(
+                    Icons.Default.Close,
+                    contentDescription = readerString("pdf_split_reader_close", "Close split reader"),
+                )
             }
         }
     }
 }
 
+/**
+ * One reader pane with its slim, one-line header.
+ *
+ * The header is compact (40dp) because the workspace toolbar above already
+ * identifies the surface; the pane header only identifies the document and
+ * offers focus plus close actions. Focus is highlighted with a subtle
+ * surface tint instead of a full border so both panes read as one document
+ * surface separated by a divider.
+ */
 @Composable
 private fun IosPdfSplitDocumentPane(
     pane: PdfSplitPane,
@@ -331,36 +369,65 @@ private fun IosPdfSplitDocumentPane(
 ) {
     Column(
         modifier = modifier
-            .border(
-                width = if (isFocused) 1.dp else 0.dp,
-                color = if (isFocused) MaterialTheme.colorScheme.primary else Color.Transparent,
+            .background(
+                if (isFocused) {
+                    MaterialTheme.colorScheme.surface
+                } else {
+                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+                },
             )
             .pointerInput(pane, document.sessionId) {
                 awaitEachGesture {
                     awaitFirstDown(requireUnconsumed = false)
                     onFocus(pane, document.sessionId)
+                    // Wait for the gesture to end without consuming it so the
+                    // reader below keeps full ownership of scroll and taps.
                     waitForUpOrCancellation()
                 }
             },
     ) {
-        Surface(tonalElevation = if (isFocused) 3.dp else 1.dp) {
-            Row(
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(IosPdfSplitPaneHeaderHeight)
+                .padding(start = 12.dp, end = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp)
-                    .padding(start = 12.dp, end = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
+                    .width(3.dp)
+                    .height(18.dp)
+                    .background(
+                        color = if (isFocused) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            Color.Transparent
+                        },
+                        shape = RoundedCornerShape(2.dp),
+                    ),
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = title,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.labelLarge,
+                color = if (isFocused) {
+                    MaterialTheme.colorScheme.onSurface
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+                modifier = Modifier.weight(1f),
+            )
+            IconButton(
+                onClick = { onClose(pane, document.sessionId) },
+                modifier = Modifier.height(IosPdfSplitPaneHeaderHeight),
             ) {
-                Text(
-                    text = title,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    style = MaterialTheme.typography.labelLarge,
-                    modifier = Modifier.weight(1f),
+                Icon(
+                    Icons.Default.Close,
+                    contentDescription = readerString("pdf_split_reader_close_pane", "Close document pane"),
+                    modifier = Modifier.height(18.dp),
                 )
-                TextButton(onClick = { onClose(pane, document.sessionId) }) {
-                    Text(readerString("pdf_split_reader_close_pane", "Close document pane"))
-                }
             }
         }
         Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -371,6 +438,15 @@ private fun IosPdfSplitDocumentPane(
     }
 }
 
+/**
+ * Two-pane layout with a draggable divider.
+ *
+ * Layout follows the viewport: portrait stacks the panes, landscape places
+ * them side by side. The divider's visual handle follows the in-flight drag
+ * preview while the pointer/semantics target stays anchored to the committed
+ * position until release; this keeps reader gestures untouched while dragging
+ * and avoids the flicker of remeasuring panes mid-drag.
+ */
 @Composable
 private fun IosPdfSplitPaneLayout(
     workspace: PdfSplitWorkspaceState,
@@ -398,8 +474,8 @@ private fun IosPdfSplitPaneLayout(
             mutableStateOf(PdfSplitDividerDragState(plan.dividerFraction))
         }
         val displayedFraction = dragState.displayedFraction
+        val isDragging = dragState.previewFraction != null
         val frameWorkspace = workspace.copy(
-            orientation = plan.orientation,
             dividerFraction = displayedFraction,
             verticalDividerFraction = if (plan.orientation == PdfSplitOrientation.VERTICAL) {
                 displayedFraction
@@ -420,6 +496,7 @@ private fun IosPdfSplitPaneLayout(
             dividerThicknessPx = dividerThicknessPx,
         )
         val dividerColor = MaterialTheme.colorScheme.outlineVariant
+        val handleColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
         val dividerDescription = readerString("pdf_split_reader_divider_desc", "PDF split divider")
         val dividerDecreaseDescription = readerString(
             "pdf_split_reader_divider_decrease",
@@ -443,9 +520,9 @@ private fun IosPdfSplitPaneLayout(
         }
 
         val dividerAbsoluteStartPx = if (plan.orientation == PdfSplitOrientation.VERTICAL && isRtl) {
-            availableWidth - framePlan.firstPaneSizePx - dividerThicknessPx
+            availableWidth - plan.firstPaneSizePx - dividerThicknessPx
         } else {
-            framePlan.firstPaneSizePx
+            plan.firstPaneSizePx
         }
         val currentDividerAbsoluteStartPx = rememberUpdatedState(dividerAbsoluteStartPx)
         val axisSizePx = if (plan.orientation == PdfSplitOrientation.VERTICAL) {
@@ -453,25 +530,76 @@ private fun IosPdfSplitPaneLayout(
         } else {
             availableHeight
         }
-        val dividerModifier = Modifier
-            .drawBehind {
-                val strokeWidth = IosPdfSplitDividerVisualThickness.toPx()
+        // The visual handle tracks the drag preview; the interaction target
+        // stays anchored to the committed plan until the pointer releases.
+        val visualDividerOffset = with(density) {
+            if (plan.orientation == PdfSplitOrientation.VERTICAL) {
+                (if (isRtl) framePlan.secondPaneSizePx else framePlan.firstPaneSizePx).toDp()
+            } else {
+                framePlan.firstPaneSizePx.toDp()
+            }
+        }
+        val interactionDividerOffset = with(density) {
+            if (plan.orientation == PdfSplitOrientation.VERTICAL) {
+                (if (isRtl) plan.secondPaneSizePx else plan.firstPaneSizePx).toDp()
+            } else {
+                plan.firstPaneSizePx.toDp()
+            }
+        }
+        val dividerCrossAxisSize = with(density) {
+            if (plan.orientation == PdfSplitOrientation.VERTICAL) {
+                availableHeight.toDp()
+            } else {
+                availableWidth.toDp()
+            }
+        }
+        val handleAlpha by animateFloatAsState(
+            targetValue = if (isDragging) 1f else 0f,
+            animationSpec = spring(dampingRatio = 0.6f),
+            label = "splitDividerHandleAlpha",
+        )
+
+        val dividerVisualModifier = Modifier.drawBehind {
+            val strokeWidth = IosPdfSplitDividerVisualThickness.toPx()
+            if (handleAlpha > 0.01f) {
+                val handleWidth = IosPdfSplitDividerHandleWidth.toPx()
+                val handleHeight = IosPdfSplitDividerHandleHeight.toPx()
+                val centerY = size.height / 2f
+                val centerX = size.width / 2f
                 if (plan.orientation == PdfSplitOrientation.VERTICAL) {
-                    drawLine(
-                        color = dividerColor,
-                        start = Offset(size.width / 2f, 0f),
-                        end = Offset(size.width / 2f, size.height),
-                        strokeWidth = strokeWidth,
+                    drawRoundRect(
+                        color = handleColor.copy(alpha = handleAlpha),
+                        topLeft = Offset(centerX - handleWidth / 2f, centerY - handleHeight / 2f),
+                        size = androidx.compose.ui.geometry.Size(handleWidth, handleHeight),
+                        cornerRadius = androidx.compose.ui.geometry.CornerRadius(handleWidth / 2f),
                     )
                 } else {
-                    drawLine(
-                        color = dividerColor,
-                        start = Offset(0f, size.height / 2f),
-                        end = Offset(size.width, size.height / 2f),
-                        strokeWidth = strokeWidth,
+                    drawRoundRect(
+                        color = handleColor.copy(alpha = handleAlpha),
+                        topLeft = Offset(centerX - handleHeight / 2f, centerY - handleWidth / 2f),
+                        size = androidx.compose.ui.geometry.Size(handleHeight, handleWidth),
+                        cornerRadius = androidx.compose.ui.geometry.CornerRadius(handleWidth / 2f),
                     )
                 }
             }
+            if (plan.orientation == PdfSplitOrientation.VERTICAL) {
+                drawLine(
+                    color = dividerColor,
+                    start = Offset(size.width / 2f, 0f),
+                    end = Offset(size.width / 2f, size.height),
+                    strokeWidth = strokeWidth,
+                )
+            } else {
+                drawLine(
+                    color = dividerColor,
+                    start = Offset(0f, size.height / 2f),
+                    end = Offset(size.width, size.height / 2f),
+                    strokeWidth = strokeWidth,
+                )
+            }
+        }
+
+        val dividerSemanticsModifier = Modifier
             .semantics {
                 contentDescription = dividerDescription
                 progressBarRangeInfo = ProgressBarRangeInfo(
@@ -519,100 +647,137 @@ private fun IosPdfSplitPaneLayout(
                     },
                 )
             }
-            .pointerInput(
-                workspace.revision,
-                plan.orientation,
-                axisSizePx,
-                dividerThicknessPx,
-                isRtl,
-            ) {
-                var lastTapTimeMillis = Long.MIN_VALUE
-                awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
-                    val startPosition = down.position
-                    var isDragging = false
-                    var didFinish = false
-                    while (true) {
-                        val event = awaitPointerEvent()
-                        val change = event.changes.firstOrNull { it.id == down.id }
-                            ?: run {
-                                if (isDragging) dragState = dragState.cancel()
-                                return@awaitEachGesture
-                            }
-                        val movedDistance = (change.position - startPosition).getDistance()
-                        if (!isDragging && movedDistance > viewConfiguration.touchSlop) {
-                            isDragging = true
-                            change.consume()
+
+        val dividerPointerModifier = Modifier.pointerInput(
+            workspace.revision,
+            plan.orientation,
+            axisSizePx,
+            dividerThicknessPx,
+            isRtl,
+        ) {
+            var lastTapTimeMillis = Long.MIN_VALUE
+            awaitEachGesture {
+                val down = awaitFirstDown(requireUnconsumed = false)
+                val startPosition = down.position
+                var isDragging = false
+                var didFinish = false
+                while (true) {
+                    val event = awaitPointerEvent()
+                    val change = event.changes.firstOrNull { it.id == down.id }
+                        ?: run {
+                            if (isDragging) dragState = dragState.cancel()
+                            return@awaitEachGesture
                         }
+                    val movedDistance = (change.position - startPosition).getDistance()
+                    if (!isDragging && movedDistance > viewConfiguration.touchSlop) {
+                        isDragging = true
+                        change.consume()
+                    }
+                    if (isDragging) {
+                        change.consume()
+                        val absolutePointer = if (plan.orientation == PdfSplitOrientation.VERTICAL) {
+                            currentDividerAbsoluteStartPx.value + change.position.x
+                        } else {
+                            currentDividerAbsoluteStartPx.value + change.position.y
+                        }
+                        val rawFraction = pdfSplitDividerFractionAtAbsolutePosition(
+                            pointerPositionPx = absolutePointer,
+                            axisSizePx = axisSizePx,
+                            dividerThicknessPx = dividerThicknessPx,
+                            isRtl = plan.orientation == PdfSplitOrientation.VERTICAL && isRtl,
+                        )
+                        dragState = dragState.preview(rawFraction)
+                    }
+                    if (change.changedToUp()) {
                         if (isDragging) {
-                            change.consume()
-                            val absolutePointer = if (plan.orientation == PdfSplitOrientation.VERTICAL) {
-                                currentDividerAbsoluteStartPx.value + change.position.x
-                            } else {
-                                currentDividerAbsoluteStartPx.value + change.position.y
-                            }
-                            val rawFraction = pdfSplitDividerFractionAtAbsolutePosition(
-                                pointerPositionPx = absolutePointer,
-                                axisSizePx = axisSizePx,
-                                dividerThicknessPx = dividerThicknessPx,
-                                isRtl = plan.orientation == PdfSplitOrientation.VERTICAL && isRtl,
-                            )
-                            dragState = dragState.preview(rawFraction)
-                        }
-                        if (change.changedToUp()) {
-                            if (isDragging) {
-                                val committed = dragState.commit().committedFraction
+                            val committed = dragState.commit().committedFraction
+                            dragState = dragState.cancel()
+                            onDividerChange(committed, plan.orientation, workspace.revision)
+                        } else {
+                            val isDoubleTap = lastTapTimeMillis != Long.MIN_VALUE &&
+                                down.uptimeMillis - lastTapTimeMillis in 1..IosPdfSplitDoubleTapTimeoutMillis
+                            if (isDoubleTap) {
                                 dragState = dragState.cancel()
-                                onDividerChange(committed, plan.orientation, workspace.revision)
+                                onDividerChange(
+                                    DefaultPdfSplitDividerFraction,
+                                    plan.orientation,
+                                    workspace.revision,
+                                )
+                                lastTapTimeMillis = Long.MIN_VALUE
                             } else {
-                                val isDoubleTap = lastTapTimeMillis != Long.MIN_VALUE &&
-                                    down.uptimeMillis - lastTapTimeMillis in 1..IosPdfSplitDoubleTapTimeoutMillis
-                                if (isDoubleTap) {
-                                    dragState = dragState.cancel()
-                                    onDividerChange(
-                                        DefaultPdfSplitDividerFraction,
-                                        plan.orientation,
-                                        workspace.revision,
-                                    )
-                                    lastTapTimeMillis = Long.MIN_VALUE
-                                } else {
-                                    lastTapTimeMillis = down.uptimeMillis
-                                }
+                                lastTapTimeMillis = down.uptimeMillis
                             }
-                            didFinish = true
-                            break
                         }
-                        if (!change.pressed) break
+                        didFinish = true
+                        break
                     }
-                    if (!didFinish && isDragging) {
-                        dragState = dragState.cancel()
-                    }
+                    if (!change.pressed) break
+                }
+                if (!didFinish && isDragging) {
+                    dragState = dragState.cancel()
                 }
             }
+        }
+
+        val dividerInteractionModifier = dividerSemanticsModifier.then(dividerPointerModifier)
 
         if (plan.orientation == PdfSplitOrientation.VERTICAL) {
             val firstWidth = with(density) { framePlan.firstPaneSizePx.toDp() }
             val secondWidth = with(density) { framePlan.secondPaneSizePx.toDp() }
-            if (isRtl) {
-                Row(Modifier.fillMaxSize()) {
-                    Box(Modifier.width(secondWidth).fillMaxHeight()) { second() }
-                    Box(dividerModifier.width(IosPdfSplitDividerTouchTarget).fillMaxHeight())
-                    Box(Modifier.width(firstWidth).fillMaxHeight()) { first() }
+            Box(Modifier.fillMaxSize()) {
+                if (isRtl) {
+                    Row(Modifier.fillMaxSize()) {
+                        Box(Modifier.width(secondWidth).fillMaxHeight()) { second() }
+                        Spacer(Modifier.width(IosPdfSplitDividerTouchTarget).fillMaxHeight())
+                        Box(Modifier.width(firstWidth).fillMaxHeight()) { first() }
+                    }
+                } else {
+                    Row(Modifier.fillMaxSize()) {
+                        Box(Modifier.width(firstWidth).fillMaxHeight()) { first() }
+                        Spacer(Modifier.width(IosPdfSplitDividerTouchTarget).fillMaxHeight())
+                        Box(Modifier.width(secondWidth).fillMaxHeight()) { second() }
+                    }
                 }
-            } else {
-                Row(Modifier.fillMaxSize()) {
-                    Box(Modifier.width(firstWidth).fillMaxHeight()) { first() }
-                    Box(dividerModifier.width(IosPdfSplitDividerTouchTarget).fillMaxHeight())
-                    Box(Modifier.width(secondWidth).fillMaxHeight()) { second() }
-                }
+                // Preview visual follows the in-flight drag...
+                Box(
+                    Modifier
+                        .offset(x = visualDividerOffset)
+                        .width(IosPdfSplitDividerTouchTarget)
+                        .height(dividerCrossAxisSize)
+                        .then(dividerVisualModifier),
+                )
+                // ...while the drag/a11y target stays anchored to the committed plan.
+                Box(
+                    Modifier
+                        .offset(x = interactionDividerOffset)
+                        .width(IosPdfSplitDividerTouchTarget)
+                        .height(dividerCrossAxisSize)
+                        .then(dividerInteractionModifier),
+                )
             }
         } else {
             val firstHeight = with(density) { framePlan.firstPaneSizePx.toDp() }
             val secondHeight = with(density) { framePlan.secondPaneSizePx.toDp() }
-            Column(Modifier.fillMaxSize()) {
-                Box(Modifier.height(firstHeight).fillMaxWidth()) { first() }
-                Box(dividerModifier.height(IosPdfSplitDividerTouchTarget).fillMaxWidth())
-                Box(Modifier.height(secondHeight).fillMaxWidth()) { second() }
+            Box(Modifier.fillMaxSize()) {
+                Column(Modifier.fillMaxSize()) {
+                    Box(Modifier.height(firstHeight).fillMaxWidth()) { first() }
+                    Spacer(Modifier.height(IosPdfSplitDividerTouchTarget).fillMaxWidth())
+                    Box(Modifier.height(secondHeight).fillMaxWidth()) { second() }
+                }
+                Box(
+                    Modifier
+                        .offset(y = visualDividerOffset)
+                        .height(IosPdfSplitDividerTouchTarget)
+                        .width(dividerCrossAxisSize)
+                        .then(dividerVisualModifier),
+                )
+                Box(
+                    Modifier
+                        .offset(y = interactionDividerOffset)
+                        .height(IosPdfSplitDividerTouchTarget)
+                        .width(dividerCrossAxisSize)
+                        .then(dividerInteractionModifier),
+                )
             }
         }
     }
@@ -636,20 +801,52 @@ private fun IosPdfSplitPaneSwitcher(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(readerString("pdf_split_reader_compact_view", "Compact view"))
-            FilterChip(
+            IosPdfSplitPaneSwitchChip(
                 selected = focusedPane == PdfSplitPane.PRIMARY,
+                label = readerString("pdf_split_reader_primary_pane", "Primary pane"),
                 onClick = { onFocusPane(PdfSplitPane.PRIMARY) },
-                label = { Text(readerString("pdf_split_reader_primary_pane", "Primary pane")) },
             )
-            FilterChip(
+            IosPdfSplitPaneSwitchChip(
                 selected = focusedPane == PdfSplitPane.SECONDARY,
+                label = readerString("pdf_split_reader_secondary_pane", "Secondary pane"),
                 onClick = { onFocusPane(PdfSplitPane.SECONDARY) },
-                label = { Text(readerString("pdf_split_reader_secondary_pane", "Secondary pane")) },
             )
         }
     }
 }
 
+@Composable
+private fun IosPdfSplitPaneSwitchChip(
+    selected: Boolean,
+    label: String,
+    onClick: () -> Unit,
+) {
+    Surface(
+        selected = selected,
+        onClick = onClick,
+        shape = RoundedCornerShape(50),
+        color = if (selected) {
+            MaterialTheme.colorScheme.secondaryContainer
+        } else {
+            MaterialTheme.colorScheme.surfaceVariant
+        },
+        contentColor = if (selected) {
+            MaterialTheme.colorScheme.onSecondaryContainer
+        } else {
+            MaterialTheme.colorScheme.onSurfaceVariant
+        },
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelMedium,
+            maxLines = 1,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+        )
+    }
+}
+
+/** Platform-native document picker sheet mirroring Android's split picker. */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun IosPdfSplitPickerDialog(
     books: List<BookItem>,
@@ -657,34 +854,54 @@ internal fun IosPdfSplitPickerDialog(
     onDismiss: () -> Unit,
     onBookSelected: (BookItem) -> Unit,
 ) {
-    AlertDialog(
+    val sheetState = rememberModalBottomSheetState()
+    ModalBottomSheet(
         onDismissRequest = onDismiss,
-        title = { Text(title) },
-        text = {
+        sheetState = sheetState,
+    ) {
+        Column(Modifier.fillMaxWidth()) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp, vertical = 8.dp),
+            )
             if (books.isEmpty()) {
-                Text(readerString("pdf_split_reader_no_other_documents", "No other PDFs are available"))
+                Text(
+                    text = readerString("pdf_split_reader_no_other_documents", "No other PDFs are available"),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp),
+                )
             } else {
-                LazyColumn {
+                LazyColumn(
+                    modifier = Modifier.height(420.dp),
+                    contentPadding = WindowInsets.navigationBars.union(WindowInsets.ime).asPaddingValues(),
+                ) {
                     items(books, key = { it.id }) { book ->
-                        TextButton(
-                            onClick = { onBookSelected(book) },
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Text(
-                                text = book.displayName,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                        }
+                        ListItem(
+                            headlineContent = {
+                                Text(
+                                    book.displayName,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            },
+                            modifier = Modifier.clickable { onBookSelected(book) },
+                            trailingContent = {
+                                Icon(
+                                    Icons.Default.Check,
+                                    contentDescription = null,
+                                    modifier = Modifier.width(18.dp).height(18.dp),
+                                    tint = MaterialTheme.colorScheme.outlineVariant,
+                                )
+                            },
+                        )
+                        HorizontalDivider()
                     }
                 }
             }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text(readerString("action_cancel", "Cancel"))
-            }
-        },
-    )
+            Spacer(Modifier.height(16.dp))
+        }
+    }
 }

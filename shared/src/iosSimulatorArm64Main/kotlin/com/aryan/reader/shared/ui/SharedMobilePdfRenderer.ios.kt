@@ -67,10 +67,28 @@ internal actual fun rememberSharedMobilePdfPageRender(
     reverseColorMode: PdfReverseColorMode,
     preserveImageColors: Boolean,
 ): SharedMobilePdfPageRender {
-    var render by remember(book.path, pageIndex, password, reverseColorMode, preserveImageColors) { mutableStateOf(SharedMobilePdfPageRender()) }
+    var render by remember(book.path, pageIndex, password, reverseColorMode, preserveImageColors) {
+        mutableStateOf(SharedMobilePdfPageRender())
+    }
 
     LaunchedEffect(book.path, pageIndex, password, reverseColorMode, preserveImageColors) {
-        render = IosPdfiumRenderer.render(book.path, pageIndex, 1f, password, reverseColorMode, preserveImageColors)
+        val cached = IosPdfPageCache.get(book.path, pageIndex, password, reverseColorMode, preserveImageColors)
+        if (cached != null) {
+            render = cached
+            return@LaunchedEffect
+        }
+        val rendered = IosPdfiumRenderer.render(book.path, pageIndex, 1f, password, reverseColorMode, preserveImageColors)
+        if (rendered.bitmap != null) {
+            IosPdfPageCache.put(
+                book.path,
+                pageIndex,
+                password,
+                reverseColorMode,
+                preserveImageColors,
+                rendered,
+            )
+        }
+        render = rendered
     }
 
     return render
@@ -143,6 +161,61 @@ internal actual fun rememberSharedMobilePdfTileRenders(
         tiles = cached + rendered
     }
     return tiles
+}
+
+/**
+ * Byte-budgeted LRU for full-page renders.
+ *
+ * Without it every page that scrolls out of the LazyColumn/Pager window is
+ * disposed and re-rasterized when it returns, which shows up as a white flash
+ * on each scroll and page turn - twice as often in split view where both
+ * panes recycle pages. Caching rendered bitmaps keeps returning pages instant.
+ */
+private object IosPdfPageCache {
+    // A 2048px-tall BGRA page is roughly 8-16MB; 6 entries cover both panes'
+    // working sets while staying well under iOS memory pressure limits.
+    private const val MaxEntries = 6
+    private val entries = LinkedHashMap<String, SharedMobilePdfPageRender>()
+    private val lock = NSLock()
+
+    fun get(
+        path: String?,
+        pageIndex: Int,
+        password: String?,
+        reverseColorMode: PdfReverseColorMode,
+        preserveImageColors: Boolean,
+    ): SharedMobilePdfPageRender? = lock.withLock {
+        entries.remove(key(path, pageIndex, password, reverseColorMode, preserveImageColors))
+            ?.also { cached ->
+                entries[key(path, pageIndex, password, reverseColorMode, preserveImageColors)] = cached
+            }
+    }
+
+    fun put(
+        path: String?,
+        pageIndex: Int,
+        password: String?,
+        reverseColorMode: PdfReverseColorMode,
+        preserveImageColors: Boolean,
+        render: SharedMobilePdfPageRender,
+    ) {
+        lock.withLock {
+            val entryKey = key(path, pageIndex, password, reverseColorMode, preserveImageColors)
+            entries.remove(entryKey)
+            entries[entryKey] = render
+            while (entries.size > MaxEntries) {
+                entries.remove(entries.keys.first())
+            }
+        }
+    }
+
+    private fun key(
+        path: String?,
+        pageIndex: Int,
+        password: String?,
+        reverseColorMode: PdfReverseColorMode,
+        preserveImageColors: Boolean,
+    ): String = "${path.orEmpty()}|$pageIndex|${password.orEmpty()}|${reverseColorMode.id}|$preserveImageColors"
 }
 
 private object IosPdfThumbnailCache {

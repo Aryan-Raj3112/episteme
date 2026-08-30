@@ -16,13 +16,11 @@ class PdfSplitWorkspaceTest {
             PdfSplitWorkspaceAction.Open(
                 primary = primary,
                 secondary = secondary,
-                orientation = PdfSplitOrientation.HORIZONTAL,
             )
         )
 
         assertTrue(state.isOpen)
         assertTrue(state.isSplit)
-        assertEquals(PdfSplitOrientation.HORIZONTAL, state.orientation)
         assertEquals(PdfSplitPane.PRIMARY, state.focusedPane)
     }
 
@@ -123,18 +121,14 @@ class PdfSplitWorkspaceTest {
     }
 
     @Test
-    fun dividerPositionsAreStoredPerOrientation() {
-        val vertical = openState().reduce(PdfSplitWorkspaceAction.DividerChanged(0.3f))
+    fun dividerPositionsAreStoredPerArrangement() {
+        val vertical = openState().reduce(PdfSplitWorkspaceAction.DividerChanged(0.3f, PdfSplitOrientation.VERTICAL))
         val horizontal = vertical.reduce(
-            PdfSplitWorkspaceAction.OrientationChanged(PdfSplitOrientation.HORIZONTAL)
-        ).reduce(PdfSplitWorkspaceAction.DividerChanged(0.7f))
-        val restoredVertical = horizontal.reduce(
-            PdfSplitWorkspaceAction.OrientationChanged(PdfSplitOrientation.VERTICAL)
+            PdfSplitWorkspaceAction.DividerChanged(0.7f, PdfSplitOrientation.HORIZONTAL)
         )
 
-        assertEquals(0.3f, restoredVertical.dividerFraction)
-        assertEquals(0.3f, restoredVertical.verticalDividerFraction)
-        assertEquals(0.7f, restoredVertical.horizontalDividerFraction)
+        assertEquals(0.3f, horizontal.verticalDividerFraction)
+        assertEquals(0.7f, horizontal.horizontalDividerFraction)
     }
 
     @Test
@@ -250,16 +244,30 @@ class PdfSplitWorkspaceTest {
     }
 
     @Test
-    fun adaptiveLayoutFallsBackToStackedBeforeSinglePane() {
-        val vertical = openState()
-        val stacked = vertical.resolveLayout(
-            availableWidthPx = 500,
-            availableHeightPx = 1_000,
+    fun portraitViewportsStackThePanesAndLandscapePlacesThemSideBySide() {
+        assertEquals(
+            PdfSplitOrientation.HORIZONTAL,
+            defaultPdfSplitOrientationForViewport(availableWidthPx = 700, availableHeightPx = 1_200),
+        )
+        assertEquals(
+            PdfSplitOrientation.VERTICAL,
+            defaultPdfSplitOrientationForViewport(availableWidthPx = 1_200, availableHeightPx = 700),
+        )
+    }
+
+    @Test
+    fun adaptiveLayoutFallsBackToTheOtherArrangementBeforeSinglePane() {
+        // A portrait viewport prefers stacked panes, but this one is too short
+        // for two readable halves while being wide enough side by side.
+        val workspace = openState()
+        val sideBySide = workspace.resolveLayout(
+            availableWidthPx = 1_000,
+            availableHeightPx = 500,
             minPaneWidthPx = 300,
             minPaneHeightPx = 300,
             dividerThicknessPx = 2,
         )
-        val single = vertical.resolveLayout(
+        val single = workspace.resolveLayout(
             availableWidthPx = 500,
             availableHeightPx = 500,
             minPaneWidthPx = 300,
@@ -267,25 +275,28 @@ class PdfSplitWorkspaceTest {
             dividerThicknessPx = 2,
         )
 
-        assertEquals(PdfSplitPresentation.SPLIT, stacked.presentation)
-        assertEquals(PdfSplitOrientation.HORIZONTAL, stacked.orientation)
-        assertTrue(stacked.firstPaneSizePx >= 300)
-        assertTrue(stacked.secondPaneSizePx >= 300)
+        assertEquals(PdfSplitPresentation.SPLIT, sideBySide.presentation)
+        assertEquals(PdfSplitOrientation.VERTICAL, sideBySide.orientation)
+        assertTrue(sideBySide.firstPaneSizePx >= 300)
+        assertTrue(sideBySide.secondPaneSizePx >= 300)
         assertEquals(PdfSplitPresentation.SINGLE, single.presentation)
     }
 
     @Test
     fun adaptiveLayoutClampsDividerToActualMinimumDimensions() {
-        val state = openState().reduce(PdfSplitWorkspaceAction.DividerChanged(0.25f))
+        val state = openState().reduce(
+            PdfSplitWorkspaceAction.DividerChanged(0.25f, PdfSplitOrientation.HORIZONTAL)
+        )
         val plan = state.resolveLayout(
-            availableWidthPx = 1_001,
-            availableHeightPx = 700,
-            minPaneWidthPx = 400,
-            minPaneHeightPx = 300,
+            availableWidthPx = 700,
+            availableHeightPx = 1_001,
+            minPaneWidthPx = 300,
+            minPaneHeightPx = 400,
             dividerThicknessPx = 1,
         )
 
         assertEquals(PdfSplitPresentation.SPLIT, plan.presentation)
+        assertEquals(PdfSplitOrientation.HORIZONTAL, plan.orientation)
         assertTrue(plan.firstPaneSizePx >= 400)
         assertTrue(plan.secondPaneSizePx >= 400)
         assertEquals(1_000, plan.firstPaneSizePx + plan.secondPaneSizePx)
@@ -308,9 +319,8 @@ class PdfSplitWorkspaceTest {
     fun durableJsonRoundTripKeepsDocumentsFocusAndDividerPreferencesButRefreshesSessions() {
         val state = openState()
             .reduce(PdfSplitWorkspaceAction.FocusChanged(PdfSplitPane.SECONDARY))
-            .reduce(PdfSplitWorkspaceAction.DividerChanged(0.31f))
-            .reduce(PdfSplitWorkspaceAction.OrientationChanged(PdfSplitOrientation.HORIZONTAL))
-            .reduce(PdfSplitWorkspaceAction.DividerChanged(0.69f))
+            .reduce(PdfSplitWorkspaceAction.DividerChanged(0.31f, PdfSplitOrientation.VERTICAL))
+            .reduce(PdfSplitWorkspaceAction.DividerChanged(0.69f, PdfSplitOrientation.HORIZONTAL))
         val encoded = PdfSplitWorkspaceJson.encode(state)
         val restored = PdfSplitWorkspaceJson.decodeOrEmpty(encoded)
 
@@ -322,6 +332,21 @@ class PdfSplitWorkspaceTest {
         assertEquals(0L, restored.revision)
         assertTrue(restored.primary!!.sessionId != state.primary!!.sessionId)
         assertTrue(!encoded.contains("sessionId"))
+        assertTrue(!encoded.contains("orientation"))
+    }
+
+    @Test
+    fun durableJsonIgnoresTheLegacyOrientationPreference() {
+        val legacy = """
+            {"orientation":"VERTICAL","verticalDividerFraction":0.31,"horizontalDividerFraction":0.69,
+            "primary":{"bookId":"one","uriString":"content://one"},
+            "secondary":{"bookId":"two","uriString":"content://two"}}
+        """.trimIndent()
+        val restored = PdfSplitWorkspaceJson.decodeOrEmpty(legacy)
+
+        assertTrue(restored.isSplit)
+        assertEquals(0.31f, restored.verticalDividerFraction)
+        assertEquals(0.69f, restored.horizontalDividerFraction)
     }
 
     @Test

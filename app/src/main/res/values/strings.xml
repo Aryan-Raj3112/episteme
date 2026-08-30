@@ -1310,8 +1310,6 @@
     <string name="pdf_split_reader_open">Open in split reader</string>
     <string name="pdf_split_reader_open_desc">Open another PDF beside this document</string>
     <string name="pdf_split_reader_title">Split Reader</string>
-    <string name="pdf_split_reader_vertical">Vertical split</string>
-    <string name="pdf_split_reader_horizontal">Horizontal split</string>
     <string name="pdf_split_reader_swap">Swap documents</string>
     <string name="pdf_split_reader_close">Close split reader</string>
     <string name="pdf_split_reader_close_pane">Close document pane</string>
@@ -1319,6 +1317,8 @@
     <string name="pdf_split_reader_choose_document">Choose a PDF to open beside this document</string>
     <string name="pdf_split_reader_replace_document">Replace the selected split pane</string>
     <string name="pdf_split_reader_no_other_documents">No other PDFs are available</string>
+    <string name="pdf_split_reader_compact_view">Compact view</string>
+    <string name="pdf_split_reader_no_document">No PDF is open</string>
     <string name="pdf_split_reader_single_pane_fallback">Showing one pane to keep it readable</string>
     <string name="pdf_split_reader_primary_pane">Primary pane</string>
     <string name="pdf_split_reader_secondary_pane">Secondary pane</string>

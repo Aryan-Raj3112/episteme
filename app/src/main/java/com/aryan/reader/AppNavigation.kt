@@ -76,7 +76,6 @@ import com.aryan.reader.pdf.PdfSplitReaderScreen
 import com.aryan.reader.shared.ReaderFeatureSurface
 import com.aryan.reader.shared.CloudFolderIncomingChoice
 import com.aryan.reader.shared.CloudFolderIncomingFolderPrompt
-import com.aryan.reader.shared.PdfSplitOrientation
 import com.aryan.reader.shared.PdfSplitPaneState
 import com.aryan.reader.shared.samePdfDocument
 import com.aryan.reader.shared.ui.SharedMobileAppDestination
@@ -235,13 +234,6 @@ fun AppNavigation(
         }
     }
     val currentDestination = SharedMobileAppDestination.fromRoute(currentRoute)
-    val defaultPdfSplitOrientation = if (
-        windowSizeClass.widthSizeClass == WindowWidthSizeClass.Compact
-    ) {
-        PdfSplitOrientation.HORIZONTAL
-    } else {
-        PdfSplitOrientation.VERTICAL
-    }
     val isOnReaderRoute = currentDestination?.isReader == true
     val showTtsMiniBar = shouldShowReaderTtsMiniBar(
         ttsState = ttsState,
@@ -366,7 +358,6 @@ fun AppNavigation(
                             },
                             onCloseWorkspace = viewModel::closePdfSplitWorkspace,
                             onSwapPanes = viewModel::swapPdfSplitPanes,
-                            onOrientationChange = viewModel::setPdfSplitOrientation,
                             onDividerChange = { fraction, orientation, revision ->
                                 viewModel.setPdfSplitDividerFraction(
                                     fraction = fraction,
@@ -451,7 +442,7 @@ fun AppNavigation(
                         onDismiss = { showPdfSplitPicker = false },
                         onDocumentSelected = { item ->
                             showPdfSplitPicker = false
-                            viewModel.openPdfSplit(item.bookId, defaultPdfSplitOrientation)
+                            viewModel.openPdfSplit(item.bookId)
                         },
                     )
                 }

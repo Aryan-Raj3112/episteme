@@ -1064,7 +1064,6 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     /** Opens a second library PDF beside the currently selected PDF. */
     fun openPdfSplit(
         secondaryBookId: String,
-        orientation: PdfSplitOrientation = PdfSplitOrientation.VERTICAL,
     ): Boolean {
         val current = _internalState.value
         val primaryUri = current.selectedPdfUri ?: return false
@@ -1090,7 +1089,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                             uriString = secondaryUri.toString(),
                         ),
                     )
-                ).reduce(PdfSplitWorkspaceAction.OrientationChanged(orientation))
+                )
             } else {
                 workspace.reduce(
                     PdfSplitWorkspaceAction.Open(
@@ -1102,7 +1101,6 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                             bookId = secondaryItem.bookId,
                             uriString = secondaryUri.toString(),
                         ),
-                        orientation = orientation,
                     )
                 )
             }
@@ -1151,19 +1149,6 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             }
         }
         return didOpen
-    }
-
-    fun setPdfSplitOrientation(
-        orientation: PdfSplitOrientation,
-        expectedRevision: Long? = null,
-    ) {
-        _internalState.update { state ->
-            val next = state.pdfSplitWorkspace.reduce(
-                PdfSplitWorkspaceAction.OrientationChanged(orientation, expectedRevision),
-            )
-            persistPdfSplitWorkspace(next)
-            state.copy(pdfSplitWorkspace = next)
-        }
     }
 
     fun focusPdfSplitPane(
