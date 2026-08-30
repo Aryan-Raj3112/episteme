@@ -49,6 +49,9 @@ import com.aryan.reader.R
 import com.aryan.reader.GEMINI_CLOUD_TTS_MODEL
 import com.aryan.reader.isByokCloudTtsAvailable
 import com.aryan.reader.loadAiByokSettings
+import com.aryan.reader.logMediaTransport
+import com.aryan.reader.mediaButtonKeyEventDetails
+import com.aryan.reader.playerTransportSnapshot
 import com.aryan.reader.tts.TtsPlaybackManager.TtsMode
 import com.aryan.reader.audiobook.BookTtsSessionCoordinator
 import kotlinx.coroutines.Job
@@ -287,12 +290,18 @@ private class TtsMediaNotificationProvider(
         builder: NotificationCompat.Builder,
         actionFactory: MediaNotification.ActionFactory
     ): IntArray {
-        return super.addNotificationActions(
+        val actions = super.addNotificationActions(
             mediaSession,
             mediaButtons,
             builder,
             TtsNotificationActionFactory(appContext, actionFactory)
         )
+        logMediaTransport(
+            "tts-notification-actions",
+            "buttons=${mediaButtons.size} names=${mediaButtons.joinToString("|") { it.displayName.toString() }} " +
+                "actions=${actions.joinToString()} ${playerTransportSnapshot(mediaSession.player)}"
+        )
+        return actions
     }
 }
 
@@ -502,14 +511,26 @@ private class TtsSessionPlayer(
     }
 
     override fun play() {
+        logMediaTransport(
+            "tts-session-player-play",
+            "directLocal=${isDirectLocalPlayback()} localPlaying=${localIsPlaying()} ${playerTransportSnapshot(this)}"
+        )
         if (isDirectLocalPlayback()) playDirectLocal() else super.play()
     }
 
     override fun pause() {
+        logMediaTransport(
+            "tts-session-player-pause",
+            "directLocal=${isDirectLocalPlayback()} localPlaying=${localIsPlaying()} ${playerTransportSnapshot(this)}"
+        )
         if (isDirectLocalPlayback()) pauseDirectLocal() else super.pause()
     }
 
     override fun stop() {
+        logMediaTransport(
+            "tts-session-player-stop",
+            "directLocal=${isDirectLocalPlayback()} localPlaying=${localIsPlaying()} ${playerTransportSnapshot(this)}"
+        )
         if (isDirectLocalPlayback()) stopDirectLocal() else super.stop()
     }
 
@@ -623,9 +644,27 @@ class TtsService : MediaSessionService() {
     private var bookSleepTimerJob: Job? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action != null) {
+            val keyEventDetails = if (intent.action == Intent.ACTION_MEDIA_BUTTON) {
+                " ${mediaButtonKeyEventDetails(intent)}"
+            } else {
+                ""
+            }
+            logMediaTransport(
+                "tts-on-start-command",
+                "action=${intent.action} startId=$startId$keyEventDetails " +
+                    playerTransportSnapshot(if (::player.isInitialized) player else null)
+            )
+        }
         when (intent?.action) {
             ACTION_START_BOOK_TTS -> {
                 val bookId = intent.getStringExtra(EXTRA_BOOK_TTS_BOOK_ID)
+                logMediaTransport(
+                    "tts-book-start-command",
+                    "bookId=$bookId policy=${intent.getStringExtra(EXTRA_BOOK_TTS_START_POLICY)} " +
+                        "chapter=${intent.getIntExtra(EXTRA_BOOK_TTS_CHAPTER_INDEX, -1)} " +
+                        "coordinatorReady=${::bookTtsCoordinator.isInitialized}"
+                )
                 if (!bookId.isNullOrBlank() && ::bookTtsCoordinator.isInitialized) {
                     showPreparingForegroundNotification("book-audiobook-start")
                     bookTtsCoordinator.start(
@@ -751,6 +790,11 @@ class TtsService : MediaSessionService() {
         }
 
         Timber.tag(TTS_NOTIFICATION_DIAG_TAG).i("Delegating notification update to MediaSessionService.")
+        logMediaTransport(
+            "tts-on-update-notification",
+            "startInForegroundRequired=$startInForegroundRequired " +
+                playerTransportSnapshot(if (::player.isInitialized) player else null)
+        )
         super.onUpdateNotification(session, startInForegroundRequired)
     }
 
@@ -850,6 +894,11 @@ class TtsService : MediaSessionService() {
     private fun onPlaybackSessionPreparing(bookTitle: String?, chapterTitle: String?) {
         foregroundPlaybackExpected = true
         foregroundIdleJob?.cancel()
+        logMediaTransport(
+            "tts-foreground-preparing",
+            "book=$bookTitle chapter=$chapterTitle " +
+                playerTransportSnapshot(if (::player.isInitialized) player else null)
+        )
         showPreparingForegroundNotification("START_TTS_COMMAND", bookTitle, chapterTitle)
     }
 
@@ -858,6 +907,10 @@ class TtsService : MediaSessionService() {
         foregroundIdleJob?.cancel()
         foregroundBookTitle = null
         foregroundChapterTitle = null
+        logMediaTransport(
+            "tts-foreground-stopped",
+            playerTransportSnapshot(if (::player.isInitialized) player else null)
+        )
         stopTtsForeground()
     }
 
@@ -1311,6 +1364,10 @@ class TtsService : MediaSessionService() {
         mediaSession?.let { playbackManager.setMediaSession(it) }
         playbackManager.setDirectLocalPlayerStateInvalidator(sessionPlayer::invalidateDirectLocalState)
         bookTtsCoordinator = BookTtsSessionCoordinator(this, scope, playbackManager)
+        logMediaTransport(
+            "tts-service-created",
+            "session=reader-tts-playback sessionAvailable=${mediaSession != null}"
+        )
         Timber.tag(TTS_NOTIFICATION_DIAG_TAG).i("MediaSession created and attached to playback manager. sessionAvailable=${mediaSession != null}")
     }
 
@@ -1331,12 +1388,17 @@ class TtsService : MediaSessionService() {
         Timber.tag(TTS_NOTIFICATION_DIAG_TAG).i(
             "onGetSession. package=${controllerInfo.packageName}, sessionAvailable=${mediaSession != null}"
         )
+        logMediaTransport(
+            "tts-on-get-session",
+            "package=${controllerInfo.packageName} sessionAvailable=${mediaSession != null}"
+        )
         return mediaSession
     }
 
     override fun onDestroy() {
         Timber.d("TtsService is being destroyed.")
         Timber.tag(TTS_NOTIFICATION_DIAG_TAG).w("TtsService onDestroy.")
+        logMediaTransport("tts-service-destroyed", "sessionAlive=${mediaSession != null}")
         foregroundIdleJob?.cancel()
         bookSleepTimerJob?.cancel()
         bookSleepTimerJob = null

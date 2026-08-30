@@ -121,6 +121,47 @@ class TtsLifecycleSourceTest {
         assertTrue(managerSource.contains("directLocalTtsPlayer.shutdown()"))
     }
 
+    @Test
+    fun `direct local speech requests audio focus before the engine speaks`() {
+        val source = sourceFile("com/aryan/reader/tts/TtsPlaybackManager.kt").readText()
+        val startLocalChunkBody = source.substringAfter("private fun startLocalChunk")
+            .substringBefore("private fun enqueueLocalLookahead")
+
+        assertTrue(startLocalChunkBody.contains("directLocalAudioFocusManager.requestFocus()"))
+        assertTrue(
+            startLocalChunkBody.indexOf("directLocalAudioFocusManager.requestFocus()") <
+                startLocalChunkBody.indexOf("directLocalTtsPlayer.speak(")
+        )
+        assertTrue(startLocalChunkBody.contains("publishLocalChunkState(chunkIndex, isLoading = false, isPlaying = false)"))
+    }
+
+    @Test
+    fun `stopping direct local tts abandons audio focus`() {
+        val source = sourceFile("com/aryan/reader/tts/TtsPlaybackManager.kt").readText()
+        val stopBody = source.substringAfter("private fun handleStopTts")
+            .substringBefore("fun stopForAppTaskRemoval")
+
+        assertTrue(stopBody.contains("directLocalAudioFocusManager.abandonFocus()"))
+
+        val finishBody = source.substringAfter("private fun handleLocalChunkDone")
+            .substringBefore("override fun onError")
+        assertTrue(finishBody.contains("directLocalAudioFocusManager.abandonFocus()"))
+
+        val releaseBody = source.substringAfter("fun release()")
+            .substringBefore("override fun onPlaybackStateChanged")
+        assertTrue(releaseBody.contains("directLocalAudioFocusManager.abandonFocus()"))
+    }
+
+    @Test
+    fun `focus interruptions route through the shared interruption policy`() {
+        val source = sourceFile("com/aryan/reader/tts/TtsPlaybackManager.kt").readText()
+
+        assertTrue(source.contains("LocalTtsInterruptionEvent.Began(playbackWasActive"))
+        assertTrue(source.contains("LocalTtsInterruptionEvent.Ended(systemAllowsResume = canResume)"))
+        assertTrue(source.contains("LocalTtsInterruptionEvent.OutputBecameNoisy(playbackWasActive"))
+        assertTrue(source.contains("LocalTtsInterruptionAction.PAUSE") || source.contains("LocalTtsInterruptionAction.RESUME"))
+    }
+
     private fun sourceFile(relativePath: String): File {
         val candidates = listOf(
             File("src/main/java/$relativePath"),
