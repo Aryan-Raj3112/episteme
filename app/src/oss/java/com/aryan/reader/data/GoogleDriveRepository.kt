@@ -119,6 +119,7 @@ class GoogleDriveRepository {
         rootId: String,
         operationId: String? = null,
         correlationId: String? = null,
+        preferredDriveFileId: String? = null,
     ): CloudFolderManifestReadResult = CloudFolderManifestReadResult.NotFound
 
     suspend fun downloadCloudFolderFileTo(

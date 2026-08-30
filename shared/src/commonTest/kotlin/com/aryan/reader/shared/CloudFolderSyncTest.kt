@@ -807,6 +807,98 @@ class CloudFolderSyncTest {
         )
     }
 
+    @Test
+    fun `stabilized metadata inherits committed mime and mtime for unchanged bytes`() {
+        val committed = file(
+            path = "Series/Book.epub",
+            hash = "sha256:${"a".repeat(64)}",
+            size = 10L,
+        ).copy(
+            mimeType = "application/epub+zip",
+            fileModifiedAt = 100L,
+        )
+        val scanned = file(
+            path = "Series/Book.epub",
+            hash = committed.contentHash,
+            size = 10L,
+        ).copy(
+            mimeType = null,
+            fileModifiedAt = 999L,
+        )
+
+        val stabilized = stabilizedCloudFolderNodeMetadata(
+            scanned = scanned,
+            committed = committed,
+        )
+
+        assertEquals("application/epub+zip", stabilized.mimeType)
+        assertEquals(100L, stabilized.fileModifiedAt)
+    }
+
+    @Test
+    fun `stabilized metadata keeps scanned values for new or changed content`() {
+        val committed = file(
+            path = "Series/Book.epub",
+            hash = "sha256:${"a".repeat(64)}",
+            size = 10L,
+        ).copy(
+            mimeType = "application/epub+zip",
+            fileModifiedAt = 100L,
+        )
+        val changedBytes = file(
+            path = "Series/Book.epub",
+            hash = "sha256:${"f".repeat(64)}",
+            size = 10L,
+        ).copy(
+            mimeType = null,
+            fileModifiedAt = 999L,
+        )
+        val untracked = file(
+            path = "Other.epub",
+            hash = committed.contentHash,
+            size = 10L,
+        ).copy(
+            mimeType = null,
+            fileModifiedAt = 999L,
+        )
+
+        assertEquals(
+            changedBytes,
+            stabilizedCloudFolderNodeMetadata(scanned = changedBytes, committed = committed),
+        )
+        assertEquals(
+            untracked,
+            stabilizedCloudFolderNodeMetadata(scanned = untracked, committed = null),
+        )
+    }
+
+    @Test
+    fun `stabilized metadata leaves sidecars and directories untouched`() {
+        val committedSidecar = file(
+            path = "EpistemeSyncData/.book_abc123def456.json",
+            hash = "sha256:${"a".repeat(64)}",
+            size = 10L,
+        ).copy(
+            mimeType = "application/json",
+            fileModifiedAt = 100L,
+        )
+        val scannedSidecar = committedSidecar.copy(
+            mimeType = null,
+            fileModifiedAt = 999L,
+        )
+        val committedDirectory = directory(path = "EpistemeSyncData")
+        val scannedDirectory = committedDirectory.copy(fileModifiedAt = 999L)
+
+        assertEquals(
+            scannedSidecar,
+            stabilizedCloudFolderNodeMetadata(scanned = scannedSidecar, committed = committedSidecar),
+        )
+        assertEquals(
+            scannedDirectory,
+            stabilizedCloudFolderNodeMetadata(scanned = scannedDirectory, committed = committedDirectory),
+        )
+    }
+
     private fun root(
         rootId: String = "root-a",
         name: String = "Books",

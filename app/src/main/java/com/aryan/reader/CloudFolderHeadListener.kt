@@ -36,7 +36,18 @@ internal data class CloudFolderHeadSnapshot(
 )
 
 /** Pure validation kept separate so malformed remote heads can be rejected without I/O. */
-internal fun isValidCloudFolderHeadUpdate(update: CloudFolderHeadUpdate): Boolean {
+internal fun isValidCloudFolderHeadUpdate(update: CloudFolderHeadUpdate): Boolean =
+    isWellFormedCloudFolderHeadUpdate(update) && !isTransientCloudFolderHeadState(update.state)
+
+/**
+ * A structurally valid head whose state is a transient lease phase.  The
+ * COMMITTING record is a normal part of the Firestore CAS protocol; it is
+ * not a malformed head and must not be surfaced as a warning.
+ */
+internal fun isTransientCloudFolderHeadState(state: String?): Boolean =
+    state?.trim()?.uppercase(Locale.US) == CLOUD_FOLDER_HEAD_COMMITTING_STATE
+
+private fun isWellFormedCloudFolderHeadUpdate(update: CloudFolderHeadUpdate): Boolean {
     val rootId = update.rootId.trim()
     if (
         rootId.isBlank() ||
@@ -55,15 +66,11 @@ internal fun isValidCloudFolderHeadUpdate(update: CloudFolderHeadUpdate): Boolea
     if (update.revision < 0L) return false
     if (update.schemaVersion != null && update.schemaVersion != 1L) return false
     val state = update.state?.trim().orEmpty()
-    return state.isBlank() || state.uppercase(Locale.US) == CLOUD_FOLDER_HEAD_COMMITTED_STATE
+    return state.isBlank() ||
+        state.uppercase(Locale.US) == CLOUD_FOLDER_HEAD_COMMITTED_STATE ||
+        state.uppercase(Locale.US) == CLOUD_FOLDER_HEAD_COMMITTING_STATE
 }
 
-/**
- * A head should wake a pull only when it is newer than the durable local
- * knowledge.  Unbound roots are intentionally allowed: a targeted pull then
- * records the manifest and creates the incoming-folder placeholder without
- * materializing files.
- */
 internal fun shouldScheduleCloudFolderHeadPull(
     remoteRevision: Long,
     knownRevision: Long,
@@ -75,6 +82,7 @@ internal fun shouldScheduleCloudFolderHeadPull(
         (!hasBinding || isIncluded)
 
 internal const val CLOUD_FOLDER_HEAD_COMMITTED_STATE = "COMMITTED"
+internal const val CLOUD_FOLDER_HEAD_COMMITTING_STATE = "COMMITTING"
 
 /**
  * Owns the foreground-only Firestore listener.  It is application scoped and
@@ -299,6 +307,17 @@ internal object CloudFolderHeadListenerCoordinator {
         generation: Long,
         update: CloudFolderHeadUpdate,
     ) {
+        if (isTransientCloudFolderHeadState(update.state) &&
+            isWellFormedCloudFolderHeadUpdate(update)
+        ) {
+            // A COMMITTING lease record is a normal CAS phase, not an error.
+            cloudFolderLogD(
+                "event=head_update_ignore reason=uncommitted_head " +
+                    "account=${cloudFolderSafeId(expectedAccountId)} root=${cloudFolderSafeId(update.rootId)} " +
+                    "revision=${update.revision} generation=$generation",
+            )
+            return
+        }
         if (!isValidCloudFolderHeadUpdate(update)) {
             cloudFolderLogW(
                 "event=head_update_ignore reason=invalid_head " +
@@ -391,6 +410,32 @@ internal object CloudFolderHeadListenerCoordinator {
             val targetRevision = pendingRevisions.remove(rootId) ?: return@launch
             pendingJobs.remove(rootId)
             if (!isCurrentListener(accountId, generation)) return@launch
+            // This device's own publish can race its own durable manifest
+            // write: the Firestore echo arrives before the worker has saved
+            // the committed revision. Re-read the durable knowledge after the
+            // debounce; only a revision still ahead of it needs work (a
+            // device that died mid-publish keeps its recovery pull).
+            if (writerIsSelf) {
+                val freshKnownRevision = runCatching {
+                    withContext(Dispatchers.IO) {
+                        val repository = CloudFolderSyncRepository(appContext(), accountId)
+                        val root = repository.getRoot(rootId)
+                        val binding = repository.getBinding(rootId)
+                        maxOf(
+                            root?.manifestRevision ?: -1L,
+                            binding?.lastAcknowledgedRevision ?: -1L,
+                        )
+                    }
+                }.getOrDefault(-1L)
+                if (targetRevision <= freshKnownRevision) {
+                    cloudFolderLogD(
+                        "event=head_pull_skip reason=self_echo account=${cloudFolderSafeId(accountId)} " +
+                            "root=${cloudFolderSafeId(rootId)} remoteRevision=$targetRevision " +
+                            "knownRevision=$freshKnownRevision",
+                    )
+                    return@launch
+                }
+            }
             runCatching {
                 withContext(Dispatchers.IO) {
                     CloudFolderSyncWorker.enqueuePull(

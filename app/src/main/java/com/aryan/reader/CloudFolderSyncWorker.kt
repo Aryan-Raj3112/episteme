@@ -16,6 +16,7 @@ import androidx.work.WorkerParameters
 import com.aryan.reader.data.CloudFolderManifestReadResult
 import com.aryan.reader.data.CloudFolderManifestLeaseResult
 import com.aryan.reader.data.legacyCloudFolderManifestHeadCandidate
+import com.aryan.reader.data.CloudFolderMetadataOutboxEntity
 import com.aryan.reader.data.CloudFolderOutboxEntity
 import com.aryan.reader.data.CloudFolderSafEntry
 import com.aryan.reader.data.CloudFolderSafScanResult
@@ -51,6 +52,7 @@ import com.aryan.reader.shared.LOCAL_FOLDER_SIDECAR_HASH_PREFIX
 import com.aryan.reader.shared.isCloudFolderMetadataSidecarPath
 import com.aryan.reader.shared.planCloudFolderSync
 import com.aryan.reader.shared.resolveCloudFolderSync
+import com.aryan.reader.shared.stabilizedCloudFolderNodeMetadata
 import java.io.File
 import java.io.FileOutputStream
 import java.io.FilterInputStream
@@ -85,12 +87,13 @@ internal data class CloudFolderMetadataWorkState(
 /**
  * Select a policy for a newly committed metadata sidecar.
  *
- * A fresh active request is allowed to finish and the new request is appended
- * so the durable Room row remains the coalescing source of truth.  A request
- * that has already retried is different: appending behind it can leave the
- * newer generation waiting forever in its backoff chain, so replace that
- * request.  The worker's exact-generation delete and startup recovery make
- * cancellation safe for a transfer that was already in flight.
+ * A RUNNING request may be mid-publish (Drive upload or Firestore lease
+ * held); cancelling it abandons the lease and can strand the remote head for
+ * the whole lease window.  New wakes therefore always append behind it — the
+ * coalesced outbox row means the next attempt picks up the newest
+ * generation.  A request waiting in backoff is different: no transfer is in
+ * flight, and replacing it revives the newest generation promptly instead of
+ * leaving it behind an exponentially growing retry chain.
  */
 internal fun cloudFolderMetadataWorkPolicy(
     existing: List<CloudFolderMetadataWorkState>,
@@ -101,10 +104,7 @@ internal fun cloudFolderMetadataWorkPolicy(
             state.state == WorkInfo.State.BLOCKED
     }
     return when {
-        unfinished.any { it.runAttemptCount > 0 } -> ExistingWorkPolicy.REPLACE
-        unfinished.any {
-            it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED
-        } -> ExistingWorkPolicy.APPEND_OR_REPLACE
+        unfinished.any { it.state == WorkInfo.State.RUNNING } -> ExistingWorkPolicy.APPEND_OR_REPLACE
         unfinished.isNotEmpty() -> ExistingWorkPolicy.REPLACE
         else -> ExistingWorkPolicy.KEEP
     }
@@ -697,11 +697,22 @@ class CloudFolderSyncWorker(
         val safeRoot = cloudFolderSafeId(rootId)
         cloudFolderLogD("event=manifest_read_start root=$safeRoot")
         ensureAccountStillActive()
+        // Read the committed head before touching Drive so the download can
+        // pin the exact committed object. Without this, an orphan manifest
+        // uploaded by an interrupted worker (a higher revision never committed
+        // to Firestore) would win the candidate sort on every read and no
+        // device could ever observe the authoritative state again.
+        var head = if (BuildConfig.IS_PRO) {
+            firestoreRepository.getCloudFolderManifestHead(repository.accountId, rootId)
+        } else {
+            null
+        }
         val result = driveRepository.downloadCloudFolderManifest(
             accessToken = accessToken,
             rootId = rootId,
             operationId = activeOperationId,
             correlationId = activeCorrelationId,
+            preferredDriveFileId = head?.manifestDriveFileId,
         )
         if (!BuildConfig.IS_PRO) {
             cloudFolderLogD(
@@ -711,7 +722,6 @@ class CloudFolderSyncWorker(
             )
             return result
         }
-        var head = firestoreRepository.getCloudFolderManifestHead(repository.accountId, rootId)
         val bootstrapCandidate = if (head == null && result is CloudFolderManifestReadResult.Found) {
             legacyCloudFolderManifestHeadCandidate(
                 remote = result,
@@ -1139,7 +1149,7 @@ class CloudFolderSyncWorker(
             deviceId = repository.deviceId,
             base = base,
             metadataOnly = false,
-            pendingBooks = emptySet(),
+            requiredKindsByBook = emptyMap(),
         )
         if (!scan.complete) throw IOException(scan.errorMessage ?: "Offline folder scan was incomplete")
         if (base == null) {
@@ -1325,6 +1335,10 @@ class CloudFolderSyncWorker(
             throw error
         }
         val pendingBooks = pendingMetadata.map { it.bookId }.toSet()
+        // Per-book dirty kinds: a METADATA-only wake must not demand the
+        // annotation sidecar (a PDF-only artifact), or every EPUB position
+        // update degrades into a full-tree re-hash.
+        val requiredKindsByBook = requiredMetadataKindsByBook(pendingMetadata)
         if (metadataOnly) {
             cloudFolderLogD(
                 "event=metadata_batch_claimed ${traceFields(rootId)} rows=${pendingMetadata.size} " +
@@ -1336,8 +1350,15 @@ class CloudFolderSyncWorker(
         val targetedMetadataSync = if (metadataOnly && committedBase != null) {
             try {
                 pendingBooks.isEmpty() || when {
-                    appStorageRoot != null -> appStorageMetadataTargetsAvailable(appStorageRoot, pendingBooks)
-                    rootUri != null -> safMetadataTargetsAvailable(rootUri, rootId, pendingBooks)
+                    appStorageRoot != null -> appStorageMetadataTargetsAvailable(
+                        root = appStorageRoot,
+                        requiredKindsByBook = requiredKindsByBook,
+                    )
+                    rootUri != null -> safMetadataTargetsAvailable(
+                        rootUri = rootUri,
+                        rootId = rootId,
+                        requiredKindsByBook = requiredKindsByBook,
+                    )
                     else -> false
                 }
             } catch (error: Exception) {
@@ -1375,7 +1396,7 @@ class CloudFolderSyncWorker(
                 deviceId = repository.deviceId,
                 base = committedBase,
                 metadataOnly = metadataOnly,
-                pendingBooks = pendingBooks,
+                requiredKindsByBook = requiredKindsByBook,
             )
         } else if (appStorageRoot == null && targetedMetadataSync) {
             cloudFolderLogD(
@@ -1387,7 +1408,7 @@ class CloudFolderSyncWorker(
                 rootId = rootId,
                 deviceId = repository.deviceId,
                 base = committedBase,
-                pendingBooks = pendingBooks,
+                requiredKindsByBook = requiredKindsByBook,
             )
         } else {
             if (appStorageRoot != null) {
@@ -1397,7 +1418,7 @@ class CloudFolderSyncWorker(
                     deviceId = repository.deviceId,
                     base = committedBase,
                     metadataOnly = false,
-                    pendingBooks = emptySet(),
+                    requiredKindsByBook = emptyMap(),
                 )
             } else {
                 val uri = rootUri ?: throw IOException("Local folder binding is missing")
@@ -1863,19 +1884,27 @@ class CloudFolderSyncWorker(
             }
         } finally {
             if (lease != null && !committed) {
-                runCatching { firestoreRepository.releaseCloudFolderManifest(lease) }
-                    .onSuccess { released ->
-                        cloudFolderLogW(
-                            "event=firestore_release ${traceFields(rootId)} root=$safeRoot result=$released",
-                        )
-                    }
-                    .onFailure { error ->
-                        cloudFolderLogError(
-                            event = "firestore_release",
-                            error = error,
-                            details = "${traceFields(rootId)} root=$safeRoot",
-                        )
-                    }
+                // The worker can be cancelled at any await point (WorkManager
+                // REPLACE, process death).  The remote lease must still be
+                // released or every peer observes an abandoned COMMITTING
+                // head for the full lease window, and a same-device wake can
+                // never reserve again.  NonCancellable keeps this release
+                // running even on a cancelled coroutine.
+                withContext(kotlinx.coroutines.NonCancellable) {
+                    runCatching { firestoreRepository.releaseCloudFolderManifest(lease) }
+                        .onSuccess { released ->
+                            cloudFolderLogW(
+                                "event=firestore_release ${traceFields(rootId)} root=$safeRoot result=$released",
+                            )
+                        }
+                        .onFailure { error ->
+                            cloudFolderLogError(
+                                event = "firestore_release",
+                                error = error,
+                                details = "${traceFields(rootId)} root=$safeRoot",
+                            )
+                        }
+                }
             }
         }
         cloudFolderLogI(
@@ -2512,13 +2541,13 @@ class CloudFolderSyncWorker(
         deviceId: String,
         base: CloudFolderManifest?,
         metadataOnly: Boolean,
-        pendingBooks: Set<String>,
+        requiredKindsByBook: Map<String, Set<String>>,
         now: Long = System.currentTimeMillis(),
     ): CloudFolderSafScanResult = withContext(Dispatchers.IO) {
         val safeRoot = cloudFolderSafeId(rootId)
         cloudFolderLogD(
             "event=app_scan_start root=$safeRoot metadataOnly=$metadataOnly " +
-                "pendingBooks=${pendingBooks.size}",
+                "pendingBooks=${requiredKindsByBook.size}",
         )
         if (!root.isDirectory) {
             return@withContext CloudFolderSafScanResult(
@@ -2576,13 +2605,9 @@ class CloudFolderSyncWorker(
 
         if (metadataOnly && base != null) {
             // Preserve every known node so a targeted sidecar wake cannot
-            // infer unrelated deletions or force a whole-root rehash.
-            val targetPaths = pendingBooks.flatMap { bookId ->
-                listOf(
-                    "$LOCAL_FOLDER_SYNC_DATA_DIR/${localFolderSyncMetadataFileName(bookId)}",
-                    "$LOCAL_FOLDER_SYNC_DATA_DIR/${localFolderSyncAnnotationFileName(bookId)}",
-                )
-            }.mapTo(hashSetOf()) { cloudFolderPathKey(it) }
+            // infer unrelated deletions or force a whole-root rehash. Only
+            // the sidecars matching each book's dirty kinds are re-hashed.
+            val targetPaths = metadataWakeTargetPaths(requiredKindsByBook)
             base.activeNodes().forEach { node ->
                 val file = safeAppPath(root, node.relativePath)
                 if (node.isDirectory) {
@@ -2597,12 +2622,13 @@ class CloudFolderSyncWorker(
                     entries[node.relativePath] = CloudFolderSafEntry(Uri.fromFile(file), node.copy(modifiedAt = now))
                 }
             }
-            pendingBooks.forEach { bookId ->
-                val sidecarPaths = listOf(
-                    "$LOCAL_FOLDER_SYNC_DATA_DIR/${localFolderSyncMetadataFileName(bookId)}",
-                    "$LOCAL_FOLDER_SYNC_DATA_DIR/${localFolderSyncAnnotationFileName(bookId)}",
-                )
-                sidecarPaths.forEach { path ->
+            requiredKindsByBook.forEach { (bookId, kinds) ->
+                kinds.forEach { kind ->
+                    val path = when (kind) {
+                        CloudFolderMetadataOutboxEntity.KIND_ANNOTATIONS ->
+                            "$LOCAL_FOLDER_SYNC_DATA_DIR/${localFolderSyncAnnotationFileName(bookId)}"
+                        else -> "$LOCAL_FOLDER_SYNC_DATA_DIR/${localFolderSyncMetadataFileName(bookId)}"
+                    }
                     val file = safeAppPath(root, path)
                     if (file.isFile) addFile(file, path)
                 }
@@ -2681,13 +2707,25 @@ class CloudFolderSyncWorker(
         result
     }
 
-    private fun appStorageMetadataTargetsAvailable(root: File, bookIds: Set<String>): Boolean {
-        if (bookIds.isEmpty()) return false
-        return bookIds.all { bookId ->
-            listOf(
-                localFolderSyncMetadataFileName(bookId),
-                localFolderSyncAnnotationFileName(bookId),
-            ).all { name ->
+    /**
+     * Required sidecar presence for a targeted metadata wake.
+     *
+     * Only the sidecars matching each book's dirty kinds must exist: the
+     * annotation sidecar is a PDF artifact, so a METADATA-only EPUB wake
+     * must not be downgraded into a full-tree re-hash because it is absent.
+     */
+    private fun appStorageMetadataTargetsAvailable(
+        root: File,
+        requiredKindsByBook: Map<String, Set<String>>,
+    ): Boolean {
+        if (requiredKindsByBook.isEmpty()) return false
+        return requiredKindsByBook.all { (bookId, kinds) ->
+            kinds.all { kind ->
+                val name = when (kind) {
+                    CloudFolderMetadataOutboxEntity.KIND_ANNOTATIONS ->
+                        localFolderSyncAnnotationFileName(bookId)
+                    else -> localFolderSyncMetadataFileName(bookId)
+                }
                 File(root, "$LOCAL_FOLDER_SYNC_DATA_DIR/$name").isFile
             }
         }
@@ -2699,13 +2737,13 @@ class CloudFolderSyncWorker(
         rootId: String,
         deviceId: String,
         base: CloudFolderManifest?,
-        pendingBooks: Set<String>,
+        requiredKindsByBook: Map<String, Set<String>>,
         now: Long = System.currentTimeMillis(),
     ): CloudFolderSafScanResult = withContext(Dispatchers.IO) {
         val safeRoot = cloudFolderSafeId(rootId)
         cloudFolderLogD(
             "event=saf_targeted_scan_start root=$safeRoot mode=saf " +
-                "pendingBooks=${pendingBooks.size}",
+                "pendingBooks=${requiredKindsByBook.size}",
         )
         val root = try {
             DocumentFile.fromTreeUri(applicationContext, rootUri)
@@ -2715,14 +2753,14 @@ class CloudFolderSyncWorker(
                 stage = "metadata_local_scan",
                 category = "metadata_saf_root_lookup",
                 error = error,
-                details = "mode=saf pendingBooks=${pendingBooks.size}",
+                details = "mode=saf pendingBooks=${requiredKindsByBook.size}",
             )
             throw error
         }
         if (root == null) {
             cloudFolderLogW(
                 "event=saf_targeted_scan_end root=$safeRoot mode=saf result=failure " +
-                    "category=metadata_saf_root_missing pendingBooks=${pendingBooks.size}",
+                    "category=metadata_saf_root_missing pendingBooks=${requiredKindsByBook.size}",
             )
             return@withContext CloudFolderSafScanResult(emptyList(), false, now, "SAF root is unavailable")
         }
@@ -2730,7 +2768,7 @@ class CloudFolderSyncWorker(
             cloudFolderLogW(
                 "event=saf_targeted_scan_end root=$safeRoot mode=saf result=failure " +
                     "category=${if (!root.isDirectory) "metadata_saf_root_not_directory" else "metadata_base_missing"} " +
-                    "pendingBooks=${pendingBooks.size}",
+                    "pendingBooks=${requiredKindsByBook.size}",
             )
             return@withContext CloudFolderSafScanResult(
                 emptyList(),
@@ -2739,12 +2777,16 @@ class CloudFolderSyncWorker(
                 "Cannot target sidecar sync without a committed folder inventory",
             )
         }
-        val targetPaths = pendingBooks.flatMap { bookId ->
-            listOf(
-                "$LOCAL_FOLDER_SYNC_DATA_DIR/${localFolderSyncMetadataFileName(bookId)}",
-                "$LOCAL_FOLDER_SYNC_DATA_DIR/${localFolderSyncAnnotationFileName(bookId)}",
-            )
-        }.mapTo(hashSetOf()) { cloudFolderPathKey(it) }
+        val targetPaths = metadataWakeTargetPaths(requiredKindsByBook)
+        val requiredPathsByBook = requiredKindsByBook.mapValues { (bookId, kinds) ->
+            kinds.mapNotNull { kind ->
+                when (kind) {
+                    CloudFolderMetadataOutboxEntity.KIND_ANNOTATIONS ->
+                        "$LOCAL_FOLDER_SYNC_DATA_DIR/${localFolderSyncAnnotationFileName(bookId)}"
+                    else -> "$LOCAL_FOLDER_SYNC_DATA_DIR/${localFolderSyncMetadataFileName(bookId)}"
+                }
+            }
+        }
         val baseByPath = base.activeNodes().associateBy { it.pathKey }
         val entries = linkedMapOf<String, CloudFolderSafEntry>()
 
@@ -2795,53 +2837,48 @@ class CloudFolderSyncWorker(
             }
         }
 
-        pendingBooks.forEach { bookId ->
-            listOf(
-                "$LOCAL_FOLDER_SYNC_DATA_DIR/${localFolderSyncMetadataFileName(bookId)}",
-                "$LOCAL_FOLDER_SYNC_DATA_DIR/${localFolderSyncAnnotationFileName(bookId)}",
-            ).forEach { path ->
-                val existing = try {
-                    findDocument(root, path)
+        requiredPathsByBook.values.flatten().distinct().forEach { path ->
+            val existing = try {
+                findDocument(root, path)
+            } catch (error: Exception) {
+                logMetadataStageFailure(
+                    rootId = rootId,
+                    stage = "metadata_local_scan",
+                    category = "metadata_saf_sidecar_resolution",
+                    error = error,
+                    details = "mode=saf path=${cloudFolderSafeId(path)}",
+                )
+                throw error
+            }
+            if (existing?.isFile == true && path !in entries) {
+                val (hash, size) = try {
+                    hashDocument(existing)
                 } catch (error: Exception) {
                     logMetadataStageFailure(
                         rootId = rootId,
                         stage = "metadata_local_scan",
-                        category = "metadata_saf_sidecar_resolution",
+                        category = "metadata_saf_sidecar_hash",
                         error = error,
-                        details = "mode=saf book=${cloudFolderSafeId(bookId)}",
+                        details = "mode=saf path=${cloudFolderSafeId(path)}",
                     )
                     throw error
                 }
-                if (existing?.isFile == true && path !in entries) {
-                    val (hash, size) = try {
-                        hashDocument(existing)
-                    } catch (error: Exception) {
-                        logMetadataStageFailure(
-                            rootId = rootId,
-                            stage = "metadata_local_scan",
-                            category = "metadata_saf_sidecar_hash",
-                            error = error,
-                            details = "mode=saf book=${cloudFolderSafeId(bookId)}",
-                        )
-                        throw error
-                    }
-                    val old = baseByPath[cloudFolderPathKey(path)]
-                    val node = CloudFolderNode(
-                        nodeId = old?.nodeId ?: com.aryan.reader.shared.cloudFolderNodeId(rootId, path),
-                        rootId = rootId,
-                        relativePath = path,
-                        kind = CloudFolderNodeKind.FILE,
-                        contentHash = hash,
-                        sizeBytes = size,
-                        mimeType = existing.type,
-                        fileModifiedAt = existing.lastModified().coerceAtLeast(0L),
-                        revision = old?.revision ?: 0L,
-                        modifiedAt = now,
-                        modifiedByDeviceId = deviceId,
-                        contentObjectId = old?.contentObjectId,
-                    )
-                    entries[path] = CloudFolderSafEntry(existing.uri, node)
-                }
+                val old = baseByPath[cloudFolderPathKey(path)]
+                val node = CloudFolderNode(
+                    nodeId = old?.nodeId ?: com.aryan.reader.shared.cloudFolderNodeId(rootId, path),
+                    rootId = rootId,
+                    relativePath = path,
+                    kind = CloudFolderNodeKind.FILE,
+                    contentHash = hash,
+                    sizeBytes = size,
+                    mimeType = existing.type,
+                    fileModifiedAt = existing.lastModified().coerceAtLeast(0L),
+                    revision = old?.revision ?: 0L,
+                    modifiedAt = now,
+                    modifiedByDeviceId = deviceId,
+                    contentObjectId = old?.contentObjectId,
+                )
+                entries[path] = CloudFolderSafEntry(existing.uri, node)
             }
         }
         CloudFolderSafScanResult(
@@ -2851,20 +2888,27 @@ class CloudFolderSyncWorker(
         ).also {
             cloudFolderLogD(
                 "event=saf_targeted_scan_end root=$safeRoot files=${it.files.size} " +
-                    "directories=${it.directories.size} pendingBooks=${pendingBooks.size}",
+                    "directories=${it.directories.size} pendingBooks=${requiredKindsByBook.size}",
             )
         }
     }
 
+    /**
+     * Required sidecar presence for a targeted metadata wake.
+     *
+     * Only the sidecars matching each book's dirty kinds must exist: the
+     * annotation sidecar is a PDF artifact, so a METADATA-only EPUB wake
+     * must not be downgraded into a full-tree re-hash because it is absent.
+     */
     private fun safMetadataTargetsAvailable(
         rootUri: Uri,
         rootId: String,
-        bookIds: Set<String>,
+        requiredKindsByBook: Map<String, Set<String>>,
     ): Boolean {
-        if (bookIds.isEmpty()) return false
+        if (requiredKindsByBook.isEmpty()) return false
         cloudFolderLogD(
             "event=metadata_target_resolution root=${cloudFolderSafeId(rootId)} mode=saf " +
-                "result=start books=${bookIds.size}",
+                "result=start books=${requiredKindsByBook.size}",
         )
         val root = try {
             DocumentFile.fromTreeUri(applicationContext, rootUri)
@@ -2874,14 +2918,14 @@ class CloudFolderSyncWorker(
                 stage = "metadata_target_resolution",
                 category = "metadata_saf_root_lookup",
                 error = error,
-                details = "mode=saf books=${bookIds.size}",
+                details = "mode=saf books=${requiredKindsByBook.size}",
             )
             throw error
         }
         if (root == null || !root.isDirectory) {
             cloudFolderLogW(
                 "event=metadata_target_resolution root=${cloudFolderSafeId(rootId)} mode=saf " +
-                    "result=unavailable category=metadata_saf_root_missing books=${bookIds.size}",
+                    "result=unavailable category=metadata_saf_root_missing books=${requiredKindsByBook.size}",
             )
             return false
         }
@@ -2893,50 +2937,45 @@ class CloudFolderSyncWorker(
                 stage = "metadata_target_resolution",
                 category = "metadata_saf_sidecar_directory_lookup",
                 error = error,
-                details = "mode=saf books=${bookIds.size}",
+                details = "mode=saf books=${requiredKindsByBook.size}",
             )
             throw error
         }
         if (dataDir == null) {
             cloudFolderLogW(
                 "event=metadata_target_resolution root=${cloudFolderSafeId(rootId)} mode=saf " +
-                    "result=missing category=metadata_sidecar_directory_missing books=${bookIds.size}",
+                    "result=missing category=metadata_sidecar_directory_missing books=${requiredKindsByBook.size}",
             )
             return false
         }
-        return bookIds.all { bookId ->
-            val metadata = try {
-                dataDir.findFile(localFolderSyncMetadataFileName(bookId))?.isFile == true
-            } catch (error: Exception) {
-                logMetadataStageFailure(
-                    rootId = rootId,
-                    stage = "metadata_target_resolution",
-                    category = "metadata_saf_sidecar_lookup",
-                    error = error,
-                    details = "mode=saf kind=metadata book=${cloudFolderSafeId(bookId)}",
-                )
-                throw error
+        return requiredKindsByBook.all { (bookId, kinds) ->
+            kinds.all { kind ->
+                val name = when (kind) {
+                    CloudFolderMetadataOutboxEntity.KIND_ANNOTATIONS ->
+                        localFolderSyncAnnotationFileName(bookId)
+                    else -> localFolderSyncMetadataFileName(bookId)
+                }
+                val present = try {
+                    dataDir.findFile(name)?.isFile == true
+                } catch (error: Exception) {
+                    logMetadataStageFailure(
+                        rootId = rootId,
+                        stage = "metadata_target_resolution",
+                        category = "metadata_saf_sidecar_lookup",
+                        error = error,
+                        details = "mode=saf kind=${kind.lowercase()} book=${cloudFolderSafeId(bookId)}",
+                    )
+                    throw error
+                }
+                if (!present) {
+                    cloudFolderLogW(
+                        "event=metadata_target_resolution root=${cloudFolderSafeId(rootId)} mode=saf " +
+                            "result=missing category=metadata_sidecar_missing " +
+                            "book=${cloudFolderSafeId(bookId)} kind=$kind",
+                    )
+                }
+                present
             }
-            val annotations = try {
-                dataDir.findFile(localFolderSyncAnnotationFileName(bookId))?.isFile == true
-            } catch (error: Exception) {
-                logMetadataStageFailure(
-                    rootId = rootId,
-                    stage = "metadata_target_resolution",
-                    category = "metadata_saf_sidecar_lookup",
-                    error = error,
-                    details = "mode=saf kind=annotations book=${cloudFolderSafeId(bookId)}",
-                )
-                throw error
-            }
-            if (!metadata || !annotations) {
-                cloudFolderLogW(
-                    "event=metadata_target_resolution root=${cloudFolderSafeId(rootId)} mode=saf " +
-                        "result=missing category=metadata_sidecar_missing " +
-                        "book=${cloudFolderSafeId(bookId)} metadata=$metadata annotations=$annotations",
-                )
-            }
-            metadata && annotations
         }
     }
 
@@ -2980,6 +3019,12 @@ class CloudFolderSyncWorker(
             // per file made every steady-state pull dozens of lines long.
             temp.delete()
             backup.delete()
+            // Keep the logical source mtime aligned with the manifest so a
+            // later local scan sees the committed state even before the
+            // stabilization rule is applied; harmless when it already agrees.
+            if (node.fileModifiedAt > 0L) {
+                runCatching { target.setLastModified(node.fileModifiedAt) }
+            }
             return false
         }
         // The local bytes could not be verified, so the missing content is
@@ -3909,6 +3954,16 @@ internal fun cloudFolderAppRootDirectory(filesDir: File, rootId: String): File {
 }
 
 /**
+ * The single canonical folder-URI spelling for an app-managed offline root.
+ *
+ * File.toURI() emits "file:/..." while Uri.fromFile emits "file:///..."; the
+ * folder list, per-file scan URIs, and any WorkManager target must agree so
+ * URI-keyed filtering and Room writes resolve consistently.
+ */
+internal fun cloudFolderAppStorageFolderUriString(root: File): String =
+    android.net.Uri.fromFile(root).toString()
+
+/**
  * Delete one app-managed offline tree. Idempotent when the tree is already
  * gone; throws when a path stands in the way or removal fails. Callers must
  * already hold the cloud-folder work mutex (or run on a single thread).
@@ -3962,6 +4017,39 @@ internal suspend fun cloudFolderAppFileMatches(
     }
 }
 
+/**
+ * Required sidecar kinds for a metadata-only wake, per book.
+ *
+ * Kinds outside the known set are dropped; an empty/blank row still demands
+ * METADATA so a legacy wake can never skip the durable sidecar entirely.
+ */
+internal fun requiredMetadataKindsByBook(
+    rows: List<CloudFolderMetadataOutboxEntity>,
+): Map<String, Set<String>> = rows.associate { row ->
+    row.bookId to row.dirtyKinds.split(',')
+        .map { kind -> kind.trim().uppercase() }
+        .filter { kind ->
+            kind == CloudFolderMetadataOutboxEntity.KIND_METADATA ||
+                kind == CloudFolderMetadataOutboxEntity.KIND_ANNOTATIONS
+        }
+        .toSet()
+        .ifEmpty { setOf(CloudFolderMetadataOutboxEntity.KIND_METADATA) }
+}
+
+/** The sidecar relative paths a metadata-only wake must hash. */
+internal fun metadataWakeTargetPaths(requiredKindsByBook: Map<String, Set<String>>): Set<String> =
+    requiredKindsByBook.entries.flatMap { (bookId, kinds) ->
+        kinds.mapNotNull { kind ->
+            when (kind) {
+                CloudFolderMetadataOutboxEntity.KIND_METADATA ->
+                    "$LOCAL_FOLDER_SYNC_DATA_DIR/${localFolderSyncMetadataFileName(bookId)}"
+                CloudFolderMetadataOutboxEntity.KIND_ANNOTATIONS ->
+                    "$LOCAL_FOLDER_SYNC_DATA_DIR/${localFolderSyncAnnotationFileName(bookId)}"
+                else -> null
+            }
+        }
+    }.mapTo(hashSetOf()) { cloudFolderPathKey(it) }
+
 internal fun buildLocalManifest(
     base: CloudFolderManifest,
     scan: CloudFolderSafScanResult,
@@ -3970,7 +4058,15 @@ internal fun buildLocalManifest(
 ): CloudFolderManifest {
     val previousById = base.activeNodes().associateBy { it.nodeId }
     val scannedNodes = scan.nodes
-    val changed = scannedNodes.any { node ->
+    // Compare through the same logical-metadata stabilization as the node
+    // mapping below, so the revision watermark and the emitted nodes can
+    // never disagree about whether the snapshot changed.
+    val stabilizedNodes = scannedNodes.map { node ->
+        previousById[node.nodeId]?.let {
+            stabilizedCloudFolderNodeMetadata(scanned = node, committed = it)
+        } ?: node
+    }
+    val changed = stabilizedNodes.any { node ->
         val previous = previousById[node.nodeId]
         previous == null || !localNodesEquivalent(previous, node)
     } || previousById.keys.any { it !in scannedNodes.mapTo(hashSetOf(), CloudFolderNode::nodeId) }
@@ -3979,7 +4075,7 @@ internal fun buildLocalManifest(
     } else {
         base.revision
     }
-    val nodes = scannedNodes.map { node ->
+    val nodes = stabilizedNodes.map { node ->
         val previous = previousById[node.nodeId]
         val same = previous != null && localNodesEquivalent(previous, node)
         // A stale mtime or re-guessed MIME type must not strip the only

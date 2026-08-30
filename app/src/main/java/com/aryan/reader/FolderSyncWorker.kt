@@ -86,9 +86,9 @@ class FolderSyncWorker(
             val normalizedRoot = rootId.trim().takeIf { it.isNotBlank() } ?: return
             val targetUri = localUri?.trim()?.takeIf { it.isNotBlank() }
                 ?: runCatching {
-                    cloudFolderAppRootDirectory(context.applicationContext.filesDir, normalizedRoot)
-                        .toURI()
-                        .toString()
+                    cloudFolderAppStorageFolderUriString(
+                        cloudFolderAppRootDirectory(context.applicationContext.filesDir, normalizedRoot),
+                    )
                 }.getOrNull()
                 ?: return
             val request = OneTimeWorkRequestBuilder<FolderSyncWorker>()
@@ -105,6 +105,32 @@ class FolderSyncWorker(
                 ExistingWorkPolicy.REPLACE,
                 request,
             )
+        }
+
+        /**
+         * Resolve a cloud index target URI to its root ID.
+         *
+         * Legacy enqueues encoded the app-storage root with File.toURI()
+         * ("file:/...") while the folder list registers Uri.fromFile
+         * ("file:///..."). Canonicalize through the registered entries so
+         * both spellings match their folder; SAF targets (content URIs)
+         * resolve to null and fall back to exact URI matching.
+         */
+        fun resolveCloudIndexTargetRootId(
+            context: Context,
+            targetFolderUri: String?,
+            accountId: String?,
+        ): String? {
+            val normalizedUri = targetFolderUri?.trim()?.takeIf { it.isNotBlank() } ?: return null
+            if (!normalizedUri.startsWith("file:", ignoreCase = true)) return null
+            val account = accountId?.trim()?.takeIf { it.isNotBlank() } ?: return null
+            return runCatching {
+                CloudFolderAppStoragePrefs.rootIdForUri(
+                    context = context.applicationContext,
+                    accountId = account,
+                    uriString = normalizedUri,
+                )
+            }.getOrNull()
         }
     }
 
@@ -162,7 +188,10 @@ class FolderSyncWorker(
         }
 
         val enabledFolders = folders.filter { it.localSyncEnabled }
-        val foldersToProcess = if (targetFolderUri.isNullOrBlank()) {
+        val targetRootId = resolveCloudIndexTargetRootId(appContext, targetFolderUri, accountId)
+        val foldersToProcess = if (targetRootId != null) {
+            enabledFolders.filter { it.cloudRootId == targetRootId }
+        } else if (targetFolderUri.isNullOrBlank()) {
             enabledFolders
         } else {
             enabledFolders.filter { it.uriString == targetFolderUri }

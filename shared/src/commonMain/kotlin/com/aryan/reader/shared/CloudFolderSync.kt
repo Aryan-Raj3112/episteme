@@ -1135,6 +1135,38 @@ private fun cloudFolderNodesEquivalent(first: CloudFolderNode, second: CloudFold
 }
 
 /**
+ * Stabilize logical file metadata for a local snapshot.
+ *
+ * A device observes the same bytes through a different provider than the one
+ * that published the committed manifest (SAF DocumentFile vs java.io, or two
+ * materialization modes on different devices). Providers disagree about MIME
+ * spelling and stamp their own mtimes for identical content, so freshly
+ * scanned values for unchanged bytes must not become local edits: inherit the
+ * committed node's MIME type and source mtime whenever the authenticated hash
+ * and size still match. Scanned values are kept only when the bytes changed
+ * or the node is new, and sidecars keep their existing exemption.
+ */
+fun stabilizedCloudFolderNodeMetadata(
+    scanned: CloudFolderNode,
+    committed: CloudFolderNode?,
+): CloudFolderNode {
+    if (committed == null || isCloudFolderMetadataSidecarPath(scanned.relativePath)) {
+        return scanned
+    }
+    val scannedHash = canonicalCloudFolderContentHash(scanned.contentHash)
+    val committedHash = canonicalCloudFolderContentHash(committed.contentHash)
+    val contentUnchanged = scannedHash != null &&
+        committedHash != null &&
+        scannedHash == committedHash &&
+        scanned.sizeBytes == committed.sizeBytes
+    if (!contentUnchanged) return scanned
+    return scanned.copy(
+        mimeType = committed.mimeType,
+        fileModifiedAt = committed.fileModifiedAt,
+    )
+}
+
+/**
  * Byte identity is hash-first. When either side has no hash, retain the
  * existing conservative size/timestamp fallback so an unknown byte change is
  * never silently merged as equal.

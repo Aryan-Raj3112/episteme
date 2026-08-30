@@ -44,6 +44,42 @@ internal fun cloudFolderSizeBucket(sizeBytes: Long): String = when {
 }
 
 /**
+ * Order immutable Drive manifest candidates for a read.
+ *
+ * The committed Firestore head names one exact object; it must be tried
+ * before any other candidate so an orphan uploaded by an interrupted worker
+ * (a higher revision that was never committed) can never outrank the
+ * authoritative head. The fallback keeps the historical revision-descending
+ * order used before the commit pointer existed. Re-sorting the pinned list
+ * would defeat the pin entirely, so only the fallback is sorted.
+ */
+internal fun <T> orderedCloudFolderManifestCandidates(
+    candidates: List<T>,
+    preferredDriveFileId: String?,
+    idOf: (T) -> String?,
+    revisionOf: (T) -> Long,
+    idOrder: (String, String) -> Int,
+): List<T> {
+    val revisionDescending = Comparator<T> { left, right ->
+        compareValues(revisionOf(right), revisionOf(left))
+    }
+    val fallbackOrder = revisionDescending.thenComparator { left, right ->
+        val leftId = idOf(left).orEmpty()
+        val rightId = idOf(right).orEmpty()
+        idOrder(leftId, rightId)
+    }
+    val preferredId = preferredDriveFileId?.trim()?.takeIf { it.isNotBlank() }
+    return if (preferredId == null) {
+        candidates.sortedWith(fallbackOrder)
+    } else {
+        val (pinned, rest) = candidates.partition { candidate ->
+            idOf(candidate)?.trim() == preferredId
+        }
+        pinned + rest.sortedWith(fallbackOrder)
+    }
+}
+
+/**
  * A deterministic, privacy-safe correlation value for one logical cloud
  * operation.  The input is never logged; only its SHA-256-derived token is
  * returned.  Keeping this in the common logging helper makes it difficult for

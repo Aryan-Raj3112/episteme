@@ -52,6 +52,25 @@ class CloudFolderHeadListenerTest {
     }
 
     @Test
+    fun `transient lease states are recognized separately from malformed heads`() {
+        assertThat(isTransientCloudFolderHeadState("COMMITTING")).isTrue()
+        assertThat(isTransientCloudFolderHeadState("committing ")).isTrue()
+        assertThat(isTransientCloudFolderHeadState(null)).isFalse()
+        assertThat(isTransientCloudFolderHeadState("COMMITTED")).isFalse()
+        // A COMMITTING head with a malformed identity is not merely
+        // transient; it must still be reported as invalid.
+        assertThat(
+            isValidCloudFolderHeadUpdate(
+                CloudFolderHeadUpdate(
+                    rootId = "../escape",
+                    revision = 1L,
+                    state = "COMMITTING",
+                ),
+            ),
+        ).isFalse()
+    }
+
+    @Test
     fun `head pull wakes only newer included roots or unbound discovery`() {
         assertThat(
             shouldScheduleCloudFolderHeadPull(

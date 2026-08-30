@@ -419,8 +419,15 @@ class RecentFilesRepository(
             val metadataJson = metadata.toJsonString()
             val accountId = authRepository.getSignedInUser()?.uid?.trim()
                 ?.takeIf { it.isNotBlank() }
+            // Resolve the sync root exactly like the post-commit scheduler
+            // (app-managed registry first, then SAF-mirror bindings) so the
+            // write log carries the same root ID as the commit log.
             val rootId = accountId?.let { id ->
                 CloudFolderAppStoragePrefs.rootIdForUri(context, id, folderUriString)
+                    ?: runCatching {
+                        CloudFolderSyncRepository(context, id)
+                            .findBindingForLocalUri(folderUriString)?.rootId
+                    }.getOrNull()
             }
             cloudFolderLogD(
                 "event=metadata_sidecar_write_start root=${cloudFolderSafeId(rootId ?: folderUriString)} " +

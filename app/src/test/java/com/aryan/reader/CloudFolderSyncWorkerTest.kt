@@ -10,6 +10,7 @@ import com.aryan.reader.data.CloudFolderSafEntry
 import com.aryan.reader.data.CloudFolderSafScanResult
 import com.aryan.reader.data.CloudFolderManifestReadResult
 import com.aryan.reader.data.CloudFolderManifestHead
+import com.aryan.reader.data.CloudFolderMetadataOutboxEntity
 import com.aryan.reader.data.legacyCloudFolderManifestHeadCandidate
 import com.aryan.reader.shared.CloudFolderManifest
 import com.aryan.reader.shared.CloudFolderNode
@@ -55,9 +56,9 @@ class CloudFolderSyncWorkerTest {
     }
 
     @Test
-    fun metadataWakeReplacesARequestThatIsCurrentlyRetrying() {
+    fun metadataWakeAppendsBehindARequestThatIsCurrentlyRetrying() {
         assertEquals(
-            ExistingWorkPolicy.REPLACE,
+            ExistingWorkPolicy.APPEND_OR_REPLACE,
             cloudFolderMetadataWorkPolicy(
                 listOf(
                     CloudFolderMetadataWorkState(
@@ -67,6 +68,76 @@ class CloudFolderSyncWorkerTest {
                 ),
             ),
         )
+    }
+
+    @Test
+    fun metadataWakeReplacesARequestThatIsOnlyWaitingInBackoff() {
+        assertEquals(
+            ExistingWorkPolicy.REPLACE,
+            cloudFolderMetadataWorkPolicy(
+                listOf(
+                    CloudFolderMetadataWorkState(
+                        state = WorkInfo.State.ENQUEUED,
+                        runAttemptCount = 4,
+                    ),
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun manifestReadOrderPinsTheCommittedHeadBeforeHigherRevisionOrphans() {
+        data class Candidate(val id: String, val revision: Long)
+
+        // The exact incident shape: a committed rev-58 object plus an
+        // orphan rev-60 manifest uploaded by an interrupted worker.
+        val committed = Candidate("drive-58", 58L)
+        val orphan = Candidate("drive-60", 60L)
+        val stale = Candidate("drive-42", 42L)
+        val candidates = listOf(stale, orphan, committed)
+
+        val ordered = orderedCloudFolderManifestCandidates(
+            candidates = candidates,
+            preferredDriveFileId = committed.id,
+            idOf = { it.id },
+            revisionOf = { it.revision },
+            idOrder = { left, right -> left.compareTo(right) },
+        )
+
+        // The pinned object is first even though the orphan has a higher
+        // revision, and the remaining candidates keep revision order.
+        assertEquals(committed, ordered.first())
+        assertEquals(listOf(orphan, stale), ordered.drop(1))
+    }
+
+    @Test
+    fun manifestReadOrderWithoutAPinKeepsRevisionDescendingFallback() {
+        data class Candidate(val id: String, val revision: Long)
+
+        val candidates = listOf(
+            Candidate("b", 42L),
+            Candidate("a", 60L),
+            Candidate("c", 58L),
+        )
+
+        val ordered = orderedCloudFolderManifestCandidates(
+            candidates = candidates,
+            preferredDriveFileId = null,
+            idOf = { it.id },
+            revisionOf = { it.revision },
+            idOrder = { left, right -> left.compareTo(right) },
+        )
+
+        assertEquals(listOf("a", "c", "b"), ordered.map { it.id })
+        // A pin that matches nothing still degrades to the same fallback.
+        val unmatched = orderedCloudFolderManifestCandidates(
+            candidates = candidates,
+            preferredDriveFileId = "drive-missing",
+            idOf = { it.id },
+            revisionOf = { it.revision },
+            idOrder = { left, right -> left.compareTo(right) },
+        )
+        assertEquals(ordered, unmatched)
     }
 
     @Test
@@ -314,6 +385,121 @@ class CloudFolderSyncWorkerTest {
     }
 
     @Test
+    fun cloudIndexTargetResolvesBothFileUriSpellingsToTheRegisteredRoot() {
+        val context = RuntimeEnvironment.getApplication()
+        val accountId = "index-account-${System.nanoTime()}"
+        val rootId = "index-root-${System.nanoTime()}"
+        val root = cloudFolderAppRootDirectory(context.filesDir, rootId)
+        root.mkdirs()
+        try {
+            CloudFolderAppStoragePrefs.upsert(context, accountId, rootId, "Books")
+
+            // The folder list registers Uri.fromFile ("file:///...").
+            val canonical = Uri.fromFile(root).toString()
+            assertEquals(
+                rootId,
+                FolderSyncWorker.resolveCloudIndexTargetRootId(context, canonical, accountId),
+            )
+            // Legacy enqueues encoded File.toURI() ("file:/...").
+            assertEquals(
+                rootId,
+                FolderSyncWorker.resolveCloudIndexTargetRootId(context, root.toURI().toString(), accountId),
+            )
+            // SAF content targets and foreign roots do not resolve.
+            assertNull(
+                FolderSyncWorker.resolveCloudIndexTargetRootId(
+                    context,
+                    "content://provider/document/primary%3Abooks",
+                    accountId,
+                ),
+            )
+            assertNull(
+                FolderSyncWorker.resolveCloudIndexTargetRootId(context, canonical, "other-account"),
+            )
+        } finally {
+            CloudFolderAppStoragePrefs.remove(context, accountId, rootId)
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun metadataWakeKindsIgnoreUnknownValuesAndDefaultToMetadata() {
+        val kinds = requiredMetadataKindsByBook(
+            listOf(
+                CloudFolderMetadataOutboxEntity(
+                    accountId = "a",
+                    rootId = "root",
+                    bookId = "epub-book",
+                    generation = 1L,
+                    dirtyKinds = "METADATA",
+                    dirtySince = 0L,
+                    updatedAt = 0L,
+                ),
+                CloudFolderMetadataOutboxEntity(
+                    accountId = "a",
+                    rootId = "root",
+                    bookId = "pdf-book",
+                    generation = 1L,
+                    dirtyKinds = "METADATA,ANNOTATIONS",
+                    dirtySince = 0L,
+                    updatedAt = 0L,
+                ),
+                CloudFolderMetadataOutboxEntity(
+                    accountId = "a",
+                    rootId = "root",
+                    bookId = "legacy-book",
+                    generation = 1L,
+                    dirtyKinds = "",
+                    dirtySince = 0L,
+                    updatedAt = 0L,
+                ),
+                CloudFolderMetadataOutboxEntity(
+                    accountId = "a",
+                    rootId = "root",
+                    bookId = "odd-book",
+                    generation = 1L,
+                    dirtyKinds = "annotations, UNKNOWN",
+                    dirtySince = 0L,
+                    updatedAt = 0L,
+                ),
+            ),
+        )
+
+        assertEquals(setOf("METADATA"), kinds.getValue("epub-book"))
+        assertEquals(setOf("METADATA", "ANNOTATIONS"), kinds.getValue("pdf-book"))
+        assertEquals(setOf("METADATA"), kinds.getValue("legacy-book"))
+        assertEquals(setOf("ANNOTATIONS"), kinds.getValue("odd-book"))
+    }
+
+    @Test
+    fun metadataWakeTargetPathsFollowRequiredKindsOnly() {
+        val targetPaths = metadataWakeTargetPaths(
+            mapOf(
+                "epub-book" to setOf("METADATA"),
+                "pdf-book" to setOf("METADATA", "ANNOTATIONS"),
+            ),
+        )
+
+        val epubMetadata = com.aryan.reader.shared.cloudFolderPathKey(
+            "EpistemeSyncData/${com.aryan.reader.shared.localFolderSyncMetadataFileName("epub-book")}",
+        )
+        val pdfMetadata = com.aryan.reader.shared.cloudFolderPathKey(
+            "EpistemeSyncData/${com.aryan.reader.shared.localFolderSyncMetadataFileName("pdf-book")}",
+        )
+        val pdfAnnotations = com.aryan.reader.shared.cloudFolderPathKey(
+            "EpistemeSyncData/${com.aryan.reader.shared.localFolderSyncAnnotationFileName("pdf-book")}",
+        )
+        val epubAnnotations = com.aryan.reader.shared.cloudFolderPathKey(
+            "EpistemeSyncData/${com.aryan.reader.shared.localFolderSyncAnnotationFileName("epub-book")}",
+        )
+        assertTrue(epubMetadata in targetPaths)
+        assertTrue(pdfMetadata in targetPaths)
+        assertTrue(pdfAnnotations in targetPaths)
+        assertFalse(epubAnnotations in targetPaths)
+        assertEquals(3, targetPaths.size)
+    }
+
+    @Test
     fun verifiedAppFileCanBeReusedOnlyWhenHashAndSizeMatch() = runBlocking {
         val file = RuntimeEnvironment.getApplication().filesDir
             .resolve("cloud-folder-match-${System.nanoTime()}.epub")
@@ -389,7 +575,7 @@ class CloudFolderSyncWorkerTest {
     }
 
     @Test
-    fun contentFileMimeOrMtimeDriftIsStillALocalChange() {
+    fun contentFileMimeOrMtimeDriftOnUnchangedBytesIsNotALocalChange() {
         val baseNode = fileNode(
             nodeId = "book",
             path = "Series/Book.epub",
@@ -405,16 +591,20 @@ class CloudFolderSyncWorkerTest {
                 path = "Series/Book.epub",
                 hash = requireNotNull(baseNode.contentHash),
                 revision = 0L,
-                modifiedAt = 10L,
+                modifiedAt = 99L,
             ).copy(mimeType = "application/epub+zip-different"),
         )
 
         val local = buildLocalManifest(base, scan, now = 20L, deviceId = "pixel")
 
-        // Non-sidecar nodes still propagate provider metadata changes.
-        assertEquals(4L, local.revision)
-        assertEquals(4L, local.nodes.single().revision)
+        // Identical bytes observed through a different provider re-guess the
+        // MIME type and stamp a new mtime. Logical metadata is inherited from
+        // the committed node so the snapshot stays a no-op.
+        assertEquals(3L, local.revision)
+        assertEquals(3L, local.nodes.single().revision)
         assertEquals("drive-object", local.nodes.single().contentObjectId)
+        assertEquals("application/epub+zip", local.nodes.single().mimeType)
+        assertEquals(10L, local.nodes.single().fileModifiedAt)
     }
 
     @Test
@@ -477,7 +667,7 @@ class CloudFolderSyncWorkerTest {
     }
 
     @Test
-    fun localSnapshotPreservesObjectIdWhenOnlyTheFileTimestampChanges() {
+    fun localSnapshotInheritsStableMetadataWhenOnlyTheFileTimestampChanges() {
         val baseNode = fileNode(
             nodeId = "book",
             path = "Series/Book.epub",
@@ -501,9 +691,12 @@ class CloudFolderSyncWorkerTest {
 
         // A stale provider mtime must not strip the only pointer to the
         // uploaded bytes: publishing without it poisons every other device.
+        // Identical bytes also inherit the committed mtime, so this is no
+        // longer promoted into a local edit at all.
         assertEquals("drive-object", local.nodes.single().contentObjectId)
-        assertEquals(4L, local.revision)
-        assertEquals(4L, local.nodes.single().revision)
+        assertEquals(3L, local.revision)
+        assertEquals(3L, local.nodes.single().revision)
+        assertEquals(10L, local.nodes.single().fileModifiedAt)
     }
 
     @Test

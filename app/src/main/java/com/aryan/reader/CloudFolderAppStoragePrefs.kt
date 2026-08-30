@@ -31,10 +31,7 @@ internal object CloudFolderAppStoragePrefs {
         fun toSyncedFolder(filesDir: File): SyncedFolder {
             val root = cloudFolderAppRootDirectory(filesDir, rootId)
             return SyncedFolder(
-                // Canonical androidx file URI; must match the per-file URIs
-                // emitted by the folder scan and the reader's managed-book
-                // open path so URI-keyed Room writes resolve consistently.
-                uriString = Uri.fromFile(root).toString(),
+                uriString = cloudFolderAppStorageFolderUriString(root),
                 name = name.trim().ifBlank { "Cloud folder" },
                 lastScanTime = lastScanTime.coerceAtLeast(0L),
                 allowedFileTypes = ANDROID_SYNCABLE_FILE_TYPES,
