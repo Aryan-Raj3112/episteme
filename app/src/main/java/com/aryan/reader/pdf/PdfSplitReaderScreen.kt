@@ -33,6 +33,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.RemoveCircleOutline
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -99,7 +100,6 @@ import com.aryan.reader.tts.TtsController
 import com.aryan.reader.tts.rememberTtsController
 import kotlin.math.abs
 
-private val PdfSplitPaneHeaderHeight = 40.dp
 private val PdfSplitDividerTouchTarget = 20.dp
 private val PdfSplitDividerVisualThickness = 3.dp
 private val PdfSplitDividerHandleWidth = 4.dp
@@ -192,6 +192,11 @@ fun PdfSplitReaderScreen(
                 showDocumentPicker = true
             },
             canAddDocument = workspace.primary != null,
+            onCloseFocusedPane = {
+                workspace.focusedDocument?.let { focusedDocument ->
+                    closePane(workspace.focusedPane, focusedDocument.sessionId)
+                }
+            },
         )
 
         Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -208,7 +213,6 @@ fun PdfSplitReaderScreen(
                     availablePdfs = availablePdfs,
                     isFocused = workspace.focusedPane == PdfSplitPane.PRIMARY,
                     isProUser = isProUser,
-                    usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName,
                     viewModel = viewModel,
                     isAppActive = isAppActive,
                     ttsController = ttsController,
@@ -231,7 +235,6 @@ fun PdfSplitReaderScreen(
                             availablePdfs = availablePdfs,
                             isFocused = workspace.focusedPane == PdfSplitPane.PRIMARY,
                             isProUser = isProUser,
-                            usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName,
                             viewModel = viewModel,
                             isAppActive = isAppActive,
                             ttsController = ttsController,
@@ -248,7 +251,6 @@ fun PdfSplitReaderScreen(
                             availablePdfs = availablePdfs,
                             isFocused = workspace.focusedPane == PdfSplitPane.SECONDARY,
                             isProUser = isProUser,
-                            usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName,
                             viewModel = viewModel,
                             isAppActive = isAppActive,
                             ttsController = ttsController,
@@ -301,6 +303,7 @@ private fun PdfSplitWorkspaceToolbar(
     onSwapPanes: () -> Unit,
     onCloseWorkspace: () -> Unit,
     onAddDocument: (PdfSplitPane) -> Unit,
+    onCloseFocusedPane: () -> Unit,
     canAddDocument: Boolean,
 ) {
     Surface(
@@ -319,17 +322,12 @@ private fun PdfSplitWorkspaceToolbar(
                 style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier.weight(1f),
             )
-            if (canAddDocument) {
+            // "+" only matters while one pane is open: it fills the empty slot.
+            // With both panes occupied, adding means replacing, so the picker is
+            // reached through the pane actions instead.
+            if (canAddDocument && !workspace.isSplit) {
                 IconButton(
-                    onClick = {
-                        onAddDocument(
-                            if (workspace.isSplit) {
-                                workspace.focusedPane
-                            } else {
-                                PdfSplitPane.SECONDARY
-                            },
-                        )
-                    },
+                    onClick = { onAddDocument(PdfSplitPane.SECONDARY) },
                 ) {
                     Icon(
                         Icons.Default.Add,
@@ -342,6 +340,16 @@ private fun PdfSplitWorkspaceToolbar(
                     Icon(
                         Icons.Default.SwapHoriz,
                         contentDescription = stringResource(R.string.pdf_split_reader_swap),
+                    )
+                }
+                // Pane management lives on the workspace bar so pane headers can
+                // stay out of the layout and give their space to content.
+                IconButton(
+                    onClick = onCloseFocusedPane,
+                ) {
+                    Icon(
+                        Icons.Default.RemoveCircleOutline,
+                        contentDescription = stringResource(R.string.pdf_split_reader_remove_focused),
                     )
                 }
             }
@@ -787,7 +795,6 @@ private fun PdfSplitDocumentPane(
     availablePdfs: List<RecentFileItem>,
     isFocused: Boolean,
     isProUser: Boolean,
-    usePdfFileNameAsDisplayName: Boolean,
     viewModel: MainViewModel,
     isAppActive: Boolean,
     ttsController: TtsController,
@@ -803,12 +810,9 @@ private fun PdfSplitDocumentPane(
             } == true
         }
     }
-    val title = item?.cardTitle(usePdfFileNameAsDisplayName)
-        ?: document.uriString.toUri().lastPathSegment
-        ?: stringResource(R.string.pdf_viewer)
     val resolvedPdfUri = item?.getUri() ?: document.uriString.toUri()
 
-    Column(
+    Box(
         modifier = modifier
             .background(
                 if (isFocused) {
@@ -827,87 +831,54 @@ private fun PdfSplitDocumentPane(
                 }
             },
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(PdfSplitPaneHeaderHeight)
-                .padding(start = 12.dp, end = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(
-                modifier = Modifier
-                    .width(3.dp)
-                    .height(18.dp)
-                    .background(
-                        color = if (isFocused) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            Color.Transparent
-                        },
-                        shape = RoundedCornerShape(2.dp),
-                    ),
-            )
-            Spacer(Modifier.width(8.dp))
-            Text(
-                text = title,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                style = MaterialTheme.typography.labelLarge,
-                color = if (isFocused) {
-                    MaterialTheme.colorScheme.onSurface
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                },
-                modifier = Modifier.weight(1f),
-            )
-            IconButton(
-                onClick = { onClose(paneId, document.sessionId) },
-                modifier = Modifier.height(PdfSplitPaneHeaderHeight),
-            ) {
-                Icon(
-                    Icons.Default.Close,
-                    contentDescription = stringResource(R.string.pdf_split_reader_close_pane),
-                    modifier = Modifier.height(18.dp),
-                )
+        if (item == null) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(stringResource(R.string.pdf_split_reader_missing_document))
             }
-        }
-
-        Box(Modifier.weight(1f).fillMaxWidth()) {
-            if (item == null) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text(stringResource(R.string.pdf_split_reader_missing_document))
-                }
-            } else {
+        } else {
                 key(paneId, document.canonicalIdentity, document.sessionId) {
                     PdfViewerScreen(
                         pdfUri = resolvedPdfUri,
                         initialPage = item.lastPage,
                         initialBookmarksJson = item.bookmarksJson,
                         isProUser = isProUser,
+                        // The pane's reader back arrow removes the pane from the
+                        // split workspace (the pane header was removed to give
+                        // its space to content).
                         onNavigateBack = { onClose(paneId, document.sessionId) },
-                        onSavePosition = viewModel::savePdfReadingPosition,
-                        onBookmarksChanged = { bookmarksJson ->
-                            viewModel.saveBookmarks(
-                                bookId = document.bookId,
-                                bookmarksJson = bookmarksJson,
-                                documentUri = resolvedPdfUri,
-                            )
-                        },
-                        onNavigateToPro = onNavigateToPro,
-                        viewModel = viewModel,
-                        ttsControllerOverride = ttsController,
-                        isPaneAppActive = isAppActive,
-                        pane = PdfViewerPane(
+                    onSavePosition = viewModel::savePdfReadingPosition,
+                    onBookmarksChanged = { bookmarksJson ->
+                        viewModel.saveBookmarks(
                             bookId = document.bookId,
-                            pdfUri = resolvedPdfUri,
-                            sessionId = document.sessionId,
-                            initialPage = item.lastPage,
-                            initialBookmarksJson = item.bookmarksJson,
-                        ),
-                        isPaneFocused = isFocused,
-                    )
-                }
+                            bookmarksJson = bookmarksJson,
+                            documentUri = resolvedPdfUri,
+                        )
+                    },
+                    onNavigateToPro = onNavigateToPro,
+                    viewModel = viewModel,
+                    ttsControllerOverride = ttsController,
+                    isPaneAppActive = isAppActive,
+                    pane = PdfViewerPane(
+                        bookId = document.bookId,
+                        pdfUri = resolvedPdfUri,
+                        sessionId = document.sessionId,
+                        initialPage = item.lastPage,
+                        initialBookmarksJson = item.bookmarksJson,
+                    ),
+                    isPaneFocused = isFocused,
+                )
             }
+        }
+        // Focus is announced with a thin accent edge instead of a full pane
+        // header, so the whole pane height stays available for content.
+        if (isFocused) {
+            Box(
+                Modifier
+                    .align(Alignment.TopCenter)
+                    .fillMaxWidth()
+                    .height(2.dp)
+                    .background(MaterialTheme.colorScheme.primary),
+            )
         }
     }
 }

@@ -114,8 +114,21 @@ def main() -> int:
         "SYNC effective navigation-bar condition",
     )
     assert_contains(current, r"contentWindowInsets\s*=\s*WindowInsets\(0,\s*0,\s*0,\s*0\)", "scaffold inset opt-out")
-    assert_contains(current, r"dockHeight\s*\+\s*if\s*\(systemUiMode\s*==\s*SystemUiMode\.DEFAULT\)\s*statusBarHeightDp", "top edit-dock status inset")
-    assert_contains(current, r"dockHeight\s*\+\s*if\s*\(systemUiMode\s*==\s*SystemUiMode\.DEFAULT\)\s*with\(density\)\s*\{\s*navBarHeight\.toDp\(\)\s*\}", "bottom edit-dock navigation inset")
+    assert_contains(
+        current,
+        r"val\s+effectiveNavBarHeight\s*=\s*if\s*\(\s*isSplitPane\s*\)\s*0\s*else\s*navBarHeight",
+        "split-view navigation-bar opt-out",
+    )
+    assert_contains(
+        current,
+        r"dockHeight\s*\+\s*if\s*\(systemUiMode\s*==\s*SystemUiMode\.DEFAULT\s*&&\s*!isSplitPane\)\s*statusBarHeightDp",
+        "top edit-dock status inset",
+    )
+    assert_contains(
+        current,
+        r"dockHeight\s*\+\s*if\s*\(systemUiMode\s*==\s*SystemUiMode\.DEFAULT\)\s*with\(density\)\s*\{\s*effectiveNavBarHeight\.toDp\(\)\s*\}",
+        "bottom edit-dock navigation inset",
+    )
     assert_contains(current, r"if\s*\(!showStandardBars\)\s*\{\s*0\.dp\s*\}\s*else\s*\{\s*var\s+inset\s*=\s*56\.dp", "top overlay hidden-bars branch")
 
     visibility_truth_table()

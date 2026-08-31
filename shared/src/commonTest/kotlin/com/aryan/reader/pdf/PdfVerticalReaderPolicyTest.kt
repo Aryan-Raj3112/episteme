@@ -68,6 +68,47 @@ class PdfVerticalReaderPolicyTest {
     }
 
     @Test
+    fun `viewport resize centers under zoomed width and clamps preserved pan`() {
+        // Split divider drag shrinks the pane: a pan from the wider viewport
+        // must land inside the new bounds or the next pinch jumps to the edge.
+        assertEquals(
+            -400f,
+            preservedPdfVerticalPanXAfterViewportResize(
+                panX = -900f,
+                zoom = 2f,
+                viewportWidth = 400f,
+            ),
+        )
+        // Narrower-than-viewport content stays centered.
+        assertEquals(
+            100f,
+            preservedPdfVerticalPanXAfterViewportResize(
+                panX = 0f,
+                zoom = 0.5f,
+                viewportWidth = 400f,
+            ),
+        )
+        // Valid pans from a same-width viewport are untouched.
+        assertEquals(
+            -160f,
+            preservedPdfVerticalPanXAfterViewportResize(
+                panX = -160f,
+                zoom = 2f,
+                viewportWidth = 400f,
+            ),
+        )
+        // Degenerate inputs fall back to a safe centered camera.
+        assertEquals(
+            0f,
+            preservedPdfVerticalPanXAfterViewportResize(panX = -50f, zoom = 0f, viewportWidth = 400f),
+        )
+        assertEquals(
+            0f,
+            preservedPdfVerticalPanXAfterViewportResize(panX = -50f, zoom = 2f, viewportWidth = 0f),
+        )
+    }
+
+    @Test
     fun `geometry refinement only resets zoom close to landscape fit scale`() {
         assertTrue(isPdfVerticalZoomNearFit(currentZoom = 0.54f, fitZoom = 0.5f))
         assertFalse(isPdfVerticalZoomNearFit(currentZoom = 0.88f, fitZoom = 0.5f))

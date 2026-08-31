@@ -105,6 +105,29 @@ fun preservedPdfVerticalPanY(
     return viewportAnchorY - newDocumentAnchor * newZoom
 }
 
+/**
+ * Horizontal camera for a viewport whose width changed (split divider drag,
+ * rotation, chrome resize). The vertical re-anchor already clamps panY, but a
+ * pan preserved from the old width can sit outside the new horizontal range;
+ * the next pinch or fling then clamps abruptly and the view jumps to the left
+ * edge. Centers under-zoomed content and clamps the preserved pan into the
+ * zoomed document's new range.
+ */
+fun preservedPdfVerticalPanXAfterViewportResize(
+    panX: Float,
+    zoom: Float,
+    viewportWidth: Float,
+): Float {
+    val safeZoom = zoom.takeIf { it.isFinite() && it > 0f } ?: 1f
+    val safeViewportWidth = viewportWidth.takeIf { it.isFinite() && it > 0f } ?: return 0f
+    val zoomedDocWidth = safeViewportWidth * safeZoom
+    return if (zoomedDocWidth <= safeViewportWidth) {
+        (safeViewportWidth - zoomedDocWidth) / 2f
+    } else {
+        panX.takeIf { it.isFinite() }?.coerceIn(-(zoomedDocWidth - safeViewportWidth), 0f) ?: 0f
+    }
+}
+
 fun calculateLockedOrientationResetCamera(
     pageTopY: Float,
     totalDocHeight: Float,

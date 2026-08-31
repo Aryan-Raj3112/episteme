@@ -353,8 +353,12 @@ internal fun PdfVerticalReader(
         val imeInsets = WindowInsets.ime
         val density = LocalDensity.current
         val viewConfiguration = LocalViewConfiguration.current
-        val screenWidth = constraints.maxWidth.toFloat()
-        val screenHeight = constraints.maxHeight.toFloat()
+        // The viewport resizes without restarting long-lived gesture/resize
+        // lambdas (a split-view divider drag changes pane bounds only), so the
+        // camera geometry is read through delegates: zoom clamps, pivots, and
+        // resize re-anchoring always work against the live viewport and fit.
+        val screenWidth by rememberUpdatedState(constraints.maxWidth.toFloat())
+        val screenHeight by rememberUpdatedState(constraints.maxHeight.toFloat())
 
         val ratios = pageAspectRatios.item
         val bookmarkSet = bookmarks.item
@@ -373,8 +377,8 @@ internal fun PdfVerticalReader(
             )
         }
 
-        val headerHeightPx = with(density) { headerHeight.toPx() }
-        val footerHeightPx = with(density) { footerHeight.toPx() }
+        val headerHeightPx by rememberUpdatedState(with(density) { headerHeight.toPx() })
+        val footerHeightPx by rememberUpdatedState(with(density) { footerHeight.toPx() })
 
         val dividerHeightDp = pdfVerticalPageGapDp(showPageGap, 8.dp)
         val dividerHeightPx = with(density) { dividerHeightDp.toPx() }
@@ -432,22 +436,28 @@ internal fun PdfVerticalReader(
         }
 
         val layoutInfo = layoutState.pages
-        val totalDocHeight = layoutState.totalHeight
+        val totalDocHeight by rememberUpdatedState(layoutState.totalHeight)
         Timber.tag(SCROLL_BOUNDS_TAG)
             .d("Layout Recalculated. Page Count: ${layoutInfo.size}, TotalDocHeight: $totalDocHeight")
 
-        val fitZoom = remember(ratios, screenWidth, screenHeight) {
-            if (ratios.isEmpty() || screenWidth == 0f || screenHeight == 0f) 1f
-            else {
-                val firstRatio = ratios.firstOrNull { it > 0f } ?: 1f
-                val baseHeight = screenWidth / firstRatio
-                if (screenWidth > screenHeight) {
-                    ((screenHeight - 32f) / baseHeight).coerceAtMost(1f)
-                } else {
-                    1f
+        // Gesture handlers live in pointerInput blocks keyed on document
+        // geometry, so a viewport-only resize (split divider drag) does not
+        // restart them. Route the fit base through a delegate so zoom/pinch
+        // math always clamps against the live fit zoom.
+        val fitZoom by rememberUpdatedState(
+            remember(ratios, screenWidth, screenHeight) {
+                if (ratios.isEmpty() || screenWidth == 0f || screenHeight == 0f) 1f
+                else {
+                    val firstRatio = ratios.firstOrNull { it > 0f } ?: 1f
+                    val baseHeight = screenWidth / firstRatio
+                    if (screenWidth > screenHeight) {
+                        ((screenHeight - 32f) / baseHeight).coerceAtMost(1f)
+                    } else {
+                        1f
+                    }
                 }
             }
-        }
+        )
 
         LaunchedEffect(layoutInfo, totalDocHeight, screenWidth, screenHeight, fitZoom, headerHeightPx, footerHeightPx) {
             PdfVerticalPerfLog.i(
@@ -615,7 +625,9 @@ internal fun PdfVerticalReader(
             }
         }
 
-        LaunchedEffect(layoutState.pages, isInteracting, isFlinging, isZoomAnimating) {
+        // Viewport keys (screenWidth/screenHeight) re-run this correction when
+        // a split divider resizes the pane without changing page layout keys.
+        LaunchedEffect(layoutState.pages, screenWidth, screenHeight, isInteracting, isFlinging, isZoomAnimating) {
             // Real page dimensions can arrive while the pointer or decay animation owns the
             // camera. Re-run this effect when motion ends instead of correcting underneath it.
             if (isInteracting || isFlinging || isZoomAnimating) return@LaunchedEffect
@@ -709,7 +721,15 @@ internal fun PdfVerticalReader(
                             (screenWidth - (screenWidth * targetZoom)) / 2f
                         } else 0f
                     } else {
-                        cameraPanX
+                        // A divider drag resizes the viewport without touching the
+                        // camera; a pan preserved from the old width can sit outside
+                        // the new bounds and made the next pinch/fling jump to the
+                        // left edge. Clamp it into the resized viewport.
+                        preservedPdfVerticalPanXAfterViewportResize(
+                            panX = cameraPanX,
+                            zoom = targetZoom,
+                            viewportWidth = screenWidth,
+                        )
                     }
 
                     panXAnimatable.updateBounds(null, null)

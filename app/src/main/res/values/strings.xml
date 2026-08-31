@@ -1315,6 +1315,7 @@
     <string name="pdf_split_reader_swap">Swap documents</string>
     <string name="pdf_split_reader_close">Close split reader</string>
     <string name="pdf_split_reader_close_pane">Close document pane</string>
+    <string name="pdf_split_reader_remove_focused">Remove focused document</string>
     <string name="pdf_split_reader_add_document">Add PDF to split reader</string>
     <string name="pdf_split_reader_choose_document">Choose a PDF to open beside this document</string>
     <string name="pdf_split_reader_replace_document">Replace the selected split pane</string>

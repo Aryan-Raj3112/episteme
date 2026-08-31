@@ -3795,10 +3795,9 @@ private fun PdfViewerScreenContent(
 
     val imeHeight = WindowInsets.ime.getBottom(density)
 
-    val bottomScrollLimitPx = remember(isEditMode, imeHeight, navBarHeight, dockLocation, isDockMinimized, systemUiMode, showStandardBars, isSplitPane) {
-        // Split panes keep the nav bar visible at all times; the workspace
-        // below them already reserves the bar's space.
-        val effectiveNavBar = if (isSplitPane || systemUiMode == SystemUiMode.DEFAULT || (systemUiMode == SystemUiMode.SYNC && showStandardBars)) navBarHeight else 0
+    val bottomScrollLimitPx = remember(isEditMode, imeHeight, navBarHeight, dockLocation, isDockMinimized, systemUiMode, showStandardBars) {
+        // navBarHeight is bridged as 0 for split panes (the system bar is hidden).
+        val effectiveNavBar = if (systemUiMode == SystemUiMode.DEFAULT || (systemUiMode == SystemUiMode.SYNC && showStandardBars)) navBarHeight else 0
         if (isEditMode) {
             if (imeHeight > 0) {
                 imeHeight.toFloat()
@@ -5642,11 +5641,12 @@ private fun PdfViewerDocumentSetup(
         if (!ownsPaneGlobals) return@LaunchedEffect
         if (window != null) {
             val insetsController = WindowCompat.getInsetsController(window, view)
-            // A split-workspace pane never owns the system bars: the workspace
-            // keeps both bars visible so its toolbar and pane chrome stay
-            // clear of them, regardless of the reader's visual option.
+            // Split view is immersive: the workspace owns the screen, so the
+            // system navigation bar hides away (a swipe reveals it
+            // transiently). The status bar stays visible for the workspace
+            // toolbar above the panes.
             val visibility = if (isSplitPane) {
-                MobileReaderSystemBarsVisibility(statusBarsVisible = true, navigationBarsVisible = true)
+                MobileReaderSystemBarsVisibility(statusBarsVisible = true, navigationBarsVisible = false)
             } else {
                 mobilePdfSystemBarsVisibility(systemUiMode, showStandardBars)
             }
@@ -5670,6 +5670,9 @@ private fun PdfViewerDocumentSetup(
     val dummySearcher: suspend (String) -> List<SearchResult> = { emptyList() }
     val searchState = rememberSearchState(scope = coroutineScope, searcher = dummySearcher)
     val navBarHeight = WindowInsets.systemBars.getBottom(density)
+    // Split view hides the system navigation bar; panes must not reserve its
+    // height or every pane's bottom chrome floats above a phantom bar.
+    val effectiveNavBarHeight = if (isSplitPane) 0 else navBarHeight
 
     val targetVerticalHeaderHeight = remember(
         dockLocation,
@@ -5677,7 +5680,8 @@ private fun PdfViewerDocumentSetup(
         isEditMode,
         isDockDragging,
         systemUiMode,
-        statusBarHeightDp
+        statusBarHeightDp,
+        isSplitPane
     ) {
         if (!isEditMode) {
             0.dp
@@ -5685,7 +5689,9 @@ private fun PdfViewerDocumentSetup(
             val isStickyTop = dockLocation == DockLocation.TOP && !isDockDragging
             val isPreviewingTop = snapPreviewLocation == DockLocation.TOP
             if (isStickyTop || isPreviewingTop) {
-                dockHeight + if (systemUiMode == SystemUiMode.DEFAULT) statusBarHeightDp else 0.dp
+                // Split panes sit below the workspace toolbar, which already
+                // pads for the status bar.
+                dockHeight + if (systemUiMode == SystemUiMode.DEFAULT && !isSplitPane) statusBarHeightDp else 0.dp
             } else 0.dp
         }
     }
@@ -5749,7 +5755,7 @@ private fun PdfViewerDocumentSetup(
                 val isPreviewingBottom = snapPreviewLocation == DockLocation.BOTTOM
 
                 if (isStickyBottom || isPreviewingBottom) {
-                    dockHeight + if (systemUiMode == SystemUiMode.DEFAULT) with(density) { navBarHeight.toDp() } else 0.dp
+                    dockHeight + if (systemUiMode == SystemUiMode.DEFAULT) with(density) { effectiveNavBarHeight.toDp() } else 0.dp
                 } else 0.dp
             }
         }
@@ -6264,7 +6270,7 @@ private fun PdfViewerDocumentSetup(
     surfaceState.viewConfiguration = viewConfiguration
     surfaceState.statusBarHeightDp.value = statusBarHeightDp
     surfaceState.searchState = searchState
-    surfaceState.navBarHeight.value = navBarHeight
+    surfaceState.navBarHeight.value = effectiveNavBarHeight
     surfaceState.verticalHeaderHeight.value = verticalHeaderHeight
     surfaceState.topOverlayInset.value = topOverlayInset
     surfaceState.verticalFooterHeight.value = verticalFooterHeight
@@ -8052,7 +8058,9 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
         modifier = Modifier.align(Alignment.TopCenter),
         showStandardBars = showStandardBars,
         systemUiMode = systemUiMode,
-        statusBarHeightDp = statusBarHeightDp,
+        // The workspace toolbar already pads the status bar in split view;
+        // adding it again double-pads the pane's own toolbar.
+        statusBarHeightDp = if (isSplitPane) 0.dp else statusBarHeightDp,
         searchState = searchState,
         focusRequester = focusRequester,
         onCloseSearch = {
