@@ -827,10 +827,8 @@ class TtsPlaybackManager(
 
     fun stopFromTransport() {
         logMediaTransport("tts-transport-stop", mediaTransportSnapshot())
-        if (!isDirectLocalPlayback()) {
-            player.stop()
-            return
-        }
+        // Transport stop (notification dismissal, headset stop) terminates the complete session
+        // for every playback mode so audio can never outlive its session or notification.
         handleStopTts(userInitiated = true)
         onExplicitStopRequested()
     }

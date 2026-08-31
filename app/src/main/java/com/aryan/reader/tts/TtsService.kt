@@ -50,6 +50,8 @@ import com.aryan.reader.GEMINI_CLOUD_TTS_MODEL
 import com.aryan.reader.isByokCloudTtsAvailable
 import com.aryan.reader.loadAiByokSettings
 import com.aryan.reader.logMediaTransport
+import com.aryan.reader.pinPostedPlaybackNotification
+import com.aryan.reader.MediaNotificationBitmapLoader
 import com.aryan.reader.mediaButtonKeyEventDetails
 import com.aryan.reader.playerTransportSnapshot
 import com.aryan.reader.tts.TtsPlaybackManager.TtsMode
@@ -272,6 +274,19 @@ const val EXTRA_BOOK_TTS_CHAPTER_INDEX = "book_tts_chapter_index"
 const val EXTRA_BOOK_TTS_SLEEP_MINUTES = "book_tts_sleep_minutes"
 private const val TTS_NOTIFICATION_PREVIOUS_REQUEST_CODE = 4208
 private const val TTS_NOTIFICATION_NEXT_REQUEST_CODE = 4209
+
+internal fun ensureTtsNotificationChannel(context: android.content.Context) {
+    val notificationManager = context.getSystemService(NotificationManager::class.java)
+    val channel = NotificationChannel(
+        TTS_FOREGROUND_CHANNEL_ID,
+        context.getString(R.string.tts_notification_channel_name),
+        NotificationManager.IMPORTANCE_LOW
+    ).apply {
+        description = context.getString(R.string.tts_notification_channel_desc)
+        setShowBadge(false)
+    }
+    notificationManager.createNotificationChannel(channel)
+}
 
 @UnstableApi
 private class TtsMediaNotificationProvider(
@@ -531,7 +546,9 @@ private class TtsSessionPlayer(
             "tts-session-player-stop",
             "directLocal=${isDirectLocalPlayback()} localPlaying=${localIsPlaying()} ${playerTransportSnapshot(this)}"
         )
-        if (isDirectLocalPlayback()) stopDirectLocal() else super.stop()
+        // A transport stop (notification dismissal, headset stop, task dismissal) always ends the
+        // complete TTS session; it must never leave playback running without its session.
+        stopDirectLocal()
     }
 
     override fun getPlayWhenReady(): Boolean =
@@ -796,6 +813,13 @@ class TtsService : MediaSessionService() {
                 playerTransportSnapshot(if (::player.isInitialized) player else null)
         )
         super.onUpdateNotification(session, startInForegroundRequired)
+        pinPostedPlaybackNotification(
+            context = this,
+            notificationId = TTS_FOREGROUND_NOTIFICATION_ID,
+            playWhenReady = session.player.playWhenReady,
+            playbackState = session.player.playbackState,
+            diagnosticsTag = TTS_NOTIFICATION_DIAG_TAG
+        )
     }
 
     private fun showPreparingForegroundNotification(
@@ -858,16 +882,7 @@ class TtsService : MediaSessionService() {
     }
 
     private fun ensureTtsNotificationChannel() {
-        val notificationManager = getSystemService(NotificationManager::class.java)
-        val channel = NotificationChannel(
-            TTS_FOREGROUND_CHANNEL_ID,
-            getString(R.string.tts_notification_channel_name),
-            NotificationManager.IMPORTANCE_LOW
-        ).apply {
-            description = getString(R.string.tts_notification_channel_desc)
-            setShowBadge(false)
-        }
-        notificationManager.createNotificationChannel(channel)
+        ensureTtsNotificationChannel(this)
     }
 
     private fun pendingIntentFlags(): Int {
@@ -1263,6 +1278,9 @@ class TtsService : MediaSessionService() {
         super.onCreate()
         Timber.d("TtsService created.")
         setMediaNotificationProvider(TtsMediaNotificationProvider(this))
+        // Never keep a media notification around for a stopped/idle player. Once a TTS session
+        // ends, the notification must be gone instead of lingering as Media3's basic fallback.
+        setShowNotificationForIdlePlayer(SHOW_NOTIFICATION_FOR_IDLE_PLAYER_NEVER)
         // ExoPlayer, the media session and the playback manager can be slow to initialize on
         // low-end devices. Promote immediately so a startForegroundService request cannot time
         // out while onCreate is still building those objects.
@@ -1359,6 +1377,8 @@ class TtsService : MediaSessionService() {
         mediaSession = MediaSession.Builder(this, sessionPlayer)
             .setId("reader-tts-playback")
             .setCallback(playbackManager)
+            // Serve artwork synchronously so notification re-posts never bypass the pinning path.
+            .setBitmapLoader(MediaNotificationBitmapLoader(this))
             .build()
 
         mediaSession?.let { playbackManager.setMediaSession(it) }

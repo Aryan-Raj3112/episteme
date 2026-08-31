@@ -25,6 +25,7 @@ import androidx.media3.session.SessionToken
 import androidx.room.withTransaction
 import com.aryan.reader.data.AppDatabase
 import com.aryan.reader.logMediaTransport
+import com.aryan.reader.pinPostedPlaybackNotification
 import com.aryan.reader.mediaButtonKeyEventDetails
 import com.aryan.reader.playerTransportSnapshot
 import com.aryan.reader.shared.SharedAudiobookPlaybackRequest
@@ -114,6 +115,8 @@ class AudiobookPlaybackService : MediaSessionService(), Player.Listener {
     override fun onCreate() {
         super.onCreate()
         setMediaNotificationProvider(LoggingAudiobookNotificationProvider(this))
+        // Never keep a media notification around for a stopped/idle player.
+        setShowNotificationForIdlePlayer(SHOW_NOTIFICATION_FOR_IDLE_PLAYER_NEVER)
         player = ExoPlayer.Builder(this)
             .setAudioAttributes(
                 AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_SPEECH).build(),
@@ -125,6 +128,8 @@ class AudiobookPlaybackService : MediaSessionService(), Player.Listener {
         session = MediaSession.Builder(this, player)
             .setId(AUDIOBOOK_MEDIA_SESSION_ID)
             .setCallback(diagnosticsCallback)
+            // Serve artwork synchronously so notification re-posts never bypass the pinning path.
+            .setBitmapLoader(com.aryan.reader.MediaNotificationBitmapLoader(this))
             .build()
         logMediaTransport(
             "audiobook-service-created",
@@ -230,6 +235,13 @@ class AudiobookPlaybackService : MediaSessionService(), Player.Listener {
             "startInForegroundRequired=$startInForegroundRequired ${playerTransportSnapshot(player)}"
         )
         super.onUpdateNotification(session, startInForegroundRequired)
+        pinPostedPlaybackNotification(
+            context = this,
+            notificationId = AUDIOBOOK_NOTIFICATION_ID,
+            playWhenReady = session.player.playWhenReady,
+            playbackState = session.player.playbackState,
+            diagnosticsTag = "AUDIOBOOK_DIAG"
+        )
     }
 
     private suspend fun persistPosition(completed: Boolean = false) {
