@@ -57,6 +57,11 @@ data class ReaderScreenState(
     val initialPageInBook: Int? = null,
     val initialPageInBookIsExplicit: Boolean = false,
     val isOpeningFromTtsNotification: Boolean = false,
+    /**
+     * Resolved TTS-audiobook target whose playback sheet should be presented
+     * after its notification was tapped. Cleared by the consuming surface.
+     */
+    val pendingAudiobookTtsPlayerTarget: RecentFileItem? = null,
     val shelves: List<Shelf> = emptyList(),
     val mainScreenStartPage: Int = 0,
     /** Android-only section selected inside the experimental unified library. */

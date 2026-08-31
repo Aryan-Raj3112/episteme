@@ -33,6 +33,7 @@ import org.junit.After
 import org.junit.AfterClass
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -504,6 +505,42 @@ class MainViewModelTest {
         } finally {
             restored.clearForTest()
         }
+    }
+
+    @Test
+    fun `audiobook tts notification tap presents player target without opening the reader`() = runTest(testDispatcher) {
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            viewModel.uiState.collect {}
+        }
+        coEvery { anyConstructed<RecentFilesRepository>().getFileByBookId("book-1") } returns recentFile("book-1")
+
+        viewModel.openAudiobookTtsNotificationTarget("book-1")
+        advanceUntilIdle()
+
+        val state = viewModel.uiState.first { it.pendingAudiobookTtsPlayerTarget?.bookId == "book-1" }
+        assertNull(state.selectedBookId)
+        assertNull(state.selectedFileType)
+
+        viewModel.dismissAudiobookTtsPlayerTarget("book-1")
+        advanceUntilIdle()
+
+        assertNull(viewModel.uiState.first { it.pendingAudiobookTtsPlayerTarget == null }.pendingAudiobookTtsPlayerTarget)
+    }
+
+    @Test
+    fun `audiobook tts notification tap for missing book reports error without player target`() = runTest(testDispatcher) {
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            viewModel.uiState.collect {}
+        }
+        coEvery { anyConstructed<RecentFilesRepository>().getFileByBookId("missing-book") } returns null
+
+        viewModel.openAudiobookTtsNotificationTarget("missing-book")
+        advanceUntilIdle()
+
+        val state = viewModel.uiState.first {
+            it.errorMessage != null && it.pendingAudiobookTtsPlayerTarget == null
+        }
+        assertEquals("res-${R.string.error_recent_item_not_found}", state.errorMessage)
     }
 
     @Test

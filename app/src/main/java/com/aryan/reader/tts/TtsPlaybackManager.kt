@@ -60,6 +60,7 @@ import com.aryan.reader.paginatedreader.TtsChunk
 import com.aryan.reader.shared.LocalTtsInterruptionAction
 import com.aryan.reader.shared.LocalTtsInterruptionEvent
 import com.aryan.reader.shared.LocalTtsInterruptionState
+import com.aryan.reader.shared.TTS_PLAYBACK_SOURCE_AUDIOBOOK
 import com.aryan.reader.shared.reduce
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
@@ -477,7 +478,7 @@ class TtsPlaybackManager(
             pageIndex = if (book.type == com.aryan.reader.FileType.PDF) content.chapter.index else null,
             startChunkIndex = startChunkIndex,
             ttsMode = TtsMode.BASE,
-            playbackSource = "AUDIOBOOK_TTS",
+            playbackSource = TTS_PLAYBACK_SOURCE_AUDIOBOOK,
             args = args
         )
     }
@@ -2866,6 +2867,7 @@ class TtsPlaybackManager(
                 state.pageIndex?.let { putExtra(EXTRA_TTS_PAGE_INDEX, it) }
                 targetCfi?.let { putExtra(EXTRA_TTS_SOURCE_CFI, it) }
                 targetOffset?.let { putExtra(EXTRA_TTS_START_OFFSET, it) }
+                state.playbackSource?.let { putExtra(EXTRA_TTS_PLAYBACK_SOURCE, it) }
                 putExtra(
                     EXTRA_TTS_REQUEST_ID,
                     "tts:${state.bookId}:${targetCfi.orEmpty()}:${targetOffset ?: -1}:" +

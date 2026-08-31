@@ -77,6 +77,7 @@ import com.aryan.reader.shared.ReaderFeatureSurface
 import com.aryan.reader.shared.CloudFolderIncomingChoice
 import com.aryan.reader.shared.CloudFolderIncomingFolderPrompt
 import com.aryan.reader.shared.PdfSplitPaneState
+import com.aryan.reader.shared.TTS_PLAYBACK_SOURCE_AUDIOBOOK
 import com.aryan.reader.shared.samePdfDocument
 import com.aryan.reader.shared.ui.SharedMobileAppDestination
 import com.aryan.reader.tts.ReaderTtsMiniBar
@@ -606,6 +607,27 @@ fun AppNavigation(
                 }
             }
         }
+        }
+
+        // TTS-audiobook notification taps are application-scoped.  Keeping
+        // this sheet outside the routes means the playback surface opens over
+        // the home, reader, and settings routes alike, without disturbing the
+        // running TTS session.
+        uiState.pendingAudiobookTtsPlayerTarget?.let { target ->
+            val liveChapterTitle = ttsState.chapterTitle?.takeIf {
+                ttsState.playbackSource == TTS_PLAYBACK_SOURCE_AUDIOBOOK &&
+                    ttsState.bookId == target.bookId
+            }
+            val playerItem = remember(target, liveChapterTitle) {
+                target.toTtsAudiobookUiItem().let { item ->
+                    liveChapterTitle?.let { item.copy(chapter = it) } ?: item
+                }
+            }
+            AudiobookPlayerSheet(
+                item = playerItem,
+                onBeforePlay = {},
+                onDismiss = { viewModel.dismissAudiobookTtsPlayerTarget(target.bookId) },
+            )
         }
 
         // Incoming folder decisions are application-scoped.  Keeping this

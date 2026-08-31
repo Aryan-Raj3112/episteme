@@ -397,6 +397,11 @@ data class SharedPdfVisualOptionsLabels(
     val systemUi: String,
     val systemUiDescription: String,
     val systemUiOptions: Map<SystemUiMode, String>,
+    val toolbars: String,
+    val topToolbar: String,
+    val topToolbarDescription: String,
+    val bottomToolbar: String,
+    val bottomToolbarDescription: String,
     val pageLayout: String,
     val pageSpread: String,
     val spreadOptions: Map<ReaderPageSpreadMode, String>,
@@ -417,11 +422,15 @@ fun SharedPdfVisualOptionsSheet(
     firstPageStandaloneInSpread: Boolean,
     showVerticalPageGap: Boolean,
     showPageNumberOverlay: Boolean,
+    showTopToolbar: Boolean,
+    showBottomToolbar: Boolean,
     onPageSpreadModeChange: (ReaderPageSpreadMode) -> Unit,
     onFirstPageStandaloneInSpreadChange: (Boolean) -> Unit,
     onSystemUiModeChange: (SystemUiMode) -> Unit,
     onShowVerticalPageGapChange: (Boolean) -> Unit,
     onShowPageNumberOverlayChange: (Boolean) -> Unit,
+    onShowTopToolbarChange: (Boolean) -> Unit,
+    onShowBottomToolbarChange: (Boolean) -> Unit,
     maxSheetHeight: Dp,
     labels: SharedPdfVisualOptionsLabels,
     onDismiss: () -> Unit
@@ -447,6 +456,19 @@ fun SharedPdfVisualOptionsSheet(
             Spacer(Modifier.height(12.dp))
             SharedReaderOptionSegmentedControl(SystemUiMode.entries, systemUiMode, onSystemUiModeChange) {
                 labels.systemUiOptions.getValue(it)
+            }
+            Spacer(Modifier.height(20.dp))
+            HorizontalDivider()
+            Spacer(Modifier.height(12.dp))
+            Text(labels.toolbars, style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(4.dp))
+            // At least one bar must remain: the reader options are only
+            // reachable through the bars themselves.
+            SharedPdfVisualOptionSwitchRow(labels.topToolbar, labels.topToolbarDescription, showTopToolbar) { visible ->
+                if (visible || showBottomToolbar) onShowTopToolbarChange(visible)
+            }
+            SharedPdfVisualOptionSwitchRow(labels.bottomToolbar, labels.bottomToolbarDescription, showBottomToolbar) { visible ->
+                if (visible || showTopToolbar) onShowBottomToolbarChange(visible)
             }
             Spacer(Modifier.height(20.dp))
             HorizontalDivider()

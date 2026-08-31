@@ -48,6 +48,12 @@ data class MobileHandoffFileIdentity(
     val relativePath: String = "",
 )
 
+/**
+ * Playback source reported for TTS sessions started from the audiobook
+ * ("listen with TTS") flow, as opposed to the reader or popup flows.
+ */
+const val TTS_PLAYBACK_SOURCE_AUDIOBOOK = "AUDIOBOOK_TTS"
+
 /** The complete locator payload needed to reopen an Android TTS session. */
 @Serializable
 data class MobileHandoffTtsTarget(
@@ -58,7 +64,13 @@ data class MobileHandoffTtsTarget(
     val pageIndex: Int? = null,
     val blockIndex: Int? = null,
     val charOffset: Int? = null,
-)
+    /** Which flow started the TTS session; used to pick the surface a tap opens. */
+    val playbackSource: String? = null,
+) {
+    /** True when tapping this target should open the audiobook playback surface. */
+    val isAudiobookListening: Boolean
+        get() = playbackSource == TTS_PLAYBACK_SOURCE_AUDIOBOOK
+}
 
 @Serializable
 data class MobileHandoffRequest(

@@ -568,17 +568,11 @@ internal fun PdfVerticalReader(
         var isResizing by remember { mutableStateOf(false) }
         var previousScreenWidth by remember { mutableFloatStateOf(0f) }
         var previousScreenHeight by remember { mutableFloatStateOf(0f) }
-        var lockedOrientationChangedDuringResize by remember { mutableStateOf(false) }
         val targetPageDuringResize = remember { mutableIntStateOf(-1) }
 
         if (previousScreenWidth != screenWidth || previousScreenHeight != screenHeight) {
             if (previousScreenWidth > 0f) {
-                val previousWasLandscape = previousScreenWidth > previousScreenHeight
-                val currentIsLandscape = screenWidth > screenHeight
                 isResizing = true
-                if (isScrollLocked && previousWasLandscape != currentIsLandscape) {
-                    lockedOrientationChangedDuringResize = true
-                }
                 if (targetPageDuringResize.intValue == -1) {
                     targetPageDuringResize.intValue = state.currentPage
                 }
@@ -631,7 +625,11 @@ internal fun PdfVerticalReader(
             // Real page dimensions can arrive while the pointer or decay animation owns the
             // camera. Re-run this effect when motion ends instead of correcting underneath it.
             if (isInteracting || isFlinging || isZoomAnimating) return@LaunchedEffect
-            if (!isInitialLayout && isScrollLocked && lockedOrientationChangedDuringResize) {
+            if (!isInitialLayout && isScrollLocked) {
+                // A locked camera must re-fit on ANY viewport resize. Split
+                // divider drags change pane bounds without flipping the
+                // width/height orientation, so gating on orientation flips
+                // left locked panes mis-fit after a resize.
                 val targetPageIdx = if (targetPageDuringResize.intValue != -1) {
                     targetPageDuringResize.intValue
                 } else {
@@ -747,7 +745,6 @@ internal fun PdfVerticalReader(
             if (!isInitialLayout) {
                 delay(50)
                 isResizing = false
-                lockedOrientationChangedDuringResize = false
                 targetPageDuringResize.intValue = -1
             }
             previousPageLayout = layoutState.pages

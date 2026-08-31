@@ -155,11 +155,15 @@ fun PdfVisualOptionsSheet(
     firstPageStandaloneInSpread: Boolean,
     showVerticalPageGap: Boolean,
     showPageNumberOverlay: Boolean,
+    showTopToolbar: Boolean,
+    showBottomToolbar: Boolean,
     onPageSpreadModeChange: (ReaderPageSpreadMode) -> Unit,
     onFirstPageStandaloneInSpreadChange: (Boolean) -> Unit,
     onSystemUiModeChange: (SystemUiMode) -> Unit,
     onShowVerticalPageGapChange: (Boolean) -> Unit,
     onShowPageNumberOverlayChange: (Boolean) -> Unit,
+    onShowTopToolbarChange: (Boolean) -> Unit,
+    onShowBottomToolbarChange: (Boolean) -> Unit,
     onDismiss: () -> Unit
 ) {
     val configuration = LocalConfiguration.current
@@ -171,11 +175,15 @@ fun PdfVisualOptionsSheet(
         firstPageStandaloneInSpread = firstPageStandaloneInSpread,
         showVerticalPageGap = showVerticalPageGap,
         showPageNumberOverlay = showPageNumberOverlay,
+        showTopToolbar = showTopToolbar,
+        showBottomToolbar = showBottomToolbar,
         onPageSpreadModeChange = onPageSpreadModeChange,
         onFirstPageStandaloneInSpreadChange = onFirstPageStandaloneInSpreadChange,
         onSystemUiModeChange = onSystemUiModeChange,
         onShowVerticalPageGapChange = onShowVerticalPageGapChange,
         onShowPageNumberOverlayChange = onShowPageNumberOverlayChange,
+        onShowTopToolbarChange = onShowTopToolbarChange,
+        onShowBottomToolbarChange = onShowBottomToolbarChange,
         maxSheetHeight = maxSheetHeight,
         labels = SharedPdfVisualOptionsLabels(
             title = stringResource(R.string.menu_visual_options),
@@ -183,6 +191,11 @@ fun PdfVisualOptionsSheet(
             systemUi = stringResource(R.string.visual_options_system_ui),
             systemUiDescription = stringResource(R.string.visual_options_system_ui_desc),
             systemUiOptions = SystemUiMode.entries.associateWith { stringResource(it.titleRes) },
+            toolbars = stringResource(R.string.visual_options_toolbars),
+            topToolbar = stringResource(R.string.visual_options_top_toolbar),
+            topToolbarDescription = stringResource(R.string.visual_options_top_toolbar_desc),
+            bottomToolbar = stringResource(R.string.visual_options_bottom_toolbar),
+            bottomToolbarDescription = stringResource(R.string.visual_options_bottom_toolbar_desc),
             pageLayout = stringResource(R.string.visual_options_page_layout),
             pageSpread = stringResource(R.string.visual_options_pdf_page_spread),
             spreadOptions = mapOf(

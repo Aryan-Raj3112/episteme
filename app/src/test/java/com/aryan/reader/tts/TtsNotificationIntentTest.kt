@@ -2,9 +2,12 @@ package com.aryan.reader.tts
 
 import android.content.Intent
 import com.aryan.reader.shared.MobileHandoffRequestKind
+import com.aryan.reader.shared.TTS_PLAYBACK_SOURCE_AUDIOBOOK
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -20,6 +23,7 @@ class TtsNotificationIntentTest {
             .putExtra(EXTRA_TTS_CHAPTER_INDEX, 2)
             .putExtra(EXTRA_TTS_PAGE_INDEX, 8)
             .putExtra(EXTRA_TTS_REQUEST_ID, "notification-1")
+            .putExtra(EXTRA_TTS_PLAYBACK_SOURCE, "READER")
             .toMobileTtsHandoffRequest()
 
         assertNotNull(request)
@@ -30,6 +34,29 @@ class TtsNotificationIntentTest {
         assertEquals(17, request?.ttsTarget?.startOffset)
         assertEquals(2, request?.ttsTarget?.chapterIndex)
         assertEquals(8, request?.ttsTarget?.pageIndex)
+        assertEquals("READER", request?.ttsTarget?.playbackSource)
+    }
+
+    @Test
+    fun audiobookPlaybackSourceRoutesToTheAudiobookSurface() {
+        val request = Intent(ACTION_OPEN_TTS_SESSION)
+            .putExtra(EXTRA_TTS_BOOK_ID, "book-1")
+            .putExtra(EXTRA_TTS_PLAYBACK_SOURCE, TTS_PLAYBACK_SOURCE_AUDIOBOOK)
+            .toMobileTtsHandoffRequest()
+
+        assertNotNull(request)
+        assertTrue(request?.ttsTarget?.isAudiobookListening == true)
+    }
+
+    @Test
+    fun missingPlaybackSourceKeepsLegacyReaderRouting() {
+        val request = Intent(ACTION_OPEN_TTS_SESSION)
+            .putExtra(EXTRA_TTS_BOOK_ID, "book-1")
+            .toMobileTtsHandoffRequest()
+
+        assertNotNull(request)
+        assertNull(request?.ttsTarget?.playbackSource)
+        assertFalse(request?.ttsTarget?.isAudiobookListening == true)
     }
 
     @Test

@@ -160,6 +160,10 @@ open class MainActivity : AppCompatActivity() {
         if (ttsRequest != null) {
             val target = ttsRequest.ttsTarget ?: return
             Timber.d("Received TTS notification intent for bookId=${target.bookId}")
+            if (target.isAudiobookListening) {
+                viewModel.openAudiobookTtsNotificationTarget(bookId = target.bookId)
+                return
+            }
             viewModel.openTtsNotificationTarget(
                 bookId = target.bookId,
                 sourceCfi = target.sourceCfi,

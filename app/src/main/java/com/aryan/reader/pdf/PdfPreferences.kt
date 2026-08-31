@@ -49,6 +49,8 @@ internal const val PDF_SYSTEM_UI_MODE_KEY = "pdf_system_ui_mode"
 internal const val PDF_VERTICAL_PAGE_GAP_VISIBLE_KEY = "pdf_vertical_page_gap_visible"
 internal const val PDF_PAGE_NUMBER_OVERLAY_VISIBLE_KEY = "pdf_page_number_overlay_visible"
 internal const val PDF_TOP_TAB_STRIP_VISIBLE_KEY = "pdf_top_tab_strip_visible"
+internal const val PDF_TOP_TOOLBAR_VISIBLE_KEY = "pdf_top_toolbar_visible"
+internal const val PDF_BOTTOM_TOOLBAR_VISIBLE_KEY = "pdf_bottom_toolbar_visible"
 internal const val PDF_PAGE_SPREAD_MODE_KEY = "pdf_page_spread_mode"
 internal const val PDF_FIRST_PAGE_STANDALONE_IN_SPREAD_KEY = "pdf_first_page_standalone_in_spread"
 internal const val PDF_LAYOUT_DEBUG_TAG = "PdfLayoutDebug"
@@ -326,10 +328,11 @@ internal fun loadPdfFirstPageStandaloneInSpread(context: Context): Boolean {
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
     return prefs.getBoolean(PDF_FIRST_PAGE_STANDALONE_IN_SPREAD_KEY, false)
 }
-
 internal fun savePdfTopTabStripVisible(context: Context, isVisible: Boolean) {
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
-    prefs.edit { putBoolean(PDF_TOP_TAB_STRIP_VISIBLE_KEY, isVisible) }
+    prefs.edit {
+        putBoolean(PDF_TOP_TAB_STRIP_VISIBLE_KEY, isVisible)
+    }
 }
 
 internal fun loadPdfTopTabStripVisible(context: Context): Boolean {
@@ -337,6 +340,29 @@ internal fun loadPdfTopTabStripVisible(context: Context): Boolean {
     return prefs.getBoolean(PDF_TOP_TAB_STRIP_VISIBLE_KEY, true)
 }
 
+internal fun savePdfTopToolbarVisible(context: Context, isVisible: Boolean) {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit {
+        putBoolean(PDF_TOP_TOOLBAR_VISIBLE_KEY, isVisible)
+    }
+}
+
+internal fun loadPdfTopToolbarVisible(context: Context): Boolean {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    return prefs.getBoolean(PDF_TOP_TOOLBAR_VISIBLE_KEY, true)
+}
+
+internal fun savePdfBottomToolbarVisible(context: Context, isVisible: Boolean) {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit {
+        putBoolean(PDF_BOTTOM_TOOLBAR_VISIBLE_KEY, isVisible)
+    }
+}
+
+internal fun loadPdfBottomToolbarVisible(context: Context): Boolean {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    return prefs.getBoolean(PDF_BOTTOM_TOOLBAR_VISIBLE_KEY, true)
+}
 internal fun savePdfThemeId(context: Context, themeId: String) {
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
     prefs.edit { putString(PDF_THEME_KEY, themeId) }

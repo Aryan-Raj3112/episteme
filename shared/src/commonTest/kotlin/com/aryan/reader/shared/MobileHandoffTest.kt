@@ -52,6 +52,38 @@ class MobileHandoffTest {
     }
 
     @Test
+    fun codecRoundTripKeepsPlaybackSourceAndAudiobookRoutingFlag() {
+        val audiobookTarget = MobileHandoffTtsTarget(
+            bookId = "book",
+            playbackSource = TTS_PLAYBACK_SOURCE_AUDIOBOOK,
+        )
+        val readerTarget = MobileHandoffTtsTarget(
+            bookId = "book",
+            playbackSource = "READER",
+        )
+        val legacyTarget = MobileHandoffTtsTarget(bookId = "book")
+
+        val decoded = MobileHandoffCodec.decodeOrEmpty(
+            MobileHandoffCodec.encode(
+                MobileHandoffEnvelope(
+                    requests = listOf(
+                        MobileHandoffMapper.ttsTarget(requestId = "tts-audiobook", target = audiobookTarget),
+                        MobileHandoffMapper.ttsTarget(requestId = "tts-reader", target = readerTarget),
+                        MobileHandoffMapper.ttsTarget(requestId = "tts-legacy", target = legacyTarget),
+                    ),
+                )
+            )
+        )
+
+        assertEquals(TTS_PLAYBACK_SOURCE_AUDIOBOOK, decoded.requests[0].ttsTarget?.playbackSource)
+        assertTrue(decoded.requests[0].ttsTarget?.isAudiobookListening == true)
+        assertEquals("READER", decoded.requests[1].ttsTarget?.playbackSource)
+        assertFalse(decoded.requests[1].ttsTarget?.isAudiobookListening == true)
+        assertEquals(null, decoded.requests[2].ttsTarget?.playbackSource)
+        assertFalse(decoded.requests[2].ttsTarget?.isAudiobookListening == true)
+    }
+
+    @Test
     fun replayUsesTtsPrecedenceThenFifoWithinKind() {
         val importRequest = MobileHandoffRequest(
             requestId = "import",

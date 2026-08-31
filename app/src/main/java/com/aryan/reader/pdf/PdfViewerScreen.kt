@@ -431,6 +431,8 @@ fun PdfViewerScreen(
     var showVerticalPageGap by remember { mutableStateOf(loadPdfVerticalPageGapVisible(context)) }
     var showPageNumberOverlay by remember { mutableStateOf(loadPdfPageNumberOverlayVisible(context)) }
     var showTopTabStrip by remember { mutableStateOf(loadPdfTopTabStripVisible(context)) }
+    var showTopToolbar by remember { mutableStateOf(loadPdfTopToolbarVisible(context)) }
+    var showBottomToolbar by remember { mutableStateOf(loadPdfBottomToolbarVisible(context)) }
     var showVisualOptionsSheet by remember { mutableStateOf(false) }
     var pdfPageSpreadMode by remember { mutableStateOf(loadPdfPageSpreadMode(context)) }
     var pdfFirstPageStandaloneInSpread by remember { mutableStateOf(loadPdfFirstPageStandaloneInSpread(context)) }
@@ -576,6 +578,8 @@ fun PdfViewerScreen(
             showBars = pdfViewerMutableValue({ showBars }, { showBars = it }),
             showInsufficientCreditsDialog = pdfViewerMutableValue({ showInsufficientCreditsDialog }, { showInsufficientCreditsDialog = it }),
             showTopTabStrip = pdfViewerMutableValue({ showTopTabStrip }, { showTopTabStrip = it }),
+            isTopToolbarEnabled = pdfViewerMutableValue({ showTopToolbar }, { showTopToolbar = it }),
+            isBottomToolbarEnabled = pdfViewerMutableValue({ showBottomToolbar }, { showBottomToolbar = it }),
             systemUiMode = pdfViewerMutableValue({ systemUiMode }, { systemUiMode = it }),
         )
     }
@@ -652,6 +656,8 @@ fun PdfViewerScreen(
             showScreenOrientationSheet = pdfViewerMutableValue({ showScreenOrientationSheet }, { showScreenOrientationSheet = it }),
             showThemePanel = pdfViewerMutableValue({ showThemePanel }, { showThemePanel = it }),
             showTopTabStrip = pdfViewerMutableValue({ showTopTabStrip }, { showTopTabStrip = it }),
+            isTopToolbarEnabled = pdfViewerMutableValue({ showTopToolbar }, { showTopToolbar = it }),
+            isBottomToolbarEnabled = pdfViewerMutableValue({ showBottomToolbar }, { showBottomToolbar = it }),
             showVerticalPageGap = pdfViewerMutableValue({ showVerticalPageGap }, { showVerticalPageGap = it }),
             showVisualOptionsSheet = pdfViewerMutableValue({ showVisualOptionsSheet }, { showVisualOptionsSheet = it }),
             summaryCacheManager = summaryCacheManager,
@@ -738,6 +744,8 @@ private class PdfViewerScreenContentInputs(
     val showScreenOrientationSheet: PdfViewerMutableValue<Boolean>,
     val showThemePanel: PdfViewerMutableValue<Boolean>,
     val showTopTabStrip: PdfViewerMutableValue<Boolean>,
+    val isTopToolbarEnabled: PdfViewerMutableValue<Boolean>,
+    val isBottomToolbarEnabled: PdfViewerMutableValue<Boolean>,
     val showVerticalPageGap: PdfViewerMutableValue<Boolean>,
     val showVisualOptionsSheet: PdfViewerMutableValue<Boolean>,
     val summaryCacheManager: SummaryCacheManager,
@@ -825,6 +833,8 @@ private fun PdfViewerScreenContent(
     var showScreenOrientationSheet by inputs.showScreenOrientationSheet
     var showThemePanel by inputs.showThemePanel
     var showTopTabStrip by inputs.showTopTabStrip
+    var isTopToolbarEnabled by inputs.isTopToolbarEnabled
+    var isBottomToolbarEnabled by inputs.isBottomToolbarEnabled
     var showVerticalPageGap by inputs.showVerticalPageGap
     var showVisualOptionsSheet by inputs.showVisualOptionsSheet
     val summaryCacheManager = inputs.summaryCacheManager
@@ -930,6 +940,8 @@ private fun PdfViewerScreenContent(
     // sibling also computes this value for system UI effects, but its plain bridge snapshot can
     // otherwise lag behind a document tap during the same frame.
     val showStandardBars = showBars && !isEditMode
+    val showTopBar = showStandardBars && isTopToolbarEnabled
+    val showBottomBar = showStandardBars && isBottomToolbarEnabled
     var readerBrightnessSettings by surfaceState.readerBrightnessSettings
     var showBrightnessSheet by surfaceState.showBrightnessSheet
     val updateReaderBrightness = surfaceState.updateReaderBrightness
@@ -2454,7 +2466,7 @@ private fun PdfViewerScreenContent(
     val scrubDebounceJob = remember { mutableStateOf<Job?>(null) }
     val pdfSliderChromeVisible = shouldRenderReaderSlider(
         isToggledOn = isPageSliderVisible,
-        isBottomChromeVisible = showStandardBars,
+        isBottomChromeVisible = showBottomBar,
         isSearchActive = searchState.isSearchActive
     )
 
@@ -3795,9 +3807,9 @@ private fun PdfViewerScreenContent(
 
     val imeHeight = WindowInsets.ime.getBottom(density)
 
-    val bottomScrollLimitPx = remember(isEditMode, imeHeight, navBarHeight, dockLocation, isDockMinimized, systemUiMode, showStandardBars) {
+    val bottomScrollLimitPx = remember(isEditMode, imeHeight, navBarHeight, dockLocation, isDockMinimized, systemUiMode, showBottomBar) {
         // navBarHeight is bridged as 0 for split panes (the system bar is hidden).
-        val effectiveNavBar = if (systemUiMode == SystemUiMode.DEFAULT || (systemUiMode == SystemUiMode.SYNC && showStandardBars)) navBarHeight else 0
+        val effectiveNavBar = if (systemUiMode == SystemUiMode.DEFAULT || (systemUiMode == SystemUiMode.SYNC && showBottomBar)) navBarHeight else 0
         if (isEditMode) {
             if (imeHeight > 0) {
                 imeHeight.toFloat()
@@ -3809,7 +3821,7 @@ private fun PdfViewerScreenContent(
                 }
             }
         } else {
-            if (showStandardBars) {
+            if (showBottomBar) {
                 with(density) { 56.dp.toPx() } + effectiveNavBar
             } else {
                 effectiveNavBar.toFloat()
@@ -4216,6 +4228,8 @@ private fun PdfViewerScreenContent(
         surfaceState.showAiDefinitionPopup = pdfViewerMutableValue({ showAiDefinitionPopup }, { showAiDefinitionPopup = it })
         surfaceState.showPasswordDialog = pdfViewerMutableValue({ showPasswordDialog }, { showPasswordDialog = it })
         surfaceState.showTopTabStrip = pdfViewerMutableValue({ showTopTabStrip }, { showTopTabStrip = it })
+        surfaceState.isTopToolbarEnabled = pdfViewerMutableValue({ isTopToolbarEnabled }, { isTopToolbarEnabled = it })
+        surfaceState.isBottomToolbarEnabled = pdfViewerMutableValue({ isBottomToolbarEnabled }, { isBottomToolbarEnabled = it })
         surfaceState.summarizationResult = pdfViewerMutableValue({ summarizationResult }, { summarizationResult = it })
         surfaceState.summaryCacheManager = summaryCacheManager
         surfaceState.summarizeCurrentPage = { authToken, onUpdate, onFinish ->
@@ -4351,6 +4365,8 @@ private fun PdfViewerScreenOverlays(surfaceState: PdfViewerSurfaceState) {
     var showAiDefinitionPopup by surfaceState.showAiDefinitionPopup
     var showPasswordDialog by surfaceState.showPasswordDialog
     var showTopTabStrip by surfaceState.showTopTabStrip
+    var isTopToolbarEnabled by surfaceState.isTopToolbarEnabled
+    var isBottomToolbarEnabled by surfaceState.isBottomToolbarEnabled
     var summarizationResult by surfaceState.summarizationResult
     val summaryCacheManager = surfaceState.summaryCacheManager
     var ttsReplacementPreferences by surfaceState.ttsReplacementPreferences
@@ -5146,6 +5162,8 @@ private fun PdfViewerScreenOverlays(surfaceState: PdfViewerSurfaceState) {
             firstPageStandaloneInSpread = pdfFirstPageStandaloneInSpread,
             showVerticalPageGap = showVerticalPageGap,
             showPageNumberOverlay = showPageNumberOverlay,
+            showTopToolbar = isTopToolbarEnabled,
+            showBottomToolbar = isBottomToolbarEnabled,
             onPageSpreadModeChange = { mode ->
                 pendingPaginationSpreadRestorePage = currentPage
                 pdfPageSpreadMode = mode
@@ -5167,6 +5185,14 @@ private fun PdfViewerScreenOverlays(surfaceState: PdfViewerSurfaceState) {
             onShowPageNumberOverlayChange = { isVisible ->
                 showPageNumberOverlay = isVisible
                 savePdfPageNumberOverlayVisible(context, isVisible)
+            },
+            onShowTopToolbarChange = { isVisible ->
+                isTopToolbarEnabled = isVisible
+                savePdfTopToolbarVisible(context, isVisible)
+            },
+            onShowBottomToolbarChange = { isVisible ->
+                isBottomToolbarEnabled = isVisible
+                savePdfBottomToolbarVisible(context, isVisible)
             },
             onDismiss = { showVisualOptionsSheet = false }
         )
@@ -5235,6 +5261,8 @@ private class PdfViewerDocumentSetupInputs(
     val showBars: PdfViewerMutableValue<Boolean>,
     val showInsufficientCreditsDialog: PdfViewerMutableValue<Boolean>,
     val showTopTabStrip: PdfViewerMutableValue<Boolean>,
+    val isTopToolbarEnabled: PdfViewerMutableValue<Boolean>,
+    val isBottomToolbarEnabled: PdfViewerMutableValue<Boolean>,
     val systemUiMode: PdfViewerMutableValue<SystemUiMode>,
 )
 
@@ -5274,6 +5302,7 @@ private fun PdfViewerDocumentSetup(
     var pendingPaginationSpreadRestorePage by setup.pendingPaginationSpreadRestorePage
     var pendingRestorePage by setup.pendingRestorePage
     var showBars by setup.showBars
+    var isTopToolbarEnabled by setup.isTopToolbarEnabled
     var showInsufficientCreditsDialog by setup.showInsufficientCreditsDialog
     var showTopTabStrip by setup.showTopTabStrip
     var systemUiMode by setup.systemUiMode
@@ -5618,6 +5647,7 @@ private fun PdfViewerDocumentSetup(
 
     val window = (view.context as? Activity)?.window
     val showStandardBars = showBars && !isEditMode
+    val showTopBar = showStandardBars && isTopToolbarEnabled
     var readerBrightnessSettings by remember { mutableStateOf(loadReaderBrightnessSettings(context)) }
     var showBrightnessSheet by remember { mutableStateOf(false) }
     if (ownsPaneGlobals) {
@@ -5703,13 +5733,13 @@ private fun PdfViewerDocumentSetup(
     )
 
     val targetTopOverlayInset = remember(
-        showStandardBars,
+        showTopBar,
         systemUiMode,
         statusBarHeightDp,
         isPdfTabStripVisible,
         isSplitPane
     ) {
-        if (!showStandardBars) {
+        if (!showTopBar) {
             0.dp
         } else {
             var inset = 56.dp
@@ -6726,6 +6756,8 @@ private class PdfViewerSurfaceState {
     lateinit var showAiDefinitionPopup: PdfViewerMutableValue<Boolean>
     lateinit var showPasswordDialog: PdfViewerMutableValue<Boolean>
     lateinit var showTopTabStrip: PdfViewerMutableValue<Boolean>
+    lateinit var isTopToolbarEnabled: PdfViewerMutableValue<Boolean>
+    lateinit var isBottomToolbarEnabled: PdfViewerMutableValue<Boolean>
     lateinit var summarizationResult: PdfViewerMutableValue<SummarizationResult?>
     lateinit var summaryCacheManager: SummaryCacheManager
     lateinit var ttsReplacementPreferences: PdfViewerMutableValue<ReaderTtsReplacementPreferences>
@@ -7765,7 +7797,11 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
         // Read the pane-owned Compose state in the chrome itself. The setup and
         // surface functions are siblings, so a plain snapshot copied by setup
         // can otherwise lag behind a tap handled by the document viewport.
+        var isTopToolbarEnabled by surfaceState.isTopToolbarEnabled
+        var isBottomToolbarEnabled by surfaceState.isBottomToolbarEnabled
         val showStandardBars = showBars && !isEditMode
+        val showTopBar = showStandardBars && isTopToolbarEnabled
+        val showBottomBar = showStandardBars && isBottomToolbarEnabled
         LaunchedEffect(showBars, isEditMode, ownsPaneGlobals) {
             Timber.tag("PdfToolbarTrace").d(
                 "chrome recomposed showBars=$showBars isEditMode=$isEditMode " +
@@ -7801,8 +7837,8 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
 
     val jumpBackPage = jumpHistory.backPage
     val jumpForwardPage = jumpHistory.forwardPage
-    val effectiveNavBarForJumpBar = if (systemUiMode == SystemUiMode.DEFAULT || (systemUiMode == SystemUiMode.SYNC && showStandardBars)) with(density) { navBarHeight.toDp() } else 0.dp
-    val isPdfJumpHistoryVisible = showStandardBars && !searchState.isSearchActive && (jumpBackPage != null || jumpForwardPage != null)
+    val effectiveNavBarForJumpBar = if (systemUiMode == SystemUiMode.DEFAULT || (systemUiMode == SystemUiMode.SYNC && showBottomBar)) with(density) { navBarHeight.toDp() } else 0.dp
+    val isPdfJumpHistoryVisible = showBottomBar && !searchState.isSearchActive && (jumpBackPage != null || jumpForwardPage != null)
     val pdfBottomChromePadding = 56.dp + effectiveNavBarForJumpBar
     val pdfSliderBottomPadding = pdfBottomChromePadding + if (isPdfJumpHistoryVisible) 40.dp else 0.dp
     val pdfSliderPageBackground = if (activeTheme.backgroundColor == Color.Unspecified) Color.White else activeTheme.backgroundColor
@@ -8056,7 +8092,7 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
     // Custom Top Bar
     PdfTopBar(
         modifier = Modifier.align(Alignment.TopCenter),
-        showStandardBars = showStandardBars,
+        showStandardBars = showTopBar,
         systemUiMode = systemUiMode,
         // The workspace toolbar already pads the status bar in split view;
         // adding it again double-pads the pane's own toolbar.
@@ -8274,7 +8310,7 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
             .padding(top = topOverlayInset)
             .fillMaxWidth()
             .padding(horizontal = 8.dp),
-        showStandardBars = showStandardBars,
+        showStandardBars = showTopBar,
         isReflowingThisBook = isReflowingThisBook,
         reflowProgressValue = reflowProgressValue
     )
@@ -8355,7 +8391,7 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
         exit = slideOutVertically(animationSpec = tween(200)) { it } + fadeOut(animationSpec = tween(200)),
         modifier = Modifier
             .align(Alignment.BottomCenter)
-            .padding(bottom = 24.dp + if (systemUiMode == SystemUiMode.DEFAULT || (systemUiMode == SystemUiMode.SYNC && showStandardBars)) with(density) { navBarHeight.toDp() } else 0.dp)
+            .padding(bottom = 24.dp + if (systemUiMode == SystemUiMode.DEFAULT || (systemUiMode == SystemUiMode.SYNC && showBottomBar)) with(density) { navBarHeight.toDp() } else 0.dp)
     ) {
         val currentResult = currentPdfSearchResult
         val searchData = smartSearchResult
@@ -8473,7 +8509,7 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
         modifier = Modifier
             .align(Alignment.BottomCenter)
             .padding(bottom = pdfBottomChromePadding),
-        showStandardBars = showStandardBars,
+        showStandardBars = showBottomBar,
         searchStateActive = searchState.isSearchActive,
         backPage = jumpBackPage,
         forwardPage = jumpForwardPage,
@@ -8551,7 +8587,9 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
         var showScreenOrientationSheet by surfaceState.showScreenOrientationSheet
         var showBubbleZoomDownloadDialog by surfaceState.showBubbleZoomDownloadDialog
         var showBars by surfaceState.showBars
+        var isBottomToolbarEnabled by surfaceState.isBottomToolbarEnabled
         val showStandardBars = showBars && !isEditMode
+        val showBottomBar = showStandardBars && isBottomToolbarEnabled
         var isHighlightingLoading by surfaceState.isHighlightingLoading
         val isOss = surfaceState.isOss
         var dockLocation by surfaceState.dockLocation
@@ -8682,7 +8720,7 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
     // Bottom Bar
     PdfBottomBar(
         modifier = Modifier.align(Alignment.BottomCenter),
-        showStandardBars = showStandardBars,
+        showStandardBars = showBottomBar,
         searchStateActive = searchState.isSearchActive,
         systemUiMode = systemUiMode,
         navBarHeightDp = with(density) { navBarHeight.toDp() },
@@ -9109,7 +9147,9 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
         val navBarHeight = surfaceState.navBarHeight.value
         var showTtsSettingsSheet by surfaceState.showTtsSettingsSheet
         var showBars by surfaceState.showBars
+        var isBottomToolbarEnabled by surfaceState.isBottomToolbarEnabled
         val showStandardBars = showBars && !isEditMode
+        val showBottomBar = showStandardBars && isBottomToolbarEnabled
         var isAutoPagingForTts by surfaceState.isAutoPagingForTts
         var dockLocation by surfaceState.dockLocation
         val highlighterPalette = surfaceState.highlighterPalette
@@ -9399,12 +9439,12 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
 
     val effectiveNavBarPaddingForOverlays = if (systemUiMode == SystemUiMode.DEFAULT || (systemUiMode == SystemUiMode.SYNC && showStandardBars)) with(density) { navBarHeight.toDp() } else 0.dp
     val autoScrollPadding by animateDpAsState(
-        targetValue = if (showStandardBars) (56.dp + 16.dp + effectiveNavBarPaddingForOverlays) else (16.dp + effectiveNavBarPaddingForOverlays),
+        targetValue = if (showBottomBar) (56.dp + 16.dp + effectiveNavBarPaddingForOverlays) else (16.dp + effectiveNavBarPaddingForOverlays),
         label = "AutoScrollPadding"
     )
 
     val ttsOverlayPadding by animateDpAsState(
-        targetValue = if (showStandardBars) (56.dp + 16.dp + effectiveNavBarPaddingForOverlays) else (16.dp + effectiveNavBarPaddingForOverlays),
+        targetValue = if (showBottomBar) (56.dp + 16.dp + effectiveNavBarPaddingForOverlays) else (16.dp + effectiveNavBarPaddingForOverlays),
         label = "TtsOverlayPadding"
     )
 

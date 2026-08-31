@@ -6823,6 +6823,36 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    /**
+     * Notification taps for audiobook ("listen with TTS") sessions must open
+     * the audiobook playback surface instead of the reader, without touching
+     * the running TTS session.
+     */
+    fun openAudiobookTtsNotificationTarget(bookId: String) {
+        viewModelScope.launch {
+            val item = bookStore.getFileByBookId(bookId)
+            if (item == null) {
+                _internalState.update {
+                    it.copy(errorMessage = appContext.getString(R.string.error_recent_item_not_found))
+                }
+                return@launch
+            }
+            _internalState.update {
+                it.copy(pendingAudiobookTtsPlayerTarget = item)
+            }
+        }
+    }
+
+    fun dismissAudiobookTtsPlayerTarget(bookId: String) {
+        _internalState.update { current ->
+            if (current.pendingAudiobookTtsPlayerTarget?.bookId == bookId) {
+                current.copy(pendingAudiobookTtsPlayerTarget = null)
+            } else {
+                current
+            }
+        }
+    }
+
     private fun importExternalFile(
         externalUri: Uri,
         isExternalIntent: Boolean = false,
