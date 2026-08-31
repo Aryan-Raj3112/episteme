@@ -291,6 +291,50 @@ class HtmlParserLinkTest {
         assertEquals(Color(0xFF00B0F0), list.items[2].spans.first { it.linkHref != null }.style.spanStyle.color)
     }
 
+    @Test
+    fun `repeated selector matching stays correct across many elements with cached evaluators`() {
+        val cssRules = CssParser.parse(
+            cssContent = """
+                p.highlight { background: #ffff00; }
+                p#special { color: #123456; }
+                div > em { font-style: italic; }
+                body em.bold { font-weight: bold; }
+            """.trimIndent(),
+            cssPath = null,
+            baseFontSizeSp = 16f,
+            density = 1f,
+            constraints = Constraints(maxWidth = 400, maxHeight = 800),
+            isDarkTheme = false
+        ).rules
+
+        val blocks = parse(
+            html = """
+                <html><body>
+                  <p class="highlight">One <em>italic</em></p>
+                  <p id="special">Two <em class="bold">bold-italic</em></p>
+                  <p>Three</p>
+                  <div><p class="highlight">Four <em>nested</em></p></div>
+                </body></html>
+            """.trimIndent(),
+            cssRules = cssRules
+        )
+
+        // Same rule set applied to 8+ elements exercises the compiled-selector reuse path;
+        // matching results must be identical to uncached parsing.
+        val paragraphs = blocks.filterIsInstance<SemanticParagraph>()
+        assertTrue(paragraphs.isNotEmpty())
+        val colored = paragraphs.filter { it.style.spanStyle.color == Color(0xFF123456) }
+        assertEquals(1, colored.size)
+        assertEquals("Two bold-italic", colored.single().text)
+        val highlighted = blocks.filterIsInstance<SemanticParagraph>()
+            .filter { it.style.blockStyle.backgroundColor == Color(0xFFFFFF00) }
+        assertEquals(2, highlighted.size)
+        val bold = blocks.filterIsInstance<SemanticParagraph>()
+            .flatMap { it.spans }
+            .filter { it.style.spanStyle.fontWeight != null }
+        assertTrue(bold.isNotEmpty())
+    }
+
     private fun parse(
         html: String,
         cssRules: OptimizedCssRules = OptimizedCssRules(),

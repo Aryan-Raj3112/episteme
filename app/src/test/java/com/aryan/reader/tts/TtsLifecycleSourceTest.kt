@@ -201,6 +201,29 @@ class TtsLifecycleSourceTest {
         assertTrue(audiobookSource.contains("AudiobookPlaybackService::class.java"))
     }
 
+    @Test
+    fun `session control updates hop to the main looper before mutating the media session`() {
+        val managerSource = sourceFile("com/aryan/reader/tts/TtsPlaybackManager.kt").readText()
+        val updateControlsBody = managerSource.substringAfter("private fun updateSessionControls")
+            .substringBefore("private fun createCustomLayout")
+
+        // Media3's MediaSessionCompat playback state updater reads the custom layout fields on
+        // the main looper while setCustomLayout/setMediaButtonPreferences mutate them on the
+        // caller thread. A non-main caller shrinking the list between the size and get reads
+        // crashes the session with IndexOutOfBoundsException, so the mutation must be marshalled.
+        assertTrue(
+            updateControlsBody.contains("if (Looper.myLooper() != Looper.getMainLooper())")
+        )
+        assertTrue(
+            updateControlsBody.contains("scope.launch(Dispatchers.Main) { updateSessionControls(state) }")
+        )
+        assertTrue(
+            "session mutations must only run after the main-thread hop",
+            updateControlsBody.indexOf("Looper.myLooper() != Looper.getMainLooper()") <
+                updateControlsBody.indexOf("session.setMediaButtonPreferences")
+        )
+    }
+
     private fun sourceFile(relativePath: String): File {
         val candidates = listOf(
             File("src/main/java/$relativePath"),

@@ -24,6 +24,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.os.Looper
 import timber.log.Timber
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -2787,6 +2788,15 @@ class TtsPlaybackManager(
     }
 
     private fun updateSessionControls(state: TtsState) {
+        // Media3's legacy MediaSessionCompat updater runs on the main looper and reads the
+        // custom layout/media button preferences fields while MediaSession.setCustomLayout and
+        // setMediaButtonPreferences mutate them on the caller thread. Hop to the main looper so
+        // the swap cannot interleave with createPlaybackStateCompat, which would otherwise crash
+        // with IndexOutOfBoundsException when the list shrinks between the size and get reads.
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            scope.launch(Dispatchers.Main) { updateSessionControls(state) }
+            return
+        }
         mediaSession?.let { session ->
             session.setMediaButtonPreferences(createMediaButtonPreferences())
             session.setCustomLayout(createCustomLayout(state))

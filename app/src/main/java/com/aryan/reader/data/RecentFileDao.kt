@@ -22,6 +22,7 @@ package com.aryan.reader.data
 
 import androidx.room.Dao
 import androidx.room.Query
+import androidx.room.Transaction
 import androidx.room.Upsert
 import kotlinx.coroutines.flow.Flow
 
@@ -33,6 +34,13 @@ interface RecentFileDao {
     @Upsert
     suspend fun insertOrUpdateFiles(files: List<RecentFileEntity>)
 
+    // The full-library projection spans multiple CursorWindows when the library is large, and
+    // Room re-executes the query on every window refill. Without a transaction, a concurrent
+    // write that shrinks the result set (e.g. markAsDeleted from sync or a cloud delete) makes
+    // the cached row count stale and the refill lands past the last row, crashing with
+    // "Couldn't read row N, col 0 from CursorWindow". A read transaction pins a single snapshot
+    // for every refill, so the whole iteration observes one consistent result set.
+    @Transaction
     @Query("SELECT bookId, uriString, type, displayName, timestamp, dateAddedTimestamp, coverImagePath, title, author, lastChapterIndex, lastPage, lastPositionCfi, progressPercentage, isRecent, isAvailable, lastModifiedTimestamp, isDeleted, locatorBlockIndex, locatorCharOffset, sourceFolderUri, isReflowPreferred, customName, fileSize, fileContentModifiedTimestamp, seriesName, seriesIndex, substr(description, 1, 512) AS description, originalTitle, originalAuthor, originalSeriesName, originalSeriesIndex, substr(originalDescription, 1, 512) AS originalDescription, readingPositionModifiedTimestamp FROM recent_files WHERE isDeleted = 0 ORDER BY timestamp DESC")
     fun getRecentFiles(): Flow<List<RecentFileSummary>>
 
@@ -45,6 +53,7 @@ interface RecentFileDao {
     @Query("UPDATE recent_files SET isReflowPreferred = :isPreferred WHERE bookId = :bookId")
     suspend fun updateReflowPreference(bookId: String, isPreferred: Boolean)
 
+    @Transaction
     @Query("SELECT bookId, uriString, type, displayName, timestamp, dateAddedTimestamp, coverImagePath, title, author, lastChapterIndex, lastPage, lastPositionCfi, progressPercentage, isRecent, isAvailable, lastModifiedTimestamp, isDeleted, locatorBlockIndex, locatorCharOffset, sourceFolderUri, isReflowPreferred, customName, fileSize, fileContentModifiedTimestamp, seriesName, seriesIndex, substr(description, 1, 512) AS description, originalTitle, originalAuthor, originalSeriesName, originalSeriesIndex, substr(originalDescription, 1, 512) AS originalDescription, readingPositionModifiedTimestamp FROM recent_files WHERE isDeleted = 0 ORDER BY timestamp DESC LIMIT :limit")
     fun getRecentFilesList(limit: Int): List<RecentFileSummary>
 

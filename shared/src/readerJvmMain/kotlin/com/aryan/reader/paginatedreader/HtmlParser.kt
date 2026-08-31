@@ -36,6 +36,8 @@ import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
 import org.jsoup.nodes.Node
 import org.jsoup.nodes.TextNode
+import org.jsoup.select.Evaluator
+import org.jsoup.select.QueryParser
 import org.jsoup.select.Selector
 import java.util.ArrayDeque
 import java.util.IdentityHashMap
@@ -268,6 +270,7 @@ private class SemanticHtmlParser(
     private val semanticBlockDescendantCache = IdentityHashMap<Element, Boolean>()
     private val matchedRulesCache = IdentityHashMap<Element, MutableMap<String, List<CssRule>>>()
     private val unsupportedSelectorCache = HashMap<String, Boolean>()
+    private val compiledSelectorCache = HashMap<String, Evaluator>()
     private var combinedRules: OptimizedCssRules = cssRules
     private var sortedRuleBuckets: SortedCssRuleBuckets = cssRules.sortedForMatching()
     private val currentFontFamilyMap: MutableMap<String, FontFamily> = fontFamilyMap.toMutableMap()
@@ -406,12 +409,16 @@ private class SemanticHtmlParser(
                 selector.selector.hasUnsupportedPseudoElement()
             }
         ) return false
-        return try {
-            element.`is`(selector.selector)
+        // The compiled evaluator is cached per selector: QueryParser.parse re-lexes the selector
+        // and allocates a new evaluator tree on every call, which dominated parse time on large
+        // chapters because this check runs per element × candidate rule.
+        val evaluator = try {
+            compiledSelectorCache.getOrPut(selector.selector) { QueryParser.parse(selector.selector) }
         } catch (e: Selector.SelectorParseException) {
             HtmlParserLog.w(e, "Jsoup failed to parse selector '${selector.selector}'.")
-            false
+            return false
         }
+        return element.`is`(evaluator)
     }
 
     private fun rulesForElement(element: Element, pseudoElement: String? = null): List<CssRule> {
