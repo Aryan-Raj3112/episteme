@@ -3245,21 +3245,11 @@ private fun PdfViewerScreenContent(
         errorMessage = null
         documentMetadataTitle = null
         isPrintBlockedForPasswordProtectedPdf = false
-        currentBookId = null
-        annotationSession = annotationSession.reduce(SharedPdfAnnotationSessionAction.Reset)
-        allAnnotations = emptyMap()
-        textBoxes.clear()
-        userHighlights.clear()
         virtualPages = emptyList()
         loadedPageLayoutBookId = null
         Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
             "ui.open.reset uri=$effectivePdfUri virtualCleared=true loadedLayoutBookId=$loadedPageLayoutBookId"
         )
-        selectedTextBoxId = null
-        undoStack.clear()
-        redoStack.clear()
-        erasedAnnotationsFromStroke.clear()
-        drawingState.onDrawCancel()
 
         if (showPasswordDialog) isPasswordError = false
 
@@ -3283,15 +3273,36 @@ private fun PdfViewerScreenContent(
             ttsController.stop()
         }
 
-        if (selectedId != null && selectedId != fastId) {
-            Timber.tag("FolderAnnotationSync").i("Detected ID mismatch. Legacy: $fastId, Selected: $selectedId. Initiating migration.")
-            Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
-                "ui.open.migrateFastToSelected legacyId=$fastId selectedId=$selectedId"
+        // The sidecar effect owns annotation state and only reloads it when the
+        // book id changes. Re-opening the SAME book (split panes re-run this
+        // effect, and password unlocks restart it) must not reset the sidecar
+        // session here: the sidecar load would never restart, the session would
+        // stay non-ready, and committed ink strokes would vanish instantly.
+        val openBookPlan = sharedPdfDocumentOpenBookPlan(
+            currentBookId = currentBookId,
+            fastId = fastId,
+            selectedBookId = selectedId,
+        )
+        openBookPlan.migrationTargetBookId?.let { migrationTargetBookId ->
+            Timber.tag("FolderAnnotationSync").i(
+                "Detected ID mismatch. Legacy: $fastId, Selected: $migrationTargetBookId. Initiating migration."
             )
-            viewModel.checkAndMigrateLegacyBookId(fastId, selectedId)
-            currentBookId = selectedId
-        } else {
-            currentBookId = fastId
+            Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
+                "ui.open.migrateFastToSelected legacyId=$fastId selectedId=$migrationTargetBookId"
+            )
+            viewModel.checkAndMigrateLegacyBookId(fastId, migrationTargetBookId)
+        }
+        if (openBookPlan.shouldResetSidecarState) {
+            annotationSession = annotationSession.reduce(SharedPdfAnnotationSessionAction.Reset)
+            allAnnotations = emptyMap()
+            textBoxes.clear()
+            userHighlights.clear()
+            selectedTextBoxId = null
+            undoStack.clear()
+            redoStack.clear()
+            erasedAnnotationsFromStroke.clear()
+            drawingState.onDrawCancel()
+            currentBookId = openBookPlan.bookId
         }
         Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
             "ui.open.activeId uri=$effectivePdfUri currentBookId=$currentBookId"
@@ -8511,6 +8522,8 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
         val hiddenTools = surfaceState.hiddenTools
         val toolOrder = surfaceState.toolOrder
         val bottomTools = surfaceState.bottomTools
+        val isSplitPane = surfaceState.isSplitPane
+        val onOpenSplit = surfaceState.onOpenSplit
         val viewModel = surfaceState.viewModel
         val isComicFile = surfaceState.isComicFile
         val dockHeightPx = surfaceState.dockHeightPx.value
@@ -8681,6 +8694,7 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
         onToggleScrollLock = togglePdfScrollLock,
         onShowDictionarySettings = showPdfDictionarySettings,
         onShowSlider = showPdfSlider,
+        onOpenSplit = if (!isSplitPane) onOpenSplit else null,
         onShowToc = showPdfToc,
         onSearchClick = showPdfSearch,
         onToggleHighlights = togglePdfHighlights,

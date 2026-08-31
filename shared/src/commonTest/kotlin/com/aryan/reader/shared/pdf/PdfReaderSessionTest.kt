@@ -416,10 +416,10 @@ class PdfReaderSessionTest {
 
     @Test
     fun `shared page range label formats single pages and spreads`() {
-        assertEquals("Page 3 of 10", sharedPdfPageRangeLabel("3", 10))
-        assertEquals("Pages 2-3 of 10", sharedPdfPageRangeLabel("2-3", 10))
-        assertEquals("Page 1 of 1", sharedPdfPageRangeLabel("", 1))
-        assertEquals("Pages 4-5 of 12", sharedPdfPageRangeLabel("4-5", 12))
+        assertEquals("3/10", sharedPdfPageRangeLabel("3", 10))
+        assertEquals("2-3/10", sharedPdfPageRangeLabel("2-3", 10))
+        assertEquals("1/1", sharedPdfPageRangeLabel("", 1))
+        assertEquals("4-5/12", sharedPdfPageRangeLabel("4-5", 12))
     }
 
     @Test

@@ -61,6 +61,7 @@ typealias PdfReaderTool = com.aryan.reader.shared.PdfReaderTool
 val PdfReaderTool.titleRes: Int
     get() = when (this) {
         PdfReaderTool.DICTIONARY -> R.string.tool_external_apps
+        PdfReaderTool.SPLIT_VIEW -> R.string.tool_split_view
         PdfReaderTool.THEME -> R.string.tooltip_theme_desc
         PdfReaderTool.BRIGHTNESS -> R.string.tool_brightness
         PdfReaderTool.LOCK_PANNING -> R.string.tooltip_lock_pan
@@ -137,9 +138,30 @@ internal fun sanitizePdfBottomToolNames(toolNames: Collection<String>): Set<Stri
 }
 
 internal fun restorePdfToolOrderNames(toolNames: Collection<String>): List<PdfReaderTool> {
-    return PdfToolbarPreferences(
-        toolOrder = toolNames.mapNotNull(PdfReaderTool::fromId),
+    val restoredTools = toolNames.mapNotNull(PdfReaderTool::fromId)
+    val order = PdfToolbarPreferences(
+        toolOrder = restoredTools,
     ).sanitized(defaultPdfToolOrder().toSet()).toolOrder
+    // Tools introduced after an order was persisted (for example split_view)
+    // surface next to their canonical neighbour instead of trailing the bar.
+    return pdfToolsIntroducedAfterOrderPersistence().fold(order) { migrated, (tool, anchor) ->
+        if (tool in restoredTools) migrated else migrated.insertedAfter(anchor, tool)
+    }
+}
+
+private fun pdfToolsIntroducedAfterOrderPersistence(): List<Pair<PdfReaderTool, PdfReaderTool>> {
+    return listOf(PdfReaderTool.SPLIT_VIEW to PdfReaderTool.DICTIONARY)
+}
+
+private fun List<PdfReaderTool>.insertedAfter(anchor: PdfReaderTool, tool: PdfReaderTool): List<PdfReaderTool> {
+    val anchorIndex = indexOf(anchor)
+    // A missing anchor means sanitized() already appended the tool at the end.
+    if (anchorIndex < 0) return this
+    return toMutableList().apply {
+        // sanitized() appends missing tools at the end; relocate that copy.
+        remove(tool)
+        add(anchorIndex + 1, tool)
+    }
 }
 
 internal fun isPdfToolbarPlacementTool(tool: PdfReaderTool): Boolean {

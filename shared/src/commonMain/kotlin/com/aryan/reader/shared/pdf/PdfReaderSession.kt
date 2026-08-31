@@ -23,14 +23,10 @@ data class SharedPdfBookmark(
     val createdAt: Long = 0L
 )
 
-/** Formats a spread-aware page label, mirroring Android's pdfPageRangeLabel. */
+/** Formats a spread-aware compact page label, mirroring Android's pdfPageRangeLabel. */
 fun sharedPdfPageRangeLabel(pageLabel: String, pageCount: Int): String {
     val range = pageLabel.ifBlank { "1" }
-    return if ('-' in range) {
-        "Pages $range of ${pageCount.coerceAtLeast(1)}"
-    } else {
-        "Page $range of ${pageCount.coerceAtLeast(1)}"
-    }
+    return "$range/${pageCount.coerceAtLeast(1)}"
 }
 
 @Serializable

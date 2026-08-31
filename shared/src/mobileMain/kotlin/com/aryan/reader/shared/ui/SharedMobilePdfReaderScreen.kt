@@ -2612,30 +2612,42 @@ private fun SharedMobilePdfReaderTopBar(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier
-                        .padding(start = 12.dp)
-                        .weight(1f)
+                        .padding(start = 12.dp, end = 8.dp)
+                        .weight(0.3f)
                 )
-                Row(Modifier.horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
-                    topTools.forEach { tool ->
-                        when (tool) {
-                            PdfReaderTool.DICTIONARY -> SharedMobilePdfTopToolButton(sharedPdfReaderToolLabel(tool), { onNativeAction(SharedMobilePdfNativeAction.DICTIONARY_SETTINGS) }) { Icon(SharedReaderIcons.Dictionary, contentDescription = null) }
-                            PdfReaderTool.THEME -> SharedMobilePdfTopToolButton(sharedPdfReaderToolLabel(tool), onTheme) { Icon(Icons.Default.Palette, contentDescription = null) }
-                            PdfReaderTool.BRIGHTNESS -> SharedMobilePdfTopToolButton(sharedPdfReaderToolLabel(tool), onBrightness) { Icon(SharedReaderIcons.Contrast, contentDescription = null) }
-                            PdfReaderTool.LOCK_PANNING -> SharedMobilePdfTopToolButton(sharedPdfReaderToolLabel(tool, isScrollLocked = isScrollLocked), onToggleScrollLock) { Icon(if (isScrollLocked) Icons.Default.Lock else Icons.Default.LockOpen, contentDescription = null) }
-                            PdfReaderTool.SLIDER -> SharedMobilePdfTopToolButton(sharedPdfReaderToolLabel(tool), onShowSlider, isPdfReaderToolEnabledDuringTts(tool, isTtsPlayingOrLoading)) { Icon(SharedReaderIcons.Slider, contentDescription = null) }
-                            PdfReaderTool.TOC -> SharedMobilePdfTopToolButton(sharedPdfReaderToolLabel(tool), onOpenDrawer, isPdfReaderToolEnabledDuringTts(tool, isTtsPlayingOrLoading)) { Icon(Icons.Default.Menu, contentDescription = null) }
-                            PdfReaderTool.SEARCH -> SharedMobilePdfTopToolButton(sharedPdfReaderToolLabel(tool), onSearch, isPdfReaderToolEnabledDuringTts(tool, isTtsPlayingOrLoading)) { Icon(Icons.Default.Search, contentDescription = null) }
-                            PdfReaderTool.HIGHLIGHT_ALL -> SharedMobilePdfTopToolButton(
-                                sharedPdfReaderToolLabel(tool),
-                                onClick = onToggleHighlights,
-                                isActive = showAllTextHighlights,
-                                isLoading = isAllTextHighlightLoading,
-                            ) { Icon(SharedReaderIcons.HighlightText, contentDescription = null) }
-                            PdfReaderTool.EDIT_MODE -> SharedMobilePdfTopToolButton(sharedPdfReaderToolLabel(tool), onEditMode) { Icon(Icons.Default.Edit, contentDescription = null) }
-                            PdfReaderTool.TTS_CONTROLS -> SharedMobilePdfTopToolButton(sharedPdfReaderToolLabel(tool, isTtsPlayingOrLoading = isTtsPlayingOrLoading), onToggleTts, isActive = isTtsPlayingOrLoading) { Icon(if (isTtsPlayingOrLoading) Icons.Default.Close else SharedReaderIcons.TextToSpeech, contentDescription = null) }
-                            PdfReaderTool.SCREEN_ORIENTATION -> SharedMobilePdfTopToolButton(sharedPdfReaderToolLabel(tool), onScreenOrientation) { Icon(SharedReaderIcons.ScreenRotation, contentDescription = null) }
-                            PdfReaderTool.AI_FEATURES -> if (aiAvailable) SharedMobilePdfTopToolButton(sharedPdfReaderToolLabel(tool), onOpenAiHub) { Icon(Icons.Default.Ai, contentDescription = null) }
-                            else -> Unit
+                // Arrangement cannot right-align content inside a horizontally
+                // scrollable Row, so the scroll row is wrapped in a Box that
+                // aligns it to the bar's end edge: icons hug the right when
+                // they fit and scroll from the start when they overflow.
+                Box(
+                    modifier = Modifier.weight(0.7f),
+                    contentAlignment = Alignment.CenterEnd,
+                ) {
+                    Row(
+                        modifier = Modifier.horizontalScroll(rememberScrollState()),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        topTools.forEach { tool ->
+                            when (tool) {
+                                PdfReaderTool.DICTIONARY -> SharedMobilePdfTopToolButton(sharedPdfReaderToolLabel(tool), { onNativeAction(SharedMobilePdfNativeAction.DICTIONARY_SETTINGS) }) { Icon(SharedReaderIcons.Dictionary, contentDescription = null) }
+                                PdfReaderTool.THEME -> SharedMobilePdfTopToolButton(sharedPdfReaderToolLabel(tool), onTheme) { Icon(Icons.Default.Palette, contentDescription = null) }
+                                PdfReaderTool.BRIGHTNESS -> SharedMobilePdfTopToolButton(sharedPdfReaderToolLabel(tool), onBrightness) { Icon(SharedReaderIcons.Contrast, contentDescription = null) }
+                                PdfReaderTool.LOCK_PANNING -> SharedMobilePdfTopToolButton(sharedPdfReaderToolLabel(tool, isScrollLocked = isScrollLocked), onToggleScrollLock) { Icon(if (isScrollLocked) Icons.Default.Lock else Icons.Default.LockOpen, contentDescription = null) }
+                                PdfReaderTool.SLIDER -> SharedMobilePdfTopToolButton(sharedPdfReaderToolLabel(tool), onShowSlider, isPdfReaderToolEnabledDuringTts(tool, isTtsPlayingOrLoading)) { Icon(SharedReaderIcons.Slider, contentDescription = null) }
+                                PdfReaderTool.TOC -> SharedMobilePdfTopToolButton(sharedPdfReaderToolLabel(tool), onOpenDrawer, isPdfReaderToolEnabledDuringTts(tool, isTtsPlayingOrLoading)) { Icon(Icons.Default.Menu, contentDescription = null) }
+                                PdfReaderTool.SEARCH -> SharedMobilePdfTopToolButton(sharedPdfReaderToolLabel(tool), onSearch, isPdfReaderToolEnabledDuringTts(tool, isTtsPlayingOrLoading)) { Icon(Icons.Default.Search, contentDescription = null) }
+                                PdfReaderTool.HIGHLIGHT_ALL -> SharedMobilePdfTopToolButton(
+                                    sharedPdfReaderToolLabel(tool),
+                                    onClick = onToggleHighlights,
+                                    isActive = showAllTextHighlights,
+                                    isLoading = isAllTextHighlightLoading,
+                                ) { Icon(SharedReaderIcons.HighlightText, contentDescription = null) }
+                                PdfReaderTool.EDIT_MODE -> SharedMobilePdfTopToolButton(sharedPdfReaderToolLabel(tool), onEditMode) { Icon(Icons.Default.Edit, contentDescription = null) }
+                                PdfReaderTool.TTS_CONTROLS -> SharedMobilePdfTopToolButton(sharedPdfReaderToolLabel(tool, isTtsPlayingOrLoading = isTtsPlayingOrLoading), onToggleTts, isActive = isTtsPlayingOrLoading) { Icon(if (isTtsPlayingOrLoading) Icons.Default.Close else SharedReaderIcons.TextToSpeech, contentDescription = null) }
+                                PdfReaderTool.SCREEN_ORIENTATION -> SharedMobilePdfTopToolButton(sharedPdfReaderToolLabel(tool), onScreenOrientation) { Icon(SharedReaderIcons.ScreenRotation, contentDescription = null) }
+                                PdfReaderTool.AI_FEATURES -> if (aiAvailable) SharedMobilePdfTopToolButton(sharedPdfReaderToolLabel(tool), onOpenAiHub) { Icon(Icons.Default.Ai, contentDescription = null) }
+                                else -> Unit
+                            }
                         }
                     }
                 }
@@ -2644,7 +2656,6 @@ private fun SharedMobilePdfReaderTopBar(
                 IconButton(onClick = {
                     showHiddenToolsExpanded = false
                     showReadingModeExpanded = false
-                    showTtsSettingsExpanded = false
                     showFileActionsExpanded = false
                     showMoreMenu = true
                 }) {
@@ -2879,6 +2890,7 @@ private fun SharedMobilePdfReaderTopBar(
 @Composable
 private fun sharedPdfReaderToolTitle(tool: PdfReaderTool): String = when (tool) {
     PdfReaderTool.DICTIONARY -> readerString("tool_external_apps", "External Apps")
+    PdfReaderTool.SPLIT_VIEW -> readerString("tool_split_view", "Split View")
     PdfReaderTool.THEME -> readerString("tooltip_theme", "Theme")
     PdfReaderTool.BRIGHTNESS -> readerString("tool_brightness", "Brightness")
     PdfReaderTool.LOCK_PANNING -> readerString("tooltip_lock_pan", "Lock Panning")

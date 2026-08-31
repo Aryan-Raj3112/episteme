@@ -896,6 +896,8 @@
     <string name="content_desc_increase">Increase</string>
     <!-- Shown in the PDF reader header. %1$d = current page number; %2$d = total page count. Example: "Page 12 of 240". -->
     <string name="page_of_pages">Page %1$d of %2$d</string>
+    <!-- Compact PDF reader header label. %1$d = current page (or spread range like "12-13"); %2$d = total page count. Example: "12/240". -->
+    <string name="pdf_page_compact_label">%1$s/%2$d</string>
 
     <!-- EpubReaderDrawer.kt -->
     <string name="tab_chapters">Chapters</string>
@@ -1874,6 +1876,7 @@
     <string name="toolbar_drop_tools_here">Drop tools here</string>
     <string name="content_desc_drag_to_reorder">Drag to reorder</string>
     <string name="tool_external_apps">External Apps</string>
+    <string name="tool_split_view">Split View</string>
     <string name="tool_navigation_slider">Navigation Slider</string>
     <string name="tool_brightness">Brightness</string>
     <string name="tool_sidebar">Sidebar</string>
