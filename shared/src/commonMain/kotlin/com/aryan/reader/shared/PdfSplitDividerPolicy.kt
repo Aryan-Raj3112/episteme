@@ -112,5 +112,5 @@ private fun safeDividerFraction(value: Float): Float {
     }
 }
 
-const val DefaultPdfSplitDividerSnapEnterDistance = 0.035f
-const val DefaultPdfSplitDividerSnapExitDistance = 0.075f
+const val DefaultPdfSplitDividerSnapEnterDistance = 0.02f
+const val DefaultPdfSplitDividerSnapExitDistance = 0.045f

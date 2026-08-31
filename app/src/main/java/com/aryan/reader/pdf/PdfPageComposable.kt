@@ -246,6 +246,7 @@ internal fun PdfPageComposable(
     onDoubleTapDragZoomStart: ((Offset) -> Unit)? = null,
     onDoubleTapDragZoom: ((Offset, Float) -> Unit)? = null,
     onDoubleTapDragZoomEnd: (() -> Unit)? = null,
+    doubleTapReaderCoordinates: (() -> LayoutCoordinates?)? = null,
     isEditMode: Boolean = false,
     drawingState: PdfDrawingState? = null,
     pageAnnotations: () -> List<PdfAnnotation> = { emptyList() },
@@ -1758,6 +1759,9 @@ internal fun PdfPageComposable(
 
     LaunchedEffect(resetZoomTrigger) {
         if (resetZoomTrigger != 0L && scale > 1f && isZoomEnabled && !isVerticalScroll && !isScrollLocked) {
+            pdfSplitZoomDiag(
+                "page.resetZoomTrigger page=$pageIndex from=${scale.diagF()} trigger=$resetZoomTrigger"
+            )
             coroutineScope.launch {
                 val startScale = scale
                 val startOffset = offset
@@ -2569,6 +2573,10 @@ internal fun PdfPageComposable(
                         "page.detector.disabled page=$pageIndex vertical=$isVerticalScroll edit=$isEditMode " +
                             "tool=$selectedTool stylusOnly=$isStylusOnlyMode"
                     )
+                    pdfSplitZoomDiag(
+                        "page.detectorDisabled page=$pageIndex vertical=$isVerticalScroll " +
+                            "edit=$isEditMode tool=$selectedTool stylusOnly=$isStylusOnlyMode"
+                    )
                     return@pointerInput
                 }
 
@@ -2580,7 +2588,7 @@ internal fun PdfPageComposable(
 
                 fun canZoomByDoubleTap(): Boolean {
                     return (isZoomEnabled && !isVerticalScroll && !isScrollLocked && actualBitmapWidthPx > 0) ||
-                        (isVerticalScroll && !isScrollLocked && currentOnDoubleTap != null)
+                        (isVerticalScroll && currentOnDoubleTap != null)
                 }
 
                 Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
@@ -2588,6 +2596,12 @@ internal fun PdfPageComposable(
                         "scrollLocked=$isScrollLocked bitmap=${actualBitmapWidthPx}x$actualBitmapHeightPx " +
                         "scale=$latestScale offset=$latestOffset hasDoubleTap=${currentOnDoubleTap != null} " +
                         "hasDragZoom=${currentOnDoubleTapDragZoom != null}"
+                )
+                pdfSplitZoomDiag(
+                    "page.detectorEnabled page=$pageIndex vertical=$isVerticalScroll " +
+                        "zoomEnabled=$isZoomEnabled scrollLocked=$isScrollLocked " +
+                        "bitmap=${actualBitmapWidthPx}x$actualBitmapHeightPx scale=${latestScale.diagF()} " +
+                        "hasDoubleTap=${currentOnDoubleTap != null}"
                 )
 
                 detectPdfTapAndOneHandZoomGestures(
@@ -2828,10 +2842,19 @@ internal fun PdfPageComposable(
                         "page=$pageIndex quickDoubleTap received vertical=$isVerticalScroll " +
                             "local=$tapOffset canZoom=${canZoomByDoubleTap()} scale=$latestScale"
                     )
+                    pdfSplitZoomDiag(
+                        "page.quickDoubleTapReceived page=$pageIndex vertical=$isVerticalScroll " +
+                            "scale=${latestScale.diagF()} offset=$tapOffset"
+                    )
                     if (!canZoomByDoubleTap()) {
                         Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
                             "page.quickDoubleTap.blocked page=$pageIndex vertical=$isVerticalScroll " +
                                 "zoomEnabled=$isZoomEnabled scrollLocked=$isScrollLocked bitmapWidth=$actualBitmapWidthPx"
+                        )
+                        pdfSplitZoomDiag(
+                            "page.quickDoubleTapBlocked page=$pageIndex vertical=$isVerticalScroll " +
+                                "zoomEnabled=$isZoomEnabled scrollLocked=$isScrollLocked " +
+                                "bitmapWidth=$actualBitmapWidthPx hasDoubleTap=${currentOnDoubleTap != null}"
                         )
                         return@quickDoubleTap
                     }
@@ -2889,13 +2912,25 @@ internal fun PdfPageComposable(
                                 isTransforming = false
                             }
                         }
-                    } else if (isVerticalScroll && !isScrollLocked && currentOnDoubleTap != null) {
+                    } else if (isVerticalScroll && currentOnDoubleTap != null) {
                         // The vertical camera is expressed in reader-root coordinates, while this
-                        // recognizer receives a point local to an individual page.
-                        val readerOffset = layoutCoordinates?.localToRoot(tapOffset) ?: tapOffset
+                        // recognizer receives a point local to an individual page. `localToRoot`
+                        // maps to the window root, which in split view also contains the split
+                        // toolbar and the other pane; converting through the reader's own
+                        // coordinates keeps the pivot inside the pane that owns the camera.
+                        val readerOffset = doubleTapReaderCoordinates
+                            ?.invoke()
+                            ?.takeIf { it.isAttached }
+                            ?.let { readerCoords ->
+                                layoutCoordinates?.let { pageCoords ->
+                                    readerCoords.localPositionOf(pageCoords, tapOffset)
+                                }
+                            }
+                            ?: layoutCoordinates?.localToRoot(tapOffset)
+                            ?: tapOffset
                         pdfZoomDiagnostic(
                             "page=$pageIndex verticalDoubleTap forward local=$tapOffset root=$readerOffset " +
-                                "hasCoordinates=${layoutCoordinates != null}"
+                                "hasCoordinates=${layoutCoordinates != null} hasReaderCoords=${doubleTapReaderCoordinates?.invoke() != null}"
                         )
                         currentOnDoubleTap!!(readerOffset)
                     }
@@ -2957,6 +2992,9 @@ internal fun PdfPageComposable(
                         )
                         if (isZoomEnabled && !isVerticalScroll && !isScrollLocked && actualBitmapWidthPx > 0) {
                             if (scale > 1f && scale < 1.05f) {
+                                pdfSplitZoomDiag(
+                                    "page.snapBackToBase page=$pageIndex scale=${scale.diagF()}"
+                                )
                                 scale = 1f
                                 offset = Offset.Zero
                                 onScaleChanged(scale)
@@ -3520,16 +3558,28 @@ internal fun PdfPageComposable(
                     Timber.tag("PdfLockDiagnostic").i(
                         "Orientation changed while locked; reset paginated zoom to fit on page $pageIndex"
                     )
+                    pdfSplitZoomDiag(
+                        "page.lockedOrientationReset page=$pageIndex viewport=$previousViewportSize" +
+                            "-> $currentViewportSize scale=1f"
+                    )
                 } else if (lockedState != null) {
                     scale = lockedState.first
                     offset = Offset(lockedState.second, lockedState.third)
                     hasAppliedLockedPaginationState = true
+                    pdfSplitZoomDiag(
+                        "page.lockedApply page=$pageIndex scale=${scale.diagF()} " +
+                            "viewport=$currentViewportSize"
+                    )
                 } else {
                     hasAppliedLockedPaginationState = true
                 }
                 onScaleChanged(scale)
             } else if (!isScrollLocked && !isVerticalScroll) {
                 hasAppliedLockedPaginationState = false
+                pdfSplitZoomDiag(
+                    "page.viewportReset page=$pageIndex wasScale=${scale.diagF()} " +
+                        "viewport=$previousViewportSize -> $currentViewportSize resetTo=1f"
+                )
                 scale = 1f
                 offset = Offset.Zero
                 onScaleChanged(1f)

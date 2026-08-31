@@ -88,6 +88,38 @@ fun isPdfVerticalZoomNearFit(
     return safeCurrentZoom <= safeFitZoom * (1f + safeTolerance)
 }
 
+/**
+ * Whether a viewport/layout change should snap the camera back to the fit scale instead of
+ * preserving the user's zoom. The camera starts on a placeholder fit (empty page layout),
+ * so the first real layout must fit before the placeholder looks like a deliberate zoom.
+ */
+fun pdfVerticalResizeShouldRefit(
+    currentZoom: Float,
+    fitZoom: Float,
+    isFirstRealLayout: Boolean,
+): Boolean {
+    if (isFirstRealLayout) return true
+    return isPdfVerticalZoomNearFit(currentZoom, fitZoom)
+}
+
+/**
+ * Base zoom of the vertical reader: the largest zoom where a single page is fully visible.
+ * Standard portrait viewports return 1f (page width fills the viewport); short or narrow
+ * panes (split view) shrink below 1f so a single page fits without scrolling. Without the
+ * whole-page fit, portrait split panes were pinned at 100% and could not zoom out below it.
+ */
+fun pdfVerticalFitZoomScale(
+    pageAspectRatios: List<Float>,
+    viewportWidthPx: Float,
+    viewportHeightPx: Float,
+): Float {
+    if (pageAspectRatios.isEmpty() || viewportWidthPx <= 0f || viewportHeightPx <= 0f) return 1f
+    val firstRatio = pageAspectRatios.firstOrNull { it > 0f } ?: 1f
+    val pageHeightAtFullWidth = viewportWidthPx / firstRatio
+    if (pageHeightAtFullWidth <= 0f) return 1f
+    return ((viewportHeightPx - 32f) / pageHeightAtFullWidth).coerceAtMost(1f)
+}
+
 fun preservedPdfVerticalPanY(
     oldPanY: Float,
     oldZoom: Float,

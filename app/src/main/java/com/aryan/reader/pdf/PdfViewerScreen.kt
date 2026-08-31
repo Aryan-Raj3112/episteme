@@ -391,6 +391,21 @@ fun PdfViewerScreen(
     // resources, or while the reader route is backgrounded. Keep the legacy
     // full-screen defaults intact, but make ownership explicit for panes.
     val ownsPaneGlobals = !isSplitPane || (isPaneFocused && isPaneAppActive)
+    LaunchedEffect(isSplitPane, isPaneFocused, isPaneAppActive, ownsPaneGlobals) {
+        pdfSplitZoomDiag(
+            "screen.ownership isSplitPane=$isSplitPane focused=$isPaneFocused " +
+                "appActive=$isPaneAppActive ownsPaneGlobals=$ownsPaneGlobals " +
+                "bookId=${pane?.bookId ?: "solo"} session=${pane?.sessionId ?: 0}"
+        )
+    }
+    val diagPaneIdentity = pane?.bookId ?: "solo"
+    val diagPaneSessionId = pane?.sessionId ?: 0L
+    DisposableEffect(diagPaneIdentity, diagPaneSessionId) {
+        pdfSplitZoomDiag("screen.composed bookId=$diagPaneIdentity session=$diagPaneSessionId")
+        onDispose {
+            pdfSplitZoomDiag("screen.disposed bookId=$diagPaneIdentity session=$diagPaneSessionId")
+        }
+    }
     val context = LocalContext.current
     LaunchedEffect(Unit) {
         PdfFontCache.init(context.assets)
@@ -584,6 +599,8 @@ fun PdfViewerScreen(
         )
     }
     PdfViewerDocumentSetup(surfaceState = surfaceState, setup = documentSetup)
+    surfaceState.paneSessionId = pane?.sessionId ?: 0L
+    surfaceState.paneBookId = pane?.bookId
 
     PdfViewerScreenContent(
         surfaceState = surfaceState,
@@ -1056,6 +1073,22 @@ private fun PdfViewerScreenContent(
     val currentPdfUri by rememberUpdatedState(effectivePdfUri)
     val currentVisibleAllAnnotations by rememberUpdatedState(visibleAllAnnotations)
     val currentRichTextController by rememberUpdatedState(richTextController)
+
+    val diagPaneContext = "pane=${surfaceState.paneBookId ?: "solo"} session=${surfaceState.paneSessionId} " +
+        "focused=$isPaneFocused ownsGlobals=$ownsPaneGlobals"
+    val currentDiagPaneContext by rememberUpdatedState(diagPaneContext)
+
+    val previousDiagScale = remember { mutableFloatStateOf(Float.NaN) }
+    LaunchedEffect(currentActiveScale) {
+        val previous = previousDiagScale.floatValue
+        previousDiagScale.floatValue = currentActiveScale
+        if (previous.isNaN() || abs(previous - currentActiveScale) > 0.01f) {
+            pdfSplitZoomDiag(
+                "cam.scale pane=${surfaceState.paneBookId ?: "solo"} session=${surfaceState.paneSessionId} " +
+                    "scale=${currentActiveScale.diagF()} previous=${if (previous.isNaN()) "init" else previous.diagF()}"
+            )
+        }
+    }
 
     val readerPersistence = remember(
         currentBookId,
@@ -2532,7 +2565,21 @@ private fun PdfViewerScreenContent(
         }
     }
 
-    val onZoomChangeStable = remember { { scale: Float -> currentPageScale = scale } }
+    val previousReportedScale = remember { mutableFloatStateOf(Float.NaN) }
+    val onZoomChangeStable = remember {
+        { scale: Float ->
+            val previous = previousReportedScale.floatValue
+            previousReportedScale.floatValue = scale
+            if (previous.isNaN() || abs(scale - previous) > 0.01f) {
+                pdfSplitZoomDiag(
+                    "zoom.onZoomChange pane=${surfaceState.paneBookId ?: "solo"} " +
+                        "session=${surfaceState.paneSessionId} scale=${scale.diagF()} " +
+                        "previous=${if (previous.isNaN()) "init" else previous.diagF()}"
+                )
+            }
+            currentPageScale = scale
+        }
+    }
 
     val onHighlightLoadingStable = remember {
         { isLoading: Boolean -> isHighlightingLoading = isLoading }
@@ -3601,6 +3648,11 @@ private fun PdfViewerScreenContent(
                 lockedState = lockedState,
                 currentActiveScale = currentActiveScale
             )
+            pdfSplitZoomDiag(
+                "pag.pageChangeScaleReset $currentDiagPaneContext page=$currentPage " +
+                    "currentScale=${currentActiveScale.diagF()} nextPageScale=${nextPageScale.diagF()} " +
+                    "locked=$isScrollLocked lockedState=${lockedState != null}"
+            )
             currentPageScale = nextPageScale
             val isCurrentTwoPageSpread =
                 PdfSpreadLayout.visiblePageIndices(currentPage, totalDisplayPages, pdfSpreadSettings).size > 1
@@ -3614,6 +3666,10 @@ private fun PdfViewerScreenContent(
                 currentActiveScale = nextPageScale
                 currentActiveOffset = nextPageOffset
             } else if (!isScrollLocked) {
+                pdfSplitZoomDiag(
+                    "pag.resetToBase $currentDiagPaneContext page=$currentPage " +
+                        "wasScale=${currentActiveScale.diagF()} reason=nonSpreadPageChange"
+                )
                 currentActiveScale = 1f
                 currentActiveOffset = Offset.Zero
             }
@@ -3629,6 +3685,10 @@ private fun PdfViewerScreenContent(
             currentActiveScale > 1f &&
             !isScrollLocked
         ) {
+            pdfSplitZoomDiag(
+                "pag.resetZoomTrigger $currentDiagPaneContext from=${currentActiveScale.diagF()} " +
+                    "page=$currentPage trigger=$resetZoomTrigger"
+            )
             val startScale = currentActiveScale
             val startOffset = currentActiveOffset
             Animatable(0f).animateTo(1f, animationSpec = tween(durationMillis = 300)) {
@@ -5412,6 +5472,10 @@ private fun PdfViewerDocumentSetup(
         lockedState = savedLockedState
         currentActiveScale = activeCamera.first
         currentActiveOffset = activeCamera.second
+        pdfSplitZoomDiag(
+            "cam.restoreLock bookId=$bookId locked=$savedIsScrollLocked " +
+                "scale=${activeCamera.first.diagF()} offset=(${activeCamera.second.x.diagF()},${activeCamera.second.y.diagF()})"
+        )
     }
 
     var isAutoScrollModeActive by remember { mutableStateOf(false) }
@@ -6457,6 +6521,8 @@ private class PdfViewerSurfaceState {
     var isTtsSessionActive: Boolean = false
     lateinit var startTtsWithPermissionCheck: (Int?, Int?) -> Unit
     var isSplitPane: Boolean = false
+    var paneSessionId: Long = 0L
+    var paneBookId: String? = null
     var onOpenSplit: (() -> Unit)? = null
     var statusBarHeightDp: androidx.compose.runtime.MutableState<androidx.compose.ui.unit.Dp> = mutableStateOf(0.dp)
     lateinit var focusRequester: FocusRequester
@@ -6946,6 +7012,13 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
     val detectSpeechBubblesForPage = surfaceState.detectSpeechBubblesForPage
     val isAnnotationHit = surfaceState.isAnnotationHit
     val boxConstraints = constraints
+    LaunchedEffect(boxConstraints.maxWidth, boxConstraints.maxHeight) {
+        pdfSplitZoomDiag(
+            "viewport.resize bookId=${surfaceState.paneBookId ?: "solo"} session=${surfaceState.paneSessionId} " +
+                "viewport=${boxConstraints.maxWidth}x${boxConstraints.maxHeight} displayMode=$displayMode " +
+                "scale=${currentActiveScale.diagF()} pageScale=${currentPageScale.diagF()} locked=$isScrollLocked"
+        )
+    }
     val hiddenRichTextInputEnabled = isPdfRichTextInputEnabled(
         isEditMode = isEditMode,
         selectedTool = selectedTool,
@@ -7015,6 +7088,26 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
 
                         Box(modifier = Modifier.fillMaxSize().clipToBounds()) {
                             var pageTurnTouchY by remember { mutableStateOf<Float?>(null) }
+                            val paginationUserScrollEnabled =
+                                (currentPageScale == 1f || (isScrollLocked && displayMode == DisplayMode.PAGINATION)) &&
+                                    !isTtsPlayingOrLoading &&
+                                    !searchState.isSearchActive &&
+                                    !isPageSliderVisible &&
+                                    paginationDraggingBoxId == null
+                            LaunchedEffect(
+                                paginationUserScrollEnabled,
+                                currentPageScale,
+                                isScrollLocked,
+                                isTtsPlayingOrLoading
+                            ) {
+                                pdfSplitZoomDiag(
+                                    "pag.userScrollEnabled=$paginationUserScrollEnabled " +
+                                        "pageScale=${currentPageScale.diagF()} scale=${currentActiveScale.diagF()} " +
+                                        "locked=$isScrollLocked tts=$isTtsPlayingOrLoading " +
+                                        "search=${searchState.isSearchActive} slider=$isPageSliderVisible " +
+                                        "dragging=${paginationDraggingBoxId != null} pagerPage=${pagerState.currentPage}"
+                                )
+                            }
                             HorizontalPager(
                                 state = pagerState,
                                 modifier = Modifier
@@ -7043,13 +7136,7 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                                 },
                                 beyondViewportPageCount = dynamicBeyondViewportPageCount,
                                 reverseLayout = rightToLeftPagination,
-                                userScrollEnabled = run {
-                                    (currentPageScale == 1f || (isScrollLocked && displayMode == DisplayMode.PAGINATION)) &&
-                                        !isTtsPlayingOrLoading &&
-                                        !searchState.isSearchActive &&
-                                        !isPageSliderVisible &&
-                                        paginationDraggingBoxId == null
-                                }
+                                userScrollEnabled = paginationUserScrollEnabled
                             ) { pagerPageIndex ->
                                 PdfViewerPaginationPage(
                                     paginationPageState = paginationPageState,
@@ -9619,6 +9706,7 @@ private fun PdfViewerPaginationPage(
     pageTurnTouchY: Float?,
 ) {
     val surfaceState = paginationPageState.surfaceState
+    val diagPaneContext = "pane=${surfaceState.paneBookId ?: "solo"} session=${surfaceState.paneSessionId}"
     val boxMaxWidthFloat = paginationPageState.boxMaxWidth.toFloat()
     val boxMaxHeightFloat = paginationPageState.boxMaxHeight.toFloat()
     val stablePdfDocument = paginationPageState.stablePdfDocument
@@ -9857,6 +9945,11 @@ private fun PdfViewerPaginationPage(
                             }
                             var oneHandZoomStartScale = 1f
                             var oneHandZoomStartOffset = Offset.Zero
+                            pdfSplitZoomDiag(
+                                "spread.detector.restart $diagPaneContext sharedZoom=$useSharedSpreadZoom " +
+                                    "scrollLocked=$isScrollLocked drawing=$isDrawingActive pages=$totalDisplayPages " +
+                                    "scale=${latestSpreadScale.value.diagF()} offset=${latestSpreadOffset.value}"
+                            )
                             Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
                                 "spread.detector.enabled scrollLocked=$isScrollLocked drawing=$isDrawingActive " +
                                     "pages=$totalDisplayPages scale=${latestSpreadScale.value} offset=${latestSpreadOffset.value}"
@@ -9897,6 +9990,10 @@ private fun PdfViewerPaginationPage(
                                         Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
                                             "spread.quickDoubleTap.blocked scrollLocked=true offset=$tapOffset"
                                         )
+                                        pdfSplitZoomDiag(
+                                            "spread.quickDoubleTap.blocked $diagPaneContext " +
+                                                "reason=scrollLocked scale=${latestSpreadScale.value.diagF()}"
+                                        )
                                         return@quickDoubleTap
                                     }
                                     val startScale = latestSpreadScale.value
@@ -9911,6 +10008,11 @@ private fun PdfViewerPaginationPage(
                                         targetScale = targetScale,
                                         startOffset = startOffset,
                                         pivot = tapOffset
+                                    )
+                                    pdfSplitZoomDiag(
+                                        "spread.quickDoubleTap $diagPaneContext tap=$tapOffset " +
+                                            "startScale=${startScale.diagF()} targetScale=${targetScale.diagF()} " +
+                                            "targetOffset=$targetOffset startOffset=$startOffset"
                                     )
                                     coroutineScope.launch {
                                         Animatable(0f).animateTo(
@@ -10015,6 +10117,10 @@ private fun PdfViewerPaginationPage(
                                                     "pressed=${change.pressed},consumed=${change.isConsumed},moved=${change.positionChanged()}"
                                                 }}"
                                         )
+                                        pdfSplitZoomDiag(
+                                            "spread.panDetector.canceledByConsumed $diagPaneContext mode=$mode " +
+                                                "scale=${gestureScale.diagF()} zoomAccum=${accumulatedZoom.diagF()}"
+                                        )
                                     }
                                     if (!canceled) {
                                         val pointerCount = event.changes.count { it.pressed }
@@ -10034,10 +10140,18 @@ private fun PdfViewerPaginationPage(
                                                     Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
                                                         "spread.panDetector.modeZoom scale=$gestureScale accumulatedZoom=$accumulatedZoom"
                                                     )
+                                                    pdfSplitZoomDiag(
+                                                        "spread.modeZoom $diagPaneContext pointers=$pointerCount " +
+                                                            "scale=${gestureScale.diagF()} zoomAccum=${accumulatedZoom.diagF()}"
+                                                    )
                                                     2
                                                 } else if (accumulatedPan.getDistance() > touchSlop) {
                                                     Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
                                                         "spread.panDetector.modePan scale=$gestureScale accumulatedPan=$accumulatedPan"
+                                                    )
+                                                    pdfSplitZoomDiag(
+                                                        "spread.modePan $diagPaneContext pointers=$pointerCount " +
+                                                            "scale=${gestureScale.diagF()} panAccum=$accumulatedPan"
                                                     )
                                                     1
                                                 } else {
@@ -10090,6 +10204,10 @@ private fun PdfViewerPaginationPage(
                                                     Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
                                                         "spread.panDetector.modeZoomAtBase accumulatedZoom=$accumulatedZoom"
                                                     )
+                                                    pdfSplitZoomDiag(
+                                                        "spread.modeZoomAtBase $diagPaneContext " +
+                                                            "pointers=$pointerCount zoomAccum=${accumulatedZoom.diagF()}"
+                                                    )
                                                     2
                                                 } else {
                                                     0
@@ -10127,7 +10245,18 @@ private fun PdfViewerPaginationPage(
                                     }
                                 } while (!canceled && event.changes.any { it.pressed })
 
+                                if (hasConsumedGesture) {
+                                    pdfSplitZoomDiag(
+                                        "spread.gestureEnd $diagPaneContext mode=$mode " +
+                                            "scale=${currentActiveScale.diagF()} offset=${currentActiveOffset}"
+                                    )
+                                }
+
                                 if (hasConsumedGesture && currentActiveScale > 1f && currentActiveScale < 1.05f) {
+                                    pdfSplitZoomDiag(
+                                        "spread.snapBackToBase $diagPaneContext scale=${currentActiveScale.diagF()} " +
+                                            "offset=${currentActiveOffset}"
+                                    )
                                     coroutineScope.launch {
                                         val startScale = currentActiveScale
                                         val startOffset = currentActiveOffset
@@ -10427,6 +10556,12 @@ private fun PdfViewerPaginationPage(
         },
         onScaleChanged = { newScale ->
             if (isActivePagerPage && !useSharedSpreadZoom) {
+                if (abs(newScale - currentPageScale) > 0.01f) {
+                    pdfSplitZoomDiag(
+                        "pag.onScaleChanged $diagPaneContext page=$pageIndex " +
+                            "scale=${newScale.diagF()} previous=${currentPageScale.diagF()}"
+                    )
+                }
                 currentPageScale = newScale
             }
         },
@@ -10527,6 +10662,12 @@ private fun PdfViewerPaginationPage(
         lockedState = if (useSharedSpreadZoom) null else lockedState,
         onZoomAndPanChanged = { newScale, newOffset ->
             if (isActivePagerPage && !useSharedSpreadZoom) {
+                if (abs(newScale - currentActiveScale) > 0.01f) {
+                    pdfSplitZoomDiag(
+                        "pag.onZoomAndPan $diagPaneContext page=$pageIndex " +
+                            "scale=${newScale.diagF()} previous=${currentActiveScale.diagF()} offset=$newOffset"
+                    )
+                }
                 currentActiveScale = newScale
                 currentActiveOffset = newOffset
             }

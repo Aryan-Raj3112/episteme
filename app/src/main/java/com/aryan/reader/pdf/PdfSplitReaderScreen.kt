@@ -46,6 +46,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -411,6 +412,14 @@ private fun PdfSplitPaneLayout(
             minPaneHeightPx = minPaneHeightPx,
             dividerThicknessPx = dividerThicknessPx,
         )
+        LaunchedEffect(plan.orientation, plan.presentation, plan.firstPaneSizePx, plan.secondPaneSizePx) {
+            pdfSplitZoomDiag(
+                "split.layout orientation=${plan.orientation} presentation=$plan.presentation " +
+                    "rev=${workspace.revision} axis=${availableWidth}x$availableHeight " +
+                    "firstPane=${plan.firstPaneSizePx} secondPane=${plan.secondPaneSizePx} " +
+                    "dividerFraction=${plan.dividerFraction.diagF()}"
+            )
+        }
         val dividerColor = MaterialTheme.colorScheme.outlineVariant
         val dividerDescription = stringResource(R.string.pdf_split_reader_divider_desc)
         val dividerDecreaseDescription = stringResource(R.string.pdf_split_reader_divider_decrease)
@@ -512,6 +521,10 @@ private fun PdfSplitPaneLayout(
                     val startPosition = down.position
                     var isDragging = false
                     var didFinish = false
+                    pdfSplitZoomDiag(
+                        "divider.down downAt=$pointerAxis dividerCenter=$dividerCenter " +
+                            "absoluteStart=${currentDividerAbsoluteStartPx.value} orientation=${plan.orientation}"
+                    )
 
                     while (true) {
                         val event = awaitPointerEvent(PointerEventPass.Initial)
@@ -524,6 +537,7 @@ private fun PdfSplitPaneLayout(
                         if (!isDragging && movedDistance > viewConfiguration.touchSlop) {
                             isDragging = true
                             change.consume()
+                            pdfSplitZoomDiag("divider.dragStart moved=${movedDistance.diagF()} slop=${viewConfiguration.touchSlop}")
                         }
 
                         if (isDragging) {
@@ -540,6 +554,10 @@ private fun PdfSplitPaneLayout(
                                 isRtl = plan.orientation == PdfSplitOrientation.VERTICAL && isRtl,
                             )
                             dragState = dragState.preview(rawFraction)
+                            pdfSplitZoomDiag(
+                                "divider.dragPreview rawFraction=${rawFraction.diagF()} " +
+                                    "preview=${dragState.previewFraction?.diagF()} absolutePointer=$absolutePointer"
+                            )
                         }
 
                         val isRelease = change.changedToUp() || (
@@ -549,12 +567,17 @@ private fun PdfSplitPaneLayout(
                             if (isDragging) {
                                 val committed = dragState.commit().committedFraction
                                 dragState = dragState.cancel()
+                                pdfSplitZoomDiag(
+                                    "divider.commit committed=${committed.diagF()} " +
+                                        "orientation=${plan.orientation} rev=${workspace.revision}"
+                                )
                                 onDividerChange(committed, plan.orientation, workspace.revision)
                             } else {
                                 val isDoubleTap = lastTapTimeMillis != Long.MIN_VALUE &&
                                     down.uptimeMillis - lastTapTimeMillis in 1..PdfSplitDoubleTapTimeoutMillis
                                 if (isDoubleTap) {
                                     dragState = dragState.cancel()
+                                    pdfSplitZoomDiag("divider.doubleTap reset fraction=$DefaultPdfSplitDividerFraction")
                                     onDividerChange(
                                         DefaultPdfSplitDividerFraction,
                                         plan.orientation,
@@ -562,6 +585,7 @@ private fun PdfSplitPaneLayout(
                                     )
                                     lastTapTimeMillis = Long.MIN_VALUE
                                 } else {
+                                    pdfSplitZoomDiag("divider.singleTap downAt=$pointerAxis")
                                     lastTapTimeMillis = down.uptimeMillis
                                 }
                             }
@@ -575,6 +599,7 @@ private fun PdfSplitPaneLayout(
 
                     if (!didFinish && isDragging) {
                         dragState = dragState.cancel()
+                        pdfSplitZoomDiag("divider.cancel gestureAborted didFinish=$didFinish isDragging=$isDragging")
                     }
                 }
             }
@@ -812,6 +837,19 @@ private fun PdfSplitDocumentPane(
     }
     val resolvedPdfUri = item?.getUri() ?: document.uriString.toUri()
 
+    LaunchedEffect(paneId, document.sessionId, document.bookId, isFocused) {
+        pdfSplitZoomDiag(
+            "pane.composed pane=$paneId sessionId=${document.sessionId} bookId=${document.bookId} " +
+                "focused=$isFocused uri=${document.uriString}"
+        )
+    }
+    val paneSessionId = document.sessionId
+    DisposableEffect(paneId, paneSessionId) {
+        onDispose {
+            pdfSplitZoomDiag("pane.disposed pane=$paneId sessionId=$paneSessionId")
+        }
+    }
+
     Box(
         modifier = modifier
             .background(
@@ -824,6 +862,10 @@ private fun PdfSplitDocumentPane(
             .pointerInput(paneId, document.sessionId) {
                 awaitEachGesture {
                     awaitFirstDown(requireUnconsumed = false)
+                    pdfSplitZoomDiag(
+                        "pane.focusDown pane=$paneId sessionId=${document.sessionId} " +
+                            "bookId=${document.bookId} alreadyFocused=$isFocused"
+                    )
                     onFocus(paneId, document.sessionId)
                     // Wait for the gesture to end without consuming it so the
                     // reader below keeps full ownership of scroll and taps.

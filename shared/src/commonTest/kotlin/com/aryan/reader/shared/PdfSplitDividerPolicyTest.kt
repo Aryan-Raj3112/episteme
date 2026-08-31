@@ -54,16 +54,22 @@ class PdfSplitDividerPolicyTest {
 
     @Test
     fun centerSnapHasHysteresis() {
+        val engageFraction = DefaultPdfSplitDividerFraction +
+            DefaultPdfSplitDividerSnapEnterDistance * 0.6f
+        val holdFraction = DefaultPdfSplitDividerFraction +
+            DefaultPdfSplitDividerSnapExitDistance * 0.6f
+        val releaseFraction = DefaultPdfSplitDividerFraction +
+            DefaultPdfSplitDividerSnapExitDistance + 0.01f
         val engaged = snapPdfSplitDividerFraction(
-            rawFraction = 0.53f,
+            rawFraction = engageFraction,
             wasSnappedToCenter = false,
         )
         val held = snapPdfSplitDividerFraction(
-            rawFraction = 0.56f,
+            rawFraction = holdFraction,
             wasSnappedToCenter = engaged.isSnappedToCenter,
         )
         val released = snapPdfSplitDividerFraction(
-            rawFraction = 0.58f,
+            rawFraction = releaseFraction,
             wasSnappedToCenter = held.isSnappedToCenter,
         )
 
@@ -72,7 +78,18 @@ class PdfSplitDividerPolicyTest {
         assertTrue(held.isSnappedToCenter)
         assertEquals(DefaultPdfSplitDividerFraction, held.fraction)
         assertFalse(released.isSnappedToCenter)
-        assertEquals(0.58f, released.fraction)
+        assertEquals(releaseFraction, released.fraction)
+    }
+
+    @Test
+    fun centerSnapReleasesWithinAReasonableDragDistance() {
+        val released = snapPdfSplitDividerFraction(
+            rawFraction = DefaultPdfSplitDividerFraction + 0.08f,
+            wasSnappedToCenter = true,
+        )
+
+        assertFalse(released.isSnappedToCenter)
+        assertEquals(DefaultPdfSplitDividerFraction + 0.08f, released.fraction)
     }
 
     @Test
