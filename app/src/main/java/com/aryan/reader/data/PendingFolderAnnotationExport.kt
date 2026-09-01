@@ -41,4 +41,7 @@ interface PendingFolderAnnotationExportDao {
 
     @Query("DELETE FROM pending_folder_annotation_exports WHERE bookId = :bookId")
     suspend fun delete(bookId: String)
+
+    @Query("DELETE FROM pending_folder_annotation_exports")
+    suspend fun clearAll()
 }

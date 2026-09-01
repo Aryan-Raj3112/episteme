@@ -594,6 +594,15 @@ class PdfReaderCoreLogicTest {
     }
 
     @Test
+    fun `preprocessTextForTts joins hyphenated line breaks and keeps index map aligned`() {
+        val processed = preprocessTextForTts("understand-\ning well")
+
+        assertEquals("understanding well", processed.cleanText)
+        assertEquals(processed.cleanText.length, processed.indexMap.size)
+        assertEquals(12, processed.indexMap[10])
+    }
+
+    @Test
     fun `mergeRectsIntoLines combines rectangles with vertical overlap and keeps separate lines sorted`() {
         val rects = listOf(
             Rect(40, 50, 60, 70),

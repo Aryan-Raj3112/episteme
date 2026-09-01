@@ -9,9 +9,18 @@ import SwiftUI
 import ReaderShared
 import UniformTypeIdentifiers
 import CryptoKit
+import OSLog
 
 struct ContentView: View {
-    private enum ImportKind { case books, folder, fonts, cover }
+    private enum ImportKind {
+        case books
+        case audiobookFile
+        case audiobookMultiple
+        case audiobookFolder
+        case folder
+        case fonts
+        case cover
+    }
 
     private let bridge = ReaderIosBridge()
     private let audiobookPlayer = AudiobookPlayerController()
@@ -28,6 +37,18 @@ struct ContentView: View {
             isSystemUiHidden: $isReaderSystemUiHidden,
             onImportBooks: {
                 importKind = .books
+                isImportPickerPresented = true
+            },
+            onImportAudiobookFile: {
+                importKind = .audiobookFile
+                isImportPickerPresented = true
+            },
+            onImportAudiobookMultiple: {
+                importKind = .audiobookMultiple
+                isImportPickerPresented = true
+            },
+            onImportAudiobookFolder: {
+                importKind = .audiobookFolder
                 isImportPickerPresented = true
             },
             onImportFolder: {
@@ -57,24 +78,42 @@ struct ContentView: View {
             allowedContentTypes: importKind == .fonts
                 ? [.font]
                 : (
-                    importKind == .folder
+                    importKind == .folder || importKind == .audiobookFolder
                         ? [.folder]
                         : (
                             importKind == .cover
                                 ? [.image]
-                                : allowedReaderImportTypes
+                                : (importKind == .audiobookFile || importKind == .audiobookMultiple
+                                    ? [.audio]
+                                    : allowedReaderImportTypes)
                         )
                 ),
-            allowsMultipleSelection: importKind != .folder && importKind != .cover
+            allowsMultipleSelection: importKind != .folder &&
+                importKind != .audiobookFolder &&
+                importKind != .audiobookFile &&
+                importKind != .cover
         ) { result in
             switch result {
             case .success(let urls):
+                if importKind == .audiobookFolder, let folderURL = urls.first {
+                    let scan = copyImportedAudiobookFolderToAppSupport(folderURL)
+                    bridge.recordImportedFiles(
+                        fileNames: scan.files.map(\.name),
+                        filePaths: scan.files.map(\.path),
+                        contentIds: scan.files.map(\.contentId),
+                        failedCount: scan.succeeded && !scan.files.isEmpty ? 0 : 1,
+                        wasCancelled: false,
+                        autoOpen: false,
+                        enqueueHandoff: true,
+                    )
+                    return
+                }
                 if importKind == .folder, let folderURL = urls.first {
                     let folderName = rememberImportedFolder(folderURL, bridge: bridge)
-                    recordImportedFolderScan(
+                    scheduleImportedFolderScan(
                         bridge: bridge,
                         folderName: folderName,
-                        scan: copyImportedFolderToAppSupport(folderURL, folderName: folderName)
+                        sourceURL: folderURL
                     )
                     return
                 }
@@ -94,7 +133,9 @@ struct ContentView: View {
                         filePaths: importedFiles.map(\.path),
                         contentIds: importedFiles.map(\.contentId),
                         failedCount: Int32(urls.count - importedFiles.count),
-                        wasCancelled: false
+                        wasCancelled: false,
+                        autoOpen: importKind != .audiobookFile && importKind != .audiobookMultiple,
+                        enqueueHandoff: true,
                     )
                 }
             case .failure(let error):
@@ -116,13 +157,25 @@ struct ContentView: View {
                         lastModifiedTimestamps: [],
                         scanSucceeded: false
                     )
+                } else if importKind == .audiobookFolder {
+                    bridge.recordImportedFiles(
+                        fileNames: [],
+                        filePaths: [],
+                        contentIds: [],
+                        failedCount: wasCancelled ? 0 : 1,
+                        wasCancelled: wasCancelled,
+                        autoOpen: false,
+                        enqueueHandoff: true,
+                    )
                 } else {
                     bridge.recordImportedFiles(
                         fileNames: [],
                         filePaths: [],
                         contentIds: [],
                         failedCount: wasCancelled ? 0 : 1,
-                        wasCancelled: wasCancelled
+                        wasCancelled: wasCancelled,
+                        autoOpen: importKind != .audiobookFile && importKind != .audiobookMultiple,
+                        enqueueHandoff: true
                     )
                 }
             }
@@ -133,8 +186,14 @@ struct ContentView: View {
             }
         }
         .task {
+#if DEBUG
+            bridge.setDebugBuild(enabled: true)
+#endif
             localStoreKit.attach(to: bridge)
             localAccount.attach(to: bridge)
+            localAccount.setLocalCloudDataClearHandler {
+                bridge.clearLocalCloudData()
+            }
             let legacyPaths = bridge.importedFilePathsMissingContentId()
             let legacyContentIds = legacyPaths.map {
                 sha256FileId(URL(fileURLWithPath: $0)) ?? ""
@@ -149,6 +208,9 @@ struct ContentView: View {
             bridge.setFolderFileReplacementHandler { folderName, managedPath in
                 replaceImportedFolderFile(folderName: folderName, managedPath: managedPath)
             }
+            bridge.setFolderFileAdditionHandler { folderName, sourcePath, fileName in
+                addImportedFolderFile(folderName: folderName, sourcePath: sourcePath, fileName: fileName)
+            }
             audiobookPlayer.onPlaybackUpdate = { isPlaying, isLoading, positionMs, durationMs, speed, sleepTimerRemainingMs, error in
                 bridge.updateAudiobookPlaybackState(
                     isPlaying: isPlaying,
@@ -159,6 +221,9 @@ struct ContentView: View {
                     sleepTimerRemainingMs: sleepTimerRemainingMs,
                     error: error
                 )
+            }
+            audiobookPlayer.onPlaybackSessionEnded = {
+                bridge.notifyAudiobookSessionEnded()
             }
             bridge.setAudiobookPlayHandler { filePath, positionMs, speed in
                 audiobookPlayer.play(
@@ -196,6 +261,7 @@ struct ContentView: View {
                     completion(title, author, album, KotlinLong(longLong: durationMs))
                 }
             }
+            bridge.setUnifiedDiagnosticsProvider { captureUnifiedLogEntries() }
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
@@ -220,9 +286,10 @@ struct ContentView: View {
     }
 
     private func openExternalURL(_ url: URL, addToLibrary: Bool) {
+        let requestId = UUID().uuidString
         let imported = addToLibrary
             ? copyImportedFileToAppSupport(url, directoryName: "Imports")
-            : copyExternalFileToTemporaryStorage(url)
+            : copyExternalFileToTemporaryStorage(url, requestId: requestId)
         guard let imported else {
             bridge.recordNativeEvent(message: "Could not open the external file")
             return
@@ -231,12 +298,19 @@ struct ContentView: View {
             fileName: imported.name,
             filePath: imported.path,
             contentId: imported.contentId,
-            addToLibrary: addToLibrary
+            addToLibrary: addToLibrary,
+            requestId: requestId,
         )
     }
 }
 
 private let importedFolderBookmarksKey = "reader.ios.importedFolderBookmarks.v1"
+
+@MainActor
+private var importedFolderScanTasks: [String: Task<Void, Never>] = [:]
+
+@MainActor
+private var importedFolderScanGenerations: [String: Int] = [:]
 
 @discardableResult
 private func rememberImportedFolder(_ url: URL, bridge: ReaderIosBridge) -> String {
@@ -295,6 +369,29 @@ private func updateImportedFolderBookmark(_ url: URL, folderName: String) {
     UserDefaults.standard.set(bookmarks, forKey: importedFolderBookmarksKey)
 }
 
+/// Captures the process unified log (os_log/NSLog included) for diagnostics
+/// export — the app-readable counterpart of Android's `logcat -d -t 5000`.
+/// Bounded to the last 24 hours; Kotlin clamps the line count.
+private func captureUnifiedLogEntries() -> String? {
+    if #available(iOS 15.0, *) {
+        return autoreleasepool { () -> String? in
+            guard let store = try? OSLogStore(scope: .currentProcessIdentifier) else { return nil }
+            // Reverse order yields newest first; cap at Android's logcat export size.
+            guard let entries = try? store.getEntries(with: .reverse) else { return nil }
+            var lines: [String] = []
+            let cutoff = Date().addingTimeInterval(-60 * 60 * 24)
+            for case let entry as any OSLogEntry & OSLogEntryWithPayload in entries {
+                if entry.date < cutoff { break }
+                if lines.count >= 5_000 { break }
+                lines.append(entry.composedMessage)
+            }
+            lines.reverse()
+            return lines.isEmpty ? nil : lines.joined(separator: "\n")
+        }
+    }
+    return nil
+}
+
 private func refreshImportedFolders(bridge: ReaderIosBridge) {
     let bookmarks = UserDefaults.standard.dictionary(forKey: importedFolderBookmarksKey) as? [String: Data] ?? [:]
     for (folderName, bookmark) in bookmarks {
@@ -315,31 +412,71 @@ private func refreshImportedFolders(bridge: ReaderIosBridge) {
         if isStale {
             updateImportedFolderBookmark(folderURL, folderName: folderName)
         }
-        recordImportedFolderScan(
+        scheduleImportedFolderScan(
             bridge: bridge,
             folderName: folderName,
-            scan: copyImportedFolderToAppSupport(folderURL, folderName: folderName)
+            sourceURL: folderURL
         )
     }
 }
 
-private func removeImportedFolder(named folderName: String) {
-    var bookmarks = UserDefaults.standard.dictionary(forKey: importedFolderBookmarksKey) as? [String: Data] ?? [:]
-    bookmarks.removeValue(forKey: folderName)
-    UserDefaults.standard.set(bookmarks, forKey: importedFolderBookmarksKey)
-    guard let appSupport = try? FileManager.default.url(
-        for: .applicationSupportDirectory,
-        in: .userDomainMask,
-        appropriateFor: nil,
-        create: true
-    ) else {
-        return
+/// Folder enumeration, copying, and hashing can be arbitrarily expensive. Keep it off the
+/// main actor, while serializing scans for the same folder so an app-activation refresh cannot
+/// replace a user-triggered import halfway through. Only the newest completed scan is applied.
+@MainActor
+private func scheduleImportedFolderScan(
+    bridge: ReaderIosBridge,
+    folderName: String,
+    sourceURL: URL
+) {
+    let generation = (importedFolderScanGenerations[folderName] ?? 0) &+ 1
+    importedFolderScanGenerations[folderName] = generation
+    let previousTask = importedFolderScanTasks[folderName]
+    let task = Task { @MainActor in
+        if let previousTask {
+            _ = await previousTask.value
+        }
+        guard importedFolderScanGenerations[folderName] == generation else { return }
+        let scan = await Task.detached(priority: .userInitiated) {
+            copyImportedFolderToAppSupport(sourceURL, folderName: folderName)
+        }.value
+        guard importedFolderScanGenerations[folderName] == generation else { return }
+        recordImportedFolderScan(bridge: bridge, folderName: folderName, scan: scan)
+        importedFolderScanTasks.removeValue(forKey: folderName)
     }
-    let managedFolder = appSupport
-        .appendingPathComponent("LocalFolders", isDirectory: true)
-        .appendingPathComponent(safeLocalFolderName(folderName), isDirectory: true)
-    if FileManager.default.fileExists(atPath: managedFolder.path) {
-        try? FileManager.default.removeItem(at: managedFolder)
+    importedFolderScanTasks[folderName] = task
+}
+
+@MainActor
+private func removeImportedFolder(named folderName: String) {
+    let pendingTask = importedFolderScanTasks[folderName]
+    importedFolderScanGenerations[folderName] = (importedFolderScanGenerations[folderName] ?? 0) &+ 1
+    pendingTask?.cancel()
+
+    // Do not remove the managed copy until an in-flight detached scan has finished. Otherwise
+    // that scan can atomically replace the folder after the user just deleted it.
+    Task { @MainActor in
+        if let pendingTask {
+            _ = await pendingTask.value
+        }
+        importedFolderScanTasks.removeValue(forKey: folderName)
+        var bookmarks = UserDefaults.standard.dictionary(forKey: importedFolderBookmarksKey) as? [String: Data] ?? [:]
+        bookmarks.removeValue(forKey: folderName)
+        UserDefaults.standard.set(bookmarks, forKey: importedFolderBookmarksKey)
+        guard let appSupport = try? FileManager.default.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        ) else {
+            return
+        }
+        let managedFolder = appSupport
+            .appendingPathComponent("LocalFolders", isDirectory: true)
+            .appendingPathComponent(safeLocalFolderName(folderName), isDirectory: true)
+        if FileManager.default.fileExists(atPath: managedFolder.path) {
+            try? FileManager.default.removeItem(at: managedFolder)
+        }
     }
 }
 
@@ -386,6 +523,77 @@ private func deleteImportedFolderFiles(folderName: String, managedPaths: [String
         try? FileManager.default.removeItem(at: sourceURL)
         try? FileManager.default.removeItem(at: managedURL)
     }
+}
+
+private func addImportedFolderFile(folderName: String, sourcePath: String, fileName: String) -> String? {
+    let bookmarks = UserDefaults.standard.dictionary(forKey: importedFolderBookmarksKey) as? [String: Data] ?? [:]
+    guard let bookmark = bookmarks[folderName] else { return nil }
+    var isStale = false
+    guard let sourceRoot = try? URL(
+        resolvingBookmarkData: bookmark,
+        options: [.withoutUI],
+        relativeTo: nil,
+        bookmarkDataIsStale: &isStale
+    ), let appSupport = try? FileManager.default.url(
+        for: .applicationSupportDirectory,
+        in: .userDomainMask,
+        appropriateFor: nil,
+        create: true
+    ) else {
+        return nil
+    }
+    if isStale {
+        updateImportedFolderBookmark(sourceRoot, folderName: folderName)
+    }
+
+    let managedRoot = appSupport
+        .appendingPathComponent("LocalFolders", isDirectory: true)
+        .appendingPathComponent(safeLocalFolderName(folderName), isDirectory: true)
+    let sourceURL = URL(fileURLWithPath: sourcePath)
+    let uniqueName = uniqueImportedFolderFileName(
+        sourceRoot: sourceRoot.standardizedFileURL,
+        managedRoot: managedRoot.standardizedFileURL,
+        preferredName: fileName
+    )
+
+    let didStartAccessing = sourceRoot.startAccessingSecurityScopedResource()
+    defer {
+        if didStartAccessing {
+            sourceRoot.stopAccessingSecurityScopedResource()
+        }
+    }
+    do {
+        let fileManager = FileManager.default
+        try fileManager.createDirectory(at: managedRoot, withIntermediateDirectories: true)
+        let managedURL = managedRoot.appendingPathComponent(uniqueName)
+        try fileManager.copyItem(at: sourceURL, to: managedURL)
+        try? fileManager.copyItem(at: sourceURL, to: sourceRoot.appendingPathComponent(uniqueName))
+        return managedURL.path
+    } catch {
+        try? FileManager.default.removeItem(at: managedRoot.appendingPathComponent(uniqueName))
+        return nil
+    }
+}
+
+private func uniqueImportedFolderFileName(
+    sourceRoot: URL,
+    managedRoot: URL,
+    preferredName: String
+) -> String {
+    let stem = (preferredName as NSString).deletingPathExtension
+    let fileExtension = (preferredName as NSString).pathExtension
+    var candidate = preferredName
+    var suffix = 1
+    func exists(_ url: URL) -> Bool {
+        FileManager.default.fileExists(atPath: url.path)
+    }
+    while exists(sourceRoot.appendingPathComponent(candidate)) || exists(managedRoot.appendingPathComponent(candidate)) {
+        candidate = fileExtension.isEmpty
+            ? "\(stem)_\(suffix)"
+            : "\(stem)_\(suffix).\(fileExtension)"
+        suffix += 1
+    }
+    return candidate
 }
 
 private func replaceImportedFolderFile(folderName: String, managedPath: String) -> String? {
@@ -441,7 +649,7 @@ private func replaceImportedFolderFile(folderName: String, managedPath: String) 
     }
 }
 
-private struct ImportedFolderScan {
+private struct ImportedFolderScan: Sendable {
     let files: [ImportedReaderFile]
     let succeeded: Bool
 }
@@ -463,7 +671,7 @@ private func recordImportedFolderScan(
     )
 }
 
-private func copyImportedFolderToAppSupport(_ sourceURL: URL, folderName: String? = nil) -> ImportedFolderScan {
+nonisolated private func copyImportedFolderToAppSupport(_ sourceURL: URL, folderName: String? = nil) -> ImportedFolderScan {
     let didStartAccessing = sourceURL.startAccessingSecurityScopedResource()
     defer {
         if didStartAccessing {
@@ -564,12 +772,100 @@ private func copyImportedFolderToAppSupport(_ sourceURL: URL, folderName: String
     }
 }
 
-private func safeLocalFolderName(_ name: String) -> String {
+/// Audiobook folder imports are app-owned files, matching Android's
+/// AudiobookImporter.importFolder semantics. They must not become a generic
+/// synced folder (which would also import EPUB/PDF files and remove audio on
+/// folder-bookmark deletion).
+nonisolated private func copyImportedAudiobookFolderToAppSupport(_ sourceURL: URL) -> ImportedFolderScan {
+    let didStartAccessing = sourceURL.startAccessingSecurityScopedResource()
+    defer {
+        if didStartAccessing {
+            sourceURL.stopAccessingSecurityScopedResource()
+        }
+    }
+
+    let audiobookExtensions: Set<String> = ["mp3", "m4a", "m4b", "aac", "ogg", "opus", "flac"]
+    do {
+        let fileManager = FileManager.default
+        let appSupport = try fileManager.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        )
+        let importsRoot = appSupport
+            .appendingPathComponent("Imports", isDirectory: true)
+            .appendingPathComponent("Audiobooks-\(UUID().uuidString)", isDirectory: true)
+        try fileManager.createDirectory(at: importsRoot, withIntermediateDirectories: true)
+        let resourceKeys: [URLResourceKey] = [
+            .isRegularFileKey,
+            .isDirectoryKey,
+            .fileSizeKey,
+            .contentModificationDateKey,
+        ]
+        var enumerationFailed = false
+        guard let enumerator = fileManager.enumerator(
+            at: sourceURL,
+            includingPropertiesForKeys: resourceKeys,
+            options: [.skipsHiddenFiles, .skipsPackageDescendants],
+            errorHandler: { _, _ in
+                enumerationFailed = true
+                return false
+            }
+        ) else {
+            return ImportedFolderScan(files: [], succeeded: false)
+        }
+
+        var imported: [ImportedReaderFile] = []
+        for case let itemURL as URL in enumerator {
+            let values = try itemURL.resourceValues(forKeys: Set(resourceKeys))
+            guard values.isRegularFile == true else { continue }
+            guard audiobookExtensions.contains(itemURL.pathExtension.lowercased()) else { continue }
+            let relativePath = itemURL.path.replacingOccurrences(
+                of: sourceURL.path + "/",
+                with: "",
+                options: [.anchored]
+            )
+            let destinationURL = importsRoot.appendingPathComponent(relativePath)
+            try fileManager.createDirectory(
+                at: destinationURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try fileManager.copyItem(at: itemURL, to: destinationURL)
+            guard let contentId = sha256FileId(destinationURL) else {
+                try? fileManager.removeItem(at: destinationURL)
+                enumerationFailed = true
+                break
+            }
+            imported.append(
+                ImportedReaderFile(
+                    name: itemURL.lastPathComponent,
+                    path: destinationURL.path,
+                    contentId: contentId,
+                    relativePath: relativePath,
+                    fileSize: Int64(values.fileSize ?? 0),
+                    lastModifiedTimestamp: Int64(
+                        (values.contentModificationDate?.timeIntervalSince1970 ?? 0) * 1000
+                    )
+                )
+            )
+        }
+        guard !enumerationFailed else {
+            try? fileManager.removeItem(at: importsRoot)
+            return ImportedFolderScan(files: [], succeeded: false)
+        }
+        return ImportedFolderScan(files: imported, succeeded: true)
+    } catch {
+        return ImportedFolderScan(files: [], succeeded: false)
+    }
+}
+
+nonisolated private func safeLocalFolderName(_ name: String) -> String {
     let cleaned = name.replacingOccurrences(of: "/", with: "_").trimmingCharacters(in: .whitespacesAndNewlines)
     return cleaned.isEmpty ? "Imported Folder" : cleaned
 }
 
-private struct ImportedReaderFile {
+private struct ImportedReaderFile: Sendable {
     let name: String
     let path: String
     let contentId: String
@@ -578,7 +874,7 @@ private struct ImportedReaderFile {
     let lastModifiedTimestamp: Int64
 }
 
-private func sha256FileId(_ url: URL) -> String? {
+nonisolated private func sha256FileId(_ url: URL) -> String? {
     guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
     defer { try? handle.close() }
     var hasher = SHA256()
@@ -639,7 +935,15 @@ private func copyImportedFileToAppSupport(_ sourceURL: URL, directoryName: Strin
     }
 }
 
-private func copyExternalFileToTemporaryStorage(_ sourceURL: URL) -> ImportedReaderFile? {
+private func copyExternalFileToTemporaryStorage(_ sourceURL: URL, requestId: String) -> ImportedReaderFile? {
+    let fileManager = FileManager.default
+    var requestDirectory: URL?
+    var keepRequestDirectory = false
+    defer {
+        if !keepRequestDirectory, let requestDirectory {
+            try? fileManager.removeItem(at: requestDirectory)
+        }
+    }
     let didStartAccessing = sourceURL.startAccessingSecurityScopedResource()
     defer {
         if didStartAccessing {
@@ -647,19 +951,18 @@ private func copyExternalFileToTemporaryStorage(_ sourceURL: URL) -> ImportedRea
         }
     }
     do {
-        let fileManager = FileManager.default
-        let directory = fileManager.temporaryDirectory.appendingPathComponent("ExternalOpen", isDirectory: true)
-        if fileManager.fileExists(atPath: directory.path) {
-            try fileManager.removeItem(at: directory)
-        }
+        let rootDirectory = fileManager.temporaryDirectory.appendingPathComponent("ExternalOpen", isDirectory: true)
+        let safeRequestId = requestId.replacingOccurrences(of: "/", with: "_")
+        let directory = rootDirectory.appendingPathComponent(safeRequestId, isDirectory: true)
+        requestDirectory = directory
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
         let destination = directory.appendingPathComponent(uniqueImportedFileName(sourceURL.lastPathComponent))
         try fileManager.copyItem(at: sourceURL, to: destination)
         guard let contentId = sha256FileId(destination) else {
-            try? fileManager.removeItem(at: destination)
             return nil
         }
         let values = try destination.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+        keepRequestDirectory = true
         return ImportedReaderFile(
             name: sourceURL.lastPathComponent,
             path: destination.path,
@@ -690,6 +993,9 @@ private struct ReaderComposeHost: UIViewControllerRepresentable {
     let bridge: ReaderIosBridge
     @Binding var isSystemUiHidden: Bool
     let onImportBooks: () -> Void
+    let onImportAudiobookFile: () -> Void
+    let onImportAudiobookMultiple: () -> Void
+    let onImportAudiobookFolder: () -> Void
     let onImportFolder: () -> Void
     let onRefreshFolders: () -> Void
     let onImportFonts: () -> Void
@@ -700,6 +1006,9 @@ private struct ReaderComposeHost: UIViewControllerRepresentable {
         let composeController = ReaderIosAppKt.readerComposeViewController(
             bridge: bridge,
             onImportBooks: onImportBooks,
+            onImportAudiobookFile: onImportAudiobookFile,
+            onImportAudiobookMultiple: onImportAudiobookMultiple,
+            onImportAudiobookFolder: onImportAudiobookFolder,
             onImportFolder: onImportFolder,
             onRefreshFolders: onRefreshFolders,
             onImportFonts: onImportFonts,
@@ -707,7 +1016,7 @@ private struct ReaderComposeHost: UIViewControllerRepresentable {
             onRemoveFolder: onRemoveFolder
         )
         let hostController = ReaderStatusBarHostController(content: composeController)
-        bridge.setSystemUiHandler { statusHidden, navigationHidden, lightContent, backgroundArgb, edgeToEdge in
+        bridge.setSystemUiHandler { statusHidden, navigationHidden, lightContent, backgroundArgb in
             DispatchQueue.main.async {
                 isSystemUiHidden = statusHidden.boolValue
             }
@@ -715,8 +1024,7 @@ private struct ReaderComposeHost: UIViewControllerRepresentable {
                 statusHidden: statusHidden.boolValue,
                 navigationHidden: navigationHidden.boolValue,
                 lightContent: lightContent.boolValue,
-                backgroundArgb: backgroundArgb.int64Value,
-                edgeToEdge: edgeToEdge.boolValue
+                backgroundArgb: backgroundArgb.int64Value
             )
         }
         bridge.setOrientationHandler { mode in
@@ -734,14 +1042,8 @@ private final class ReaderStatusBarHostController: UIViewController {
     private var hidesStatusBar = false
     private var hidesHomeIndicator = false
     private var usesLightStatusBarContent = false
-    private var contentInterfaceStyle: UIUserInterfaceStyle = .unspecified
     private var readerOrientationMode: Int32 = 0
-    private let statusBarBackdrop = UIView()
-    private let navigationBarBackdrop = UIView()
-    private var contentTopToSafeAreaConstraint: NSLayoutConstraint?
-    private var contentBottomToSafeAreaConstraint: NSLayoutConstraint?
-    private var contentTopToEdgeConstraint: NSLayoutConstraint?
-    private var contentBottomToEdgeConstraint: NSLayoutConstraint?
+    private var pencilInteraction: UIPencilInteraction?
 
     init(content: UIViewController) {
         self.contentController = content
@@ -755,48 +1057,46 @@ private final class ReaderStatusBarHostController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        contentInterfaceStyle = traitCollection.userInterfaceStyle
-        contentController.overrideUserInterfaceStyle = contentInterfaceStyle
+        IosPencilShortcutKt.resetIosPencilEraserOverride()
         addChild(contentController)
         contentController.view.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(contentController.view)
-        let topToSafeArea = contentController.view.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor)
-        let bottomToSafeArea = contentController.view.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor)
-        let topToEdge = contentController.view.topAnchor.constraint(equalTo: view.topAnchor)
-        let bottomToEdge = contentController.view.bottomAnchor.constraint(equalTo: view.bottomAnchor)
-        contentTopToSafeAreaConstraint = topToSafeArea
-        contentBottomToSafeAreaConstraint = bottomToSafeArea
-        contentTopToEdgeConstraint = topToEdge
-        contentBottomToEdgeConstraint = bottomToEdge
+        // The Compose window is always edge-to-edge like Android's
+        // enableEdgeToEdge: screens paint their own backgrounds beneath the
+        // transparent system bars instead of the host insetting the content.
         NSLayoutConstraint.activate([
             contentController.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             contentController.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            topToSafeArea,
-            bottomToSafeArea
+            contentController.view.topAnchor.constraint(equalTo: view.topAnchor),
+            contentController.view.bottomAnchor.constraint(equalTo: view.bottomAnchor)
         ])
         contentController.didMove(toParent: self)
 
-        statusBarBackdrop.isUserInteractionEnabled = false
-        navigationBarBackdrop.isUserInteractionEnabled = false
-        statusBarBackdrop.translatesAutoresizingMaskIntoConstraints = false
-        navigationBarBackdrop.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(statusBarBackdrop)
-        view.addSubview(navigationBarBackdrop)
-        NSLayoutConstraint.activate([
-            statusBarBackdrop.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            statusBarBackdrop.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            statusBarBackdrop.topAnchor.constraint(equalTo: view.topAnchor),
-            statusBarBackdrop.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            navigationBarBackdrop.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            navigationBarBackdrop.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            navigationBarBackdrop.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            navigationBarBackdrop.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor)
-        ])
+        // UIPencilInteraction is the public UIKit surface for Pencil side
+        // gestures. Installing it on the stable host (instead of the Compose
+        // view) keeps it alive across reader navigation and split panes.
+        let interaction = UIPencilInteraction()
+        interaction.delegate = self
+        view.addInteraction(interaction)
+        pencilInteraction = interaction
+
+        // SwiftUI resolves the scene's status bar appearance before this child
+        // is attached, so the first frame renders without any bar content until
+        // an explicit appearance update is requested.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            setNeedsStatusBarAppearanceUpdate()
+            setNeedsUpdateOfHomeIndicatorAutoHidden()
+        }
     }
 
     override var prefersStatusBarHidden: Bool { hidesStatusBar }
     override var prefersHomeIndicatorAutoHidden: Bool { hidesHomeIndicator }
     override var preferredStatusBarUpdateAnimation: UIStatusBarAnimation { .fade }
+
+    // Android parity: the shared bridge always publishes an explicit style —
+    // the app theme drives it on home/library and reader themes drive it while
+    // reading — so the bar icons always contrast with the surface beneath.
     override var preferredStatusBarStyle: UIStatusBarStyle {
         usesLightStatusBarContent ? .lightContent : .darkContent
     }
@@ -820,22 +1120,17 @@ private final class ReaderStatusBarHostController: UIViewController {
         }
     }
 
-    private func updateSystemBarLayout(edgeToEdge: Bool) {
-        let safeAreaConstraints = [contentTopToSafeAreaConstraint, contentBottomToSafeAreaConstraint].compactMap { $0 }
-        let edgeConstraints = [contentTopToEdgeConstraint, contentBottomToEdgeConstraint].compactMap { $0 }
-        NSLayoutConstraint.deactivate(safeAreaConstraints + edgeConstraints)
-        NSLayoutConstraint.activate(edgeToEdge ? edgeConstraints : safeAreaConstraints)
-        view.setNeedsLayout()
-    }
-
-    func updateSystemUi(statusHidden: Bool, navigationHidden: Bool, lightContent: Bool, backgroundArgb: Int64, edgeToEdge: Bool) {
+    func updateSystemUi(
+        statusHidden: Bool,
+        navigationHidden: Bool,
+        lightContent: Bool,
+        backgroundArgb: Int64
+    ) {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             hidesStatusBar = statusHidden
             hidesHomeIndicator = navigationHidden
             usesLightStatusBarContent = lightContent
-            overrideUserInterfaceStyle = lightContent ? .dark : .light
-            contentController.overrideUserInterfaceStyle = contentInterfaceStyle
             let bits = UInt64(bitPattern: backgroundArgb)
             let red = CGFloat((bits >> 16) & 0xFF) / 255
             let green = CGFloat((bits >> 8) & 0xFF) / 255
@@ -843,19 +1138,27 @@ private final class ReaderStatusBarHostController: UIViewController {
             let alpha = CGFloat((bits >> 24) & 0xFF) / 255
             let themeColor = UIColor(red: red, green: green, blue: blue, alpha: alpha)
             view.backgroundColor = themeColor
-            view.window?.backgroundColor = view.backgroundColor
-            statusBarBackdrop.backgroundColor = themeColor
-            navigationBarBackdrop.backgroundColor = themeColor
-            // In edge-to-edge modes these views would sit above Compose and leave a permanent
-            // surface-colored strip after Sync hides the reader chrome. The Compose toolbar
-            // itself paints beneath the system bars while visible; when it is hidden the PDF
-            // must be allowed to draw all the way to the screen edges.
-            statusBarBackdrop.isHidden = edgeToEdge
-            navigationBarBackdrop.isHidden = edgeToEdge
-            updateSystemBarLayout(edgeToEdge: edgeToEdge)
+            view.window?.backgroundColor = themeColor
             setNeedsStatusBarAppearanceUpdate()
             setNeedsUpdateOfHomeIndicatorAutoHidden()
         }
+    }
+}
+
+extension ReaderStatusBarHostController: UIPencilInteractionDelegate {
+    func pencilInteractionDidTap(_ interaction: UIPencilInteraction) {
+        guard UIPencilInteraction.preferredTapAction == .switchEraser else { return }
+        _ = IosPencilShortcutKt.toggleIosPencilEraserOverride()
+    }
+
+    @available(iOS 17.5, *)
+    func pencilInteraction(
+        _ interaction: UIPencilInteraction,
+        didReceiveSqueeze squeeze: UIPencilInteraction.Squeeze
+    ) {
+        guard squeeze.phase == .ended,
+              UIPencilInteraction.preferredSqueezeAction == .switchEraser else { return }
+        _ = IosPencilShortcutKt.toggleIosPencilEraserOverride()
     }
 }
 

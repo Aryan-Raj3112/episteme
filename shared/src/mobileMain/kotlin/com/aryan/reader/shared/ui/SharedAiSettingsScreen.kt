@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -39,9 +40,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.aryan.reader.shared.GEMINI_CLOUD_TTS_MODEL
+import com.aryan.reader.shared.GEMINI_CLOUD_TTS_MODEL_ID
 import com.aryan.reader.shared.ReaderAiByokSettings
 import com.aryan.reader.shared.ReaderAiModelOption
 import com.aryan.reader.shared.ReaderAiModelOptions
+import com.aryan.reader.shared.ReaderCloudTtsVoices
+import com.aryan.reader.shared.ReaderTtsCacheSummary
 
 data class SharedAiSettingsStrings(
     val title: String,
@@ -88,6 +92,8 @@ fun SharedAiSettingsScreen(
     onSaveKey: (provider: String, key: String) -> Unit,
     onDeleteKey: (provider: String) -> Unit,
     onSettingsChange: (ReaderAiByokSettings) -> Unit,
+    cloudCacheSummary: ReaderTtsCacheSummary? = null,
+    onClearCloudTtsCache: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     var currentSettings by remember(settings) { mutableStateOf(settings) }
@@ -96,6 +102,7 @@ fun SharedAiSettingsScreen(
     var pendingKey by remember { mutableStateOf("") }
     var showSaveConfirm by remember { mutableStateOf(false) }
     var providerToDelete by remember { mutableStateOf<String?>(null) }
+    var ttsVoiceMenuExpanded by remember { mutableStateOf(false) }
 
     fun updateSettings(updated: ReaderAiByokSettings) {
         currentSettings = updated
@@ -120,6 +127,7 @@ fun SharedAiSettingsScreen(
                 .fillMaxSize()
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
+                .imePadding()
                 .padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
@@ -216,6 +224,61 @@ fun SharedAiSettingsScreen(
                 listOf(ReaderAiModelOption("gemini", GEMINI_CLOUD_TTS_MODEL)),
                 strings,
             ) { updateSettings(currentSettings.copy(ttsModel = it)) }
+            if (currentSettings.ttsModel == GEMINI_CLOUD_TTS_MODEL_ID) {
+                Text("Cloud TTS voice", style = MaterialTheme.typography.titleMedium)
+                ExposedDropdownMenuBox(
+                    expanded = ttsVoiceMenuExpanded,
+                    onExpandedChange = { ttsVoiceMenuExpanded = it },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    val selectedVoice = ReaderCloudTtsVoices.firstOrNull { it.id == currentSettings.ttsSpeakerId }
+                        ?: ReaderCloudTtsVoices.first()
+                    OutlinedTextField(
+                        value = "${selectedVoice.name} · ${selectedVoice.description}",
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Voice") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = ttsVoiceMenuExpanded) },
+                        modifier = Modifier.fillMaxWidth().menuAnchor(),
+                    )
+                    ExposedDropdownMenu(
+                        expanded = ttsVoiceMenuExpanded,
+                        onDismissRequest = { ttsVoiceMenuExpanded = false },
+                    ) {
+                        ReaderCloudTtsVoices.forEach { voice ->
+                            DropdownMenuItem(
+                                text = {
+                                    Column {
+                                        Text(voice.name)
+                                        Text(voice.description, style = MaterialTheme.typography.bodySmall)
+                                    }
+                                },
+                                onClick = {
+                                    updateSettings(currentSettings.copy(ttsSpeakerId = voice.id))
+                                    ttsVoiceMenuExpanded = false
+                                },
+                                trailingIcon = if (voice.id == currentSettings.ttsSpeakerId) {
+                                    { Icon(Icons.Default.Check, contentDescription = null) }
+                                } else null,
+                            )
+                        }
+                    }
+                }
+                cloudCacheSummary?.let { cache ->
+                    Text(
+                        if (cache.hasCachedAudio) {
+                            "Cached cloud audio: ${cache.cachedChunkCount} chunks · ${cache.currentVoiceLabel}"
+                        } else {
+                            "No cached cloud audio"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (cache.hasCachedAudio) {
+                        TextButton(onClick = onClearCloudTtsCache) { Text("Clear cached cloud audio") }
+                    }
+                }
+            }
         }
     }
 

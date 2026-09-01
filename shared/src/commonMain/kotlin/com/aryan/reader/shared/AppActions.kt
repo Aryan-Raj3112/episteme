@@ -95,6 +95,7 @@ sealed interface AppAction {
     data class ReaderToolOrderChanged(val toolOrder: List<ReaderTool>) : AppAction
     data class ReaderHighlightPaletteChanged(val palette: ReaderHighlightPalette) : AppAction
     data class PdfHighlighterPaletteChanged(val palette: SharedPdfHighlighterPalette) : AppAction
+    data class PdfHighlighterSnapChanged(val enabled: Boolean) : AppAction
     data class ReaderTtsReplacementPreferencesChanged(
         val preferences: ReaderTtsReplacementPreferences,
     ) : AppAction

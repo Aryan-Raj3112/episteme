@@ -341,6 +341,7 @@
     <string name="banner_clearing_cloud_local_data">Borrando todos los datos locales y de la nube…</string>
     <string name="banner_cloud_local_data_cleared">Todos los datos locales y de la nube se borraron correctamente.</string>
     <string name="error_clear_all_data">Error: no se pudieron borrar todos los datos.</string>
+    <string name="error_cloud_delete_pending">No se pudo conectar con la nube. Tu eliminación se completará automáticamente la próxima vez que estés en línea.</string>
     <string name="banner_local_data_cleared">Todos los datos locales borrados.</string>
     <string name="error_sign_in_failed">No se pudo iniciar sesión. Inténtalo de nuevo.</string>
     <string name="error_no_google_account">No se pudo encontrar una cuenta de Google. Esto puede ocurrir en una instalación nueva; inténtalo de nuevo en un momento.</string>

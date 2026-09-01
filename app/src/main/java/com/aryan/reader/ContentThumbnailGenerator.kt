@@ -14,6 +14,7 @@ import com.aryan.reader.epub.OdtParser
 import com.aryan.reader.pdf.ArchiveDocumentWrapper
 import com.aryan.reader.pdf.PdfCoverGenerator
 import com.aryan.reader.pptx.PptxCoverGenerator
+import com.aryan.reader.shared.reader.SharedTextDecoding
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.jsoup.Jsoup
@@ -161,12 +162,12 @@ internal class ContentThumbnailGenerator(context: Context) {
     }
 
     private fun extractHtmlText(input: InputStream): String? {
-        val raw = input.bufferedReader(Charsets.UTF_8).use { it.readTextLimited(MAX_TEXT_SOURCE_CHARS) }
+        val raw = SharedTextDecoding.decode(input.readBytesLimited(MAX_TEXT_SOURCE_BYTES))
         return Jsoup.parse(raw).body().text().takeIf { it.isNotBlank() }
     }
 
     private fun readPlainText(input: InputStream): String? {
-        return input.bufferedReader(Charsets.UTF_8).use { it.readTextLimited(MAX_TEXT_SOURCE_CHARS) }
+        return SharedTextDecoding.decode(input.readBytesLimited(MAX_TEXT_SOURCE_BYTES))
             .takeIf { it.isNotBlank() }
     }
 
@@ -292,7 +293,7 @@ internal class ContentThumbnailGenerator(context: Context) {
         return candidate
     }
 
-    private fun InputStream.readTextLimited(maxBytes: Int): String {
+    private fun InputStream.readBytesLimited(maxBytes: Int): ByteArray {
         val output = java.io.ByteArrayOutputStream(minOf(maxBytes, DEFAULT_BUFFER_SIZE))
         val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
         var total = 0
@@ -302,7 +303,7 @@ internal class ContentThumbnailGenerator(context: Context) {
             output.write(buffer, 0, count)
             total += count
         }
-        return output.toString(Charsets.UTF_8.name())
+        return output.toByteArray()
     }
 
     private fun java.io.Reader.readTextLimited(maxChars: Int): String {
@@ -321,7 +322,7 @@ internal class ContentThumbnailGenerator(context: Context) {
     private fun StringBuilder.endsWith(char: Char): Boolean = isNotEmpty() && this[length - 1] == char
 
     companion object {
-        private const val MAX_TEXT_SOURCE_CHARS = 256_000
+        private const val MAX_TEXT_SOURCE_BYTES = 256_000
         private const val MAX_PREVIEW_TEXT_CHARS = 8_000
         private val ODT_TEXT_TAGS = setOf("p", "h", "span", "a")
         private val FB2_TEXT_TAGS = setOf("p", "v", "subtitle", "text-author")

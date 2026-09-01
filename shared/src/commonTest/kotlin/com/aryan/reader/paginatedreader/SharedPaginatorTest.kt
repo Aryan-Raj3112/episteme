@@ -65,9 +65,15 @@ class SharedPaginatorTest {
         }
         val incrementalProvider = object : BlockMeasurementProvider {
             override suspend fun measure(block: ContentBlock): Int = when (block) {
-                is FlexContainerBlock -> block.children.sumOf { measure(it) }
+                is FlexContainerBlock -> {
+                    var total = 0
+                    for (child in block.children) {
+                        total += measure(child)
+                    }
+                    total
+                }
                 else -> {
-                    childMeasurements[block.blockIndex] = childMeasurements.getOrDefault(block.blockIndex, 0) + 1
+                    childMeasurements[block.blockIndex] = (childMeasurements[block.blockIndex] ?: 0) + 1
                     10
                 }
             }
@@ -103,5 +109,139 @@ class SharedPaginatorTest {
 
         assertEquals(10, pages.size)
         assertTrue(childMeasurements.values.max() <= 3, "rows should not be remeasured for every later page")
+    }
+
+    @Test
+    fun breakInsideAvoidBlockTallerThanFullPageIsStillSplit() = kotlinx.coroutines.test.runTest {
+        val avoid = ParagraphBlock(
+            AnnotatedString("avoid"),
+            style = BlockStyle(breakInside = "avoid"),
+            blockIndex = 9
+        )
+        val part1 = avoid.copy(content = AnnotatedString("av"))
+        val part2 = avoid.copy(content = AnnotatedString("oid"))
+        val provider = object : BlockMeasurementProvider {
+            override suspend fun measure(block: ContentBlock): Int = when (block) {
+                avoid -> 1200
+                part1 -> 400
+                part2 -> 800
+                else -> error("unexpected block $block")
+            }
+
+            override suspend fun split(block: ParagraphBlock, availableHeight: Int) =
+                if (block == avoid) part1 to part2 else null
+
+            override suspend fun split(block: WrappingContentBlock, availableHeight: Int) = null
+            override suspend fun split(block: TableBlock, availableHeight: Int) = null
+            override suspend fun split(block: FlexContainerBlock, availableHeight: Int) = null
+            override suspend fun split(block: ChantScoreBlock, availableHeight: Int) = null
+        }
+
+        val pages = paginateReaderBlocks(listOf(avoid), 1000, provider, Density(1f))
+
+        assertEquals(2, pages.size)
+        assertEquals("av", (pages[0].content.single() as ParagraphBlock).content.text)
+        assertEquals("oid", (pages[1].content.single() as ParagraphBlock).content.text)
+    }
+
+    @Test
+    fun breakInsideAvoidFlexTallerThanFullPageIsStillSplit() = kotlinx.coroutines.test.runTest {
+        val childA = ParagraphBlock(AnnotatedString("a"), blockIndex = 2)
+        val childB = ParagraphBlock(AnnotatedString("b"), blockIndex = 2)
+        val box = FlexContainerBlock(
+            children = listOf(childA, childB),
+            style = BlockStyle(breakInside = "avoid"),
+            blockIndex = 3
+        )
+        val head = FlexContainerBlock(children = listOf(childA), blockIndex = 3)
+        val tail = FlexContainerBlock(children = listOf(childB), blockIndex = 3)
+        val provider = object : BlockMeasurementProvider {
+            override suspend fun measure(block: ContentBlock): Int = when (block) {
+                box -> 1500
+                head -> 900
+                tail -> 600
+                else -> error("unexpected block $block")
+            }
+
+            override suspend fun split(block: FlexContainerBlock, availableHeight: Int) =
+                if (block == box) head to tail else null
+
+            override suspend fun split(block: ParagraphBlock, availableHeight: Int) = null
+            override suspend fun split(block: WrappingContentBlock, availableHeight: Int) = null
+            override suspend fun split(block: TableBlock, availableHeight: Int) = null
+            override suspend fun split(block: ChantScoreBlock, availableHeight: Int) = null
+        }
+
+        val pages = paginateReaderBlocks(listOf(box), 1000, provider, Density(1f))
+
+        assertEquals(2, pages.size)
+        assertEquals(head.withReaderExpectedHeight(0), pages[0].content.single().withReaderExpectedHeight(0))
+        assertEquals(tail.withReaderExpectedHeight(0), pages[1].content.single().withReaderExpectedHeight(0))
+    }
+
+    @Test
+    fun breakInsideAvoidShorterThanFullPageIsKeptWholeWhenPushedToNextPage() = kotlinx.coroutines.test.runTest {
+        val first = ParagraphBlock(AnnotatedString("first"), blockIndex = 1)
+        val avoid = ParagraphBlock(
+            AnnotatedString("avoid"),
+            style = BlockStyle(breakInside = "avoid"),
+            blockIndex = 2
+        )
+        val provider = object : BlockMeasurementProvider {
+            override suspend fun measure(block: ContentBlock): Int = when (block) {
+                first -> 900
+                avoid -> 800
+                else -> error("unexpected block $block")
+            }
+
+            override suspend fun split(block: ParagraphBlock, availableHeight: Int): Pair<ParagraphBlock, ParagraphBlock> =
+                error("split must not be attempted for a break-inside:avoid block that fits a full page")
+
+            override suspend fun split(block: WrappingContentBlock, availableHeight: Int) = null
+            override suspend fun split(block: TableBlock, availableHeight: Int) = null
+            override suspend fun split(block: FlexContainerBlock, availableHeight: Int) = null
+            override suspend fun split(block: ChantScoreBlock, availableHeight: Int) = null
+        }
+
+        val pages = paginateReaderBlocks(listOf(first, avoid), 1000, provider, Density(1f))
+
+        assertEquals(2, pages.size)
+        assertEquals(first.withReaderExpectedHeight(0), pages[0].content.single().withReaderExpectedHeight(0))
+        assertEquals(avoid.withReaderExpectedHeight(0), pages[1].content.single().withReaderExpectedHeight(0))
+    }
+
+    @Test
+    fun splitFragmentTallerThanRemainingSpaceIsRejectedAndPushedWhole() = kotlinx.coroutines.test.runTest {
+        // Regression: a splitter that returns a head fragment measuring taller than the space it
+        // was asked to fill must not be committed unchecked; that produced bottom-of-page
+        // overflows on decorated callout boxes.
+        val first = ParagraphBlock(AnnotatedString("first"), blockIndex = 1)
+        val splittable = ParagraphBlock(AnnotatedString("splittable"), blockIndex = 2)
+        val fatPart1 = ParagraphBlock(AnnotatedString("fat"), blockIndex = 2)
+        val part2 = ParagraphBlock(AnnotatedString("rest"), blockIndex = 2)
+        val provider = object : BlockMeasurementProvider {
+            override suspend fun measure(block: ContentBlock): Int = when (block) {
+                first -> 900
+                splittable -> 800
+                fatPart1 -> 500 // Exceeds the 100px left on page 1 despite fitting the ask loosely
+                part2 -> 300
+                else -> error("unexpected block $block")
+            }
+
+            override suspend fun split(block: ParagraphBlock, availableHeight: Int) =
+                if (block == splittable) fatPart1 to part2 else null
+
+            override suspend fun split(block: WrappingContentBlock, availableHeight: Int) = null
+            override suspend fun split(block: TableBlock, availableHeight: Int) = null
+            override suspend fun split(block: FlexContainerBlock, availableHeight: Int) = null
+            override suspend fun split(block: ChantScoreBlock, availableHeight: Int) = null
+        }
+
+        val pages = paginateReaderBlocks(listOf(first, splittable), 1000, provider, Density(1f))
+
+        assertEquals(2, pages.size)
+        assertEquals(first.withReaderExpectedHeight(0), pages[0].content.single().withReaderExpectedHeight(0))
+        // The whole block was pushed instead of its oversized fragment.
+        assertEquals(splittable.withReaderExpectedHeight(0), pages[1].content.single().withReaderExpectedHeight(0))
     }
 }

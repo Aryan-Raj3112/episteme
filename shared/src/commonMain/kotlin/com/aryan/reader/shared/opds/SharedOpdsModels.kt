@@ -1,5 +1,62 @@
 package com.aryan.reader.shared.opds
 
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+
+data class SharedOpdsDownloadLocation(
+    val folderUriString: String? = null,
+    val folderName: String? = null
+) {
+    val isAppStorage: Boolean
+        get() = folderUriString.isNullOrBlank()
+
+    /**
+     * Folder identity is URI based.  Display names are not unique and must not
+     * be used to redirect a persisted download to a different folder.
+     */
+    fun matchesFolderUri(candidateUri: String?): Boolean {
+        return !folderUriString.isNullOrBlank() && folderUriString == candidateUri
+    }
+}
+
+object SharedOpdsDownloadLocationCodec {
+    private val json = Json {
+        prettyPrint = true
+        ignoreUnknownKeys = true
+    }
+
+    fun encode(location: SharedOpdsDownloadLocation?): String? {
+        if (location == null) return null
+        if (location.isAppStorage) return null
+        return json.encodeToString(
+            JsonElement.serializer(),
+            JsonObject(
+                buildMap {
+                    put("folderUriString", JsonPrimitive(location.folderUriString))
+                    put("folderName", location.folderName?.let(::JsonPrimitive) ?: JsonNull)
+                }
+            )
+        )
+    }
+
+    fun decode(rawJson: String?): SharedOpdsDownloadLocation? {
+        if (rawJson.isNullOrBlank()) return null
+        val obj = runCatching { json.parseToJsonElement(rawJson).jsonObject }.getOrNull() ?: return null
+        val folderUriString = obj["folderUriString"]?.jsonPrimitive?.contentOrNull
+        if (folderUriString.isNullOrBlank()) return null
+        return SharedOpdsDownloadLocation(
+            folderUriString = folderUriString,
+            folderName = obj["folderName"]?.jsonPrimitive?.contentOrNull
+        )
+    }
+}
+
 data class OpdsCatalog(
     val id: String,
     val title: String,
@@ -115,6 +172,16 @@ data class SharedOpdsDownloadState(
     val progress: Float? = null
 )
 
+data class SharedOpdsTransferProgress(
+    val bytesReceived: Long,
+    val totalBytes: Long?
+) {
+    val fraction: Float?
+        get() = totalBytes
+            ?.takeIf { it > 0L }
+            ?.let { (bytesReceived.toFloat() / it.toFloat()).coerceIn(0f, 1f) }
+}
+
 data class SharedOpdsScreenState(
     val catalogs: List<OpdsCatalog> = emptyList(),
     val currentCatalog: OpdsCatalog? = null,
@@ -123,7 +190,8 @@ data class SharedOpdsScreenState(
     val errorMessage: String? = null,
     val isViewingCatalog: Boolean = false,
     val searchUrlTemplate: String? = null,
-    val downloadingState: Map<String, SharedOpdsDownloadState> = emptyMap()
+    val downloadingState: Map<String, SharedOpdsDownloadState> = emptyMap(),
+    val downloadLocation: SharedOpdsDownloadLocation? = null
 )
 
 data class OpdsStreamReference(
@@ -133,9 +201,17 @@ data class OpdsStreamReference(
     val catalogId: String? = null
 )
 
+data class SharedOpdsStreamPageRequest(
+    val reference: OpdsStreamReference,
+    val pageIndex: Int,
+    val maxWidth: Int = SharedOpdsStreamRequest.DefaultMaxWidth,
+)
+
 interface SharedOpdsRepository {
     fun loadCatalogs(): List<OpdsCatalog>
     fun saveCatalogs(catalogs: List<OpdsCatalog>)
     suspend fun fetchFeed(url: String, username: String? = null, password: String? = null): Result<OpdsFeed>
     suspend fun getSearchTemplate(openSearchUrl: String, username: String? = null, password: String? = null): String?
+    fun loadOpdsDownloadLocation(): SharedOpdsDownloadLocation? = null
+    fun saveOpdsDownloadLocation(location: SharedOpdsDownloadLocation?) = Unit
 }

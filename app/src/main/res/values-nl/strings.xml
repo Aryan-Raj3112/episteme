@@ -341,6 +341,7 @@
     <string name="banner_clearing_cloud_local_data">Alle cloud- en lokale gegevens wissen...</string>
     <string name="banner_cloud_local_data_cleared">Alle cloud- en lokale gegevens zijn met succes gewist.</string>
     <string name="error_clear_all_data">Fout: Het is niet gelukt om alle gegevens te wissen.</string>
+    <string name="error_cloud_delete_pending">Kon de cloud niet bereiken. Uw verwijdering wordt automatisch voltooid zodra u weer online bent.</string>
     <string name="banner_local_data_cleared">Alle lokale gegevens gewist.</string>
     <string name="error_sign_in_failed">Aanmelden mislukt. Probeer het opnieuw.</string>
     <string name="error_no_google_account">Kan geen Google-account vinden. Dit kan gebeuren bij een nieuwe installatie. Probeer het over enkele ogenblikken opnieuw.</string>

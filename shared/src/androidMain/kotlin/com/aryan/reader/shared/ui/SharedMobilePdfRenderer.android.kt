@@ -13,6 +13,8 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.pdf.PdfPageBounds
+import com.aryan.reader.shared.pdf.PdfReverseColorMode
+import com.aryan.reader.shared.pdf.invertPdfArgb
 import com.aryan.reader.shared.pdf.PDF_ZOOM_RENDER_SETTLE_MILLIS
 import com.aryan.reader.shared.pdf.PDF_ZOOM_TILE_CACHE_MAX_BYTES
 import com.aryan.reader.shared.pdf.PdfTileLruCache
@@ -38,12 +40,14 @@ internal actual fun rememberSharedMobilePdfPageRender(
     pageIndex: Int,
     zoomScale: Float,
     password: String?,
+    reverseColorMode: PdfReverseColorMode,
+    preserveImageColors: Boolean,
 ): SharedMobilePdfPageRender {
     val context = LocalContext.current.applicationContext
     registerSharedAndroidMobileApplicationContext(context)
-    var render by remember(book.path, pageIndex, password) { mutableStateOf(SharedMobilePdfPageRender()) }
-    LaunchedEffect(book.path, pageIndex, password) {
-        render = AndroidSharedPdfiumRenderer.render(context, book, pageIndex, password)
+    var render by remember(book.path, pageIndex, password, reverseColorMode, preserveImageColors) { mutableStateOf(SharedMobilePdfPageRender()) }
+    LaunchedEffect(book.path, pageIndex, password, reverseColorMode, preserveImageColors) {
+        render = AndroidSharedPdfiumRenderer.render(context, book, pageIndex, password, reverseColorMode, preserveImageColors)
     }
     return render
 }
@@ -53,16 +57,19 @@ internal actual fun rememberSharedMobilePdfPageThumbnail(
     book: BookItem,
     pageIndex: Int,
     password: String?,
+    reverseColorMode: PdfReverseColorMode,
+    preserveImageColors: Boolean,
 ): SharedMobilePdfPageThumbnail {
     val context = LocalContext.current.applicationContext
     registerSharedAndroidMobileApplicationContext(context)
-    var thumbnail by remember(book.path, pageIndex, password) {
-        mutableStateOf(AndroidPdfThumbnailCache.get(book, pageIndex, password))
+    var thumbnail by remember(book.path, pageIndex, password, reverseColorMode, preserveImageColors) {
+        mutableStateOf(AndroidPdfThumbnailCache.get(book, pageIndex, password, reverseColorMode, preserveImageColors))
     }
-    LaunchedEffect(book.path, pageIndex, password) {
+    LaunchedEffect(book.path, pageIndex, password, reverseColorMode, preserveImageColors) {
         if (thumbnail == null) {
-            thumbnail = AndroidSharedPdfiumRenderer.renderThumbnail(context, book, pageIndex, password)
-                ?.also { AndroidPdfThumbnailCache.put(book, pageIndex, password, it) }
+            thumbnail = AndroidPdfThumbnailCache.get(book, pageIndex, password, reverseColorMode, preserveImageColors)
+                ?: AndroidSharedPdfiumRenderer.renderThumbnail(context, book, pageIndex, password, reverseColorMode, preserveImageColors)
+                    ?.also { AndroidPdfThumbnailCache.put(book, pageIndex, password, reverseColorMode, preserveImageColors, it) }
                 ?: SharedMobilePdfPageThumbnail()
         }
     }
@@ -77,6 +84,8 @@ internal actual fun rememberSharedMobilePdfTileRenders(
     zoomScale: Float,
     visibleBounds: PdfPageBounds?,
     password: String?,
+    reverseColorMode: PdfReverseColorMode,
+    preserveImageColors: Boolean,
 ): List<SharedMobilePdfTileRender> {
     val context = LocalContext.current.applicationContext
     registerSharedAndroidMobileApplicationContext(context)
@@ -91,16 +100,16 @@ internal actual fun rememberSharedMobilePdfTileRenders(
     val requests = remember(pageAspectRatio, settledZoomScale, visibleBounds) {
         visibleBounds?.let { planPdfZoomTiles(pageAspectRatio, settledZoomScale, it) }.orEmpty()
     }
-    var tiles by remember(book.path, pageIndex, password) {
+    var tiles by remember(book.path, pageIndex, password, reverseColorMode, preserveImageColors) {
         mutableStateOf<List<SharedMobilePdfTileRender>>(emptyList())
     }
-    LaunchedEffect(book.path, pageIndex, requests, password, zoomIsSettling) {
+    LaunchedEffect(book.path, pageIndex, requests, password, zoomIsSettling, reverseColorMode, preserveImageColors) {
         if (zoomIsSettling) return@LaunchedEffect
         if (requests.isEmpty()) {
             tiles = emptyList()
             return@LaunchedEffect
         }
-        val cached = AndroidPdfTileCache.get(book, pageIndex, password, requests)
+        val cached = AndroidPdfTileCache.get(book, pageIndex, password, reverseColorMode, preserveImageColors, requests)
         val cachedIds = cached.mapTo(mutableSetOf()) { it.request.id }
         val missing = requests.filterNot { it.id in cachedIds }
         if (missing.isEmpty()) {
@@ -108,10 +117,10 @@ internal actual fun rememberSharedMobilePdfTileRenders(
             return@LaunchedEffect
         }
         val rendered = AndroidSharedPdfiumRenderer.renderTiles(
-            context, book, pageIndex, missing, password,
+            context, book, pageIndex, missing, password, reverseColorMode, preserveImageColors,
         )
         coroutineContext.ensureActive()
-        AndroidPdfTileCache.put(book, pageIndex, password, rendered)
+        AndroidPdfTileCache.put(book, pageIndex, password, reverseColorMode, preserveImageColors, rendered)
         tiles = cached + rendered
     }
     return tiles
@@ -150,18 +159,35 @@ private object AndroidPdfThumbnailCache {
     private const val MaxEntries = 96
     private val entries = LinkedHashMap<String, SharedMobilePdfPageThumbnail>()
 
-    fun get(book: BookItem, pageIndex: Int, password: String?) =
-        synchronized(entries) { entries[key(book, pageIndex, password)] }
+    fun get(
+        book: BookItem,
+        pageIndex: Int,
+        password: String?,
+        reverseColorMode: PdfReverseColorMode,
+        preserveImageColors: Boolean,
+    ) = synchronized(entries) { entries[key(book, pageIndex, password, reverseColorMode, preserveImageColors)] }
 
-    fun put(book: BookItem, pageIndex: Int, password: String?, value: SharedMobilePdfPageThumbnail) {
+    fun put(
+        book: BookItem,
+        pageIndex: Int,
+        password: String?,
+        reverseColorMode: PdfReverseColorMode,
+        preserveImageColors: Boolean,
+        value: SharedMobilePdfPageThumbnail,
+    ) {
         synchronized(entries) {
-            entries[key(book, pageIndex, password)] = value
+            entries[key(book, pageIndex, password, reverseColorMode, preserveImageColors)] = value
             while (entries.size > MaxEntries) entries.remove(entries.keys.first())
         }
     }
 
-    private fun key(book: BookItem, pageIndex: Int, password: String?) =
-        "${book.path.orEmpty()}|${book.fileContentModifiedTimestamp}|$pageIndex|${password.hashCode()}"
+    private fun key(
+        book: BookItem,
+        pageIndex: Int,
+        password: String?,
+        reverseColorMode: PdfReverseColorMode,
+        preserveImageColors: Boolean,
+    ) = "${book.path.orEmpty()}|${book.fileContentModifiedTimestamp}|$pageIndex|${password.hashCode()}|${reverseColorMode.id}|$preserveImageColors"
 }
 
 private object AndroidPdfTileCache {
@@ -171,15 +197,24 @@ private object AndroidPdfTileCache {
         book: BookItem,
         pageIndex: Int,
         password: String?,
+        reverseColorMode: PdfReverseColorMode,
+        preserveImageColors: Boolean,
         requests: List<com.aryan.reader.shared.pdf.PdfZoomTileRequest>,
     ): List<SharedMobilePdfTileRender> = synchronized(this) {
-        requests.mapNotNull { entries.get(key(book, pageIndex, password, it)) }
+        requests.mapNotNull { entries.get(key(book, pageIndex, password, reverseColorMode, preserveImageColors, it)) }
     }
 
-    fun put(book: BookItem, pageIndex: Int, password: String?, renders: List<SharedMobilePdfTileRender>) {
+    fun put(
+        book: BookItem,
+        pageIndex: Int,
+        password: String?,
+        reverseColorMode: PdfReverseColorMode,
+        preserveImageColors: Boolean,
+        renders: List<SharedMobilePdfTileRender>,
+    ) {
         synchronized(this) {
             renders.forEach { render ->
-                val key = key(book, pageIndex, password, render.request)
+                val key = key(book, pageIndex, password, reverseColorMode, preserveImageColors, render.request)
                 val bytes = render.request.widthPx.toLong() * render.request.heightPx * 4L
                 entries.put(key, render, bytes)
             }
@@ -190,9 +225,11 @@ private object AndroidPdfTileCache {
         book: BookItem,
         pageIndex: Int,
         password: String?,
+        reverseColorMode: PdfReverseColorMode,
+        preserveImageColors: Boolean,
         request: com.aryan.reader.shared.pdf.PdfZoomTileRequest,
     ) = "${book.path.orEmpty()}|${book.fileContentModifiedTimestamp}|$pageIndex|${password.hashCode()}|" +
-        "${request.fullWidthPx}x${request.fullHeightPx}|${request.id}"
+        "${reverseColorMode.id}|$preserveImageColors|${request.fullWidthPx}x${request.fullHeightPx}|${request.id}"
 }
 
 private object AndroidSharedPdfiumRenderer {
@@ -228,6 +265,8 @@ private object AndroidSharedPdfiumRenderer {
         book: BookItem,
         pageIndex: Int,
         password: String?,
+        reverseColorMode: PdfReverseColorMode = PdfReverseColorMode.RGB,
+        preserveImageColors: Boolean = false,
     ): SharedMobilePdfPageRender = runCatching {
         AndroidSharedPdfiumRuntime.mutex.withLock {
             context.openSharedPdfDescriptor(book).use { pfd ->
@@ -243,7 +282,13 @@ private object AndroidSharedPdfiumRenderer {
                         val bitmap = Bitmap.createBitmap(targetWidth, targetHeight, Bitmap.Config.ARGB_8888)
                         bitmap.eraseColor(android.graphics.Color.WHITE)
                         page.renderPageBitmap(bitmap, 0, 0, targetWidth, targetHeight, true)
-                        SharedMobilePdfPageRender(count, aspect, bitmap.asImageBitmap())
+                        val rasterizedMode = bitmap.applyPdfReverseColorMode(reverseColorMode, preserveImageColors)
+                        SharedMobilePdfPageRender(
+                            pageCount = count,
+                            aspectRatio = aspect,
+                            bitmap = bitmap.asImageBitmap(),
+                            rasterizedReverseColorMode = rasterizedMode,
+                        )
                     }
                 }
             }
@@ -262,6 +307,8 @@ private object AndroidSharedPdfiumRenderer {
         book: BookItem,
         pageIndex: Int,
         password: String?,
+        reverseColorMode: PdfReverseColorMode = PdfReverseColorMode.RGB,
+        preserveImageColors: Boolean = false,
     ): SharedMobilePdfPageThumbnail? = runCatching {
         AndroidSharedPdfiumRuntime.mutex.withLock {
             context.openSharedPdfDescriptor(book).use { pfd ->
@@ -277,6 +324,11 @@ private object AndroidSharedPdfiumRenderer {
                         val bitmap = Bitmap.createBitmap(targetWidth, targetHeight, Bitmap.Config.ARGB_8888)
                         bitmap.eraseColor(android.graphics.Color.WHITE)
                         page.renderPageBitmap(bitmap, 0, 0, targetWidth, targetHeight, true)
+                        bitmap.applyPdfReverseColorMode(
+                            mode = reverseColorMode,
+                            preserveImageColors = preserveImageColors,
+                            forceRgbTransform = true,
+                        )
                         SharedMobilePdfPageThumbnail(bitmap.asImageBitmap(), aspect)
                     }
                 }
@@ -290,6 +342,8 @@ private object AndroidSharedPdfiumRenderer {
         pageIndex: Int,
         requests: List<com.aryan.reader.shared.pdf.PdfZoomTileRequest>,
         password: String?,
+        reverseColorMode: PdfReverseColorMode = PdfReverseColorMode.RGB,
+        preserveImageColors: Boolean = false,
     ): List<SharedMobilePdfTileRender> {
         if (requests.isEmpty()) return emptyList()
         return runCatching {
@@ -312,7 +366,12 @@ private object AndroidSharedPdfiumRenderer {
                                     request.fullHeightPx,
                                     true,
                                 )
-                                SharedMobilePdfTileRender(request, bitmap.asImageBitmap())
+                                val rasterizedMode = bitmap.applyPdfReverseColorMode(reverseColorMode, preserveImageColors)
+                                SharedMobilePdfTileRender(
+                                    request = request,
+                                    bitmap = bitmap.asImageBitmap(),
+                                    rasterizedReverseColorMode = rasterizedMode,
+                                )
                             }
                         }
                     }
@@ -320,6 +379,26 @@ private object AndroidSharedPdfiumRenderer {
             }
         }.getOrDefault(emptyList())
     }
+}
+
+/**
+ * Applies nonlinear Okular modes once per cached render, never from Canvas' draw loop.
+ * Android's legacy renderer supplies image rectangles for preserve-image mode; the shared
+ * Pdfium adapter has no portable object-bound API, so it safely falls back to the full page.
+ */
+private fun Bitmap.applyPdfReverseColorMode(
+    mode: PdfReverseColorMode,
+    @Suppress("UNUSED_PARAMETER") preserveImageColors: Boolean,
+    forceRgbTransform: Boolean = false,
+): PdfReverseColorMode? {
+    if (mode == PdfReverseColorMode.RGB && !forceRgbTransform) return null
+    val row = IntArray(width)
+    for (y in 0 until height) {
+        getPixels(row, 0, width, 0, y, width, 1)
+        for (x in row.indices) row[x] = invertPdfArgb(row[x], mode)
+        setPixels(row, 0, width, 0, y, width, 1)
+    }
+    return mode
 }
 
 internal fun Context.openSharedPdfDescriptor(book: BookItem): android.os.ParcelFileDescriptor {

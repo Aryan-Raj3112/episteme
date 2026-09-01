@@ -5,6 +5,7 @@ import android.content.Context
 import androidx.core.net.toUri
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
+import com.aryan.reader.data.AndroidBookArtifactPaths
 import androidx.work.workDataOf
 import com.aryan.reader.FileType
 import com.aryan.reader.R
@@ -13,7 +14,6 @@ import com.aryan.reader.data.RecentFilesRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import timber.log.Timber
-import java.io.File
 
 class ReflowWorker(
     context: Context,
@@ -41,7 +41,8 @@ class ReflowWorker(
             "Input | bookId=$bookId | reflowBookId=$reflowBookId | pdfUri=$pdfUriString | title=$originalTitle"
         )
 
-        val destFile = File(applicationContext.filesDir, "${bookId}_reflow.html")
+        val destFile = AndroidBookArtifactPaths.reflowFile(applicationContext.filesDir, bookId)
+        destFile.parentFile?.mkdirs()
         val pdfUri = pdfUriString.toUri()
 
         Timber.tag("PdfToHtmlPerf").d("Dest: ${destFile.absolutePath} | exists=${destFile.exists()}")

@@ -41,13 +41,15 @@ internal object SyncedFolderPrefs {
                     val uri = obj.optString("uri").takeIf { it.isNotBlank() }
                     if (uri == null) continue
                     val name = obj.optString("name").takeIf { it.isNotBlank() } ?: legacyNameResolver(uri)
+                    val cloudRootId = obj.optString("cloudRootId").takeIf { it.isNotBlank() }
                     add(
                         SyncedFolder(
                             uriString = uri,
                             name = name,
                             lastScanTime = obj.optLong("lastScanTime", 0L),
                             allowedFileTypes = decodeAllowedFileTypes(obj, syncableTypes),
-                            localSyncEnabled = obj.optBoolean("localSyncEnabled", true)
+                            localSyncEnabled = obj.optBoolean("localSyncEnabled", true),
+                            cloudRootId = cloudRootId,
                         )
                     )
                 }
@@ -69,6 +71,7 @@ internal object SyncedFolderPrefs {
             obj.put("name", folder.name)
             obj.put("lastScanTime", folder.lastScanTime)
             obj.put("localSyncEnabled", folder.localSyncEnabled)
+            folder.cloudRootId?.trim()?.takeIf { it.isNotBlank() }?.let { obj.put("cloudRootId", it) }
             val typesArray = JSONArray()
             folder.allowedFileTypes
                 .filter { it in syncableTypes }

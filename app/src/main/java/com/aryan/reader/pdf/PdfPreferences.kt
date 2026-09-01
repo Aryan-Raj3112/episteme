@@ -49,6 +49,8 @@ internal const val PDF_SYSTEM_UI_MODE_KEY = "pdf_system_ui_mode"
 internal const val PDF_VERTICAL_PAGE_GAP_VISIBLE_KEY = "pdf_vertical_page_gap_visible"
 internal const val PDF_PAGE_NUMBER_OVERLAY_VISIBLE_KEY = "pdf_page_number_overlay_visible"
 internal const val PDF_TOP_TAB_STRIP_VISIBLE_KEY = "pdf_top_tab_strip_visible"
+internal const val PDF_TOP_TOOLBAR_VISIBLE_KEY = "pdf_top_toolbar_visible"
+internal const val PDF_BOTTOM_TOOLBAR_VISIBLE_KEY = "pdf_bottom_toolbar_visible"
 internal const val PDF_PAGE_SPREAD_MODE_KEY = "pdf_page_spread_mode"
 internal const val PDF_FIRST_PAGE_STANDALONE_IN_SPREAD_KEY = "pdf_first_page_standalone_in_spread"
 internal const val PDF_LAYOUT_DEBUG_TAG = "PdfLayoutDebug"
@@ -61,12 +63,14 @@ typealias PdfReaderTool = com.aryan.reader.shared.PdfReaderTool
 val PdfReaderTool.titleRes: Int
     get() = when (this) {
         PdfReaderTool.DICTIONARY -> R.string.tool_external_apps
+        PdfReaderTool.SPLIT_VIEW -> R.string.tool_split_view
         PdfReaderTool.THEME -> R.string.tooltip_theme_desc
         PdfReaderTool.BRIGHTNESS -> R.string.tool_brightness
         PdfReaderTool.LOCK_PANNING -> R.string.tooltip_lock_pan
         PdfReaderTool.FILE_INFO -> R.string.file_information
         PdfReaderTool.VISUAL_OPTIONS -> R.string.menu_visual_options
         PdfReaderTool.TAP_TO_TURN -> R.string.menu_tap_to_turn_pages
+        PdfReaderTool.PAGE_TURN_ANIM -> R.string.menu_realistic_page_turns
         PdfReaderTool.SLIDER -> R.string.tool_navigation_slider
         PdfReaderTool.TOC -> R.string.tool_sidebar
         PdfReaderTool.SEARCH -> R.string.action_search
@@ -136,9 +140,30 @@ internal fun sanitizePdfBottomToolNames(toolNames: Collection<String>): Set<Stri
 }
 
 internal fun restorePdfToolOrderNames(toolNames: Collection<String>): List<PdfReaderTool> {
-    return PdfToolbarPreferences(
-        toolOrder = toolNames.mapNotNull(PdfReaderTool::fromId),
+    val restoredTools = toolNames.mapNotNull(PdfReaderTool::fromId)
+    val order = PdfToolbarPreferences(
+        toolOrder = restoredTools,
     ).sanitized(defaultPdfToolOrder().toSet()).toolOrder
+    // Tools introduced after an order was persisted (for example split_view)
+    // surface next to their canonical neighbour instead of trailing the bar.
+    return pdfToolsIntroducedAfterOrderPersistence().fold(order) { migrated, (tool, anchor) ->
+        if (tool in restoredTools) migrated else migrated.insertedAfter(anchor, tool)
+    }
+}
+
+private fun pdfToolsIntroducedAfterOrderPersistence(): List<Pair<PdfReaderTool, PdfReaderTool>> {
+    return listOf(PdfReaderTool.SPLIT_VIEW to PdfReaderTool.DICTIONARY)
+}
+
+private fun List<PdfReaderTool>.insertedAfter(anchor: PdfReaderTool, tool: PdfReaderTool): List<PdfReaderTool> {
+    val anchorIndex = indexOf(anchor)
+    // A missing anchor means sanitized() already appended the tool at the end.
+    if (anchorIndex < 0) return this
+    return toMutableList().apply {
+        // sanitized() appends missing tools at the end; relocate that copy.
+        remove(tool)
+        add(anchorIndex + 1, tool)
+    }
 }
 
 internal fun isPdfToolbarPlacementTool(tool: PdfReaderTool): Boolean {
@@ -303,10 +328,11 @@ internal fun loadPdfFirstPageStandaloneInSpread(context: Context): Boolean {
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
     return prefs.getBoolean(PDF_FIRST_PAGE_STANDALONE_IN_SPREAD_KEY, false)
 }
-
 internal fun savePdfTopTabStripVisible(context: Context, isVisible: Boolean) {
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
-    prefs.edit { putBoolean(PDF_TOP_TAB_STRIP_VISIBLE_KEY, isVisible) }
+    prefs.edit {
+        putBoolean(PDF_TOP_TAB_STRIP_VISIBLE_KEY, isVisible)
+    }
 }
 
 internal fun loadPdfTopTabStripVisible(context: Context): Boolean {
@@ -314,6 +340,29 @@ internal fun loadPdfTopTabStripVisible(context: Context): Boolean {
     return prefs.getBoolean(PDF_TOP_TAB_STRIP_VISIBLE_KEY, true)
 }
 
+internal fun savePdfTopToolbarVisible(context: Context, isVisible: Boolean) {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit {
+        putBoolean(PDF_TOP_TOOLBAR_VISIBLE_KEY, isVisible)
+    }
+}
+
+internal fun loadPdfTopToolbarVisible(context: Context): Boolean {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    return prefs.getBoolean(PDF_TOP_TOOLBAR_VISIBLE_KEY, true)
+}
+
+internal fun savePdfBottomToolbarVisible(context: Context, isVisible: Boolean) {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit {
+        putBoolean(PDF_BOTTOM_TOOLBAR_VISIBLE_KEY, isVisible)
+    }
+}
+
+internal fun loadPdfBottomToolbarVisible(context: Context): Boolean {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    return prefs.getBoolean(PDF_BOTTOM_TOOLBAR_VISIBLE_KEY, true)
+}
 internal fun savePdfThemeId(context: Context, themeId: String) {
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
     prefs.edit { putString(PDF_THEME_KEY, themeId) }

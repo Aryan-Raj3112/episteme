@@ -11,6 +11,9 @@ import com.aryan.reader.shared.ReaderLocator
 import com.aryan.reader.shared.ReaderExternalLookupAction
 import com.aryan.reader.shared.UserHighlight
 import com.aryan.reader.shared.reader.ReaderPage
+import com.aryan.reader.shared.reader.ReaderPageSpreadMode
+import com.aryan.reader.shared.reader.ReaderReadingMode
+import com.aryan.reader.shared.reader.ReaderSettings
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
@@ -18,6 +21,41 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 
 class SharedNativePaginatedReaderInteractionTest {
+    @Test
+    fun `paginated spread page slot only applies to two page spread mode`() {
+        val single = ReaderSettings(
+            readingMode = ReaderReadingMode.PAGINATED,
+            pageSpreadMode = ReaderPageSpreadMode.SINGLE
+        )
+        val spread = single.copy(pageSpreadMode = ReaderPageSpreadMode.TWO_PAGE)
+        val vertical = single.copy(readingMode = ReaderReadingMode.VERTICAL)
+
+        assertEquals(false, single.usesNativePaginatedSpreadPageSlot())
+        assertEquals(true, spread.usesNativePaginatedSpreadPageSlot())
+        assertEquals(false, vertical.usesNativePaginatedSpreadPageSlot())
+    }
+
+    @Test
+    fun `page chrome only shows for slots narrower than the reader width`() {
+        val fullBleed = SharedNativePageRenderGeometry(
+            readerWidthPx = 1_179,
+            readerHeightPx = 2_000,
+            pageOuterWidthPx = 1_179,
+            pageContentWidthPx = 1_035,
+            pageContentHeightPx = 1_904,
+            pageGapPx = 84,
+            horizontalMarginPx = 72,
+            verticalMarginPx = 48,
+            configuredPageWidthPx = 2_280,
+            visiblePageCount = 1,
+            spreadMode = "SINGLE"
+        )
+        val spreadSlot = fullBleed.copy(pageOuterWidthPx = 547, visiblePageCount = 2, spreadMode = "TWO_PAGE")
+
+        assertEquals(false, fullBleed.showsPageChrome)
+        assertEquals(true, spreadSlot.showsPageChrome)
+    }
+
     @Test
     fun `native selection lookup actions match vertical reader actions`() {
         assertEquals(ReaderExternalLookupAction.DICTIONARY, SharedNativeReaderSelectionAction.DEFINE.externalLookupActionOrNull())

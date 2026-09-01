@@ -2,6 +2,7 @@ package com.aryan.reader.desktop
 
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.BookShelfRef
+import com.aryan.reader.shared.CloudBookTombstone
 import com.aryan.reader.shared.CustomFontItem
 import com.aryan.reader.shared.EpubAnnotationSerializer
 import com.aryan.reader.shared.EpubBookmark
@@ -19,6 +20,7 @@ import com.aryan.reader.shared.toStablePositionCfi
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationSidecarCodec
 import com.aryan.reader.shared.pdf.SharedPdfReaderViewport
 import com.aryan.reader.shared.reader.ReaderBookmark
+import kotlinx.coroutines.CancellationException
 import java.io.File
 
 internal data class DesktopCloudSyncInput(
@@ -41,6 +43,11 @@ internal data class DesktopCloudSyncResult(
     val uploadedBooks: Int = 0,
     val downloadedBooks: Int = 0,
     val pendingContentDownloads: Int = 0
+)
+
+internal data class DesktopPendingDeleteDrainResult(
+    val succeededBookIds: Set<String> = emptySet(),
+    val failedBookIds: Set<String> = emptySet()
 )
 
 internal class DesktopCloudSync(
@@ -189,6 +196,12 @@ internal class DesktopCloudSync(
                             }
                         } else if (metadataWinner == SharedCloudBookMetadataWinner.REMOTE) {
                             logDesktopCloudSync { "desktop.engine.book_decision action=apply_remote_delete book=$bookId" }
+                            bookImporter.deleteImportedBookFileIfUnreferenced(
+                                path = local.path,
+                                otherReferencingPaths = state.rawLibraryBooks
+                                    .filterNot { it.id == bookId }
+                                    .mapNotNull { it.path }
+                            )
                             state = state.removeCloudBook(bookId)
                         } else {
                             logDesktopCloudSync { "desktop.engine.book_decision action=skip_equal_delete book=$bookId" }
@@ -578,30 +591,77 @@ internal class DesktopCloudSync(
         idToken: String,
         accessToken: String,
         deviceId: String,
-        books: List<BookItem>
-    ) {
-        val driveFiles = driveRepository.getFiles(accessToken).associateBy { it.name }
-        books
-            .filterNot { isDesktopPdfReflowBookId(it.id) }
-            .filter { it.sourceFolder == null }
-            .filterNot { it.path?.startsWith("opds-pse") == true }
-            .filterNot { SharedFileCapabilities.isManualOnlyReaderFileName(it.displayName) }
-            .forEach { book ->
-                firestoreRepository.syncBookMetadata(
+        tombstones: List<CloudBookTombstone>
+    ): DesktopPendingDeleteDrainResult {
+        if (tombstones.isEmpty()) return DesktopPendingDeleteDrainResult()
+        val driveFilesByName = driveRepository.getFiles(accessToken).associateBy { it.name }
+        val succeeded = mutableSetOf<String>()
+        val failed = mutableSetOf<String>()
+        tombstones.forEach { tombstone ->
+            try {
+                executePendingCloudBookDelete(
                     userId = userId,
-                    book = book.toDesktopCloudBookMetadata(
-                        hasAnnotations = false,
-                        timestamp = System.currentTimeMillis()
-                    ).copy(isDeleted = true),
-                    originDeviceId = deviceId,
-                    idToken = idToken
+                    idToken = idToken,
+                    accessToken = accessToken,
+                    deviceId = deviceId,
+                    tombstone = tombstone,
+                    driveFilesByName = driveFilesByName
                 )
-                desktopCloudBookDriveFileName(book.id, book.type)
-                    ?.let { driveFiles[it]?.id }
-                    ?.let { driveRepository.deleteDriveFile(accessToken, it) }
-                driveFiles[desktopCloudAnnotationDriveFileName(book.id)]?.id
-                    ?.let { driveRepository.deleteDriveFile(accessToken, it) }
+                succeeded += tombstone.bookId
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                logDesktopCloudSync {
+                    "desktop.delete.pending_retry book=${tombstone.bookId} " +
+                        "error=\"${error.message.orEmpty().logPreview(240)}\""
+                }
+                failed += tombstone.bookId
             }
+        }
+        return DesktopPendingDeleteDrainResult(
+            succeededBookIds = succeeded,
+            failedBookIds = failed
+        )
+    }
+
+    /**
+     * Mirrors the Android remote-first delete contract: Drive payloads must be
+     * removed before the Firestore tombstone is published, so a failed Drive
+     * deletion never leaves a consumable tombstone behind while retries are
+     * still pending.
+     */
+    private suspend fun executePendingCloudBookDelete(
+        userId: String,
+        idToken: String,
+        accessToken: String,
+        deviceId: String,
+        tombstone: CloudBookTombstone,
+        driveFilesByName: Map<String, DesktopDriveFile>
+    ) {
+        val type = tombstone.type?.let { typeName -> runCatching { FileType.valueOf(typeName) }.getOrNull() }
+        type?.let { fileType ->
+            desktopCloudBookDriveFileName(tombstone.bookId, fileType)
+                ?.let { driveFilesByName[it]?.id }
+                ?.let { driveRepository.deleteDriveFileOrThrow(accessToken, it) }
+        }
+        driveFilesByName[desktopCloudAnnotationDriveFileName(tombstone.bookId)]?.id
+            ?.let { driveRepository.deleteDriveFileOrThrow(accessToken, it) }
+
+        // Publish the Firestore tombstone last. Retries keep bumping the clock
+        // forward (like the Android outbox) so concurrent remote edits made
+        // after the original deletion cannot resurrect the book.
+        firestoreRepository.syncBookMetadata(
+            userId = userId,
+            book = DesktopCloudBookMetadata(
+                bookId = tombstone.bookId,
+                displayName = "",
+                type = tombstone.type.orEmpty(),
+                isDeleted = true,
+                lastModifiedTimestamp = maxOf(tombstone.deletedAt, System.currentTimeMillis())
+            ),
+            originDeviceId = deviceId,
+            idToken = idToken
+        )
     }
 
     suspend fun syncShelfChange(

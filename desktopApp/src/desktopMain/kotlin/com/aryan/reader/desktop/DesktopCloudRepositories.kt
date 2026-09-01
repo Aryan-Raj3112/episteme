@@ -2,6 +2,7 @@ package com.aryan.reader.desktop
 
 import com.aryan.reader.shared.FileType
 import com.aryan.reader.shared.SharedFileCapabilities
+import com.aryan.reader.shared.isIdempotentCloudDeleteStatus
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
@@ -90,7 +91,7 @@ internal data class DesktopDriveFile(
     val modifiedTimeMillis: Long = 0L
 )
 
-internal class DesktopFirestoreRepository(
+internal open class DesktopFirestoreRepository(
     private val config: DesktopCloudConfig,
     private val client: HttpClient = defaultDesktopCloudHttpClient()
 ) {
@@ -104,7 +105,7 @@ internal class DesktopFirestoreRepository(
             document.fields?.toBookMetadata(document.id)
         }
 
-    suspend fun syncBookMetadata(
+    open suspend fun syncBookMetadata(
         userId: String,
         book: DesktopCloudBookMetadata,
         originDeviceId: String,
@@ -263,10 +264,10 @@ internal class DesktopFirestoreRepository(
     }
 }
 
-internal class DesktopGoogleDriveRepository(
+internal open class DesktopGoogleDriveRepository(
     private val client: HttpClient = defaultDesktopCloudHttpClient()
 ) {
-    suspend fun getFiles(accessToken: String): List<DesktopDriveFile> = withContext(Dispatchers.IO) {
+    open suspend fun getFiles(accessToken: String): List<DesktopDriveFile> = withContext(Dispatchers.IO) {
         listFiles(accessToken = accessToken, query = null)
     }
 
@@ -338,12 +339,26 @@ internal class DesktopGoogleDriveRepository(
 
     suspend fun deleteAllFiles(accessToken: String): Boolean = withContext(Dispatchers.IO) {
         getFiles(accessToken).forEach { file ->
-            deleteDriveFile(accessToken, file.id)
+            deleteDriveFileOrThrow(accessToken, file.id)
         }
         true
     }
 
     suspend fun deleteDriveFile(accessToken: String, fileId: String): Boolean = withContext(Dispatchers.IO) {
+        val statusCode = sendDriveDelete(accessToken, fileId)
+        isIdempotentCloudDeleteStatus(statusCode)
+    }
+
+    /** Strict variant used by destructive deletion; failure must remain visible to the caller. */
+    open suspend fun deleteDriveFileOrThrow(accessToken: String, fileId: String) = withContext(Dispatchers.IO) {
+        val statusCode = sendDriveDelete(accessToken, fileId)
+        if (!isIdempotentCloudDeleteStatus(statusCode)) {
+            throw IllegalStateException("Google Drive delete HTTP $statusCode")
+        }
+        Unit
+    }
+
+    private fun sendDriveDelete(accessToken: String, fileId: String): Int {
         val request = HttpRequest.newBuilder(
             URI.create("https://www.googleapis.com/drive/v3/files/${pathEncode(fileId)}")
         )
@@ -351,8 +366,7 @@ internal class DesktopGoogleDriveRepository(
             .header("Authorization", "Bearer $accessToken")
             .DELETE()
             .build()
-        val response = client.send(request, HttpResponse.BodyHandlers.ofString(Charsets.UTF_8))
-        response.statusCode() in 200..299 || response.statusCode() == 404
+        return client.send(request, HttpResponse.BodyHandlers.ofString(Charsets.UTF_8)).statusCode()
     }
 
     private suspend fun uploadNamedFile(

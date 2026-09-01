@@ -22,12 +22,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -55,22 +56,28 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.aryan.reader.shared.ReaderExternalLookupAction
 import com.aryan.reader.shared.HighlightStyle
+import com.aryan.reader.shared.HighlightColor
 import com.aryan.reader.shared.ReaderHighlightPalette
+import com.aryan.reader.shared.ReaderHighlightListAction
 import com.aryan.reader.shared.UserHighlight
 import com.aryan.reader.shared.deduplicatedReaderBookmarks
+import com.aryan.reader.shared.readerHighlightListActions
 import com.aryan.reader.shared.reader.ReaderBookmark
 import com.aryan.reader.shared.reader.ReaderImageReference
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.ReaderSpreadLayout
 import com.aryan.reader.shared.reader.SharedEpubBook
 import com.aryan.reader.shared.reader.SharedEpubTocEntry
+import com.aryan.reader.shared.reader.effectiveReaderTocEntries
+import com.aryan.reader.shared.reader.projectReaderTocEntries
+import com.aryan.reader.shared.reader.readerTocLocatePlan
+import com.aryan.reader.shared.reader.readerTocParentIndices
+import com.aryan.reader.shared.reader.readerTocToggleExpansion
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
@@ -138,20 +145,26 @@ internal fun SharedMobileEpubToc(
     onEntryClick: (Int, SharedEpubTocEntry) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val entries = epub?.tableOfContents.orEmpty()
+    val entries = epub?.effectiveReaderTocEntries().orEmpty()
     if (entries.isEmpty()) {
         Box(modifier, contentAlignment = Alignment.Center) { Text("No table of contents") }
         return
     }
     var query by remember(epub?.id) { mutableStateOf("") }
-    var expanded by remember(epub?.id) { mutableStateOf(true) }
+    var expandedEntryIndices by remember(epub?.id, entries) {
+        mutableStateOf(readerTocParentIndices(entries) { it.depth })
+    }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
-    val visibleEntries = remember(entries, query, expanded) {
-        entries.withIndex().filter { indexed ->
-            val matches = query.isBlank() || indexed.value.label.contains(query, ignoreCase = true)
-            matches && (expanded || indexed.value.depth == 0)
-        }
+    val visibleEntries = remember(entries, query, expandedEntryIndices, selectedIndex) {
+        projectReaderTocEntries(
+            entries = entries,
+            expandedEntryIndices = expandedEntryIndices,
+            query = query,
+            activeOriginalIndex = selectedIndex.takeIf { it in entries.indices },
+            labelOf = { it.label },
+            depthOf = { it.depth }
+        )
     }
     Column(modifier) {
         OutlinedTextField(
@@ -166,20 +179,34 @@ internal fun SharedMobileEpubToc(
             Modifier.fillMaxWidth().padding(horizontal = 8.dp),
             horizontalArrangement = Arrangement.SpaceEvenly
         ) {
-            TextButton(onClick = { expanded = true }) { Text("Expand All") }
-            TextButton(onClick = { expanded = false }) { Text("Collapse All") }
+            TextButton(onClick = { expandedEntryIndices = readerTocParentIndices(entries) { it.depth } }) {
+                Text("Expand All")
+            }
+            TextButton(onClick = { expandedEntryIndices = emptySet() }) { Text("Collapse All") }
             TextButton(
                 onClick = {
                     query = ""
-                    expanded = true
-                    scope.launch { listState.animateScrollToItem(selectedIndex.coerceAtLeast(0)) }
+                    val plan = readerTocLocatePlan(
+                        entries = entries,
+                        expandedEntryIndices = expandedEntryIndices,
+                        activeOriginalIndex = selectedIndex.takeIf { it in entries.indices },
+                        depthOf = { it.depth }
+                    )
+                    expandedEntryIndices = plan.expandedEntryIndices
+                    scope.launch {
+                        // Let the LazyColumn consume the new expansion projection before
+                        // asking it to scroll. The plan's index is in that projection, not
+                        // the filtered/collapsed source list.
+                        kotlinx.coroutines.yield()
+                        plan.visibleIndex?.let { listState.animateScrollToItem(it) }
+                    }
                 }
             ) { Text("Locate") }
         }
         HorizontalDivider()
         LazyColumn(Modifier.fillMaxSize(), state = listState) {
-            items(visibleEntries, key = { it.index }) { indexed ->
-                val entry = indexed.value
+            items(visibleEntries, key = { it.originalIndex }) { projected ->
+                val entry = projected.entry
                 NavigationDrawerItem(
                     label = {
                         Text(
@@ -189,8 +216,37 @@ internal fun SharedMobileEpubToc(
                             fontWeight = if (entry.depth == 0) FontWeight.SemiBold else FontWeight.Normal
                         )
                     },
-                    selected = indexed.index == selectedIndex,
-                    onClick = { onEntryClick(indexed.index, entry) },
+                    icon = if (projected.hasChildren) {
+                        {
+                            val isExpanded = projected.originalIndex in expandedEntryIndices
+                            IconButton(
+                                onClick = {
+                                    expandedEntryIndices = readerTocToggleExpansion(
+                                        entries = entries,
+                                        expandedEntryIndices = expandedEntryIndices,
+                                        originalIndex = projected.originalIndex,
+                                        depthOf = { it.depth }
+                                    )
+                                },
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(
+                                    imageVector = if (isExpanded) {
+                                        Icons.Default.KeyboardArrowDown
+                                    } else {
+                                        Icons.AutoMirrored.Filled.KeyboardArrowRight
+                                    },
+                                    contentDescription = if (isExpanded) {
+                                        "Collapse ${entry.label}"
+                                    } else {
+                                        "Expand ${entry.label}"
+                                    }
+                                )
+                            }
+                        }
+                    } else null,
+                    selected = projected.isActive,
+                    onClick = { onEntryClick(projected.originalIndex, entry) },
                     modifier = Modifier.padding(start = (entry.depth * 18).dp, end = 8.dp)
                 )
             }
@@ -271,11 +327,17 @@ internal fun SharedMobileEpubBookmarks(
 internal fun SharedMobileEpubHighlights(
     highlights: List<UserHighlight>,
     chapters: List<com.aryan.reader.shared.reader.SharedEpubChapter>,
+    palette: ReaderHighlightPalette,
     onHighlightClick: (UserHighlight) -> Unit,
     onHighlightEdit: (UserHighlight) -> Unit,
+    onHighlightColorChange: (UserHighlight, HighlightColor) -> Unit,
+    onDeleteHighlight: (UserHighlight) -> Unit,
+    onOpenPaletteManager: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     var notesOnly by remember { mutableStateOf(false) }
+    var menuHighlight by remember { mutableStateOf<UserHighlight?>(null) }
+    var deleteHighlight by remember { mutableStateOf<UserHighlight?>(null) }
     if (highlights.isEmpty()) {
         Box(modifier, contentAlignment = Alignment.Center) { Text("No annotations yet") }
         return
@@ -334,13 +396,132 @@ internal fun SharedMobileEpubHighlights(
                                     Text(note, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 6.dp))
                                 }
                             }
-                            IconButton(onClick = { onHighlightEdit(highlight) }) {
-                                Icon(Icons.Default.Edit, contentDescription = "Edit annotation")
+                            Box {
+                                IconButton(onClick = { menuHighlight = highlight }) {
+                                    Icon(Icons.Default.MoreVert, contentDescription = "Annotation options")
+                                }
+                                DropdownMenu(
+                                    expanded = menuHighlight?.id == highlight.id,
+                                    onDismissRequest = { menuHighlight = null }
+                                ) {
+                                    val actions = readerHighlightListActions(onOpenPaletteManager != null)
+                                    actions.forEach { action ->
+                                        when (action) {
+                                            ReaderHighlightListAction.CHANGE_COLOR -> {
+                                                SharedMobileEpubHighlightColorRow(
+                                                    palette = palette,
+                                                    selectedHighlight = highlight,
+                                                    onOpenPaletteManager = if (ReaderHighlightListAction.MANAGE_PALETTE in actions) {
+                                                        {
+                                                            onOpenPaletteManager?.invoke()
+                                                            menuHighlight = null
+                                                        }
+                                                    } else {
+                                                        null
+                                                    },
+                                                    onColorSelect = { color ->
+                                                        onHighlightColorChange(highlight, color)
+                                                        menuHighlight = null
+                                                    },
+                                                )
+                                            }
+                                            ReaderHighlightListAction.MANAGE_PALETTE -> {
+                                                HorizontalDivider()
+                                            }
+                                            ReaderHighlightListAction.EDIT_NOTE -> {
+                                                DropdownMenuItem(
+                                                    text = { Text(if (highlight.note.isNullOrBlank()) "Add note" else "Edit note") },
+                                                    onClick = {
+                                                        onHighlightEdit(highlight)
+                                                        menuHighlight = null
+                                                    }
+                                                )
+                                            }
+                                            ReaderHighlightListAction.DELETE -> {
+                                                DropdownMenuItem(
+                                                    text = { Text("Delete") },
+                                                    onClick = {
+                                                        deleteHighlight = highlight
+                                                        menuHighlight = null
+                                                    }
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
                 }
             }
+        }
+    }
+    deleteHighlight?.let { highlight ->
+        AlertDialog(
+            onDismissRequest = { deleteHighlight = null },
+            title = { Text("Delete annotation?") },
+            text = { Text("This removes the highlight and its comment.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    onDeleteHighlight(highlight)
+                    deleteHighlight = null
+                }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteHighlight = null }) { Text("Cancel") }
+            }
+        )
+    }
+}
+
+@Composable
+private fun SharedMobileEpubHighlightColorRow(
+    palette: ReaderHighlightPalette,
+    selectedHighlight: UserHighlight,
+    onOpenPaletteManager: (() -> Unit)?,
+    onColorSelect: (HighlightColor) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .padding(vertical = 8.dp, horizontal = 10.dp)
+            .fillMaxWidth(),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        palette.sanitized().colors.forEach { color ->
+            val selected = selectedHighlight.color == color && selectedHighlight.colorArgb == null
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .padding(horizontal = 4.dp)
+                    .size(28.dp)
+                    .clip(CircleShape)
+                    .background(color.color)
+                    .border(
+                        width = if (selected) 3.dp else 1.dp,
+                        color = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
+                        shape = CircleShape,
+                    )
+                    .clickable { onColorSelect(color) },
+            ) {
+                if (selected) {
+                    Icon(
+                        imageVector = Icons.Default.Check,
+                        contentDescription = "Selected color",
+                        tint = if (color == HighlightColor.WHITE) Color.Black else Color.White,
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
+            }
+        }
+        onOpenPaletteManager?.let { openPaletteManager ->
+            Spacer(Modifier.width(6.dp))
+            SharedReaderHighlightPaletteSpectrumButton(
+                onClick = {
+                    openPaletteManager()
+                },
+                size = 28.dp,
+            )
         }
     }
 }
@@ -354,10 +535,12 @@ internal fun SharedMobileEpubHighlightSheet(
     onDelete: () -> Unit,
     onSpeak: () -> Unit,
     onLookup: (ReaderExternalLookupAction) -> Unit,
+    onClipboardError: ((String) -> Unit)? = null,
     onDismiss: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val clipboard = LocalClipboardManager.current
+    val copiedTextLabel = readerString("clip_label_copied_text", "Copied Text")
+    val clipboardErrorMessage = readerString("error_copy_to_clipboard", "Could not copy to clipboard")
     var note by remember(highlight.id, highlight.note) { mutableStateOf(highlight.note.orEmpty()) }
     var confirmDelete by remember(highlight.id) { mutableStateOf(false) }
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
@@ -385,7 +568,10 @@ internal fun SharedMobileEpubHighlightSheet(
                 modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                TextButton(onClick = { clipboard.setText(AnnotatedString(highlight.text)) }) { Text("Copy") }
+                TextButton(onClick = {
+                    val result = writeSharedClipboard(copiedTextLabel, highlight.text)
+                    if (!result.success) onClipboardError?.invoke(clipboardErrorMessage)
+                }) { Text("Copy") }
                 TextButton(onClick = onSpeak) { Text("Speak") }
                 TextButton(onClick = { onLookup(ReaderExternalLookupAction.DICTIONARY) }) { Text("Dictionary") }
                 TextButton(onClick = { onLookup(ReaderExternalLookupAction.TRANSLATE) }) { Text("Translate") }

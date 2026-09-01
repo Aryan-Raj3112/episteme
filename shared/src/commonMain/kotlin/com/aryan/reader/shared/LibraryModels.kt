@@ -53,7 +53,8 @@ const val IN_APP_STORAGE_SOURCE = "IN_APP_STORAGE"
 const val MAX_SYNCED_FOLDER_COUNT = 10
 
 fun canAddSyncedFolder(folders: Collection<SyncedFolder>): Boolean =
-    folders.mapTo(mutableSetOf()) { it.uriString.trim() }
+    folders.filterNot { it.isAppManaged || it.isCloudPlaceholder }
+        .mapTo(mutableSetOf()) { it.uriString.trim() }
         .count { it.isNotBlank() } < MAX_SYNCED_FOLDER_COUNT
 
 enum class ShelfType {
@@ -75,7 +76,24 @@ data class SyncedFolder(
     val name: String,
     val lastScanTime: Long,
     val allowedFileTypes: Set<FileType> = SharedFileCapabilities.knownFileTypes,
-    val localSyncEnabled: Boolean = true
+    val localSyncEnabled: Boolean = true,
+    /**
+     * Device-local mapping to the account-level logical cloud root.  This is
+     * generated once when the folder is added and must not be derived from a
+     * SAF URI: the same folder on another device has a different URI.
+     */
+    val cloudRootId: String? = null,
+    /**
+     * True when this is an app-private materialization of a cloud root rather
+     * than a user-granted local folder. Such folders are read-only bindings:
+     * their lifetime and storage are controlled by cloud-folder settings.
+     */
+    val isAppManaged: Boolean = false,
+    /**
+     * A cloud root discovered from another device but not materialized here.
+     * Placeholders are UI-only and must never be indexed as local folders.
+     */
+    val isCloudPlaceholder: Boolean = false,
 )
 
 data class BookItem(
@@ -139,6 +157,7 @@ data class Shelf(
     val sortKey: String = name.lowercase(),
     val smartRulesJson: String? = null,
     val directBookAddedAt: Map<String, Long> = emptyMap(),
+    val modifiedAt: Long = 0L,
 ) {
     val bookCount: Int get() = books.size
     val topBook: BookItem? get() = books.maxByOrNull { it.timestamp }

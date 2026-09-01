@@ -2,7 +2,16 @@ package com.aryan.reader.shared.reader
 
 import com.aryan.reader.paginatedreader.SemanticTextBlock
 
-class SimplePaginator {
+class SimplePaginator : SharedReaderPaginator {
+    override suspend fun paginate(
+        book: SharedEpubBook,
+        settings: ReaderSettings,
+        viewport: ReaderViewportSpec,
+        readCache: Boolean
+    ): List<ReaderPage> {
+        return paginate(book, settings, viewport.widthPx, viewport.heightPx)
+    }
+
     fun paginate(
         book: SharedEpubBook,
         settings: ReaderSettings,

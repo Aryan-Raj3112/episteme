@@ -1,12 +1,12 @@
 package com.aryan.reader.shared
 
-internal actual fun localFolderSyncSha256ShortHex(value: String): String {
+internal actual fun localFolderSyncSha256Hex(value: String): String {
     return sha256(value.encodeToByteArray()).joinToString("") { byte ->
         byte.toUByte().toString(16).padStart(2, '0')
-    }.take(12)
+    }
 }
 
-private fun sha256(input: ByteArray): ByteArray {
+internal fun sha256(input: ByteArray): ByteArray {
     val messageLengthBits = input.size.toLong() * 8L
     val paddingLength = ((56 - (input.size + 1) % 64) + 64) % 64
     val padded = ByteArray(input.size + 1 + paddingLength + 8)

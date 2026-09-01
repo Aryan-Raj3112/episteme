@@ -16,8 +16,8 @@ class SharedJvmBookLoadCacheTest {
     fun `book load cache round trips parsed shared book`() {
         val root = Files.createTempDirectory("reader-book-load-cache").toFile()
         try {
-            val cache = SharedJvmBookLoadCache(root)
-            val key = SharedJvmBookLoadCacheKey(
+            val cache = SharedBookLoadCache(JvmSharedBookLoadCacheStorage(root))
+            val key = SharedBookLoadCacheKey(
                 canonicalPath = "C:/Books/book.epub",
                 type = FileType.EPUB,
                 length = 1234L,
@@ -87,8 +87,8 @@ class SharedJvmBookLoadCacheTest {
     fun `book load cache rejects styled reader books without semantic blocks`() {
         val root = Files.createTempDirectory("reader-book-load-cache").toFile()
         try {
-            val cache = SharedJvmBookLoadCache(root)
-            val key = SharedJvmBookLoadCacheKey(
+            val cache = SharedBookLoadCache(JvmSharedBookLoadCacheStorage(root))
+            val key = SharedBookLoadCacheKey(
                 canonicalPath = "C:/Books/book.epub",
                 type = FileType.EPUB,
                 length = 1234L,
@@ -121,8 +121,8 @@ class SharedJvmBookLoadCacheTest {
     fun `book load cache misses when source fingerprint changes`() {
         val root = Files.createTempDirectory("reader-book-load-cache").toFile()
         try {
-            val cache = SharedJvmBookLoadCache(root)
-            val key = SharedJvmBookLoadCacheKey(
+            val cache = SharedBookLoadCache(JvmSharedBookLoadCacheStorage(root))
+            val key = SharedBookLoadCacheKey(
                 canonicalPath = "C:/Books/book.epub",
                 type = FileType.EPUB,
                 length = 1234L,

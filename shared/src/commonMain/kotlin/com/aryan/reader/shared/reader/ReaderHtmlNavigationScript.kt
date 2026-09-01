@@ -1050,6 +1050,13 @@ internal fun readerHtmlNavigationScript(pageAnchorJson: String): String = """
                 }
                 return null;
               }
+              // Native jump controls can be tapped before the debounced
+              // readerPositionChanged bridge report arrives. Expose the same
+              // DOM calculation for a direct WebView capture at that moment.
+              window.readerCaptureCurrentPosition = function () {
+                var position = pendingRestoreVisiblePosition() || currentVisiblePosition();
+                return position ? JSON.stringify(position) : null;
+              };
               function reportVisiblePage() {
                 var position = pendingRestoreVisiblePosition() || currentVisiblePosition();
                 if (!position) {

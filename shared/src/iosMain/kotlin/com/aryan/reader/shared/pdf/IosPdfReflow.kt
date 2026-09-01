@@ -37,6 +37,8 @@ import kotlinx.cinterop.ptr
 import kotlinx.cinterop.usePinned
 import kotlinx.cinterop.value
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import platform.CoreFoundation.CFDataCreate
@@ -67,41 +69,55 @@ internal suspend fun generateIosPdfReflowHtml(
 ): Boolean {
     if (!pdfPath.endsWith(".pdf", ignoreCase = true)) return false
     return withContext(Dispatchers.Default) {
-        IosPdfiumRuntime.mutex.withLock {
+        // The document handle stays open for the whole generation, but the runtime mutex is
+        // re-acquired per step so page rendering can interleave with Text View generation
+        // (Android's ReflowWorker runs in the background without freezing the reader).
+        val document = IosPdfiumRuntime.mutex.withLock {
             IosPdfiumRuntime.ensureInitialized()
-            val document = FPDF_LoadDocument(pdfPath, password) ?: return@withLock false
-            try {
-                val totalPages = FPDF_GetPageCount(document).coerceAtLeast(0)
-                if (totalPages == 0) return@withLock false
+            FPDF_LoadDocument(pdfPath, password)
+        } ?: return@withContext false
+        try {
+            val totalPages = IosPdfiumRuntime.mutex.withLock {
+                FPDF_GetPageCount(document).coerceAtLeast(0)
+            }
+            if (totalPages == 0) return@withContext false
 
-                val headerFooterStrings = detectIosReflowHeaderFooter(document, totalPages)
+            val headerFooterStrings = IosPdfiumRuntime.mutex.withLock {
+                detectIosReflowHeaderFooter(document, totalPages)
+            }
 
-                val output = StringBuilder()
-                output.append(SharedPdfReflowHtml.buildGlobalHtmlHeader())
-                for (pageIndex in 0 until totalPages) {
-                    if (pageIndex > 0) output.append("\n<page-break></page-break>\n")
-                    output.append(extractIosReflowPage(document, pageIndex, pageIndex + 1, headerFooterStrings))
-                    if (pageIndex % 5 == 0 || pageIndex == totalPages - 1) {
-                        onProgress((pageIndex + 1).toFloat() / totalPages.toFloat())
+            val output = StringBuilder()
+            output.append(SharedPdfReflowHtml.buildGlobalHtmlHeader())
+            for (pageIndex in 0 until totalPages) {
+                currentCoroutineContext().ensureActive()
+                if (pageIndex > 0) output.append("\n<page-break></page-break>\n")
+                output.append(
+                    IosPdfiumRuntime.mutex.withLock {
+                        extractIosReflowPage(document, pageIndex, pageIndex + 1, headerFooterStrings)
+                    }
+                )
+                if (pageIndex % 5 == 0 || pageIndex == totalPages - 1) {
+                    onProgress((pageIndex + 1).toFloat() / totalPages.toFloat())
+                }
+            }
+            output.append(SharedPdfReflowHtml.buildGlobalHtmlFooter())
+
+            val bytes = output.toString().encodeToByteArray()
+            val file = fopen(destPath, "wb") ?: return@withContext false
+            val written = try {
+                if (bytes.isEmpty()) {
+                    0uL
+                } else {
+                    bytes.usePinned { pinned ->
+                        fwrite(pinned.addressOf(0), 1u, bytes.size.toULong(), file)
                     }
                 }
-                output.append(SharedPdfReflowHtml.buildGlobalHtmlFooter())
-
-                val bytes = output.toString().encodeToByteArray()
-                val file = fopen(destPath, "wb") ?: return@withLock false
-                val written = try {
-                    if (bytes.isEmpty()) {
-                        0uL
-                    } else {
-                        bytes.usePinned { pinned ->
-                            fwrite(pinned.addressOf(0), 1u, bytes.size.toULong(), file)
-                        }
-                    }
-                } finally {
-                    fclose(file)
-                }
-                written == bytes.size.toULong()
             } finally {
+                fclose(file)
+            }
+            written == bytes.size.toULong()
+        } finally {
+            IosPdfiumRuntime.mutex.withLock {
                 FPDF_CloseDocument(document)
             }
         }

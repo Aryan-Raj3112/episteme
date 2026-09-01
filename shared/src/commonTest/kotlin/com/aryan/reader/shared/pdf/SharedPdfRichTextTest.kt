@@ -175,6 +175,7 @@ class SharedPdfRichTextTest {
         )
         assertEquals(4, decoded.spans.single().start)
         assertEquals(2, decoded.spans.single().end)
+        assertEquals(SharedPdfTextAnnotationDefaults.MaxPageRelativeFontSize, decoded.spans.single().fontSizeNorm)
         assertEquals("", decoded.spans.single().fontPath)
     }
 

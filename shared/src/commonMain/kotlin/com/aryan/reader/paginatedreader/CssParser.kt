@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.isSpecified
+import androidx.compose.ui.unit.sp
 import kotlin.math.roundToInt
 
 private const val IMPORTANT_SPECIFICITY_BOOST = 10_000
@@ -80,7 +81,7 @@ object CssParser {
     private val CLASS_ATTRIBUTE_SELECTOR_REGEX by lazy(LazyThreadSafetyMode.PUBLICATION) { Regex("""\.[^\s,]+|\[[^]]+]|:(?!:)[^\s,]+""") }
     private val TYPE_PSEUDO_ELEMENT_SELECTOR_REGEX by lazy(LazyThreadSafetyMode.PUBLICATION) { Regex("""(?<![.#\[])\b[a-zA-Z-]+|::[a-zA-Z-]+""") }
     private val TRANSIENT_PSEUDO_CLASSES = setOf("link", "visited", "hover", "active", "focus")
-    private val UNSUPPORTED_PSEUDO_ELEMENTS = setOf("first-letter", "first-line", "marker", "selection")
+    private val UNSUPPORTED_PSEUDO_ELEMENTS = setOf("first-line", "marker", "selection")
     private data class FontSource(val url: String, val format: String?)
 
     private fun parseFontSources(srcString: String): List<FontSource> =
@@ -635,7 +636,7 @@ object CssParser {
 
                 val name = selector.substring(nameStart, nameEnd).lowercase()
                 when {
-                    name == "before" || name == "after" -> {
+                    name == "before" || name == "after" || name == "first-letter" -> {
                         if (pseudoElement == null) pseudoElement = name
                         index = nameEnd
                     }
@@ -826,7 +827,7 @@ object CssParser {
                 resolveCssRelativePath(cssPath, rawSrc)
             } catch (e: Exception) {
                 ReaderCssLog.e(e, "Could not resolve font path for src '$rawSrc' in css '$cssPath'")
-                rawSrc // Fallback to the raw path on error
+                rawSrc
             }
         } else {
             rawSrc
@@ -876,7 +877,6 @@ object CssParser {
         var maxHeight: Dp = Dp.Unspecified
         var backgroundColor: Color = Color.Unspecified
 
-        // Changed: Track the max width found to prioritize visible borders
         var maxBorderWidthFound: Dp = 0.dp
         var finalBorderColor: Color? = null
         var finalBorderStyle: String? = null
@@ -1021,7 +1021,7 @@ object CssParser {
                                 TextUnit.Unspecified
                             }
                         } else {
-                            parseCssDimensionToTextUnit(value, containerWidthPx, density)
+                            parseCssDimensionToTextUnit(value, containerWidthPx, density, baseFontSizeSp)
                         }
                     }
                     "font-weight" -> {
@@ -1078,9 +1078,20 @@ object CssParser {
                         }
                     }
                     "text-indent" -> {
-                        val indent = parseCssDimensionToTextUnit(value, containerWidthPx, density)
-                        if (indent != TextUnit.Unspecified) {
-                            paragraphStyle = paragraphStyle.copy(textIndent = TextIndent(firstLine = indent))
+                        val tokens = value.trim().lowercase().split(Regex("\\s+")).filter { it.isNotBlank() }
+                        val isHanging = "hanging" in tokens
+                        val lengthToken = tokens.firstOrNull { it != "hanging" && it != "each-line" }
+                        val indentValue = lengthToken
+                            ?.let { parseCssDimensionToTextUnit(it, containerWidthPx, density, baseFontSizeSp) }
+                            ?: TextUnit.Unspecified
+                        if (indentValue != TextUnit.Unspecified) {
+                            paragraphStyle = paragraphStyle.copy(
+                                textIndent = if (isHanging) {
+                                    TextIndent(firstLine = 0f.sp, restLine = indentValue)
+                                } else {
+                                    TextIndent(firstLine = indentValue, restLine = 0f.sp)
+                                }
+                            )
                         }
                     }
                     "text-decoration" -> {
@@ -1612,14 +1623,14 @@ object CssParser {
         }
 
         return when {
-            trimmed.endsWith("px") -> trimmed.removeSuffix("px").toFloatOrNull()?.let { (it / density).dp } ?: Dp.Unspecified
+            trimmed.endsWith("px") -> trimmed.removeSuffix("px").toFloatOrNull()?.dp ?: Dp.Unspecified
             trimmed.endsWith("dp") -> trimmed.removeSuffix("dp").toFloatOrNull()?.dp ?: Dp.Unspecified
             trimmed.endsWith("em") -> trimmed.removeSuffix("em").toFloatOrNull()?.let { (it * baseFontSizeSp).dp } ?: Dp.Unspecified
             trimmed.endsWith("rem") -> trimmed.removeSuffix("rem").toFloatOrNull()?.let { (it * baseFontSizeSp).dp } ?: Dp.Unspecified
             trimmed.endsWith("pt") -> trimmed.removeSuffix("pt").toFloatOrNull()?.let { (it * 1.33f).dp } ?: Dp.Unspecified
             trimmed.endsWith("%") -> {
                 val percent = trimmed.removeSuffix("%").toFloatOrNull()
-                if (percent != null) {
+                if (percent != null && density > 0) {
                     ((percent / 100f) * containerWidthPx / density).dp
                 } else {
                     Dp.Unspecified
@@ -1627,14 +1638,14 @@ object CssParser {
             }
             trimmed.endsWith("vw") -> {
                 val percent = trimmed.removeSuffix("vw").toFloatOrNull()
-                if (percent != null) {
+                if (percent != null && density > 0) {
                     ((percent / 100f) * containerWidthPx / density).dp
                 } else {
                     Dp.Unspecified
                 }
             }
             trimmed.endsWith("vh") -> Dp.Unspecified
-            trimmed.toFloatOrNull() != null -> (trimmed.toFloat() / density).dp
+            trimmed.toFloatOrNull() != null -> trimmed.toFloat().dp
             else -> Dp.Unspecified
         }
     }
@@ -1654,8 +1665,10 @@ object CssParser {
         var index = 0
         var parseExpression: (() -> Float?)? = null
         fun parseNumber(token: String): Float? {
+            // The expression evaluator works in physical pixel space (the result is converted
+            // to dp by the caller), so density-independent units are scaled up here.
             return when {
-                token.endsWith("px") -> token.removeSuffix("px").toFloatOrNull()
+                token.endsWith("px") -> token.removeSuffix("px").toFloatOrNull()?.let { it * density }
                 token.endsWith("dp") -> token.removeSuffix("dp").toFloatOrNull()?.let { it * density }
                 token.endsWith("em") -> token.removeSuffix("em").toFloatOrNull()?.let { it * baseFontSizeSp * density }
                 token.endsWith("rem") -> token.removeSuffix("rem").toFloatOrNull()?.let { it * baseFontSizeSp * density }

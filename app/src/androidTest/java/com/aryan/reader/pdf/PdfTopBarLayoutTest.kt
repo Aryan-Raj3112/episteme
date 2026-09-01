@@ -102,6 +102,8 @@ class PdfTopBarLayoutTest {
                         isHighlightingLoading = false,
                         tapToNavigateEnabled = false,
                         onToggleTapToNavigate = {},
+                        pageTurnAnimationEnabled = false,
+                        onTogglePageTurnAnimation = {},
                         onChangeDisplayMode = {},
                         onSetRightToLeftPagination = {},
                         onToggleKeepScreenOn = {},

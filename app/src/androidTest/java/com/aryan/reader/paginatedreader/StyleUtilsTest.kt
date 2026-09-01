@@ -17,7 +17,10 @@ class StyleUtilsTest {
 
     @Test
     fun parseCssSizeToDp_handlesPxValues() {
-        assertThat(parseCssSizeToDp("100px", baseFontSizeSp, density, containerWidthPx)).isEqualTo(50.dp)
+        // CSS px are density-independent and must not be divided by device density.
+        assertThat(parseCssSizeToDp("100px", baseFontSizeSp, density, containerWidthPx)).isEqualTo(100.dp)
+        assertThat(parseCssSizeToDp("100px", baseFontSizeSp, 1f, containerWidthPx)).isEqualTo(100.dp)
+        assertThat(parseCssSizeToDp("100px", baseFontSizeSp, 4f, containerWidthPx)).isEqualTo(100.dp)
     }
 
     @Test
@@ -32,7 +35,7 @@ class StyleUtilsTest {
 
     @Test
     fun parseCssSizeToDp_handlesPtValues() {
-        assertThat(parseCssSizeToDp("12pt", baseFontSizeSp, density, containerWidthPx).value).isWithin(0.01f).of(8.0f)
+        assertThat(parseCssSizeToDp("12pt", baseFontSizeSp, density, containerWidthPx).value).isWithin(0.01f).of(16.0f)
     }
 
     @Test
@@ -47,8 +50,9 @@ class StyleUtilsTest {
     }
 
     @Test
-    fun parseCssSizeToDp_handlesZeroDensity() {
-        assertThat(parseCssSizeToDp("100px", baseFontSizeSp, 0f, containerWidthPx)).isEqualTo(0.dp)
+    fun parseCssSizeToDp_ignoresDensityForAbsoluteUnits() {
+        assertThat(parseCssSizeToDp("100px", baseFontSizeSp, 0f, containerWidthPx)).isEqualTo(100.dp)
+        assertThat(parseCssSizeToDp("12pt", baseFontSizeSp, 0f, containerWidthPx).value).isWithin(0.01f).of(16.0f)
     }
 
     @Test
@@ -66,7 +70,8 @@ class StyleUtilsTest {
     fun parseCssDimensionToTextUnit_handlesPxValues() {
         val result = parseCssDimensionToTextUnit("100px", containerWidthPx, density)
         assertThat(result.isSp).isTrue()
-        assertThat(result.value).isWithin(0.01f).of(50f)
+        assertThat(result.value).isWithin(0.01f).of(100f)
+        assertThat(parseCssDimensionToTextUnit("18px", containerWidthPx, 3f).value).isWithin(0.01f).of(18f)
     }
 
     @Test
@@ -88,7 +93,14 @@ class StyleUtilsTest {
     fun parseCssDimensionToTextUnit_handlesPtValues() {
         val result = parseCssDimensionToTextUnit("12pt", containerWidthPx, density)
         assertThat(result.isSp).isTrue()
-        assertThat(result.value).isWithin(0.01f).of(8.0f)
+        assertThat(result.value).isWithin(0.01f).of(16.0f)
+    }
+
+    @Test
+    fun parseCssDimensionToTextUnit_resolvesPercentageAgainstBaseFontSizeWhenProvided() {
+        val result = parseCssDimensionToTextUnit("150%", containerWidthPx, density, baseFontSizeSp = 16f)
+        assertThat(result.isSp).isTrue()
+        assertThat(result.value).isWithin(0.01f).of(24f)
     }
 
     @Test

@@ -27,6 +27,17 @@ class PdfToolbarPreferencesTest {
     }
 
     @Test
+    fun `split view tool defaults beside external apps and supports placement`() {
+        val preferences = PdfToolbarPreferences()
+
+        assertTrue(PdfReaderTool.SPLIT_VIEW.supportsToolbarPlacement)
+        assertTrue(preferences.isVisible(PdfReaderTool.SPLIT_VIEW))
+        assertFalse(preferences.isBottom(PdfReaderTool.SPLIT_VIEW))
+        assertEquals(PdfReaderTool.DICTIONARY, preferences.toolOrder.first())
+        assertEquals(PdfReaderTool.SPLIT_VIEW, preferences.toolOrder[1])
+    }
+
+    @Test
     fun `sanitizing removes unavailable tools and invalid placement`() {
         val available = setOf(PdfReaderTool.THEME, PdfReaderTool.FILE_INFO, PdfReaderTool.SEARCH)
         val sanitized = PdfToolbarPreferences(

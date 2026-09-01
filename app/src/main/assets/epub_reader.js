@@ -17,6 +17,24 @@
 
         viewport.setAttribute("content", "width=device-width, initial-scale=1.0, maximum-scale=1.5, user-scalable=yes");
 
+        // Some Android WebViews resolve percentage heights on <html> against a zero-height
+        // initial containing block (observed with file-based loadDataWithBaseURL documents),
+        // collapsing the page to a zero-pixel scroll container that clips all content and
+        // pins window.scrollY to 0. Pin the root to a concrete pixel height derived from the
+        // real viewport and re-apply it on resize so scrolling and position tracking work
+        // regardless of publication CSS height traps (e.g. body { height: calc(100% - 40px) }).
+        var applyReaderViewportHeight = function () {
+            try {
+                var height = Math.max(window.innerHeight || 0, document.documentElement.clientHeight || 0);
+                if (height <= 0) return;
+                document.documentElement.style.height = height + "px";
+                if (document.body) document.body.style.height = "auto";
+            } catch (e) { }
+        };
+        window.__applyReaderViewportHeight = applyReaderViewportHeight;
+        window.addEventListener("resize", applyReaderViewportHeight);
+        applyReaderViewportHeight();
+
         var style = document.getElementById("customMobileStyle");
 
         if (!style) {
@@ -926,7 +944,7 @@
         getReaderImageElements().forEach(function (image) {
             var anchor = image.getAttribute("data-reader-image-anchor") || "center";
 
-            image.style.setProperty("display", "block", "important");
+            image.style.setProperty("display", window.__readerHideImages ? "none" : "block", "important");
             image.style.setProperty("height", "auto", "important");
             image.style.setProperty("object-fit", "contain", "important");
 
@@ -945,7 +963,7 @@
         });
     }
 
-    window.updateReaderStyles = function (fontSizeEm, lineHeight, fontFamily, textAlign, paragraphGap, imageSize, horizontalMargin, verticalMargin, fontWeight, letterSpacing) {
+    window.updateReaderStyles = function (fontSizeEm, lineHeight, fontFamily, textAlign, paragraphGap, imageSize, horizontalMargin, verticalMargin, fontWeight, letterSpacing, hideImages) {
         var logTag = "ReaderFontDiagnosis";
         console.log(
             logTag +
@@ -994,6 +1012,8 @@
         if (isNaN(newFontWeight) || newFontWeight < 0 || newFontWeight > 1000) newFontWeight = 0;
         if (isNaN(newLetterSpacing) || newLetterSpacing < -0.1 || newLetterSpacing > 0.5) newLetterSpacing = 0;
 
+        window.__readerHideImages = !!hideImages;
+
         var styleSignature = [
             newFontSize,
             newLineHeight,
@@ -1005,6 +1025,7 @@
             newVerticalMargin,
             newFontWeight,
             newLetterSpacing,
+            hideImages ? 1 : 0,
         ].join("|");
 
         if (window.__readerStyleSignature === styleSignature && dynamicStyleElement.innerHTML.trim().length > 0) {
@@ -1074,12 +1095,20 @@
             `;
         }
 
-        var typographyOverrideCss = `
+        var typographyDeclarations = [];
+        if (newFontWeight > 0) {
+            typographyDeclarations.push(`font-weight: ${newFontWeight} !important;`);
+        }
+        if (Math.abs(newLetterSpacing) > 0.0001) {
+            // Only override when the reader moved away from the default; otherwise
+            // publication letter-spacing must survive (parity with pagination engine).
+            typographyDeclarations.push(`letter-spacing: ${newLetterSpacing}em !important;`);
+        }
+        var typographyOverrideCss = typographyDeclarations.length > 0 ? `
             body, p, div, span, li, a, h1, h2, h3, h4, h5, h6, blockquote, td, th {
-                ${newFontWeight > 0 ? `font-weight: ${newFontWeight} !important;` : ""}
-                letter-spacing: ${newLetterSpacing}em !important;
+                ${typographyDeclarations.join("\n                ")}
             }
-        `;
+        ` : "";
 
         var horizontalPaddingPx = Math.max(0, 16 * newHorizontalMargin);
         var verticalPaddingPx = Math.max(0, 16 * newVerticalMargin);
@@ -1153,7 +1182,11 @@
             }
         `;
 
-        dynamicStyleElement.innerHTML = [sizeCss, lineHeightCss, typographyOverrideCss, fontCss, alignCss, gapCss, viewportContainmentCss, imageCss, horizontalMarginCss].join("\n");
+        var hideImagesCss = hideImages
+            ? "body img { display: none !important; }"
+            : "";
+
+        dynamicStyleElement.innerHTML = [sizeCss, lineHeightCss, typographyOverrideCss, fontCss, alignCss, gapCss, viewportContainmentCss, imageCss, horizontalMarginCss, hideImagesCss].join("\n");
         applyReaderImageAnchors();
         setTimeout(applyReaderImageAnchors, 80);
         logVerticalJitter(

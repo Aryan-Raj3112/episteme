@@ -283,6 +283,79 @@ fun SharedReaderScreenState.withAudiobookImported(
     )
 }
 
+/**
+ * Adds a decoded audiobook to both Listen and the normal mobile library.
+ * Android's importer persists these two projections in one Room transaction;
+ * this shared mutation gives iOS the same all-or-nothing state transition.
+ */
+fun SharedReaderScreenState.withAudiobookImportedToLibrary(
+    request: SharedAudiobookImportRequest,
+): SharedAudiobookImportResult {
+    val normalizedPath = request.filePath.trim()
+    val normalizedName = request.displayName.trim()
+    if (request.bookId.isBlank() || normalizedPath.isBlank() || normalizedName.isBlank()) {
+        return SharedAudiobookImportResult(
+            state = this,
+            status = SharedAudiobookImportStatus.INVALID,
+            message = "Audiobook location or name is missing",
+        )
+    }
+
+    val audiobook = request.copy(
+        bookId = request.bookId.trim(),
+        filePath = normalizedPath,
+        displayName = normalizedName,
+        format = request.format.trim().ifBlank { "AUDIOBOOK" },
+    ).toAudiobook()
+    val normalizedIdentity = normalizedPath.normalizedAudiobookPathIdentity()
+    val duplicateAudiobook = audiobooks.firstOrNull { existing ->
+        existing.bookId == audiobook.bookId ||
+            existing.filePath.normalizedAudiobookPathIdentity() == normalizedIdentity
+    }
+    val duplicateLibraryBook = rawLibraryBooks.firstOrNull { existing ->
+        existing.id == audiobook.bookId ||
+            existing.path?.normalizedAudiobookPathIdentity() == normalizedIdentity
+    }
+    if (duplicateAudiobook != null || duplicateLibraryBook != null) {
+        return SharedAudiobookImportResult(
+            state = this,
+            status = SharedAudiobookImportStatus.DUPLICATE,
+            audiobook = duplicateAudiobook,
+            libraryBook = duplicateLibraryBook
+                ?: duplicateAudiobook?.let { existing ->
+                    rawLibraryBooks.firstOrNull { it.id == existing.bookId }
+                },
+            message = "This audiobook is already in the library",
+        )
+    }
+
+    val libraryBook = audiobook.toSharedLibraryBook(
+        displayName = normalizedName,
+        fileSize = request.fileSize,
+        isAvailable = request.isAvailable,
+    )
+    val importedState = withAudiobookImported(audiobook)
+    val libraryResult = importedState.withMobileImportedBooks(listOf(libraryBook))
+    if (libraryResult.addedBooks.isEmpty()) {
+        return SharedAudiobookImportResult(
+            state = this,
+            status = SharedAudiobookImportStatus.DUPLICATE,
+            audiobook = audiobook,
+            libraryBook = rawLibraryBooks.firstOrNull { it.id == audiobook.bookId },
+            message = "This audiobook is already in the library",
+        )
+    }
+    return SharedAudiobookImportResult(
+        state = libraryResult.state,
+        status = SharedAudiobookImportStatus.ADDED,
+        audiobook = audiobook,
+        libraryBook = libraryResult.addedBooks.single(),
+    )
+}
+
+private fun String.normalizedAudiobookPathIdentity(): String =
+    trim().removePrefix("file://").removePrefix("/private")
+
 fun SharedReaderScreenState.withAudiobookPosition(
     bookId: String,
     positionMs: Long,

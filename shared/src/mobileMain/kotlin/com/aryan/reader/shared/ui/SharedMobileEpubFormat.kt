@@ -90,14 +90,20 @@ import com.aryan.reader.shared.BuiltInReaderThemes
 import com.aryan.reader.shared.CustomFontItem
 import com.aryan.reader.shared.ReaderTheme
 import com.aryan.reader.shared.ReaderFont
+import com.aryan.reader.shared.AndroidEpubFormatSlider
+import com.aryan.reader.shared.AndroidEpubFormatSliders
 import com.aryan.reader.shared.PageInfoMode
 import com.aryan.reader.shared.PageInfoPosition
 import com.aryan.reader.shared.SystemUiMode
 import com.aryan.reader.shared.currentTimestamp
 import com.aryan.reader.shared.toSharedReaderFontFamily
+import com.aryan.reader.shared.toAndroidEpubFormatSliderValues
+import com.aryan.reader.shared.withAndroidEpubFormatSliderValue
 import com.aryan.reader.shared.reader.ReaderPageInfo
 import com.aryan.reader.shared.reader.ReaderReadingMode
 import com.aryan.reader.shared.reader.ReaderSettings
+import com.aryan.reader.shared.reader.pullToTurnEnabled
+import com.aryan.reader.shared.reader.seamlessChapterTransitionEnabled
 import com.aryan.reader.shared.reader.SharedReaderTextAlign
 import com.aryan.reader.shared.toReaderSettings
 import com.aryan.reader.shared.generated.resources.Res
@@ -136,6 +142,22 @@ internal fun SharedMobileEpubFormatSheet(
         )
     }
     val defaults = ReaderSettings(readingMode = ReaderReadingMode.VERTICAL)
+    val sliderValues = settings.toAndroidEpubFormatSliderValues()
+
+    fun sliderValue(slider: AndroidEpubFormatSlider): Float = when (slider) {
+        AndroidEpubFormatSlider.FONT_SIZE -> sliderValues.fontSize
+        AndroidEpubFormatSlider.LINE_HEIGHT -> sliderValues.lineHeight
+        AndroidEpubFormatSlider.PARAGRAPH_GAP -> sliderValues.paragraphGap
+        AndroidEpubFormatSlider.IMAGE_SIZE -> sliderValues.imageSize
+        AndroidEpubFormatSlider.HORIZONTAL_MARGIN -> sliderValues.horizontalMargin
+        AndroidEpubFormatSlider.VERTICAL_MARGIN -> sliderValues.verticalMargin
+    }
+
+    fun adjust(slider: AndroidEpubFormatSlider, deltaSteps: Int) {
+        val spec = AndroidEpubFormatSliders.forSlider(slider)
+        onSettingsChange(settings.withAndroidEpubFormatSliderValue(slider, spec.step(sliderValue(slider), deltaSteps)))
+    }
+
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
@@ -159,7 +181,20 @@ internal fun SharedMobileEpubFormatSheet(
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     TextButton(onClick = {
-                        onSettingsChange(settings.copy(fontSize = defaults.fontSize, fontWeight = defaults.fontWeight, letterSpacing = defaults.letterSpacing, lineSpacing = defaults.lineSpacing, paragraphSpacing = defaults.paragraphSpacing, imageScale = defaults.imageScale, horizontalMargin = defaults.resolvedHorizontalMargin, verticalMargin = defaults.resolvedVerticalMargin, fontFamily = defaults.fontFamily, customFontPath = null, textAlign = defaults.textAlign))
+                        onSettingsChange(settings.copy(
+                            fontSize = defaults.fontSize,
+                            fontWeight = defaults.fontWeight,
+                            letterSpacing = defaults.letterSpacing,
+                            lineSpacing = defaults.lineSpacing,
+                            paragraphSpacing = defaults.paragraphSpacing,
+                            imageScale = defaults.imageScale,
+                            margin = defaults.margin,
+                            horizontalMargin = defaults.resolvedHorizontalMargin,
+                            verticalMargin = defaults.resolvedVerticalMargin,
+                            fontFamily = defaults.fontFamily,
+                            customFontPath = null,
+                            textAlign = defaults.textAlign
+                        ))
                         alignmentChoice = "Default"
                     }) { Text("Reset") }
                     IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) { Icon(Icons.Default.Close, contentDescription = "Close", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp)) }
@@ -215,18 +250,18 @@ internal fun SharedMobileEpubFormatSheet(
             Spacer(Modifier.height(24.dp))
             Text("TYPOGRAPHY", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 4.dp, bottom = 12.dp))
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                SharedMobileEpubFormatStepperRow("Font Size", sharedMobileFormatMultiplier(settings.fontSize / defaults.fontSize.toFloat()), { onSettingsChange(settings.copy(fontSize = (settings.fontSize - 1).coerceAtLeast((defaults.fontSize * 0.5f).roundToInt()))) }, { onSettingsChange(settings.copy(fontSize = (settings.fontSize + 1).coerceAtMost(defaults.fontSize * 3))) }, { activeAdjustment = SharedMobileReaderFormatAdjustment.FONT_SIZE })
+                SharedMobileEpubFormatStepperRow("Font Size", sharedMobileFormatMultiplier(sliderValues.fontSize), { adjust(AndroidEpubFormatSlider.FONT_SIZE, -1) }, { adjust(AndroidEpubFormatSlider.FONT_SIZE, 1) }, { activeAdjustment = SharedMobileReaderFormatAdjustment.FONT_SIZE })
                 SharedMobileEpubFormatStepperRow("Font Weight", sharedMobileFormatWeight(settings.fontWeight), { onSettingsChange(settings.copy(fontWeight = sharedMobilePreviousWeight(settings.fontWeight))) }, { onSettingsChange(settings.copy(fontWeight = sharedMobileNextWeight(settings.fontWeight))) }, { activeAdjustment = SharedMobileReaderFormatAdjustment.FONT_WEIGHT })
                 SharedMobileEpubFormatStepperRow("Letter Spacing", sharedMobileFormatLetterSpacing(settings.letterSpacing), { onSettingsChange(settings.copy(letterSpacing = sharedMobileStep(settings.letterSpacing, -0.01f, -0.10f, 0.50f, 100f))) }, { onSettingsChange(settings.copy(letterSpacing = sharedMobileStep(settings.letterSpacing, 0.01f, -0.10f, 0.50f, 100f))) }, { activeAdjustment = SharedMobileReaderFormatAdjustment.LETTER_SPACING })
             }
             Spacer(Modifier.height(24.dp))
             Text("LAYOUT & SPACING", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 4.dp, bottom = 12.dp))
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                SharedMobileEpubFormatStepperRow("Line Height", sharedMobileFormatMultiplier(settings.lineSpacing / defaults.lineSpacing), { onSettingsChange(settings.copy(lineSpacing = sharedMobileStep(settings.lineSpacing / defaults.lineSpacing, -0.1f, 1f, 3f) * defaults.lineSpacing)) }, { onSettingsChange(settings.copy(lineSpacing = sharedMobileStep(settings.lineSpacing / defaults.lineSpacing, 0.1f, 1f, 3f) * defaults.lineSpacing)) }, { activeAdjustment = SharedMobileReaderFormatAdjustment.LINE_HEIGHT })
-                SharedMobileEpubFormatStepperRow("Paragraph Gap", sharedMobileFormatMultiplier(settings.paragraphSpacing / defaults.paragraphSpacing), { onSettingsChange(settings.copy(paragraphSpacing = sharedMobileStep(settings.paragraphSpacing / defaults.paragraphSpacing, -0.1f, 0f, 3f) * defaults.paragraphSpacing)) }, { onSettingsChange(settings.copy(paragraphSpacing = sharedMobileStep(settings.paragraphSpacing / defaults.paragraphSpacing, 0.1f, 0f, 3f) * defaults.paragraphSpacing)) }, { activeAdjustment = SharedMobileReaderFormatAdjustment.PARAGRAPH_GAP })
-                SharedMobileEpubFormatStepperRow("Image Size", sharedMobileFormatMultiplier(settings.imageScale / defaults.imageScale), { onSettingsChange(settings.copy(imageScale = sharedMobileStep(settings.imageScale / defaults.imageScale, -0.1f, 0.5f, 2f) * defaults.imageScale)) }, { onSettingsChange(settings.copy(imageScale = sharedMobileStep(settings.imageScale / defaults.imageScale, 0.1f, 0.5f, 2f) * defaults.imageScale)) }, { activeAdjustment = SharedMobileReaderFormatAdjustment.IMAGE_SIZE })
-                SharedMobileEpubFormatStepperRow("Horizontal Margin", sharedMobileFormatMargin(settings.resolvedHorizontalMargin / defaults.resolvedHorizontalMargin.toFloat()), { onSettingsChange(settings.copy(horizontalMargin = (sharedMobileStep(settings.resolvedHorizontalMargin / defaults.resolvedHorizontalMargin.toFloat(), -0.1f, 0f, 3f) * defaults.resolvedHorizontalMargin).roundToInt())) }, { onSettingsChange(settings.copy(horizontalMargin = (sharedMobileStep(settings.resolvedHorizontalMargin / defaults.resolvedHorizontalMargin.toFloat(), 0.1f, 0f, 3f) * defaults.resolvedHorizontalMargin).roundToInt())) }, { activeAdjustment = SharedMobileReaderFormatAdjustment.HORIZONTAL_MARGIN })
-                SharedMobileEpubFormatStepperRow("Vertical Margin", sharedMobileFormatMargin(settings.resolvedVerticalMargin / defaults.resolvedVerticalMargin.toFloat()), { onSettingsChange(settings.copy(verticalMargin = (sharedMobileStep(settings.resolvedVerticalMargin / defaults.resolvedVerticalMargin.toFloat(), -0.1f, 0f, 3f) * defaults.resolvedVerticalMargin).roundToInt())) }, { onSettingsChange(settings.copy(verticalMargin = (sharedMobileStep(settings.resolvedVerticalMargin / defaults.resolvedVerticalMargin.toFloat(), 0.1f, 0f, 3f) * defaults.resolvedVerticalMargin).roundToInt())) }, { activeAdjustment = SharedMobileReaderFormatAdjustment.VERTICAL_MARGIN })
+                SharedMobileEpubFormatStepperRow("Line Height", sharedMobileFormatMultiplier(sliderValues.lineHeight), { adjust(AndroidEpubFormatSlider.LINE_HEIGHT, -1) }, { adjust(AndroidEpubFormatSlider.LINE_HEIGHT, 1) }, { activeAdjustment = SharedMobileReaderFormatAdjustment.LINE_HEIGHT })
+                SharedMobileEpubFormatStepperRow("Paragraph Gap", sharedMobileFormatMultiplier(sliderValues.paragraphGap), { adjust(AndroidEpubFormatSlider.PARAGRAPH_GAP, -1) }, { adjust(AndroidEpubFormatSlider.PARAGRAPH_GAP, 1) }, { activeAdjustment = SharedMobileReaderFormatAdjustment.PARAGRAPH_GAP })
+                SharedMobileEpubFormatStepperRow("Image Size", sharedMobileFormatMultiplier(sliderValues.imageSize), { adjust(AndroidEpubFormatSlider.IMAGE_SIZE, -1) }, { adjust(AndroidEpubFormatSlider.IMAGE_SIZE, 1) }, { activeAdjustment = SharedMobileReaderFormatAdjustment.IMAGE_SIZE })
+                SharedMobileEpubFormatStepperRow("Horizontal Margin", sharedMobileFormatMargin(sliderValues.horizontalMargin), { adjust(AndroidEpubFormatSlider.HORIZONTAL_MARGIN, -1) }, { adjust(AndroidEpubFormatSlider.HORIZONTAL_MARGIN, 1) }, { activeAdjustment = SharedMobileReaderFormatAdjustment.HORIZONTAL_MARGIN })
+                SharedMobileEpubFormatStepperRow("Vertical Margin", sharedMobileFormatMargin(sliderValues.verticalMargin), { adjust(AndroidEpubFormatSlider.VERTICAL_MARGIN, -1) }, { adjust(AndroidEpubFormatSlider.VERTICAL_MARGIN, 1) }, { activeAdjustment = SharedMobileReaderFormatAdjustment.VERTICAL_MARGIN })
             }
         }
     }
@@ -371,37 +406,56 @@ internal fun SharedMobileEpubFormatAdjustmentDialog(
     onSettingsChange: (ReaderSettings) -> Unit,
     onDismiss: () -> Unit
 ) {
+    val sliderValues = settings.toAndroidEpubFormatSliderValues()
     val value = when (adjustment) {
-        SharedMobileReaderFormatAdjustment.FONT_SIZE -> settings.fontSize / defaults.fontSize.toFloat()
+        SharedMobileReaderFormatAdjustment.FONT_SIZE -> sliderValues.fontSize
         SharedMobileReaderFormatAdjustment.FONT_WEIGHT -> settings.fontWeight.takeIf { it > 0 }?.toFloat() ?: 400f
         SharedMobileReaderFormatAdjustment.LETTER_SPACING -> settings.letterSpacing
-        SharedMobileReaderFormatAdjustment.LINE_HEIGHT -> settings.lineSpacing / defaults.lineSpacing
-        SharedMobileReaderFormatAdjustment.PARAGRAPH_GAP -> settings.paragraphSpacing / defaults.paragraphSpacing
-        SharedMobileReaderFormatAdjustment.IMAGE_SIZE -> settings.imageScale / defaults.imageScale
-        SharedMobileReaderFormatAdjustment.HORIZONTAL_MARGIN -> settings.resolvedHorizontalMargin / defaults.resolvedHorizontalMargin.toFloat()
-        SharedMobileReaderFormatAdjustment.VERTICAL_MARGIN -> settings.resolvedVerticalMargin / defaults.resolvedVerticalMargin.toFloat()
+        SharedMobileReaderFormatAdjustment.LINE_HEIGHT -> sliderValues.lineHeight
+        SharedMobileReaderFormatAdjustment.PARAGRAPH_GAP -> sliderValues.paragraphGap
+        SharedMobileReaderFormatAdjustment.IMAGE_SIZE -> sliderValues.imageSize
+        SharedMobileReaderFormatAdjustment.HORIZONTAL_MARGIN -> sliderValues.horizontalMargin
+        SharedMobileReaderFormatAdjustment.VERTICAL_MARGIN -> sliderValues.verticalMargin
     }
     val range = when (adjustment) {
-        SharedMobileReaderFormatAdjustment.FONT_SIZE -> 0.5f..3f
+        SharedMobileReaderFormatAdjustment.FONT_SIZE -> AndroidEpubFormatSliders.fontSize.minimum..AndroidEpubFormatSliders.fontSize.maximum
         SharedMobileReaderFormatAdjustment.FONT_WEIGHT -> 100f..1000f
         SharedMobileReaderFormatAdjustment.LETTER_SPACING -> -0.10f..0.50f
-        SharedMobileReaderFormatAdjustment.LINE_HEIGHT,
-        SharedMobileReaderFormatAdjustment.PARAGRAPH_GAP,
-        SharedMobileReaderFormatAdjustment.HORIZONTAL_MARGIN,
-        SharedMobileReaderFormatAdjustment.VERTICAL_MARGIN -> 0f..3f
-        SharedMobileReaderFormatAdjustment.IMAGE_SIZE -> 0.5f..2f
+        SharedMobileReaderFormatAdjustment.LINE_HEIGHT -> AndroidEpubFormatSliders.lineHeight.minimum..AndroidEpubFormatSliders.lineHeight.maximum
+        SharedMobileReaderFormatAdjustment.PARAGRAPH_GAP -> AndroidEpubFormatSliders.paragraphGap.minimum..AndroidEpubFormatSliders.paragraphGap.maximum
+        SharedMobileReaderFormatAdjustment.HORIZONTAL_MARGIN -> AndroidEpubFormatSliders.horizontalMargin.minimum..AndroidEpubFormatSliders.horizontalMargin.maximum
+        SharedMobileReaderFormatAdjustment.VERTICAL_MARGIN -> AndroidEpubFormatSliders.verticalMargin.minimum..AndroidEpubFormatSliders.verticalMargin.maximum
+        SharedMobileReaderFormatAdjustment.IMAGE_SIZE -> AndroidEpubFormatSliders.imageSize.minimum..AndroidEpubFormatSliders.imageSize.maximum
     }
     fun update(raw: Float) {
         onSettingsChange(
             when (adjustment) {
-                SharedMobileReaderFormatAdjustment.FONT_SIZE -> settings.copy(fontSize = (defaults.fontSize * sharedMobileStep(raw, 0f, 0.5f, 3f)).roundToInt())
+                SharedMobileReaderFormatAdjustment.FONT_SIZE -> settings.withAndroidEpubFormatSliderValue(
+                    AndroidEpubFormatSlider.FONT_SIZE,
+                    AndroidEpubFormatSliders.fontSize.snap(raw)
+                )
                 SharedMobileReaderFormatAdjustment.FONT_WEIGHT -> settings.copy(fontWeight = ((raw / 100f).roundToInt() * 100).coerceIn(100, 1000))
                 SharedMobileReaderFormatAdjustment.LETTER_SPACING -> settings.copy(letterSpacing = sharedMobileStep(raw, 0f, -0.10f, 0.50f, 100f))
-                SharedMobileReaderFormatAdjustment.LINE_HEIGHT -> settings.copy(lineSpacing = defaults.lineSpacing * sharedMobileStep(raw, 0f, 1f, 3f))
-                SharedMobileReaderFormatAdjustment.PARAGRAPH_GAP -> settings.copy(paragraphSpacing = defaults.paragraphSpacing * sharedMobileStep(raw, 0f, 0f, 3f))
-                SharedMobileReaderFormatAdjustment.IMAGE_SIZE -> settings.copy(imageScale = defaults.imageScale * sharedMobileStep(raw, 0f, 0.5f, 2f))
-                SharedMobileReaderFormatAdjustment.HORIZONTAL_MARGIN -> settings.copy(horizontalMargin = (defaults.resolvedHorizontalMargin * sharedMobileStep(raw, 0f, 0f, 3f)).roundToInt())
-                SharedMobileReaderFormatAdjustment.VERTICAL_MARGIN -> settings.copy(verticalMargin = (defaults.resolvedVerticalMargin * sharedMobileStep(raw, 0f, 0f, 3f)).roundToInt())
+                SharedMobileReaderFormatAdjustment.LINE_HEIGHT -> settings.withAndroidEpubFormatSliderValue(
+                    AndroidEpubFormatSlider.LINE_HEIGHT,
+                    AndroidEpubFormatSliders.lineHeight.snap(raw)
+                )
+                SharedMobileReaderFormatAdjustment.PARAGRAPH_GAP -> settings.withAndroidEpubFormatSliderValue(
+                    AndroidEpubFormatSlider.PARAGRAPH_GAP,
+                    AndroidEpubFormatSliders.paragraphGap.snap(raw)
+                )
+                SharedMobileReaderFormatAdjustment.IMAGE_SIZE -> settings.withAndroidEpubFormatSliderValue(
+                    AndroidEpubFormatSlider.IMAGE_SIZE,
+                    AndroidEpubFormatSliders.imageSize.snap(raw)
+                )
+                SharedMobileReaderFormatAdjustment.HORIZONTAL_MARGIN -> settings.withAndroidEpubFormatSliderValue(
+                    AndroidEpubFormatSlider.HORIZONTAL_MARGIN,
+                    AndroidEpubFormatSliders.horizontalMargin.snap(raw)
+                )
+                SharedMobileReaderFormatAdjustment.VERTICAL_MARGIN -> settings.withAndroidEpubFormatSliderValue(
+                    AndroidEpubFormatSlider.VERTICAL_MARGIN,
+                    AndroidEpubFormatSliders.verticalMargin.snap(raw)
+                )
             }
         )
     }
@@ -430,14 +484,32 @@ internal fun SharedMobileEpubFormatAdjustmentDialog(
             TextButton(onClick = {
                 onSettingsChange(
                     when (adjustment) {
-                        SharedMobileReaderFormatAdjustment.FONT_SIZE -> settings.copy(fontSize = defaults.fontSize)
+                        SharedMobileReaderFormatAdjustment.FONT_SIZE -> settings.withAndroidEpubFormatSliderValue(
+                            AndroidEpubFormatSlider.FONT_SIZE,
+                            AndroidEpubFormatSliders.fontSize.default
+                        )
                         SharedMobileReaderFormatAdjustment.FONT_WEIGHT -> settings.copy(fontWeight = defaults.fontWeight)
                         SharedMobileReaderFormatAdjustment.LETTER_SPACING -> settings.copy(letterSpacing = defaults.letterSpacing)
-                        SharedMobileReaderFormatAdjustment.LINE_HEIGHT -> settings.copy(lineSpacing = defaults.lineSpacing)
-                        SharedMobileReaderFormatAdjustment.PARAGRAPH_GAP -> settings.copy(paragraphSpacing = defaults.paragraphSpacing)
-                        SharedMobileReaderFormatAdjustment.IMAGE_SIZE -> settings.copy(imageScale = defaults.imageScale)
-                        SharedMobileReaderFormatAdjustment.HORIZONTAL_MARGIN -> settings.copy(horizontalMargin = defaults.resolvedHorizontalMargin)
-                        SharedMobileReaderFormatAdjustment.VERTICAL_MARGIN -> settings.copy(verticalMargin = defaults.resolvedVerticalMargin)
+                        SharedMobileReaderFormatAdjustment.LINE_HEIGHT -> settings.withAndroidEpubFormatSliderValue(
+                            AndroidEpubFormatSlider.LINE_HEIGHT,
+                            AndroidEpubFormatSliders.lineHeight.default
+                        )
+                        SharedMobileReaderFormatAdjustment.PARAGRAPH_GAP -> settings.withAndroidEpubFormatSliderValue(
+                            AndroidEpubFormatSlider.PARAGRAPH_GAP,
+                            AndroidEpubFormatSliders.paragraphGap.default
+                        )
+                        SharedMobileReaderFormatAdjustment.IMAGE_SIZE -> settings.withAndroidEpubFormatSliderValue(
+                            AndroidEpubFormatSlider.IMAGE_SIZE,
+                            AndroidEpubFormatSliders.imageSize.default
+                        )
+                        SharedMobileReaderFormatAdjustment.HORIZONTAL_MARGIN -> settings.withAndroidEpubFormatSliderValue(
+                            AndroidEpubFormatSlider.HORIZONTAL_MARGIN,
+                            AndroidEpubFormatSliders.horizontalMargin.default
+                        )
+                        SharedMobileReaderFormatAdjustment.VERTICAL_MARGIN -> settings.withAndroidEpubFormatSliderValue(
+                            AndroidEpubFormatSlider.VERTICAL_MARGIN,
+                            AndroidEpubFormatSliders.verticalMargin.default
+                        )
                     }
                 )
             }) { Text("Reset") }
@@ -772,14 +844,12 @@ internal fun SharedMobileEpubChapterChangeIndicator(direction: String, progress:
 @Composable
 internal fun SharedMobileEpubVisualOptionsSheet(
     settings: ReaderSettings,
-    readerBrightness: Float?,
-    readerBrightnessSupported: Boolean,
-    onReaderBrightnessChange: (Float?) -> Unit,
     onSettingsChange: (ReaderSettings) -> Unit,
     onDismiss: () -> Unit
 ) {
-    ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp).padding(bottom = 32.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+        Column(Modifier.fillMaxWidth().fillMaxHeight(0.72f).verticalScroll(rememberScrollState()).padding(horizontal = 24.dp).padding(bottom = 32.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text("Visual Options", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                 IconButton(onClick = onDismiss) {
@@ -812,7 +882,7 @@ internal fun SharedMobileEpubVisualOptionsSheet(
                 Column {
                     Row(
                         Modifier.fillMaxWidth().clickable {
-                            onSettingsChange(settings.copy(seamlessChapterNavigation = !settings.seamlessChapterNavigation))
+                            onSettingsChange(settings.copy(seamlessChapterNavigation = !settings.pullToTurnEnabled))
                         }.padding(16.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -826,11 +896,13 @@ internal fun SharedMobileEpubVisualOptionsSheet(
                         }
                         Spacer(Modifier.width(16.dp))
                         Switch(
-                            checked = !settings.seamlessChapterNavigation,
-                            onCheckedChange = { seamless -> onSettingsChange(settings.copy(seamlessChapterNavigation = !seamless)) }
+                            checked = settings.seamlessChapterTransitionEnabled,
+                            onCheckedChange = { seamless ->
+                                onSettingsChange(settings.copy(seamlessChapterNavigation = !seamless))
+                            }
                         )
                     }
-                    if (settings.seamlessChapterNavigation) {
+                    if (settings.pullToTurnEnabled) {
                         HorizontalDivider(Modifier.padding(horizontal = 16.dp))
                         Column(Modifier.padding(16.dp)) {
                             SharedMobileEpubSettingSlider(
@@ -842,6 +914,44 @@ internal fun SharedMobileEpubVisualOptionsSheet(
                         }
                     }
                 }
+            }
+            Spacer(Modifier.height(8.dp))
+            SharedMobileEpubReaderImagesToggle(
+                hideImages = settings.hideImages,
+                onHideImagesChange = { hideImages -> onSettingsChange(settings.copy(hideImages = hideImages)) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun SharedMobileEpubReaderImagesToggle(
+    hideImages: Boolean,
+    onHideImagesChange: (Boolean) -> Unit
+) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column {
+            Row(
+                Modifier.fillMaxWidth().clickable { onHideImagesChange(!hideImages) }.padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Hide Images", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "Turn this on to read with all images in the book hidden.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Spacer(Modifier.width(16.dp))
+                Switch(
+                    checked = hideImages,
+                    onCheckedChange = onHideImagesChange
+                )
             }
         }
     }

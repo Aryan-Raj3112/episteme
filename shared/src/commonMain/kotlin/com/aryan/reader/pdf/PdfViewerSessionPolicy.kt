@@ -28,6 +28,40 @@ fun canManagePdfVirtualPages(
 ): Boolean = isDocumentReady && currentBookId != null &&
     loadedPageLayoutBookId == currentBookId && virtualPageCount > 0
 
+data class SharedPdfDocumentOpenBookPlan(
+    val bookId: String,
+    /** Non-null when legacy fast-id sidecars should be migrated into [bookId]. */
+    val migrationTargetBookId: String?,
+    val shouldResetSidecarState: Boolean,
+) {
+    val shouldMigrateLegacyBookId: Boolean
+        get() = migrationTargetBookId != null
+}
+
+/**
+ * Resolves the reader book id for a document-open pass and whether sidecar
+ * (annotation) state may be reset.
+ *
+ * [shouldResetSidecarState] is false when the pass resolves the book the
+ * reader already loaded. Re-opening the same book (split panes re-run the
+ * open effect, password unlocks restart it) must not reset sidecar state:
+ * the sidecar load only restarts when the book id changes, so a reset would
+ * strand the session non-ready and committed ink strokes would vanish.
+ */
+fun sharedPdfDocumentOpenBookPlan(
+    currentBookId: String?,
+    fastId: String,
+    selectedBookId: String?,
+): SharedPdfDocumentOpenBookPlan {
+    val shouldUseSelectedId = selectedBookId != null && selectedBookId != fastId
+    val bookId = if (shouldUseSelectedId) selectedBookId!! else fastId
+    return SharedPdfDocumentOpenBookPlan(
+        bookId = bookId,
+        migrationTargetBookId = if (shouldUseSelectedId) selectedBookId else null,
+        shouldResetSidecarState = currentBookId != bookId,
+    )
+}
+
 fun pdfPageToPersist(
     initialRestorationComplete: Boolean,
     currentPage: Int,
@@ -64,17 +98,14 @@ fun sharedPdfPageRangeText(
     pageCount: Int,
     isPaginationMode: Boolean,
     settings: ReaderSettings,
-): String = "${sharedPdfPageRange(pageIndex, pageCount, isPaginationMode, settings)} / $pageCount"
+): String = "${sharedPdfPageRange(pageIndex, pageCount, isPaginationMode, settings)}/$pageCount"
 
 fun sharedPdfPageRangeLabel(
     pageIndex: Int,
     pageCount: Int,
     isPaginationMode: Boolean,
     settings: ReaderSettings,
-): String {
-    val pageRange = sharedPdfPageRange(pageIndex, pageCount, isPaginationMode, settings)
-    return if ('-' in pageRange) "Pages $pageRange of $pageCount" else "Page $pageRange of $pageCount"
-}
+): String = "${sharedPdfPageRange(pageIndex, pageCount, isPaginationMode, settings)}/$pageCount"
 
 private fun sharedPdfPageRange(
     pageIndex: Int,

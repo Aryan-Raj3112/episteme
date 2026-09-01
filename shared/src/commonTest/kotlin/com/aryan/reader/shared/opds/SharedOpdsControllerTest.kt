@@ -70,6 +70,35 @@ class SharedOpdsControllerTest {
         assertEquals(listOf("root", "https://example.org/search?query=ada%20lovelace"), repository.requestedUrls)
     }
 
+    @Test
+    fun `controller loads persisted opds download location and updates it`() {
+        val persisted = SharedOpdsDownloadLocation(
+            folderUriString = "content://folder/books",
+            folderName = "Downloaded Books"
+        )
+        val repository = FakeOpdsRepository(
+            catalogs = emptyList(),
+            feeds = emptyMap(),
+            downloadLocation = persisted
+        )
+        val controller = SharedOpdsController(repository = repository, idFactory = { "generated" })
+
+        assertEquals(persisted, controller.state.downloadLocation)
+
+        val appStorage = SharedOpdsDownloadLocation()
+        controller.setDownloadLocation(appStorage)
+        assertEquals(appStorage, controller.state.downloadLocation)
+        assertEquals(appStorage, repository.savedDownloadLocation)
+
+        val folderLocation = SharedOpdsDownloadLocation(
+            folderUriString = "content://folder/comics",
+            folderName = "Comics"
+        )
+        controller.setDownloadLocation(folderLocation)
+        assertEquals(folderLocation, controller.state.downloadLocation)
+        assertEquals(folderLocation, repository.savedDownloadLocation)
+    }
+
     private fun feed(
         title: String,
         vararg entries: OpdsEntry,
@@ -96,15 +125,25 @@ class SharedOpdsControllerTest {
 
     private class FakeOpdsRepository(
         catalogs: List<OpdsCatalog>,
-        private val feeds: Map<String, OpdsFeed>
+        private val feeds: Map<String, OpdsFeed>,
+        downloadLocation: SharedOpdsDownloadLocation? = null
     ) : SharedOpdsRepository {
         private var storedCatalogs = catalogs
+        private var storedDownloadLocation = downloadLocation
         val requestedUrls = mutableListOf<String>()
+        var savedDownloadLocation: SharedOpdsDownloadLocation? = null
 
         override fun loadCatalogs(): List<OpdsCatalog> = storedCatalogs
 
         override fun saveCatalogs(catalogs: List<OpdsCatalog>) {
             storedCatalogs = catalogs
+        }
+
+        override fun loadOpdsDownloadLocation(): SharedOpdsDownloadLocation? = storedDownloadLocation
+
+        override fun saveOpdsDownloadLocation(location: SharedOpdsDownloadLocation?) {
+            storedDownloadLocation = location
+            savedDownloadLocation = location
         }
 
         override suspend fun fetchFeed(url: String, username: String?, password: String?): Result<OpdsFeed> {

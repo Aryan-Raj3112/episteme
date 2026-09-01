@@ -87,7 +87,70 @@ fun SharedAndroidHomeTopBar(
     var optionsExpanded by remember { mutableStateOf(false) }
     var limitsExpanded by remember { mutableStateOf(false) }
     var hideReaderAi by remember(initialHideReaderAi) { mutableStateOf(initialHideReaderAi) }
-    fun closeAfter(action: () -> Unit): () -> Unit = { action(); optionsExpanded = false }
+    val overflowItems = sharedMobileHomeOverflowItems(
+        state = SharedMobileHomeOverflowState(
+            tabsEnabled = tabsEnabled,
+            screenCaptureProtectionEnabled = screenCaptureProtectionEnabled,
+            strictFileFilterEnabled = strictFileFilterEnabled,
+            usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName,
+            hideReaderAi = hideReaderAi,
+        ),
+        capabilities = SharedMobileHomeOverflowCapabilities(
+            screenCaptureProtection = true,
+            readerAi = showReaderAiOption,
+            clearBookCache = true,
+            clearReflowCache = true,
+            testMlDiagnostics = showDebugActions,
+            exportLogs = showDebugActions,
+            deviceManagement = showDebugCloudActions,
+            clearCloudAndLocalData = showDebugCloudActions,
+        ),
+    )
+
+    fun itemLabel(action: SharedMobileHomeOverflowAction): String = when (action) {
+        SharedMobileHomeOverflowAction.ABOUT -> strings.about
+        SharedMobileHomeOverflowAction.TABS_TOGGLE -> strings.multiTab
+        SharedMobileHomeOverflowAction.SCREEN_CAPTURE_PROTECTION -> strings.screenCaptureProtection
+        SharedMobileHomeOverflowAction.EXTERNAL_FILE_BEHAVIOR -> strings.externalFileBehavior
+        SharedMobileHomeOverflowAction.STRICT_FILE_FILTER -> strings.strictFileFilter
+        SharedMobileHomeOverflowAction.PDF_FILENAME_DISPLAY_NAME -> strings.pdfFileName
+        SharedMobileHomeOverflowAction.LANGUAGE -> strings.language
+        SharedMobileHomeOverflowAction.TOGGLE_READER_AI -> if (hideReaderAi) {
+            strings.showReaderAi
+        } else {
+            strings.hideReaderAi
+        }
+        SharedMobileHomeOverflowAction.CLEAR_BOOK_CACHE -> strings.clearBookCache
+        SharedMobileHomeOverflowAction.CLEAR_REFLOW_CACHE -> strings.clearReflowCache
+        SharedMobileHomeOverflowAction.TEST_PANEL_DETECTION -> strings.testPanelDetection
+        SharedMobileHomeOverflowAction.TEST_SPEECH_BUBBLE_DETECTION -> strings.testSpeechBubbleDetection
+        SharedMobileHomeOverflowAction.EXPORT_LOGS -> strings.exportLogs
+        SharedMobileHomeOverflowAction.DEVICE_MANAGEMENT -> strings.showDeviceManagement
+        SharedMobileHomeOverflowAction.CLEAR_CLOUD_LOCAL_DATA -> strings.clearCloudAndLocalData
+    }
+
+    fun onItemClick(action: SharedMobileHomeOverflowAction) {
+        when (action) {
+            SharedMobileHomeOverflowAction.ABOUT -> onAbout()
+            SharedMobileHomeOverflowAction.TABS_TOGGLE -> onTabsToggle()
+            SharedMobileHomeOverflowAction.SCREEN_CAPTURE_PROTECTION -> onScreenCaptureProtectionToggle()
+            SharedMobileHomeOverflowAction.EXTERNAL_FILE_BEHAVIOR -> onExternalFileBehavior()
+            SharedMobileHomeOverflowAction.STRICT_FILE_FILTER -> onStrictFileFilterToggle()
+            SharedMobileHomeOverflowAction.PDF_FILENAME_DISPLAY_NAME -> onPdfFileNameToggle()
+            SharedMobileHomeOverflowAction.LANGUAGE -> onLanguage()
+            SharedMobileHomeOverflowAction.TOGGLE_READER_AI -> {
+                onToggleReaderAi()
+                hideReaderAi = !hideReaderAi
+            }
+            SharedMobileHomeOverflowAction.CLEAR_BOOK_CACHE -> onClearBookCache()
+            SharedMobileHomeOverflowAction.CLEAR_REFLOW_CACHE -> onClearReflowCache()
+            SharedMobileHomeOverflowAction.TEST_PANEL_DETECTION -> onTestPanelDetection()
+            SharedMobileHomeOverflowAction.TEST_SPEECH_BUBBLE_DETECTION -> onTestSpeechBubbleDetection()
+            SharedMobileHomeOverflowAction.EXPORT_LOGS -> onExportLogs()
+            SharedMobileHomeOverflowAction.DEVICE_MANAGEMENT -> onShowDeviceManagement()
+            SharedMobileHomeOverflowAction.CLEAR_CLOUD_LOCAL_DATA -> onClearCloudAndLocalData()
+        }
+    }
 
     SharedMobileTopAppBar(
         title = {},
@@ -116,35 +179,18 @@ fun SharedAndroidHomeTopBar(
             Box {
                 IconButton(onClick = { optionsExpanded = true }) { Icon(Icons.Default.MoreVert, strings.moreOptions) }
                 DropdownMenu(expanded = optionsExpanded, onDismissRequest = { optionsExpanded = false }) {
-                    item(strings.about, enabledDescription = strings.enabled, action = closeAfter(onAbout))
-                    HorizontalDivider()
-                    item(strings.multiTab, tabsEnabled, strings.enabled, closeAfter(onTabsToggle))
-                    item(strings.screenCaptureProtection, screenCaptureProtectionEnabled, strings.enabled, closeAfter(onScreenCaptureProtectionToggle))
-                    item(strings.externalFileBehavior, enabledDescription = strings.enabled, action = closeAfter(onExternalFileBehavior))
-                    item(strings.strictFileFilter, strictFileFilterEnabled, strings.enabled, closeAfter(onStrictFileFilterToggle))
-                    item(strings.pdfFileName, usePdfFileNameAsDisplayName, strings.enabled, closeAfter(onPdfFileNameToggle))
-                    HorizontalDivider()
-                    item(strings.language, enabledDescription = strings.enabled, action = closeAfter(onLanguage))
-                    if (showReaderAiOption) {
-                        item(if (hideReaderAi) strings.showReaderAi else strings.hideReaderAi, hideReaderAi, strings.enabled) {
-                            onToggleReaderAi()
-                            hideReaderAi = !hideReaderAi
+                    overflowItems.forEachIndexed { index, overflowItem ->
+                        if (index > 0 && overflowItems[index - 1].section != overflowItem.section) {
+                            HorizontalDivider()
+                        }
+                        item(
+                            label = itemLabel(overflowItem.action),
+                            checked = overflowItem.checked,
+                            enabledDescription = strings.enabled,
+                        ) {
+                            onItemClick(overflowItem.action)
                             optionsExpanded = false
                         }
-                    }
-                    HorizontalDivider()
-                    item(strings.clearBookCache, enabledDescription = strings.enabled, action = closeAfter(onClearBookCache))
-                    item(strings.clearReflowCache, enabledDescription = strings.enabled, action = closeAfter(onClearReflowCache))
-                    if (showDebugActions) {
-                        HorizontalDivider()
-                        item(strings.testPanelDetection, enabledDescription = strings.enabled, action = closeAfter(onTestPanelDetection))
-                        item(strings.testSpeechBubbleDetection, enabledDescription = strings.enabled, action = closeAfter(onTestSpeechBubbleDetection))
-                        item(strings.exportLogs, enabledDescription = strings.enabled, action = closeAfter(onExportLogs))
-                    }
-                    if (showDebugCloudActions) {
-                        HorizontalDivider()
-                        item(strings.showDeviceManagement, enabledDescription = strings.enabled, action = closeAfter(onShowDeviceManagement))
-                        item(strings.clearCloudAndLocalData, enabledDescription = strings.enabled, action = closeAfter(onClearCloudAndLocalData))
                     }
                 }
             }

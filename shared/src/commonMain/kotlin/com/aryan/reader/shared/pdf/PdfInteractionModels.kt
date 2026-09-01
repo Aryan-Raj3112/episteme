@@ -1,5 +1,8 @@
 package com.aryan.reader.shared.pdf
 
+import kotlin.math.abs
+import kotlin.math.atan2
+
 import androidx.compose.ui.graphics.Color
 import com.aryan.reader.shared.HighlightStyle
 import kotlinx.serialization.Serializable
@@ -194,6 +197,7 @@ object SharedPdfEmbeddedAnnotationThreads {
                     bounds = annotation.bounds,
                     hasVisibleText = annotation.contents.isNotBlank(),
                     hasVisibleReply = annotation.replies.any { it.hasVisibleText },
+                    isPopupAttachment = annotation.subtype == PdfiumAnnotationSubtype.POPUP,
                 )
             },
             geometryTolerance = geometryTolerance,
@@ -231,6 +235,7 @@ data class PdfEmbeddedAnnotationThreadItem(
     val bounds: PdfPageBounds,
     val hasVisibleText: Boolean,
     val hasVisibleReply: Boolean = false,
+    val isPopupAttachment: Boolean = false,
 )
 
 data class PdfEmbeddedAnnotationReplyEdge(
@@ -274,6 +279,12 @@ fun buildPdfEmbeddedAnnotationThreadPlan(
 
     val groupedRoots = mutableListOf<MutableList<Int>>()
     orphanIndices.forEach { annotationIndex ->
+        // Popup annotations are transient comment windows, not tappable
+        // targets. Their rects sit above or beside the comment icon they
+        // belong to, so letting one root a group would displace the hitbox
+        // away from the icon while their contents merely duplicate the
+        // parent comment. Drop them from display entirely.
+        if (annotations[annotationIndex].isPopupAttachment) return@forEach
         val match = groupedRoots.firstOrNull { group ->
             annotations[group.first()].bounds
                 .inflatedBy(geometryTolerance)
@@ -372,6 +383,32 @@ data class SharedPdfHighlighterPalette(
     }
 }
 
+/**
+ * Matches Android's highlighter gesture snapping: near-horizontal and
+ * near-vertical strokes are constrained in page coordinates, accounting for
+ * the rendered page aspect ratio so the threshold is visually consistent.
+ */
+fun sharedPdfSnapHighlighterPoint(
+    pageAspectRatio: Float,
+    currentPoint: PdfPagePoint,
+    startPoint: PdfPagePoint?,
+    thresholdDegrees: Float = 10f,
+): PdfPagePoint {
+    if (startPoint == null) return currentPoint
+    val safeAspectRatio = pageAspectRatio.takeIf { it.isFinite() && it > 0f } ?: 1f
+    val dx = (currentPoint.x - startPoint.x) * safeAspectRatio
+    val dy = currentPoint.y - startPoint.y
+    val angleDegrees = atan2(dy, dx) * 180f / kotlin.math.PI.toFloat()
+    val isHorizontal = abs(angleDegrees) < thresholdDegrees ||
+        abs(abs(angleDegrees) - 180f) < thresholdDegrees
+    val isVertical = abs(abs(angleDegrees) - 90f) < thresholdDegrees
+    return when {
+        isHorizontal -> currentPoint.copy(y = startPoint.y)
+        isVertical -> currentPoint.copy(x = startPoint.x)
+        else -> currentPoint
+    }
+}
+
 object SharedPdfAndroidHighlightColors {
     const val StoredAlpha: Int = 0x8C
     const val RenderAlpha: Float = 0.4f
@@ -423,7 +460,6 @@ data class SharedPdfAnnotationStore(
 object SharedPdfAnnotationSerializer {
     private val json = Json {
         ignoreUnknownKeys = true
-        prettyPrint = true
         encodeDefaults = true
     }
 
@@ -435,8 +471,12 @@ object SharedPdfAnnotationSerializer {
         if (raw.isBlank()) return emptyList()
         return runCatching {
             json.decodeFromString<SharedPdfAnnotationStore>(raw).annotations
+                .map { it.sanitizedSharedPdfTextAnnotation() }
         }.getOrElse {
-            runCatching { json.decodeFromString<List<SharedPdfAnnotation>>(raw) }.getOrDefault(emptyList())
+            runCatching {
+                json.decodeFromString<List<SharedPdfAnnotation>>(raw)
+                    .map { it.sanitizedSharedPdfTextAnnotation() }
+            }.getOrDefault(emptyList())
         }
     }
 }

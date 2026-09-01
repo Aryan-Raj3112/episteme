@@ -2,6 +2,7 @@ package com.aryan.reader.shared.pdf
 
 import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.localFolderSyncSha256ShortHex
+import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -11,7 +12,9 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.doubleOrNull
+import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -28,15 +31,24 @@ object SharedPdfAnnotationSidecarCodec {
     private val json = Json {
         ignoreUnknownKeys = true
         encodeDefaults = true
-        prettyPrint = true
     }
 
     fun encodeAnnotationsElement(annotations: List<SharedPdfAnnotation>): JsonElement {
-        return json.parseToJsonElement(SharedPdfAnnotationSerializer.encode(annotations))
+        return json.encodeToJsonElement(SharedPdfAnnotationStore.serializer(), SharedPdfAnnotationStore(annotations = annotations))
     }
 
     fun decodeAnnotationsElement(element: JsonElement): List<SharedPdfAnnotation> {
-        return SharedPdfAnnotationSerializer.decode(json.encodeToString(JsonElement.serializer(), element))
+        // Decodes straight from the element tree. Re-encoding the element to a string just to
+        // run the typed decoder allocated multi-megabyte transient copies and OOMed on large
+        // ink-heavy sidecars.
+        val annotations = runCatching {
+            json.decodeFromJsonElement(SharedPdfAnnotationStore.serializer(), element).annotations
+        }.getOrElse {
+            runCatching {
+                json.decodeFromJsonElement(ListSerializer(SharedPdfAnnotation.serializer()), element)
+            }.getOrDefault(emptyList())
+        }
+        return annotations.map { it.sanitizedSharedPdfTextAnnotation() }
     }
 
     fun annotationsFromData(data: JsonObject): List<SharedPdfAnnotation> {
@@ -63,6 +75,80 @@ object SharedPdfAnnotationSidecarCodec {
     fun canonicalizeDataJson(rawDataJson: String): String {
         val data = parseObjectOrNull(rawDataJson) ?: return rawDataJson
         return json.encodeToString(JsonElement.serializer(), withCanonicalAnnotations(data))
+    }
+
+    /**
+     * Returns whether the payload explicitly represents annotation state.  An
+     * empty canonical array and empty legacy arrays are meaningful state too:
+     * they are different from a sidecar which predates annotation support.
+     */
+    fun hasExplicitAnnotationPayload(rawDataJson: String?): Boolean {
+        val data = parseObjectOrNull(rawDataJson.orEmpty())?.sidecarDataObject() ?: return false
+        return data[KEY_PDF_ANNOTATIONS] != null || data.hasLegacyAndroidAnnotationPayload()
+    }
+
+    /**
+     * Returns whether an explicit clear has already been persisted.  Legacy
+     * arrays are checked as well so a malformed canonical/legacy combination
+     * cannot suppress a repair write and resurrect stale annotations in an
+     * older Android reader.
+     */
+    fun hasExplicitEmptyAnnotationPayload(rawDataJson: String?): Boolean {
+        val data = parseObjectOrNull(rawDataJson.orEmpty())?.sidecarDataObject() ?: return false
+        val annotationsEmpty = runCatching { annotationsFromData(data).isEmpty() }.getOrDefault(false)
+        if (!annotationsEmpty) return false
+
+        if (data[KEY_PDF_ANNOTATIONS] != null) {
+            return listOf(
+                data[KEY_LEGACY_INK],
+                data[KEY_LEGACY_TEXT_BOXES],
+                data[KEY_LEGACY_HIGHLIGHTS]
+            ).all { it == null || it.jsonArrayOrNull()?.isEmpty() == true }
+        }
+        return data.hasLegacyAndroidAnnotationPayload()
+    }
+
+    /**
+     * Creates an explicit empty annotation snapshot from the last known
+     * sidecar.  Every still-live annotation in that snapshot becomes a
+     * deletion tombstone, so merging this clear with the previous remote
+     * snapshot cannot reintroduce those annotations.  Unknown concurrent
+     * additions are intentionally left untouched and are handled by the
+     * normal conflict/merge semantics.
+     */
+    fun clearAllAnnotationsDataJson(
+        previousDataJson: String?,
+        deletedAt: Long
+    ): String {
+        val previousData = parseObjectOrNull(previousDataJson.orEmpty())
+            ?.sidecarDataObject()
+            ?: JsonObject(emptyMap())
+        val deletionTimestamp = deletedAt.coerceAtLeast(1L)
+        val deletions = annotationDeletionsFromData(previousData).toMutableMap()
+        annotationsFromData(previousData).forEach { annotation ->
+            deletions[annotation.id] = maxOf(
+                deletions[annotation.id] ?: 0L,
+                deletionTimestamp
+            )
+        }
+
+        val cleared = previousData.toMutableMap().apply {
+            this[KEY_PDF_ANNOTATIONS] = encodeAnnotationsElement(emptyList())
+            if (deletions.isEmpty()) {
+                remove(KEY_PDF_ANNOTATION_DELETIONS)
+            } else {
+                this[KEY_PDF_ANNOTATION_DELETIONS] = encodeAnnotationDeletionsElement(deletions)
+            }
+        }
+
+        // Keep old Android readers in sync with the canonical clear.  In
+        // particular, do not leave stale legacy arrays beside pdfAnnotations=[]
+        // because old readers do not know which representation is authoritative.
+        val legacyCompatible = legacyAndroidDataFromAnnotations(
+            annotations = emptyList(),
+            existingData = JsonObject(cleared)
+        )
+        return json.encodeToString(JsonElement.serializer(), legacyCompatible)
     }
 
     fun mergeAnnotationDataJson(
@@ -197,7 +283,7 @@ object SharedPdfAnnotationSidecarCodec {
             addAll(data[KEY_LEGACY_INK].parseLegacyAndroidInk())
             addAll(data[KEY_LEGACY_TEXT_BOXES].parseLegacyAndroidTextBoxes())
             addAll(data[KEY_LEGACY_HIGHLIGHTS].parseLegacyAndroidHighlights())
-        }
+        }.map { it.sanitizedSharedPdfTextAnnotation() }
     }
 
     private fun JsonElement?.parseLegacyAndroidInk(): List<SharedPdfAnnotation> {
@@ -553,7 +639,7 @@ object SharedPdfAnnotationSidecarCodec {
             top = minOf(top, bottom),
             right = maxOf(left, right),
             bottom = maxOf(top, bottom)
-        )
+        ).sanitizedForSharedPdf(allowEmpty = true)
     }
 
     private fun PdfPageBounds.toJsonObject(): JsonObject {

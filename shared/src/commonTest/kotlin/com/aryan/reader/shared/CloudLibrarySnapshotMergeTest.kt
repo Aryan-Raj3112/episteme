@@ -1,8 +1,16 @@
 package com.aryan.reader.shared
 
+import com.aryan.reader.shared.pdf.PdfAnnotationKind
+import com.aryan.reader.shared.pdf.PdfInkTool
+import com.aryan.reader.shared.pdf.PdfPageBounds
+import com.aryan.reader.shared.pdf.SharedPdfAnnotation
+import com.aryan.reader.shared.pdf.SharedPdfCloudSidecarCodec
+import com.aryan.reader.shared.pdf.SharedPdfCloudSidecarSnapshot
+import com.aryan.reader.shared.pdf.SharedPdfReaderState
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.test.assertNotNull
 
 class CloudLibrarySnapshotMergeTest {
     @Test
@@ -232,5 +240,156 @@ class CloudLibrarySnapshotMergeTest {
 
         assertEquals(listOf(local), merged.books)
         assertEquals(emptyList(), merged.bookTombstones)
+    }
+
+    @Test
+    fun `cloud merge keeps concurrent pdf sidecar annotations and newest state clock`() {
+        fun annotation(id: String) = SharedPdfAnnotation(
+            id = id,
+            pageIndex = 0,
+            kind = PdfAnnotationKind.HIGHLIGHT,
+            tool = PdfInkTool.HIGHLIGHTER,
+            bounds = PdfPageBounds(0.1f, 0.1f, 0.4f, 0.2f),
+            text = id,
+            colorArgb = 0x8CFFEB3B.toInt(),
+        )
+        val local = SharedPdfCloudSidecarCodec.encode(
+            bookId = "pdf",
+            state = SharedPdfReaderState.initial(1).copy(
+                annotations = listOf(annotation("local")),
+                themeId = "light",
+            ),
+            modifiedTimestamp = 100L,
+        )
+        val remote = SharedPdfCloudSidecarCodec.encode(
+            bookId = "pdf",
+            state = SharedPdfReaderState.initial(1).copy(
+                annotations = listOf(annotation("remote")),
+                themeId = "dark",
+            ),
+            modifiedTimestamp = 200L,
+        )
+
+        val merged = mergeCloudLibrarySnapshotWithDownloadedBooks(
+            local = SharedLibrarySnapshot(
+                pdfSidecars = listOf(SharedPdfCloudSidecarSnapshot("pdf", 100L, local)),
+            ),
+            remote = SharedLibrarySnapshot(
+                pdfSidecars = listOf(SharedPdfCloudSidecarSnapshot("pdf", 200L, remote)),
+            ),
+            downloadedBookPaths = emptyMap(),
+        )
+        val sidecar = assertNotNull(merged.pdfSidecars.singleOrNull())
+        val decoded = assertNotNull(SharedPdfCloudSidecarCodec.decode(sidecar.data))
+
+        assertEquals(200L, sidecar.timestamp)
+        assertEquals("dark", decoded.readerState?.themeId)
+        assertEquals(listOf("local", "remote"), decoded.annotations.map { it.id })
+    }
+
+    @Test
+    fun `cloud merge drops pdf sidecar covered by a newer book tombstone`() {
+        val sidecar = SharedPdfCloudSidecarCodec.encode(
+            bookId = "deleted-pdf",
+            state = SharedPdfReaderState.initial(1),
+            modifiedTimestamp = 10L,
+        )
+        val merged = mergeCloudLibrarySnapshotWithDownloadedBooks(
+            local = SharedLibrarySnapshot(
+                pdfSidecars = listOf(
+                    SharedPdfCloudSidecarSnapshot("deleted-pdf", 10L, sidecar),
+                ),
+            ),
+            remote = SharedLibrarySnapshot(
+                bookTombstones = listOf(
+                    CloudBookTombstone("deleted-pdf", "PDF", 20L),
+                ),
+            ),
+            downloadedBookPaths = emptyMap(),
+        )
+
+        assertEquals(emptyList(), merged.pdfSidecars)
+    }
+
+    @Test
+    fun `cloud merge keeps newer shelf tombstones and newest membership clocks`() {
+        val localBook = BookItem(
+            id = "book",
+            path = "/local/book.epub",
+            type = FileType.EPUB,
+            displayName = "book.epub",
+            timestamp = 1L,
+        )
+        val merged = mergeCloudLibrarySnapshotWithDownloadedBooks(
+            local = SharedLibrarySnapshot(
+                books = listOf(localBook),
+                shelfRecords = listOf(
+                    ShelfRecord("keep", "Local", modifiedAt = 10L),
+                    ShelfRecord("delete", "Local delete", modifiedAt = 30L, isDeleted = true),
+                ),
+                shelfRefs = listOf(BookShelfRef("book", "keep", addedAt = 10L)),
+            ),
+            remote = SharedLibrarySnapshot(
+                shelfRecords = listOf(
+                    ShelfRecord("keep", "Remote", modifiedAt = 20L),
+                    ShelfRecord("delete", "Remote delete", modifiedAt = 20L),
+                ),
+                shelfRefs = listOf(
+                    BookShelfRef("book", "keep", addedAt = 40L),
+                    BookShelfRef("missing", "keep", addedAt = 50L),
+                ),
+            ),
+            downloadedBookPaths = emptyMap(),
+        )
+
+        assertEquals(listOf("keep"), merged.shelfRecords.map(ShelfRecord::id))
+        assertEquals("Remote", merged.shelfRecords.single().name)
+        assertEquals(listOf(40L), merged.shelfRefs.map(BookShelfRef::addedAt))
+    }
+
+    @Test
+    fun `cloud merge selects newest custom font and preserves existing folder grants`() {
+        val localFolder = SyncedFolder("file:///local", "Local", lastScanTime = 20L)
+        val merged = mergeCloudLibrarySnapshotWithDownloadedBooks(
+            local = SharedLibrarySnapshot(
+                syncedFolders = listOf(localFolder),
+                customFonts = listOf(
+                    CustomFontItem("font", "Local", "local.ttf", "ttf", "/local.ttf", 10L),
+                ),
+            ),
+            remote = SharedLibrarySnapshot(
+                syncedFolders = listOf(
+                    SyncedFolder("file:///local", "Remote", lastScanTime = 30L),
+                    SyncedFolder("file:///remote", "Remote-only", lastScanTime = 40L),
+                ),
+                customFonts = listOf(
+                    CustomFontItem("font", "Remote", "remote.ttf", "ttf", "/remote.ttf", 20L),
+                    CustomFontItem("font2", "Remote 2", "remote2.ttf", "ttf", "/remote2.ttf", 30L),
+                ),
+            ),
+            downloadedBookPaths = emptyMap(),
+            downloadedFontPaths = mapOf("font" to "/remote.ttf", "font2" to "/remote2.ttf"),
+        )
+
+        assertEquals("Remote", merged.customFonts.first { it.id == "font" }.displayName)
+        assertEquals(setOf("font", "font2"), merged.customFonts.mapTo(mutableSetOf(), CustomFontItem::id))
+        assertEquals(listOf(localFolder.uriString), merged.syncedFolders.map(SyncedFolder::uriString))
+    }
+
+    @Test
+    fun `equal font metadata clocks preserve local installed path when cloud has metadata only`() {
+        val local = CustomFontItem("font", "Local", "local.ttf", "ttf", "/local.ttf", 20L)
+        val merged = mergeCloudLibrarySnapshotWithDownloadedBooks(
+            local = SharedLibrarySnapshot(customFonts = listOf(local)),
+            remote = SharedLibrarySnapshot(
+                customFonts = listOf(
+                    CustomFontItem("font", "Remote", "local.ttf", "ttf", "", 20L),
+                ),
+            ),
+            downloadedBookPaths = emptyMap(),
+        )
+
+        assertEquals("Local", merged.customFonts.single().displayName)
+        assertEquals("/local.ttf", merged.customFonts.single().path)
     }
 }

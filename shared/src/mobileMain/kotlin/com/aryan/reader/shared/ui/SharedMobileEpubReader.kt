@@ -1,12 +1,11 @@
 package com.aryan.reader.shared.ui
 
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.EnterTransition
-import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.AnimationEndReason
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -25,6 +24,8 @@ import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -45,21 +46,26 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.CustomFontItem
 import com.aryan.reader.shared.ReaderLocator
+import com.aryan.reader.shared.ReaderAiFeature
+import com.aryan.reader.shared.ReaderAiResultState
+import com.aryan.reader.shared.ReaderExtrasState
 import com.aryan.reader.shared.ReaderTheme
 import com.aryan.reader.shared.ReaderTtsPlanner
 import com.aryan.reader.shared.ReaderTtsChunk
@@ -77,6 +83,8 @@ import com.aryan.reader.shared.PageInfoPosition
 import com.aryan.reader.shared.ReaderTool
 import com.aryan.reader.shared.ReaderToolbarPreferences
 import com.aryan.reader.shared.ReaderTtsReplacementPreferences
+import com.aryan.reader.shared.ReaderTtsOverlaySize
+import com.aryan.reader.shared.readerTtsOverlayAlignmentBias
 import com.aryan.reader.shared.ReaderBookReplacementEngine
 import com.aryan.reader.shared.ReaderBookReplacementPreferences
 import com.aryan.reader.shared.currentTimestamp
@@ -86,6 +94,7 @@ import com.aryan.reader.shared.readerLifecycleAction
 import com.aryan.reader.shared.readerAutoScrollPixelsPerSecond
 import com.aryan.reader.shared.readerAutoScrollBoundaryAction
 import com.aryan.reader.shared.migrateLegacyIosReaderAutoScrollSpeed
+import com.aryan.reader.shared.migrateAndroidEpubFormatSettings
 import com.aryan.reader.shared.shouldFollowReaderTtsChunk
 import com.aryan.reader.shared.shouldShowEpubPageInfoBar
 import com.aryan.reader.shared.toSharedReaderFontFamily
@@ -94,6 +103,7 @@ import com.aryan.reader.shared.withReaderFormatFrom
 import com.aryan.reader.shared.reader.ReaderBookmark
 import com.aryan.reader.shared.reader.ReaderEngine
 import com.aryan.reader.shared.reader.ReaderJumpHistory
+import com.aryan.reader.shared.reader.captureReaderJumpHistoryOrigin
 import com.aryan.reader.shared.reader.ReaderHtmlDocumentBuilder
 import com.aryan.reader.shared.reader.ReaderPage
 import com.aryan.reader.shared.reader.sharedReaderPageInfo
@@ -102,9 +112,19 @@ import com.aryan.reader.shared.reader.ReaderScreenOrientationMode
 import com.aryan.reader.shared.reader.ReaderSearchOptions
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.ReaderSpreadLayout
+import com.aryan.reader.shared.reader.ReaderViewportSpec
+import com.aryan.reader.shared.reader.SharedEpubPaginationCache
+import com.aryan.reader.shared.reader.SharedMeasuredEpubPaginator
+import com.aryan.reader.shared.reader.effectiveReaderTocEntries
+import com.aryan.reader.shared.reader.findPageIndexForLocator
 import com.aryan.reader.shared.reader.layoutSignature
 import com.aryan.reader.shared.reader.readerImageReferences
+import com.aryan.reader.shared.reader.readerTocActiveIndex
+import com.aryan.reader.shared.reader.pullToTurnEnabled
+import com.aryan.reader.shared.reader.seamlessChapterTransitionEnabled
+import kotlin.math.abs
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -128,6 +148,13 @@ data class SharedMobileEpubReaderSnapshot(
     val autoScrollLocalMaxSpeed: Float?,
 )
 
+/** Outgoing page set while an Android-benchmark realistic page turn animates. */
+private data class SharedMobileEpubActivePageTurn(
+    val outgoingPages: List<ReaderPage>,
+    val direction: Int,
+    val touchY: Float?
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SharedMobileEpubReaderScreen(
@@ -141,6 +168,7 @@ fun SharedMobileEpubReaderScreen(
     initialKeepScreenOn: Boolean = false,
     onKeepScreenOnPreferenceChange: (Boolean) -> Unit = {},
     onSystemUiAppearanceChange: (statusHidden: Boolean, navigationHidden: Boolean, lightContent: Boolean, backgroundArgb: Long) -> Unit = { _, _, _, _ -> },
+    onSystemUiRelease: () -> Unit = {},
     customReaderThemes: List<ReaderTheme> = emptyList(),
     onCustomReaderThemesChange: (List<ReaderTheme>) -> Unit = {},
     customFonts: List<CustomFontItem> = emptyList(),
@@ -148,12 +176,27 @@ fun SharedMobileEpubReaderScreen(
     readerDefaultSettings: ReaderSettings = ReaderSettings(),
     onReaderDefaultSettingsChange: (ReaderSettings) -> Unit = {},
     readerHighlightPalette: ReaderHighlightPalette = ReaderHighlightPalette(),
+    onReaderHighlightPaletteChange: (ReaderHighlightPalette) -> Unit = {},
     readerToolbarPreferences: ReaderToolbarPreferences = ReaderToolbarPreferences(),
     onReaderToolbarPreferencesChange: (ReaderToolbarPreferences) -> Unit = {},
     readerTtsReplacementPreferences: ReaderTtsReplacementPreferences = ReaderTtsReplacementPreferences(),
     onReaderTtsReplacementPreferencesChange: (ReaderTtsReplacementPreferences) -> Unit = {},
     readerBookReplacementPreferences: ReaderBookReplacementPreferences = ReaderBookReplacementPreferences(),
     onReaderBookReplacementPreferencesChange: (ReaderBookReplacementPreferences) -> Unit = {},
+    onOpenDictionarySettings: () -> Unit = {},
+    readerAiAvailable: Boolean = false,
+    readerExtrasState: ReaderExtrasState = ReaderExtrasState(),
+    cloudTts: SharedMobileEpubCloudTts? = null,
+    cloudTtsModeEnabled: Boolean = false,
+    onCloudTtsModeChange: (Boolean) -> Unit = {},
+    cloudTtsVoiceId: String = com.aryan.reader.shared.DEFAULT_CLOUD_TTS_SPEAKER_ID,
+    onCloudTtsVoiceChange: (String) -> Unit = {},
+    onClearCloudTtsCache: () -> Unit = {},
+    initialTtsOverlaySize: ReaderTtsOverlaySize = ReaderTtsOverlaySize.LARGE,
+    onTtsOverlaySizePreferenceChange: (ReaderTtsOverlaySize) -> Unit = {},
+    onAiAction: (ReaderAiFeature, String) -> Unit = { _, _ -> },
+    onAiResultDismiss: () -> Unit = {},
+    onOpenAiHub: () -> Unit = {},
     readerBrightness: Float? = null,
     readerCustomBrightness: Float = com.aryan.reader.shared.DefaultReaderCustomBrightness,
     readerBrightnessSupported: Boolean = false,
@@ -169,11 +212,14 @@ fun SharedMobileEpubReaderScreen(
     initialUseNativeVerticalRenderer: Boolean = false,
     onUseNativeVerticalRendererPreferenceChange: (Boolean) -> Unit = {},
     onTtsError: ((String) -> Unit)? = null,
+    onClipboardError: ((String) -> Unit)? = null,
     readerScreenOrientationMode: ReaderScreenOrientationMode = ReaderScreenOrientationMode.FOLLOW_SYSTEM,
     onReaderScreenOrientationModeChange: (ReaderScreenOrientationMode) -> Unit = {},
     onApplyReaderScreenOrientation: (ReaderScreenOrientationMode) -> Unit = {},
+    streamPageLoader: SharedMobileEpubStreamPageLoader? = null,
     modifier: Modifier = Modifier
 ) {
+    val motionPolicy = rememberReaderMotionPolicy()
     val loadState = rememberSharedMobileEpubLoadState(book)
     val rawLoadedBook = loadState.book
     val bookReplacementSignature = readerBookReplacementPreferences.signatureForFile(book.id)
@@ -196,33 +242,66 @@ fun SharedMobileEpubReaderScreen(
         )
     }
     val localTts = rememberSharedMobileEpubLocalTts()
+    val streamPageUnavailableLabel = readerString("msg_page_unavailable", "Page Unavailable")
+    val cloudTtsState = cloudTts?.state ?: readerExtrasState.cloudTts
+    val cloudTtsAvailable = cloudTts != null && cloudTtsState.isAvailable && !localTts.isSessionActive
     LaunchedEffect(localTts.errorMessage) {
         localTts.errorMessage?.let { message -> onTtsError?.invoke(message) }
     }
     val activeTtsChunk = localTts.progress.currentChunk
     var detachedTtsChunkIndex by remember(book.id) { mutableStateOf<Int?>(null) }
-    val storedBookSettings = book.readerSettings ?: readerDefaultSettings
+    val migratedReaderDefaults = readerDefaultSettings.migrateAndroidEpubFormatSettings()
+    val storedBookSettings = (book.readerSettings ?: migratedReaderDefaults).migrateAndroidEpubFormatSettings()
+    val migratedLocalFormatSettings = book.readerLocalFormatSettings?.migrateAndroidEpubFormatSettings()
     var isLocalFormatMode by remember(book.id) { mutableStateOf(book.readerFormatIsLocal) }
-    var localFormatSettings by remember(book.id) { mutableStateOf(book.readerLocalFormatSettings) }
+    var localFormatSettings by remember(book.id) { mutableStateOf(migratedLocalFormatSettings) }
     var settings by remember(book.id) {
         mutableStateOf(
             if (book.readerFormatIsLocal) {
-                storedBookSettings.withReaderFormatFrom(book.readerLocalFormatSettings ?: storedBookSettings)
+                storedBookSettings.withReaderFormatFrom(migratedLocalFormatSettings ?: storedBookSettings)
             } else {
-                storedBookSettings.withReaderFormatFrom(readerDefaultSettings)
+                storedBookSettings.withReaderFormatFrom(migratedReaderDefaults)
             }
         )
     }
     var pages by remember(book.id) { mutableStateOf<List<ReaderPage>>(emptyList()) }
+    var measuredPagesApplied by remember(book.id) { mutableStateOf(false) }
     var currentLocator by remember(book.id) { mutableStateOf(book.readerPosition) }
     var currentPageIndex by remember(book.id) { mutableStateOf(book.lastPageIndex ?: 0) }
     var currentChapterIndex by remember(book.id) {
         mutableIntStateOf(book.readerPosition?.chapterIndex?.coerceAtLeast(0) ?: 0)
     }
+    val activeCloudTtsChunk = cloudTtsState.progress.currentChunk
+
+    fun planReaderTtsChunks(epub: com.aryan.reader.shared.reader.SharedEpubBook): List<ReaderTtsChunk> {
+        val session = ReaderEngine().createSession(
+            book = epub,
+            settings = settings,
+            initialPageIndex = currentPageIndex,
+            initialLocator = currentLocator,
+        )
+        return ReaderTtsPlanner.chunksFromCurrentLocation(session)
+            .ifEmpty { ReaderTtsPlanner.chunksForCurrentChapter(session) }
+            .withTtsReplacements(readerTtsReplacementPreferences, book.id)
+    }
+
+    fun toggleCloudTts() {
+        val controller = cloudTts ?: return
+        when {
+            cloudTtsState.isPlaying || cloudTtsState.isLoading -> controller.pause()
+            cloudTtsState.isPaused -> controller.resume()
+            else -> loadedBook?.let { epub ->
+                localTts.stop()
+                val planned = planReaderTtsChunks(epub)
+                controller.start(planned, epub.title, book.id)
+            }
+        }
+    }
     var bookmarks by remember(book.id) { mutableStateOf(book.readerBookmarks) }
     var highlights by remember(book.id) { mutableStateOf(book.readerHighlights) }
     var jumpHistory by remember(book.id) { mutableStateOf(ReaderJumpHistory()) }
     var editingHighlight by remember(book.id) { mutableStateOf<UserHighlight?>(null) }
+    var showHighlightPaletteManager by remember(book.id) { mutableStateOf(false) }
     // Match Android's distraction-free reader entry; a reader tap reveals chrome.
     var showChrome by remember(book.id) { mutableStateOf(false) }
     var showFormatSheet by remember(book.id) { mutableStateOf(false) }
@@ -240,6 +319,7 @@ fun SharedMobileEpubReaderScreen(
     var pullProgress by remember(book.id) { mutableStateOf(0f) }
     var showSlider by remember(book.id) { mutableStateOf(initialPageSliderVisible) }
     var showMore by remember(book.id) { mutableStateOf(false) }
+    var showAiHub by remember(book.id) { mutableStateOf(false) }
     var showFileInfo by remember(book.id) { mutableStateOf(false) }
     var showCustomizeToolsSheet by remember(book.id) { mutableStateOf(false) }
     var showScreenOrientationSheet by remember(book.id) { mutableStateOf(false) }
@@ -247,7 +327,11 @@ fun SharedMobileEpubReaderScreen(
     var showTtsReplacementsSheet by remember(book.id) { mutableStateOf(false) }
     var showTtsSettingsSheet by remember(book.id) { mutableStateOf(false) }
     var showBookReplacementsSheet by remember(book.id) { mutableStateOf(false) }
+    var ttsOverlaySize by remember(book.id, initialTtsOverlaySize) {
+        mutableStateOf(initialTtsOverlaySize)
+    }
     var pendingExternalLink by remember(book.id) { mutableStateOf<String?>(null) }
+    var activeFootnote by remember(book.id) { mutableStateOf<SharedMobileEpubFootnote?>(null) }
     var keepScreenOn by remember(book.id) { mutableStateOf(initialKeepScreenOn) }
     var autoScrollModeActive by remember(book.id) { mutableStateOf(false) }
     var autoScroll by remember(book.id) { mutableStateOf(false) }
@@ -259,6 +343,10 @@ fun SharedMobileEpubReaderScreen(
     var autoScrollIsLocal by remember(book.id) { mutableStateOf(book.readerAutoScrollIsLocal) }
     var useNativeVerticalRenderer by remember(book.id) { mutableStateOf(initialUseNativeVerticalRenderer) }
     val nativeVerticalScrollController = remember(book.id) { SharedNativeVerticalScrollController() }
+    val nativePaginatedPositionController = remember(book.id) {
+        SharedNativePaginatedPositionController()
+    }
+    val webViewPositionController = remember(book.id) { SharedMobileEpubWebViewController() }
     var autoScrollLocalProfile by remember(book.id) {
         mutableStateOf(
             book.readerAutoScrollLocalSpeed?.let { speed ->
@@ -288,12 +376,43 @@ fun SharedMobileEpubReaderScreen(
     var explicitNavigationChunkHtml by remember(book.id) { mutableStateOf<String?>(null) }
     var navigationRequestId by remember(book.id) { mutableLongStateOf(0L) }
     var commandScript by remember(book.id) { mutableStateOf<String?>(null) }
+    var readerViewport by remember(book.id) { mutableStateOf(ReaderViewportSpec(0, 0)) }
+    val readerDensity = LocalDensity.current
+    val readerTextMeasurer = rememberTextMeasurer()
+    val paginationCacheWriteScope = rememberCoroutineScope()
+    val epubPaginationCache = remember(book.id) { SharedEpubPaginationCache() }
+    val measuredPaginator = remember(
+        readerTextMeasurer,
+        readerDensity,
+        settings.fontFamily,
+        settings.customFontPath,
+        epubPaginationCache,
+        paginationCacheWriteScope
+    ) {
+        SharedMeasuredEpubPaginator(
+            textMeasurer = readerTextMeasurer,
+            density = readerDensity,
+            fontFamily = settings.toSharedReaderFontFamily(),
+            pageCache = epubPaginationCache,
+            cacheWriteScope = paginationCacheWriteScope
+        )
+    }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val focusManager = LocalFocusManager.current
-    val clipboard = LocalClipboardManager.current
+    val copiedTextLabel = readerString("clip_label_copied_text", "Copied Text")
+    val copiedLinkLabel = readerString("clip_label_copied_link", "Copied Link")
+    val clipboardErrorMessage = readerString("error_copy_to_clipboard", "Could not copy to clipboard")
+
+    fun copyToClipboard(text: String, label: String = copiedTextLabel): SharedClipboardResult {
+        val result = writeSharedClipboard(label = label, text = text)
+        if (!result.success) onClipboardError?.invoke(clipboardErrorMessage)
+        return result
+    }
     val sanitizedToolbarPreferences = readerToolbarPreferences.sanitized()
-    val visibleToolbarTools = sanitizedToolbarPreferences.orderedVisibleTools().filter { it in SharedMobileEpubCustomizableTools }
+    val visibleToolbarTools = sanitizedToolbarPreferences.orderedVisibleTools().filter {
+        it in SharedMobileEpubCustomizableTools && (it != ReaderTool.AI_FEATURES || readerAiAvailable)
+    }
     val mobileBottomToolIds = if (readerToolbarPreferences.bottomToolIds == ReaderToolbarPreferences.defaultBottomToolIds) {
         readerToolbarPreferences.bottomToolIds + ReaderTool.TTS_CONTROLS.id
     } else {
@@ -310,6 +429,25 @@ fun SharedMobileEpubReaderScreen(
     val systemUiHidden = !systemBarsVisibility.statusBarsVisible
     val navigationUiHidden = !systemBarsVisibility.navigationBarsVisible
 
+    fun refreshSelectedTocIndex(
+        locator: ReaderLocator? = currentLocator,
+        activeHref: String? = null,
+        activeFragmentId: String? = null
+    ) {
+        val epub = loadedBook ?: return
+        val effectiveLocator = locator ?: ReaderLocator(
+            chapterIndex = currentChapterIndex,
+            href = epub.chapters.getOrNull(currentChapterIndex)?.baseHref
+        )
+        readerTocActiveIndex(
+            entries = epub.effectiveReaderTocEntries(),
+            book = epub,
+            locator = effectiveLocator,
+            activeHref = activeHref,
+            activeFragmentId = activeFragmentId
+        )?.let { selectedTocIndex = it }
+    }
+
     DisposableEffect(readerScreenOrientationMode, onApplyReaderScreenOrientation) {
         onApplyReaderScreenOrientation(readerScreenOrientationMode)
         onDispose { onApplyReaderScreenOrientation(ReaderScreenOrientationMode.FOLLOW_SYSTEM) }
@@ -318,20 +456,18 @@ fun SharedMobileEpubReaderScreen(
     fun openReaderDrawer(tab: Int? = null) {
         tab?.let { drawerTab = it }
         scope.launch {
-            drawerState.open()
+            if (motionPolicy.animationsEnabled) drawerState.open() else drawerState.snapTo(DrawerValue.Open)
             focusManager.clearFocus(force = true)
         }
     }
 
     LaunchedEffect(loadedBook?.id) {
         loadedBook?.let {
+            measuredPagesApplied = false
             jumpHistory = jumpHistory.pruned(it.chapters.size)
             currentChapterIndex = currentChapterIndex.coerceIn(0, it.chapters.lastIndex.coerceAtLeast(0))
             if (selectedTocIndex < 0) {
-                val currentHref = currentLocator?.href?.normalizeMobileEpubPath()
-                selectedTocIndex = it.tableOfContents.indexOfFirst { entry ->
-                    currentHref != null && entry.href.normalizeMobileEpubPath() == currentHref
-                }
+                refreshSelectedTocIndex()
             }
             onMetadataLoaded(it.title, it.author)
         }
@@ -340,6 +476,7 @@ fun SharedMobileEpubReaderScreen(
     LaunchedEffect(loadedBook, settings.layoutSignature()) {
         val epub = loadedBook ?: return@LaunchedEffect
         if (pages.isNotEmpty()) delay(180)
+        if (measuredPagesApplied) return@LaunchedEffect
         val locator = currentLocator ?: book.readerPosition
         val readerState = withContext(Dispatchers.Default) {
             ReaderEngine().createSession(
@@ -351,6 +488,28 @@ fun SharedMobileEpubReaderScreen(
         }
         pages = readerState.pages
         currentPageIndex = readerState.currentPageIndex.coerceIn(0, readerState.pages.lastIndex.coerceAtLeast(0))
+    }
+
+    LaunchedEffect(
+        loadedBook,
+        settings.layoutSignature(),
+        readerViewport,
+        measuredPaginator
+    ) {
+        val epub = loadedBook ?: return@LaunchedEffect
+        if (settings.readingMode != ReaderReadingMode.PAGINATED) return@LaunchedEffect
+        if (!readerViewport.isSpecified) return@LaunchedEffect
+        val measuredPages = withContext(Dispatchers.Default) {
+            measuredPaginator.paginate(epub, settings, readerViewport)
+        }
+        measuredPagesApplied = true
+        val anchor = currentLocator ?: book.readerPosition
+        val targetIndex = anchor
+            ?.let { measuredPages.findPageIndexForLocator(it) }
+            ?.takeIf { it >= 0 }
+            ?: currentPageIndex.coerceIn(0, measuredPages.lastIndex.coerceAtLeast(0))
+        pages = measuredPages
+        currentPageIndex = targetIndex
     }
 
     LaunchedEffect(keepScreenOn) { onKeepScreenOnChange(keepScreenOn) }
@@ -369,7 +528,7 @@ fun SharedMobileEpubReaderScreen(
     DisposableEffect(book.id) {
         onDispose {
             onKeepScreenOnChange(false)
-            onSystemUiAppearanceChange(false, false, false, 0xFFFFFFFFL)
+            onSystemUiRelease()
         }
     }
     LaunchedEffect(autoScroll, autoScrollProfile.speed, autoScrollTemporarilyPaused, useNativeVerticalRenderer) {
@@ -479,7 +638,7 @@ fun SharedMobileEpubReaderScreen(
                 ReaderMusicianNavigationTarget.END ->
                     "window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'auto' });"
                 ReaderMusicianNavigationTarget.RELATIVE ->
-                    "window.scrollBy({ top: window.innerHeight * ${plan.relativeViewportDelta}, behavior: 'smooth' });"
+                    "window.scrollBy({ top: window.innerHeight * ${plan.relativeViewportDelta}, behavior: '${motionPolicy.webViewScrollBehavior()}' });"
             }
         }
         navigationRequestId++
@@ -521,16 +680,83 @@ fun SharedMobileEpubReaderScreen(
         navigationRequestId++
         currentLocator = locator
         locator.pageIndex?.let { currentPageIndex = it.coerceIn(0, pageCount - 1) }
+        refreshSelectedTocIndex(locator, activeFragmentId = fragment)
+    }
+
+    fun publishCapturedEpubLocator(locator: ReaderLocator?) {
+        if (locator == null) return
+        currentLocator = locator
+        locator.chapterIndex?.let { chapterIndex ->
+            currentChapterIndex = chapterIndex.coerceIn(0, loadedBook?.chapters?.lastIndex ?: 0)
+        }
+        locator.pageIndex?.let { pageIndex ->
+            currentPageIndex = pageIndex.coerceIn(0, pageCount - 1)
+        }
+        refreshSelectedTocIndex(locator)
+    }
+
+    /**
+     * Captures the rendered origin before any explicit jump is recorded.
+     * Native vertical rendering reads LazyListState.layoutInfo directly;
+     * WebView rendering asks the DOM for its current visible locator and falls
+     * back to the latest bridge observation while the page is unavailable.
+     */
+    fun captureCurrentEpubLocator(onCaptured: (ReaderLocator?) -> Unit) {
+        val chapterCount = loadedBook?.chapters?.size ?: 0
+        val nativeLocator = if (
+            settings.readingMode == ReaderReadingMode.VERTICAL && useNativeVerticalRenderer
+        ) {
+            nativeVerticalScrollController.currentLocator()
+        } else if (settings.readingMode == ReaderReadingMode.PAGINATED) {
+            nativePaginatedPositionController.currentLocator()
+        } else {
+            null
+        }
+        if (nativeLocator != null) {
+            val captured = captureReaderJumpHistoryOrigin(
+                renderedCurrentLocator = nativeLocator,
+                fallbackCurrentLocator = currentLocator,
+                chapterCount = chapterCount,
+            )
+            publishCapturedEpubLocator(captured)
+            onCaptured(captured)
+            return
+        }
+        webViewPositionController.captureCurrentLocator { locator ->
+            val captured = captureReaderJumpHistoryOrigin(
+                renderedCurrentLocator = locator,
+                fallbackCurrentLocator = currentLocator,
+                chapterCount = chapterCount,
+            )
+            publishCapturedEpubLocator(captured)
+            onCaptured(captured)
+        }
     }
 
     fun recordJumpAndNavigate(locator: ReaderLocator, fragment: String? = null) {
         val chapterCount = loadedBook?.chapters?.size ?: return
-        jumpHistory = jumpHistory.record(
-            currentLocator = currentLocator,
-            targetLocator = locator,
-            chapterCount = chapterCount,
-        )
-        navigate(locator, fragment)
+        captureCurrentEpubLocator { current ->
+            jumpHistory = jumpHistory.record(
+                currentLocator = current,
+                targetLocator = locator,
+                chapterCount = chapterCount,
+            )
+            navigate(locator, fragment)
+        }
+    }
+
+    fun showFootnoteIfAvailable(
+        href: String,
+        ownerHref: String?,
+        sourceChapterIndex: Int? = null,
+    ): Boolean {
+        val note = loadedBook?.resolveMobileEpubFootnote(
+            rawHref = href,
+            ownerHref = ownerHref,
+            sourceChapterIndex = sourceChapterIndex,
+        ) ?: return false
+        activeFootnote = note
+        return true
     }
 
     fun navigateChapter(direction: Int) {
@@ -568,10 +794,7 @@ fun SharedMobileEpubReaderScreen(
             }
         }
         navigationRequestId++
-        selectedTocIndex = epub.tableOfContents.indexOfLast { entry ->
-            entry.href.normalizeMobileEpubPath() == epub.chapters[targetChapterIndex].baseHref.orEmpty().normalizeMobileEpubPath() &&
-                entry.fragmentId == epub.chapters[targetChapterIndex].fragmentId
-        }
+        refreshSelectedTocIndex(locator)
     }
 
     fun navigatePage(direction: Int) {
@@ -630,43 +853,61 @@ fun SharedMobileEpubReaderScreen(
         navigate(chunk.toLocator(), detachFromTts = false)
     }
 
+    LaunchedEffect(activeCloudTtsChunk?.index, activeCloudTtsChunk?.chapterIndex, activeCloudTtsChunk?.pageIndex) {
+        val chunk = activeCloudTtsChunk
+        if (chunk == null || loadedBook == null) return@LaunchedEffect
+        if (!shouldFollowReaderTtsChunk(detachedTtsChunkIndex, chunk.index)) return@LaunchedEffect
+        detachedTtsChunkIndex = null
+        navigate(chunk.toLocator(), detachFromTts = false)
+    }
+
     fun navigateSearchResult(result: SharedMobileEpubSearchResult) {
         val epub = loadedBook ?: return
         val chapter = epub.chapters.getOrNull(result.chapterIndex) ?: return
         detachVerticalReaderFromTts()
-        jumpHistory = jumpHistory.record(
-            currentLocator = currentLocator,
-            targetLocator = result.locator,
-            chapterCount = epub.chapters.size,
-        )
-        val chunks = ReaderHtmlDocumentBuilder.verticalChapterChunks(epub, result.chapterIndex)
-        currentChapterIndex = result.chapterIndex
-        currentLocator = result.locator
-        result.locator.pageIndex?.let { currentPageIndex = it.coerceIn(0, pageCount - 1) }
-        explicitNavigationLocator = result.locator.takeIf {
-            settings.readingMode == ReaderReadingMode.PAGINATED || useNativeVerticalRenderer
+        captureCurrentEpubLocator { current ->
+            jumpHistory = jumpHistory.record(
+                currentLocator = current,
+                targetLocator = result.locator,
+                chapterCount = epub.chapters.size,
+            )
+            val chunks = ReaderHtmlDocumentBuilder.verticalChapterChunks(epub, result.chapterIndex)
+            currentChapterIndex = result.chapterIndex
+            currentLocator = result.locator
+            result.locator.pageIndex?.let { currentPageIndex = it.coerceIn(0, pageCount - 1) }
+            explicitNavigationLocator = result.locator.takeIf {
+                settings.readingMode == ReaderReadingMode.PAGINATED || useNativeVerticalRenderer
+            }
+            explicitNavigationChunkIndex = result.chunkIndex
+            explicitNavigationChunkHtml = chunks.getOrNull(result.chunkIndex)
+            commandScript = if (settings.readingMode == ReaderReadingMode.VERTICAL && !useNativeVerticalRenderer) {
+                sharedMobileEpubSearchNavigationScript(result, searchQuery, chunks.getOrNull(result.chunkIndex))
+            } else {
+                null
+            }
+            navigationRequestId++
+            showSearchResultsPanel = false
         }
-        explicitNavigationChunkIndex = result.chunkIndex
-        explicitNavigationChunkHtml = chunks.getOrNull(result.chunkIndex)
-        commandScript = if (settings.readingMode == ReaderReadingMode.VERTICAL && !useNativeVerticalRenderer) {
-            sharedMobileEpubSearchNavigationScript(result, searchQuery, chunks.getOrNull(result.chunkIndex))
-        } else {
-            null
-        }
-        navigationRequestId++
-        showSearchResultsPanel = false
     }
 
     fun goBackInJumpHistory() {
-        val target = jumpHistory.backLocator ?: return
-        jumpHistory = jumpHistory.stepBack()
-        navigate(target)
+        val chapterCount = loadedBook?.chapters?.size ?: return
+        captureCurrentEpubLocator { current ->
+            val refreshedHistory = jumpHistory.updateCurrentLocation(current, chapterCount)
+            val target = refreshedHistory.backLocator ?: return@captureCurrentEpubLocator
+            jumpHistory = refreshedHistory.stepBack()
+            navigate(target)
+        }
     }
 
     fun goForwardInJumpHistory() {
-        val target = jumpHistory.forwardLocator ?: return
-        jumpHistory = jumpHistory.stepForward()
-        navigate(target)
+        val chapterCount = loadedBook?.chapters?.size ?: return
+        captureCurrentEpubLocator { current ->
+            val refreshedHistory = jumpHistory.updateCurrentLocation(current, chapterCount)
+            val target = refreshedHistory.forwardLocator ?: return@captureCurrentEpubLocator
+            jumpHistory = refreshedHistory.stepForward()
+            navigate(target)
+        }
     }
 
     fun speakSelectedText(text: String, locator: ReaderLocator) {
@@ -749,7 +990,7 @@ fun SharedMobileEpubReaderScreen(
                     }
                     TextButton(
                         onClick = {
-                            clipboard.setText(AnnotatedString(url))
+                            copyToClipboard(url, copiedLinkLabel)
                             pendingExternalLink = null
                         }
                     ) {
@@ -765,6 +1006,15 @@ fun SharedMobileEpubReaderScreen(
         )
     }
 
+    activeFootnote?.let { footnote ->
+        SharedMobileEpubFootnoteSheet(
+            footnote = footnote,
+            settings = settings,
+            onCopyText = { copyToClipboard(it) },
+            onDismiss = { activeFootnote = null },
+        )
+    }
+
     ModalNavigationDrawer(
         drawerState = drawerState,
         gesturesEnabled = drawerState.isOpen,
@@ -773,7 +1023,13 @@ fun SharedMobileEpubReaderScreen(
                 val drawerPagerState = rememberPagerState(pageCount = { 4 })
                 val drawerScope = rememberCoroutineScope()
                 LaunchedEffect(drawerTab) {
-                    if (drawerTab in 0..3) drawerPagerState.animateScrollToPage(drawerTab)
+                    if (drawerTab in 0..3) {
+                        if (motionPolicy.animationsEnabled) {
+                            drawerPagerState.animateScrollToPage(drawerTab)
+                        } else {
+                            drawerPagerState.scrollToPage(drawerTab)
+                        }
+                    }
                 }
                 Text(
                     loadedBook?.title ?: book.displayName,
@@ -784,7 +1040,15 @@ fun SharedMobileEpubReaderScreen(
                     listOf("Chapters", "Bookmarks", "Annotations", "Images").forEachIndexed { index, label ->
                         Tab(
                             selected = drawerPagerState.currentPage == index,
-                            onClick = { drawerScope.launch { drawerPagerState.animateScrollToPage(index) } },
+                            onClick = {
+                                drawerScope.launch {
+                                    if (motionPolicy.animationsEnabled) {
+                                        drawerPagerState.animateScrollToPage(index)
+                                    } else {
+                                        drawerPagerState.scrollToPage(index)
+                                    }
+                                }
+                            },
                             text = { Text(label, maxLines = 1) }
                         )
                     }
@@ -820,15 +1084,34 @@ fun SharedMobileEpubReaderScreen(
                         2 -> SharedMobileEpubHighlights(
                             highlights = highlights,
                             chapters = loadedBook?.chapters.orEmpty(),
+                            palette = readerHighlightPalette,
                             onHighlightClick = { highlight ->
                                 recordJumpAndNavigate(highlight.locator)
                                 scope.launch { drawerState.close() }
                             },
                             onHighlightEdit = { editingHighlight = it },
+                            onHighlightColorChange = { highlight, color ->
+                                highlights = highlights.map { current ->
+                                    if (current.id == highlight.id) {
+                                        current.copy(color = color, colorArgb = null)
+                                    } else {
+                                        current
+                                    }
+                                }
+                            },
+                            onDeleteHighlight = { highlight ->
+                                highlights = highlights.filterNot { it.id == highlight.id }
+                                if (editingHighlight?.id == highlight.id) editingHighlight = null
+                            },
+                            onOpenPaletteManager = { showHighlightPaletteManager = true },
                             modifier = Modifier.fillMaxSize()
                         )
                         else -> SharedMobileEpubImages(
-                            images = loadedBook?.readerImageReferences(pages).orEmpty(),
+                            images = if (settings.hideImages) {
+                                emptyList()
+                            } else {
+                                loadedBook?.readerImageReferences(pages).orEmpty()
+                            },
                             onImageClick = { image ->
                                 loadedBook?.chapters?.getOrNull(image.chapterIndex)?.let {
                                     recordJumpAndNavigate(image.locator)
@@ -847,6 +1130,9 @@ fun SharedMobileEpubReaderScreen(
             Box(
                 Modifier
                     .fillMaxSize()
+                    .onSizeChanged { size ->
+                        readerViewport = ReaderViewportSpec(size.width, size.height)
+                    }
                     .then(
                         if (!systemUiHidden) {
                             Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top))
@@ -866,90 +1152,372 @@ fun SharedMobileEpubReaderScreen(
                                 pages.size,
                                 settings
                             ).mapNotNull(pages::getOrNull)
-                            AnimatedContent(
-                                targetState = visiblePages,
-                                transitionSpec = {
-                                    if (!settings.pageTurnAnimationEnabled) {
-                                        EnterTransition.None togetherWith ExitTransition.None
-                                    } else {
-                                        val direction = sharedPaginatedTransitionDirection(
-                                            initialState.minOfOrNull { it.pageIndex } ?: 0,
-                                            targetState.minOfOrNull { it.pageIndex } ?: 0,
-                                            settings.rightToLeftPagination
-                                        )
-                                        slideInHorizontally(tween(700)) { width -> width * direction } togetherWith
-                                            slideOutHorizontally(tween(700)) { width -> -width * direction }
-                                    }
-                                },
-                                label = "EPUB page turn"
-                            ) { animatedPages ->
-                            SharedNativePaginatedReader(
-                                renderPlan = ReaderContentRenderPlan.NativePaginatedPages(
-                                    visiblePages = animatedPages,
-                                    settings = settings,
-                                    searchQuery = searchQuery,
-                                    searchOptions = ReaderSearchOptions(),
-                                    highlightPalette = readerHighlightPalette,
-                                    background = settings.readerBackgroundColor(),
-                                    foreground = settings.readerTextColor(),
-                                    navigationTarget = ReaderContentNavigationTarget(
-                                        locator = explicitNavigationLocator ?: currentLocator,
-                                        requestId = navigationRequestId,
-                                        readingMode = settings.readingMode
-                                    ),
-                                    highlights = activeTtsChunk?.let { chunk ->
-                                        highlights + chunk.toHighlight(localTts.progress.sessionId)
-                                    } ?: highlights
+                            val paginatedRenderPlan = ReaderContentRenderPlan.NativePaginatedPages(
+                                visiblePages = visiblePages,
+                                settings = settings,
+                                searchQuery = searchQuery,
+                                searchOptions = ReaderSearchOptions(),
+                                highlightPalette = readerHighlightPalette,
+                                background = settings.readerBackgroundColor(),
+                                foreground = settings.readerTextColor(),
+                                navigationTarget = ReaderContentNavigationTarget(
+                                    locator = explicitNavigationLocator ?: currentLocator,
+                                    requestId = navigationRequestId,
+                                    readingMode = settings.readingMode
                                 ),
-                                readerFontFamily = settings.toSharedReaderFontFamily(),
-                                searchHighlight = MaterialTheme.colorScheme.primary.copy(alpha = 0.28f),
-                                onVisiblePageChanged = { pageIndex, locator ->
-                                    currentPageIndex = pageIndex.coerceIn(0, pageCount - 1)
-                                    currentChapterIndex = pages.getOrNull(currentPageIndex)?.chapterIndex
-                                        ?: currentChapterIndex
-                                    currentLocator = locator ?: currentLocator
-                                },
-                                onHighlightCreated = { highlight ->
-                                    highlights = highlights.filterNot { it.id == highlight.id } + highlight
-                                },
-                                onHighlightSelected = { id ->
-                                    editingHighlight = highlights.firstOrNull { it.id == id }
-                                },
-                                enabledSelectionActions = SharedNativeReaderSelectionAction.entries.toSet(),
-                                onCopyText = { text -> clipboard.setText(AnnotatedString(text)) },
-                                onSelectionAction = { action, text, locator ->
-                                    val selectionLocator = locator ?: currentLocator ?: return@SharedNativePaginatedReader
-                                    val lookupAction = action.externalLookupActionOrNull()
-                                    when {
-                                        lookupAction != null -> openSharedMobileEpubLookup(lookupAction, text)
-                                        action == SharedNativeReaderSelectionAction.SPEAK -> speakSelectedText(text, selectionLocator)
-                                        action == SharedNativeReaderSelectionAction.NOTE -> createNoteForSelection(text, selectionLocator)
-                                        else -> Unit
+                                highlights = activeTtsChunk?.let { chunk ->
+                                    highlights + chunk.toHighlight(localTts.progress.sessionId)
+                                } ?: highlights
+                            )
+                            // Android-benchmark page turn: single visible-step turns play the realistic
+                            // page curl with the same tween(700) the Android pager snap uses; multi-page
+                            // jumps (slider, TOC, links, TTS) settle instantly like Android's scrollToPage.
+                            var lastTurnedPages by remember(book.id) { mutableStateOf(visiblePages) }
+                            var activePageTurn by remember(book.id) { mutableStateOf<SharedMobileEpubActivePageTurn?>(null) }
+                            var pageTurnTouchY by remember(book.id) { mutableStateOf<Float?>(null) }
+                            val pageTurnFraction = remember(book.id) { Animatable(1f) }
+
+                            LaunchedEffect(visiblePages) {
+                                val outgoingPages = lastTurnedPages
+                                if (outgoingPages == visiblePages || outgoingPages.isEmpty() || visiblePages.isEmpty()) {
+                                    lastTurnedPages = visiblePages
+                                    activePageTurn = null
+                                    return@LaunchedEffect
+                                }
+                                val animateTurn = sharedPaginatedTurnShouldAnimate(
+                                    animationEnabled = motionPolicy.shouldAnimate(settings.pageTurnAnimationEnabled),
+                                    outgoingFirstPageIndex = outgoingPages.minOf { it.pageIndex },
+                                    incomingFirstPageIndex = visiblePages.minOf { it.pageIndex },
+                                    visiblePageCount = visiblePages.size
+                                )
+                                if (!animateTurn) {
+                                    lastTurnedPages = visiblePages
+                                    activePageTurn = null
+                                    return@LaunchedEffect
+                                }
+                                val direction = sharedPaginatedTransitionDirection(
+                                    outgoingPages.minOf { it.pageIndex },
+                                    visiblePages.minOf { it.pageIndex },
+                                    settings.rightToLeftPagination
+                                )
+                                lastTurnedPages = visiblePages
+                                activePageTurn = SharedMobileEpubActivePageTurn(
+                                    outgoingPages = outgoingPages,
+                                    direction = direction,
+                                    touchY = pageTurnTouchY
+                                )
+                                pageTurnFraction.snapTo(0f)
+                                try {
+                                    pageTurnFraction.animateTo(1f, tween(700, easing = FastOutSlowInEasing))
+                                } finally {
+                                    activePageTurn = null
+                                }
+                            }
+
+                            // Android-benchmark drag-to-page: the position follows the finger 1:1
+                            // with the curl rendering live, then settles with the pager snap spring.
+                            var pageDragActive by remember(book.id) { mutableStateOf(false) }
+                            var pageDragDirection by remember(book.id) { mutableIntStateOf(0) }
+                            val pageDragPosition = remember(book.id) { mutableFloatStateOf(0f) }
+                            var pageDragSettleJob by remember(book.id) { mutableStateOf<Job?>(null) }
+
+                            val canDragForward = ReaderSpreadLayout.canGoNext(currentPageIndex, pageCount, settings)
+                            val canDragBackward = ReaderSpreadLayout.normalizePageIndex(currentPageIndex, pageCount, settings) > 0
+                            val forwardDragPages = if (canDragForward) {
+                                ReaderSpreadLayout.visiblePageIndicesForDisplay(
+                                    ReaderSpreadLayout.nextPageIndex(currentPageIndex, pageCount, settings),
+                                    pages.size,
+                                    settings
+                                ).mapNotNull(pages::getOrNull)
+                            } else {
+                                emptyList()
+                            }
+                            val backwardDragPages = if (canDragBackward) {
+                                ReaderSpreadLayout.visiblePageIndicesForDisplay(
+                                    ReaderSpreadLayout.previousPageIndex(currentPageIndex, pageCount, settings),
+                                    pages.size,
+                                    settings
+                                ).mapNotNull(pages::getOrNull)
+                            } else {
+                                emptyList()
+                            }
+
+                            fun settlePageDrag(targetPositionPages: Float, onCompleted: () -> Unit) {
+                                pageDragSettleJob?.cancel()
+                                if (!motionPolicy.animationsEnabled) {
+                                    pageDragPosition.floatValue = targetPositionPages
+                                    onCompleted()
+                                    return
+                                }
+                                pageDragSettleJob = scope.launch {
+                                    // Android settles drags with the pager snap spring.
+                                    val animation = Animatable(pageDragPosition.floatValue)
+                                    val result = animation.animateTo(
+                                        targetPositionPages,
+                                        spring(stiffness = Spring.StiffnessMediumLow)
+                                    ) { pageDragPosition.floatValue = value }
+                                    if (result.endReason == AnimationEndReason.Finished) {
+                                        pageDragSettleJob = null
+                                        onCompleted()
+                                    }
+                                }
+                            }
+
+                            val pageDragController = SharedPaginatedPageDragController(
+                                isEnabled = { activePageTurn == null && pages.isNotEmpty() },
+                                onDragStarted = { touchY ->
+                                    val caughtSettle = pageDragSettleJob != null
+                                    pageDragSettleJob?.cancel()
+                                    pageDragSettleJob = null
+                                    pageTurnTouchY = touchY
+                                    pageDragActive = true
+                                    if (caughtSettle) {
+                                        // Android lets the finger catch a settling page mid-flight.
+                                        pageDragDirection = when {
+                                            pageDragPosition.floatValue > 0f -> 1
+                                            pageDragPosition.floatValue < 0f -> -1
+                                            else -> 0
+                                        }
+                                    } else {
+                                        pageDragPosition.floatValue = 0f
+                                        pageDragDirection = 0
                                     }
                                 },
-                                onLinkClicked = { link ->
-                                    if (link.href.isExternalEpubLink()) {
-                                        pendingExternalLink = link.href
-                                    } else {
+                                onDrag = { rawDragFraction ->
+                                    val position = sharedPaginatedDragPositionPages(
+                                        rawDragFraction = rawDragFraction,
+                                        visiblePageCount = visiblePages.size,
+                                        rightToLeftPagination = settings.rightToLeftPagination
+                                    )
+                                    val clamped = when {
+                                        position > 0f && forwardDragPages.isEmpty() -> 0f
+                                        position < 0f && backwardDragPages.isEmpty() -> 0f
+                                        else -> position
+                                    }
+                                    pageDragPosition.floatValue = clamped
+                                    pageDragDirection = when {
+                                        clamped > 0f -> 1
+                                        clamped < 0f -> -1
+                                        else -> 0
+                                    }
+                                },
+                                onDragReleased = { rawVelocityFraction ->
+                                    val dragSign = if (settings.rightToLeftPagination) 1 else -1
+                                    val velocityPages = rawVelocityFraction * dragSign * visiblePages.size
+                                    when (
+                                        sharedPaginatedDragReleaseTarget(
+                                            positionPages = pageDragPosition.floatValue,
+                                            velocityPagesPerSecond = velocityPages,
+                                            visiblePageCount = visiblePages.size,
+                                            canDragForward = canDragForward,
+                                            canDragBackward = canDragBackward
+                                        )
+                                    ) {
+                                        SharedPaginatedDragRelease.COMMIT_FORWARD -> settlePageDrag(
+                                            targetPositionPages = visiblePages.size.toFloat(),
+                                            onCompleted = {
+                                                lastTurnedPages = forwardDragPages
+                                                pageDragActive = false
+                                                pageDragDirection = 0
+                                                pageDragPosition.floatValue = 0f
+                                                // navigate() commits currentPageIndex synchronously,
+                                                // so the drag layers and the settled page swap in one frame.
+                                                navigatePage(1)
+                                            }
+                                        )
+                                        SharedPaginatedDragRelease.COMMIT_BACKWARD -> settlePageDrag(
+                                            targetPositionPages = -visiblePages.size.toFloat(),
+                                            onCompleted = {
+                                                lastTurnedPages = backwardDragPages
+                                                pageDragActive = false
+                                                pageDragDirection = 0
+                                                pageDragPosition.floatValue = 0f
+                                                navigatePage(-1)
+                                            }
+                                        )
+                                        SharedPaginatedDragRelease.CANCEL -> settlePageDrag(
+                                            targetPositionPages = 0f,
+                                            onCompleted = {
+                                                pageDragActive = false
+                                                pageDragDirection = 0
+                                            }
+                                        )
+                                    }
+                                },
+                                onDragCancelled = {
+                                    settlePageDrag(
+                                        targetPositionPages = 0f,
+                                        onCompleted = {
+                                            pageDragActive = false
+                                            pageDragDirection = 0
+                                        }
+                                    )
+                                }
+                            )
+
+                            val activeTurn = activePageTurn
+                            val incomingTurnSpec = activeTurn?.let { turn ->
+                                SharedPaginatedPageTurnSpec(
+                                    offsetForSlot = { slot ->
+                                        sharedPaginatedTurnPageOffset(
+                                            slotOffsetInSet = slot,
+                                            setLeadSlots = visiblePages.size,
+                                            turnDistanceSlots = visiblePages.size,
+                                            direction = turn.direction,
+                                            fraction = pageTurnFraction.value
+                                        )
+                                    },
+                                    touchY = turn.touchY
+                                )
+                            }
+                            val outgoingTurnSpec = activeTurn?.let { turn ->
+                                SharedPaginatedPageTurnSpec(
+                                    offsetForSlot = { slot ->
+                                        sharedPaginatedTurnPageOffset(
+                                            slotOffsetInSet = slot,
+                                            setLeadSlots = 0,
+                                            turnDistanceSlots = visiblePages.size,
+                                            direction = turn.direction,
+                                            fraction = pageTurnFraction.value
+                                        )
+                                    },
+                                    touchY = turn.touchY
+                                )
+                            }
+                            val dragCurrentSpec = if (pageDragActive) {
+                                SharedPaginatedPageTurnSpec(
+                                    offsetForSlot = { slot ->
+                                        sharedPaginatedTurnPageOffset(
+                                            slotOffsetInSet = slot,
+                                            setLeadSlots = 0,
+                                            turnDistanceSlots = visiblePages.size,
+                                            direction = pageDragDirection,
+                                            fraction = abs(pageDragPosition.floatValue) / visiblePages.size.coerceAtLeast(1)
+                                        )
+                                    },
+                                    touchY = pageTurnTouchY
+                                )
+                            } else {
+                                null
+                            }
+                            val dragNeighborSpec = if (pageDragActive) {
+                                SharedPaginatedPageTurnSpec(
+                                    offsetForSlot = { slot ->
+                                        sharedPaginatedTurnPageOffset(
+                                            slotOffsetInSet = slot,
+                                            setLeadSlots = visiblePages.size,
+                                            turnDistanceSlots = visiblePages.size,
+                                            direction = pageDragDirection,
+                                            fraction = abs(pageDragPosition.floatValue) / visiblePages.size.coerceAtLeast(1)
+                                        )
+                                    },
+                                    touchY = pageTurnTouchY
+                                )
+                            } else {
+                                null
+                            }
+                            val dragNeighborPages = when {
+                                !pageDragActive || pageDragDirection == 0 -> null
+                                pageDragDirection > 0 -> forwardDragPages
+                                else -> backwardDragPages
+                            }
+                            val dragOverlayPlan = dragNeighborPages
+                                ?.takeIf { it.isNotEmpty() }
+                                ?.let { paginatedRenderPlan.copy(visiblePages = it) }
+
+                            // Draw order mirrors the pager z-order: a forward turn or forward drag
+                            // keeps the incoming set beneath the curling set, while a backward turn
+                            // or drag un-curls the incoming set on top.
+                            val overlayFirst = if (pageDragActive) {
+                                pageDragDirection > 0
+                            } else {
+                                (activeTurn?.direction ?: 0) < 0
+                            }
+                            val turnOverlay: @Composable () -> Unit = {
+                                val overlayPlan = when {
+                                    dragOverlayPlan != null -> dragOverlayPlan
+                                    activeTurn != null -> paginatedRenderPlan.copy(visiblePages = activeTurn.outgoingPages)
+                                    else -> null
+                                }
+                                val overlaySpec = dragNeighborSpec ?: outgoingTurnSpec
+                                if (overlayPlan != null && overlaySpec != null) {
+                                    SharedNativePaginatedPageTurnOverlay(
+                                        renderPlan = overlayPlan,
+                                        readerFontFamily = settings.toSharedReaderFontFamily(),
+                                        searchHighlight = MaterialTheme.colorScheme.primary.copy(alpha = 0.28f),
+                                        selectionHighlight = MaterialTheme.colorScheme.primary.copy(alpha = 0.28f),
+                                        pageTurn = overlaySpec
+                                    )
+                                }
+                            }
+                            Box(Modifier.fillMaxSize()) {
+                                if (overlayFirst) {
+                                    turnOverlay()
+                                }
+                                SharedNativePaginatedReader(
+                                    renderPlan = paginatedRenderPlan,
+                                    readerFontFamily = settings.toSharedReaderFontFamily(),
+                                    searchHighlight = MaterialTheme.colorScheme.primary.copy(alpha = 0.28f),
+                                    onVisiblePageChanged = { pageIndex, locator ->
+                                        currentPageIndex = pageIndex.coerceIn(0, pageCount - 1)
+                                        val page = pages.getOrNull(currentPageIndex)
+                                        currentChapterIndex = page?.chapterIndex ?: currentChapterIndex
+                                        currentLocator = locator ?: page?.toMobileEpubLocator(loadedBook) ?: currentLocator
+                                        refreshSelectedTocIndex()
+                                    },
+                                    onHighlightCreated = { highlight ->
+                                        highlights = highlights.filterNot { it.id == highlight.id } + highlight
+                                    },
+                                    onHighlightSelected = { id ->
+                                        editingHighlight = highlights.firstOrNull { it.id == id }
+                                    },
+                                    enabledSelectionActions = SharedNativeReaderSelectionAction.entries.toSet(),
+                                    onCopyText = { text -> copyToClipboard(text) },
+                                    onSelectionAction = { action, text, locator ->
+                                        val selectionLocator = locator ?: currentLocator ?: return@SharedNativePaginatedReader
+                                        val lookupAction = action.externalLookupActionOrNull()
+                                        when {
+                                            action == SharedNativeReaderSelectionAction.DEFINE && readerAiAvailable -> onAiAction(ReaderAiFeature.DEFINE, text)
+                                            lookupAction != null -> openSharedMobileEpubLookup(lookupAction, text)
+                                            action == SharedNativeReaderSelectionAction.SPEAK -> speakSelectedText(text, selectionLocator)
+                                            action == SharedNativeReaderSelectionAction.NOTE -> createNoteForSelection(text, selectionLocator)
+                                            else -> Unit
+                                        }
+                                    },
+                                    onLinkClicked = { link ->
                                         val sourceChapter = link.chapterIndex ?: currentChapterIndex
                                         val sourceHref = loadedBook.chapters.getOrNull(sourceChapter)?.baseHref
-                                        loadedBook.locatorForLink(link.href, sourceHref, pages)?.let { (locator, fragment) ->
-                                            recordJumpAndNavigate(locator, fragment)
+                                        if (showFootnoteIfAvailable(link.href, sourceHref, sourceChapter)) {
+                                            Unit
+                                        } else if (link.href.isExternalEpubLink()) {
+                                            pendingExternalLink = link.href
+                                        } else {
+                                            loadedBook.locatorForLink(link.href, sourceHref, pages)?.let { (locator, fragment) ->
+                                                recordJumpAndNavigate(locator, fragment)
+                                            }
                                         }
-                                    }
-                                },
-                                onReaderTap = {
-                                    if (!(autoScrollMusicianMode && autoScrollModeActive)) showChrome = !showChrome
-                                },
-                                onReaderHorizontalTap = { horizontalFraction ->
-                                    when (sharedPaginatedTapAction(horizontalFraction, settings.tapToNavigateEnabled, settings.rightToLeftPagination)) {
-                                        SharedPaginatedTapAction.PREVIOUS_PAGE -> navigatePage(-1)
-                                        SharedPaginatedTapAction.NEXT_PAGE -> navigatePage(1)
-                                        SharedPaginatedTapAction.TOGGLE_CHROME -> showChrome = !showChrome
-                                    }
-                                },
-                                modifier = Modifier.fillMaxSize()
-                            )
+                                    },
+                                    onReaderTap = {
+                                        if (!(autoScrollMusicianMode && autoScrollModeActive)) showChrome = !showChrome
+                                    },
+                                    onReaderHorizontalTap = { horizontalFraction, touchY ->
+                                        if (!pageDragActive) {
+                                            pageTurnTouchY = touchY
+                                            when (sharedPaginatedTapAction(horizontalFraction, settings.tapToNavigateEnabled, settings.rightToLeftPagination)) {
+                                                SharedPaginatedTapAction.PREVIOUS_PAGE -> navigatePage(-1)
+                                                SharedPaginatedTapAction.NEXT_PAGE -> navigatePage(1)
+                                                SharedPaginatedTapAction.TOGGLE_CHROME -> showChrome = !showChrome
+                                            }
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxSize(),
+                                    positionController = nativePaginatedPositionController,
+                                    pageTurn = if (pageDragActive) dragCurrentSpec else incomingTurnSpec,
+                                    pageDragController = pageDragController
+                                )
+                                if (!overlayFirst) {
+                                    turnOverlay()
+                                }
                             }
                         } else if (useNativeVerticalRenderer) {
                         LaunchedEffect(
@@ -1001,9 +1569,10 @@ fun SharedMobileEpubReaderScreen(
                             searchHighlight = MaterialTheme.colorScheme.primary.copy(alpha = 0.28f),
                             onVisiblePageChanged = { pageIndex, locator ->
                                 currentPageIndex = pageIndex.coerceIn(0, pageCount - 1)
-                                currentChapterIndex = pages.getOrNull(currentPageIndex)?.chapterIndex
-                                    ?: currentChapterIndex
-                                currentLocator = locator ?: currentLocator
+                                val page = pages.getOrNull(currentPageIndex)
+                                currentChapterIndex = page?.chapterIndex ?: currentChapterIndex
+                                currentLocator = locator ?: page?.toMobileEpubLocator(loadedBook) ?: currentLocator
+                                refreshSelectedTocIndex()
                             },
                             onHighlightCreated = { highlight ->
                                 highlights = highlights.filterNot { it.id == highlight.id } + highlight
@@ -1011,24 +1580,27 @@ fun SharedMobileEpubReaderScreen(
                             onHighlightSelected = { id ->
                                 editingHighlight = highlights.firstOrNull { it.id == id }
                             },
-                            enabledSelectionActions = SharedNativeReaderSelectionAction.entries.toSet(),
-                            onCopyText = { text -> clipboard.setText(AnnotatedString(text)) },
+                                enabledSelectionActions = SharedNativeReaderSelectionAction.entries.toSet(),
+                            onCopyText = { text -> copyToClipboard(text) },
                             onSelectionAction = { action, text, locator ->
                                 val selectionLocator = locator ?: currentLocator ?: return@SharedNativeVerticalReader
                                 val lookupAction = action.externalLookupActionOrNull()
                                 when {
-                                    lookupAction != null -> openSharedMobileEpubLookup(lookupAction, text)
+                                        action == SharedNativeReaderSelectionAction.DEFINE && readerAiAvailable -> onAiAction(ReaderAiFeature.DEFINE, text)
+                                        lookupAction != null -> openSharedMobileEpubLookup(lookupAction, text)
                                     action == SharedNativeReaderSelectionAction.SPEAK -> speakSelectedText(text, selectionLocator)
                                     action == SharedNativeReaderSelectionAction.NOTE -> createNoteForSelection(text, selectionLocator)
                                     else -> Unit
                                 }
                             },
                             onLinkClicked = { link ->
-                                if (link.href.isExternalEpubLink()) {
+                                val sourceChapter = link.chapterIndex ?: currentChapterIndex
+                                val sourceHref = loadedBook.chapters.getOrNull(sourceChapter)?.baseHref
+                                if (showFootnoteIfAvailable(link.href, sourceHref, sourceChapter)) {
+                                    Unit
+                                } else if (link.href.isExternalEpubLink()) {
                                     pendingExternalLink = link.href
                                 } else {
-                                    val sourceChapter = link.chapterIndex ?: currentChapterIndex
-                                    val sourceHref = loadedBook.chapters.getOrNull(sourceChapter)?.baseHref
                                     loadedBook.locatorForLink(link.href, sourceHref, pages)?.let { (locator, fragment) ->
                                         recordJumpAndNavigate(locator, fragment)
                                     }
@@ -1038,10 +1610,12 @@ fun SharedMobileEpubReaderScreen(
                                 if (!(autoScrollMusicianMode && autoScrollModeActive)) showChrome = !showChrome
                             },
                             imageContent = { image, imageModifier ->
-                                SharedMobileEpubNativeImage(
-                                    image = image,
-                                    modifier = imageModifier
-                                )
+                                if (!settings.hideImages) {
+                                    SharedMobileEpubNativeImage(
+                                        image = image,
+                                        modifier = imageModifier
+                                    )
+                                }
                             },
                             verticalScrollController = nativeVerticalScrollController,
                             modifier = Modifier.fillMaxSize()
@@ -1083,7 +1657,7 @@ fun SharedMobileEpubReaderScreen(
                                 navigationLocator = currentLocator,
                                 pages = pages,
                                 highlightActionsEnabled = true,
-                                readerAiFeaturesEnabled = false,
+                                readerAiFeaturesEnabled = readerAiAvailable,
                                 // This flag controls the selection-menu Speak action. iOS handles
                                 // it with local device speech rather than the paid cloud service.
                                 cloudTtsEnabled = true,
@@ -1102,8 +1676,8 @@ fun SharedMobileEpubReaderScreen(
                             ReaderHtmlDocumentBuilder.appearanceUpdateScript(settings) + "\n" +
                                 ReaderHtmlDocumentBuilder.pageAnchorsUpdateScript(pages) + "\n" +
                                 sharedMobileEpubActiveTocScript(loadedBook, currentChapterIndex) + "\n" +
-                                "window.readerIosPullEnabled=${settings.seamlessChapterNavigation};" +
-                                "window.readerIosSeamlessChapter=${!settings.seamlessChapterNavigation};" +
+                                "window.readerIosPullEnabled=${settings.pullToTurnEnabled};" +
+                                "window.readerIosSeamlessChapter=${settings.seamlessChapterTransitionEnabled};" +
                                 "window.readerIosPullMultiplier=${settings.chapterTurnDragMultiplier.coerceIn(0.5f, 2f)};"
                         }
                         val navigationScript = buildList {
@@ -1126,6 +1700,9 @@ fun SharedMobileEpubReaderScreen(
                             appearanceScript = appearanceScript,
                             navigationScript = navigationScript,
                             navigationRequestId = navigationRequestId,
+                            positionController = webViewPositionController,
+                            streamPageLoader = streamPageLoader,
+                            streamPageUnavailableLabel = streamPageUnavailableLabel,
                             onBridgeMessage = { method, payload ->
                                 when (method) {
                                     "readerPointerActivity" -> {
@@ -1133,10 +1710,13 @@ fun SharedMobileEpubReaderScreen(
                                     }
                                     "readerDragActivity" -> temporarilyPauseAutoScroll(300L)
                                     "readerPositionChanged" -> payload.sharedMobileEpubLocatorOrNull()?.let { position ->
+                                        webViewPositionController.updateObservedLocator(position)
                                         val reportedChapter = position.chapterIndex
                                         if (reportedChapter == null || reportedChapter == currentChapterIndex) {
                                             currentLocator = position
                                             currentPageIndex = (position.pageIndex ?: currentPageIndex).coerceIn(0, pageCount - 1)
+                                            position.chapterIndex?.let { currentChapterIndex = it }
+                                            refreshSelectedTocIndex(position)
                                             commandScript = null
                                         }
                                     }
@@ -1162,17 +1742,16 @@ fun SharedMobileEpubReaderScreen(
                                         pullProgress = pull.second
                                     }
                                     "readerActiveTocChanged" -> payload.sharedMobileEpubActiveTocOrNull()?.let { active ->
-                                        val activePath = active.href.normalizeMobileEpubPath()
-                                        selectedTocIndex = loadedBook.tableOfContents.indexOfFirst { entry ->
-                                            entry.href.normalizeMobileEpubPath() == activePath &&
-                                                if (active.fragmentId == null) entry.fragmentId == null
-                                                else entry.fragmentId == active.fragmentId
-                                        }.takeIf { it >= 0 } ?: loadedBook.tableOfContents.indexOfFirst { entry ->
-                                            entry.href.normalizeMobileEpubPath() == activePath
-                                        }
+                                        refreshSelectedTocIndex(
+                                            locator = currentLocator,
+                                            activeHref = active.href,
+                                            activeFragmentId = active.fragmentId
+                                        )
                                     }
                                     "readerLinkClicked" -> payload.sharedMobileEpubLinkOrNull()?.let { link ->
-                                        if (link.href.isExternalEpubLink()) {
+                                        if (showFootnoteIfAvailable(link.href, link.chapterHref)) {
+                                            Unit
+                                        } else if (link.href.isExternalEpubLink()) {
                                             pendingExternalLink = link.href
                                         } else {
                                             loadedBook.locatorForLink(link.href, link.chapterHref, pages)?.let { (locator, fragment) ->
@@ -1191,6 +1770,7 @@ fun SharedMobileEpubReaderScreen(
                                     "readerSelectionAction" -> payload.sharedMobileEpubSelectionActionOrNull()?.let { selection ->
                                         val lookupAction = readerExternalLookupActionForSelectionId(selection.action)
                                         when {
+                                            selection.action == "define" && readerAiAvailable -> onAiAction(ReaderAiFeature.DEFINE, selection.text)
                                             lookupAction != null -> openSharedMobileEpubLookup(lookupAction, selection.text)
                                             selection.action == "speak" -> {
                                                 val locator = selection.locator ?: currentLocator ?: return@let
@@ -1211,7 +1791,7 @@ fun SharedMobileEpubReaderScreen(
                 }
             }
 
-                val chapterTitle = loadedBook?.tableOfContents?.getOrNull(selectedTocIndex)?.label
+                val chapterTitle = loadedBook?.effectiveReaderTocEntries()?.getOrNull(selectedTocIndex)?.label
                     ?: loadedBook?.chapters?.getOrNull(currentChapterIndex)?.title
                     ?: "Chapter ${currentChapterIndex + 1}"
                 val pageInfoVisible = shouldShowEpubPageInfoBar(
@@ -1270,6 +1850,9 @@ fun SharedMobileEpubReaderScreen(
                         onTtsReplacements = { showTtsReplacementsSheet = true },
                         onTtsSettings = { showTtsSettingsSheet = true },
                         onBookReplacements = { showBookReplacementsSheet = true },
+                        onOpenDictionarySettings = onOpenDictionarySettings,
+                        onOpenAiHub = { showAiHub = true; onOpenAiHub() },
+                        aiAvailable = readerAiAvailable,
                         readingMode = settings.readingMode,
                         rightToLeftPagination = settings.rightToLeftPagination,
                         useNativeVerticalRenderer = useNativeVerticalRenderer,
@@ -1297,6 +1880,7 @@ fun SharedMobileEpubReaderScreen(
                         onLocalTtsToggle = {
                             when (localTts.state) {
                                 SharedMobileEpubLocalTtsState.IDLE -> loadedBook?.let { epub ->
+                                    cloudTts?.stop()
                                     val session = ReaderEngine().createSession(
                                         book = epub,
                                         settings = settings,
@@ -1316,6 +1900,10 @@ fun SharedMobileEpubReaderScreen(
                             }
                         },
                         onLocalTtsStop = localTts::stop,
+                        cloudTtsState = cloudTtsState,
+                        cloudTtsAvailable = cloudTtsAvailable,
+                        onCloudTtsToggle = ::toggleCloudTts,
+                        onCloudTtsStop = cloudTts?.let { controller -> { controller.stop() } } ?: {},
                         keepScreenOn = keepScreenOn,
                         onKeepScreenOnChange = {
                             keepScreenOn = it
@@ -1348,10 +1936,14 @@ fun SharedMobileEpubReaderScreen(
                             onBookmark = ::toggleBookmark,
                             onVisualOptions = { showVisualOptionsSheet = true },
                             onOpenSlider = { showSlider = !showSlider },
+                            onDictionary = onOpenDictionarySettings,
+                            onOpenAiHub = { showAiHub = true; onOpenAiHub() },
+                            aiAvailable = readerAiAvailable,
                             localTtsState = localTts.state,
                             onLocalTtsToggle = {
                                 when (localTts.state) {
                                     SharedMobileEpubLocalTtsState.IDLE -> loadedBook?.let { epub ->
+                                        cloudTts?.stop()
                                         val session = ReaderEngine().createSession(
                                             book = epub,
                                             settings = settings,
@@ -1370,6 +1962,9 @@ fun SharedMobileEpubReaderScreen(
                                     SharedMobileEpubLocalTtsState.PAUSED -> localTts.resume()
                                 }
                             },
+                            cloudTtsState = cloudTtsState,
+                            cloudTtsAvailable = cloudTtsAvailable,
+                            onCloudTtsToggle = ::toggleCloudTts,
                             modifier = Modifier
                                 .align(Alignment.BottomCenter)
                                 .then(
@@ -1390,10 +1985,36 @@ fun SharedMobileEpubReaderScreen(
                             activeTtsChunk?.let { navigate(it.toLocator(), detachFromTts = false) }
                         },
                         onOpenSettings = { showTtsSettingsSheet = true },
+                        overlaySize = ttsOverlaySize,
+                        onOverlaySizeChange = {
+                            ttsOverlaySize = it
+                            onTtsOverlaySizePreferenceChange(it)
+                        },
                         modifier = Modifier
-                            .align(Alignment.BottomCenter)
+                            .align(BiasAlignment(readerTtsOverlayAlignmentBias(ttsOverlaySize), 1f))
                             .padding(horizontal = 12.dp)
                             .offset(y = if (showChrome) (-52).dp else (-12).dp)
+                    )
+                }
+                if (
+                    cloudTts != null &&
+                    (cloudTtsState.isLoading || cloudTtsState.isPlaying || cloudTtsState.isPaused)
+                ) {
+                    SharedMobileEpubCloudTtsControls(
+                        tts = cloudTts,
+                        onLocate = {
+                            detachedTtsChunkIndex = null
+                            activeCloudTtsChunk?.let { navigate(it.toLocator(), detachFromTts = false) }
+                        },
+                        overlaySize = ttsOverlaySize,
+                        onOverlaySizeChange = {
+                            ttsOverlaySize = it
+                            onTtsOverlaySizePreferenceChange(it)
+                        },
+                        modifier = Modifier
+                            .align(BiasAlignment(readerTtsOverlayAlignmentBias(ttsOverlaySize), 1f))
+                            .padding(horizontal = 12.dp)
+                            .offset(y = if (showChrome) (-52).dp else (-12).dp),
                     )
                 }
                 if (autoScrollModeActive && settings.readingMode == ReaderReadingMode.VERTICAL) {
@@ -1479,7 +2100,7 @@ fun SharedMobileEpubReaderScreen(
                 }
                 val canPullDirection = (pullDirection == "previous" && currentChapterIndex > 0) ||
                     (pullDirection == "next" && currentChapterIndex < (loadedBook?.chapters?.lastIndex ?: -1))
-                if (pullProgress > 0.05f && settings.seamlessChapterNavigation && canPullDirection) {
+                if (pullProgress > 0.05f && settings.pullToTurnEnabled && canPullDirection) {
                     SharedMobileEpubChapterChangeIndicator(
                         direction = pullDirection.orEmpty(),
                         progress = pullProgress,
@@ -1554,14 +2175,18 @@ fun SharedMobileEpubReaderScreen(
                     )
                 }
                 if (showChrome && showSlider && !showSearch && pages.isNotEmpty()) {
-                    SharedMobileEpubSlider(
-                        pageIndex = currentPageIndex,
-                        pageCount = pageCount,
-                        settings = settings,
-                        onPageSelected = { index -> pages.getOrNull(index)?.let { navigate(it.toMobileEpubLocator(loadedBook)) } },
-                        modifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .padding(bottom = 60.dp, start = 16.dp, end = 16.dp)
+                        SharedMobileEpubSlider(
+                            pageIndex = currentPageIndex,
+                            pageCount = pageCount,
+                            settings = settings,
+                            onPageSelected = { index ->
+                                pages.getOrNull(index)?.let {
+                                    recordJumpAndNavigate(it.toMobileEpubLocator(loadedBook))
+                                }
+                            },
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .padding(bottom = 60.dp, start = 16.dp, end = 16.dp)
                     )
                 }
             }
@@ -1581,7 +2206,7 @@ fun SharedMobileEpubReaderScreen(
                         settings = settings.withReaderFormatFrom(local)
                     } else {
                         localFormatSettings = settings
-                        settings = settings.withReaderFormatFrom(readerDefaultSettings)
+                        settings = settings.withReaderFormatFrom(migratedReaderDefaults)
                     }
                     isLocalFormatMode = useLocal
                 }
@@ -1610,10 +2235,10 @@ fun SharedMobileEpubReaderScreen(
     if (showVisualOptionsSheet) {
         SharedMobileEpubVisualOptionsSheet(
             settings = settings,
-            readerBrightness = readerBrightness,
-            readerBrightnessSupported = readerBrightnessSupported,
-            onReaderBrightnessChange = onReaderBrightnessChange,
-            onSettingsChange = { settings = it },
+            onSettingsChange = {
+                settings = it
+                onReaderDefaultSettingsChange(it)
+            },
             onDismiss = { showVisualOptionsSheet = false }
         )
     }
@@ -1652,10 +2277,53 @@ fun SharedMobileEpubReaderScreen(
             }
         }
     }
+    if (readerExtrasState.aiResult.hasContent) {
+        SharedReaderAiResultSheet(
+            result = readerExtrasState.aiResult,
+            onDismiss = onAiResultDismiss,
+        )
+    }
+    if (showAiHub) {
+        ModalBottomSheet(onDismissRequest = { showAiHub = false }) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text("AI features", style = MaterialTheme.typography.titleLarge)
+                TextButton(
+                    onClick = {
+                        showAiHub = false
+                        loadedBook?.chapters?.getOrNull(currentChapterIndex)?.plainText
+                            ?.takeIf { it.isNotBlank() }
+                            ?.let { onAiAction(ReaderAiFeature.SUMMARIZE, it.take(24_000)) }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Summarize current chapter") }
+                TextButton(
+                    onClick = {
+                        showAiHub = false
+                        loadedBook?.let { epub ->
+                            val recapText = epub.chapters.take(currentChapterIndex + 1)
+                                .joinToString("\n\n") { chapter -> chapter.plainText }
+                                .take(24_000)
+                            onAiAction(ReaderAiFeature.RECAP, recapText)
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Recap up to here") }
+            }
+        }
+    }
     if (showTtsSettingsSheet) {
         SharedMobileReaderTtsSettingsSheet(
             tts = localTts,
-            onDismiss = { showTtsSettingsSheet = false }
+            onDismiss = { showTtsSettingsSheet = false },
+            cloudTts = cloudTts,
+            cloudTtsModeEnabled = cloudTtsModeEnabled,
+            onCloudTtsModeChange = onCloudTtsModeChange,
+            cloudTtsVoiceId = cloudTtsVoiceId,
+            onCloudTtsVoiceChange = onCloudTtsVoiceChange,
+            onClearCloudTtsCache = onClearCloudTtsCache,
         )
     }
     if (showBookReplacementsSheet) {
@@ -1668,6 +2336,16 @@ fun SharedMobileEpubReaderScreen(
                     .padding(horizontal = 20.dp).padding(bottom = 32.dp)
             )
         }
+    }
+    if (showHighlightPaletteManager) {
+        SharedReaderHighlightPaletteDialog(
+            palette = readerHighlightPalette,
+            onDismiss = { showHighlightPaletteManager = false },
+            onSave = { palette ->
+                onReaderHighlightPaletteChange(palette)
+                showHighlightPaletteManager = false
+            }
+        )
     }
     if (showFileInfo) {
         ModalBottomSheet(onDismissRequest = { showFileInfo = false }) {
@@ -1701,6 +2379,7 @@ fun SharedMobileEpubReaderScreen(
             onLookup = { action ->
                 openSharedMobileEpubLookup(action, highlight.text)
             },
+            onClipboardError = onClipboardError,
             onDismiss = { editingHighlight = null }
         )
     }

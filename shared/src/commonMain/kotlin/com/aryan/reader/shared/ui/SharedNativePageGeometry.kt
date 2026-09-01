@@ -43,6 +43,15 @@ internal data class SharedNativePageRenderGeometry(
     val spreadMode: String
 )
 
+/**
+ * Android benchmark parity: a page slot that fills the reader width renders full-bleed
+ * with no border, shadow, or corner shape. Page chrome is reserved for slots narrower
+ * than the viewport (two-page spreads, capped page widths) where page edges are visible.
+ * The 1px tolerance absorbs float rounding between the dp and px width computations.
+ */
+internal val SharedNativePageRenderGeometry.showsPageChrome: Boolean
+    get() = pageOuterWidthPx < readerWidthPx - 1
+
 internal data class SharedNativeTextFitLabel(
     val page: ReaderPage,
     val blockIndex: Int,

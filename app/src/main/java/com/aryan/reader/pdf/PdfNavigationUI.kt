@@ -148,7 +148,7 @@ fun VerticalScrollbar(
 @Composable
 internal fun PageScrubbingAnimation(currentPage: Int, totalPages: Int) {
     PageScrubbingAnimation(
-        pageLabel = "Page $currentPage of $totalPages"
+        pageLabel = stringResource(R.string.page_of_format, currentPage, totalPages)
     )
 }
 

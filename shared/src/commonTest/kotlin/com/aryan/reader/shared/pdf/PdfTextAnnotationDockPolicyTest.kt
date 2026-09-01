@@ -1,6 +1,7 @@
 package com.aryan.reader.shared.pdf
 
 import androidx.compose.ui.graphics.Color
+import com.aryan.reader.shared.CustomFontItem
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -23,6 +24,23 @@ class PdfTextAnnotationDockPolicyTest {
         assertNull(androidPdfTextDockBuiltInFontPath("Unknown"))
         assertEquals(PdfTextDockPopup.COLOR, togglePdfTextDockPopup(PdfTextDockPopup.NONE, PdfTextDockPopup.COLOR))
         assertEquals(PdfTextDockPopup.NONE, togglePdfTextDockPopup(PdfTextDockPopup.COLOR, PdfTextDockPopup.COLOR))
+    }
+
+    @Test
+    fun importedPdfFontsOnlyExposeResolvedLiveFamilies() {
+        val fonts = listOf(
+            CustomFontItem("deleted", "Deleted", "deleted.ttf", "ttf", "/deleted.ttf", 1L, isDeleted = true),
+            CustomFontItem("missing", "Missing", "missing.ttf", "ttf", "/missing.ttf", 2L),
+            CustomFontItem("zeta", "Zeta", "zeta.ttf", "ttf", "/zeta.ttf", 3L),
+            CustomFontItem("alpha", "Alpha", "alpha.ttf", "ttf", "/alpha.ttf", 4L),
+        )
+
+        val available = availableSharedPdfCustomFonts(
+            customFonts = fonts,
+            resolvedFamilyKeys = setOf("/zeta.ttf", "alpha"),
+        )
+
+        assertEquals(listOf("alpha", "zeta"), available.map { it.id })
     }
 
     @Test

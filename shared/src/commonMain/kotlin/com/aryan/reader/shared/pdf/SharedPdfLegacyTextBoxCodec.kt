@@ -75,11 +75,17 @@ object SharedPdfLegacyTextBoxCodec {
                         top = bounds.requiredFloat("top"),
                         right = bounds.requiredFloat("right"),
                         bottom = bounds.requiredFloat("bottom"),
-                    ),
+                    ).sanitizedForSharedPdf()
+                        ?: error("Invalid bounds"),
                     text = obj.string("text").orEmpty(),
                     colorArgb = obj.requiredInt("color"),
                     backgroundArgb = obj.requiredInt("backgroundColor"),
-                    fontSize = obj.requiredFloat("fontSize"),
+                    // Older Android sidecars sometimes stored display pixels
+                    // here. Normalize both that form and the current page
+                    // relative form before a renderer can consume the value.
+                    fontSize = SharedPdfTextAnnotationDefaults.legacyFontSizeToPageRelative(
+                        obj.requiredFloat("fontSize")
+                    ),
                     isBold = obj.boolean("isBold") ?: false,
                     isItalic = obj.boolean("isItalic") ?: false,
                     isUnderline = obj.boolean("isUnderline") ?: false,

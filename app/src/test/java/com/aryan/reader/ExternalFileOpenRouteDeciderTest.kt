@@ -1,6 +1,7 @@
 package com.aryan.reader
 
 import android.content.Intent
+import com.aryan.reader.shared.ExternalDocumentOpenMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -44,6 +45,22 @@ class ExternalFileOpenRouteDeciderTest {
                 Intent.FLAG_GRANT_PREFIX_URI_PERMISSION or
                 Intent.FLAG_ACTIVITY_NEW_TASK,
             forwardedFlags
+        )
+    }
+
+    @Test
+    fun `temporary behavior only applies to single document handoffs`() {
+        assertTrue(
+            ExternalFileOpenRouteDecider.shouldOpenTemporarily(
+                externalFileBehavior = "TEMPORARY",
+                openMode = ExternalDocumentOpenMode.OPEN_SINGLE,
+            )
+        )
+        assertFalse(
+            ExternalFileOpenRouteDecider.shouldOpenTemporarily(
+                externalFileBehavior = "TEMPORARY",
+                openMode = ExternalDocumentOpenMode.IMPORT_BATCH,
+            )
         )
     }
 }

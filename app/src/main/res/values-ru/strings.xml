@@ -325,6 +325,7 @@
     <string name="banner_clearing_cloud_local_data">Очистка облачных и локальных данных…</string>
     <string name="banner_cloud_local_data_cleared">Данные успешно очищены.</string>
     <string name="error_clear_all_data">Ошибка при очистке данных.</string>
+    <string name="error_cloud_delete_pending">Не удалось подключиться к облаку. Удаление завершится автоматически при следующем подключении к сети.</string>
     <string name="banner_local_data_cleared">Локальные данные очищены.</string>
     <string name="error_sign_in_failed">Ошибка авторизации.</string>
     <string name="error_no_google_account">Аккаунт Google не найден.</string>

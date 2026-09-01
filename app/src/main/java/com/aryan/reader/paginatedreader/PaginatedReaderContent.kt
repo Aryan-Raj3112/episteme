@@ -158,6 +158,7 @@ internal fun PaginatedReaderContent(
     ttsHighlightInfo: TtsHighlightInfo?,
     textStyle: TextStyle,
     imageSizeMultiplier: Float,
+    hideImages: Boolean = false,
     horizontalPadding: Dp,
     verticalPadding: Dp,
     onGetPage: (Int) -> Page?,
@@ -573,11 +574,15 @@ internal fun PaginatedReaderContent(
                             mutableStateMapOf<Int, AndroidEpubRenderedBlockBounds>()
                         }
                         val cutoffDiagnosticsEnabled = !uiState.isLoading
-                        val cutoffDiagnosticsContext =
+                        // Only built while diagnostics are enabled: this ran on every
+                        // recomposition of every page slot otherwise, and was the sampled
+                        // allocation in a GC-pressure ANR.
+                        val cutoffDiagnosticsContext = if (cutoffDiagnosticsEnabled) {
                             "generation=${uiState.generation} loading=${uiState.isLoading} pageCount=${uiState.totalPageCount} " +
                                 "density=${density.density} fontScale=${density.fontScale} " +
                                 "locale=${context.resources.configuration.locales[0]} " +
                                 "layoutDirection=${context.resources.configuration.layoutDirection}"
+                        } else ""
 
                         Box(
                             modifier = Modifier
@@ -891,7 +896,11 @@ internal fun PaginatedReaderContent(
                                                         }
                                                     }.then(marginModifier).then(styleModifier)
 
-                                                Box(modifier = diagnosticModifier.androidEpubNaturalHeight()) {
+                                                Box(
+                                                    modifier = diagnosticModifier
+                                                        .androidEpubNaturalHeight()
+                                                        .readerRelativeOffset(block.style)
+                                                ) {
                                                     val paddingModifier = Modifier.padding(
                                                         start = block.style.padding.left.coerceAtLeast(
                                                             0.dp
@@ -1351,6 +1360,7 @@ internal fun PaginatedReaderContent(
                                                                 block = block,
                                                                 textStyle = textStyle,
                                                                 imageSizeMultiplier = imageSizeMultiplier,
+                                                                hideImages = hideImages,
                                                                 modifier = paddingModifier,
                                                                 searchQuery = searchQuery,
                                                                 ttsHighlightInfo = ttsHighlightInfo,
@@ -1387,6 +1397,7 @@ internal fun PaginatedReaderContent(
                                                                             childBlock = childBlock,
                                                                             textStyle = textStyle,
                                                                             imageSizeMultiplier = imageSizeMultiplier,
+                                                                            hideImages = hideImages,
                                                                             searchQuery = searchQuery,
                                                                             searchHighlightColor = searchHighlightColor,
                                                                             ttsHighlightInfo = ttsHighlightInfo,
@@ -1457,6 +1468,7 @@ internal fun PaginatedReaderContent(
                                                                             childBlock = childBlock,
                                                                             textStyle = textStyle,
                                                                             imageSizeMultiplier = imageSizeMultiplier,
+                                                                            hideImages = hideImages,
                                                                             searchQuery = searchQuery,
                                                                             searchHighlightColor = searchHighlightColor,
                                                                             ttsHighlightInfo = ttsHighlightInfo,
@@ -1619,7 +1631,7 @@ internal fun PaginatedReaderContent(
                                                             }
                                                         }
 
-                                                        is ImageBlock -> {
+                                                        is ImageBlock -> if (!hideImages) {
                                                             val style = block.style
                                                             val colorFilter =
                                                                 if (block.style.filter == "invert(100%)") {
@@ -1979,7 +1991,7 @@ internal fun PaginatedReaderContent(
                                                                                             )
                                                                                         }
 
-                                                                                        is ImageBlock -> {
+                                                                                        is ImageBlock -> if (!hideImages) {
                                                                                             AsyncImage(
                                                                                                 model = Builder(
                                                                                                     LocalContext.current
@@ -2650,6 +2662,7 @@ internal fun RenderFlexChildBlock(
     childBlock: ContentBlock,
     textStyle: TextStyle,
     imageSizeMultiplier: Float,
+    hideImages: Boolean = false,
     searchQuery: String,
     searchHighlightColor: Color,
     ttsHighlightInfo: TtsHighlightInfo?,
@@ -2777,7 +2790,7 @@ internal fun RenderFlexChildBlock(
         is HeaderBlock -> renderTextBlock(childBlock)
         is QuoteBlock -> renderTextBlock(childBlock)
         is TextContentBlock -> renderTextBlock(childBlock)
-        is ImageBlock -> {
+        is ImageBlock -> if (!hideImages) {
             val style = childBlock.style
             val colorFilter = if (childBlock.style.filter == "invert(100%)") {
                 val matrix = floatArrayOf(
@@ -2954,7 +2967,7 @@ internal fun RenderFlexChildBlock(
                                             onGeneralTap = onGeneralTapCallback,
                                             wrapDiagnosticsContext = "page=${pageIndex + 1} source=flex_table_cell tableBlock=${childBlock.blockIndex} row=$rowIndex cell=$cellIndex cellBlock=${blockInCell.blockIndex}"
                                         )
-                                    } else if (blockInCell is ImageBlock) {
+                                    } else if (blockInCell is ImageBlock && !hideImages) {
                                         AsyncImage(
                                             model = Builder(LocalContext.current).data(
                                                 nativeVerticalImageModelData(blockInCell.path)
@@ -2983,6 +2996,7 @@ internal fun RenderFlexChildBlock(
                         childBlock = nested,
                         textStyle = textStyle,
                         imageSizeMultiplier = imageSizeMultiplier,
+                        hideImages = hideImages,
                         searchQuery = searchQuery,
                         searchHighlightColor = searchHighlightColor,
                         ttsHighlightInfo = ttsHighlightInfo,

@@ -56,8 +56,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
@@ -352,7 +350,6 @@ fun SharedBookInfoDialog(
     onSaveDisplayName: ((String?) -> Unit)? = null,
     onRestore: (BookItem) -> Unit
 ) {
-    val clipboard = LocalClipboardManager.current
     var isEditing by remember(book.id, initiallyEditing) { mutableStateOf(initiallyEditing) }
     var titleInput by remember(book.id, book.title) { mutableStateOf(book.title.orEmpty()) }
     var authorInput by remember(book.id, book.author) { mutableStateOf(book.author.orEmpty()) }
@@ -364,6 +361,9 @@ fun SharedBookInfoDialog(
     var displayNameInput by remember(book.id, initialDisplayName) { mutableStateOf(initialDisplayName) }
     var tagInput by remember(book.id, book.tags) { mutableStateOf(book.tags.joinToString(", ") { it.name }) }
     var selectedCoverPath by remember(book.id) { mutableStateOf<String?>(null) }
+    var clipboardErrorMessage by remember(book.id) { mutableStateOf<String?>(null) }
+    val copiedTextLabel = readerString("clip_label_copied_text", "Copied Text")
+    val clipboardFailureMessage = readerString("error_copy_to_clipboard", "Could not copy to clipboard")
     LaunchedEffect(externallySelectedCoverPath) {
         if (!externallySelectedCoverPath.isNullOrBlank()) {
             selectedCoverPath = externallySelectedCoverPath
@@ -478,8 +478,19 @@ fun SharedBookInfoDialog(
                             onCopyPath = {
                                 (displayLocation ?: book.path)
                                     ?.takeIf { it.isNotBlank() }
-                                    ?.let { clipboard.setText(AnnotatedString(it)) }
-                            }
+                                    ?.let {
+                                        val result = writeSharedClipboard(
+                                            label = copiedTextLabel,
+                                            text = it,
+                                        )
+                                        clipboardErrorMessage = if (result.success) {
+                                            null
+                                        } else {
+                                            clipboardFailureMessage
+                                        }
+                                    }
+                            },
+                            clipboardErrorMessage = clipboardErrorMessage,
                         )
                     }
                 }
@@ -615,7 +626,8 @@ private fun SharedBookMetadataInfoContent(
     displayNameChanged: Boolean,
     onOpenTags: (() -> Unit)?,
     tagChipsContent: (@Composable () -> Unit)?,
-    onCopyPath: () -> Unit
+    onCopyPath: () -> Unit,
+    clipboardErrorMessage: String?,
 ) {
     SharedInfoCard {
         Text(
@@ -676,6 +688,13 @@ private fun SharedBookMetadataInfoContent(
             maxLines = 4,
             onCopy = onCopyPath,
         )
+        clipboardErrorMessage?.let { message ->
+            Text(
+                message,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
         if (displayLocation == null) book.sourceFolder?.takeIf { it.isNotBlank() }?.let {
             SharedInfoRowDetailed(readerString("filter_source_folder", "Source folder"), it, maxLines = 3)
         }

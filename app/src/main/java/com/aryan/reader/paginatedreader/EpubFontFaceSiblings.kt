@@ -30,15 +30,35 @@ fun expandFontFacesWithSiblings(
                 readerFontDiagnosticSummary(sourceFile.nameWithoutExtension)
         )
 
-        parent.listFiles()
-            ?.filter(File::isFile)
-            ?.map { candidate -> EpubFontSiblingCandidate(candidate.name, candidate.toFontFaceSrc(extractionRoot)) }
-            .orEmpty()
+        listFontFiles(parent).map { candidate ->
+            EpubFontSiblingCandidate(candidate.name, candidate.toFontFaceSrc(extractionRoot))
+        }
     }
 
     Timber.tag(ReaderFontDiagnosticsTag).i("epub.siblings.done outputCount=${result.size}")
     return result
 }
+
+/**
+ * Font sibling expansion runs on every reader screen entry, chapter render and paginator
+ * construction and used to re-list and stat the same font directories synchronously during
+ * composition on the main thread (ANR source). Extracted EPUB font directories are immutable
+ * while a book is loaded, so listings are memoized per directory in a small bounded LRU.
+ */
+private const val MAX_CACHED_FONT_DIRECTORIES = 8
+
+private val fontDirectoryListings: MutableMap<String, List<File>> =
+    object : LinkedHashMap<String, List<File>>(8, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<File>>): Boolean =
+            size > MAX_CACHED_FONT_DIRECTORIES
+    }
+
+private fun listFontFiles(parent: File): List<File> =
+    synchronized(fontDirectoryListings) {
+        fontDirectoryListings.getOrPut(parent.absolutePath) {
+            parent.listFiles()?.filter(File::isFile).orEmpty()
+        }
+    }
 
 fun buildEpubFontFaceCss(
     fontFaces: List<FontFaceInfo>,

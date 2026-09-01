@@ -48,13 +48,15 @@ fun parseSvgDimension(
     density: Density
 ): Float? {
     if (dimension.isNullOrBlank()) return null
+    // Results are consumed as physical pixels (callers pass px-space font sizes and
+    // container widths), so density-independent CSS units are scaled up here.
     return when {
         dimension.endsWith("ex") -> dimension.removeSuffix("ex").toFloatOrNull()?.let { it * 0.5f * fontSizePx }
         dimension.endsWith("em") -> dimension.removeSuffix("em").toFloatOrNull()?.let { it * fontSizePx }
-        dimension.endsWith("px") -> dimension.removeSuffix("px").toFloatOrNull()
+        dimension.endsWith("px") -> dimension.removeSuffix("px").toFloatOrNull()?.let { it * density.density }
         dimension.endsWith("pt") -> dimension.removeSuffix("pt").toFloatOrNull()?.let { it * 1.333f * density.density }
         dimension.endsWith("%") -> dimension.removeSuffix("%").toFloatOrNull()?.let { (it / 100f) * containerWidthPx }
-        else -> dimension.toFloatOrNull()
+        else -> dimension.toFloatOrNull()?.let { it * density.density }
     }
 }
 

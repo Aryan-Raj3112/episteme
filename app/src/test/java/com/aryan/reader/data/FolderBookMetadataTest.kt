@@ -31,15 +31,13 @@ class FolderBookMetadataTest {
 
         val decoded = FolderBookMetadata.fromJsonString(metadata.toJsonString())
 
-        assertEquals(
-            metadata.copy(
-                title = null,
-                author = null,
-                lastPage = null,
-                locatorCharOffset = null
-            ),
-            decoded
-        )
+        // v2 sidecars record every serialized key, so fields that v1 dropped
+        // now round trip; nullable reader fields must survive as null values
+        // instead of leaking the legacy -1 sentinels.
+        assertEquals(metadata.copy(presentFields = decoded.presentFields), decoded)
+        assertTrue(decoded.hasExplicitField("title"))
+        assertTrue(decoded.hasExplicitField("lastPage"))
+        assertTrue(decoded.hasExplicitField("locatorCharOffset"))
     }
 
     @Test
@@ -86,8 +84,8 @@ class FolderBookMetadataTest {
 
         assertEquals("book-2", item.bookId)
         assertEquals(FileType.EPUB, item.type)
-        assertEquals("Remote", item.title)
-        assertNull(item.author)
+        assertEquals("Remote Title", item.title)
+        assertEquals("Author", item.author)
         assertEquals(12, item.lastPage)
         assertEquals(7, item.locatorBlockIndex)
         assertEquals(8, item.locatorCharOffset)

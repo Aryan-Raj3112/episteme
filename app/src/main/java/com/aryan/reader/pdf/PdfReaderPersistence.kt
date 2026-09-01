@@ -13,8 +13,6 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import org.json.JSONArray
-import org.json.JSONObject
 import timber.log.Timber
 
 internal data class PdfReaderSaveSnapshot(
@@ -137,14 +135,7 @@ internal class PdfReaderPersistence(
                     }
 
                     if (force || bookmarksHash != lastSavedHashes[3]) {
-                        val bookmarkObjects = snapshot.bookmarks.map { bookmark ->
-                            JSONObject().apply {
-                                put("pageIndex", bookmark.pageIndex)
-                                put("title", bookmark.title)
-                                put("totalPages", bookmark.totalPages)
-                            }
-                        }
-                        val bookmarksJson = JSONArray(bookmarkObjects).toString()
+                        val bookmarksJson = serializePdfBookmarksToJson(snapshot.bookmarks)
                         withContext(Dispatchers.Main) { onBookmarksChanged(bookmarksJson) }
                         lastSavedHashes[3] = bookmarksHash
                     }

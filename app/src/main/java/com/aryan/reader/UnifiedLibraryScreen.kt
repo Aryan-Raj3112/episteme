@@ -2,6 +2,7 @@ package com.aryan.reader
 
 import android.content.ActivityNotFoundException
 import android.net.Uri
+import android.view.View
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -55,7 +56,6 @@ import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.outlined.AccountCircle
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
@@ -82,8 +82,8 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDrawerState
+import androidx.compose.material3.windowsizeclass.WindowWidthSizeClass
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -102,8 +102,9 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -122,6 +123,14 @@ import com.aryan.reader.data.AppDatabase
 import com.aryan.reader.data.AudiobookImporter
 import com.aryan.reader.audiobook.AudiobookController
 import com.aryan.reader.shared.AnnotationExportFormat
+import com.aryan.reader.shared.CloudFolderSyncSelection
+import com.aryan.reader.shared.ui.MobileUnifiedLibraryDrawerAppearance
+import com.aryan.reader.shared.ui.MobileUnifiedLibraryDrawerCapabilities
+import com.aryan.reader.shared.ui.MobileUnifiedLibraryDrawerDestination
+import com.aryan.reader.shared.ui.mobileUnifiedLibraryDrawerModel
+import com.aryan.reader.shared.ui.SharedAnnotationExportFormatDialog
+import com.aryan.reader.shared.ui.sharedAnnotationExportFormatOptions
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 
 internal typealias UnifiedLibrarySection = com.aryan.reader.shared.ui.MobileUnifiedLibrarySection
@@ -144,6 +153,7 @@ internal fun shouldAutoStartTtsAudiobook(
 fun UnifiedLibraryScreen(
     viewModel: MainViewModel,
     navController: NavHostController,
+    widthSizeClass: WindowWidthSizeClass,
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -190,6 +200,19 @@ fun UnifiedLibraryScreen(
         mutableStateOf(false)
     }
     var audiobookPlayerItem by remember { mutableStateOf<AudiobookUiItem?>(null) }
+    val canUseCloudFolderSync = uiState.canUseCloudFolderSync()
+    var cloudFolderSelection by remember(uiState.currentUser?.uid) {
+        mutableStateOf(viewModel.cloudFolderSyncSelection())
+    }
+
+    LaunchedEffect(uiState.currentUser?.uid) {
+        cloudFolderSelection = viewModel.cloudFolderSyncSelection()
+    }
+    LaunchedEffect(Unit) {
+        CloudFolderSyncEvents.stateChanged.collect {
+            cloudFolderSelection = viewModel.cloudFolderSyncSelection()
+        }
+    }
 
     val filePicker = rememberFilePickerLauncher(viewModel::onFilesSelected)
     val folderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
@@ -243,6 +266,20 @@ fun UnifiedLibraryScreen(
         pendingAnnotationExportText = null
         if (destination != null && contents != null) viewModel.saveAnnotationExport(contents, destination)
     }
+    val saveJsonAnnotationsLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument(AnnotationExportFormat.JSON.mimeType)
+    ) { destination ->
+        val contents = pendingAnnotationExportText
+        pendingAnnotationExportText = null
+        if (destination != null && contents != null) viewModel.saveAnnotationExport(contents, destination)
+    }
+    val saveCsvAnnotationsLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument(AnnotationExportFormat.CSV.mimeType)
+    ) { destination ->
+        val contents = pendingAnnotationExportText
+        pendingAnnotationExportText = null
+        if (destination != null && contents != null) viewModel.saveAnnotationExport(contents, destination)
+    }
 
     fun launchDocumentPicker(onUnavailable: () -> Unit = {}, launch: () -> Unit) {
         try {
@@ -263,6 +300,12 @@ fun UnifiedLibraryScreen(
                 AnnotationExportFormat.TEXT -> launchDocumentPicker(
                     onUnavailable = { pendingAnnotationExportText = null }
                 ) { saveTextAnnotationsLauncher.launch(prepared.fileName) }
+                AnnotationExportFormat.JSON -> launchDocumentPicker(
+                    onUnavailable = { pendingAnnotationExportText = null }
+                ) { saveJsonAnnotationsLauncher.launch(prepared.fileName) }
+                AnnotationExportFormat.CSV -> launchDocumentPicker(
+                    onUnavailable = { pendingAnnotationExportText = null }
+                ) { saveCsvAnnotationsLauncher.launch(prepared.fileName) }
             }
         }
     }
@@ -342,7 +385,12 @@ fun UnifiedLibraryScreen(
                             navController.navigateIfReady(com.aryan.reader.shared.ui.SharedMobileAppDestination.SETTINGS)
                         },
                         navController = navController,
-                        onFolderSyncToggle = viewModel::setFolderSyncEnabled,
+                        onFolderSyncSettingsClick = {
+                            scope.launch {
+                                accountDrawerState.close()
+                                navController.navigateIfReady(com.aryan.reader.shared.ui.SharedMobileAppDestination.FOLDER_SYNC_SETTINGS)
+                            }
+                        },
                         onAboutClick = {
                             scope.launch { accountDrawerState.close() }
                             showAboutDialog = true
@@ -517,6 +565,7 @@ fun UnifiedLibraryScreen(
                     onControlsClick = { showLibraryControls = true },
                     onAdvancedFiltersClick = { showAdvancedFilters = true },
                     onListViewChange = viewModel::setUnifiedLibraryListView,
+                    widthSizeClass = widthSizeClass,
                     onBookClick = { item ->
                         if (item.type == FileType.AUDIOBOOK) {
                             importedAudiobooks.firstOrNull { it.bookId == item.bookId }?.let { audiobookPlayerItem = it.toUiItem() }
@@ -587,7 +636,18 @@ fun UnifiedLibraryScreen(
                     onSyncMetadata = viewModel::syncFolderMetadata,
                     onToggleLocalSync = viewModel::setFolderLocalSyncEnabled,
                     onEditFolderFilters = viewModel::updateFolderFilters,
-                    onRemove = viewModel::removeSyncedFolder
+                    onRemove = viewModel::removeSyncedFolder,
+                    cloudFolderSelection = cloudFolderSelection.takeIf { canUseCloudFolderSync },
+                    cloudSyncEnabled = uiState.isSyncEnabled,
+                    isProUser = canUseCloudFolderSync,
+                    onCloudFolderSettings = if (canUseCloudFolderSync) {
+                        {
+                            navController.navigateIfReady(com.aryan.reader.shared.ui.SharedMobileAppDestination.FOLDER_SYNC_SETTINGS)
+                        }
+                    } else null,
+                    onIncomingCloudFolder = if (canUseCloudFolderSync) {
+                        { rootId -> viewModel.showIncomingCloudFolderPrompt(rootId) }
+                    } else null,
                 )
                 UnifiedLibrarySection.CATALOGS -> if (!BuildConfig.IS_OFFLINE) {
                     Box(modifier = Modifier.fillMaxSize().padding(padding)) {
@@ -601,7 +661,9 @@ fun UnifiedLibraryScreen(
                             onStreamBook = { entry, catalog ->
                                 viewModel.streamOpdsBook(entry.id, entry.title, entry.pseUrlTemplate!!, entry.pseCount!!, catalog?.id)
                             },
-                            onDeleteCatalogStreams = viewModel::deleteStreamedBooksForCatalog
+                            onDeleteCatalogStreams = viewModel::deleteStreamedBooksForCatalog,
+                            onShowBanner = viewModel::showBanner,
+                            syncedFolders = uiState.syncedFolders
                         )
                     }
                 }
@@ -759,23 +821,24 @@ fun UnifiedLibraryScreen(
         )
     }
     showAnnotationExportFormatDialogFor?.let { item ->
-        AlertDialog(
-            onDismissRequest = { showAnnotationExportFormatDialogFor = null },
-            title = { Text(stringResource(R.string.dialog_export_annotations_title)) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButton(onClick = {
-                        showAnnotationExportFormatDialogFor = null
-                        exportAnnotations(item, AnnotationExportFormat.MARKDOWN)
-                    }) { Text(stringResource(R.string.export_annotations_markdown)) }
-                    TextButton(onClick = {
-                        showAnnotationExportFormatDialogFor = null
-                        exportAnnotations(item, AnnotationExportFormat.TEXT)
-                    }) { Text(stringResource(R.string.export_annotations_text)) }
-                }
-            },
-            confirmButton = {},
-            dismissButton = { TextButton(onClick = { showAnnotationExportFormatDialogFor = null }) { Text(stringResource(R.string.action_cancel)) } }
+        SharedAnnotationExportFormatDialog(
+            title = stringResource(R.string.dialog_export_annotations_title),
+            cancelLabel = stringResource(R.string.action_cancel),
+            options = sharedAnnotationExportFormatOptions(
+                markdownLabel = stringResource(R.string.export_annotations_markdown),
+                markdownDescription = stringResource(R.string.export_annotations_markdown_description),
+                textLabel = stringResource(R.string.export_annotations_text),
+                textDescription = stringResource(R.string.export_annotations_text_description),
+                jsonLabel = stringResource(R.string.export_annotations_json),
+                jsonDescription = stringResource(R.string.export_annotations_json_description),
+                csvLabel = stringResource(R.string.export_annotations_csv),
+                csvDescription = stringResource(R.string.export_annotations_csv_description)
+            ),
+            onDismiss = { showAnnotationExportFormatDialogFor = null },
+            onExport = { format ->
+                showAnnotationExportFormatDialogFor = null
+                exportAnnotations(item, format)
+            }
         )
     }
     HydratedFileInfoDialog(
@@ -837,21 +900,75 @@ private fun UnifiedLibraryDrawer(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(start = 28.dp, top = 20.dp, bottom = 8.dp)
             )
-            UnifiedLibraryDestination(stringResource(R.string.unified_library_home), currentSection == UnifiedLibrarySection.HOME, { Icon(Icons.Default.Home, null) }) { onSectionSelected(UnifiedLibrarySection.HOME) }
-            UnifiedLibraryDestination(stringResource(R.string.listen_title), currentSection == UnifiedLibrarySection.AUDIOBOOKS, { Icon(Icons.AutoMirrored.Filled.VolumeUp, null) }) { onSectionSelected(UnifiedLibrarySection.AUDIOBOOKS) }
-            UnifiedLibraryDestination(stringResource(R.string.tab_shelves), currentSection == UnifiedLibrarySection.SHELVES, { Icon(Icons.AutoMirrored.Filled.LibraryBooks, null) }) { onSectionSelected(UnifiedLibrarySection.SHELVES) }
-            UnifiedLibraryDestination(stringResource(R.string.tab_folders), currentSection == UnifiedLibrarySection.FOLDERS, { Icon(Icons.Default.Folder, null) }) { onSectionSelected(UnifiedLibrarySection.FOLDERS) }
-            if (!BuildConfig.IS_OFFLINE) {
-                UnifiedLibraryDestination(stringResource(R.string.tab_catalogs), currentSection == UnifiedLibrarySection.CATALOGS, { Icon(painterResource(R.drawable.cloud), null) }) { onSectionSelected(UnifiedLibrarySection.CATALOGS) }
+            val drawerModel = mobileUnifiedLibraryDrawerModel(
+                MobileUnifiedLibraryDrawerCapabilities(
+                    catalogsAvailable = !BuildConfig.IS_OFFLINE,
+                    aiSettingsAvailable = BuildConfig.FLAVOR == "oss" && !BuildConfig.IS_OFFLINE,
+                ),
+            )
+            drawerModel.destinations.forEach { destination ->
+                when (destination) {
+                    MobileUnifiedLibraryDrawerDestination.HOME -> UnifiedLibraryDestination(
+                        stringResource(R.string.unified_library_home),
+                        currentSection == destination.section,
+                        { Icon(Icons.Default.Home, null) },
+                    ) { onSectionSelected(destination.section) }
+                    MobileUnifiedLibraryDrawerDestination.AUDIOBOOKS -> UnifiedLibraryDestination(
+                        stringResource(R.string.listen_title),
+                        currentSection == destination.section,
+                        { Icon(Icons.AutoMirrored.Filled.VolumeUp, null) },
+                    ) { onSectionSelected(destination.section) }
+                    MobileUnifiedLibraryDrawerDestination.SHELVES -> UnifiedLibraryDestination(
+                        stringResource(R.string.tab_shelves),
+                        currentSection == destination.section,
+                        { Icon(Icons.AutoMirrored.Filled.LibraryBooks, null) },
+                    ) { onSectionSelected(destination.section) }
+                    MobileUnifiedLibraryDrawerDestination.FOLDERS -> UnifiedLibraryDestination(
+                        stringResource(R.string.tab_folders),
+                        currentSection == destination.section,
+                        { Icon(Icons.Default.Folder, null) },
+                    ) { onSectionSelected(destination.section) }
+                    MobileUnifiedLibraryDrawerDestination.CATALOGS -> UnifiedLibraryDestination(
+                        stringResource(R.string.tab_catalogs),
+                        currentSection == destination.section,
+                        { Icon(painterResource(R.drawable.cloud), null) },
+                    ) { onSectionSelected(destination.section) }
+                }
             }
 
             HorizontalDivider(modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp))
             Text(stringResource(R.string.unified_library_appearance), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 28.dp, bottom = 8.dp))
-            NavigationDrawerItem(icon = { Icon(Icons.Default.Palette, null) }, label = { Text(stringResource(R.string.app_theme_title)) }, selected = false, onClick = onThemeClick, modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp))
-            NavigationDrawerItem(icon = { Icon(Icons.Default.Settings, null) }, label = { Text(stringResource(R.string.settings)) }, selected = false, onClick = onSettingsClick, modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp))
-            NavigationDrawerItem(icon = { Icon(painterResource(R.drawable.fonts), null) }, label = { Text(stringResource(R.string.drawer_custom_fonts)) }, selected = false, onClick = onFontsClick, modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp))
-            if (BuildConfig.FLAVOR == "oss" && !BuildConfig.IS_OFFLINE) {
-                NavigationDrawerItem(icon = { Icon(painterResource(R.drawable.ai), null) }, label = { Text(stringResource(R.string.ai_settings_title)) }, selected = false, onClick = onAiSettingsClick, modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp))
+            drawerModel.appearance.forEach { appearance ->
+                when (appearance) {
+                    MobileUnifiedLibraryDrawerAppearance.THEME -> NavigationDrawerItem(
+                        icon = { Icon(Icons.Default.Palette, null) },
+                        label = { Text(stringResource(R.string.app_theme_title)) },
+                        selected = false,
+                        onClick = onThemeClick,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+                    )
+                    MobileUnifiedLibraryDrawerAppearance.SETTINGS -> NavigationDrawerItem(
+                        icon = { Icon(Icons.Default.Settings, null) },
+                        label = { Text(stringResource(R.string.settings)) },
+                        selected = false,
+                        onClick = onSettingsClick,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+                    )
+                    MobileUnifiedLibraryDrawerAppearance.FONTS -> NavigationDrawerItem(
+                        icon = { Icon(painterResource(R.drawable.fonts), null) },
+                        label = { Text(stringResource(R.string.drawer_custom_fonts)) },
+                        selected = false,
+                        onClick = onFontsClick,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+                    )
+                    MobileUnifiedLibraryDrawerAppearance.AI -> NavigationDrawerItem(
+                        icon = { Icon(painterResource(R.drawable.ai), null) },
+                        label = { Text(stringResource(R.string.ai_settings_title)) },
+                        selected = false,
+                        onClick = onAiSettingsClick,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.weight(1f))
@@ -911,9 +1028,14 @@ private fun UnifiedLibraryTopBar(
 
 @Composable
 private fun UnifiedProfileAvatar(uiState: ReaderScreenState) {
+    val user = uiState.currentUser
     when {
         BuildConfig.FLAVOR != "pro" -> AsyncImage(model = R.mipmap.ic_launcher, contentDescription = stringResource(R.string.content_desc_app_icon), modifier = Modifier.size(32.dp).clip(CircleShape))
-        !uiState.currentUser?.photoUrl.isNullOrBlank() -> AsyncImage(model = ImageRequest.Builder(LocalContext.current).data(uiState.currentUser.photoUrl).crossfade(true).build(), contentDescription = stringResource(R.string.content_desc_profile_picture), contentScale = ContentScale.Crop, modifier = Modifier.size(32.dp).clip(CircleShape))
+        user != null -> AndroidAccountAvatar(
+            user = user,
+            modifier = Modifier.size(32.dp),
+            contentDescription = stringResource(R.string.content_desc_profile_picture),
+        )
         else -> Icon(
             Icons.Outlined.AccountCircle,
             contentDescription = stringResource(R.string.content_desc_profile),
@@ -943,6 +1065,7 @@ private fun UnifiedLibraryHome(
     onListViewChange: (Boolean) -> Unit,
     onBookClick: (RecentFileItem) -> Unit,
     onBookLongClick: (RecentFileItem) -> Unit,
+    widthSizeClass: WindowWidthSizeClass,
 ) {
     com.aryan.reader.shared.ui.SharedAndroidUnifiedLibraryHome(
         books = books,
@@ -985,6 +1108,11 @@ private fun UnifiedLibraryHome(
                 isDownloading = item.bookId in downloadingBookIds,
                 usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName,
             )
+        },
+        widthClass = when (widthSizeClass) {
+            WindowWidthSizeClass.Compact -> com.aryan.reader.shared.ui.SharedAndroidHomeWidthClass.COMPACT
+            WindowWidthSizeClass.Medium -> com.aryan.reader.shared.ui.SharedAndroidHomeWidthClass.MEDIUM
+            else -> com.aryan.reader.shared.ui.SharedAndroidHomeWidthClass.EXPANDED
         },
         modifier = modifier,
     )
@@ -1080,6 +1208,11 @@ private fun UnifiedFoldersSection(
     onToggleLocalSync: (SyncedFolder, Boolean, Boolean) -> Unit,
     onEditFolderFilters: (SyncedFolder, Set<FileType>) -> Unit,
     onRemove: (SyncedFolder) -> Unit,
+    cloudFolderSelection: CloudFolderSyncSelection? = null,
+    cloudSyncEnabled: Boolean = false,
+    isProUser: Boolean = false,
+    onCloudFolderSettings: (() -> Unit)? = null,
+    onIncomingCloudFolder: ((String) -> Unit)? = null,
 ) {
     Box(modifier = modifier.fillMaxSize()) {
         FolderSyncScreen(
@@ -1091,7 +1224,12 @@ private fun UnifiedFoldersSection(
             onEditFolderFiltersClick = onEditFolderFilters,
             onScanNowClick = onScan,
             onSyncMetadataClick = onSyncMetadata,
-            isLoading = isLoading
+            isLoading = isLoading,
+            cloudFolderSelection = cloudFolderSelection,
+            cloudSyncEnabled = cloudSyncEnabled,
+            isProUser = isProUser,
+            onCloudFolderSettingsClick = onCloudFolderSettings,
+            onIncomingCloudFolderClick = onIncomingCloudFolder,
         )
     }
 }
@@ -1132,6 +1270,11 @@ private fun UnifiedCreateShelfDialog(onConfirm: (String) -> Unit, onDismiss: () 
 @Composable
 private fun UnifiedContinueReadingCard(item: RecentFileItem, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val progress = (item.progressPercentage ?: 0f).coerceIn(0f, 100f)
+    val appLayoutDirection = if (LocalConfiguration.current.layoutDirection == View.LAYOUT_DIRECTION_RTL) {
+        LayoutDirection.Rtl
+    } else {
+        LayoutDirection.Ltr
+    }
     com.aryan.reader.shared.ui.SharedAndroidUnifiedContinueCard(
         sectionLabel = stringResource(R.string.unified_library_continue_reading),
         title = item.cardTitle(),
@@ -1140,6 +1283,7 @@ private fun UnifiedContinueReadingCard(item: RecentFileItem, onClick: () -> Unit
         progressLabel = stringResource(R.string.progress_complete, progress.toInt()),
         sourceLabel = if (item.sourceFolderUri != null) "· Local folder" else null,
         coverTone = generatedBookCoverColor(item),
+        cardLayoutDirection = appLayoutDirection,
         onClick = onClick,
         modifier = modifier,
         cover = { coverModifier ->

@@ -324,6 +324,7 @@
     <string name="banner_clearing_cloud_local_data">Nettoyage de toutes les données du cloud et locales…</string>
     <string name="banner_cloud_local_data_cleared">Toutes les données locales et du cloud ont été nettoyées avec succès.</string>
     <string name="error_clear_all_data">Erreur: échec du nettoyage des données.</string>
+    <string name="error_cloud_delete_pending">Impossible de joindre le cloud. Votre suppression se terminera automatiquement la prochaine fois que vous serez en ligne.</string>
     <string name="banner_local_data_cleared">Toutes les données ont été nettoyées.</string>
     <string name="error_sign_in_failed">Connexion échoutée. Merci de réessayer.</string>
     <string name="error_no_google_account">Nous n\'avons pas pu trouver de compte Google. Cela peut arriver lors d\'une nouvelle installation, merci de réessayer dans un instant.</string>

@@ -183,6 +183,28 @@ class HtmlParserLinkTest {
     }
 
     @Test
+    fun `generated content decodes css hexadecimal escapes`() {
+        val cssRules = CssParser.parse(
+            cssContent = """
+                p::before { content: "\200c"; }
+                p::after { content: "\41!"; }
+            """.trimIndent(),
+            cssPath = null,
+            baseFontSizeSp = 16f,
+            density = 1f,
+            constraints = Constraints(maxWidth = 400, maxHeight = 800),
+            isDarkTheme = false
+        ).rules
+
+        val paragraph = parse(
+            html = "<html><body><p>Body</p></body></html>",
+            cssRules = cssRules
+        ).single() as SemanticParagraph
+
+        assertEquals("\u200cBodyA!", paragraph.text)
+    }
+
+    @Test
     fun `chant score preserves neume and lyric as atomic native flow units`() {
         val cssRules = CssParser.parse(
             cssContent = """
@@ -267,6 +289,72 @@ class HtmlParserLinkTest {
         )
         assertEquals(16.dp, list.items[2].style.blockStyle.margin.left)
         assertEquals(Color(0xFF00B0F0), list.items[2].spans.first { it.linkHref != null }.style.spanStyle.color)
+    }
+
+    @Test
+    fun `repeated selector matching stays correct across many elements with cached evaluators`() {
+        val cssRules = CssParser.parse(
+            cssContent = """
+                p.highlight { background: #ffff00; }
+                p#special { color: #123456; }
+                div > em { font-style: italic; }
+                body em.bold { font-weight: bold; }
+            """.trimIndent(),
+            cssPath = null,
+            baseFontSizeSp = 16f,
+            density = 1f,
+            constraints = Constraints(maxWidth = 400, maxHeight = 800),
+            isDarkTheme = false
+        ).rules
+
+        val blocks = parse(
+            html = """
+                <html><body>
+                  <p class="highlight">One <em>italic</em></p>
+                  <p id="special">Two <em class="bold">bold-italic</em></p>
+                  <p>Three</p>
+                  <div><p class="highlight">Four <em>nested</em></p></div>
+                </body></html>
+            """.trimIndent(),
+            cssRules = cssRules
+        )
+
+        // Same rule set applied to 8+ elements exercises the compiled-selector reuse path;
+        // matching results must be identical to uncached parsing.
+        val paragraphs = blocks.filterIsInstance<SemanticParagraph>()
+        assertTrue(paragraphs.isNotEmpty())
+        val colored = paragraphs.filter { it.style.spanStyle.color == Color(0xFF123456) }
+        assertEquals(1, colored.size)
+        assertEquals("Two bold-italic", colored.single().text)
+        val highlighted = blocks.filterIsInstance<SemanticParagraph>()
+            .filter { it.style.blockStyle.backgroundColor == Color(0xFFFFFF00) }
+        assertEquals(2, highlighted.size)
+        val bold = blocks.filterIsInstance<SemanticParagraph>()
+            .flatMap { it.spans }
+            .filter { it.style.spanStyle.fontWeight != null }
+        assertTrue(bold.isNotEmpty())
+    }
+
+    @Test
+    fun `structural cfi paths stay stable across nested containers`() {
+        val blocks = parse(
+            html = """
+                <html><body>
+                  <p>one</p>
+                  <p>two</p>
+                  <div><span>deep</span></div>
+                </body></html>
+            """.trimIndent()
+        )
+
+        val paragraphs = blocks.filterIsInstance<SemanticParagraph>()
+        // Meaningful children of body: [p, p, div] -> indices 0, 1, 2 -> cfi steps 2, 4, 6.
+        val cfiByText = paragraphs.associate { it.text to it.cfi }
+        assertEquals("/4/2", cfiByText["one"])
+        assertEquals("/4/4", cfiByText["two"])
+        // "deep" is inline inside the div, so the paragraph is flushed from the div's text
+        // buffer and carries the div's CFI (index 2 within body -> step 6).
+        assertEquals("/4/6", cfiByText["deep"])
     }
 
     private fun parse(

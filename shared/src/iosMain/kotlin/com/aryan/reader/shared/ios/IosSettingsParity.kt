@@ -6,6 +6,13 @@ import com.aryan.reader.shared.SharedSettingsAction
  * iOS parity scope for every action exposed by the shared settings model.
  *
  * Keep this exhaustive: adding a shared setting must require an explicit iOS parity decision.
+ *
+ * Comic panel and speech-bubble diagnostics intentionally remain DEBUG_ONLY on
+ * iOS. Android's panel path loads `best_float16.tflite` from its external-files
+ * directory in debug builds, while the paid bubble path loads the separately
+ * downloaded `manga_speech_bubble_v3.ort` through ONNX Runtime. Neither model
+ * nor an iOS/Core ML runtime adapter is checked into this repository, so
+ * exposing these actions on iOS would claim a capability that cannot execute.
  */
 internal enum class IosSettingsActionDisposition {
     SHARED_NAVIGATION,
@@ -37,6 +44,7 @@ internal fun SharedSettingsAction.iosDisposition(): IosSettingsActionDisposition
     SharedSettingsAction.TTS_SETTINGS,
     SharedSettingsAction.HIDE_READER_AI,
     SharedSettingsAction.CLEAR_REFLOW_CACHE,
+    SharedSettingsAction.EXPORT_LOGS,
     SharedSettingsAction.HELP_FEEDBACK,
     SharedSettingsAction.SUPPORT,
     SharedSettingsAction.ABOUT -> IosSettingsActionDisposition.IMPLEMENTED_ON_IOS
@@ -44,13 +52,14 @@ internal fun SharedSettingsAction.iosDisposition(): IosSettingsActionDisposition
     SharedSettingsAction.SCREEN_CAPTURE_PROTECTION,
     SharedSettingsAction.CLEAR_BOOK_CACHE -> IosSettingsActionDisposition.INTENTIONAL_PLATFORM_DIFFERENCE
 
-    SharedSettingsAction.CLOUD_SYNC,
+    SharedSettingsAction.AI_SETTINGS -> IosSettingsActionDisposition.IMPLEMENTED_ON_IOS
+
+    SharedSettingsAction.CLOUD_SYNC -> IosSettingsActionDisposition.IMPLEMENTED_ON_IOS
+
     SharedSettingsAction.DEVICE_MANAGEMENT,
-    SharedSettingsAction.AI_SETTINGS,
-    SharedSettingsAction.CLEAR_CLOUD_LOCAL_DATA -> IosSettingsActionDisposition.DEFERRED_CLOUD_OR_PAID
+    SharedSettingsAction.CLEAR_CLOUD_LOCAL_DATA -> IosSettingsActionDisposition.IMPLEMENTED_ON_IOS
 
     SharedSettingsAction.TEST_PANEL_DETECTION,
     SharedSettingsAction.TEST_SPEECH_BUBBLE_DETECTION,
-    SharedSettingsAction.EXPORT_LOGS,
     SharedSettingsAction.DEBUG_ACTIONS -> IosSettingsActionDisposition.DEBUG_ONLY
 }

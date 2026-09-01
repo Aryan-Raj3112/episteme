@@ -2,6 +2,7 @@ package com.aryan.reader
 
 internal const val KEY_RENDER_MODE = "render_mode"
 internal const val KEY_FOLDER_SYNC_ENABLED = "folder_sync_enabled"
+internal const val KEY_SYNC_ENABLED = "sync_enabled"
 internal const val KEY_MAIN_SCREEN_START_PAGE = "main_screen_start_page"
 internal const val KEY_LIBRARY_SCREEN_START_PAGE = "library_screen_start_page"
 internal const val KEY_LAST_VIEWING_SHELF_ID = "last_viewing_shelf_id"

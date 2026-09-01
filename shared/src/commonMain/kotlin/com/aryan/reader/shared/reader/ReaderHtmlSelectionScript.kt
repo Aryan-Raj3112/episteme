@@ -516,11 +516,22 @@ internal fun readerHtmlSelectionScript(): String = """
                 selectionPointerDown = false;
                 scheduleMenuFromSelection();
               }
-              function copyText(text) {
-                if (navigator.clipboard && navigator.clipboard.writeText) {
-                  navigator.clipboard.writeText(text);
-                  return;
+              function nativeClipboardCopy(text) {
+                if (!window.kmpJsBridge || !window.kmpJsBridge.callNative) return null;
+                try {
+                  var response = window.kmpJsBridge.callNative(
+                    'readerCopyText',
+                    JSON.stringify({ text: text })
+                  );
+                  if (response === true || response === 'true') return true;
+                  if (response === false || response === 'false') return false;
+                } catch (error) {
+                  readerConsoleLog('READER_COPY native_error=' + readerTtsPreview(error, 180));
+                  return false;
                 }
+                return null;
+              }
+              function execCommandClipboardCopy(text) {
                 var textarea = document.createElement('textarea');
                 textarea.value = text;
                 textarea.setAttribute('readonly', 'true');
@@ -528,8 +539,49 @@ internal fun readerHtmlSelectionScript(): String = """
                 textarea.style.left = '-9999px';
                 document.body.appendChild(textarea);
                 textarea.select();
-                document.execCommand('copy');
+                var copied = false;
+                try {
+                  copied = document.execCommand('copy') === true;
+                } catch (error) {
+                  readerConsoleLog('READER_COPY exec_error=' + readerTtsPreview(error, 180));
+                }
                 document.body.removeChild(textarea);
+                return copied;
+              }
+              function reportClipboardFailure(error) {
+                readerConsoleLog('READER_COPY failed' + (error ? ' error=' + readerTtsPreview(error, 180) : ''));
+                return false;
+              }
+              function fallbackClipboardCopy(text, error) {
+                if (execCommandClipboardCopy(text)) {
+                  readerConsoleLog('READER_COPY fallback_success method=execCommand');
+                  return true;
+                }
+                var nativeResult = nativeClipboardCopy(text);
+                if (nativeResult === true) {
+                  readerConsoleLog('READER_COPY fallback_success method=native');
+                  return true;
+                }
+                return reportClipboardFailure(error || 'fallback_unavailable');
+              }
+              function copyText(text) {
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                  try {
+                    var writeResult = navigator.clipboard.writeText(text);
+                    if (writeResult && typeof writeResult.then === 'function') {
+                      writeResult.then(function () {
+                        readerConsoleLog('READER_COPY success method=navigator');
+                      }).catch(function (error) {
+                        fallbackClipboardCopy(text, error);
+                      });
+                      return true;
+                    }
+                    return fallbackClipboardCopy(text, 'navigator_no_promise');
+                  } catch (error) {
+                    return fallbackClipboardCopy(text, error);
+                  }
+                }
+                return fallbackClipboardCopy(text, 'navigator_unavailable');
               }
               function fallbackSelectionAction(action, text) {
                 if (action === 'web-search') {

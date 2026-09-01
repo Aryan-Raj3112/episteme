@@ -48,6 +48,7 @@ import com.aryan.reader.shared.reader.MobileEpubNcxNavigationNode
 import com.aryan.reader.shared.reader.flattenMobileEpubNcxNavigation
 import com.aryan.reader.shared.reader.MobileEpubNcxChapterMetadata as NcxMetadata
 import com.aryan.reader.shared.reader.mobileEpubNcxChapterMetadata
+import com.aryan.reader.shared.reader.MobileEpubMetaElement
 import com.aryan.reader.shared.reader.resolveMobileEpubMetadata
 import com.aryan.reader.shared.reader.MobileEpubManifestItem as EpubManifestItem
 import com.aryan.reader.shared.reader.mobileEpubSpineItemIds
@@ -492,8 +493,15 @@ class EpubParser(private val context: Context) {
             author = document.metadata.selectFirstChildTag("dc:creator")?.textContent,
             language = document.metadata.selectFirstChildTag("dc:language")?.textContent,
             description = document.metadata.selectFirstChildTag("dc:description")?.textContent,
-            metaEntries = metadataNodes.map { meta ->
-                meta.getAttributeValue("name") to meta.getAttributeValue("content")
+            metaElements = metadataNodes.map { meta ->
+                MobileEpubMetaElement(
+                    id = meta.getAttributeValue("id"),
+                    name = meta.getAttributeValue("name"),
+                    property = meta.getAttributeValue("property"),
+                    content = meta.getAttributeValue("content"),
+                    text = meta.textContent.trim().takeIf { it.isNotEmpty() },
+                    refines = meta.getAttributeValue("refines")
+                )
             }.toList()
         )
         val metadataCoverId = getMetadataCoverId(document.metadata)

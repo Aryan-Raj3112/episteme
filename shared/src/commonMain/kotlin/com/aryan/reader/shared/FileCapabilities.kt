@@ -103,6 +103,21 @@ object SharedFileCapabilities {
         "application/x-vnd.oasis.opendocument.text-flat-xml"
     ) + manualOnlyReaderMimeTypes
 
+    /**
+     * MIME types that may be advertised by Android's external-open contract.
+     * The picker list is the source of truth for supported formats; the
+     * aliases below cover providers that use older FB2 labels or a generic
+     * stream MIME while still supplying a recognizable file extension.
+     */
+    val androidExternalDocumentMimeTypes: List<String> = (
+        androidFilePickerMimeTypes +
+            listOf(
+                "application/x-fictionbook",
+                "application/x-fb2",
+                "application/octet-stream",
+            )
+        ).distinct()
+
     val all: List<FileTypeCapability> = listOf(
         FileTypeCapability(
             type = FileType.EPUB,

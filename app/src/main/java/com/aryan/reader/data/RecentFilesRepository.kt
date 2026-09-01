@@ -35,6 +35,16 @@ import com.aryan.reader.logCloudSyncTrace
 import com.aryan.reader.scaledToCanvasLimit
 import timber.log.Timber
 import com.aryan.reader.BookImporter
+import com.aryan.reader.AuthRepository
+import com.aryan.reader.CloudFolderAppStoragePrefs
+import com.aryan.reader.CloudFolderMetadataSyncScheduler
+import com.aryan.reader.cloudFolderAppRootDirectory
+import com.aryan.reader.cloudFolderLogD
+import com.aryan.reader.cloudFolderSafeId
+import com.aryan.reader.cloudFolderSafeUri
+import com.aryan.reader.cloudFolderSidecarPayloadInfo
+import com.aryan.reader.cloudFolderLogW
+import com.aryan.reader.toLogFields
 import com.aryan.reader.cloudSyncAnnotationSummary
 import com.aryan.reader.paginatedreader.Locator
 import com.aryan.reader.paginatedreader.data.BookCacheDatabase
@@ -60,13 +70,15 @@ private const val DIRECT_EMBEDDED_COVER_MAX_BYTES = 8L * 1024L * 1024L
 private const val EMBEDDED_COVER_MAX_DIMENSION = 1200
 private val EMBEDDED_COVER_EXTENSIONS = setOf("jpg", "jpeg", "png", "gif", "webp", "bmp")
 
-class RecentFilesRepository(private val context: Context) :
+class RecentFilesRepository(
+    private val context: Context,
+    private val database: AppDatabase = AppDatabase.getDatabase(context),
+) :
     AndroidBookStore,
     AndroidFolderMirrorStore,
     AndroidBookArtifactStore,
     AndroidLegacyMigrationStore {
 
-    private val database = AppDatabase.getDatabase(context)
     private val recentFileDao = database.recentFileDao()
     private val coverCacheDir = File(context.filesDir, COVER_CACHE_DIR)
     private val bookImporter = BookImporter(context)
@@ -78,6 +90,7 @@ class RecentFilesRepository(private val context: Context) :
     private val pdfHighlightRepository = com.aryan.reader.pdf.data.PdfHighlightRepository(context)
     private val pdfTextRepository by lazy { PdfTextRepository(context) }
     private val bookCacheDao by lazy { BookCacheDatabase.getDatabase(context).bookCacheDao() }
+    private val authRepository by lazy { AuthRepository(context) }
 
     init {
         if (!coverCacheDir.exists()) {
@@ -108,23 +121,43 @@ class RecentFilesRepository(private val context: Context) :
     }
 
     override suspend fun clearAllLocalData() = withContext(Dispatchers.IO) {
-        recentFileDao.clearAll()
-        if (coverCacheDir.exists()) {
-            coverCacheDir.deleteRecursively()
+        // Keep the database cleanup together so a successful remote clear
+        // cannot leave orphaned library metadata behind.
+        database.withTransaction {
+            recentFileDao.clearAll()
+            database.customFontDao().clearAll()
+            database.audiobookDao().clearAll()
+            database.bookTtsListeningProgressDao().clearAll()
+            database.shelfDao().clearAllBookShelfCrossRefs()
+            database.shelfDao().clearAll()
+            database.tagDao().clearAllBookTagCrossRefs()
+            database.tagDao().clearAll()
+            database.pendingFolderAnnotationExportDao().clearAll()
         }
-        coverCacheDir.mkdirs()
-        pdfHighlightRepository.clearAll()
 
-        File(context.filesDir, "annotations").deleteRecursively()
-        File(context.filesDir, "pdf_rich_text").deleteRecursively()
-        File(context.filesDir, "page_layouts").deleteRecursively()
-        File(context.filesDir, "pdf_text_boxes").deleteRecursively()
-
-        context.cacheDir.listFiles()?.forEach { file ->
-            val name = file.name
-            if (name.startsWith("imported_file_") || name.startsWith("temp_") || name.startsWith("sync_bundle_")) {
+        // These paths are private app-owned storage. In particular, do not
+        // enumerate or delete arbitrary URI-backed files selected by users.
+        context.filesDir.listFiles()?.forEach { file ->
+            if (AndroidCloudCleanupPlan.shouldDeleteFilesDirEntry(file.name, file.isDirectory)) {
                 if (file.isDirectory) file.deleteRecursively() else file.delete()
             }
+        }
+        context.cacheDir.listFiles()?.forEach { file ->
+            if (AndroidCloudCleanupPlan.shouldDeleteCacheEntry(file.name, file.isDirectory)) {
+                if (file.isDirectory) file.deleteRecursively() else file.delete()
+            }
+        }
+
+        // Room-backed caches are separate databases and are not covered by
+        // the AppDatabase transaction above.
+        bookCacheDao.clearAllCache()
+        pdfTextRepository.clearAllText()
+        pdfTextBoxRepository.clearAll()
+        pdfHighlightRepository.clearAll()
+
+        // Keep the cache directory available for the next import.
+        listOf("books", "custom_fonts", "audiobooks", COVER_CACHE_DIR, "derived").forEach { directoryName ->
+            File(context.filesDir, directoryName).mkdirs()
         }
         Timber.d("Cleared all local book data, sidecars, and cover cache.")
     }
@@ -331,14 +364,15 @@ class RecentFilesRepository(private val context: Context) :
         Timber.d("Updated highlights for $bookId")
     }
 
-    override suspend fun syncLocalMetadataToFolder(bookId: String, force: Boolean) = withContext(Dispatchers.IO) {
-        val entity = recentFileDao.getFileByBookId(bookId) ?: return@withContext
+    override suspend fun syncLocalMetadataToFolder(bookId: String, force: Boolean): Boolean = withContext(Dispatchers.IO) {
+        val entity = recentFileDao.getFileByBookId(bookId) ?: return@withContext true
         val folderUriString = entity.sourceFolderUri
 
         if (folderUriString != null) {
-            if (!isLocalFolderSyncEnabled(folderUriString)) {
+            val appStorageRoot = appStorageRootForFolderUri(folderUriString)
+            if (appStorageRoot == null && !isLocalFolderSyncEnabled(folderUriString)) {
                 Timber.d("SyncDebug: Folder sync disabled for $folderUriString. Skipping metadata sidecar.")
-                return@withContext
+                return@withContext true
             }
 
             val hasProgress = (entity.progressPercentage != null && entity.progressPercentage > 0f)
@@ -348,7 +382,7 @@ class RecentFilesRepository(private val context: Context) :
 
             if (!force && !isDirty) {
                 Timber.d("SyncDebug: Book $bookId is 'Clean' (Unread/Not Recent). Skipping JSON creation.")
-                return@withContext
+                return@withContext true
             }
 
             Timber.d("Syncing metadata to local folder for book: $bookId")
@@ -379,13 +413,55 @@ class RecentFilesRepository(private val context: Context) :
                 originalSeriesIndex = entity.originalSeriesIndex,
                 originalDescription = entity.originalDescription
             )
-
-            LocalSyncUtils.saveMetadataToFolder(
-                context = context,
-                sourceFolderUri = folderUriString.toUri(),
-                metadata = metadata
+            // Keep the exact canonical bytes available for the durable cloud
+            // wake-up diagnostics.  The sidecar writer still owns the atomic
+            // commit; this value is never uploaded directly from here.
+            val metadataJson = metadata.toJsonString()
+            val accountId = authRepository.getSignedInUser()?.uid?.trim()
+                ?.takeIf { it.isNotBlank() }
+            // Resolve the sync root exactly like the post-commit scheduler
+            // (app-managed registry first, then SAF-mirror bindings) so the
+            // write log carries the same root ID as the commit log.
+            val rootId = accountId?.let { id ->
+                CloudFolderAppStoragePrefs.rootIdForUri(context, id, folderUriString)
+                    ?: runCatching {
+                        CloudFolderSyncRepository(context, id)
+                            .findBindingForLocalUri(folderUriString)?.rootId
+                    }.getOrNull()
+            }
+            cloudFolderLogD(
+                "event=metadata_sidecar_write_start root=${cloudFolderSafeId(rootId ?: folderUriString)} " +
+                    "book=${cloudFolderSafeId(bookId)} source=${cloudFolderSafeUri(folderUriString.toUri())} " +
+                    "schema=${metadata.schemaVersion} bytes=${metadataJson.toByteArray(Charsets.UTF_8).size} " +
+                    "hash=${cloudFolderSidecarPayloadInfo(metadataJson)?.sha256 ?: "none"} force=$force",
             )
+
+            val saved = if (appStorageRoot != null) {
+                LocalSyncUtils.saveMetadataToAppStorage(appStorageRoot, metadata)
+            } else {
+                LocalSyncUtils.saveMetadataToFolder(
+                    context = context,
+                    sourceFolderUri = folderUriString.toUri(),
+                    metadata = metadata,
+                )
+            }
+            if (saved) {
+                CloudFolderMetadataSyncScheduler.onSidecarCommitted(
+                    context = context,
+                    sourceFolderUri = folderUriString,
+                    bookId = bookId,
+                    kind = CloudFolderMetadataSyncScheduler.METADATA_KIND,
+                    payload = metadataJson,
+                )
+            }
+            cloudFolderLogD(
+                "event=metadata_sidecar_write_end root=${cloudFolderSafeId(rootId ?: folderUriString)} " +
+                    "book=${cloudFolderSafeId(bookId)} result=${if (saved) "success" else "failure"} " +
+                    "source=${cloudFolderSafeUri(folderUriString.toUri())}",
+            )
+            return@withContext saved
         }
+        true
     }
 
     override suspend fun syncLocalAnnotationsToFolder(bookId: String): Boolean = withContext(Dispatchers.IO) {
@@ -398,7 +474,8 @@ class RecentFilesRepository(private val context: Context) :
             Timber.tag("FolderAnnotationSync").w("sourceFolderUri is null for bookId: $bookId")
             return@withContext false
         }
-        if (!isLocalFolderSyncEnabled(folderUriString)) {
+        val appStorageRoot = appStorageRootForFolderUri(folderUriString)
+        if (appStorageRoot == null && !isLocalFolderSyncEnabled(folderUriString)) {
             Timber.tag("FolderAnnotationSync").d("Folder sync disabled for $folderUriString. Skipping annotation sidecar.")
             return@withContext false
         }
@@ -423,9 +500,40 @@ class RecentFilesRepository(private val context: Context) :
                 "richBytes=${if (hasRichText) richTextFile.length() else 0L} folder=$folderUriString"
         )
 
+        val existingSidecarBeforeClear = if (
+            !hasInk && !hasDeletedInk && !hasRichText && !hasLayout && !hasTextBoxes && !hasHighlights
+        ) {
+            if (appStorageRoot != null) {
+                LocalSyncUtils.getAnnotationSidecarFromAppStorage(appStorageRoot, bookId)
+            } else {
+                LocalSyncUtils.getAnnotationSidecar(
+                    context = context,
+                    sourceFolderUri = folderUriString.toUri(),
+                    bookId = bookId,
+                )
+            }
+        } else {
+            null
+        }
+        val existingSidecarHasAnnotationState = existingSidecarBeforeClear?.second?.let { payload ->
+            val hasExplicitPayload = SharedPdfAnnotationSidecarCodec.hasExplicitAnnotationPayload(payload)
+            val hasDeletionTombstones =
+                SharedPdfAnnotationSidecarCodec.annotationDeletionsFromJson(payload).isNotEmpty()
+            val alreadyCleared =
+                SharedPdfAnnotationSidecarCodec.hasExplicitEmptyAnnotationPayload(payload)
+            (hasExplicitPayload || hasDeletionTombstones) && !alreadyCleared
+        } == true
+
         if (!hasInk && !hasDeletedInk && !hasRichText && !hasLayout && !hasTextBoxes && !hasHighlights) {
-            Timber.tag("FolderAnnotationSync").d("No annotations found locally for bookId: $bookId. Aborting sync.")
-            return@withContext true
+            if (!existingSidecarHasAnnotationState) {
+                Timber.tag("FolderAnnotationSync").d(
+                    "No annotations found locally for bookId: $bookId and no remote annotation state needs clearing."
+                )
+                return@withContext true
+            }
+            Timber.tag("FolderAnnotationSync").i(
+                "Local annotation payload is empty; committing explicit clear for bookId=$bookId"
+            )
         }
 
         val bundleJson = JSONObject()
@@ -468,33 +576,86 @@ class RecentFilesRepository(private val context: Context) :
         val tsBox = if(hasTextBoxes) textBoxFile.lastModified() else 0L
         val tsHighlight = if(hasHighlights) highlightFile.lastModified() else 0L
 
+        val hasLocalPayload =
+            hasInk || hasDeletedInk || hasRichText || hasLayout || hasTextBoxes || hasHighlights
         val maxFileTs = maxOf(tsInk, tsDeletedInk, tsText, tsLayout, tsBox, tsHighlight)
-        val finalTs = maxOf(maxFileTs, System.currentTimeMillis())
+        val nextClearTimestamp = if (!hasLocalPayload) {
+            existingSidecarBeforeClear?.first?.let { previousTimestamp ->
+                if (previousTimestamp == Long.MAX_VALUE) Long.MAX_VALUE else previousTimestamp + 1L
+            } ?: 0L
+        } else {
+            0L
+        }
+        val finalTs = maxOf(maxFileTs, System.currentTimeMillis(), nextClearTimestamp)
 
         Timber.tag("FolderAnnotationSync").d("Pushing annotation bundle for $bookId to folder. finalTs=$finalTs")
 
-        val canonicalBundleJson = SharedPdfAnnotationSidecarCodec.canonicalizeDataJson(bundleJson.toString())
+        val canonicalBundleJson = if (!hasLocalPayload) {
+            SharedPdfAnnotationSidecarCodec.clearAllAnnotationsDataJson(
+                previousDataJson = existingSidecarBeforeClear?.second,
+                deletedAt = finalTs,
+            )
+        } else {
+            SharedPdfAnnotationSidecarCodec.canonicalizeDataJson(bundleJson.toString())
+        }
         if (hasRichText) {
             Timber.d(
                 "android.folder.export.saveSidecar book=$bookId timestamp=$finalTs canonicalLen=${canonicalBundleJson.length}"
             )
         }
 
-        val saved = LocalSyncUtils.saveAnnotationSidecar(
-            context = context,
-            sourceFolderUri = folderUriString.toUri(),
-            bookId = bookId,
-            jsonPayload = canonicalBundleJson,
-            timestamp = finalTs
+        val annotationPayloadInfo = cloudFolderSidecarPayloadInfo(canonicalBundleJson)
+        val annotationRootId = authRepository.getSignedInUser()?.uid?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?.let { id -> CloudFolderAppStoragePrefs.rootIdForUri(context, id, folderUriString) }
+        cloudFolderLogD(
+            "event=annotation_sidecar_write_start root=${cloudFolderSafeId(annotationRootId ?: folderUriString)} " +
+                "book=${cloudFolderSafeId(bookId)} source=${cloudFolderSafeUri(folderUriString.toUri())} " +
+                "${annotationPayloadInfo.toLogFields()} finalTs=$finalTs",
         )
 
+        val saved = if (appStorageRoot != null) {
+            LocalSyncUtils.saveAnnotationSidecarToAppStorage(
+                root = appStorageRoot,
+                bookId = bookId,
+                jsonPayload = canonicalBundleJson,
+                timestamp = finalTs,
+            )
+        } else {
+            LocalSyncUtils.saveAnnotationSidecar(
+                context = context,
+                sourceFolderUri = folderUriString.toUri(),
+                bookId = bookId,
+                jsonPayload = canonicalBundleJson,
+                timestamp = finalTs,
+            )
+        }
+
+        cloudFolderLogD(
+            "event=annotation_sidecar_write_end root=${cloudFolderSafeId(annotationRootId ?: folderUriString)} " +
+                "book=${cloudFolderSafeId(bookId)} result=${if (saved) "success" else "failure"} " +
+                "source=${cloudFolderSafeUri(folderUriString.toUri())} " +
+                "${annotationPayloadInfo.toLogFields()}",
+        )
         if (!saved) return@withContext false
 
-        val savedSidecar = LocalSyncUtils.getAnnotationSidecar(
+        CloudFolderMetadataSyncScheduler.onSidecarCommitted(
             context = context,
-            sourceFolderUri = folderUriString.toUri(),
-            bookId = bookId
+            sourceFolderUri = folderUriString,
+            bookId = bookId,
+            kind = CloudFolderMetadataSyncScheduler.ANNOTATIONS_KIND,
+            payload = canonicalBundleJson,
         )
+
+        val savedSidecar = if (appStorageRoot != null) {
+            LocalSyncUtils.getAnnotationSidecarFromAppStorage(appStorageRoot, bookId)
+        } else {
+            LocalSyncUtils.getAnnotationSidecar(
+                context = context,
+                sourceFolderUri = folderUriString.toUri(),
+                bookId = bookId,
+            )
+        }
         if (savedSidecar != null && savedSidecar.second != canonicalBundleJson) {
             importAnnotationBundle(
                 bookId = bookId,
@@ -593,6 +754,15 @@ class RecentFilesRepository(private val context: Context) :
         val item = recentFileDao.getFileByUri(uriString)
         if (item != null) {
             val currentTime = System.currentTimeMillis()
+            val operation = com.aryan.reader.cloudFolderOperationId("reader-position", item.bookId, currentTime)
+            val correlation = com.aryan.reader.cloudFolderSyncCorrelationId("reader-position", item.bookId, currentTime)
+            cloudFolderLogD(
+                "event=room_position_write_start operation=$operation correlation=$correlation " +
+                    "book=${cloudFolderSafeId(item.bookId)} kind=epub " +
+                    "beforeReadTs=${item.toRecentFileItem().effectiveReadingPositionModifiedTimestamp()} " +
+                    "chapter=${locator.chapterIndex} block=${locator.blockIndex} char=${locator.charOffset} " +
+                    "progress=$progress",
+            )
             recentFileDao.updateEpubReadingPosition(
                 bookId = item.bookId,
                 cfi = cfiForWebView,
@@ -602,7 +772,20 @@ class RecentFilesRepository(private val context: Context) :
                 progress = progress,
                 timestamp = currentTime
             )
+            val updated = recentFileDao.getFileByBookId(item.bookId)
+            cloudFolderLogD(
+                "event=room_position_write_end operation=$operation correlation=$correlation " +
+                    "book=${cloudFolderSafeId(item.bookId)} kind=epub result=${if (updated != null) "success" else "missing"} " +
+                    "afterReadTs=${updated?.toRecentFileItem()?.effectiveReadingPositionModifiedTimestamp() ?: 0L} " +
+                    "afterChapter=${updated?.lastChapterIndex ?: "none"} afterBlock=${updated?.locatorBlockIndex ?: "none"} " +
+                    "afterChar=${updated?.locatorCharOffset ?: "none"} afterProgress=${updated?.progressPercentage ?: "none"}",
+            )
             Timber.d("Updated EPUB reading position for ${item.bookId} to Locator: $locator, Progress: $progress%")
+        } else {
+            cloudFolderLogW(
+                "event=room_position_write_end book=${cloudFolderSafeId(uriString)} kind=epub " +
+                    "result=skipped reason=book_not_found",
+            )
         }
     }
 
@@ -666,9 +849,37 @@ class RecentFilesRepository(private val context: Context) :
         )
     }
 
+    private fun appStorageRootForFolderUri(folderUriString: String): File? {
+        val accountId = authRepository.getSignedInUser()?.uid?.trim()
+            ?.takeIf { it.isNotBlank() } ?: return null
+        val rootId = CloudFolderAppStoragePrefs.rootIdForUri(
+            context = context,
+            accountId = accountId,
+            uriString = folderUriString,
+        ) ?: return null
+        return runCatching { cloudFolderAppRootDirectory(context.filesDir, rootId) }
+            .getOrNull()
+            ?.takeIf { it.isDirectory }
+    }
+
     override suspend fun updateBookmarks(bookId: String, bookmarksJson: String) = withContext(Dispatchers.IO) {
         val currentTime = System.currentTimeMillis()
+        val before = recentFileDao.getFileByBookId(bookId)
+        val operation = com.aryan.reader.cloudFolderOperationId("reader-bookmarks", bookId, currentTime)
+        val correlation = com.aryan.reader.cloudFolderSyncCorrelationId("reader-bookmarks", bookId, currentTime)
+        cloudFolderLogD(
+            "event=room_bookmarks_write_start operation=$operation correlation=$correlation " +
+                "book=${cloudFolderSafeId(bookId)} beforeTs=${before?.lastModifiedTimestamp ?: 0L} " +
+                "beforeBytes=${before?.bookmarks?.toByteArray(Charsets.UTF_8)?.size ?: 0} " +
+                "afterBytes=${bookmarksJson.toByteArray(Charsets.UTF_8).size}",
+        )
         recentFileDao.updateBookmarks(bookId, bookmarksJson, currentTime)
+        val after = recentFileDao.getFileByBookId(bookId)
+        cloudFolderLogD(
+            "event=room_bookmarks_write_end operation=$operation correlation=$correlation " +
+                "book=${cloudFolderSafeId(bookId)} result=${if (after != null) "success" else "missing"} " +
+                "afterTs=${after?.lastModifiedTimestamp ?: 0L}",
+        )
         Timber.d("Updated bookmarks for $bookId")
     }
 
@@ -676,12 +887,31 @@ class RecentFilesRepository(private val context: Context) :
         val item = recentFileDao.getFileByUri(uriString)
         if (item != null) {
             val currentTime = System.currentTimeMillis()
+            val operation = com.aryan.reader.cloudFolderOperationId("reader-position", item.bookId, currentTime)
+            val correlation = com.aryan.reader.cloudFolderSyncCorrelationId("reader-position", item.bookId, currentTime)
+            cloudFolderLogD(
+                "event=room_position_write_start operation=$operation correlation=$correlation " +
+                    "book=${cloudFolderSafeId(item.bookId)} kind=pdf " +
+                    "beforeReadTs=${item.toRecentFileItem().effectiveReadingPositionModifiedTimestamp()} " +
+                    "page=$page progress=$progress",
+            )
             recentFileDao.updatePdfReadingPosition(item.bookId, page, progress, currentTime)
+            val updated = recentFileDao.getFileByBookId(item.bookId)
+            cloudFolderLogD(
+                "event=room_position_write_end operation=$operation correlation=$correlation " +
+                    "book=${cloudFolderSafeId(item.bookId)} kind=pdf result=${if (updated != null) "success" else "missing"} " +
+                    "afterReadTs=${updated?.toRecentFileItem()?.effectiveReadingPositionModifiedTimestamp() ?: 0L} " +
+                    "afterPage=${updated?.lastPage ?: "none"} afterProgress=${updated?.progressPercentage ?: "none"}",
+            )
             Timber.tag("PdfPositionDebug").i("Repository: Executed DB update for ${item.bookId} to Page $page, Progress $progress% at TS: $currentTime")
             logCloudSyncTrace {
                 "android.repository.pdf_position_update book=${item.bookId} page=$page progress=$progress ts=$currentTime"
             }
         } else {
+            cloudFolderLogW(
+                "event=room_position_write_end book=${cloudFolderSafeId(uriString)} kind=pdf " +
+                    "result=skipped reason=book_not_found",
+            )
             Timber.tag("PdfPositionDebug").e("Repository: DB Update Failed! No recent file found matching URI: $uriString")
         }
     }
@@ -733,6 +963,109 @@ class RecentFilesRepository(private val context: Context) :
             } else {
                 Timber.w("DeleteDebug: DAO - Files not found for permanent deletion.")
             }
+        }
+    }
+
+    /**
+     * Finalize a worker-owned deletion only when the claimed local generation
+     * is still present. The conditional claim/DELETE prevents a concurrent
+     * re-import or edit from being removed by a stale worker completion.
+     */
+    internal suspend fun deleteFilePermanentlyIfCloudDeleteGenerationMatches(
+        bookId: String,
+        generation: CloudBookLocalGeneration,
+    ): Boolean = withContext(Dispatchers.IO) {
+        val current = recentFileDao.getFileByBookId(bookId) ?: return@withContext true
+        if (!current.toRecentFileItem().matchesCloudBookLocalGeneration(generation)) {
+            return@withContext false
+        }
+        if (
+            recentFileDao.claimForCloudDelete(
+                bookId = bookId,
+                lastModifiedTimestamp = generation.lastModifiedTimestamp,
+                timestamp = generation.timestamp,
+                fileContentModifiedTimestamp = generation.fileContentModifiedTimestamp,
+                fileSize = generation.fileSize,
+                uriString = generation.uriString,
+            ) == 0
+        ) {
+            return@withContext false
+        }
+
+        // Re-read after the conditional claim. If an edit/re-import replaced
+        // the row, do not touch its physical URI or cached artifacts.
+        val claimed = recentFileDao.getFileByBookId(bookId)
+            ?: return@withContext true
+        if (!claimed.toRecentFileItem().matchesCloudBookLocalGeneration(generation)) {
+            return@withContext false
+        }
+        try {
+            claimed.uriString?.let { uri ->
+                try {
+                    bookImporter.deleteBookByUriString(uri)
+                } catch (error: Exception) {
+                    Timber.w(
+                        error,
+                        "Cloud-delete physical file cleanup failed (likely already gone) for $bookId",
+                    )
+                }
+            }
+            cleanupLocalBookArtifacts(claimed, "cloud-delete finalization")
+        } catch (error: Exception) {
+            Timber.e(error, "Cloud-delete artifact cleanup failed for $bookId")
+            return@withContext false
+        }
+        recentFileDao.deleteCloudDeleteClaimedGeneration(
+            bookId = bookId,
+            lastModifiedTimestamp = generation.lastModifiedTimestamp,
+            timestamp = generation.timestamp,
+            fileContentModifiedTimestamp = generation.fileContentModifiedTimestamp,
+            fileSize = generation.fileSize,
+            uriString = generation.uriString,
+        ) == 1
+    }
+
+    /**
+     * Finalize a cloud-delete recovery without touching user-owned storage.
+     *
+     * A WorkManager retry can race a re-import between a generation read and
+     * physical URI cleanup. Keep this operation entirely inside one Room
+     * transaction: the row is hidden and removed only when every generation
+     * field still matches the worker's claim. The source file and derived
+     * artifacts are intentionally left in place; a later orphan sweeper or
+     * manual cleanup can reclaim them once no newer local incarnation uses
+     * the URI.
+     */
+    internal suspend fun removeCloudDeleteGenerationFromDatabase(
+        bookId: String,
+        generation: CloudBookLocalGeneration,
+    ): Boolean = withContext(Dispatchers.IO) {
+        database.withTransaction {
+            val current = recentFileDao.getFileByBookId(bookId)
+                ?: return@withTransaction true
+            if (!current.toRecentFileItem().matchesCloudBookLocalGeneration(generation)) {
+                return@withTransaction false
+            }
+            if (
+                recentFileDao.claimForCloudDelete(
+                    bookId = bookId,
+                    lastModifiedTimestamp = generation.lastModifiedTimestamp,
+                    timestamp = generation.timestamp,
+                    fileContentModifiedTimestamp = generation.fileContentModifiedTimestamp,
+                    fileSize = generation.fileSize,
+                    uriString = generation.uriString,
+                ) != 1
+            ) {
+                return@withTransaction false
+            }
+            recentFileDao.deleteCloudDeleteClaimedGeneration(
+                bookId = bookId,
+                lastModifiedTimestamp = generation.lastModifiedTimestamp,
+                timestamp = generation.timestamp,
+                fileContentModifiedTimestamp = generation.fileContentModifiedTimestamp,
+                fileSize = generation.fileSize,
+                uriString = generation.uriString,
+            ) == 1
         }
     }
 

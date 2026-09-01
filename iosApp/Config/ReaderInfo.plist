@@ -6,8 +6,41 @@
 	<true/>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	<key>CFBundleDisplayName</key>
 	<string>Episteme</string>
+	<key>GIDClientID</key>
+	<string>692770553179-opv63otlhchk0442h5ci8q52upk3gag5.apps.googleusercontent.com</string>
+	<key>GIDServerClientID</key>
+	<string>692770553179-q7ruh5abg77r6v8tb6909dc8kl2ls9dd.apps.googleusercontent.com</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.googleusercontent.apps.692770553179-opv63otlhchk0442h5ci8q52upk3gag5</string>
+			</array>
+		</dict>
+	</array>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>Episteme</string>
+	<key>CFBundlePackageType</key>
+	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>LSRequiresIPhoneOS</key>
+	<true/>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>CFBundleDocumentTypes</key>
 	<array>
 		<dict>
@@ -24,46 +57,65 @@
 				<string>public.html</string>
 				<string>com.adobe.pdf</string>
 				<string>org.idpf.epub-container</string>
+				<string>net.daringfireball.markdown</string>
+				<string>org.oasis.opendocument.text</string>
+				<string>org.openxmlformats.wordprocessingml.document</string>
+				<string>com.microsoft.powerpoint.pptx</string>
+				<string>com.aryan.reader.fb2</string>
+				<string>com.aryan.reader.mobi</string>
 			</array>
 		</dict>
 	</array>
-	<key>CFBundleExecutable</key>
-	<string>$(EXECUTABLE_NAME)</string>
-	<key>CFBundleIdentifier</key>
-	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
-	<key>CFBundleInfoDictionaryVersion</key>
-	<string>6.0</string>
-	<key>CFBundleName</key>
-	<string>Episteme</string>
-	<key>CFBundlePackageType</key>
-	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
-	<key>CFBundleShortVersionString</key>
-	<string>$(MARKETING_VERSION)</string>
-	<key>CFBundleURLTypes</key>
+	<key>UTImportedTypeDeclarations</key>
 	<array>
 		<dict>
-			<key>CFBundleTypeRole</key>
-			<string>Editor</string>
-			<key>CFBundleURLSchemes</key>
+			<key>UTTypeIdentifier</key>
+			<string>com.aryan.reader.fb2</string>
+			<key>UTTypeDescription</key>
+			<string>FictionBook 2 document</string>
+			<key>UTTypeConformsTo</key>
 			<array>
-				<string>com.googleusercontent.apps.692770553179-a1upc4c7sar1tokkt6g46ctof8qa8kk7</string>
+				<string>public.xml</string>
+				<string>public.text</string>
 			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>fb2</string>
+					<string>fb2.zip</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.aryan.reader.mobi</string>
+			<key>UTTypeDescription</key>
+			<string>Mobipocket electronic book</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>mobi</string>
+					<string>azw</string>
+					<string>azw3</string>
+					<string>prc</string>
+				</array>
+			</dict>
 		</dict>
 	</array>
-	<key>CFBundleVersion</key>
-	<string>$(CURRENT_PROJECT_VERSION)</string>
-	<key>GIDClientID</key>
-	<string>692770553179-a1upc4c7sar1tokkt6g46ctof8qa8kk7.apps.googleusercontent.com</string>
-	<key>GIDServerClientID</key>
-	<string>692770553179-q7ruh5abg77r6v8tb6909dc8kl2ls9dd.apps.googleusercontent.com</string>
-	<key>LSRequiresIPhoneOS</key>
-	<true/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
+	<key>UIFileSharingEnabled</key>
 	<true/>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
-		<true/>
+		<false/>
 		<key>UISceneConfigurations</key>
 		<dict/>
 	</dict>

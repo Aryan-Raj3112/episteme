@@ -2,12 +2,14 @@ package com.aryan.reader.shared
 
 enum class PdfReaderTool(val id: String, val title: String, val category: String) {
     DICTIONARY("dictionary", "External Apps", "Top Bar"),
+    SPLIT_VIEW("split_view", "Split View", "Top Bar"),
     THEME("theme", "Theme", "Top Bar"),
     BRIGHTNESS("brightness", "Brightness", "Top Bar"),
     LOCK_PANNING("lock_panning", "Lock Panning", "Top Bar"),
     FILE_INFO("file_info", "File Information", "Overflow Menu"),
     VISUAL_OPTIONS("visual_options", "Visual Options", "Overflow Menu"),
     TAP_TO_TURN("tap_to_turn", "Tap to Turn Pages", "Overflow Menu"),
+    PAGE_TURN_ANIM("page_turn_anim", "Realistic Page Turns", "Overflow Menu"),
     SLIDER("slider", "Navigation Slider", "Bottom Bar"),
     TOC("toc", "Sidebar", "Bottom Bar"),
     SEARCH("search", "Search", "Bottom Bar"),
@@ -34,7 +36,7 @@ enum class PdfReaderTool(val id: String, val title: String, val category: String
 
     companion object {
         private val toolbarPlacementTools = setOf(
-            DICTIONARY, THEME, BRIGHTNESS, LOCK_PANNING, SLIDER, TOC, SEARCH,
+            DICTIONARY, SPLIT_VIEW, THEME, BRIGHTNESS, LOCK_PANNING, SLIDER, TOC, SEARCH,
             HIGHLIGHT_ALL, AI_FEATURES, EDIT_MODE, TTS_CONTROLS, SCREEN_ORIENTATION,
         )
 

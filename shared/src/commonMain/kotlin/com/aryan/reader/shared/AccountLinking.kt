@@ -79,7 +79,11 @@ fun canUseCloudSync(
     providers: Set<AccountAuthProvider>,
     hasGoogleDrivePermission: Boolean,
     isProUser: Boolean,
-): Boolean = isProUser && canEnableGoogleDriveSync(providers, hasGoogleDrivePermission)
+): Boolean = resolveCloudSyncSetupIntent(
+    isProUser = isProUser,
+    providers = providers,
+    hasGoogleDrivePermission = hasGoogleDrivePermission,
+) == CloudSyncSetupIntent.READY
 
 fun canUseProFeature(
     isSignedIn: Boolean,

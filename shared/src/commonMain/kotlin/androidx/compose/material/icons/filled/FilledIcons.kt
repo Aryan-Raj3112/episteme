@@ -210,6 +210,9 @@ val Icons.Filled.Refresh: ImageVector
 val Icons.Filled.Remove: ImageVector
     get() = EpistemeFilledIcons.remove
 
+val Icons.Filled.RemoveCircleOutline: ImageVector
+    get() = EpistemeFilledIcons.removeCircleOutline
+
 val Icons.Filled.Restore: ImageVector
     get() = EpistemeFilledIcons.restore
 
@@ -1220,6 +1223,20 @@ private object EpistemeFilledIcons {
             autoMirror = false,
             paths = listOf(
                 """M200,520L200,440L760,440L760,520L200,520Z"""
+            )
+        )
+    }
+
+    val removeCircleOutline: ImageVector by lazy {
+        materialIcon(
+            name = "RemoveCircleOutline",
+            defaultWidth = 24f,
+            defaultHeight = 24f,
+            viewportWidth = 960f,
+            viewportHeight = 960f,
+            autoMirror = false,
+            paths = listOf(
+                """M480,880Q398,880 325,848.5Q252,817 197.5,762.5Q143,708 111.5,635Q80,562 80,480Q80,398 111.5,325Q143,252 197.5,197.5Q252,143 325,111.5Q398,80 480,80Q562,80 635,111.5Q708,143 762.5,197.5Q817,252 848.5,325Q880,398 880,480Q880,562 848.5,635Q817,708 762.5,762.5Q708,817 635,848.5Q562,880 480,880ZM480,800Q614,800 707,707Q800,614 800,480Q800,346 707,253Q614,160 480,160Q346,160 253,253Q160,346 160,480Q160,614 253,707Q346,800 480,800ZM240,520L240,440L720,440L720,520L240,520Z"""
             )
         )
     }

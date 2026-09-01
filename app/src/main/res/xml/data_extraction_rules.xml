@@ -1,19 +1,52 @@
-<?xml version="1.0" encoding="utf-8"?><!--
-   Sample data extraction rules file; uncomment and customize as necessary.
-   See https://developer.android.com/about/versions/12/backup-restore#xml-changes
-   for details.
--->
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 12+ (targetSdk 31+) cloud and device-transfer policy.
+
+     Allowlist mode: only the paths below are ever backed up, so <exclude>
+     entries would be dead config (and lint-vital fails on them). Never broaden
+     these includes to a whole domain: credentials live in reader_user_prefs.xml
+     and AI keys in ai_byok_prefs.xml, while cover_cache, TTS_Cache, derived,
+     book_cache_database, pdf_text_cache_db and androidx.work.workdb are
+     generated or device-specific and must stay out of backups.
+     AndroidBackupRulesContractTest enforces this. -->
 <data-extraction-rules>
-    <cloud-backup>
-        <!-- TODO: Use <include> and <exclude> to control what is backed up.
-        <include .../>
-        <exclude .../>
-        -->
+    <cloud-backup disableIfNoEncryptionCapabilities="true">
+        <include domain="sharedpref" path="reader_prefs.xml" />
+        <include domain="sharedpref" path="epub_reader_settings.xml" />
+        <include domain="sharedpref" path="epub_reader_bookmarks.xml" />
+        <include domain="sharedpref" path="reader_slider_chrome_prefs.xml" />
+        <include domain="sharedpref" path="listen_sleep_timer_preferences.xml" />
+        <include domain="sharedpref" path="annotation_settings_global.xml" />
+
+        <!-- database domain includes Room's -wal/-shm/-journal companions. -->
+        <include domain="database" path="reader_database" />
+
+        <include domain="file" path="annotations" />
+        <include domain="file" path="page_layouts" />
+        <include domain="file" path="textboxes" />
+        <include domain="file" path="pdf_highlights" />
+        <include domain="file" path="custom_fonts" />
+        <include domain="file" path="reader_textures" />
     </cloud-backup>
-    <!--
+
     <device-transfer>
-        <include .../>
-        <exclude .../>
+        <include domain="sharedpref" path="reader_prefs.xml" />
+        <include domain="sharedpref" path="epub_reader_settings.xml" />
+        <include domain="sharedpref" path="epub_reader_bookmarks.xml" />
+        <include domain="sharedpref" path="reader_slider_chrome_prefs.xml" />
+        <include domain="sharedpref" path="listen_sleep_timer_preferences.xml" />
+        <include domain="sharedpref" path="annotation_settings_global.xml" />
+
+        <!-- database domain includes Room's -wal/-shm/-journal companions. -->
+        <include domain="database" path="reader_database" />
+
+        <include domain="file" path="annotations" />
+        <include domain="file" path="page_layouts" />
+        <include domain="file" path="textboxes" />
+        <include domain="file" path="pdf_highlights" />
+        <include domain="file" path="custom_fonts" />
+        <include domain="file" path="reader_textures" />
+        <include domain="file" path="books" />
+        <include domain="file" path="audiobooks" />
+        <include domain="file" path="metadata_backups" />
     </device-transfer>
-    -->
 </data-extraction-rules>

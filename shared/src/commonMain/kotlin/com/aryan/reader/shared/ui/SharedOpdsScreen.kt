@@ -82,11 +82,13 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aryan.reader.shared.BookItem
+import com.aryan.reader.shared.SyncedFolder
 import com.aryan.reader.shared.opds.OpdsAcquisition
 import com.aryan.reader.shared.opds.OpdsCatalog
 import com.aryan.reader.shared.opds.OpdsEntry
-import com.aryan.reader.shared.opds.SharedOpdsLocalBookMatcher
+import com.aryan.reader.shared.opds.SharedOpdsDownloadLocation
 import com.aryan.reader.shared.opds.SharedOpdsDownloadState
+import com.aryan.reader.shared.opds.SharedOpdsLocalBookMatcher
 import com.aryan.reader.shared.opds.SharedOpdsScreenState
 import com.aryan.reader.shared.opds.SharedOpdsText
 import com.aryan.reader.shared.opds.opdsStreamBooksForCatalog
@@ -109,6 +111,8 @@ fun SharedOpdsScreen(
     onReadBook: (BookItem) -> Unit,
     onStreamBook: (OpdsEntry, OpdsCatalog?) -> Unit,
     onClearError: () -> Unit,
+    onDownloadLocationChange: (SharedOpdsDownloadLocation) -> Unit = {},
+    syncedFolders: List<SyncedFolder> = emptyList(),
     coverContent: @Composable (OpdsEntry, Modifier) -> Unit = { entry, coverModifier ->
         SharedOpdsCoverPlaceholder(entry, coverModifier)
     },
@@ -124,6 +128,9 @@ fun SharedOpdsScreen(
         if (!state.isViewingCatalog) {
             SharedOpdsCatalogList(
                 catalogs = state.catalogs,
+                downloadLocation = state.downloadLocation,
+                syncedFolders = syncedFolders,
+                onDownloadLocationChange = onDownloadLocationChange,
                 onOpenCatalog = onOpenCatalog,
                 onEditCatalog = { catalog ->
                     editingCatalog = catalog
@@ -292,6 +299,9 @@ fun SharedOpdsScreen(
 @Composable
 private fun SharedOpdsCatalogList(
     catalogs: List<OpdsCatalog>,
+    downloadLocation: SharedOpdsDownloadLocation?,
+    syncedFolders: List<SyncedFolder>,
+    onDownloadLocationChange: (SharedOpdsDownloadLocation) -> Unit,
     onOpenCatalog: (OpdsCatalog) -> Unit,
     onEditCatalog: (OpdsCatalog) -> Unit,
     onDeleteCatalog: (OpdsCatalog) -> Unit,
@@ -299,12 +309,19 @@ private fun SharedOpdsCatalogList(
     mobileLayout: Boolean
 ) {
     if (mobileLayout) {
+        var showDownloadLocationSheet by remember { mutableStateOf(false) }
         Box(Modifier.fillMaxSize()) {
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 88.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
+                item(key = "download_location") {
+                    SharedOpdsDownloadLocationCard(
+                        downloadLocation = downloadLocation,
+                        onClick = { showDownloadLocationSheet = true }
+                    )
+                }
                 items(catalogs, key = { it.id }) { catalog ->
                     SharedOpdsCatalogCard(
                         catalog = catalog,
@@ -322,6 +339,17 @@ private fun SharedOpdsCatalogList(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .padding(16.dp)
+            )
+        }
+        if (showDownloadLocationSheet) {
+            SharedOpdsDownloadLocationSheet(
+                downloadLocation = downloadLocation,
+                syncedFolders = syncedFolders,
+                onSelectLocation = { location ->
+                    onDownloadLocationChange(location)
+                    showDownloadLocationSheet = false
+                },
+                onDismiss = { showDownloadLocationSheet = false }
             )
         }
         return
@@ -550,6 +578,162 @@ private fun SharedOpdsFeedView(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SharedOpdsDownloadLocationCard(
+    downloadLocation: SharedOpdsDownloadLocation?,
+    onClick: () -> Unit
+) {
+    Surface(
+        onClick = onClick,
+        shape = MaterialTheme.shapes.medium,
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(16.dp),
+        ) {
+            Icon(
+                Icons.Default.Download,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+            )
+            Spacer(Modifier.width(16.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    readerString("opds_download_location", "Download location"),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    downloadLocationLabel(downloadLocation),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+        }
+    }
+}
+
+@Composable
+private fun downloadLocationLabel(downloadLocation: SharedOpdsDownloadLocation?): String {
+    return if (downloadLocation?.isAppStorage == false) {
+        downloadLocation.folderName?.takeIf { it.isNotBlank() } ?: readerString(
+            "opds_download_location_local_folder",
+            "Local folder"
+        )
+    } else {
+        readerString("opds_download_location_app_storage", "App storage")
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SharedOpdsDownloadLocationSheet(
+    downloadLocation: SharedOpdsDownloadLocation?,
+    syncedFolders: List<SyncedFolder>,
+    onSelectLocation: (SharedOpdsDownloadLocation) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp, vertical = 8.dp)
+                .padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(
+                readerString("opds_download_location", "Download location"),
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+            )
+            Spacer(Modifier.height(4.dp))
+            SharedOpdsDownloadLocationOption(
+                title = readerString("opds_download_location_app_storage", "App storage"),
+                subtitle = readerString(
+                    "opds_download_location_app_storage_desc",
+                    "Saved inside the app's library storage"
+                ),
+                isSelected = downloadLocation?.isAppStorage != false,
+                onClick = { onSelectLocation(SharedOpdsDownloadLocation()) }
+            )
+            syncedFolders.forEach { folder ->
+                SharedOpdsDownloadLocationOption(
+                    title = folder.name,
+                    subtitle = readerString("opds_download_location_local_folder_desc", "Local folder"),
+                    isSelected = folder.uriString == downloadLocation?.folderUriString,
+                    onClick = {
+                        onSelectLocation(
+                            SharedOpdsDownloadLocation(
+                                folderUriString = folder.uriString,
+                                folderName = folder.name
+                            )
+                        )
+                    }
+                )
+            }
+            if (syncedFolders.isEmpty()) {
+                Text(
+                    readerString(
+                        "opds_download_location_no_folder_hint",
+                        "Add a local folder in Library to save downloads there."
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 8.dp, bottom = 8.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SharedOpdsDownloadLocationOption(
+    title: String,
+    subtitle: String,
+    isSelected: Boolean,
+    onClick: () -> Unit,
+) {
+    Surface(
+        onClick = onClick,
+        shape = MaterialTheme.shapes.medium,
+        color = if (isSelected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+        ) {
+            Icon(
+                if (isSelected) Icons.Default.FolderSpecial else Icons.Default.Folder,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+            )
+            Spacer(Modifier.width(16.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.titleMedium)
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (isSelected) {
+                Icon(
+                    Icons.Default.Check,
+                    contentDescription = readerString("desktop_opds_selected", "Selected"),
+                    tint = MaterialTheme.colorScheme.primary,
+                )
             }
         }
     }

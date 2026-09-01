@@ -3,6 +3,7 @@
 
 package com.aryan.reader.data
 
+import com.aryan.reader.CloudFolderHeadSnapshot
 import java.util.Date
 
 // --- Data Classes used by ViewModel ---
@@ -86,6 +87,44 @@ data class FeedbackMessage(
 // --- Stub Class ---
 class FirestoreRepository {
 
+    suspend fun getCloudFolderManifestHead(
+        userId: String,
+        rootId: String,
+    ): CloudFolderManifestHead? = null
+
+    /** OSS has no Firebase dependency; keep the API source-compatible. */
+    internal fun listenToCloudFolderHeads(
+        userId: String,
+        onUpdate: (CloudFolderHeadSnapshot) -> Unit,
+        onError: (Exception) -> Unit,
+    ): Any? = null
+
+    suspend fun bootstrapCloudFolderManifestHead(
+        userId: String,
+        rootId: String,
+        manifestDriveFileId: String,
+        revision: Long,
+        manifestHash: String,
+    ): CloudFolderManifestHead? = null
+
+    suspend fun reserveCloudFolderManifest(
+        userId: String,
+        rootId: String,
+        expectedRevision: Long?,
+        revision: Long,
+        deviceId: String,
+    ): CloudFolderManifestLeaseResult = CloudFolderManifestLeaseResult.Unsupported
+
+    suspend fun commitCloudFolderManifest(
+        lease: CloudFolderManifestLease,
+        manifestDriveFileId: String,
+        manifestHash: String,
+    ): Boolean = false
+
+    suspend fun releaseCloudFolderManifest(lease: CloudFolderManifestLease): Boolean = false
+
+    suspend fun deleteCloudFolderManifestHead(userId: String, rootId: String): Boolean = false
+
     // Helper to safely ignore listener removal in ViewModel
     fun removeListener(listener: Any?) {
         // No-op
@@ -112,6 +151,16 @@ class FirestoreRepository {
     suspend fun deleteFontMetadata(userId: String, fontId: String) {}
 
     suspend fun syncBookMetadata(userId: String, book: BookMetadata, originDeviceId: String) {}
+    suspend fun syncBookMetadataForDeletion(userId: String, book: BookMetadata, originDeviceId: String) {
+        error("Firestore is unavailable in the OSS build")
+    }
+    suspend fun syncBookMetadataDeletions(
+        userId: String,
+        books: Collection<BookMetadata>,
+        originDeviceId: String,
+    ) {
+        error("Firestore is unavailable in the OSS build")
+    }
     suspend fun getAllBooks(userId: String): List<BookMetadata> = emptyList()
     suspend fun getBookMetadata(userId: String, bookId: String): BookMetadata? = null
 

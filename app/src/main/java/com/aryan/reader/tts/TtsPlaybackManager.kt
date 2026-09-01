@@ -24,6 +24,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.os.Looper
 import timber.log.Timber
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -35,7 +36,11 @@ import androidx.media3.session.MediaSession
 import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionResult
 import com.aryan.reader.MainActivity
+import com.aryan.reader.MediaButtonRouting
 import com.aryan.reader.R
+import com.aryan.reader.logMediaTransport
+import com.aryan.reader.mediaButtonKeyEventDetails
+import com.aryan.reader.playerTransportSnapshot
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.CoroutineScope
@@ -53,6 +58,11 @@ import java.util.concurrent.atomic.AtomicInteger
 import androidx.core.net.toUri
 import com.aryan.reader.paginatedreader.TimedWord
 import com.aryan.reader.paginatedreader.TtsChunk
+import com.aryan.reader.shared.LocalTtsInterruptionAction
+import com.aryan.reader.shared.LocalTtsInterruptionEvent
+import com.aryan.reader.shared.LocalTtsInterruptionState
+import com.aryan.reader.shared.TTS_PLAYBACK_SOURCE_AUDIOBOOK
+import com.aryan.reader.shared.reduce
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 
@@ -342,7 +352,7 @@ class TtsPlaybackManager(
     private val onPlaybackSessionPreparing: (bookTitle: String?, chapterTitle: String?) -> Unit = { _, _ -> },
     private val onPlaybackSessionStopped: () -> Unit = {},
     private val onExplicitStopRequested: () -> Unit = {}
-) : MediaSession.Callback, Player.Listener, DirectLocalTtsListener {
+) : MediaSession.Callback, Player.Listener, DirectLocalTtsListener, DirectLocalTtsAudioFocusListener {
 
     private val appContext = context.applicationContext
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -417,6 +427,9 @@ class TtsPlaybackManager(
     private var totalChapters: Int? = null
     private var pageIndex: Int? = null
     private val directLocalTtsPlayer = DirectLocalTtsPlayer(appContext, this)
+    private val directLocalAudioFocusManager = DirectLocalTtsAudioFocusManager(appContext, this)
+    private val directLocalPlaybackAnchor = DirectLocalTtsPlaybackAnchor(appContext)
+    private var localTtsInterruptionState = LocalTtsInterruptionState()
     private var localSpeechRate = 1f
     private var localSpeechPitch = 1f
     private var localResumeOffset = 0
@@ -466,7 +479,7 @@ class TtsPlaybackManager(
             pageIndex = if (book.type == com.aryan.reader.FileType.PDF) content.chapter.index else null,
             startChunkIndex = startChunkIndex,
             ttsMode = TtsMode.BASE,
-            playbackSource = "AUDIOBOOK_TTS",
+            playbackSource = TTS_PLAYBACK_SOURCE_AUDIOBOOK,
             args = args
         )
     }
@@ -562,6 +575,10 @@ class TtsPlaybackManager(
         Timber.tag(TTS_NOTIFICATION_DIAG_TAG).i(
             "MediaSession onConnect. package=${controller.packageName}, uid=${controller.uid}"
         )
+        logMediaTransport(
+            "tts-on-connect",
+            "package=${controller.packageName} uid=${controller.uid} ${mediaTransportSnapshot()}"
+        )
         val availableSessionCommands = MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS.buildUpon()
             .add(START_TTS_COMMAND)
             .add(STOP_TTS_COMMAND)
@@ -580,6 +597,26 @@ class TtsPlaybackManager(
             .setCustomLayout(createCustomLayout(_ttsState.value))
             .setSessionActivity(createSessionActivity(_ttsState.value))
             .build()
+    }
+
+    override fun onMediaButtonEvent(
+        mediaSession: MediaSession,
+        controllerInfo: MediaSession.ControllerInfo,
+        intent: Intent
+    ): Boolean {
+        logMediaTransport(
+            "tts-on-media-button",
+            "package=${controllerInfo.packageName} ${mediaButtonKeyEventDetails(intent)} ${mediaTransportSnapshot()}"
+        )
+        return super.onMediaButtonEvent(mediaSession, controllerInfo, intent)
+    }
+
+    private fun mediaTransportSnapshot(): String {
+        return "mode=${currentTtsMode.name} directLocal=${isDirectLocalPlayback()} " +
+            "localPlaying=${localIsPlaying()} localLoading=${_ttsState.value.isLoading} " +
+            "localState=${localPlaybackState()} chunk=${_ttsState.value.currentChunkIndex}/${textChunks.size} " +
+            "focusHeld=${directLocalAudioFocusManager.isFocusHeld()} focusInterruption=${directLocalAudioFocusManager.isInterruptionActive()} " +
+            playerTransportSnapshot(player)
     }
 
     override fun onAddMediaItems(
@@ -750,23 +787,38 @@ class TtsPlaybackManager(
     fun isDirectLocalPlayback(): Boolean = currentTtsMode == TtsMode.BASE && textChunks.isNotEmpty()
 
     fun playFromTransport() {
+        logMediaTransport(
+            "tts-transport-play",
+            "localPlaying=${_ttsState.value.isPlaying} chunk=${_ttsState.value.currentChunkIndex} ${mediaTransportSnapshot()}"
+        )
         if (!isDirectLocalPlayback()) {
             player.play()
             return
         }
         if (_ttsState.value.isPlaying) return
         val chunkIndex = _ttsState.value.currentChunkIndex.takeIf { it in textChunks.indices } ?: return
+        if (!directLocalAudioFocusManager.requestFocus()) {
+            Timber.tag(TTS_LOCAL_SPEAK_DIAG_TAG).i("play-from-transport blocked: audio focus not granted")
+            logMediaTransport("tts-transport-play-blocked", "reason=focus-not-granted ${mediaTransportSnapshot()}")
+            return
+        }
         val generation = advancePlaybackGeneration()
         startLocalChunk(chunkIndex, localResumeOffset, generation)
     }
 
     fun pauseFromTransport() {
+        logMediaTransport("tts-transport-pause", mediaTransportSnapshot())
         if (!isDirectLocalPlayback()) {
             player.pause()
             return
         }
+        pauseLocalSpeech()
+    }
+
+    private fun pauseLocalSpeech() {
         advancePlaybackGeneration()
         directLocalTtsPlayer.stop()
+        directLocalPlaybackAnchor.pause()
         localQueuedThrough = -1
         localResumeOffset = localLatestRangeOffset
         _ttsState.value = _ttsState.value.copy(isPlaying = false, isLoading = false)
@@ -776,10 +828,9 @@ class TtsPlaybackManager(
     }
 
     fun stopFromTransport() {
-        if (!isDirectLocalPlayback()) {
-            player.stop()
-            return
-        }
+        logMediaTransport("tts-transport-stop", mediaTransportSnapshot())
+        // Transport stop (notification dismissal, headset stop) terminates the complete session
+        // for every playback mode so audio can never outlive its session or notification.
         handleStopTts(userInitiated = true)
         onExplicitStopRequested()
     }
@@ -1065,6 +1116,15 @@ class TtsPlaybackManager(
         localResumeOffset = safeOffset
         localLatestRangeOffset = safeOffset
         localQueuedThrough = chunkIndex
+        if (!directLocalAudioFocusManager.requestFocus()) {
+            Timber.tag(TTS_LOCAL_SPEAK_DIAG_TAG).i(
+                "speak-blocked-no-focus chunk=$chunkIndex generation=$generation"
+            )
+            logMediaTransport("tts-speak-blocked-no-focus", "chunk=$chunkIndex generation=$generation")
+            publishLocalChunkState(chunkIndex, isLoading = false, isPlaying = false)
+            return
+        }
+        directLocalPlaybackAnchor.start()
         publishLocalChunkState(chunkIndex, isLoading = true, isPlaying = false)
         updateLocalMediaItem(chunkIndex)
         val id = localTtsUtteranceId(generation, chunkIndex, safeOffset)
@@ -1086,6 +1146,7 @@ class TtsPlaybackManager(
         val chunk = textChunks.getOrNull(target) ?: return
         val spokenText = chunk.spokenText.ifBlank { chunk.text }
         localQueuedThrough = target
+        directLocalPlaybackAnchor.start()
         directLocalTtsPlayer.speak(
             text = spokenText,
             utteranceId = localTtsUtteranceId(generation, target, 0),
@@ -1196,6 +1257,8 @@ class TtsPlaybackManager(
             localResumeOffset = 0
             localLatestRangeOffset = 0
             localQueuedThrough = -1
+            directLocalAudioFocusManager.abandonFocus()
+            directLocalPlaybackAnchor.pause()
             _ttsState.value = _ttsState.value.copy(
                 isLoading = false,
                 isPlaying = false,
@@ -1215,6 +1278,56 @@ class TtsPlaybackManager(
                 isPlaying = false,
                 errorMessage = appContext.getString(R.string.tts_error_playback, errorCode.toString())
             )
+        }
+    }
+
+    override fun onLocalTtsInterruptionBegan() {
+        scope.launch(Dispatchers.Main) {
+            if (!isDirectLocalPlayback()) return@launch
+            val transition = localTtsInterruptionState.reduce(
+                LocalTtsInterruptionEvent.Began(playbackWasActive = localIsPlaying() || _ttsState.value.isLoading)
+            )
+            localTtsInterruptionState = transition.state
+            Timber.tag(TTS_LOCAL_SPEAK_DIAG_TAG).i("interruption-began action=${transition.action}")
+            logMediaTransport(
+                "tts-interruption-began",
+                "action=${transition.action} wasActive=${transition.state.resumeWhenInterruptionEnds} ${mediaTransportSnapshot()}"
+            )
+            if (transition.action == LocalTtsInterruptionAction.PAUSE) {
+                pauseLocalSpeech()
+            }
+        }
+    }
+
+    override fun onLocalTtsInterruptionEnded(canResume: Boolean) {
+        scope.launch(Dispatchers.Main) {
+            val transition = localTtsInterruptionState.reduce(
+                LocalTtsInterruptionEvent.Ended(systemAllowsResume = canResume)
+            )
+            localTtsInterruptionState = transition.state
+            Timber.tag(TTS_LOCAL_SPEAK_DIAG_TAG).i("interruption-ended canResume=$canResume action=${transition.action}")
+            logMediaTransport(
+                "tts-interruption-ended",
+                "canResume=$canResume action=${transition.action} ${mediaTransportSnapshot()}"
+            )
+            if (transition.action == LocalTtsInterruptionAction.RESUME) {
+                playFromTransport()
+            }
+        }
+    }
+
+    override fun onLocalTtsOutputBecameNoisy() {
+        scope.launch(Dispatchers.Main) {
+            if (!isDirectLocalPlayback()) return@launch
+            val transition = localTtsInterruptionState.reduce(
+                LocalTtsInterruptionEvent.OutputBecameNoisy(playbackWasActive = localIsPlaying() || _ttsState.value.isLoading)
+            )
+            localTtsInterruptionState = transition.state
+            Timber.tag(TTS_LOCAL_SPEAK_DIAG_TAG).i("interruption-noisy action=${transition.action}")
+            logMediaTransport("tts-interruption-noisy", "action=${transition.action} ${mediaTransportSnapshot()}")
+            if (transition.action == LocalTtsInterruptionAction.PAUSE) {
+                pauseLocalSpeech()
+            }
         }
     }
 
@@ -1297,6 +1410,7 @@ class TtsPlaybackManager(
             Timber.tag(TTS_NOTIFICATION_DIAG_TAG).w("handleStartTts aborted because chunks is empty.")
             return
         }
+        MediaButtonRouting.recordPlaybackService(appContext, TtsService::class.java.name)
 
         // --- YOUR SNIPPET START ---
         val authToken = args.getString(KEY_AUTH_TOKEN)
@@ -1837,6 +1951,9 @@ class TtsPlaybackManager(
         preparationJob?.cancel()
         wordTrackingJob?.cancel()
         if (userInitiated) directLocalTtsPlayer.shutdown() else directLocalTtsPlayer.stop()
+        directLocalAudioFocusManager.abandonFocus()
+        directLocalPlaybackAnchor.pause()
+        localTtsInterruptionState = LocalTtsInterruptionState()
         localResumeOffset = 0
         localLatestRangeOffset = 0
         localQueuedThrough = -1
@@ -2544,6 +2661,10 @@ class TtsPlaybackManager(
 
     override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
         Timber.tag("TTS_CLOUD_DIAG").d("onPlayWhenReadyChanged: playWhenReady=$playWhenReady, reason=$reason")
+        logMediaTransport(
+            "tts-play-when-ready-changed",
+            "playWhenReady=$playWhenReady reason=$reason ${mediaTransportSnapshot()}"
+        )
     }
 
     override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) {
@@ -2667,6 +2788,15 @@ class TtsPlaybackManager(
     }
 
     private fun updateSessionControls(state: TtsState) {
+        // Media3's legacy MediaSessionCompat updater runs on the main looper and reads the
+        // custom layout/media button preferences fields while MediaSession.setCustomLayout and
+        // setMediaButtonPreferences mutate them on the caller thread. Hop to the main looper so
+        // the swap cannot interleave with createPlaybackStateCompat, which would otherwise crash
+        // with IndexOutOfBoundsException when the list shrinks between the size and get reads.
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            scope.launch(Dispatchers.Main) { updateSessionControls(state) }
+            return
+        }
         mediaSession?.let { session ->
             session.setMediaButtonPreferences(createMediaButtonPreferences())
             session.setCustomLayout(createCustomLayout(state))
@@ -2747,6 +2877,12 @@ class TtsPlaybackManager(
                 state.pageIndex?.let { putExtra(EXTRA_TTS_PAGE_INDEX, it) }
                 targetCfi?.let { putExtra(EXTRA_TTS_SOURCE_CFI, it) }
                 targetOffset?.let { putExtra(EXTRA_TTS_START_OFFSET, it) }
+                state.playbackSource?.let { putExtra(EXTRA_TTS_PLAYBACK_SOURCE, it) }
+                putExtra(
+                    EXTRA_TTS_REQUEST_ID,
+                    "tts:${state.bookId}:${targetCfi.orEmpty()}:${targetOffset ?: -1}:" +
+                        "${state.chapterIndex ?: -1}:${state.pageIndex ?: -1}",
+                )
             } else {
                 action = Intent.ACTION_MAIN
                 addCategory(Intent.CATEGORY_LAUNCHER)
@@ -2822,6 +2958,8 @@ class TtsPlaybackManager(
         directLocalPlayerStateInvalidator = null
         player.removeListener(this)
         handleStopTts(userInitiated = true)
+        directLocalAudioFocusManager.abandonFocus()
+        directLocalPlaybackAnchor.release()
         directLocalTtsPlayer.shutdown()
         Timber.d("TtsPlaybackManager released.")
     }

@@ -324,6 +324,7 @@
     <string name="banner_clearing_cloud_local_data">Alle Cloud- und lokalen Daten löschen…</string>
     <string name="banner_cloud_local_data_cleared">Alle Cloud- und lokalen Daten wurden erfolgreich gelöscht.</string>
     <string name="error_clear_all_data">Fehler: Fehler beim Löschen aller Daten.</string>
+    <string name="error_cloud_delete_pending">Cloud konnte nicht erreicht werden. Ihr Löschen wird automatisch abgeschlossen, sobald Sie wieder online sind.</string>
     <string name="banner_local_data_cleared">Alle lokalen Daten gelöscht.</string>
     <string name="error_sign_in_failed">Anmeldung fehlgeschlagen. Bitte erneut versuchen.</string>
     <string name="error_no_google_account">Google-Konto konnte nicht gefunden werden. Dies kann auf einer frischen Installation geschehen, bitte versuchen Sie es in einem Moment noch einmal.</string>

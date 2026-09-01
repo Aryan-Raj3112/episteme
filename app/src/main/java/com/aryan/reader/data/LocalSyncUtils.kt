@@ -17,9 +17,12 @@ import com.aryan.reader.shared.localFolderSyncSidecarStem
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationSidecarCodec
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationSidecarSnapshot
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.FileOutputStream
 import org.json.JSONObject
 import timber.log.Timber
 
@@ -203,32 +206,36 @@ object LocalSyncUtils {
         context: Context,
         sourceFolderUri: Uri,
         metadata: FolderBookMetadata
-    ) = withContext(Dispatchers.IO) {
+    ): Boolean = withContext(Dispatchers.IO) {
         try {
-            val rootTree = DocumentFile.fromTreeUri(context, sourceFolderUri) ?: return@withContext
-            val syncDir = getOrCreateSyncDir(rootTree) ?: return@withContext
+            val rootTree = DocumentFile.fromTreeUri(context, sourceFolderUri)
+                ?: return@withContext false
+            val syncDir = getOrCreateSyncDir(rootTree)
+                ?: return@withContext false
 
             val syncFileName = localFolderSyncMetadataFileName(metadata.bookId)
             val existingMeta = resolveAndCleanMetadataConflicts(context, syncDir, metadata.bookId)
             if (existingMeta != null && existingMeta.lastModifiedTimestamp > metadata.lastModifiedTimestamp) {
                 Timber.tag(TAG).w("ClobberCheck: ABORTING save. Folder has newer data for ${metadata.bookId}.")
-                return@withContext
+                // The remote/newer sidecar remains authoritative.  This is a
+                // successful no-op, not an I/O failure that should be retried.
+                return@withContext true
             }
 
             val tempFileName = uniqueFolderSyncTempName(localFolderSyncMetadataTempFileName(metadata.bookId))
             val tempFile = syncDir.createFile("application/json", tempFileName)
             if (tempFile == null) {
                 Timber.tag(TAG).e("Could not create temp metadata file for ${metadata.bookId}")
-                return@withContext
+                return@withContext false
             }
 
             val jsonString = metadata.toJsonString()
-            var writeSuccess = false
-
             try {
-                context.contentResolver.openFileDescriptor(tempFile.uri, "rwt")?.use { pfd ->
+                val descriptor = context.contentResolver.openFileDescriptor(tempFile.uri, "rwt")
+                    ?: error("Provider returned no file descriptor for metadata temp file")
+                descriptor.use { pfd ->
                     java.io.FileOutputStream(pfd.fileDescriptor).use { fos ->
-                        fos.write(jsonString.toByteArray())
+                        fos.write(jsonString.toByteArray(Charsets.UTF_8))
                         fos.flush()
                         try {
                             pfd.fileDescriptor.sync()
@@ -236,38 +243,78 @@ object LocalSyncUtils {
                         }
                     }
                 }
-                writeSuccess = true
             } catch (e: Exception) {
                 Timber.tag(TAG).e(e, "Failed to write temp metadata for ${metadata.bookId}")
                 try { tempFile.delete() } catch (_: Exception) {}
-                return@withContext
+                return@withContext false
             }
 
-            @Suppress("KotlinConstantConditions") if (writeSuccess) {
-                val targetFile = syncDir.findFile(syncFileName)
-                if (targetFile != null && targetFile.exists()) {
-                    targetFile.delete()
+            // Keep the old canonical file until the new one is fully written;
+            // SAF rename is not guaranteed to be atomic across providers, so
+            // preserve a recoverable backup while committing the replacement.
+            val targetFile = syncDir.findFile(syncFileName)?.takeIf { it.exists() }
+            val previousBackup = targetFile?.let {
+                val backupName = "$syncFileName.sync-backup-${System.currentTimeMillis()}-${Thread.currentThread().id}.json"
+                if (!it.renameTo(backupName)) {
+                    Timber.tag(TAG).e("Could not preserve existing metadata before replacement: $syncFileName")
+                    tempFile.delete()
+                    return@withContext false
                 }
+                it
+            }
 
-                if (tempFile.renameTo(syncFileName)) {
-                    Timber.tag(TAG).d("Atomic save successful: $syncFileName")
+            if (!tempFile.renameTo(syncFileName)) {
+                Timber.tag(TAG).e("Failed to rename temp metadata file to $syncFileName")
+                previousBackup?.renameTo(syncFileName)
+                tempFile.delete()
+                return@withContext false
+            }
 
-                    val absolutePath = getPathFromUri(context, tempFile.uri)
-                    if (absolutePath != null) {
-                        android.media.MediaScannerConnection.scanFile(
-                            context,
-                            arrayOf(absolutePath),
-                            arrayOf("application/json"),
-                            null
-                        )
+            val installedFile = syncDir.findFile(syncFileName)
+            val installed = installedFile?.let { file ->
+                runCatching {
+                    context.contentResolver.openInputStream(file.uri)?.use { input ->
+                        FolderBookMetadata.fromJsonString(input.bufferedReader().use { it.readText() })
                     }
-                } else {
-                    Timber.tag(TAG).e("Failed to rename temp file to $syncFileName")
+                }.getOrNull()
+            }
+            if (installed?.bookId != metadata.bookId) {
+                Timber.tag(TAG).e("Installed metadata failed validation; restoring previous copy: $syncFileName")
+                installedFile?.delete()
+                previousBackup?.renameTo(syncFileName)
+                return@withContext false
+            }
+            val installedUri = installedFile?.uri ?: run {
+                Timber.tag(TAG).e("Installed metadata disappeared during validation: $syncFileName")
+                previousBackup?.renameTo(syncFileName)
+                return@withContext false
+            }
+
+            previousBackup?.let { backup ->
+                if (!backup.delete()) {
+                    // The new canonical copy is valid.  A stale backup is
+                    // harmless and can be cleaned by a later reconciliation.
+                    Timber.tag(TAG).w("Metadata committed but backup cleanup failed: ${backup.name}")
                 }
             }
 
+            Timber.tag(TAG).d("Atomic save successful: $syncFileName")
+            val absolutePath = getPathFromUri(context, installedUri)
+            if (absolutePath != null) {
+                android.media.MediaScannerConnection.scanFile(
+                    context,
+                    arrayOf(absolutePath),
+                    arrayOf("application/json"),
+                    null
+                )
+            }
+            true
+
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Timber.tag(TAG).e(e, "Failed to save local metadata to folder.")
+            false
         }
     }
 
@@ -317,7 +364,9 @@ object LocalSyncUtils {
 
             var writeSuccess = false
             try {
-                context.contentResolver.openFileDescriptor(tempFile.uri, "rwt")?.use { pfd ->
+                val descriptor = context.contentResolver.openFileDescriptor(tempFile.uri, "rwt")
+                    ?: error("Provider returned no file descriptor for annotation temp file")
+                descriptor.use { pfd ->
                     java.io.FileOutputStream(pfd.fileDescriptor).use { fos ->
                         fos.write(contentBytes)
                         fos.flush()
@@ -733,6 +782,232 @@ object LocalSyncUtils {
             ReaderPerfLog.w("LocalSync metadata read failed uri=$sourceFolderUri")
         }
         return@withContext finalResults
+    }
+
+    /** Read metadata sidecars from a DOWNLOAD_ALL app-private materialization. */
+    suspend fun getAllFolderMetadataFromAppStorage(
+        root: File,
+    ): Map<String, FolderBookMetadata> = withContext(Dispatchers.IO) {
+        val syncDir = File(root, SYNC_SUBFOLDER_NAME)
+        if (!syncDir.isDirectory) return@withContext emptyMap()
+        val grouped = mutableMapOf<String, MutableList<FolderBookMetadata>>()
+        val files = syncDir.listFiles().orEmpty()
+        files
+            .asSequence()
+            .filter { it.isFile && it.name?.let(::isMetadataSidecarCandidateName) == true }
+            .forEach { file ->
+                runCatching {
+                    FolderBookMetadata.fromJsonString(file.readText())
+                }.onSuccess { metadata ->
+                    grouped.getOrPut(metadata.bookId) { mutableListOf() }.add(metadata)
+                }.onFailure { error ->
+                    Timber.tag(TAG).w(error, "Failed to parse app-storage metadata sidecar: ${file.name}")
+                }
+            }
+        grouped.mapValues { (_, records) -> records.maxByOrNull { it.lastModifiedTimestamp }!! }
+    }
+
+    /**
+     * Migrate a metadata sidecar inside a completed app-private materialization.
+     * The normal SAF writer cannot be used for a file:// root, so keep the same
+     * newer-sidecar guard and write/validate/replace sequence locally.
+     */
+    suspend fun saveMetadataToAppStorage(
+        root: File,
+        metadata: FolderBookMetadata,
+    ): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val syncDir = File(root, SYNC_SUBFOLDER_NAME)
+            if (!syncDir.isDirectory && !syncDir.mkdirs()) return@withContext false
+            val candidates = syncDir.listFiles().orEmpty().filter { file ->
+                file.isFile && isMetadataCandidateForBook(file.name, metadata.bookId)
+            }
+            val current = candidates.mapNotNull { file ->
+                runCatching { FolderBookMetadata.fromJsonString(file.readText()) }.getOrNull()
+            }.maxByOrNull { it.lastModifiedTimestamp }
+            if (current != null && current.lastModifiedTimestamp > metadata.lastModifiedTimestamp) {
+                return@withContext true
+            }
+
+            val target = File(syncDir, localFolderSyncMetadataFileName(metadata.bookId))
+            val temp = File(syncDir, uniqueFolderSyncTempName(localFolderSyncMetadataTempFileName(metadata.bookId)))
+            FileOutputStream(temp).use { output ->
+                output.write(metadata.toJsonString().toByteArray(Charsets.UTF_8))
+                output.flush()
+                runCatching { output.fd.sync() }
+            }
+            val backup = if (target.exists()) {
+                File(syncDir, "${target.name}.sync-backup-${System.nanoTime()}")
+                    .takeIf { target.renameTo(it) }
+            } else {
+                null
+            }
+            if (!temp.renameTo(target)) {
+                backup?.renameTo(target)
+                temp.delete()
+                return@withContext false
+            }
+            val installed = runCatching { FolderBookMetadata.fromJsonString(target.readText()) }.getOrNull()
+            if (installed?.bookId != metadata.bookId) {
+                target.delete()
+                backup?.renameTo(target)
+                return@withContext false
+            }
+            candidates.filterNot { it.absolutePath == target.absolutePath }.forEach { it.delete() }
+            backup?.delete()
+            true
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            Timber.tag(TAG).w(error, "Failed to migrate app-storage metadata sidecar for ${metadata.bookId}")
+            false
+        }
+    }
+
+    /** Read annotation sidecars from a DOWNLOAD_ALL app-private materialization. */
+    suspend fun preloadAnnotationSidecarsFromAppStorage(
+        root: File,
+    ): Map<String, Pair<Long, String>> = withContext(Dispatchers.IO) {
+        val syncDir = File(root, SYNC_SUBFOLDER_NAME)
+        if (!syncDir.isDirectory) return@withContext emptyMap()
+        val parsedSidecars = syncDir.listFiles().orEmpty()
+            .asSequence()
+            .filter { it.isFile && it.name?.let(::isAnnotationSidecarCandidateName) == true }
+            .mapNotNull { file ->
+                parseAnnotationSidecarFile(
+                    file = file,
+                    fallbackBookId = extractLegacyAnnotationBookId(file.name),
+                )
+            }
+            .groupBy { it.bookId }
+        parsedSidecars.mapNotNull { (bookId, sidecars) ->
+            mergeParsedAnnotationSidecars(sidecars)?.let { merged ->
+                bookId to (merged.timestamp to merged.data)
+            }
+        }.toMap()
+    }
+
+    suspend fun getAnnotationSidecarFromAppStorage(
+        root: File,
+        bookId: String,
+    ): Pair<Long, String>? = preloadAnnotationSidecarsFromAppStorage(root)[bookId]
+
+    /** Atomic/validated annotation-sidecar migration for app-private roots. */
+    suspend fun saveAnnotationSidecarToAppStorage(
+        root: File,
+        bookId: String,
+        jsonPayload: String,
+        timestamp: Long,
+    ): Boolean = annotationSidecarWriteMutex.withLock { withContext(Dispatchers.IO) {
+        try {
+            val syncDir = File(root, SYNC_SUBFOLDER_NAME)
+            if (!syncDir.isDirectory && !syncDir.mkdirs()) return@withContext false
+            val candidates = syncDir.listFiles().orEmpty().filter { file ->
+                file.isFile && isAnnotationCandidateForBook(file.name, bookId)
+            }
+            var hasUnreadableCandidate = false
+            val parsed = candidates.mapNotNull { file ->
+                parseAnnotationSidecarFile(file, extractLegacyAnnotationBookId(file.name))
+                    ?: run {
+                        hasUnreadableCandidate = true
+                        null
+                    }
+            }
+            if (hasUnreadableCandidate) return@withContext false
+            val current = mergeParsedAnnotationSidecars(parsed)
+            val mergedPayload = current?.let { remote ->
+                SharedPdfAnnotationSidecarCodec.mergeAnnotationDataJson(
+                    localDataJson = jsonPayload,
+                    remoteDataJson = remote.data,
+                    preferRemoteOnConflict = remote.timestamp > timestamp,
+                )
+            } ?: jsonPayload
+            val mergedTimestamp = maxOf(timestamp, current?.timestamp ?: 0L)
+            val wrapper = JSONObject().apply {
+                put("version", 1)
+                put("bookId", bookId)
+                put("timestamp", mergedTimestamp)
+                put("data", JSONObject(mergedPayload))
+            }
+            val target = File(syncDir, localFolderSyncAnnotationFileName(bookId))
+            val temp = File(syncDir, uniqueFolderSyncTempName(localFolderSyncAnnotationTempFileName(bookId)))
+            FileOutputStream(temp).use { output ->
+                output.write(wrapper.toString().toByteArray(Charsets.UTF_8))
+                output.flush()
+                runCatching { output.fd.sync() }
+            }
+            val backup = if (target.exists()) {
+                File(syncDir, "${target.name}.sync-backup-${System.nanoTime()}")
+                    .takeIf { target.renameTo(it) }
+            } else {
+                null
+            }
+            if (!temp.renameTo(target)) {
+                backup?.renameTo(target)
+                temp.delete()
+                return@withContext false
+            }
+            if (parseAnnotationSidecarFile(target, bookId) == null) {
+                target.delete()
+                backup?.renameTo(target)
+                return@withContext false
+            }
+            candidates.filterNot { it.absolutePath == target.absolutePath }.forEach { it.delete() }
+            backup?.delete()
+            true
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            Timber.tag("FolderAnnotationSync").w(error, "Failed to migrate app-storage annotation sidecar for $bookId")
+            false
+        }
+    } }
+
+    suspend fun deleteBookSidecarsFromAppStorage(
+        root: File,
+        bookId: String,
+    ) = withContext(Dispatchers.IO) {
+        val syncDir = File(root, SYNC_SUBFOLDER_NAME)
+        if (!syncDir.isDirectory) return@withContext
+        syncDir.listFiles().orEmpty()
+            .filter { file ->
+                file.isFile && (
+                    isMetadataCandidateForBook(file.name, bookId) ||
+                        isAnnotationCandidateForBook(file.name, bookId)
+                    )
+            }
+            .forEach { file -> runCatching { file.delete() } }
+    }
+
+    private fun parseAnnotationSidecarFile(
+        file: File,
+        fallbackBookId: String?,
+    ): ParsedAnnotationSidecar? {
+        return try {
+            val json = JSONObject(file.readText())
+            val bookId = json.optString("bookId").takeIf { it.isNotBlank() }
+                ?: fallbackBookId
+                ?: return null
+            val data = json.optJSONObject("data")?.toString() ?: return null
+            ParsedAnnotationSidecar(
+                name = file.name,
+                bookId = bookId,
+                timestamp = json.optLong("timestamp", 0L),
+                data = data,
+            )
+        } catch (error: Exception) {
+            Timber.tag("FolderAnnotationSync").w(error, "Error parsing app-storage annotation sidecar: ${file.name}")
+            null
+        }
+    }
+
+    private fun isMetadataCandidateForBook(name: String?, bookId: String): Boolean {
+        val candidateName = name ?: return false
+        if (!isMetadataSidecarCandidateName(candidateName)) return false
+        val normalized = candidateName.normalizedSidecarName()
+        val hashedStem = localFolderSyncSidecarStem(bookId)
+        return normalized.matchesJsonSidecarStem(hashedStem) ||
+            normalized.matchesJsonSidecarStem(bookId)
     }
 
 }

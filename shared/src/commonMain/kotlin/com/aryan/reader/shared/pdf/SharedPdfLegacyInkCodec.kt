@@ -64,23 +64,48 @@ object SharedPdfLegacyInkCodec {
     fun decode(rawJson: String, newId: () -> String): SharedPdfLegacyInkDecodeResult {
         if (rawJson.isBlank()) return SharedPdfLegacyInkDecodeResult(emptyList())
         return runCatching {
-            val root = json.parseToJsonElement(rawJson).jsonArray
-            var pointsWereCapped = false
-            val annotations = root.take(MAX_ANNOTATIONS_PER_LOAD).mapNotNull { element ->
-                val obj = element.objectOrNull() ?: return@mapNotNull null
-                val pageIndex = obj.number("pageIndex")?.toInt() ?: return@mapNotNull null
-                val colorArgb = obj.number("color")?.toInt() ?: return@mapNotNull null
-                val strokeWidth = obj.number("strokeWidth")?.toFloat() ?: return@mapNotNull null
-                val rawPoints = obj["points"]?.arrayOrNull().orEmpty()
-                if (rawPoints.size > MAX_POINTS_PER_ANNOTATION) pointsWereCapped = true
-                val points = rawPoints.take(MAX_POINTS_PER_ANNOTATION).mapNotNull { pointElement ->
-                    val point = pointElement.objectOrNull() ?: return@mapNotNull null
-                    PdfPagePoint(
-                        x = point.number("x")?.toFloat() ?: return@mapNotNull null,
-                        y = point.number("y")?.toFloat() ?: return@mapNotNull null,
-                        timestamp = point.number("t")?.toLong() ?: 0L,
-                    )
-                }
+            decodeElements(json.parseToJsonElement(rawJson).jsonArray.asSequence(), newId)
+        }.getOrElse { SharedPdfLegacyInkDecodeResult(emptyList()) }
+    }
+
+    /**
+     * Shared decode over a lazily-produced element sequence so both the in-memory
+     * String path and streaming sidecar readers share one cap policy: at most
+     * [MAX_ANNOTATIONS_PER_LOAD] elements are surfaced (excess only flips
+     * [SharedPdfLegacyInkDecodeResult.annotationsWereCapped]) and each annotation
+     * keeps at most [MAX_POINTS_PER_ANNOTATION] points.
+     */
+    internal fun decodeElements(
+        elements: Sequence<JsonElement>,
+        newId: () -> String,
+    ): SharedPdfLegacyInkDecodeResult {
+        val annotations = ArrayList<SharedPdfLegacyInkAnnotation>()
+        var pointsWereCapped = false
+        var elementCount = 0
+        for (element in elements) {
+            if (elementCount >= MAX_ANNOTATIONS_PER_LOAD) {
+                return SharedPdfLegacyInkDecodeResult(
+                    annotations = annotations,
+                    annotationsWereCapped = true,
+                    pointsWereCapped = pointsWereCapped,
+                )
+            }
+            elementCount++
+            val obj = element.objectOrNull() ?: continue
+            val pageIndex = obj.number("pageIndex")?.toInt() ?: continue
+            val colorArgb = obj.number("color")?.toInt() ?: continue
+            val strokeWidth = obj.number("strokeWidth")?.toFloat() ?: continue
+            val rawPoints = obj["points"]?.arrayOrNull().orEmpty()
+            if (rawPoints.size > MAX_POINTS_PER_ANNOTATION) pointsWereCapped = true
+            val points = rawPoints.take(MAX_POINTS_PER_ANNOTATION).mapNotNull { pointElement ->
+                val point = pointElement.objectOrNull() ?: return@mapNotNull null
+                PdfPagePoint(
+                    x = point.number("x")?.toFloat() ?: return@mapNotNull null,
+                    y = point.number("y")?.toFloat() ?: return@mapNotNull null,
+                    timestamp = point.number("t")?.toLong() ?: 0L,
+                )
+            }
+            annotations.add(
                 SharedPdfLegacyInkAnnotation(
                     id = obj.string("id") ?: newId(),
                     pageIndex = pageIndex,
@@ -91,13 +116,13 @@ object SharedPdfLegacyInkCodec {
                     points = points,
                     note = obj.string("note"),
                 )
-            }
-            SharedPdfLegacyInkDecodeResult(
-                annotations = annotations,
-                annotationsWereCapped = root.size > MAX_ANNOTATIONS_PER_LOAD,
-                pointsWereCapped = pointsWereCapped,
             )
-        }.getOrElse { SharedPdfLegacyInkDecodeResult(emptyList()) }
+        }
+        return SharedPdfLegacyInkDecodeResult(
+            annotations = annotations,
+            annotationsWereCapped = false,
+            pointsWereCapped = pointsWereCapped,
+        )
     }
 
     private fun Float.roundedLegacyCoordinate(): Double = round(toDouble() * 100_000.0) / 100_000.0

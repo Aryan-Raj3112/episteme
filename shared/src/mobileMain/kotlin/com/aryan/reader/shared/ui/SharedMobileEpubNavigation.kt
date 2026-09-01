@@ -60,6 +60,8 @@ import com.aryan.reader.shared.reader.ReaderPage
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.SharedEpubBook
 import com.aryan.reader.shared.reader.SharedEpubTocEntry
+import com.aryan.reader.shared.reader.findElementOffset
+import com.aryan.reader.paginatedreader.SemanticTextBlock
 import kotlinx.coroutines.delay
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -242,6 +244,18 @@ internal data class SharedMobileEpubActiveToc(val href: String, val fragmentId: 
 internal data class SharedMobileEpubSelectionAction(val action: String, val text: String, val locator: ReaderLocator?)
 
 internal val SharedMobileEpubJson = Json { ignoreUnknownKeys = true }
+
+internal const val SharedMobileEpubCaptureCurrentPositionScript =
+    "window.readerCaptureCurrentPosition ? window.readerCaptureCurrentPosition() : null"
+
+/** Normalizes the quoted result returned by Android/iOS WebView JavaScript evaluation. */
+internal fun decodeSharedMobileJavascriptResult(raw: String?): String? {
+    val value = raw?.trim()?.takeIf { it.isNotEmpty() && it != "null" } ?: return null
+    val parsed = runCatching { Json.parseToJsonElement(value) }.getOrNull()
+    return parsed?.let { element ->
+        runCatching { element.jsonPrimitive.contentOrNull }.getOrNull()
+    }?.takeIf(String::isNotBlank) ?: value
+}
 
 internal fun String.sharedMobileEpubLocatorOrNull(): ReaderLocator? {
     val objectValue = runCatching { SharedMobileEpubJson.parseToJsonElement(this).jsonObject }.getOrNull() ?: return null
@@ -450,58 +464,18 @@ internal fun sharedMobileEpubActiveTocScript(book: SharedEpubBook, chapterIndex:
     """.trimIndent()
 }
 
-internal fun SharedEpubBook.locatorForTocEntry(entry: SharedEpubTocEntry, pages: List<ReaderPage>): ReaderLocator? {
-    val chapterIndex = chapters.indexOfFirst {
-        it.baseHref?.normalizeMobileEpubPath() == entry.href.normalizeMobileEpubPath() &&
-            it.fragmentId == entry.fragmentId
-    }.takeIf { it >= 0 } ?: chapters.indexOfFirst {
-        it.baseHref?.normalizeMobileEpubPath() == entry.href.normalizeMobileEpubPath()
-    }
-        .takeIf { it >= 0 } ?: return null
-    val page = pages.firstOrNull { it.chapterIndex == chapterIndex }
-    return ReaderLocator(
-        chapterIndex = chapterIndex,
-        chapterId = chapters[chapterIndex].id,
-        href = chapters[chapterIndex].baseHref,
-        pageIndex = page?.pageIndex,
-        startOffset = page?.startOffset ?: 0,
-        endOffset = page?.startOffset ?: 0,
-        textQuote = page?.text?.take(120)
-    )
-}
 
-internal fun SharedEpubBook.locatorForLink(
-    rawHref: String,
-    ownerHref: String?,
-    pages: List<ReaderPage>
-): Pair<ReaderLocator, String?>? {
-    val fragment = rawHref.substringAfter('#', missingDelimiterValue = "")
-        .substringBefore('?')
-        .percentDecodeMobileEpubPath()
-        .takeIf(String::isNotBlank)
-    val reference = rawHref.substringBefore('#').substringBefore('?').percentDecodeMobileEpubPath()
-    val targetPath = if (reference.isBlank()) ownerHref.orEmpty() else resolveMobileEpubPath(ownerHref.orEmpty(), reference)
-    val chapterIndex = chapters.indexOfFirst {
-        it.baseHref?.normalizeMobileEpubPath() == targetPath.normalizeMobileEpubPath() &&
-            it.fragmentId == fragment
-    }.takeIf { it >= 0 } ?: chapters.indexOfFirst {
-        it.baseHref?.normalizeMobileEpubPath() == targetPath.normalizeMobileEpubPath()
-    }
-        .takeIf { it >= 0 } ?: return null
-    val page = pages.firstOrNull { it.chapterIndex == chapterIndex }
-    return ReaderLocator(
-        chapterIndex = chapterIndex,
-        chapterId = chapters[chapterIndex].id,
-        href = chapters[chapterIndex].baseHref,
-        pageIndex = page?.pageIndex,
-        startOffset = page?.startOffset ?: 0,
-        endOffset = page?.startOffset ?: 0,
-        textQuote = page?.text?.take(120)
-    ) to fragment
-}
 
 internal fun ReaderPage.toMobileEpubLocator(book: SharedEpubBook?): ReaderLocator {
     val chapter = book?.chapters?.getOrNull(chapterIndex)
+    val textBlock = semanticBlocks
+        .flatMap { it.flattenForLocator() }
+        .filterIsInstance<SemanticTextBlock>()
+        .firstOrNull { it.text.isNotBlank() }
+    val localCharOffset = 0
+    val androidStyleCfi = textBlock?.cfi
+        ?.takeIf { it.startsWith("/") }
+        ?.let { "$it:$localCharOffset" }
     return ReaderLocator(
         chapterIndex = chapterIndex,
         chapterId = chapter?.id,
@@ -509,8 +483,26 @@ internal fun ReaderPage.toMobileEpubLocator(book: SharedEpubBook?): ReaderLocato
         pageIndex = pageIndex,
         startOffset = startOffset,
         endOffset = startOffset,
-        textQuote = text.take(120)
+        textQuote = text.take(120),
+        blockIndex = textBlock?.blockIndex,
+        charOffset = textBlock?.startCharOffsetInSource,
+        cfi = androidStyleCfi
     )
+}
+
+private fun com.aryan.reader.paginatedreader.SemanticBlock.flattenForLocator(): List<com.aryan.reader.paginatedreader.SemanticBlock> {
+    return when (this) {
+        is com.aryan.reader.paginatedreader.SemanticList -> listOf(this) + items
+        is com.aryan.reader.paginatedreader.SemanticTable -> listOf(this) +
+            rows.flatMap { row -> row.flatMap { cell -> cell.content.flattenAllForLocator() } }
+        is com.aryan.reader.paginatedreader.SemanticFlexContainer -> listOf(this) + children.flatMap { it.flattenForLocator() }
+        is com.aryan.reader.paginatedreader.SemanticWrappingBlock -> listOf(this, floatedImage) + paragraphsToWrap
+        else -> listOf(this)
+    }
+}
+
+private fun List<com.aryan.reader.paginatedreader.SemanticBlock>.flattenAllForLocator(): List<com.aryan.reader.paginatedreader.SemanticBlock> {
+    return flatMap { it.flattenForLocator() }
 }
 
 internal fun sharedMobileEpubNavigationScript(
@@ -609,52 +601,10 @@ internal fun sharedMobileEpubSearchNavigationScript(result: SharedMobileEpubSear
     """.trimIndent()
 }
 
-internal fun String.isExternalEpubLink(): Boolean {
-    val lower = trim().lowercase()
-    return lower.startsWith("http://") || lower.startsWith("https://") || lower.startsWith("//") ||
-        lower.startsWith("mailto:") || lower.startsWith("tel:") || lower.startsWith("sms:")
-}
 
-internal fun String.containsReaderFragment(fragment: String): Boolean {
-    val escaped = Regex.escape(fragment)
-    return Regex("""\bid\s*=\s*([\"'])$escaped\1""", RegexOption.IGNORE_CASE).containsMatchIn(this)
-}
 
-internal fun resolveMobileEpubPath(owner: String, reference: String): String {
-    if (reference.startsWith('/')) return reference.removePrefix("/").normalizeMobileEpubPath()
-    val base = owner.substringBeforeLast('/', missingDelimiterValue = "")
-    return (if (base.isBlank()) reference else "$base/$reference").normalizeMobileEpubPath()
-}
 
-internal fun String.percentDecodeMobileEpubPath(): String {
-    val bytes = ArrayList<Byte>(length)
-    var index = 0
-    while (index < length) {
-        if (this[index] == '%' && index + 2 < length) {
-            val decoded = substring(index + 1, index + 3).toIntOrNull(16)
-            if (decoded != null) {
-                bytes += decoded.toByte()
-                index += 3
-                continue
-            }
-        }
-        bytes += this[index].toString().encodeToByteArray().toList()
-        index++
-    }
-    return bytes.toByteArray().decodeToString()
-}
 
-internal fun String.normalizeMobileEpubPath(): String {
-    val parts = ArrayDeque<String>()
-    replace('\\', '/').split('/').forEach { part ->
-        when (part) {
-            "", "." -> Unit
-            ".." -> if (parts.isNotEmpty()) parts.removeLast()
-            else -> parts.addLast(part)
-        }
-    }
-    return parts.joinToString("/")
-}
 
 internal fun ReaderSettings.readerBackgroundColor(): Color {
     val value = backgroundColorArgb ?: if (darkMode) 0xFF121212L else 0xFFFFFFFFL

@@ -36,6 +36,8 @@ import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
 import org.jsoup.nodes.Node
 import org.jsoup.nodes.TextNode
+import org.jsoup.select.Evaluator
+import org.jsoup.select.QueryParser
 import org.jsoup.select.Selector
 import java.util.ArrayDeque
 import java.util.IdentityHashMap
@@ -99,27 +101,6 @@ private object HtmlParserLog {
     fun d(@Suppress("UNUSED_PARAMETER") message: String) = Unit
     fun w(@Suppress("UNUSED_PARAMETER") throwable: Throwable, @Suppress("UNUSED_PARAMETER") message: String) = Unit
     fun e(@Suppress("UNUSED_PARAMETER") throwable: Throwable, @Suppress("UNUSED_PARAMETER") message: String) = Unit
-}
-
-private fun Element.getCfiPath(): String {
-    val path = mutableListOf<Int>()
-    var currentNode: Node? = this
-    while (currentNode != null && (currentNode !is Element || currentNode.tagName() != "body")) {
-        val parent = currentNode.parent() ?: break
-        val children = parent.childNodes().filter { node ->
-            node is Element || (node is TextNode && node.text().trim().isNotEmpty())
-        }
-        val nodeIndex = children.indexOf(currentNode)
-        if (nodeIndex == -1) {
-            currentNode = parent
-            continue
-        }
-        val cfiIndex = (nodeIndex * 2) + 2
-        path.add(0, cfiIndex)
-        currentNode = parent
-    }
-    path.add(0, 4)
-    return "/" + path.joinToString("/")
 }
 
 private fun String.capitalizeWords(): String =
@@ -240,9 +221,7 @@ private fun OptimizedCssRules.sortedForMatching(): SortedCssRuleBuckets {
 
 private fun String.hasUnsupportedPseudoElement(): Boolean {
     val lower = lowercase()
-    return lower.contains(":first-letter") ||
-        lower.contains("::first-letter") ||
-        lower.contains(":first-line") ||
+    return lower.contains(":first-line") ||
         lower.contains("::first-line") ||
         lower.contains(":marker") ||
         lower.contains("::marker") ||
@@ -270,6 +249,8 @@ private class SemanticHtmlParser(
     private val semanticBlockDescendantCache = IdentityHashMap<Element, Boolean>()
     private val matchedRulesCache = IdentityHashMap<Element, MutableMap<String, List<CssRule>>>()
     private val unsupportedSelectorCache = HashMap<String, Boolean>()
+    private val compiledSelectorCache = HashMap<String, Evaluator>()
+    private val cfiMeaningfulChildrenCache = IdentityHashMap<Node, List<Node>>()
     private var combinedRules: OptimizedCssRules = cssRules
     private var sortedRuleBuckets: SortedCssRuleBuckets = cssRules.sortedForMatching()
     private val currentFontFamilyMap: MutableMap<String, FontFamily> = fontFamilyMap.toMutableMap()
@@ -311,6 +292,36 @@ private class SemanticHtmlParser(
                 .resolveFontSizeAgainst(CssStyle(fontSize = textStyle.fontSize))
                 .withResolvedFontFamily()
         )
+    }
+
+    /**
+     * Computes a structural CFI-style path from this element up to (excluding) the body element.
+     *
+     * The per-parent "meaningful children" lookup is cached: every element in a chapter walks the
+     * same ancestor chain, and re-filtering each ancestor's children (previously with an
+     * allocating per-text-node whitespace normalization) made parsing quadratic on large
+     * documents and showed up in ANR traces.
+     */
+    private fun Element.getCfiPath(): String {
+        val path = mutableListOf<Int>()
+        var currentNode: Node? = this
+        while (currentNode != null && (currentNode !is Element || currentNode.tagName() != "body")) {
+            val parent = currentNode.parent() ?: break
+            val children = cfiMeaningfulChildrenCache.getOrPut(parent) {
+                parent.childNodes().filter { node ->
+                    node is Element || (node is TextNode && !node.isBlank())
+                }
+            }
+            val nodeIndex = children.indexOf(currentNode)
+            if (nodeIndex == -1) {
+                currentNode = parent
+                continue
+            }
+            path.add(0, (nodeIndex * 2) + 2)
+            currentNode = parent
+        }
+        path.add(0, 4)
+        return "/" + path.joinToString("/")
     }
 
     private inline fun Element.anyChildElement(predicate: (Element) -> Boolean): Boolean {
@@ -408,12 +419,16 @@ private class SemanticHtmlParser(
                 selector.selector.hasUnsupportedPseudoElement()
             }
         ) return false
-        return try {
-            element.`is`(selector.selector)
+        // The compiled evaluator is cached per selector: QueryParser.parse re-lexes the selector
+        // and allocates a new evaluator tree on every call, which dominated parse time on large
+        // chapters because this check runs per element × candidate rule.
+        val evaluator = try {
+            compiledSelectorCache.getOrPut(selector.selector) { QueryParser.parse(selector.selector) }
         } catch (e: Selector.SelectorParseException) {
             HtmlParserLog.w(e, "Jsoup failed to parse selector '${selector.selector}'.")
-            false
+            return false
         }
+        return element.`is`(evaluator)
     }
 
     private fun rulesForElement(element: Element, pseudoElement: String? = null): List<CssRule> {
@@ -870,13 +885,58 @@ private class SemanticHtmlParser(
         inheritedLinkHref: String? = null,
         excludedNodes: Set<Node> = emptySet()
     ): Pair<String, List<SemanticSpan>> {
-        return buildSemanticTextAndSpansFromNodes(
+        val (text, spans) = buildSemanticTextAndSpansFromNodes(
             rootElement.childNodes(),
             rootStyle,
             rootElement,
             inheritedLinkHref,
             excludedNodes
         )
+        return text to applyFirstLetterPseudoStyle(rootElement, rootStyle, text, spans)
+    }
+
+    /**
+     * Applies `::first-letter` pseudo-element styling to the first non-whitespace grapheme.
+     * CSS applies the pseudo element to the first letter including any preceding punctuation;
+     * leading whitespace is skipped, matching the common browser behavior for indented text.
+     */
+    private fun applyFirstLetterPseudoStyle(
+        element: Element?,
+        inheritedStyle: CssStyle,
+        text: String,
+        spans: List<SemanticSpan>
+    ): List<SemanticSpan> {
+        if (element == null || text.isEmpty()) return spans
+        if (rulesForElement(element, "first-letter").isEmpty()) return spans
+        val styleStart = text.indexOfFirst { !it.isWhitespace() }
+        if (styleStart < 0 || styleStart + 1 > text.length) return spans
+        val firstLetterStyle = getPseudoElementStyle(element, "first-letter", inheritedStyle)
+
+        val result = spans.toMutableList()
+        val coveringIndex = result.indexOfFirst { it.start <= styleStart && it.end >= styleStart + 1 }
+        if (coveringIndex >= 0) {
+            val covering = result[coveringIndex]
+            result[coveringIndex] = if (covering.end > styleStart + 1) {
+                val head = covering.copy(
+                    end = styleStart + 1,
+                    style = covering.style.merge(firstLetterStyle)
+                )
+                val tail = covering.copy(start = styleStart + 1)
+                result.add(coveringIndex + 1, tail)
+                head
+            } else {
+                covering.copy(style = covering.style.merge(firstLetterStyle))
+            }
+        } else {
+            result += SemanticSpan(
+                start = styleStart,
+                end = styleStart + 1,
+                style = firstLetterStyle,
+                tag = "::first-letter",
+                elementId = element.id().ifBlank { null }
+            )
+        }
+        return result
     }
 
     private fun buildSemanticTextAndSpansFromNodes(
@@ -1048,30 +1108,12 @@ private class SemanticHtmlParser(
             }
         }
 
-        fun materializeCssContent(rawContent: String?, element: Element): String? {
-            if (rawContent.isNullOrBlank()) return null
-            val content = rawContent.trim()
-            if (content == "none" || content == "normal") return null
-            val tokens = Regex("""attr\(([^)]+)\)|"((?:\\.|[^"])*)"|'((?:\\.|[^'])*)'""")
-                .findAll(content)
-                .mapNotNull { match ->
-                    when {
-                        match.groupValues[1].isNotBlank() -> element.attr(match.groupValues[1].trim()).ifBlank { null }
-                        match.groupValues[2].isNotBlank() -> match.groupValues[2].replace("\\\"", "\"")
-                        match.groupValues[3].isNotBlank() -> match.groupValues[3].replace("\\'", "'")
-                        else -> null
-                    }
-                }
-                .toList()
-            return tokens.joinToString("").ifBlank {
-                content.removeSurrounding("\"").removeSurrounding("'").takeIf { it.isNotBlank() }
-            }
-        }
-
         fun appendGeneratedContent(element: Element, inheritedStyle: CssStyle, pseudoElement: String) {
             val generatedStyle = getPseudoElementStyle(element, pseudoElement, inheritedStyle)
             if (generatedStyle.display == "none") return
-            val text = materializeCssContent(generatedStyle.content, element) ?: return
+            val text = materializeCssGeneratedContent(generatedStyle.content) { attribute ->
+                element.attr(attribute).ifBlank { null }
+            } ?: return
             val start = textBuilder.length
             appendTransformedText(text, generatedStyle)
             val end = textBuilder.length

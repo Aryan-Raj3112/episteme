@@ -5,6 +5,7 @@ import kotlin.math.pow
 
 const val PDF_MIN_ZOOM_SCALE = 1f
 const val PDF_MAX_ZOOM_SCALE = 10f
+const val PDF_DOUBLE_TAP_ZOOM_SCALE = 2.5f
 const val PDF_ZOOM_RENDER_SETTLE_MILLIS = 120L
 
 data class PdfZoomPoint(val x: Float, val y: Float) {
@@ -85,7 +86,8 @@ fun pdfOneHandZoomScale(
     return (safeStart * 2f.pow(totalDragY / safeDistance)).coerceIn(minScale, maxScale)
 }
 
-fun pdfDoubleTapTargetScale(scale: Float): Float = if (scale > 1.1f) 1f else 2.5f
+fun pdfDoubleTapTargetScale(scale: Float): Float =
+    if (scale > 1.1f) PDF_MIN_ZOOM_SCALE else PDF_DOUBLE_TAP_ZOOM_SCALE
 
 fun PdfZoomCamera.isZoomed(minScale: Float = 1f): Boolean = scale > minScale + PdfZoomEpsilon
 

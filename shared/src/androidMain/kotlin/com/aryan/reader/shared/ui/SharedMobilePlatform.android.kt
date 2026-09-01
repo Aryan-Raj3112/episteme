@@ -17,15 +17,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.core.content.FileProvider
 import io.legere.pdfiumandroid.api.Bookmark
 import io.legere.pdfiumandroid.suspend.PdfDocumentKt
 import com.aryan.reader.shared.BookItem
+import com.aryan.reader.shared.AndroidShareArtifactManager
 import com.aryan.reader.shared.PdfTocEntry
 import com.aryan.reader.shared.ReaderExternalLookupAction
 import com.aryan.reader.shared.ReaderTtsChunk
 import com.aryan.reader.shared.ReaderTtsProgress
 import com.aryan.reader.shared.externalLookupUrl
+import com.aryan.reader.shared.isReaderExternalHref
+import com.aryan.reader.shared.normalizeReaderHref
 import com.aryan.reader.shared.pdf.PdfTextPageSession
 import com.aryan.reader.shared.pdf.SharedPdfSearchResult
 import com.aryan.reader.shared.pdf.SharedPdfSearchIndex
@@ -36,6 +38,7 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonPrimitive
+import org.json.JSONObject
 import java.io.File
 import java.text.DateFormat
 import java.util.Date
@@ -47,7 +50,7 @@ private object AndroidSharedMobileContext {
 internal fun sharedAndroidMobileApplicationContext(): Context? =
     AndroidSharedMobileContext.applicationContext
 
-internal fun registerSharedAndroidMobileApplicationContext(context: Context) {
+fun registerSharedAndroidMobileApplicationContext(context: Context) {
     AndroidSharedMobileContext.applicationContext = context.applicationContext
 }
 
@@ -123,11 +126,18 @@ internal actual fun SharedMobileEpubWebView(
     navigationScript: String?,
     navigationRequestId: Long,
     onBridgeMessage: (method: String, payload: String) -> Unit,
+    positionController: SharedMobileEpubWebViewController?,
+    streamPageLoader: SharedMobileEpubStreamPageLoader?,
+    streamPageUnavailableLabel: String,
     modifier: Modifier,
 ) {
     rememberAndroidSharedMobileContext()
     val coordinator = remember { AndroidEpubWebViewCoordinator(onBridgeMessage) }
     coordinator.onBridgeMessage = onBridgeMessage
+    DisposableEffect(positionController, coordinator) {
+        positionController?.attach { callback -> coordinator.captureCurrentLocator(callback) }
+        onDispose { positionController?.detach() }
+    }
     AndroidView(
         modifier = modifier,
         factory = coordinator::createWebView,
@@ -142,7 +152,8 @@ private class AndroidEpubBridge(
     private val coordinator: AndroidEpubWebViewCoordinator,
 ) {
     @JavascriptInterface
-    fun callNative(method: String, payload: String) = coordinator.handleBridgeMessage(method, payload)
+    fun callNative(method: String, payload: String): Boolean =
+        coordinator.handleBridgeMessage(method, payload)
 }
 
 private class AndroidEpubWebViewCoordinator(
@@ -179,9 +190,9 @@ private class AndroidEpubWebViewCoordinator(
             }
 
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                val scheme = request.url.scheme.orEmpty().lowercase()
-                return if (scheme == "http" || scheme == "https" || scheme == "mailto") {
-                    openSharedMobileEpubExternalLink(request.url.toString())
+                val url = normalizeReaderHref(request.url.toString())
+                return if (isReaderExternalHref(url)) {
+                    openSharedMobileEpubExternalLink(url)
                     true
                 } else {
                     false
@@ -223,20 +234,44 @@ private class AndroidEpubWebViewCoordinator(
         }
     }
 
-    fun handleBridgeMessage(method: String, payload: String) {
+    fun handleBridgeMessage(method: String, payload: String): Boolean {
+        if (method == "readerCopyText") {
+            val text = runCatching { JSONObject(payload).optString("text") }
+                .getOrNull()
+                ?.takeIf { it.isNotEmpty() }
+                ?: return false
+            return writeSharedClipboard(
+                label = "Copied Text",
+                text = text,
+            ).success
+        }
         if (method == "readerChunkRequested") {
             val index = AndroidEpubChunkIndexRegex.find(payload)
-                ?.groupValues?.getOrNull(1)?.toIntOrNull() ?: return
-            val chunk = contentChunks.getOrNull(index) ?: return
+                ?.groupValues?.getOrNull(1)?.toIntOrNull() ?: return false
+            val chunk = contentChunks.getOrNull(index) ?: return false
             activeWebView?.post {
                 activeWebView?.evaluateJavascript(
                     "window.readerVirtualization && window.readerVirtualization.provideChunk($index, ${JsonPrimitive(chunk)});",
                     null,
                 )
             }
-            return
+            return true
         }
         onBridgeMessage(method, payload)
+        return true
+    }
+
+    fun captureCurrentLocator(callback: (String?) -> Unit) {
+        val webView = activeWebView
+        if (webView == null) {
+            callback(null)
+            return
+        }
+        webView.post {
+            webView.evaluateJavascript(SharedMobileEpubCaptureCurrentPositionScript) { raw ->
+                callback(decodeSharedMobileJavascriptResult(raw))
+            }
+        }
     }
 
     fun release(webView: WebView) {
@@ -255,7 +290,7 @@ private val AndroidEpubBridgeBootstrapScript = """
     (function () {
       window.kmpJsBridge = {
         callNative: function (method, payload) {
-          try { window.$AndroidEpubBridgeName.callNative(String(method || ''), String(payload || '{}')); } catch (_) {}
+          try { return window.$AndroidEpubBridgeName.callNative(String(method || ''), String(payload || '{}')); } catch (_) { return false; }
         }
       };
       window.readerDisableLinkFallback = true;
@@ -271,11 +306,10 @@ internal actual fun shareSharedMobileEpubImage(bytes: ByteArray, fileName: Strin
     if (bytes.isEmpty()) return false
     val context = AndroidSharedMobileContext.applicationContext ?: return false
     return runCatching {
-        val safeName = fileName.replace(Regex("[^A-Za-z0-9._-]+"), "_").ifBlank { "image.png" }
-        val directory = File(context.cacheDir, "shared_files").apply { mkdirs() }
-        val file = File(directory, safeName).apply { writeBytes(bytes) }
-        val uri = FileProvider.getUriForFile(context, "${context.packageName}.provider", file)
-        val mimeType = when (file.extension.lowercase()) {
+        val artifact = AndroidShareArtifactManager.create(context, fileName, write = { output ->
+            output.write(bytes)
+        })
+        val mimeType = when (artifact.fileName.substringAfterLast('.', "").lowercase()) {
             "svg" -> "image/svg+xml"
             "jpg", "jpeg" -> "image/jpeg"
             "gif" -> "image/gif"
@@ -284,11 +318,7 @@ internal actual fun shareSharedMobileEpubImage(bytes: ByteArray, fileName: Strin
         }
         context.startActivity(
             Intent.createChooser(
-                Intent(Intent.ACTION_SEND).apply {
-                    type = mimeType
-                    putExtra(Intent.EXTRA_STREAM, uri)
-                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                },
+                AndroidShareArtifactManager.buildShareIntent(artifact, mimeType),
                 null,
             ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
         )
@@ -300,9 +330,10 @@ internal actual fun openSharedMobileExternalUrl(url: String): Boolean = openAndr
 
 private fun openAndroidUrl(url: String): Boolean {
     val context = AndroidSharedMobileContext.applicationContext ?: return false
+    val normalized = normalizeReaderHref(url)
     return runCatching {
         context.startActivity(
-            Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            Intent(Intent.ACTION_VIEW, Uri.parse(normalized)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
         )
         true
     }.getOrDefault(false)

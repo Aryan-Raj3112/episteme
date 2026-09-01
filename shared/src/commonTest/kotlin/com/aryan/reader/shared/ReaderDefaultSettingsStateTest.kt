@@ -3,14 +3,23 @@ package com.aryan.reader.shared
 import com.aryan.reader.shared.reader.ReaderReadingMode
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.SharedReaderTextAlign
+import com.aryan.reader.shared.reader.DefaultPdfReaderSettings
+import com.aryan.reader.shared.pdf.PdfReverseColorMode
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 
 class ReaderDefaultSettingsStateTest {
 
     @Test
     fun `epub reader defaults to vertical mode`() {
         assertEquals(ReaderReadingMode.VERTICAL, ReaderSettings().readingMode)
+    }
+
+    @Test
+    fun `pdf defaults to sync system ui while epub defaults to system default`() {
+        assertEquals(SystemUiMode.SYNC, DefaultPdfReaderSettings.systemUiMode)
+        assertEquals(SystemUiMode.DEFAULT, ReaderSettings().systemUiMode)
     }
 
     @Test
@@ -74,7 +83,9 @@ class ReaderDefaultSettingsStateTest {
         val pdfDefaults = ReaderSettings(
             themeId = "reverse",
             pdfFirstPageStandaloneInSpread = true,
-            rightToLeftPagination = true
+            rightToLeftPagination = true,
+            pdfReverseColorMode = PdfReverseColorMode.LUMA_SYMMETRIC,
+            pdfPreserveImageColors = true
         )
 
         val decoded = SharedLibrarySnapshotJson.decodeOrEmpty(
@@ -88,5 +99,22 @@ class ReaderDefaultSettingsStateTest {
 
         assertEquals(epubDefaults, decoded.readerDefaultSettings)
         assertEquals(pdfDefaults, decoded.pdfReaderDefaultSettings)
+    }
+
+    @Test
+    fun `legacy pdf defaults keep Android tap to turn default disabled`() {
+        val decoded = SharedLibrarySnapshotJson.decodeOrEmpty(
+            """
+            {
+              "pdfReaderDefaultSettings": {
+                "themeId": "no_theme"
+              }
+            }
+            """.trimIndent()
+        )
+
+        assertFalse(DefaultPdfReaderSettings.tapToNavigateEnabled)
+        assertFalse(SharedReaderScreenState().pdfReaderDefaultSettings.tapToNavigateEnabled)
+        assertFalse(decoded.pdfReaderDefaultSettings.tapToNavigateEnabled)
     }
 }

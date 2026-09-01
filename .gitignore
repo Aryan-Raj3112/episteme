@@ -15,7 +15,20 @@ build/
 .cxx
 local.properties
 .env
+.env.*
+!.env.example
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+.wrangler/
 *.jks
+*.p8
+*.p12
+*.pem
+*.mobileprovision
+Secrets.xcconfig
+*.secrets.xcconfig
+gradle.properties
 google-services.json
 .kotlin/
 .idea/
@@ -37,3 +50,4 @@ iosApp/Reader/GoogleService-Info.plist
 DerivedData/
 .swiftpm/
 *.xcresult
+/docs

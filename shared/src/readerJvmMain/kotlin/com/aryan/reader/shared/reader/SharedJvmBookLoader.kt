@@ -74,8 +74,8 @@ private fun IntRange.toOpenTraceRangeKey(): String {
 }
 
 object SharedJvmBookLoader {
-    private val persistentBookCache = SharedJvmBookLoadCache()
-    private val loadedBookCache = SharedJvmLruMemoryCache<SharedJvmBookLoadCacheKey, SharedEpubBook>(maxEntries = 12)
+    private val persistentBookCache = SharedBookLoadCache()
+    private val loadedBookCache = SharedLruMemoryCache<SharedBookLoadCacheKey, SharedEpubBook>(maxEntries = 12)
     private val htmlPageBreakRegex = Regex("(?is)<page-break\\b[^>]*>(?:\\s*</page-break>)?")
 
     fun load(
@@ -83,13 +83,13 @@ object SharedJvmBookLoader {
         type: FileType,
         titleOverride: String? = null,
         authorOverride: String? = null,
-        semanticMode: SharedJvmBookLoadSemanticMode = SharedJvmBookLoadSemanticMode.FULL,
+        semanticMode: SharedBookLoadSemanticMode = SharedBookLoadSemanticMode.FULL,
         preparedHtmlChapterRange: IntRange? = null
     ): SharedEpubBook {
         val loadStartedAt = System.nanoTime()
         require(file.isFile) { "Missing reader file: ${file.absolutePath}" }
         val preparedHtmlChapterRangeKey = preparedHtmlChapterRange?.toOpenTraceRangeKey()
-        val key = SharedJvmBookLoadCacheKey(
+        val key = SharedBookLoadCacheKey(
             canonicalPath = file.canonicalPath,
             type = type,
             length = file.length(),
@@ -132,7 +132,7 @@ object SharedJvmBookLoader {
             val parsed = when (type) {
                 FileType.EPUB -> loadEpub(
                     file = file,
-                    parseSemanticBlocks = semanticMode == SharedJvmBookLoadSemanticMode.FULL,
+                    parseSemanticBlocks = semanticMode == SharedBookLoadSemanticMode.FULL,
                     preparedHtmlChapterRange = preparedHtmlChapterRange
                 )
                 FileType.HTML -> loadHtml(file)
@@ -187,7 +187,7 @@ object SharedJvmBookLoader {
             type = FileType.EPUB,
             titleOverride = book.title,
             authorOverride = book.author,
-            semanticMode = SharedJvmBookLoadSemanticMode.SKIP,
+            semanticMode = SharedBookLoadSemanticMode.SKIP,
             preparedHtmlChapterRange = safeRange
         )
         if (prepared.chapters.isEmpty()) return book
@@ -1609,11 +1609,7 @@ object SharedJvmBookLoader {
         }
     }
 
-    private fun File.readTextLenient(): String {
-        val bytes = readBytes()
-        return bytes.toString(Charsets.UTF_8).takeIf { '\uFFFD' !in it }
-            ?: bytes.toString(Charset.forName("windows-1252"))
-    }
+    private fun File.readTextLenient(): String = SharedTextDecoding.decode(readBytes())
 
     private fun String.extractBodyOrSelf(): String {
         return Regex("(?is)<body\\b[^>]*>(.*?)</body>")

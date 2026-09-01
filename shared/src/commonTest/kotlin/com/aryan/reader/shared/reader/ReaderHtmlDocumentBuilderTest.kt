@@ -29,6 +29,17 @@ import kotlin.test.assertTrue
 class ReaderHtmlDocumentBuilderTest {
 
     @Test
+    fun `selection copy reports async failures and uses native fallback`() {
+        val script = readerHtmlSelectionScript()
+
+        assertTrue(script.contains("navigator.clipboard.writeText(text)"))
+        assertTrue(script.contains(".catch(function (error)"))
+        assertTrue(script.contains("document.execCommand('copy')"))
+        assertTrue(script.contains("readerCopyText"))
+        assertTrue(script.contains("READER_COPY failed"))
+    }
+
+    @Test
     fun `vertical position reports are throttled during scrolling instead of deferred until scroll stops`() {
         val html = ReaderHtmlDocumentBuilder.verticalDocument(
             book = repeatedWordBook("alpha beta"),
@@ -48,6 +59,26 @@ class ReaderHtmlDocumentBuilderTest {
         )
 
         assertTrue(html.contains("--reader-align: right;"))
+    }
+
+    @Test
+    fun `reader documents neutralize publication root height rules in both reading modes`() {
+        val verticalHtml = ReaderHtmlDocumentBuilder.verticalDocument(
+            book = repeatedWordBook("alpha beta"),
+            settings = ReaderSettings(readingMode = ReaderReadingMode.VERTICAL),
+        )
+        val paginatedHtml = ReaderHtmlDocumentBuilder.pageDocument(
+            book = repeatedWordBook("alpha beta"),
+            page = ReaderPage(0, 0, "One", "alpha beta", 0, 10),
+            settings = ReaderSettings(readingMode = ReaderReadingMode.PAGINATED)
+        )
+
+        val expectedSelectors = listOf("html.reader-vertical-root,", "html.reader-paginated-root {")
+        listOf(verticalHtml, paginatedHtml).forEach { html ->
+            expectedSelectors.forEach { selector -> assertTrue(html.contains(selector)) }
+            assertTrue(html.contains("height: auto !important;"))
+        }
+        assertTrue(verticalHtml.contains("body.reader-vertical {"))
     }
 
     @Test
@@ -622,6 +653,7 @@ class ReaderHtmlDocumentBuilderTest {
             "body\\.reader-vertical \\{\\s*" +
                 "width: 100%;\\s*" +
                 "max-width: 100%;\\s*" +
+                "height: auto !important;\\s*" +
                 "min-height: 100vh;\\s*" +
                 "min-height: 100dvh;\\s*" +
                 "min-width: 0;\\s*" +
@@ -710,6 +742,35 @@ class ReaderHtmlDocumentBuilderTest {
         assertTrue(script.contains("root.style.setProperty('--reader-image-scale', \"135%\");"))
         assertTrue(script.contains("root.style.setProperty('--reader-align', \"justify\");"))
         assertTrue(script.contains("root.style.setProperty('--reader-family', \"Georgia, 'Times New Roman', serif\");"))
+    }
+
+    @Test
+    fun hideImagesSettingTogglesCssVariableAndImageRuleAndAppearanceUpdateScript() {
+        val hiddenHtml = ReaderHtmlDocumentBuilder.verticalDocument(
+            book = repeatedWordBook("alpha beta"),
+            settings = ReaderSettings(hideImages = true),
+            pages = listOf(ReaderPage(0, 0, "One", "alpha", 0, 5))
+        )
+        val visibleHtml = ReaderHtmlDocumentBuilder.verticalDocument(
+            book = repeatedWordBook("alpha beta"),
+            settings = ReaderSettings(),
+            pages = listOf(ReaderPage(0, 0, "One", "alpha", 0, 5))
+        )
+
+        assertTrue(hiddenHtml.contains("--reader-hide-images: none;"))
+        assertTrue(visibleHtml.contains("--reader-hide-images: block;"))
+        assertTrue(hiddenHtml.contains("display: var(--reader-hide-images);"))
+
+        assertTrue(
+            ReaderHtmlDocumentBuilder.appearanceUpdateScript(
+                settings = ReaderSettings(hideImages = true)
+            ).contains("root.style.setProperty('--reader-hide-images', 'none');")
+        )
+        assertTrue(
+            ReaderHtmlDocumentBuilder.appearanceUpdateScript(
+                settings = ReaderSettings()
+            ).contains("root.style.setProperty('--reader-hide-images', 'block');")
+        )
     }
 
     @Test

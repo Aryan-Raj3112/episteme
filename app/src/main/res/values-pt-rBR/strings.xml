@@ -341,6 +341,7 @@
     <string name="banner_clearing_cloud_local_data">Limpando todos os dados da nuvem e locais…</string>
     <string name="banner_cloud_local_data_cleared">Todos os dados da nuvem e locais foram limpos com sucesso.</string>
     <string name="error_clear_all_data">Erro: falha ao limpar todos os dados.</string>
+    <string name="error_cloud_delete_pending">Não foi possível conectar à nuvem. Sua exclusão será concluída automaticamente na próxima vez que você estiver on-line.</string>
     <string name="banner_local_data_cleared">Todos os dados locais foram limpos.</string>
     <string name="error_sign_in_failed">Falha ao entrar. Tente novamente.</string>
     <string name="error_no_google_account">Não foi possível encontrar uma conta Google. Isso pode acontecer em uma instalação nova; tente novamente em instantes.</string>

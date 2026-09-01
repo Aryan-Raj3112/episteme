@@ -1,6 +1,7 @@
 package com.aryan.reader.shared
 
 import androidx.compose.ui.input.pointer.PointerEvent
+import com.aryan.reader.shared.ios.isIosPencilEraserOverrideEnabled
 import kotlinx.cinterop.alloc
 import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.ptr
@@ -16,4 +17,9 @@ actual fun currentTimestamp(): Long {
     }
 }
 
-actual fun sharedPdfStylusBarrelPressed(event: PointerEvent): Boolean = false
+actual fun sharedPdfStylusBarrelPressed(event: PointerEvent): Boolean {
+    // UIPencilInteraction exposes a discrete user gesture rather than a
+    // MotionEvent button bit. The shared renderer still checks the pointer
+    // type, so this can only affect Pencil strokes and never touch input.
+    return isIosPencilEraserOverrideEnabled()
+}

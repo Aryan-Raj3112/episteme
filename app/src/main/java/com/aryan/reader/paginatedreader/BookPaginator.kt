@@ -182,7 +182,9 @@ class BookPaginator(
     private val mathMLRenderer: MathMLRenderer,
     private val userTextAlign: TextAlign?,
     private val paragraphGapMultiplier: Float,
+    private val userLineHeightMultiplier: Float,
     private val imageSizeMultiplier: Float,
+    private val hideImages: Boolean = false,
     private val verticalMarginMultiplier: Float,
     private val bookReplacementPreferences: ReaderBookReplacementPreferences = ReaderBookReplacementPreferences(),
     private val bookReplacementFileId: String? = null
@@ -384,6 +386,7 @@ class BookPaginator(
                 "textAlign" to userTextAlign,
                 "paragraphGap" to paragraphGapMultiplier,
                 "imageScale" to imageSizeMultiplier,
+                "hideImages" to hideImages,
                 "verticalMargin" to verticalMarginMultiplier,
                 "bookReplacements" to bookReplacementPreferences.signatureForFile(bookReplacementFileId),
                 "processingVersion" to LATEST_PROCESSING_VERSION,
@@ -942,6 +945,7 @@ class BookPaginator(
             extractionBasePath = extractionBasePath,
             userTextAlign = userTextAlign,
             paragraphGapMultiplier = paragraphGapMultiplier,
+            userLineHeightMultiplier = userLineHeightMultiplier,
             adaptThemeColors = false
         )
 
@@ -993,127 +997,133 @@ class BookPaginator(
                 "htmlContentChars=${chapter.htmlContent.length} extractionBasePath=$extractionBasePath"
         )
 
-        var htmlToParse = chapter.htmlContent
-        if (htmlToParse.isEmpty()) {
-            val file = java.io.File(extractionBasePath, chapter.contentFilePath())
-            if (file.exists()) {
-                Timber.tag("ReflowPaginationDiag").d("getBlocksForChapter: Lazy loading content from disk for chapter $chapterIndex: ${file.name} (${file.length()} bytes)")
+        // The HTML/CSS parsing and semantic conversion below is heavily CPU-bound. This function
+        // is reachable from UI-dispatcher coroutines, so pin the work to the default dispatcher
+        // pool to keep the main thread responsive (the ANR traces showed jsoup parsing running
+        // inside Choreographer frames).
+        val styledBlocks = withContext(Dispatchers.Default) {
+            var htmlToParse = chapter.htmlContent
+            if (htmlToParse.isEmpty()) {
+                val file = java.io.File(extractionBasePath, chapter.contentFilePath())
+                if (file.exists()) {
+                    Timber.tag("ReflowPaginationDiag").d("getBlocksForChapter: Lazy loading content from disk for chapter $chapterIndex: ${file.name} (${file.length()} bytes)")
+                    try {
+                        htmlToParse = file.readText()
+                        val lazyHtmlHasProductEzoic = htmlToParse.contains("productEzoicAds", ignoreCase = true)
+                        Timber.tag("HtmlImportDebug").d(
+                            "paginator_lazy_html_loaded bookId=$bookId chapter=$chapterIndex file=${file.absolutePath} " +
+                                "fileBytes=${file.length()} htmlChars=${htmlToParse.length} productEzoic=$lazyHtmlHasProductEzoic"
+                        )
+                    } catch (e: Exception) {
+                        Timber.tag("ReflowPaginationDiag").e(e, "Failed to read lazy HTML file")
+                    }
+                } else {
+                    Timber.tag("ReflowPaginationDiag").w("getBlocksForChapter: htmlContent is empty and file not found: ${file.absolutePath}")
+                }
+            }
+
+            val txtTraceContainsPreWrap = htmlToParse.contains("white-space: pre-wrap") || htmlToParse.contains("white-space:pre-wrap")
+            val txtTraceContainsAlbumMarker = htmlToParse.contains("===========CD 1=============")
+            Timber.tag(TxtFormatTraceTag).d(
+                "event=android_paginator_html_input bookId=$bookId chapter=$chapterIndex title=${chapter.title.txtFormatTracePreview()} " +
+                    "htmlChars=${htmlToParse.length} newlines=${htmlToParse.count { it == '\n' }} " +
+                    "plainChars=${chapter.plainTextCharacterCount()} containsPreWrap=$txtTraceContainsPreWrap " +
+                    "containsAlbumMarker=$txtTraceContainsAlbumMarker preview=${htmlToParse.txtFormatTracePreview()}"
+            )
+            val document = Jsoup.parse(htmlToParse, chapter.absPath)
+            document.outputSettings().prettyPrint(false)
+            val htmlInputHasProductEzoic = htmlToParse.contains("productEzoicAds", ignoreCase = true)
+            val parsedBlockedNodeCount = document.select("script, style, noscript, template").size
+            val parsedBodyTextHasProductEzoic = document.body().text().contains("productEzoicAds", ignoreCase = true)
+            Timber.tag("HtmlImportDebug").d(
+                "paginator_jsoup_parsed bookId=$bookId chapter=$chapterIndex htmlChars=${htmlToParse.length} " +
+                    "scriptNodes=$parsedBlockedNodeCount bodyTextHasProductEzoic=$parsedBodyTextHasProductEzoic " +
+                    "htmlHasProductEzoic=$htmlInputHasProductEzoic"
+            )
+            Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
+                "html_parse_input chapter=$chapterIndex htmlChars=${htmlToParse.length} " +
+                    document.readerHtmlLinkDiagSummary()
+            )
+            val mathElements = document.select("math")
+            val svgResults = mutableMapOf<String, String>()
+
+            if (mathElements.isNotEmpty()) {
+                mathElements.forEachIndexed { i, element ->
+                    val uniqueId = "math-ch${chapterIndex}-eq${i}"
+                    val altText = element.attr("alttext").ifBlank { "Equation" }
+                    val placeholder = Element("math-placeholder").attr("id", uniqueId)
+
+                    when (val result = mathMLRenderer.render(element.outerHtml(), altText)) {
+                        is RenderResult.Success -> svgResults[uniqueId] = result.svg
+                        is RenderResult.Failure -> placeholder.attr("alttext", result.altText)
+                    }
+                    element.replaceWith(placeholder)
+                }
+            }
+            applyBookReplacementsToHtmlDocument(
+                document = document,
+                preferences = bookReplacementPreferences,
+                fileId = bookReplacementFileId,
+            )
+            val processedHtml = document.outerHtml()
+
+            var parsingCssRules = OptimizedCssRules()
+            val uaResult = CssParser.parse(cssContent = userAgentStylesheet, cssPath = null, baseFontSizeSp = textStyle.fontSize.value, density = density.density, constraints = constraints, isDarkTheme = false, adaptThemeColors = false)
+            parsingCssRules = parsingCssRules.merge(uaResult.rules)
+            bookCss.forEach { (path, content) ->
+                val bookCssResult = CssParser.parse(cssContent = content, cssPath = path, baseFontSizeSp = textStyle.fontSize.value, density = density.density, constraints = constraints, isDarkTheme = false, adaptThemeColors = false)
+                parsingCssRules = parsingCssRules.merge(bookCssResult.rules)
+            }
+
+            val txtTraceProcessedHasInlinePreWrap = processedHtml.contains("white-space: pre-wrap !important")
+            Timber.tag(TxtFormatTraceTag).d(
+                "event=android_paginator_processed_html bookId=$bookId chapter=$chapterIndex " +
+                    "htmlChars=${processedHtml.length} newlines=${processedHtml.count { it == '\n' }} " +
+                    "containsInlinePreWrap=$txtTraceProcessedHasInlinePreWrap " +
+                    "containsAlbumMarker=${processedHtml.contains("===========CD 1=============")} " +
+                    "preview=${processedHtml.txtFormatTracePreview()}"
+            )
+
+            val semanticBlocks = androidHtmlToSemanticBlocks(
+                html = processedHtml,
+                cssRules = parsingCssRules,
+                textStyle = textStyle.copy(color = Color.Black),
+                chapterAbsPath = chapter.absPath,
+                extractionBasePath = extractionBasePath,
+                density = density,
+                fontFamilyMap = fontFamilyMap,
+                constraints = constraints,
+                mathSvgCache = svgResults,
+                adaptThemeColors = false
+            )
+            Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
+                "semantic_parse_result chapter=$chapterIndex " +
+                    semanticBlocks.readerSemanticLinkDiagSummary()
+            )
+            val firstTxtSemantic = semanticBlocks.filterIsInstance<SemanticTextBlock>()
+                .firstOrNull { it.text.contains("===========CD 1=============") || it.text.contains("[ID]") }
+            Timber.tag(TxtFormatTraceTag).d(
+                "event=android_paginator_semantic_result bookId=$bookId chapter=$chapterIndex " +
+                    "textBlocks=${semanticBlocks.filterIsInstance<SemanticTextBlock>().size} " +
+                    "firstTxtChars=${firstTxtSemantic?.text?.length ?: 0} " +
+                    "firstTxtNewlines=${firstTxtSemantic?.text?.count { it == '\n' } ?: 0} " +
+                    "firstTxtHasRepeatedSpaces=${firstTxtSemantic?.text?.let { Regex(" {2,}").containsMatchIn(it) } == true} " +
+                    "preview=${firstTxtSemantic?.text.orEmpty().txtFormatTracePreview()}"
+            )
+
+            withContext(NonCancellable + Dispatchers.IO) {
                 try {
-                    htmlToParse = file.readText()
-                    val lazyHtmlHasProductEzoic = htmlToParse.contains("productEzoicAds", ignoreCase = true)
-                    Timber.tag("HtmlImportDebug").d(
-                        "paginator_lazy_html_loaded bookId=$bookId chapter=$chapterIndex file=${file.absolutePath} " +
-                            "fileBytes=${file.length()} htmlChars=${htmlToParse.length} productEzoic=$lazyHtmlHasProductEzoic"
-                    )
+                    val protoBytes = proto.encodeToByteArray(semanticBlocks)
+                    val newCacheEntry = ProcessedChapter(bookId, chapterIndex, protoBytes, chapterPageCounts[chapterIndex] ?: 0, currentConfigHash)
+                    bookCacheDao.insertProcessedChapters(listOf(newCacheEntry))
+                    Timber.i("Successfully cached SEMANTIC content for chapter $chapterIndex.")
                 } catch (e: Exception) {
-                    Timber.tag("ReflowPaginationDiag").e(e, "Failed to read lazy HTML file")
+                    Timber.e(e, "Failed to serialize and cache on-demand semantic chapter $chapterIndex")
                 }
-            } else {
-                Timber.tag("ReflowPaginationDiag").w("getBlocksForChapter: htmlContent is empty and file not found: ${file.absolutePath}")
             }
+
+            styler.style(semanticBlocks)
         }
-
-        val txtTraceContainsPreWrap = htmlToParse.contains("white-space: pre-wrap") || htmlToParse.contains("white-space:pre-wrap")
-        val txtTraceContainsAlbumMarker = htmlToParse.contains("===========CD 1=============")
-        Timber.tag(TxtFormatTraceTag).d(
-            "event=android_paginator_html_input bookId=$bookId chapter=$chapterIndex title=${chapter.title.txtFormatTracePreview()} " +
-                "htmlChars=${htmlToParse.length} newlines=${htmlToParse.count { it == '\n' }} " +
-                "plainChars=${chapter.plainTextCharacterCount()} containsPreWrap=$txtTraceContainsPreWrap " +
-                "containsAlbumMarker=$txtTraceContainsAlbumMarker preview=${htmlToParse.txtFormatTracePreview()}"
-        )
-        val document = Jsoup.parse(htmlToParse, chapter.absPath)
-        document.outputSettings().prettyPrint(false)
-        val htmlInputHasProductEzoic = htmlToParse.contains("productEzoicAds", ignoreCase = true)
-        val parsedBlockedNodeCount = document.select("script, style, noscript, template").size
-        val parsedBodyTextHasProductEzoic = document.body().text().contains("productEzoicAds", ignoreCase = true)
-        Timber.tag("HtmlImportDebug").d(
-            "paginator_jsoup_parsed bookId=$bookId chapter=$chapterIndex htmlChars=${htmlToParse.length} " +
-                "scriptNodes=$parsedBlockedNodeCount bodyTextHasProductEzoic=$parsedBodyTextHasProductEzoic " +
-                "htmlHasProductEzoic=$htmlInputHasProductEzoic"
-        )
-        Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
-            "html_parse_input chapter=$chapterIndex htmlChars=${htmlToParse.length} " +
-                document.readerHtmlLinkDiagSummary()
-        )
-        val mathElements = document.select("math")
-        val svgResults = mutableMapOf<String, String>()
-
-        if (mathElements.isNotEmpty()) {
-            mathElements.forEachIndexed { i, element ->
-                val uniqueId = "math-ch${chapterIndex}-eq${i}"
-                val altText = element.attr("alttext").ifBlank { "Equation" }
-                val placeholder = Element("math-placeholder").attr("id", uniqueId)
-
-                when (val result = mathMLRenderer.render(element.outerHtml(), altText)) {
-                    is RenderResult.Success -> svgResults[uniqueId] = result.svg
-                    is RenderResult.Failure -> placeholder.attr("alttext", result.altText)
-                }
-                element.replaceWith(placeholder)
-            }
-        }
-        applyBookReplacementsToHtmlDocument(
-            document = document,
-            preferences = bookReplacementPreferences,
-            fileId = bookReplacementFileId,
-        )
-        val processedHtml = document.outerHtml()
-
-        var parsingCssRules = OptimizedCssRules()
-        val uaResult = CssParser.parse(cssContent = userAgentStylesheet, cssPath = null, baseFontSizeSp = textStyle.fontSize.value, density = density.density, constraints = constraints, isDarkTheme = false, adaptThemeColors = false)
-        parsingCssRules = parsingCssRules.merge(uaResult.rules)
-        bookCss.forEach { (path, content) ->
-            val bookCssResult = CssParser.parse(cssContent = content, cssPath = path, baseFontSizeSp = textStyle.fontSize.value, density = density.density, constraints = constraints, isDarkTheme = false, adaptThemeColors = false)
-            parsingCssRules = parsingCssRules.merge(bookCssResult.rules)
-        }
-
-        val txtTraceProcessedHasInlinePreWrap = processedHtml.contains("white-space: pre-wrap !important")
-        Timber.tag(TxtFormatTraceTag).d(
-            "event=android_paginator_processed_html bookId=$bookId chapter=$chapterIndex " +
-                "htmlChars=${processedHtml.length} newlines=${processedHtml.count { it == '\n' }} " +
-                "containsInlinePreWrap=$txtTraceProcessedHasInlinePreWrap " +
-                "containsAlbumMarker=${processedHtml.contains("===========CD 1=============")} " +
-                "preview=${processedHtml.txtFormatTracePreview()}"
-        )
-
-        val semanticBlocks = androidHtmlToSemanticBlocks(
-            html = processedHtml,
-            cssRules = parsingCssRules,
-            textStyle = textStyle.copy(color = Color.Black),
-            chapterAbsPath = chapter.absPath,
-            extractionBasePath = extractionBasePath,
-            density = density,
-            fontFamilyMap = fontFamilyMap,
-            constraints = constraints,
-            mathSvgCache = svgResults,
-            adaptThemeColors = false
-        )
-        Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
-            "semantic_parse_result chapter=$chapterIndex " +
-                semanticBlocks.readerSemanticLinkDiagSummary()
-        )
-        val firstTxtSemantic = semanticBlocks.filterIsInstance<SemanticTextBlock>()
-            .firstOrNull { it.text.contains("===========CD 1=============") || it.text.contains("[ID]") }
-        Timber.tag(TxtFormatTraceTag).d(
-            "event=android_paginator_semantic_result bookId=$bookId chapter=$chapterIndex " +
-                "textBlocks=${semanticBlocks.filterIsInstance<SemanticTextBlock>().size} " +
-                "firstTxtChars=${firstTxtSemantic?.text?.length ?: 0} " +
-                "firstTxtNewlines=${firstTxtSemantic?.text?.count { it == '\n' } ?: 0} " +
-                "firstTxtHasRepeatedSpaces=${firstTxtSemantic?.text?.let { Regex(" {2,}").containsMatchIn(it) } == true} " +
-                "preview=${firstTxtSemantic?.text.orEmpty().txtFormatTracePreview()}"
-        )
-
-        withContext(NonCancellable + Dispatchers.IO) {
-            try {
-                val protoBytes = proto.encodeToByteArray(semanticBlocks)
-                val newCacheEntry = ProcessedChapter(bookId, chapterIndex, protoBytes, chapterPageCounts[chapterIndex] ?: 0, currentConfigHash)
-                bookCacheDao.insertProcessedChapters(listOf(newCacheEntry))
-                Timber.i("Successfully cached SEMANTIC content for chapter $chapterIndex.")
-            } catch (e: Exception) {
-                Timber.e(e, "Failed to serialize and cache on-demand semantic chapter $chapterIndex")
-            }
-        }
-
-        val styledBlocks = styler.style(semanticBlocks)
         Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
             "content_parse_result chapter=$chapterIndex " +
                 styledBlocks.readerContentLinkDiagSummary()
@@ -1410,7 +1420,8 @@ class BookPaginator(
             constraints = constraints,
             textStyle = textStyle,
             density = density,
-            imageSizeMultiplier = imageSizeMultiplier
+            imageSizeMultiplier = imageSizeMultiplier,
+            hideImages = hideImages
         )
         Timber.d("paginateChapter: Calling PaginatorLogic for chapter $chapterIndex.")
         val pages = paginate(

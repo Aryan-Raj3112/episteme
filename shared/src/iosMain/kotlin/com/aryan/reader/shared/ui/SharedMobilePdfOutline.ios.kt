@@ -20,9 +20,6 @@ import kotlinx.cinterop.ByteVar
 import kotlinx.cinterop.allocArray
 import kotlinx.cinterop.get
 import kotlinx.cinterop.memScoped
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withContext
 import platform.Foundation.NSFileManager
 import platform.Foundation.NSURL
 
@@ -34,9 +31,8 @@ internal actual suspend fun loadSharedMobilePdfOutline(
         if (value.startsWith("file://")) NSURL.URLWithString(value)?.path ?: value.removePrefix("file://") else value
     } ?: return emptyList()
     if (!NSFileManager.defaultManager.fileExistsAtPath(path)) return emptyList()
-    return withContext(Dispatchers.Main) { IosPdfiumRuntime.mutex.withLock {
-        IosPdfiumRuntime.ensureInitialized()
-        val document = FPDF_LoadDocument(path, password) ?: return@withLock emptyList()
+    return IosPdfiumRuntime.withPdfium {
+        val document = FPDF_LoadDocument(path, password) ?: return@withPdfium emptyList()
         try {
         val result = mutableListOf<PdfTocEntry>()
         fun titleOf(bookmark: com.aryan.reader.shared.pdfium.c.FPDF_BOOKMARK): String = memScoped {
@@ -85,5 +81,5 @@ internal actual suspend fun loadSharedMobilePdfOutline(
         } finally {
             FPDF_CloseDocument(document)
         }
-    } }
+    }
 }

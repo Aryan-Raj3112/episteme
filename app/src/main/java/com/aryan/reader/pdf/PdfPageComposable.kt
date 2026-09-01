@@ -6,6 +6,7 @@ package com.aryan.reader.pdf
 
 import com.aryan.reader.shared.ReaderTheme
 import com.aryan.reader.shared.pdf.PDF_MAX_ZOOM_SCALE
+import com.aryan.reader.shared.pdf.pdfDoubleTapTargetScale
 import com.aryan.reader.shared.pdf.pdfZoomRenderScale
 
 import android.graphics.Bitmap
@@ -100,6 +101,7 @@ import com.aryan.reader.pdf.ocr.OcrElement
 import com.aryan.reader.pdf.ocr.OcrResult
 import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.pdf.PdfSelectionHandle
+import com.aryan.reader.shared.pdf.PdfReverseColorMode
 import com.aryan.reader.shared.pdf.PdfSelectionGeometry
 import com.aryan.reader.shared.pdf.PdfTextSelectionEngine
 import com.aryan.reader.shared.pdf.PdfTextSelectionRange
@@ -160,6 +162,7 @@ data class PageStaticData(
     val colorFilter: StableHolder<ColorFilter?>,
     val isDarkMode: Boolean,
     val excludeImages: Boolean,
+    val reverseColorMode: PdfReverseColorMode,
     val imageRects: StableHolder<List<android.graphics.Rect>>,
     val textureBitmap: StableHolder<ImageBitmap?>,
     val textureAlpha: Float,
@@ -238,10 +241,12 @@ internal fun PdfPageComposable(
     activeTheme: ReaderTheme = ReaderTheme("no_theme", "No Theme", Color.Unspecified, Color.Unspecified, false),
     activeTextureAlpha: Float = 0.55f,
     excludeImages: Boolean = false,
+    reverseColorMode: PdfReverseColorMode = PdfReverseColorMode.RGB,
     onDoubleTap: ((Offset) -> Unit)? = null,
     onDoubleTapDragZoomStart: ((Offset) -> Unit)? = null,
     onDoubleTapDragZoom: ((Offset, Float) -> Unit)? = null,
     onDoubleTapDragZoomEnd: (() -> Unit)? = null,
+    doubleTapReaderCoordinates: (() -> LayoutCoordinates?)? = null,
     isEditMode: Boolean = false,
     drawingState: PdfDrawingState? = null,
     pageAnnotations: () -> List<PdfAnnotation> = { emptyList() },
@@ -347,6 +352,7 @@ internal fun PdfPageComposable(
     val currentOnDoubleTapDragZoomStart by rememberUpdatedState(onDoubleTapDragZoomStart)
     val currentOnDoubleTapDragZoom by rememberUpdatedState(onDoubleTapDragZoom)
     val currentOnDoubleTapDragZoomEnd by rememberUpdatedState(onDoubleTapDragZoomEnd)
+    val currentOnTwoFingerSwipe by rememberUpdatedState(onTwoFingerSwipe)
 
     val effectiveScale = if (isZoomEnabled && !isVerticalScroll) scale else externalScale
     val effectiveOffset = if (isZoomEnabled && !isVerticalScroll) offset else Offset.Zero
@@ -443,11 +449,17 @@ internal fun PdfPageComposable(
     val canvasHeightPx = remember { mutableFloatStateOf(0f) }
 
     val isDarkMode = activeTheme.isDark || activeTheme.id == "reverse"
-
-    val colorFilter = remember(activeTheme) {
+    // The reverse-color mode only has meaning for the PDF reverse theme. Keep a
+    // persisted mode inert while another theme is selected.
+    val effectiveReverseColorMode = if (activeTheme.id == "reverse") {
+        reverseColorMode
+    } else {
+        PdfReverseColorMode.RGB
+    }
+    val colorFilter = remember(activeTheme, effectiveReverseColorMode) {
         when (activeTheme.id) {
             "no_theme", "system" -> null
-            "reverse" -> {
+            "reverse" if (effectiveReverseColorMode == PdfReverseColorMode.RGB) -> {
                 val colorMatrix = floatArrayOf(
                     -1f,  0f,  0f,  0f, 255f,
                     0f, -1f,  0f,  0f, 255f,
@@ -456,6 +468,10 @@ internal fun PdfPageComposable(
                 )
                 ColorFilter.colorMatrix(ColorMatrix(colorMatrix))
             }
+            // The Okular lightness/luma modes are baked into the page and tile
+            // bitmaps off the main thread. Applying the legacy theme matrix on
+            // top would erase hue/chroma and effectively transform twice.
+            "reverse" -> null
             else -> {
                 val bgR = activeTheme.backgroundColor.red * 255f
                 val bgG = activeTheme.backgroundColor.green * 255f
@@ -610,7 +626,7 @@ internal fun PdfPageComposable(
             Timber.tag("BubbleZoom").d("Conditions NOT met or mode disabled. Clearing bubbles.")
             detectedBubbles = emptyList()
             expandedBubbleIndex = -1
-            expandedBubbleRender?.bitmap?.takeUnless { it.isRecycled }?.recycle()
+            safeRecyclePdfBitmap(expandedBubbleRender?.bitmap)
             expandedBubbleRender = null
             if (
                 shouldResetPdfZoomAfterBubbleZoomCleanup(
@@ -645,7 +661,7 @@ internal fun PdfPageComposable(
     ) {
         val previousRender = expandedBubbleRender
         expandedBubbleRender = null
-        previousRender?.bitmap?.takeUnless { it.isRecycled }?.recycle()
+        safeRecyclePdfBitmap(previousRender?.bitmap)
 
         if (!isBubbleZoomModeActive || !isPdfPage || animatingBubbleIndex !in detectedBubbles.indices) {
             return@LaunchedEffect
@@ -680,9 +696,9 @@ internal fun PdfPageComposable(
             val currentBitmap = bitmapState
             val cachedBitmap = PdfThumbnailCache.get(targetPageId)
             if (currentBitmap != null && !currentBitmap.isRecycled && currentBitmap !== cachedBitmap) {
-                currentBitmap.recycle()
+                safeRecyclePdfBitmap(currentBitmap)
             }
-            expandedBubbleRender?.bitmap?.takeUnless { it.isRecycled }?.recycle()
+            safeRecyclePdfBitmap(expandedBubbleRender?.bitmap)
         }
     }
 
@@ -888,6 +904,13 @@ internal fun PdfPageComposable(
     @Suppress("VariableNeverRead") var embeddedAnnotations by remember(targetPageId) { mutableStateOf<List<EmbeddedAnnotation>>(emptyList()) }
     var standardAnnotScreenRects by remember(targetPageId) { mutableStateOf<List<Pair<EmbeddedAnnotation, Rect>>>(emptyList()) }
     var imageScreenRects by remember(targetPageId) { mutableStateOf<List<android.graphics.Rect>>(emptyList()) }
+    val placeholderRenderBitmap = rememberPdfReverseBitmap(
+        bitmap = placeholderBitmap,
+        mode = effectiveReverseColorMode,
+        protectedRects = if (excludeImages) imageScreenRects else emptyList(),
+        targetWidth = actualBitmapWidthPx.takeIf { it > 0 } ?: placeholderBitmap?.width ?: 0,
+        targetHeight = actualBitmapHeightPx.takeIf { it > 0 } ?: placeholderBitmap?.height ?: 0,
+    )
 
     LaunchedEffect(pageIndex, pdfDocumentItem, actualBitmapWidthPx, actualBitmapHeightPx, virtualPage) {
         if (!isPdfPage || actualBitmapWidthPx == 0 || actualBitmapHeightPx == 0) {
@@ -1736,6 +1759,9 @@ internal fun PdfPageComposable(
 
     LaunchedEffect(resetZoomTrigger) {
         if (resetZoomTrigger != 0L && scale > 1f && isZoomEnabled && !isVerticalScroll && !isScrollLocked) {
+            pdfSplitZoomDiag(
+                "page.resetZoomTrigger page=$pageIndex from=${scale.diagF()} trigger=$resetZoomTrigger"
+            )
             coroutineScope.launch {
                 val startScale = scale
                 val startOffset = offset
@@ -1902,7 +1928,7 @@ internal fun PdfPageComposable(
 
                                                 if (targetSymbolIndex != -1) {
                                                     ocrSelectionSymbolIndices?.let { currentRange ->
-                                                        val sharedHandle = when (activeDraggingHandle) {
+                                                        val sharedHandle = when (val activeHandle = activeDraggingHandle) {
                                                             Handle.START -> PdfSelectionHandle.START
                                                             Handle.END -> PdfSelectionHandle.END
                                                             null -> null
@@ -2038,7 +2064,7 @@ internal fun PdfPageComposable(
 
                                                     val currentRange = selectionCharRange.value
                                                     if (currentRange != null) {
-                                                        val sharedHandle = when (activeDraggingHandle) {
+                                                        val sharedHandle = when (val activeHandle = activeDraggingHandle) {
                                                             Handle.START -> PdfSelectionHandle.START
                                                             Handle.END -> PdfSelectionHandle.END
                                                             null -> null
@@ -2547,6 +2573,10 @@ internal fun PdfPageComposable(
                         "page.detector.disabled page=$pageIndex vertical=$isVerticalScroll edit=$isEditMode " +
                             "tool=$selectedTool stylusOnly=$isStylusOnlyMode"
                     )
+                    pdfSplitZoomDiag(
+                        "page.detectorDisabled page=$pageIndex vertical=$isVerticalScroll " +
+                            "edit=$isEditMode tool=$selectedTool stylusOnly=$isStylusOnlyMode"
+                    )
                     return@pointerInput
                 }
 
@@ -2558,7 +2588,7 @@ internal fun PdfPageComposable(
 
                 fun canZoomByDoubleTap(): Boolean {
                     return (isZoomEnabled && !isVerticalScroll && !isScrollLocked && actualBitmapWidthPx > 0) ||
-                        (isVerticalScroll && !isScrollLocked && currentOnDoubleTap != null)
+                        (isVerticalScroll && currentOnDoubleTap != null)
                 }
 
                 Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
@@ -2566,6 +2596,12 @@ internal fun PdfPageComposable(
                         "scrollLocked=$isScrollLocked bitmap=${actualBitmapWidthPx}x$actualBitmapHeightPx " +
                         "scale=$latestScale offset=$latestOffset hasDoubleTap=${currentOnDoubleTap != null} " +
                         "hasDragZoom=${currentOnDoubleTapDragZoom != null}"
+                )
+                pdfSplitZoomDiag(
+                    "page.detectorEnabled page=$pageIndex vertical=$isVerticalScroll " +
+                        "zoomEnabled=$isZoomEnabled scrollLocked=$isScrollLocked " +
+                        "bitmap=${actualBitmapWidthPx}x$actualBitmapHeightPx scale=${latestScale.diagF()} " +
+                        "hasDoubleTap=${currentOnDoubleTap != null}"
                 )
 
                 detectPdfTapAndOneHandZoomGestures(
@@ -2806,10 +2842,19 @@ internal fun PdfPageComposable(
                         "page=$pageIndex quickDoubleTap received vertical=$isVerticalScroll " +
                             "local=$tapOffset canZoom=${canZoomByDoubleTap()} scale=$latestScale"
                     )
+                    pdfSplitZoomDiag(
+                        "page.quickDoubleTapReceived page=$pageIndex vertical=$isVerticalScroll " +
+                            "scale=${latestScale.diagF()} offset=$tapOffset"
+                    )
                     if (!canZoomByDoubleTap()) {
                         Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
                             "page.quickDoubleTap.blocked page=$pageIndex vertical=$isVerticalScroll " +
                                 "zoomEnabled=$isZoomEnabled scrollLocked=$isScrollLocked bitmapWidth=$actualBitmapWidthPx"
+                        )
+                        pdfSplitZoomDiag(
+                            "page.quickDoubleTapBlocked page=$pageIndex vertical=$isVerticalScroll " +
+                                "zoomEnabled=$isZoomEnabled scrollLocked=$isScrollLocked " +
+                                "bitmapWidth=$actualBitmapWidthPx hasDoubleTap=${currentOnDoubleTap != null}"
                         )
                         return@quickDoubleTap
                     }
@@ -2821,7 +2866,7 @@ internal fun PdfPageComposable(
                         if (actualBitmapWidthPx == 0) return@quickDoubleTap
                         coroutineScope.launch {
                             val startScale = latestScale
-                            val targetScale = if (startScale > 1.1f) 1f else 2.5f
+                            val targetScale = pdfDoubleTapTargetScale(startScale)
 
                             val startOffset = latestOffset
                             val viewportSize = Size(size.width.toFloat(), size.height.toFloat())
@@ -2867,13 +2912,25 @@ internal fun PdfPageComposable(
                                 isTransforming = false
                             }
                         }
-                    } else if (isVerticalScroll && !isScrollLocked && currentOnDoubleTap != null) {
+                    } else if (isVerticalScroll && currentOnDoubleTap != null) {
                         // The vertical camera is expressed in reader-root coordinates, while this
-                        // recognizer receives a point local to an individual page.
-                        val readerOffset = layoutCoordinates?.localToRoot(tapOffset) ?: tapOffset
+                        // recognizer receives a point local to an individual page. `localToRoot`
+                        // maps to the window root, which in split view also contains the split
+                        // toolbar and the other pane; converting through the reader's own
+                        // coordinates keeps the pivot inside the pane that owns the camera.
+                        val readerOffset = doubleTapReaderCoordinates
+                            ?.invoke()
+                            ?.takeIf { it.isAttached }
+                            ?.let { readerCoords ->
+                                layoutCoordinates?.let { pageCoords ->
+                                    readerCoords.localPositionOf(pageCoords, tapOffset)
+                                }
+                            }
+                            ?: layoutCoordinates?.localToRoot(tapOffset)
+                            ?: tapOffset
                         pdfZoomDiagnostic(
                             "page=$pageIndex verticalDoubleTap forward local=$tapOffset root=$readerOffset " +
-                                "hasCoordinates=${layoutCoordinates != null}"
+                                "hasCoordinates=${layoutCoordinates != null} hasReaderCoords=${doubleTapReaderCoordinates?.invoke() != null}"
                         )
                         currentOnDoubleTap!!(readerOffset)
                     }
@@ -2935,6 +2992,9 @@ internal fun PdfPageComposable(
                         )
                         if (isZoomEnabled && !isVerticalScroll && !isScrollLocked && actualBitmapWidthPx > 0) {
                             if (scale > 1f && scale < 1.05f) {
+                                pdfSplitZoomDiag(
+                                    "page.snapBackToBase page=$pageIndex scale=${scale.diagF()}"
+                                )
                                 scale = 1f
                                 offset = Offset.Zero
                                 onScaleChanged(scale)
@@ -2954,7 +3014,6 @@ internal fun PdfPageComposable(
                 isZoomEnabled,
                 isVerticalScroll,
                 isEditMode,
-                onTwoFingerSwipe,
                 isScrollLocked,
                 isOneHandZooming
             ) {
@@ -3154,7 +3213,7 @@ internal fun PdfPageComposable(
                                         if (abs(swipeAccumulatorX) > 70f) {
                                             val direction = if (swipeAccumulatorX > 0) -1
                                             else 1
-                                            onTwoFingerSwipe(direction)
+                                            currentOnTwoFingerSwipe(direction)
                                             mode = 4
                                         }
                                         event.changes.forEach {
@@ -3499,16 +3558,28 @@ internal fun PdfPageComposable(
                     Timber.tag("PdfLockDiagnostic").i(
                         "Orientation changed while locked; reset paginated zoom to fit on page $pageIndex"
                     )
+                    pdfSplitZoomDiag(
+                        "page.lockedOrientationReset page=$pageIndex viewport=$previousViewportSize" +
+                            "-> $currentViewportSize scale=1f"
+                    )
                 } else if (lockedState != null) {
                     scale = lockedState.first
                     offset = Offset(lockedState.second, lockedState.third)
                     hasAppliedLockedPaginationState = true
+                    pdfSplitZoomDiag(
+                        "page.lockedApply page=$pageIndex scale=${scale.diagF()} " +
+                            "viewport=$currentViewportSize"
+                    )
                 } else {
                     hasAppliedLockedPaginationState = true
                 }
                 onScaleChanged(scale)
             } else if (!isScrollLocked && !isVerticalScroll) {
                 hasAppliedLockedPaginationState = false
+                pdfSplitZoomDiag(
+                    "page.viewportReset page=$pageIndex wasScale=${scale.diagF()} " +
+                        "viewport=$previousViewportSize -> $currentViewportSize resetTo=1f"
+                )
                 scale = 1f
                 offset = Offset.Zero
                 onScaleChanged(1f)
@@ -3732,7 +3803,7 @@ internal fun PdfPageComposable(
                     val old = bitmapState
                     if (old != null && old !== finalBitmap) {
                         if (old !== PdfThumbnailCache.get(targetPageId)) {
-                            old.recycle()
+                            safeRecyclePdfBitmap(old)
                         }
                     }
                     bitmapState = finalBitmap
@@ -3859,7 +3930,7 @@ internal fun PdfPageComposable(
                                 if (old != null && old !== newBitmap && !old.isRecycled) {
                                     val cached = PdfThumbnailCache.get(targetPageId)
                                     if (old !== cached) {
-                                        old.recycle()
+                                        safeRecyclePdfBitmap(old)
                                     }
                                 }
 
@@ -3891,20 +3962,20 @@ internal fun PdfPageComposable(
                         )
                     } finally {
                         isLoadingPage = false
-                        localBitmap?.recycle()
+                        safeRecyclePdfBitmap(localBitmap)
                     }
                 }
             }
 
             when {
                 isLoadingPage -> {
-                    if (placeholderBitmap != null && !placeholderBitmap.isRecycled) {
+                    if (placeholderRenderBitmap != null && !placeholderRenderBitmap.isRecycled) {
                         Canvas(modifier = Modifier.fillMaxSize()) {
-                            if (!placeholderBitmap.isRecycled) {
+                            if (!placeholderRenderBitmap.isRecycled) {
                                 val canvasWidth = size.width
                                 val canvasHeight = size.height
-                                val bitmapWidth = placeholderBitmap.width
-                                val bitmapHeight = placeholderBitmap.height
+                                val bitmapWidth = placeholderRenderBitmap.width
+                                val bitmapHeight = placeholderRenderBitmap.height
 
                                 if (bitmapWidth <= 0 || bitmapHeight <= 0) return@Canvas
 
@@ -3929,7 +4000,7 @@ internal fun PdfPageComposable(
                                 )
 
                                 drawImage(
-                                    image = placeholderBitmap.asImageBitmap(),
+                                    image = placeholderRenderBitmap.asImageBitmap(),
                                     dstOffset = IntOffset(
                                         dstOffset.x.roundToInt(), dstOffset.y.roundToInt()
                                     ),
@@ -3993,6 +4064,7 @@ internal fun PdfPageComposable(
                         stableColorFilter,
                         isDarkMode,
                         excludeImages,
+                        effectiveReverseColorMode,
                         stableImageRects,
                         textureBitmap,
                         effectiveTextureAlpha,
@@ -4015,6 +4087,7 @@ internal fun PdfPageComposable(
                             colorFilter = stableColorFilter,
                             isDarkMode = isDarkMode,
                             excludeImages = excludeImages,
+                            reverseColorMode = effectiveReverseColorMode,
                             imageRects = stableImageRects,
                             textureBitmap = StableHolder(textureBitmap),
                             textureAlpha = effectiveTextureAlpha,

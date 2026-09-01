@@ -67,7 +67,7 @@ class SharedPdfExportPolicyTest {
             ),
         )
         assertEquals(
-            SharedPdfExportMode.UNSUPPORTED_VIRTUAL_PAGES,
+            SharedPdfExportMode.ANNOTATED,
             sharedPdfExportMode(
                 SharedPdfReaderState(blankPageInsertions = listOf(SharedPdfBlankPageInsertion(0))),
             ),
