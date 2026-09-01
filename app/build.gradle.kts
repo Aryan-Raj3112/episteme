@@ -56,7 +56,8 @@ kotlin {
 
 android {
     namespace = "com.aryan.reader"
-    compileSdk = 36
+    compileSdk = 37
+    compileSdkMinor = 0
 
     defaultConfig {
         applicationId = "com.aryan.reader"
@@ -247,7 +248,7 @@ dependencies {
     androidTestImplementation("androidx.test:rules:1.7.0")
     androidTestImplementation("androidx.test.espresso:espresso-web:3.7.0")
     androidTestImplementation("com.google.truth:truth:1.4.2")
-    androidTestImplementation("androidx.navigation:navigation-testing:2.9.6")
+    androidTestImplementation("androidx.navigation:navigation-testing:2.10.0")
     androidTestImplementation("io.mockk:mockk-android:1.13.11") {
         exclude(group = "org.junit.jupiter")
     }
@@ -263,7 +264,7 @@ dependencies {
     implementation("androidx.appcompat:appcompat:1.7.1")
 
     //noinspection GradleDependency (Updating these might cause the custom toolbox in pagination to break)
-    implementation("androidx.navigation:navigation-compose:2.9.6")
+    implementation("androidx.navigation:navigation-compose:2.10.0")
     //noinspection GradleDependency
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.2")
     //noinspection GradleDependency

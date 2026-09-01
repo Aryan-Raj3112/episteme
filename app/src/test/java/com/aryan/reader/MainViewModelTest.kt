@@ -75,9 +75,14 @@ class MainViewModelTest {
         }
 
         fun clearForTest() {
-            ViewModel::class.java
-                .getDeclaredMethod("clear\$lifecycle_viewmodel_release")
-                .invoke(this)
+            // ViewModel.clear is internal with a version-mangled JVM name
+            // (clear$lifecycle_viewmodel[_release]); resolve it by prefix so the test
+            // helper survives lifecycle upgrades.
+            val clearMethod = ViewModel::class.java.declaredMethods
+                .firstOrNull { it.name.startsWith("clear\$lifecycle_viewmodel") }
+                ?: error("ViewModel.clear internal method not found for current lifecycle version")
+            clearMethod.isAccessible = true
+            clearMethod.invoke(this)
         }
     }
 
