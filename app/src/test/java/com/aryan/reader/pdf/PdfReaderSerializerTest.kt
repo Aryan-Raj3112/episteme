@@ -19,7 +19,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
-import java.io.StringReader
 
 @RunWith(RobolectricTestRunner::class)
 class PdfReaderSerializerTest {
@@ -121,7 +120,7 @@ class PdfReaderSerializerTest {
     }
 
     @Test
-    fun `AnnotationSerializer streams reader input and caps oversized point lists`() {
+    fun `AnnotationSerializer streams input and caps oversized point lists`() {
         val points = (0..5_000).joinToString(separator = ",") { index ->
             """{"x":0.1,"y":0.2,"t":$index}"""
         }
@@ -138,11 +137,47 @@ class PdfReaderSerializerTest {
             ]
         """.trimIndent()
 
-        val decoded = AnnotationSerializer.fromJson(StringReader(json)).getValue(7).single()
+        val decoded = AnnotationSerializer.fromJson(json.byteInputStream()).getValue(7).single()
 
         assertEquals(5_000, decoded.points.size)
         assertEquals(0L, decoded.points.first().timestamp)
         assertEquals(4_999L, decoded.points.last().timestamp)
+    }
+
+    @Test
+    fun `AnnotationSerializer streaming decode matches string decode and rejects malformed input`() {
+        val annotations = mapOf(
+            0 to listOf(
+                PdfAnnotation(
+                    type = AnnotationType.INK,
+                    inkType = InkType.PEN,
+                    pageIndex = 0,
+                    points = listOf(PdfPoint(0.1f, 0.2f, 1L), PdfPoint(0.3f, 0.4f, 2L)),
+                    color = Color(0xFF112233),
+                    strokeWidth = 0.5f,
+                    id = "ink-stream",
+                    note = "Note"
+                )
+            ),
+            3 to listOf(
+                PdfAnnotation(
+                    type = AnnotationType.INK,
+                    inkType = InkType.HIGHLIGHTER_ROUND,
+                    pageIndex = 3,
+                    points = emptyList(),
+                    color = Color(0x8CFFEB3B),
+                    strokeWidth = 0.25f
+                )
+            )
+        )
+        val json = AnnotationSerializer.toJson(annotations)
+
+        val streamed = AnnotationSerializer.fromJson(json.byteInputStream())
+
+        assertEquals(AnnotationSerializer.fromJson(json), streamed)
+        assertTrue(AnnotationSerializer.fromJson("not json".byteInputStream()).isEmpty())
+        assertTrue(AnnotationSerializer.fromJson(ByteArray(0).inputStream()).isEmpty())
+        assertTrue(AnnotationSerializer.fromJson("""{"not":"an array"}""".byteInputStream()).isEmpty())
     }
 
     @Test

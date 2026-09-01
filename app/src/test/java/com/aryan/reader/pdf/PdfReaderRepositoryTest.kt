@@ -3,6 +3,7 @@ package com.aryan.reader.pdf
 import android.content.Context
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
+import com.aryan.reader.data.hasSameUtf8Content
 import com.aryan.reader.pdf.data.PageLayoutRepository
 import com.aryan.reader.pdf.data.PdfAnnotation
 import com.aryan.reader.pdf.data.PdfAnnotationRepository
@@ -87,6 +88,66 @@ class PdfReaderRepositoryTest {
 
         assertEquals(previousModified, file.lastModified())
     }
+
+    @Test
+    fun `hasSameUtf8Content rejects size byte and missing file mismatches`() {
+        val dir = tempRoot("atomic-compare")
+        val matching = File(dir, "match.json").apply { writeText("{\"a\":1}") }
+        assertTrue(matching.hasSameUtf8Content("{\"a\":1}"))
+        assertFalse(matching.hasSameUtf8Content("{\"a\":2}"))
+        assertFalse(matching.hasSameUtf8Content("{\"a\":1} "))
+        assertFalse(matching.hasSameUtf8Content(""))
+        assertFalse(File(dir, "missing.json").hasSameUtf8Content("x"))
+        val unicode = File(dir, "unicode.json").apply { writeText("„quote“") }
+        assertTrue(unicode.hasSameUtf8Content("„quote“"))
+        assertFalse(unicode.hasSameUtf8Content("„quote”"))
+    }
+
+    @Test
+    fun `PdfAnnotationRepository loads multi megabyte sidecar through streaming decode`() = runTest {
+        val context = contextWithFilesDir(tempRoot("annotation-stream"))
+        val repository = PdfAnnotationRepository(context)
+        // 3,000 annotations x 500 points would previously decode through a full
+        // in-memory JSON DOM; both sides must stay byte-identical.
+        val annotations = mapOf(
+            0 to (0 until 3_000).map { index ->
+                PdfAnnotation(
+                    type = AnnotationType.INK,
+                    inkType = InkType.PEN,
+                    pageIndex = 0,
+                    points = (0 until 500).map { point ->
+                        PdfPoint(0.001f * point, 0.002f * point, point.toLong())
+                    },
+                    color = Color.Black,
+                    strokeWidth = 0.01f,
+                    id = "ink-$index"
+                )
+            }
+        )
+        repository.saveAnnotations("book", annotations)
+        val file = requireNotNull(repository.getAnnotationFileForSync("book"))
+        assertTrue("sidecar should be multi-megabyte", file.length() > 2_000_000L)
+
+        val loaded = repository.loadAnnotations("book")
+
+        // Encode canonicalizes coordinates to 5 decimals; expectations must mirror that.
+        val canonical = annotations.mapValues { (_, list) ->
+            list.map { annotation ->
+                annotation.copy(
+                    points = annotation.points.map { point ->
+                        point.copy(
+                            x = roundToLegacyPrecision(point.x),
+                            y = roundToLegacyPrecision(point.y)
+                        )
+                    }
+                )
+            }
+        }
+        assertEquals(canonical, loaded)
+    }
+
+    private fun roundToLegacyPrecision(value: Float): Float =
+        (kotlin.math.round(value.toDouble() * 100_000.0) / 100_000.0).toFloat()
 
     @Test
     fun `PdfAnnotationRepository stores deleted annotation tombstones for sync`() = runTest {

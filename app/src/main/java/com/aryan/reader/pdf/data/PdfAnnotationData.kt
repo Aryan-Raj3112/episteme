@@ -36,11 +36,12 @@ import com.aryan.reader.shared.pdf.SharedPdfLegacyHighlight
 import com.aryan.reader.shared.pdf.SharedPdfLegacyHighlightCodec
 import com.aryan.reader.shared.pdf.SharedPdfLegacyInkAnnotation
 import com.aryan.reader.shared.pdf.SharedPdfLegacyInkCodec
+import com.aryan.reader.shared.pdf.SharedPdfLegacyInkDecodeResult
+import com.aryan.reader.shared.pdf.SharedPdfLegacyInkStreamDecoder
 import com.aryan.reader.shared.pdf.SharedPdfLegacyTextBox
 import com.aryan.reader.shared.pdf.SharedPdfLegacyTextBoxCodec
 import timber.log.Timber
-import java.io.Reader
-import java.io.StringReader
+import java.io.InputStream
 import java.util.UUID
 
 data class PdfTextBox(
@@ -88,17 +89,20 @@ object AnnotationSerializer {
 
     fun fromJson(json: String): Map<Int, List<PdfAnnotation>> {
         if (json.isBlank()) return emptyMap()
-        return fromJson(StringReader(json))
+        return fromDecoded(SharedPdfLegacyInkCodec.decode(json) { UUID.randomUUID().toString() })
     }
 
-    fun fromJson(reader: Reader): Map<Int, List<PdfAnnotation>> {
-        return parseAnnotationArray(reader.readText())
+    /**
+     * Streaming decode for sidecar files read from disk: parses the JSON array
+     * one element at a time so huge annotation files cannot exhaust the heap
+     * (see SharedPdfLegacyInkStreamDecoder).
+     */
+    fun fromJson(stream: InputStream): Map<Int, List<PdfAnnotation>> {
+        return fromDecoded(SharedPdfLegacyInkStreamDecoder.decode(stream) { UUID.randomUUID().toString() })
     }
 
-    private fun parseAnnotationArray(json: String): Map<Int, List<PdfAnnotation>> {
+    private fun fromDecoded(decoded: SharedPdfLegacyInkDecodeResult): Map<Int, List<PdfAnnotation>> {
         val resultMap = mutableMapOf<Int, MutableList<PdfAnnotation>>()
-        if (json.isBlank()) return resultMap
-        val decoded = SharedPdfLegacyInkCodec.decode(json) { UUID.randomUUID().toString() }
         decoded.annotations.forEach { annotation ->
             val androidAnnotation = PdfAnnotation(
                 type = runCatching { AnnotationType.valueOf(annotation.annotationTypeName) }

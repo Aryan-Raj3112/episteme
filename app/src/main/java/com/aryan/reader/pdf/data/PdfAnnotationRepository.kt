@@ -21,6 +21,7 @@ package com.aryan.reader.pdf.data
 
 import android.content.Context
 import com.aryan.reader.logCloudAnnotationSyncTrace
+import com.aryan.reader.data.hasSameUtf8Content
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationSidecarCodec
 import com.aryan.reader.data.writeJsonAtomically
 import kotlinx.coroutines.Dispatchers
@@ -57,7 +58,7 @@ class PdfAnnotationRepository(private val context: Context) {
 
                 val json = AnnotationSerializer.toJson(annotations)
                 val file = getFile(bookId)
-                if (file.exists() && file.readText() == json) {
+                if (file.exists() && file.hasSameUtf8Content(json)) {
                     logCloudAnnotationSyncTrace {
                         "android.repository.save_ink_noop book=$bookId count=${annotations.values.sumOf { it.size }} " +
                             "bytes=${file.length()} ts=${file.lastModified()}"
@@ -85,8 +86,10 @@ class PdfAnnotationRepository(private val context: Context) {
                 val file = getFile(bookId)
                 if (file.exists()) {
                     Timber.tag("AnnotationSync").d("Loaded local JSON for $bookId. Size: ${file.length()}")
-                    file.bufferedReader(Charsets.UTF_8).use { reader ->
-                        AnnotationSerializer.fromJson(reader)
+                    // Streaming decode: annotation sidecars can grow to many MB and
+                    // materializing the whole document OOMs under memory pressure.
+                    file.inputStream().use { stream ->
+                        AnnotationSerializer.fromJson(stream)
                     }
                 } else {
                     Timber.tag("AnnotationSync").d("No local annotation file found for $bookId")
