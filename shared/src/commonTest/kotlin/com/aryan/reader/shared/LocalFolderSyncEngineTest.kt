@@ -53,7 +53,7 @@ class LocalFolderSyncEngineTest {
 
         val book = result.state.rawLibraryBooks.single()
         assertEquals("local_Book.pdf", book.id)
-        assertEquals("Book", book.title)
+        assertEquals("Remote Title", book.title)
         assertEquals(4, book.lastPageIndex)
         assertEquals(25f, book.progressPercentage)
         assertEquals("C:/Library", book.sourceFolder)
@@ -84,7 +84,7 @@ class LocalFolderSyncEngineTest {
         )
 
         val book = result.state.rawLibraryBooks.single()
-        assertEquals("Local", book.title)
+        assertEquals("Remote", book.title)
         assertEquals(80f, book.progressPercentage)
         assertEquals(1, result.stats.remoteMetadataUpdates)
     }
@@ -701,7 +701,36 @@ class LocalFolderSyncEngineTest {
             locatorBlockIndex = null,
             locatorCharOffset = null,
             customName = null,
-            highlightsJson = null
+            highlightsJson = null,
+            presentFields = sidecarPresentFields
         )
     }
+
+    private val sidecarPresentFields = setOf(
+        "bookId",
+        "schemaVersion",
+        "title",
+        "author",
+        "displayName",
+        "type",
+        "lastChapterIndex",
+        "lastPage",
+        "lastPositionCfi",
+        "progressPercentage",
+        "isRecent",
+        "lastModifiedTimestamp",
+        "bookmarksJson",
+        "locatorBlockIndex",
+        "locatorCharOffset",
+        "customName",
+        "highlightsJson",
+        "seriesName",
+        "seriesIndex",
+        "description",
+        "originalTitle",
+        "originalAuthor",
+        "originalSeriesName",
+        "originalSeriesIndex",
+        "originalDescription"
+    )
 }

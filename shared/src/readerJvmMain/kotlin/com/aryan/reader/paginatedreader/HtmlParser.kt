@@ -103,27 +103,6 @@ private object HtmlParserLog {
     fun e(@Suppress("UNUSED_PARAMETER") throwable: Throwable, @Suppress("UNUSED_PARAMETER") message: String) = Unit
 }
 
-private fun Element.getCfiPath(): String {
-    val path = mutableListOf<Int>()
-    var currentNode: Node? = this
-    while (currentNode != null && (currentNode !is Element || currentNode.tagName() != "body")) {
-        val parent = currentNode.parent() ?: break
-        val children = parent.childNodes().filter { node ->
-            node is Element || (node is TextNode && node.text().trim().isNotEmpty())
-        }
-        val nodeIndex = children.indexOf(currentNode)
-        if (nodeIndex == -1) {
-            currentNode = parent
-            continue
-        }
-        val cfiIndex = (nodeIndex * 2) + 2
-        path.add(0, cfiIndex)
-        currentNode = parent
-    }
-    path.add(0, 4)
-    return "/" + path.joinToString("/")
-}
-
 private fun String.capitalizeWords(): String =
     split(' ').joinToString(" ") { word ->
         if (word.isNotEmpty()) word.replaceFirstChar { it.titlecase() } else ""
@@ -271,6 +250,7 @@ private class SemanticHtmlParser(
     private val matchedRulesCache = IdentityHashMap<Element, MutableMap<String, List<CssRule>>>()
     private val unsupportedSelectorCache = HashMap<String, Boolean>()
     private val compiledSelectorCache = HashMap<String, Evaluator>()
+    private val cfiMeaningfulChildrenCache = IdentityHashMap<Node, List<Node>>()
     private var combinedRules: OptimizedCssRules = cssRules
     private var sortedRuleBuckets: SortedCssRuleBuckets = cssRules.sortedForMatching()
     private val currentFontFamilyMap: MutableMap<String, FontFamily> = fontFamilyMap.toMutableMap()
@@ -312,6 +292,36 @@ private class SemanticHtmlParser(
                 .resolveFontSizeAgainst(CssStyle(fontSize = textStyle.fontSize))
                 .withResolvedFontFamily()
         )
+    }
+
+    /**
+     * Computes a structural CFI-style path from this element up to (excluding) the body element.
+     *
+     * The per-parent "meaningful children" lookup is cached: every element in a chapter walks the
+     * same ancestor chain, and re-filtering each ancestor's children (previously with an
+     * allocating per-text-node whitespace normalization) made parsing quadratic on large
+     * documents and showed up in ANR traces.
+     */
+    private fun Element.getCfiPath(): String {
+        val path = mutableListOf<Int>()
+        var currentNode: Node? = this
+        while (currentNode != null && (currentNode !is Element || currentNode.tagName() != "body")) {
+            val parent = currentNode.parent() ?: break
+            val children = cfiMeaningfulChildrenCache.getOrPut(parent) {
+                parent.childNodes().filter { node ->
+                    node is Element || (node is TextNode && !node.isBlank())
+                }
+            }
+            val nodeIndex = children.indexOf(currentNode)
+            if (nodeIndex == -1) {
+                currentNode = parent
+                continue
+            }
+            path.add(0, (nodeIndex * 2) + 2)
+            currentNode = parent
+        }
+        path.add(0, 4)
+        return "/" + path.joinToString("/")
     }
 
     private inline fun Element.anyChildElement(predicate: (Element) -> Boolean): Boolean {

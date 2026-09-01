@@ -574,11 +574,15 @@ internal fun PaginatedReaderContent(
                             mutableStateMapOf<Int, AndroidEpubRenderedBlockBounds>()
                         }
                         val cutoffDiagnosticsEnabled = !uiState.isLoading
-                        val cutoffDiagnosticsContext =
+                        // Only built while diagnostics are enabled: this ran on every
+                        // recomposition of every page slot otherwise, and was the sampled
+                        // allocation in a GC-pressure ANR.
+                        val cutoffDiagnosticsContext = if (cutoffDiagnosticsEnabled) {
                             "generation=${uiState.generation} loading=${uiState.isLoading} pageCount=${uiState.totalPageCount} " +
                                 "density=${density.density} fontScale=${density.fontScale} " +
                                 "locale=${context.resources.configuration.locales[0]} " +
                                 "layoutDirection=${context.resources.configuration.layoutDirection}"
+                        } else ""
 
                         Box(
                             modifier = Modifier

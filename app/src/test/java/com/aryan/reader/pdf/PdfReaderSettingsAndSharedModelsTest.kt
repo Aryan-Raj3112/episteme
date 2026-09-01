@@ -21,6 +21,7 @@ import com.aryan.reader.shared.pdf.PdfZoomSpec
 import com.aryan.reader.shared.pdf.SharedPdfAnnotation
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationDefaults
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationSerializer
+import com.aryan.reader.shared.pdf.sanitizedSharedPdfTextAnnotation
 import com.aryan.reader.shared.pdf.SharedPdfHighlighterPalette
 import java.io.File
 import org.junit.Assert.assertEquals
@@ -104,7 +105,7 @@ class PdfReaderSettingsAndSharedModelsTest {
             SharedPdfAnnotationSerializer.encode(listOf(annotation))
         )
 
-        assertEquals(listOf(annotation), decoded)
+        assertEquals(listOf(annotation.sanitizedSharedPdfTextAnnotation()), decoded)
         assertEquals(emptyList<SharedPdfAnnotation>(), SharedPdfAnnotationSerializer.decode(""))
         assertEquals(emptyList<SharedPdfAnnotation>(), SharedPdfAnnotationSerializer.decode("bad json"))
     }

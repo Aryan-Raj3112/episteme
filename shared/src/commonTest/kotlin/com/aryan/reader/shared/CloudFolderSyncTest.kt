@@ -412,14 +412,14 @@ class CloudFolderSyncTest {
     @Test
     fun `sidecar conflicts never create a generic keep both copy`() {
         val original = file("EpistemeSyncData/.book_abc.json", hash = "a".repeat(64), size = 10L, revision = 1L)
-        val base = manifest(revision = 1L, nodes = listOf(original))
+        val base = manifest(revision = 1L, nodes = listOf(directory("EpistemeSyncData"), original))
         val local = base.copy(
             revision = 2L,
-            nodes = listOf(original.copy(contentHash = "b".repeat(64), sizeBytes = 11L, revision = 2L)),
+            nodes = listOf(directory("EpistemeSyncData"), original.copy(contentHash = "b".repeat(64), sizeBytes = 11L, revision = 2L)),
         )
         val remote = base.copy(
             revision = 3L,
-            nodes = listOf(original.copy(contentHash = "c".repeat(64), sizeBytes = 12L, revision = 3L)),
+            nodes = listOf(directory("EpistemeSyncData"), original.copy(contentHash = "c".repeat(64), sizeBytes = 12L, revision = 3L)),
         )
 
         val plan = planCloudFolderSync(base, local, remote)

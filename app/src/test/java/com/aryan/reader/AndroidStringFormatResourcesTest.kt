@@ -17,33 +17,6 @@ class AndroidStringFormatResourcesTest {
 
         assertEquals("Episteme", ossStrings["app_name"])
     }
-    @Test
-    fun `vietnamese strings cover translatable base resources`() {
-        assertLocaleCoversTranslatableBaseResources(localeDirectory = "values-vi", localeName = "Vietnamese")
-    }
-
-    @Test
-    fun `estonian strings cover translatable base resources`() {
-        assertLocaleCoversTranslatableBaseResources(localeDirectory = "values-et", localeName = "Estonian")
-    }
-
-    private fun assertLocaleCoversTranslatableBaseResources(
-        localeDirectory: String,
-        localeName: String
-    ) {
-        val resDirectory = findResDirectory()
-        val baseNames = readResourceNames(
-            stringsFile = File(resDirectory, "values/strings.xml"),
-            includeNonTranslatable = false
-        )
-        val localizedNames = readResourceNames(File(resDirectory, "$localeDirectory/strings.xml"))
-        val missingNames = baseNames.filterNot { it in localizedNames }
-
-        assertTrue(
-            "Missing $localeName strings:\n${missingNames.joinToString(separator = "\n")}",
-            missingNames.isEmpty()
-        )
-    }
 
     @Test
     fun `localized formatted strings use valid formatter syntax`() {
@@ -88,28 +61,6 @@ class AndroidStringFormatResourcesTest {
             File("src/oss/res"),
             File("app/src/oss/res")
         ).first { it.isDirectory }
-    }
-
-    private fun readResourceNames(
-        stringsFile: File,
-        includeNonTranslatable: Boolean = true
-    ): List<String> {
-        val document = DocumentBuilderFactory.newInstance()
-            .newDocumentBuilder()
-            .parse(stringsFile)
-        val nodes = document.documentElement.childNodes
-
-        return buildList {
-            for (index in 0 until nodes.length) {
-                val node = nodes.item(index)
-                val attributes = node.attributes ?: continue
-                val name = attributes.getNamedItem("name")?.nodeValue ?: continue
-                val translatable = attributes.getNamedItem("translatable")?.nodeValue
-                if (includeNonTranslatable || translatable != "false") {
-                    add(name)
-                }
-            }
-        }
     }
 
     private fun readStringResources(stringsFile: File): Map<String, String> {

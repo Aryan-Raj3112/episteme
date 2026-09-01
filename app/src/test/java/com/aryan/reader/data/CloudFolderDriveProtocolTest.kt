@@ -9,6 +9,7 @@ import com.aryan.reader.shared.CloudFolderSyncOperation
 import com.aryan.reader.shared.CloudFolderSyncOperationKind
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -169,9 +170,11 @@ class CloudFolderDriveProtocolTest {
         assertEquals("1", metadata["cloudFolderSchema"])
         assertEquals("root", metadata["cloudFolderRootId"])
         assertEquals("node", metadata["cloudFolderNodeId"])
-        assertEquals("Series/Book.epub", metadata["cloudFolderRelativePath"])
         assertEquals("7", metadata["cloudFolderRevision"])
         assertEquals("sha256:abc", metadata["cloudFolderContentHash"])
+        // Relative paths are unbounded user data and must stay out of Drive
+        // appProperties (124-byte cap); they live in the manifest instead.
+        assertNull(metadata["cloudFolderRelativePath"])
     }
 
     @Test

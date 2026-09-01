@@ -10,6 +10,7 @@ import com.aryan.reader.pdf.data.PdfHighlightRepository
 import com.aryan.reader.pdf.data.PdfTextBox
 import com.aryan.reader.pdf.data.PdfTextBoxRepository
 import com.aryan.reader.pdf.data.VirtualPage
+import com.aryan.reader.shared.pdf.SharedPdfTextAnnotationDefaults
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
@@ -159,7 +160,7 @@ class PdfReaderRepositoryTest {
             text = "Text box",
             color = Color.Black,
             backgroundColor = Color.White,
-            fontSize = 16f
+            fontSize = SharedPdfTextAnnotationDefaults.sanitizePageRelativeFontSize(16f / 500f)
         )
 
         repository.saveTextBoxes("book/one", listOf(box))
@@ -185,7 +186,7 @@ class PdfReaderRepositoryTest {
             text = "Text box",
             color = Color.Black,
             backgroundColor = Color.White,
-            fontSize = 16f
+            fontSize = SharedPdfTextAnnotationDefaults.sanitizePageRelativeFontSize(16f / 500f)
         )
 
         repository.saveTextBoxes("book", listOf(box))

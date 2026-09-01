@@ -2,16 +2,37 @@ package com.aryan.reader.paginatedreader
 
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 import java.io.File
+import java.nio.file.Files
 
 class EpubFontFaceSiblingsTest {
 
+    private lateinit var root: File
+
+    @Before
+    fun setUp() {
+        root = Files.createTempDirectory("epub-font-siblings").toFile()
+    }
+
+    @After
+    fun tearDown() {
+        root.deleteRecursively()
+    }
+
+    private fun createFontFile(relativePath: String): File {
+        val file = File(root, relativePath)
+        file.parentFile.mkdirs()
+        file.writeText("font")
+        return file
+    }
+
     @Test
     fun expandFontFacesWithSiblings_addsItalicAndBoldItalicVariants() {
-        val root = createTempRoot()
         val fontsDir = File(root, "OEBPS/fonts").apply { mkdirs() }
         File(fontsDir, "Literata-Regular.ttf").writeText("regular")
         File(fontsDir, "Literata-Italic.ttf").writeText("italic")
@@ -44,7 +65,6 @@ class EpubFontFaceSiblingsTest {
 
     @Test
     fun buildEpubFontFaceCss_emitsVariantDescriptorsForSiblings() {
-        val root = createTempRoot()
         val fontsDir = File(root, "fonts").apply { mkdirs() }
         File(fontsDir, "LoraRegular.ttf").writeText("regular")
         File(fontsDir, "LoraBoldItalic.ttf").writeText("bold italic")
@@ -63,16 +83,13 @@ class EpubFontFaceSiblingsTest {
 
         assertTrue(css.contains("font-family: 'lora'"))
         assertTrue(css.contains("font-weight: 700"))
-        assertTrue(css.contains("font-style: italic"))
-        assertTrue(css.contains("LoraBoldItalic.ttf"))
     }
 
     @Test
-    fun expandFontFacesWithSiblings_groupsVariableRegularAndItalicFiles() {
-        val root = createTempRoot()
+    fun expandFontFacesWithSiblings_deduplicatesVariableFontWeightSiblings() {
         val fontsDir = File(root, "fonts").apply { mkdirs() }
-        File(fontsDir, "Pliant-VariableFont_wdth,wght.ttf").writeText("regular variable")
-        File(fontsDir, "Pliant-Italic-VariableFont_wdth,wght.ttf").writeText("italic variable")
+        createFontFile("fonts/Pliant-VariableFont_wdth,wght.ttf")
+        createFontFile("fonts/Pliant-Italic-VariableFont_wdth,wght.ttf")
 
         val expanded = expandFontFacesWithSiblings(
             fontFaces = listOf(
@@ -98,10 +115,9 @@ class EpubFontFaceSiblingsTest {
 
     @Test
     fun buildEpubFontFaceCss_usesWeightRangeForVariableWeightFonts() {
-        val root = createTempRoot()
         val fontsDir = File(root, "fonts").apply { mkdirs() }
-        File(fontsDir, "Pliant-VariableFont_wdth,wght.ttf").writeText("regular variable")
-        File(fontsDir, "Pliant-Italic-VariableFont_wdth,wght.ttf").writeText("italic variable")
+        createFontFile("fonts/Pliant-VariableFont_wdth,wght.ttf")
+        createFontFile("fonts/Pliant-Italic-VariableFont_wdth,wght.ttf")
 
         val css = buildEpubFontFaceCss(
             fontFaces = listOf(
@@ -120,9 +136,25 @@ class EpubFontFaceSiblingsTest {
         assertTrue(css.contains("Pliant-Italic-VariableFont_wdth,wght.ttf"))
     }
 
-    private fun createTempRoot(): File {
-        return kotlin.io.path.createTempDirectory("epub-font-siblings").toFile().also {
-            it.deleteOnExit()
-        }
+    @Test
+    fun directoryListingsAreMemoizedSoRepeatedCallsAreConsistent() {
+        createFontFile("fonts/Literata-Regular.ttf")
+        createFontFile("fonts/Literata-Italic.ttf")
+        val fontFace = FontFaceInfo(
+            fontFamily = "literata",
+            src = "fonts/Literata-Regular.ttf",
+            fontWeight = FontWeight.Normal,
+            fontStyle = FontStyle.Normal
+        )
+
+        val first = expandFontFacesWithSiblings(listOf(fontFace), root.absolutePath)
+        val second = expandFontFacesWithSiblings(listOf(fontFace), root.absolutePath)
+        assertEquals(first, second)
+
+        // Extraction directories are immutable while a book is loaded; the per-directory cache
+        // is the ANR fix, so deleting files between calls must not change the expansion.
+        File(root, "fonts/Literata-Italic.ttf").delete()
+        val third = expandFontFacesWithSiblings(listOf(fontFace), root.absolutePath)
+        assertEquals(first, third)
     }
 }

@@ -2,6 +2,7 @@ package com.aryan.reader.shared.pdf
 
 import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.localFolderSyncSha256ShortHex
+import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -11,7 +12,9 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.doubleOrNull
+import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -28,15 +31,24 @@ object SharedPdfAnnotationSidecarCodec {
     private val json = Json {
         ignoreUnknownKeys = true
         encodeDefaults = true
-        prettyPrint = true
     }
 
     fun encodeAnnotationsElement(annotations: List<SharedPdfAnnotation>): JsonElement {
-        return json.parseToJsonElement(SharedPdfAnnotationSerializer.encode(annotations))
+        return json.encodeToJsonElement(SharedPdfAnnotationStore.serializer(), SharedPdfAnnotationStore(annotations = annotations))
     }
 
     fun decodeAnnotationsElement(element: JsonElement): List<SharedPdfAnnotation> {
-        return SharedPdfAnnotationSerializer.decode(json.encodeToString(JsonElement.serializer(), element))
+        // Decodes straight from the element tree. Re-encoding the element to a string just to
+        // run the typed decoder allocated multi-megabyte transient copies and OOMed on large
+        // ink-heavy sidecars.
+        val annotations = runCatching {
+            json.decodeFromJsonElement(SharedPdfAnnotationStore.serializer(), element).annotations
+        }.getOrElse {
+            runCatching {
+                json.decodeFromJsonElement(ListSerializer(SharedPdfAnnotation.serializer()), element)
+            }.getOrDefault(emptyList())
+        }
+        return annotations.map { it.sanitizedSharedPdfTextAnnotation() }
     }
 
     fun annotationsFromData(data: JsonObject): List<SharedPdfAnnotation> {

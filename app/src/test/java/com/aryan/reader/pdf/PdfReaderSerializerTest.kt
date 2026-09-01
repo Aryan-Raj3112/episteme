@@ -11,6 +11,7 @@ import com.aryan.reader.pdf.data.PdfTextBox
 import com.aryan.reader.pdf.data.TextBoxSerializer
 import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationComment
+import com.aryan.reader.shared.pdf.SharedPdfTextAnnotationDefaults
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -172,7 +173,13 @@ class PdfReaderSerializerTest {
         assertEquals("Hello annotations", decoded.text)
         assertEquals(Color(0xFF112233).toArgb(), decoded.color.toArgb())
         assertEquals(Color(0x66123456).toArgb(), decoded.backgroundColor.toArgb())
-        assertEquals(18f, decoded.fontSize, 0.0001f)
+        // Text box font sizes are canonicalized to page-relative units at the
+        // codec boundary (see SharedPdfTextAnnotationDefaults).
+        assertEquals(
+            SharedPdfTextAnnotationDefaults.sanitizePageRelativeFontSize(18f / 500f),
+            decoded.fontSize,
+            0.0001f
+        )
         assertTrue(decoded.isBold)
         assertTrue(decoded.isItalic)
         assertTrue(decoded.isUnderline)

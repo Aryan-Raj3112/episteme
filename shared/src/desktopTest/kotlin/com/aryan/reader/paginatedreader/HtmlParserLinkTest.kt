@@ -335,6 +335,28 @@ class HtmlParserLinkTest {
         assertTrue(bold.isNotEmpty())
     }
 
+    @Test
+    fun `structural cfi paths stay stable across nested containers`() {
+        val blocks = parse(
+            html = """
+                <html><body>
+                  <p>one</p>
+                  <p>two</p>
+                  <div><span>deep</span></div>
+                </body></html>
+            """.trimIndent()
+        )
+
+        val paragraphs = blocks.filterIsInstance<SemanticParagraph>()
+        // Meaningful children of body: [p, p, div] -> indices 0, 1, 2 -> cfi steps 2, 4, 6.
+        val cfiByText = paragraphs.associate { it.text to it.cfi }
+        assertEquals("/4/2", cfiByText["one"])
+        assertEquals("/4/4", cfiByText["two"])
+        // "deep" is inline inside the div, so the paragraph is flushed from the div's text
+        // buffer and carries the div's CFI (index 2 within body -> step 6).
+        assertEquals("/4/6", cfiByText["deep"])
+    }
+
     private fun parse(
         html: String,
         cssRules: OptimizedCssRules = OptimizedCssRules(),

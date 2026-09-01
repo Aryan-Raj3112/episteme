@@ -127,6 +127,8 @@ class MainViewModelTest {
         every { mockApplication.getExternalFilesDir(any()) } returns externalFilesDir
         every { mockApplication.getString(any()) } answers { "res-${firstArg<Int>()}" }
         every { mockApplication.getString(any(), *anyVararg()) } answers { "res-${firstArg<Int>()}" }
+        every { mockApplication.registerActivityLifecycleCallbacks(any()) } just Runs
+        every { mockApplication.unregisterActivityLifecycleCallbacks(any()) } just Runs
         every { mockPrefs.edit() } returns mockEditor
 
         every { mockPrefs.getString(any(), any()) } answers { secondArg() as String? }

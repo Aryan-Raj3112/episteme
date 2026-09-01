@@ -460,7 +460,6 @@ data class SharedPdfAnnotationStore(
 object SharedPdfAnnotationSerializer {
     private val json = Json {
         ignoreUnknownKeys = true
-        prettyPrint = true
         encodeDefaults = true
     }
 

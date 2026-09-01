@@ -79,6 +79,15 @@ internal fun cloudFolderDriveSizeBucket(sizeBytes: Long): String = when {
  */
 internal const val CLOUD_FOLDER_DIRECT_UPLOAD_MAX_BYTES: Long = 1L * 1024L * 1024L
 
+/**
+ * Resumable-upload chunk size. MediaHttpUploader marks the content stream with the chunk
+ * size, so its BufferedInputStream grows up to [CLOUD_FOLDER_RESUMABLE_UPLOAD_CHUNK_BYTES]
+ * while uploading. The library default is 10MB, which OOMed low-heap devices whose heap was
+ * already full from book/annotation data. 2MB keeps the peak buffer bounded at a fraction of
+ * that while limiting the request-count increase for large book files.
+ */
+internal const val CLOUD_FOLDER_RESUMABLE_UPLOAD_CHUNK_BYTES: Int = 2 * 1024 * 1024
+
 internal fun cloudFolderUploadMode(sizeBytes: Long): String =
     if (sizeBytes in 0L..CLOUD_FOLDER_DIRECT_UPLOAD_MAX_BYTES) "multipart" else "resumable"
 
