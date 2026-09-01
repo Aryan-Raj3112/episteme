@@ -26,21 +26,29 @@ object SharedTextDecoding {
         return decodeLatin1(bytes)
     }
 
-    private fun decodeBomMarkedText(bytes: ByteArray): String? {
+    /** Byte-order marks in the exact detection priority [decode] applies them. */
+    internal enum class SharedTextBomKind(internal val byteCount: Int) {
+        Utf8(3), Utf16Le(2), Utf16Be(2), Utf32Le(4), Utf32Be(4)
+    }
+
+    /**
+     * Returns the leading byte-order mark, or null. The UTF-32LE BOM starts with the
+     * UTF-16LE BOM, so it must win; the UTF-8 BOM is only reported for streaming
+     * callers because [decode] strips it later through the strict UTF-8 branch.
+     */
+    internal fun detectSharedTextBom(bytes: ByteArray): SharedTextBomKind? {
         if (bytes.size < Utf16BomLength) return null
-        val hasUtf16LeBom = matchesAt(bytes, Utf16LeBomBytes, offset = 0)
-        val hasUtf32LeBom = bytes.size >= Utf32BomLength &&
+        if (bytes.size >= Utf32BomLength &&
             matchesAt(bytes, Utf16LeBomBytes, offset = 0) &&
             bytes[2] == 0x00.toByte() &&
             bytes[3] == 0x00.toByte()
-        if (hasUtf32LeBom) return decodeUtf32(bytes, offset = Utf32BomLength, littleEndian = true)
-        if (matchesAt(bytes, Utf32BeBomBytes, offset = 0)) {
-            return decodeUtf32(bytes, offset = Utf32BomLength, littleEndian = false)
+        ) {
+            return SharedTextBomKind.Utf32Le
         }
-        if (hasUtf16LeBom) return decodeUtf16(bytes, offset = Utf16BomLength, littleEndian = true)
-        if (matchesAt(bytes, Utf16BeBomBytes, offset = 0)) {
-            return decodeUtf16(bytes, offset = Utf16BomLength, littleEndian = false)
-        }
+        if (matchesAt(bytes, Utf32BeBomBytes, offset = 0)) return SharedTextBomKind.Utf32Be
+        if (matchesAt(bytes, Utf16LeBomBytes, offset = 0)) return SharedTextBomKind.Utf16Le
+        if (matchesAt(bytes, Utf16BeBomBytes, offset = 0)) return SharedTextBomKind.Utf16Be
+        if (matchesAt(bytes, Utf8BomBytes, offset = 0)) return SharedTextBomKind.Utf8
         return null
     }
 
@@ -49,24 +57,44 @@ object SharedTextDecoding {
      * 16-bit unit (the high byte of Latin-range text). Real prose never
      * contains NUL bytes in any legacy encoding, while UTF-16LE/BE payloads do
      * — including mixed-script text where only most, not all, units qualify.
+     *
+     * Returns true for little-endian, false for big-endian, or null when the
+     * sample cannot be UTF-16. [scanLength] lets streaming callers evaluate a
+     * bounded leading sample (even-length truncated) without copying.
      */
-    private fun decodeBomLessUtf16(bytes: ByteArray): String? {
-        if (bytes.size < MinimumBomLessUtf16Bytes || bytes.size % 2 != 0) return null
+    internal fun detectBomLessUtf16Endianness(bytes: ByteArray, scanLength: Int = bytes.size): Boolean? {
+        if (scanLength < MinimumBomLessUtf16Bytes || scanLength % 2 != 0) return null
         var evenZeros = 0
         var oddZeros = 0
-        for (index in bytes.indices) {
+        for (index in 0 until scanLength) {
             if (bytes[index] != 0.toByte()) continue
             if (index % 2 == 0) evenZeros++ else oddZeros++
         }
         val nulDominantSide = maxOf(evenZeros, oddZeros)
-        return when {
-            nulDominantSide < bytes.size / Utf16NulDensityDivisor -> null
-            oddZeros >= evenZeros -> decodeUtf16(bytes, offset = 0, littleEndian = true)
-            else -> decodeUtf16(bytes, offset = 0, littleEndian = false)
-        }?.takeIf { '\u0000' !in it }
+        if (nulDominantSide < scanLength / Utf16NulDensityDivisor) return null
+        return oddZeros >= evenZeros
     }
 
-    private fun decodeUtf16(bytes: ByteArray, offset: Int, littleEndian: Boolean): String {
+    private fun decodeBomMarkedText(bytes: ByteArray): String? {
+        return when (detectSharedTextBom(bytes)) {
+            SharedTextBomKind.Utf32Le -> decodeUtf32(bytes, offset = Utf32BomLength, littleEndian = true)
+            SharedTextBomKind.Utf32Be -> decodeUtf32(bytes, offset = Utf32BomLength, littleEndian = false)
+            SharedTextBomKind.Utf16Le -> decodeUtf16(bytes, offset = Utf16BomLength, littleEndian = true)
+            SharedTextBomKind.Utf16Be -> decodeUtf16(bytes, offset = Utf16BomLength, littleEndian = false)
+            // The UTF-8 BOM is not terminal here: decode() still validates the whole
+            // payload strictly and strips the BOM char afterwards.
+            SharedTextBomKind.Utf8, null -> null
+        }
+    }
+
+    private fun decodeBomLessUtf16(bytes: ByteArray): String? {
+        if (bytes.size % 2 != 0) return null
+        val littleEndian = detectBomLessUtf16Endianness(bytes) ?: return null
+        return decodeUtf16(bytes, offset = 0, littleEndian = littleEndian)
+            .takeIf { '\u0000' !in it }
+    }
+
+    internal fun decodeUtf16(bytes: ByteArray, offset: Int, littleEndian: Boolean): String {
         val unitCount = (bytes.size - offset) / 2
         return buildString(unitCount) {
             var index = offset
@@ -112,7 +140,9 @@ object SharedTextDecoding {
 
     private fun decodeLatin1(bytes: ByteArray): String {
         return buildString(bytes.size) {
-            for (byte in bytes) append(byte.toInt() and 0xFF)
+            // append(Char), not append(Int): the per-byte Latin-1 mapping must
+            // reproduce each byte's character, not its decimal representation.
+            for (byte in bytes) append((byte.toInt() and 0xFF).toChar())
         }
     }
 
@@ -125,6 +155,7 @@ object SharedTextDecoding {
     }
 
     private const val utf8BomChar = "\uFEFF"
+    private val Utf8BomBytes = byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte())
     private val Utf16BeBomBytes = byteArrayOf(0xFE.toByte(), 0xFF.toByte())
     private val Utf16LeBomBytes = byteArrayOf(0xFF.toByte(), 0xFE.toByte())
     private val Utf32BeBomBytes = byteArrayOf(0x00.toByte(), 0x00.toByte(), 0xFE.toByte(), 0xFF.toByte())

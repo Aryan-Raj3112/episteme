@@ -14,7 +14,7 @@ private const val CharsetDetectionSampleBytes = 64 * 1024
  */
 internal actual fun decodeTextWithPlatformCharset(bytes: ByteArray): String? {
     if (bytes.isEmpty()) return null
-    val detectedName = detectCharsetName(bytes) ?: return null
+    val detectedName = detectPlatformCharsetName(bytes) ?: return null
     // Strict UTF-8 already failed upstream, so answers that decode through
     // UTF-8 cannot improve the result.
     if (detectedName.equals("UTF-8", ignoreCase = true) || detectedName.equals("US-ASCII", ignoreCase = true)) {
@@ -30,7 +30,8 @@ internal actual fun decodeTextWithPlatformCharset(bytes: ByteArray): String? {
     }.getOrNull()
 }
 
-private fun detectCharsetName(bytes: ByteArray): String? {
+/** juniversalchardet name detection over a bounded leading sample, shared by decode and streaming. */
+internal fun detectPlatformCharsetName(bytes: ByteArray): String? {
     val sampleLength = minOf(bytes.size, CharsetDetectionSampleBytes)
     if (sampleLength == 0) return null
     val detector = UniversalDetector()

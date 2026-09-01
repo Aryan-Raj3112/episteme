@@ -22,6 +22,7 @@ package com.aryan.reader.epub
 import android.content.Context
 import com.aryan.reader.FileType
 import com.aryan.reader.shared.reader.SharedTextDecoding
+import com.aryan.reader.shared.reader.openLenientDecodedReader
 import com.vladsch.flexmark.ext.autolink.AutolinkExtension
 import com.vladsch.flexmark.ext.gfm.strikethrough.StrikethroughExtension
 import com.vladsch.flexmark.ext.gfm.tasklist.TaskListExtension
@@ -44,7 +45,6 @@ import java.io.BufferedReader
 import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStream
-import java.io.StringReader
 import java.util.UUID
 import java.util.zip.ZipFile
 
@@ -61,6 +61,7 @@ class SingleFileImporter(private val context: Context) {
         private const val MAX_HTML_INLINE_CSS_CHARS = 256_000
         private const val MAX_SINGLE_FILE_PLAIN_TEXT_CHARS = 256_000
         private const val MAX_SINGLE_FILE_METADATA_BYTES = 2L * 1024L * 1024L
+        private const val TRACE_SAMPLE_LINE_CHARS = 512
         private const val BOOK_METADATA_FILE = "book_metadata.json"
         private const val MARKDOWN_METADATA_FILE = "book_metadata_markdown_v2.json"
         private const val TXT_PREFORMATTED_METADATA_FILE = "book_metadata_txt_preformatted_v3.json"
@@ -115,11 +116,16 @@ class SingleFileImporter(private val context: Context) {
     private fun txtMetadataFile(extractionDir: File): File = File(extractionDir, TXT_PREFORMATTED_METADATA_FILE)
 
     private fun String.txtFormatTracePreview(maxLength: Int = 220): String {
-        return replace("\\", "\\\\")
+        // Truncate first: previews must stay allocation-bounded even when the
+        // caller passes a chapter-sized or line-sized string.
+        val truncated = take(maxLength)
+        val suffix = if (length > maxLength) "..." else ""
+        return truncated
+            .replace("\\", "\\\\")
             .replace("\r", "\\r")
             .replace("\n", "\\n")
             .replace("\t", "\\t")
-            .let { if (it.length <= maxLength) it else it.take(maxLength) + "..." }
+            .plus(suffix)
             .replace("\"", "\\\"")
     }
 
@@ -254,7 +260,7 @@ class SingleFileImporter(private val context: Context) {
 
                 val delimiter = if (originalBookNameHint.lowercase().let { it.endsWith(".tsv") || it.endsWith(".tsv.txt") }) '\t' else ','
 
-                BufferedReader(StringReader(SharedTextDecoding.decode(inputStream.readBytes()))).use { reader ->
+                openLenientDecodedReader(inputStream).use { reader ->
                     var line = reader.readLine()
                     while (line != null) {
                         if (isCsv) {
@@ -563,17 +569,28 @@ class SingleFileImporter(private val context: Context) {
             val fileName = "part_$chapterCounter.html"
             val file = File(extractionDir, fileName)
             val chapterTitle = "Part $chapterCounter"
-            val plainText = currentChapterPlainText.toString().trim()
+            // Single bounded copy: trim bounds are computed on the builder so the
+            // chapter text is materialized exactly once.
+            val plainText = currentChapterPlainText.trimmedToString()
 
-            val fullHtml = "<!DOCTYPE html>\n<html>\n<head>\n<title>$chapterTitle</title>\n<style>$cssStyle</style>\n</head>\n<body>\n$currentChapterContent\n</body>\n</html>"
-
-            FileOutputStream(file).use { it.write(fullHtml.toByteArray()) }
+            val header = "<!DOCTYPE html>\n<html>\n<head>\n<title>$chapterTitle</title>\n<style>$cssStyle</style>\n</head>\n<body>\n"
+            val footer = "\n</body>\n</html>"
+            // Stream the chapter in bounded chunks: no fullHtml copy, no toByteArray copy.
+            FileOutputStream(file).bufferedWriter(Charsets.UTF_8).use { writer ->
+                writer.write(header)
+                currentChapterContent.writeChunkedTo(writer)
+                writer.write(footer)
+            }
+            val htmlChars = header.length + currentChapterContent.length + footer.length
             Timber.tag(TXT_FORMAT_TRACE_TAG).d(
                 "event=android_txt_chapter_written bookId=$bookId chapter=$chapterCounter file=$fileName " +
-                    "htmlChars=${fullHtml.length} plainChars=${plainText.length} htmlNewlines=${fullHtml.count { it == '\n' }} " +
-                    "plainNewlines=${plainText.count { it == '\n' }} containsPreWrap=${fullHtml.contains("white-space: pre-wrap")} " +
-                    "containsInlinePreWrap=${fullHtml.contains(TXT_PREFORMATTED_INLINE_STYLE)} " +
-                    "htmlPreview=${fullHtml.txtFormatTracePreview()} plainPreview=${plainText.txtFormatTracePreview()}"
+                    "htmlChars=$htmlChars plainChars=${plainText.length} " +
+                    "htmlNewlines=${header.count { it == '\n' } + currentChapterContent.count { it == '\n' } + footer.count { it == '\n' }} " +
+                    "plainNewlines=${plainText.count { it == '\n' }} " +
+                    "containsPreWrap=${header.contains("white-space: pre-wrap")} " +
+                    "containsInlinePreWrap=${header.contains(TXT_PREFORMATTED_INLINE_STYLE)} " +
+                    "htmlPreview=${currentChapterContent.tracePreviewFrom(220)} " +
+                    "plainPreview=${plainText.txtFormatTracePreview()}"
             )
 
             chapters.add(
@@ -594,16 +611,20 @@ class SingleFileImporter(private val context: Context) {
             chapterCounter++
         }
 
-        fun escapeHtml(text: String): String {
-            return text.replace("&", "&amp;")
-                .replace("<", "&lt;")
-                .replace(">", "&gt;")
+        fun appendEscapedHtml(target: StringBuilder, text: String) {
+            for (char in text) {
+                when (char) {
+                    '&' -> target.append("&amp;")
+                    '<' -> target.append("&lt;")
+                    '>' -> target.append("&gt;")
+                    else -> target.append(char)
+                }
+            }
         }
 
         var inParagraph = false
 
-        val decodedContent = SharedTextDecoding.decode(inputStream.readBytes())
-        BufferedReader(StringReader(decodedContent)).use { reader ->
+        openLenientDecodedReader(inputStream).use { reader ->
             while (true) {
                 val line = reader.readLine()
                 if (line != null) {
@@ -613,11 +634,11 @@ class SingleFileImporter(private val context: Context) {
                         blankLines++
                     } else {
                         nonBlankLines++
-                        if (firstNonBlankLine == null) firstNonBlankLine = line
+                        if (firstNonBlankLine == null) firstNonBlankLine = line.take(TRACE_SAMPLE_LINE_CHARS)
                         if (line != line.trim()) linesWithLeadingOrTrailingSpaces++
                         if (Regex(" {2,}").containsMatchIn(line)) {
                             linesWithRepeatedSpaces++
-                            if (firstRepeatedSpaceLine == null) firstRepeatedSpaceLine = line
+                            if (firstRepeatedSpaceLine == null) firstRepeatedSpaceLine = line.take(TRACE_SAMPLE_LINE_CHARS)
                         }
                     }
                 }
@@ -648,7 +669,7 @@ class SingleFileImporter(private val context: Context) {
                         currentChapterContent.append("\n")
                         currentChapterPlainText.append("\n")
                     }
-                    currentChapterContent.append(escapeHtml(line))
+                    appendEscapedHtml(currentChapterContent, line)
                     currentChapterPlainText.append(line)
 
                     if (currentChapterContent.length >= chapterTargetSize * 2) {
@@ -751,8 +772,7 @@ class SingleFileImporter(private val context: Context) {
         val cssBuilder = java.lang.StringBuilder()
         val chapters = mutableListOf<EpubChapter>()
 
-        val decodedHtml = SharedTextDecoding.decode(inputStream.readBytes())
-        BufferedReader(StringReader(decodedHtml)).use { reader ->
+        openLenientDecodedReader(inputStream).use { reader ->
             var inScript = false
             var skippedScriptLines = 0
             var scriptStartLines = 0
@@ -956,6 +976,34 @@ class SingleFileImporter(private val context: Context) {
             this[0] == '<' &&
             this[1].lowercaseChar() == 'h' &&
             this[2] in '1'..'6'
+    }
+
+    /** Trims directly on the builder so the resulting String is a single bounded copy. */
+    private fun StringBuilder.trimmedToString(): String {
+        var start = 0
+        while (start < length && this[start].isWhitespace()) start++
+        var end = length
+        while (end > start && this[end - 1].isWhitespace()) end--
+        return substring(start, end)
+    }
+
+    /** Copies at most [maxChars] leading characters without materializing the whole builder. */
+    private fun StringBuilder.boundedSubstring(maxChars: Int): String =
+        substring(0, minOf(maxChars, length))
+
+    /** Trace preview of the builder's leading characters without materializing the whole builder. */
+    private fun StringBuilder.tracePreviewFrom(maxChars: Int): String =
+        boundedSubstring(maxChars).txtFormatTracePreview() +
+            if (length > maxChars) "..." else ""
+
+    /** Writes builder content in bounded chunks so no full-size copy is materialized. */
+    private fun StringBuilder.writeChunkedTo(writer: java.io.Writer, chunkChars: Int = 16_384) {
+        var offset = 0
+        while (offset < length) {
+            val end = minOf(offset + chunkChars, length)
+            writer.write(subSequence(offset, end).toString())
+            offset = end
+        }
     }
 
     private fun generatedHtmlTitle(originalBookNameHint: String): String {
