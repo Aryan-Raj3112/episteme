@@ -65,8 +65,14 @@ fun <T> SharedAndroidUnifiedLibraryHome(
     continueCard: @Composable (T, Modifier) -> Unit,
     bookCard: @Composable (T) -> Unit,
     bookListItem: @Composable (T) -> Unit,
+    widthClass: SharedAndroidHomeWidthClass = SharedAndroidHomeWidthClass.COMPACT,
     modifier: Modifier = Modifier,
 ) {
+    val gridCells = when (widthClass) {
+        SharedAndroidHomeWidthClass.COMPACT -> GridCells.Fixed(3)
+        SharedAndroidHomeWidthClass.MEDIUM -> GridCells.Adaptive(140.dp)
+        SharedAndroidHomeWidthClass.EXPANDED -> GridCells.Adaptive(160.dp)
+    }
     Column(modifier.fillMaxSize().padding(horizontal = 20.dp)) {
         continueReading?.let { continueCard(it, Modifier.padding(top = 16.dp)) }
         LazyRow(
@@ -110,7 +116,7 @@ fun <T> SharedAndroidUnifiedLibraryHome(
                     ) { items(books, key = itemKey) { bookListItem(it) } }
                 } else {
                     LazyVerticalGrid(
-                        columns = GridCells.Adaptive(104.dp),
+                        columns = gridCells,
                         modifier = Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(12.dp, 16.dp, 12.dp, 96.dp),
                         horizontalArrangement = Arrangement.spacedBy(16.dp),
@@ -131,6 +137,7 @@ fun <T> SharedAndroidUnifiedLibrarySearch(
     closeDescription: String,
     resultLabel: String,
     noResultsLabel: String,
+    showSearchField: Boolean = true,
     itemKey: (T) -> String,
     onQueryChange: (String) -> Unit,
     onClose: () -> Unit,
@@ -138,21 +145,25 @@ fun <T> SharedAndroidUnifiedLibrarySearch(
     modifier: Modifier = Modifier,
 ) {
     val focusRequester = androidx.compose.runtime.remember { FocusRequester() }
-    LaunchedEffect(Unit) { focusRequester.requestFocus() }
+    if (showSearchField) {
+        LaunchedEffect(Unit) { focusRequester.requestFocus() }
+    }
     Column(modifier.fillMaxSize().padding(horizontal = 20.dp)) {
-        Row(Modifier.fillMaxWidth().padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(
-                value = query,
-                onValueChange = onQueryChange,
-                modifier = Modifier.weight(1f).focusRequester(focusRequester).testTag("UnifiedLibrarySearch"),
-                placeholder = { Text(searchPlaceholder) },
-                leadingIcon = { Icon(Icons.Default.Search, null) },
-                trailingIcon = {
-                    if (query.isNotEmpty()) IconButton(onClick = { onQueryChange("") }) { Icon(Icons.Default.Close, clearDescription) }
-                },
-                singleLine = true,
-            )
-            IconButton(onClick = onClose) { Icon(Icons.Default.Close, closeDescription) }
+        if (showSearchField) {
+            Row(Modifier.fillMaxWidth().padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = onQueryChange,
+                    modifier = Modifier.weight(1f).focusRequester(focusRequester).testTag("UnifiedLibrarySearch"),
+                    placeholder = { Text(searchPlaceholder) },
+                    leadingIcon = { Icon(Icons.Default.Search, null) },
+                    trailingIcon = {
+                        if (query.isNotEmpty()) IconButton(onClick = { onQueryChange("") }) { Icon(Icons.Default.Close, clearDescription) }
+                    },
+                    singleLine = true,
+                )
+                IconButton(onClick = onClose) { Icon(Icons.Default.Close, closeDescription) }
+            }
         }
         Text(resultLabel, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 12.dp, bottom = 8.dp))
         if (books.isEmpty() && query.isNotBlank()) {

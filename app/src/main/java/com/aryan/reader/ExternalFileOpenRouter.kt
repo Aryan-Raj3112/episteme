@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import com.aryan.reader.shared.MobileExternalOpenAction
+import com.aryan.reader.shared.ExternalDocumentOpenMode
 import com.aryan.reader.shared.mobileExternalOpenAction
 
 const val EXTRA_TEMPORARY_EXTERNAL_OPEN = "com.aryan.reader.extra.TEMPORARY_EXTERNAL_OPEN"
@@ -17,6 +18,34 @@ object ExternalFileOpenRouteDecider {
 
     fun shouldOpenTemporary(externalFileBehavior: String?): Boolean {
         return mobileExternalOpenAction(externalFileBehavior) == MobileExternalOpenAction.OPEN_TEMPORARY
+    }
+
+    fun shouldOpenTemporarily(
+        externalFileBehavior: String?,
+        openMode: ExternalDocumentOpenMode,
+    ): Boolean {
+        return openMode == ExternalDocumentOpenMode.OPEN_SINGLE &&
+            shouldOpenTemporary(externalFileBehavior)
+    }
+
+    /**
+     * Returns the normalized open mode for an external document intent. VIEW
+     * retains its historical direct-data fallback when a provider omits or
+     * lies about metadata; SEND intents are accepted only after shared
+     * normalization succeeds.
+     */
+    fun openModeForIntent(sourceIntent: Intent, context: Context? = null): ExternalDocumentOpenMode? {
+        val normalizedMode = ExternalDocumentIntentMapper
+            .map(sourceIntent, context)
+            ?.request
+            ?.openMode
+        if (normalizedMode != null) return normalizedMode
+
+        return if (sourceIntent.action == Intent.ACTION_VIEW && sourceIntent.data != null) {
+            ExternalDocumentOpenMode.OPEN_SINGLE
+        } else {
+            null
+        }
     }
 
     fun targetActivityClass(externalFileBehavior: String?): Class<out Activity> {
@@ -50,15 +79,27 @@ class ExternalFileOpenRouterActivity : Activity() {
     }
 
     private fun routeExternalOpen(sourceIntent: Intent?) {
-        if (sourceIntent?.action != Intent.ACTION_VIEW || sourceIntent.data == null) return
+        if (sourceIntent == null) return
+        val openMode = ExternalFileOpenRouteDecider.openModeForIntent(sourceIntent, this)
+            ?: return
+        routeIntent(sourceIntent, openMode = openMode)
+    }
 
+    private fun routeIntent(sourceIntent: Intent, openMode: ExternalDocumentOpenMode) {
         val prefs = getSharedPreferences("reader_user_prefs", Context.MODE_PRIVATE)
         val behavior = prefs.getString("external_file_behavior", "ASK")
-        val temporary = ExternalFileOpenRouteDecider.shouldOpenTemporary(behavior)
+        val shouldOpenTemporarily = ExternalFileOpenRouteDecider.shouldOpenTemporarily(behavior, openMode)
         val targetIntent = Intent(sourceIntent).apply {
             flags = ExternalFileOpenRouteDecider.flagsForInternalForward(sourceIntent.flags)
-            setClass(this@ExternalFileOpenRouterActivity, ExternalFileOpenRouteDecider.targetActivityClass(behavior))
-            if (temporary) {
+            setClass(
+                this@ExternalFileOpenRouterActivity,
+                if (shouldOpenTemporarily) {
+                    TemporaryExternalFileActivity::class.java
+                } else {
+                    MainActivity::class.java
+                }
+            )
+            if (shouldOpenTemporarily) {
                 putExtra(EXTRA_TEMPORARY_EXTERNAL_OPEN, true)
                 addFlags(Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS)
             }

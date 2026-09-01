@@ -127,6 +127,6 @@ class SharedPdfInkRenderingTest {
             SharedPdfAnnotationSerializer.encode(listOf(annotation))
         )
 
-        assertEquals(listOf(annotation), decoded)
+        assertEquals(listOf(annotation.sanitizedSharedPdfTextAnnotation()), decoded)
     }
 }

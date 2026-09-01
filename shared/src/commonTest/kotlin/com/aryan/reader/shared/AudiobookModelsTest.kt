@@ -136,6 +136,20 @@ class AudiobookModelsTest {
     }
 
     @Test
+    fun `sleep timer preserves paused time across repeated ticks`() {
+        var remaining = 3
+        remaining = advanceSharedSleepTimer(remaining, isPlaying = false)
+        assertEquals(3, remaining)
+        remaining = advanceSharedSleepTimer(remaining, isPlaying = true)
+        assertEquals(2, remaining)
+        remaining = advanceSharedSleepTimer(remaining, isPlaying = false)
+        assertEquals(2, remaining)
+        remaining = advanceSharedSleepTimer(remaining, isPlaying = true)
+        remaining = advanceSharedSleepTimer(remaining, isPlaying = true)
+        assertEquals(0, remaining)
+    }
+
+    @Test
     fun `remaining label matches Android listen row text`() {
         assertEquals("Duration unavailable", sharedAudiobookRemainingLabel(0L, 0L))
         assertEquals("1 hr 40 min", sharedAudiobookRemainingLabel(6_000_000L, 0L))

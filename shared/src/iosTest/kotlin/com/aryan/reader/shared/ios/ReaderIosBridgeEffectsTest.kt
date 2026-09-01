@@ -68,6 +68,146 @@ class ReaderIosBridgeEffectsTest {
         )
     }
 
+    @Test
+    fun appSystemUiDefaultsAreEmittedAndRestoredAfterReaderRelease() {
+        val bridge = bridge()
+        val updates = mutableListOf<FakeIosSystemUiSnapshot>()
+        bridge.setSystemUiHandler { statusHidden, navigationHidden, lightContent, backgroundArgb ->
+            updates += FakeIosSystemUiSnapshot(statusHidden, navigationHidden, lightContent, backgroundArgb)
+        }
+
+        bridge.setAppSystemUi(darkTheme = true, backgroundArgb = 0xFF121212L)
+        assertEquals(
+            listOf(
+                FakeIosSystemUiSnapshot(
+                    statusHidden = false,
+                    navigationHidden = false,
+                    lightContent = true,
+                    backgroundArgb = 0xFF121212L,
+                )
+            ),
+            updates,
+        )
+
+        bridge.updateReaderSystemUi(
+            statusHidden = true,
+            navigationHidden = true,
+            lightContent = true,
+            backgroundArgb = 0xFF202020L,
+        )
+        bridge.releaseReaderSystemUi()
+        assertEquals(
+            listOf(
+                FakeIosSystemUiSnapshot(
+                    statusHidden = false,
+                    navigationHidden = false,
+                    lightContent = true,
+                    backgroundArgb = 0xFF121212L,
+                ),
+                FakeIosSystemUiSnapshot(
+                    statusHidden = true,
+                    navigationHidden = true,
+                    lightContent = true,
+                    backgroundArgb = 0xFF202020L,
+                ),
+                FakeIosSystemUiSnapshot(
+                    statusHidden = false,
+                    navigationHidden = false,
+                    lightContent = true,
+                    backgroundArgb = 0xFF121212L,
+                ),
+            ),
+            updates,
+        )
+    }
+
+    @Test
+    fun appSystemUiPublicationDoesNotOverrideAnActiveReader() {
+        val bridge = bridge()
+        val updates = mutableListOf<FakeIosSystemUiSnapshot>()
+        bridge.setSystemUiHandler { statusHidden, navigationHidden, lightContent, backgroundArgb ->
+            updates += FakeIosSystemUiSnapshot(statusHidden, navigationHidden, lightContent, backgroundArgb)
+        }
+
+        bridge.updateReaderSystemUi(
+            statusHidden = false,
+            navigationHidden = false,
+            lightContent = true,
+            backgroundArgb = 0xFF202020L,
+        )
+        bridge.setAppSystemUi(darkTheme = false, backgroundArgb = 0xFFF9FAEFL)
+
+        assertEquals(
+            listOf(
+                FakeIosSystemUiSnapshot(
+                    statusHidden = false,
+                    navigationHidden = false,
+                    lightContent = true,
+                    backgroundArgb = 0xFF202020L,
+                )
+            ),
+            updates,
+        )
+    }
+
+    @Test
+    fun systemUiHandlerReplaysTheLatestReaderStateWhenAttachedLate() {
+        val bridge = bridge()
+        bridge.updateReaderSystemUi(
+            statusHidden = false,
+            navigationHidden = false,
+            lightContent = true,
+            backgroundArgb = 0xFF202020L,
+        )
+
+        val updates = mutableListOf<FakeIosSystemUiSnapshot>()
+        bridge.setSystemUiHandler { statusHidden, navigationHidden, lightContent, backgroundArgb ->
+            updates += FakeIosSystemUiSnapshot(statusHidden, navigationHidden, lightContent, backgroundArgb)
+        }
+
+        assertEquals(
+            listOf(
+                FakeIosSystemUiSnapshot(
+                    statusHidden = false,
+                    navigationHidden = false,
+                    lightContent = true,
+                    backgroundArgb = 0xFF202020L,
+                )
+            ),
+            updates,
+        )
+    }
+
+    @Test
+    fun systemUiHandlerAttachedAfterReleaseReplaysTheAppThemeDefaults() {
+        val bridge = bridge()
+        bridge.setAppSystemUi(darkTheme = true, backgroundArgb = 0xFF121212L)
+        bridge.updateReaderSystemUi(
+            statusHidden = true,
+            navigationHidden = true,
+            lightContent = true,
+            backgroundArgb = 0xFF202020L,
+        )
+        bridge.releaseReaderSystemUi()
+
+        val updates = mutableListOf<FakeIosSystemUiSnapshot>()
+        bridge.setSystemUiHandler { statusHidden, navigationHidden, lightContent, backgroundArgb ->
+            updates += FakeIosSystemUiSnapshot(statusHidden, navigationHidden, lightContent, backgroundArgb)
+        }
+
+        assertEquals(
+            listOf(
+                FakeIosSystemUiSnapshot(
+                    statusHidden = false,
+                    navigationHidden = false,
+                    lightContent = true,
+                    backgroundArgb = 0xFF121212L,
+                )
+            ),
+            updates,
+        )
+    }
+
     private fun bridge(
         effects: IosReaderSystemEffects = FakeReaderSystemEffects(),
     ): ReaderIosBridge = ReaderIosBridge(
@@ -75,6 +215,13 @@ class ReaderIosBridgeEffectsTest {
         pdfNativeActionPresenter = IosPdfNativeActionPresenter { _, _ -> false },
     )
 }
+
+private data class FakeIosSystemUiSnapshot(
+    val statusHidden: Boolean,
+    val navigationHidden: Boolean,
+    val lightContent: Boolean,
+    val backgroundArgb: Long,
+)
 
 private class FakeReaderSystemEffects(
     initialBrightness: Double = 0.5,

@@ -25,6 +25,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.aryan.reader.shared.ReaderTheme
+import com.aryan.reader.shared.pdf.PdfReverseColorMode
 import kotlin.math.roundToInt
 
 data class SharedReaderThemePanelLabels(
@@ -41,6 +42,12 @@ data class SharedReaderThemePanelLabels(
     val edit: String,
     val delete: String,
     val preview: String,
+    val reverseColors: String = "Reverse colors",
+    val reverseColorsDescription: String = "Choose how PDF colors are inverted",
+    val reverseRgb: String = "Invert colors",
+    val reverseLightness: String = "Invert lightness",
+    val reverseLumaSrgb: String = "Invert luma (sRGB linear)",
+    val reverseLumaSymmetric: String = "Invert luma (symmetric)",
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -51,6 +58,9 @@ fun SharedReaderThemePanel(
     excludeImages: Boolean = false,
     onExcludeImagesChange: (Boolean) -> Unit = {},
     showExcludeImagesOption: Boolean = false,
+    reverseColorMode: PdfReverseColorMode = PdfReverseColorMode.RGB,
+    onReverseColorModeChange: (PdfReverseColorMode) -> Unit = {},
+    showReverseColorOption: Boolean = false,
     customThemes: List<ReaderTheme>,
     builtInThemes: List<ReaderTheme>,
     globalTextureTransparency: Float,
@@ -162,6 +172,40 @@ fun SharedReaderThemePanel(
                         horizontalArrangement = Arrangement.spacedBy(16.dp),
                         verticalArrangement = Arrangement.spacedBy(16.dp),
                     ) {
+                        if (showReverseColorOption && currentThemeId == "reverse") {
+                            item(span = { GridItemSpan(maxLineSpan) }) {
+                                Column(
+                                    Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    Text(labels.reverseColors, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
+                                    Text(
+                                        labels.reverseColorsDescription,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = Color.Gray,
+                                    )
+                                    val modes = listOf(
+                                        PdfReverseColorMode.RGB to labels.reverseRgb,
+                                        PdfReverseColorMode.LIGHTNESS to labels.reverseLightness,
+                                        PdfReverseColorMode.LUMA_SRGB_LINEAR to labels.reverseLumaSrgb,
+                                        PdfReverseColorMode.LUMA_SYMMETRIC to labels.reverseLumaSymmetric,
+                                    )
+                                    modes.chunked(2).forEach { rowModes ->
+                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            rowModes.forEach { (mode, label) ->
+                                                FilterChip(
+                                                    selected = reverseColorMode == mode,
+                                                    onClick = { onReverseColorModeChange(mode) },
+                                                    label = { Text(label, maxLines = 2, overflow = TextOverflow.Ellipsis) },
+                                                    modifier = Modifier.weight(1f),
+                                                )
+                                            }
+                                            if (rowModes.size == 1) Spacer(Modifier.weight(1f))
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         if (showExcludeImagesOption) {
                             item(span = { GridItemSpan(maxLineSpan) }) {
                                 Row(

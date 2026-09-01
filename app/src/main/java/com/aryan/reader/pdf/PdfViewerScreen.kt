@@ -103,6 +103,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DrawerState
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
@@ -136,6 +137,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.BiasAlignment
@@ -158,6 +160,8 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.zIndex
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.isBackPressed
 import androidx.compose.ui.input.pointer.isForwardPressed
@@ -187,6 +191,8 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -212,6 +218,7 @@ import com.aryan.reader.COMIC_ARCHIVE_FILE_TYPES
 import com.aryan.reader.FileType
 import com.aryan.reader.HighlightColorPickerDialog
 import com.aryan.reader.MainViewModel
+import com.aryan.reader.ReaderScreenState
 import com.aryan.reader.PDF_RENAME_TRACE_TAG
 import com.aryan.reader.R
 import com.aryan.reader.ReaderBrightnessEffect
@@ -221,10 +228,14 @@ import com.aryan.reader.ReaderScreenOrientationEffect
 import com.aryan.reader.ReaderScreenOrientationSheet
 import com.aryan.reader.ReaderThemePanel
 import com.aryan.reader.shared.SearchResult
+import com.aryan.reader.shared.ReaderSearchState
+import com.aryan.reader.shared.ReaderTheme
 import com.aryan.reader.shared.SummarizationResult
 import com.aryan.reader.SummaryCacheManager
 import com.aryan.reader.TtsSettingsSheet
 import com.aryan.reader.TtsWordReplacementsSheet
+import com.aryan.reader.data.CustomFontEntity
+import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.areReaderAiFeaturesEnabled
 import com.aryan.reader.callByokGeminiInlineAi
 import com.aryan.reader.cardTitle
@@ -233,7 +244,9 @@ import com.aryan.reader.epubreader.DictionarySettingsDialog
 import com.aryan.reader.epubreader.ExternalDictionaryHelper
 import com.aryan.reader.epubreader.SystemUiMode
 import com.aryan.reader.epubreader.TtsOverlayControls
+import com.aryan.reader.epubreader.loadPageTurnAnimationSetting
 import com.aryan.reader.epubreader.loadTapToNavigateSetting
+import com.aryan.reader.epubreader.savePageTurnAnimationSetting
 import com.aryan.reader.epubreader.saveTapToNavigateSetting
 import com.aryan.reader.fetchAiDefinition
 import com.aryan.reader.isByokCloudTtsAvailable
@@ -248,6 +261,7 @@ import com.aryan.reader.logCloudAnnotationSyncTrace
 import com.aryan.reader.ml.SpeechBubble
 import com.aryan.reader.paginatedreader.TtsChunk
 import com.aryan.reader.pdf.data.AnnotationSettingsRepository
+import com.aryan.reader.pdf.data.AnnotationToolSettings
 import com.aryan.reader.pdf.data.PdfAnnotation
 import com.aryan.reader.pdf.data.PdfAnnotationRepository
 import com.aryan.reader.pdf.data.PdfHighlightRepository
@@ -273,13 +287,21 @@ import com.aryan.reader.scaledToCanvasLimit
 import com.aryan.reader.shared.ReaderTtsReplacementPreferences
 import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.pdf.PdfSpreadLayout
+import com.aryan.reader.shared.pdf.PdfReverseColorMode
+import com.aryan.reader.shared.pdf.PdfNavigationReason
+import com.aryan.reader.shared.pdf.RealisticPdfPageTurnAnimationSpec
+import com.aryan.reader.shared.pdf.pdfPaginatedPagePaperColor
+import com.aryan.reader.shared.pdf.shouldPlayRealisticPdfPageTurn
 import com.aryan.reader.shared.pdf.PDF_MAX_ZOOM_SCALE
+import com.aryan.reader.shared.pdf.pdfDoubleTapTargetScale
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationSessionAction
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationSessionState
 import com.aryan.reader.shared.pdf.SharedPdfJumpHistory
 import com.aryan.reader.shared.pdf.reduce
+import com.aryan.reader.shared.pdf.animatesPagination
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.ui.ReaderMinimalSlider
+import com.aryan.reader.shared.ui.realisticPageCurl
 import com.aryan.reader.shared.ui.SharedPdfRichTextHiddenInput
 import com.aryan.reader.shared.ui.SharedMobileReaderDrawer
 import com.aryan.reader.shared.ui.SharedMobileReaderScaffold
@@ -287,6 +309,7 @@ import com.aryan.reader.shared.reader.MobilePdfReaderBackAction
 import com.aryan.reader.shared.reader.MobilePdfReaderBackState
 import com.aryan.reader.shared.reader.selectMobilePdfReaderBackAction
 import com.aryan.reader.shared.reader.mobilePdfSystemBarsVisibility
+import com.aryan.reader.shared.reader.MobileReaderSystemBarsVisibility
 import com.aryan.reader.shared.reader.MobilePdfDocumentPresentation
 import com.aryan.reader.shared.reader.selectMobilePdfDocumentPresentation
 import com.aryan.reader.shared.ui.SharedMobileReaderLoadingIndicator
@@ -302,6 +325,7 @@ import com.aryan.reader.shouldRenderReaderSlider
 import com.aryan.reader.summarizationUrl
 import com.aryan.reader.tts.ReaderTtsOverlaySize
 import com.aryan.reader.tts.SpeakerSamplePlayer
+import com.aryan.reader.tts.TtsController
 import com.aryan.reader.tts.TtsPlaybackManager
 import com.aryan.reader.tts.loadReaderTtsOverlaySize
 import com.aryan.reader.tts.readerTtsOverlayAlignmentBias
@@ -337,6 +361,9 @@ import kotlin.math.roundToInt
 private const val PDF_SPREAD_PAN_FLING_MIN_VELOCITY = 600f
 private const val PDF_SPREAD_PAN_FLING_MULTIPLIER = 0.72f
 
+/** Temporary diagnostics for the PDF TTS start regression; remove once root-caused. */
+private const val TTS_DIAG_TAG = "TTS_DIAG"
+
 @Suppress("KotlinConstantConditions")
 @SuppressLint("UnusedBoxWithConstraintsScope", "ObsoleteSdkInt", "LocalContextGetResourceValueCall")
 @ExperimentalMaterial3Api
@@ -352,8 +379,33 @@ fun PdfViewerScreen(
     onSavePosition: suspend (uri: Uri, page: Int, totalPages: Int) -> Unit,
     onBookmarksChanged: (bookmarksJson: String) -> Unit,
     onNavigateToPro: () -> Unit,
-    viewModel: MainViewModel
+    viewModel: MainViewModel,
+    pane: PdfViewerPane? = null,
+    isPaneFocused: Boolean = true,
+    isPaneAppActive: Boolean = true,
+    onOpenSplit: (() -> Unit)? = null,
+    ttsControllerOverride: TtsController? = null,
 ) {
+    val isSplitPane = pane != null
+    // A split pane may remain composed while another pane owns process-global
+    // resources, or while the reader route is backgrounded. Keep the legacy
+    // full-screen defaults intact, but make ownership explicit for panes.
+    val ownsPaneGlobals = !isSplitPane || (isPaneFocused && isPaneAppActive)
+    LaunchedEffect(isSplitPane, isPaneFocused, isPaneAppActive, ownsPaneGlobals) {
+        pdfSplitZoomDiag(
+            "screen.ownership isSplitPane=$isSplitPane focused=$isPaneFocused " +
+                "appActive=$isPaneAppActive ownsPaneGlobals=$ownsPaneGlobals " +
+                "bookId=${pane?.bookId ?: "solo"} session=${pane?.sessionId ?: 0}"
+        )
+    }
+    val diagPaneIdentity = pane?.bookId ?: "solo"
+    val diagPaneSessionId = pane?.sessionId ?: 0L
+    DisposableEffect(diagPaneIdentity, diagPaneSessionId) {
+        pdfSplitZoomDiag("screen.composed bookId=$diagPaneIdentity session=$diagPaneSessionId")
+        onDispose {
+            pdfSplitZoomDiag("screen.disposed bookId=$diagPaneIdentity session=$diagPaneSessionId")
+        }
+    }
     val context = LocalContext.current
     LaunchedEffect(Unit) {
         PdfFontCache.init(context.assets)
@@ -366,9 +418,11 @@ fun PdfViewerScreen(
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     var displayMode by remember { mutableStateOf(loadDisplayMode(context)) }
     var tapToNavigateEnabled by remember { mutableStateOf(loadTapToNavigateSetting(context)) }
+    var pageTurnAnimationEnabled by remember { mutableStateOf(loadPageTurnAnimationSetting(context)) }
     var showThemePanel by remember { mutableStateOf(false) }
     var currentThemeId by remember { mutableStateOf(loadPdfThemeId(context)) }
     var excludeImages by remember { mutableStateOf(com.aryan.reader.loadExcludeImages(context)) }
+    var reverseColorMode by remember { mutableStateOf(com.aryan.reader.loadPdfReverseColorMode(context)) }
     var customThemes by remember { mutableStateOf(loadCustomThemes(context)) }
     var globalTextureTransparency by remember { mutableFloatStateOf(loadGlobalTextureTransparency(context)) }
     val documentCache = remember { DocumentCache(3) }
@@ -392,6 +446,8 @@ fun PdfViewerScreen(
     var showVerticalPageGap by remember { mutableStateOf(loadPdfVerticalPageGapVisible(context)) }
     var showPageNumberOverlay by remember { mutableStateOf(loadPdfPageNumberOverlayVisible(context)) }
     var showTopTabStrip by remember { mutableStateOf(loadPdfTopTabStripVisible(context)) }
+    var showTopToolbar by remember { mutableStateOf(loadPdfTopToolbarVisible(context)) }
+    var showBottomToolbar by remember { mutableStateOf(loadPdfBottomToolbarVisible(context)) }
     var showVisualOptionsSheet by remember { mutableStateOf(false) }
     var pdfPageSpreadMode by remember { mutableStateOf(loadPdfPageSpreadMode(context)) }
     var pdfFirstPageStandaloneInSpread by remember { mutableStateOf(loadPdfFirstPageStandaloneInSpread(context)) }
@@ -407,7 +463,9 @@ fun PdfViewerScreen(
     var showPasswordDialog by remember { mutableStateOf(false) }
     var isPasswordError by remember { mutableStateOf(false) }
     LocalView.current
-    ReaderScreenOrientationEffect(screenOrientationMode)
+    if (ownsPaneGlobals) {
+        ReaderScreenOrientationEffect(screenOrientationMode)
+    }
 
     var ocrLanguage by remember { mutableStateOf(loadOcrLanguage(context)) }
     var hasSelectedOcrLanguage by remember { mutableStateOf(hasUserSelectedOcrLanguage(context)) }
@@ -455,13 +513,15 @@ fun PdfViewerScreen(
 
     val isOss = BuildConfig.FLAVOR == "oss"
 
-    val executeWithOcrCheck = remember(hasSelectedOcrLanguage) {
+    val executeWithOcrCheck = remember(hasSelectedOcrLanguage, ownsPaneGlobals) {
         { action: () -> Unit ->
-            if (isOss || hasSelectedOcrLanguage) {
-                action()
-            } else {
-                pendingActionAfterOcrSelection = action
-                showOcrLanguageDialog = true
+            if (ownsPaneGlobals) {
+                if (isOss || hasSelectedOcrLanguage) {
+                    action()
+                } else {
+                    pendingActionAfterOcrSelection = action
+                    showOcrLanguageDialog = true
+                }
             }
         }
     }
@@ -472,834 +532,512 @@ fun PdfViewerScreen(
     var backgroundIndexingProgress by remember { mutableFloatStateOf(0f) }
 
     val uiState by viewModel.uiState.collectAsState()
-    val effectivePdfUri = uiState.selectedPdfUri ?: pdfUri
-    val effectiveFileType = uiState.selectedFileType ?: FileType.PDF
-    var documentPassword by rememberSaveable(effectivePdfUri.toString()) { mutableStateOf<String?>(null) }
-    var isPrintBlockedForPasswordProtectedPdf by rememberSaveable(effectivePdfUri.toString()) { mutableStateOf(false) }
-    val isComicFile = effectiveFileType in COMIC_ARCHIVE_FILE_TYPES
-
-    var showNewTabSheet by remember { mutableStateOf(false) }
-    var showFileInfoDialog by remember { mutableStateOf(false) }
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
-
-    val isTabsEnabled = uiState.isTabsEnabled
-    val openTabs = uiState.openTabs
-    val activeTabBookId = uiState.activeTabBookId
-    val canShowPdfTabs = isTabsEnabled && openTabs.isNotEmpty() && effectiveFileType == FileType.PDF
-    val isPdfTabStripVisible = canShowPdfTabs && showTopTabStrip
-    val originalFileName by remember(uiState.allRecentFiles, uiState.rawLibraryFiles, uiState.recentFiles, uiState.selectedBookId, effectivePdfUri) {
-        derivedStateOf {
-            (uiState.selectedBookId?.let { selectedId ->
-                uiState.allRecentFiles.find { it.bookId == selectedId }
-                    ?: uiState.rawLibraryFiles.find { it.bookId == selectedId }
-                    ?: uiState.recentFiles.find { it.bookId == selectedId }
-            } ?: uiState.allRecentFiles.find { it.uriString == effectivePdfUri.toString() }
-                ?: uiState.rawLibraryFiles.find { it.uriString == effectivePdfUri.toString() }
-                ?: uiState.recentFiles.find { it.uriString == effectivePdfUri.toString() })?.displayName
-                ?: effectivePdfUri.lastPathSegment ?: "Document.pdf"
-        }
-    }
-    var documentMetadataTitle by remember { mutableStateOf<String?>(null) }
-    val activeLibraryItem by remember(uiState.allRecentFiles, uiState.rawLibraryFiles, uiState.recentFiles, uiState.selectedBookId, effectivePdfUri) {
-        derivedStateOf {
-            uiState.selectedBookId?.let { selectedId ->
-                uiState.allRecentFiles.find { it.bookId == selectedId }
-                    ?: uiState.rawLibraryFiles.find { it.bookId == selectedId }
-                    ?: uiState.recentFiles.find { it.bookId == selectedId }
-            } ?: uiState.allRecentFiles.find { it.uriString == effectivePdfUri.toString() }
-                ?: uiState.rawLibraryFiles.find { it.uriString == effectivePdfUri.toString() }
-                ?: uiState.recentFiles.find { it.uriString == effectivePdfUri.toString() }
-        }
-    }
-    val readerDisplayTitle by remember(activeLibraryItem, uiState.usePdfFileNameAsDisplayName, originalFileName) {
-        derivedStateOf {
-            activeLibraryItem
-                ?.cardTitle(uiState.usePdfFileNameAsDisplayName)
-                ?: originalFileName
-        }
-    }
-    val effectiveReaderBookTitle by remember(activeLibraryItem, documentMetadataTitle, readerDisplayTitle) {
-        derivedStateOf {
-            activeLibraryItem?.customName?.takeIf { it.isNotBlank() }
-                ?: documentMetadataTitle?.takeIf { it.isNotBlank() }
-                ?: readerDisplayTitle
-        }
-    }
-    var currentBookId by remember { mutableStateOf<String?>(null) }
-    val bookId = currentBookId ?: effectivePdfUri.toString().hashCode().toString()
-    val activeDocumentRenderKey = currentBookId ?: effectivePdfUri.toString()
-    val view = LocalView.current
-    var isDockDragging by remember { mutableStateOf(false) }
-    var initialScrollDone by remember { mutableStateOf(false) }
-
-    LaunchedEffect(
-        activeLibraryItem,
-        documentMetadataTitle,
-        readerDisplayTitle,
-        effectiveReaderBookTitle,
-        originalFileName,
-        currentBookId,
-        uiState.selectedBookId,
-        effectivePdfUri
-    ) {
-        Timber.tag(PDF_RENAME_TRACE_TAG).i(
-            "pdfScreen.titleResolved selectedBookId=${uiState.selectedBookId} currentBookId=$currentBookId " +
-                "uri=$effectivePdfUri activeItemId=${activeLibraryItem?.bookId} " +
-                "displayName=${activeLibraryItem?.displayName} title=${activeLibraryItem?.title} " +
-                "customName=${activeLibraryItem?.customName} documentMetadataTitle=$documentMetadataTitle " +
-                "originalFileName=$originalFileName readerDisplayTitle=$readerDisplayTitle " +
-                "effectiveReaderBookTitle=$effectiveReaderBookTitle usePdfFileName=${uiState.usePdfFileNameAsDisplayName}"
-        )
-    }
-
-    val reflowBookId = remember(bookId) { "${bookId}_reflow" }
-    val hasReflowFile by remember(uiState.allRecentFiles, reflowBookId) {
-        derivedStateOf {
-            uiState.allRecentFiles.any { it.bookId == reflowBookId && !it.isDeleted }
-        }
-    }
-
-    LaunchedEffect(bookId) {
-        showBars = false
-        val savedIsScrollLocked = loadPdfScrollLocked(context, bookId)
-        val savedLockedState = loadPdfLockedState(context, bookId)
-        val activeCamera = activePdfCameraAfterLockPreferenceLoad(
-            isScrollLocked = savedIsScrollLocked,
-            lockedState = savedLockedState
-        )
-        isScrollLocked = savedIsScrollLocked
-        lockedState = savedLockedState
-        currentActiveScale = activeCamera.first
-        currentActiveOffset = activeCamera.second
-    }
-
-    var isAutoScrollModeActive by remember { mutableStateOf(false) }
-    var isAutoScrollPlaying by remember { mutableStateOf(false) }
-    var isAutoScrollTempPaused by remember { mutableStateOf(false) }
-    val autoScrollResumeJob = remember { mutableStateOf<Job?>(null) }
-    var isAutoScrollCollapsed by remember { mutableStateOf(false) }
-    var ttsOverlaySize by remember(context) { mutableStateOf(loadReaderTtsOverlaySize(context)) }
-
-    var isMusicianMode by remember { mutableStateOf(loadPdfMusicianMode(context)) }
-    var autoScrollUseSlider by remember { mutableStateOf(loadPdfAutoScrollUseSlider(context)) }
-    var isStylusOnlyMode by remember { mutableStateOf(loadStylusOnlyMode(context)) }
-    var showTtsControlsSheet by remember { mutableStateOf(false) }
-    var isKeepScreenOn by remember { mutableStateOf(loadKeepScreenOn(context)) }
-    val ttsController = rememberTtsController()
-    val ttsState by ttsController.ttsState.collectAsState()
-    ttsState.currentText
-    var currentTtsMode by remember {
-        mutableStateOf(
-            com.aryan.reader.tts.loadTtsMode(context).let {
-                if (BuildConfig.FLAVOR == "oss" && !isByokCloudTtsAvailable(context)) TtsPlaybackManager.TtsMode.BASE else it
-            }
-        )
-    }
-    var showTtsSettingsSheet by remember { mutableStateOf(false) }
-    var showTtsReplacementsSheet by remember { mutableStateOf(false) }
-    var ttsReplacementPreferences by remember { mutableStateOf(loadTtsReplacementPreferences(context)) }
-    val updateTtsReplacementPreferences: (ReaderTtsReplacementPreferences) -> Unit = { next ->
-        ttsReplacementPreferences = next
-        saveTtsReplacementPreferences(context, next)
-    }
-
-    DisposableEffect(isKeepScreenOn) {
-        view.keepScreenOn = isKeepScreenOn
-        onDispose {
-            view.keepScreenOn = false
-        }
-    }
-
-    var showDictionarySettingsSheet by remember { mutableStateOf(false) }
-    var useOnlineDictionary by remember { mutableStateOf(loadUseOnlineDict(context)) }
-    var selectedDictPackage by remember { mutableStateOf(loadExternalDictPackage(context)) }
-    var selectedTranslatePackage by remember { mutableStateOf(loadExternalTranslatePackage(context)) }
-    var selectedSearchPackage by remember { mutableStateOf(loadExternalSearchPackage(context)) }
-
-    fun triggerAutoScrollTempPause(durationMs: Long) {
-        if (!isAutoScrollModeActive || !isAutoScrollPlaying) return
-        autoScrollResumeJob.value?.cancel()
-        isAutoScrollTempPaused = true
-        autoScrollResumeJob.value = coroutineScope.launch {
-            delay(durationMs)
-            if (isActive && isAutoScrollModeActive && isAutoScrollPlaying) {
-                isAutoScrollTempPaused = false
-            }
-        }
-    }
-
-    val onAutoScrollInteraction = remember {
-        {
-            if (isAutoScrollPlaying) {
-                triggerAutoScrollTempPause(300L)
-            }
-        }
-    }
-
-    var paginationDraggingBoxId by remember { mutableStateOf<String?>(null) }
-
     val customFonts by viewModel.customFonts.collectAsState()
-
-    fun showBanner(message: String, isError: Boolean = false, isPersistent: Boolean = false) {
-        viewModel.showBanner(message, isError, isPersistent)
-    }
-    val onOcrStateChange: (Boolean) -> Unit = {}
-
-    var showZoomIndicator by remember { mutableStateOf(false) }
-    var bookmarks by remember(pdfUri) { mutableStateOf(loadPdfBookmarksFromJson(initialBookmarksJson)) }
-
-    var showPenPlayground by rememberSaveable { mutableStateOf(false) }
-    var isEditMode by rememberSaveable { mutableStateOf(false) }
-    var isDockMinimized by rememberSaveable { mutableStateOf(false) }
-
-    var pendingNoteForNewHighlight by remember { mutableStateOf(false) }
-    var highlightToNoteId by remember { mutableStateOf<String?>(null) }
-    val onNoteRequested: (String?) -> Unit = { id ->
-        if (id != null) {
-            highlightToNoteId = id
-        } else {
-            pendingNoteForNewHighlight = true
-        }
-    }
-
-    val isDrawingActive by remember(isEditMode, isDockMinimized) {
-        derivedStateOf { isEditMode && !isDockMinimized }
-    }
-
-    var isAutoScrollLocal by remember { mutableStateOf(loadPdfAutoScrollLocalMode(context, bookId)) }
-
-    LaunchedEffect(bookId) {
-        isAutoScrollLocal = loadPdfAutoScrollLocalMode(context, bookId)
-    }
-
-    val onPrintDocument: () -> Unit = onPrintDocument@{
-        if (isPrintBlockedForPasswordProtectedPdf) {
-            showBanner(context.getString(R.string.error_print_password_protected), isError = true)
-            return@onPrintDocument
-        }
-        val printManager = context.getSystemService(Context.PRINT_SERVICE) as PrintManager
-        val jobName = "${context.getString(R.string.app_name)} - $originalFileName"
-
-        try {
-            Timber.tag("PdfPrint").d("Starting print job: $jobName")
-            printManager.print(
-                jobName,
-                PdfPrintDocumentAdapter(context, effectivePdfUri, originalFileName),
-                null
-            )
-        } catch (e: Exception) {
-            Timber.tag("PdfPrint").e(e, "Failed to initialize print job")
-            showBanner(context.getString(R.string.error_open_print_settings), isError = true)
-        }
-    }
-
-    val initialSettings = remember(isAutoScrollLocal, bookId) {
-        if (isAutoScrollLocal) {
-            loadPdfAutoScrollLocalSettings(context, bookId) ?: Triple(
-                loadPdfAutoScrollSpeed(context),
-                loadPdfAutoScrollMinSpeed(context),
-                loadPdfAutoScrollMaxSpeed(context)
-            )
-        } else {
-            Triple(
-                loadPdfAutoScrollSpeed(context),
-                loadPdfAutoScrollMinSpeed(context),
-                loadPdfAutoScrollMaxSpeed(context)
-            )
-        }
-    }
-
-    var autoScrollSpeed by remember { mutableFloatStateOf(initialSettings.first) }
-    var autoScrollMinSpeed by remember { mutableFloatStateOf(initialSettings.second) }
-    var autoScrollMaxSpeed by remember { mutableFloatStateOf(initialSettings.third) }
-
-    LaunchedEffect(initialSettings) {
-        autoScrollSpeed = initialSettings.first
-        autoScrollMinSpeed = initialSettings.second
-        autoScrollMaxSpeed = initialSettings.third
-    }
-
-    val onToggleAutoScrollMode = { newIsLocal: Boolean ->
-        isAutoScrollLocal = newIsLocal
-        savePdfAutoScrollLocalMode(context, bookId, newIsLocal)
-
-        if (newIsLocal) {
-            val existingLocal = loadPdfAutoScrollLocalSettings(context, bookId)
-            if (existingLocal == null) {
-                savePdfAutoScrollLocalSettings(context, bookId, autoScrollSpeed, autoScrollMinSpeed, autoScrollMaxSpeed)
-            } else {
-                autoScrollSpeed = existingLocal.first
-                autoScrollMinSpeed = existingLocal.second
-                autoScrollMaxSpeed = existingLocal.third
-            }
-        } else {
-            autoScrollSpeed = loadPdfAutoScrollSpeed(context)
-            autoScrollMinSpeed = loadPdfAutoScrollMinSpeed(context)
-            autoScrollMaxSpeed = loadPdfAutoScrollMaxSpeed(context)
-        }
-    }
-
-    val updateSpeed = { newSpeed: Float ->
-        autoScrollSpeed = newSpeed
-        if (isAutoScrollLocal) {
-            savePdfAutoScrollLocalSettings(context, bookId, newSpeed, autoScrollMinSpeed, autoScrollMaxSpeed)
-        } else {
-            savePdfAutoScrollSpeed(context, newSpeed)
-        }
-    }
-
-    val updateMinSpeed = { newMin: Float ->
-        autoScrollMinSpeed = newMin
-        if (isAutoScrollLocal) {
-            var currentMax = autoScrollMaxSpeed
-            var currentSpeed = autoScrollSpeed
-            if (currentMax < newMin) { currentMax = newMin; autoScrollMaxSpeed = newMin }
-            if (currentSpeed < newMin) { currentSpeed = newMin; autoScrollSpeed = newMin }
-            else if (currentSpeed > currentMax) { currentSpeed = currentMax; autoScrollSpeed = currentMax }
-            savePdfAutoScrollLocalSettings(context, bookId, currentSpeed, newMin, currentMax)
-        } else {
-            savePdfAutoScrollMinSpeed(context, newMin)
-        }
-    }
-
-    val updateMaxSpeed = { newMax: Float ->
-        autoScrollMaxSpeed = newMax
-        if (isAutoScrollLocal) {
-            var currentMin = autoScrollMinSpeed
-            var currentSpeed = autoScrollSpeed
-            if (currentMin > newMax) { currentMin = newMax; autoScrollMinSpeed = newMax }
-            if (currentSpeed > newMax) { currentSpeed = newMax; autoScrollSpeed = newMax }
-            else if (currentSpeed < currentMin) { currentSpeed = currentMin; autoScrollSpeed = currentMin }
-            savePdfAutoScrollLocalSettings(context, bookId, currentSpeed, currentMin, newMax)
-        } else {
-            savePdfAutoScrollMaxSpeed(context, newMax)
-        }
-    }
-
-    val (initialDockLocation, initialDockOffset) = remember(context) { loadDockState(context) }
-
-    var customHighlightColors by remember { mutableStateOf(loadCustomHighlightColors(context)) }
-    var showHighlightColorPicker by remember { mutableStateOf(false) }
-    var highlightColorPickerInitialSlot by remember { mutableStateOf(PdfHighlightColor.YELLOW) }
-    var isBubbleZoomModeActive by remember { mutableStateOf(false) }
-    var showBubbleZoomDownloadDialog by remember { mutableStateOf(false) }
     val bubbleZoomDownloadProgress by viewModel.speechBubbleModelDownloadProgress.collectAsState()
-
-    LaunchedEffect(isComicFile) {
-        if (!isComicFile) {
-            isBubbleZoomModeActive = false
-            showBubbleZoomDownloadDialog = false
-        }
-    }
-
-    var dockLocation by remember { mutableStateOf(initialDockLocation) }
-    var dockOffset by remember { mutableStateOf(initialDockOffset) }
-    var snapPreviewLocation by remember { mutableStateOf<DockLocation?>(null) }
-    var paginationDraggingOffset by remember { mutableStateOf(Offset.Zero) }
-    var paginationDraggingSize by remember { mutableStateOf(Size.Zero) }
-    var paginationDragPageHeight by remember { mutableFloatStateOf(0f) }
-    var paginationOriginalRelSize by remember { mutableStateOf(Size.Zero) }
-
-    LaunchedEffect(Unit) {
-        if (dockLocation == DockLocation.FLOATING && dockOffset == Offset.Zero) {
-            dockLocation = DockLocation.BOTTOM
-        }
-    }
-
-    val window = (view.context as? Activity)?.window
-    val showStandardBars = showBars && !isEditMode
-    var readerBrightnessSettings by remember { mutableStateOf(loadReaderBrightnessSettings(context)) }
-    var showBrightnessSheet by remember { mutableStateOf(false) }
-    ReaderBrightnessEffect(window, readerBrightnessSettings)
-
-    val updateReaderBrightness: (com.aryan.reader.ReaderBrightnessSettings) -> Unit = { settings ->
-        readerBrightnessSettings = settings
-        saveReaderBrightnessSettings(context, settings)
-    }
-
-    DisposableEffect(window, view) {
-        onDispose {
-            window?.let {
-                WindowCompat.getInsetsController(it, view).show(WindowInsetsCompat.Type.systemBars())
-            }
-        }
-    }
-
-    LaunchedEffect(systemUiMode, showStandardBars) {
-        if (window != null) {
-            val insetsController = WindowCompat.getInsetsController(window, view)
-            val visibility = mobilePdfSystemBarsVisibility(systemUiMode, showStandardBars)
-            if (visibility.statusBarsVisible) insetsController.show(WindowInsetsCompat.Type.statusBars())
-            else insetsController.hide(WindowInsetsCompat.Type.statusBars())
-            if (visibility.navigationBarsVisible) insetsController.show(WindowInsetsCompat.Type.navigationBars())
-            else insetsController.hide(WindowInsetsCompat.Type.navigationBars())
-            if (!visibility.statusBarsVisible || !visibility.navigationBarsVisible) {
-                insetsController.systemBarsBehavior =
-                    WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-            }
-        }
-    }
-
-    val dockHeight = 64.dp
-    val dockHeightPx = with(LocalDensity.current) { dockHeight.toPx() }
-    val density = LocalDensity.current
-    val viewConfiguration = LocalViewConfiguration.current
-
-    val statusBarHeightDp = with(density) { WindowInsets.statusBars.getTop(density).toDp() }
-    val dummySearcher: suspend (String) -> List<SearchResult> = { emptyList() }
-    val searchState = rememberSearchState(scope = coroutineScope, searcher = dummySearcher)
-    val navBarHeight = WindowInsets.systemBars.getBottom(density)
-
-    val targetVerticalHeaderHeight = remember(
-        dockLocation,
-        snapPreviewLocation,
-        isEditMode,
-        isDockDragging,
-        systemUiMode,
-        statusBarHeightDp
-    ) {
-        if (!isEditMode) {
-            0.dp
-        } else {
-            val isStickyTop = dockLocation == DockLocation.TOP && !isDockDragging
-            val isPreviewingTop = snapPreviewLocation == DockLocation.TOP
-            if (isStickyTop || isPreviewingTop) {
-                dockHeight + if (systemUiMode == SystemUiMode.DEFAULT) statusBarHeightDp else 0.dp
-            } else 0.dp
-        }
-    }
-
-    val verticalHeaderHeight by animateDpAsState(
-        targetValue = targetVerticalHeaderHeight,
-        animationSpec = tween(durationMillis = 200),
-        label = "verticalHeaderHeight"
-    )
-
-    val targetTopOverlayInset = remember(
-        showStandardBars,
-        systemUiMode,
-        statusBarHeightDp,
-        isPdfTabStripVisible
-    ) {
-        if (!showStandardBars) {
-            0.dp
-        } else {
-            var inset = 56.dp
-            val isStatusBarVisible =
-                systemUiMode == SystemUiMode.DEFAULT || (systemUiMode == SystemUiMode.SYNC && showStandardBars)
-
-            if (isStatusBarVisible) {
-                inset += statusBarHeightDp
-            }
-            if (isPdfTabStripVisible) {
-                inset += PdfTabStripHeight
-            }
-            inset
-        }
-    }
-
-    val topOverlayInset by animateDpAsState(
-        targetValue = targetTopOverlayInset,
-        animationSpec = tween(durationMillis = 200),
-        label = "topOverlayInset"
-    )
-
-    val verticalFooterHeight by remember(
-        dockLocation,
-        snapPreviewLocation,
-        isEditMode,
-        isDockDragging,
-        systemUiMode,
-        navBarHeight,
-        density
-    ) {
-        derivedStateOf {
-            if (!isEditMode) {
-                0.dp
-            } else {
-                val isStickyBottom = dockLocation == DockLocation.BOTTOM && !isDockDragging
-                val isPreviewingBottom = snapPreviewLocation == DockLocation.BOTTOM
-
-                if (isStickyBottom || isPreviewingBottom) {
-                    dockHeight + if (systemUiMode == SystemUiMode.DEFAULT) with(density) { navBarHeight.toDp() } else 0.dp
-                } else 0.dp
-            }
-        }
-    }
-    var errorMessage by remember { mutableStateOf<String?>(null) }
-
-    LaunchedEffect(ocrLanguage) { OcrHelper.init(ocrLanguage) }
-
-    LaunchedEffect(displayMode) { saveDisplayMode(context, displayMode) }
-
-    LaunchedEffect(bookId, currentActiveScale, currentActiveOffset, isScrollLocked) {
-        if (isScrollLocked) {
-            val requestedCamera = currentActiveScale to currentActiveOffset
-            delay(500)
-            Timber.tag("PdfLockDiagnostic").d("SAVING: BookId=$bookId | Scale=${requestedCamera.first} | X=${requestedCamera.second.x} | Y=${requestedCamera.second.y}")
-
-            lockedState = Triple(requestedCamera.first, requestedCamera.second.x, requestedCamera.second.y)
-            savePdfLockedState(context, bookId, requestedCamera.first, requestedCamera.second.x, requestedCamera.second.y)
-        }
-    }
-
-    LaunchedEffect(ttsState.errorMessage) {
-        ttsState.errorMessage?.let { message ->
-            if (message == "INSUFFICIENT_CREDITS") {
-                showInsufficientCreditsDialog = true
-                ttsController.stop()
-            } else {
-                showBanner(message, isError = true)
-            }
-        }
-    }
-
-    LaunchedEffect(errorMessage) {
-        errorMessage?.let { showBanner(it, isError = true) }
-    }
-
     val annotationSettingsRepo = remember(context) { AnnotationSettingsRepository(context) }
     val toolSettings by annotationSettingsRepo.settings.collectAsState()
-    var showToolSettings by rememberSaveable { mutableStateOf(false) }
-    val isHighlighterSnapEnabled = toolSettings.isHighlighterSnapEnabled
-
-    val selectedTool = toolSettings.getActiveTool()
-
-    val lastPenTool = toolSettings.getLastPenTool()
-    val lastHighlighterTool = toolSettings.getLastHighlighterTool()
-    val dockPenColor = toolSettings.getToolColor(lastPenTool)
-    val dockHighlighterColor = toolSettings.getToolColor(lastHighlighterTool)
-
-    val activeToolColor = toolSettings.getToolColor(selectedTool)
-    val activeToolThickness = toolSettings.getToolThickness(selectedTool)
-    val eraserToolThickness = toolSettings.getToolThickness(InkType.ERASER)
-
-    val fountainPenColor = toolSettings.getToolColor(InkType.FOUNTAIN_PEN)
-    val markerColor = toolSettings.getToolColor(InkType.PEN)
-    val pencilColor = toolSettings.getToolColor(InkType.PENCIL)
-    val highlighterColor = toolSettings.getToolColor(InkType.HIGHLIGHTER)
-    val highlighterRoundColor = toolSettings.getToolColor(InkType.HIGHLIGHTER_ROUND)
-
-    val isCurrentToolHighlighter =
-        selectedTool == InkType.HIGHLIGHTER || selectedTool == InkType.HIGHLIGHTER_ROUND
-
-    val currentSnapEnabled by rememberUpdatedState(isHighlighterSnapEnabled)
-    val currentIsHighlighter by rememberUpdatedState(isCurrentToolHighlighter)
-
-    val penPalette = remember(toolSettings.penPaletteArgb) { toolSettings.getPenPalette() }
-    val highlighterPalette =
-        remember(toolSettings.highlighterPaletteArgb) { toolSettings.getHighlighterPalette() }
-
-    val currentStrokeColor by remember(activeToolColor) { derivedStateOf { activeToolColor } }
-    val currentStrokeWidth by remember(activeToolThickness) { derivedStateOf { activeToolThickness } }
-    val currentEraserStrokeWidth by remember(eraserToolThickness) { derivedStateOf { eraserToolThickness } }
-
-    val pdfTextRepository = remember(context) { PdfTextRepository(context) }
-    val annotationRepository = remember(context) { PdfAnnotationRepository(context) }
-    val textBoxRepository = remember(context) { PdfTextBoxRepository(context) }
-    val highlightRepository = remember(context) { PdfHighlightRepository(context) }
-
-    var allAnnotations by remember { mutableStateOf<Map<Int, List<PdfAnnotation>>>(emptyMap()) }
-
-    val undoStack = remember { mutableStateListOf<HistoryAction>() }
-    val redoStack = remember { mutableStateListOf<HistoryAction>() }
-
-    val erasedAnnotationsFromStroke = remember {
-        mutableStateMapOf<Int, MutableList<PdfAnnotation>>()
-    }
-
-    var lastEraserPoint by remember { mutableStateOf<PdfPoint?>(null) }
-
-    var annotationSession by remember { mutableStateOf(SharedPdfAnnotationSessionState()) }
-
-    val richTextRepository = remember(context) { PdfRichTextRepository(context) }
-    val richTextController = remember(currentBookId) {
-        if (currentBookId != null) RichTextController(
-            richTextRepository,
-            coroutineScope,
-            currentBookId!!,
-            viewModel::onPdfSidecarsCommitted,
-        )
-        else null
-    }
-    var pdfDocument by remember { mutableStateOf<ReaderDocument?>(null) }
-    var pfdState by remember { mutableStateOf<ParcelFileDescriptor?>(null) }
-    var totalPages by remember { mutableIntStateOf(0) }
-    var currentPageScale by remember { mutableFloatStateOf(1f) }
-    val textBoxes = remember { mutableStateListOf<PdfTextBox>() }
-    var selectedTextBoxId by rememberSaveable { mutableStateOf<String?>(null) }
-    val userHighlights = remember { mutableStateListOf<PdfUserHighlight>() }
-    val drawingState = remember { PdfDrawingState() }
-    val pdfiumCore = remember { PdfiumCoreProvider.core }
-    val verticalReaderState = rememberVerticalPdfReaderState()
-    var virtualPages by remember { mutableStateOf<List<VirtualPage>>(emptyList()) }
-    var loadedPageLayoutBookId by remember { mutableStateOf<String?>(null) }
-    var pageLayoutMutationVersion by remember(currentBookId) { mutableLongStateOf(0L) }
-    val totalDisplayPages by remember(virtualPages, totalPages) {
-        derivedStateOf { if (virtualPages.isNotEmpty()) virtualPages.size else totalPages }
-    }
-    val pdfSpreadSettings = remember(pdfPageSpreadMode, pdfFirstPageStandaloneInSpread) {
-        ReaderSettings(
-            pageSpreadMode = pdfPageSpreadMode,
-            pdfFirstPageStandaloneInSpread = pdfFirstPageStandaloneInSpread
+    val ttsController = ttsControllerOverride ?: rememberTtsController()
+    val ttsState by ttsController.ttsState.collectAsState()
+    val surfaceState = remember { PdfViewerSurfaceState() }
+    val documentSetup = remember(
+        uiState,
+        pdfUri,
+        initialPage,
+        initialBookmarksJson,
+        onBookmarksChanged,
+        pane,
+        viewModel,
+        isPaneFocused,
+        isSplitPane,
+        ownsPaneGlobals,
+        context,
+        coroutineScope,
+        ttsController,
+        ttsState,
+        customFonts,
+        bubbleZoomDownloadProgress,
+        annotationSettingsRepo,
+        toolSettings,
+        tabStateMap
+    ) {
+        PdfViewerDocumentSetupInputs(
+            uiState = uiState,
+            pdfUri = pdfUri,
+            initialPage = initialPage,
+            initialBookmarksJson = initialBookmarksJson,
+            onBookmarksChanged = onBookmarksChanged,
+            pane = pane,
+            viewModel = viewModel,
+            isPaneFocused = isPaneFocused,
+            isSplitPane = isSplitPane,
+            ownsPaneGlobals = ownsPaneGlobals,
+            context = context,
+            coroutineScope = coroutineScope,
+            ttsController = ttsController,
+            ttsState = ttsState,
+            customFonts = customFonts,
+            bubbleZoomDownloadProgress = bubbleZoomDownloadProgress,
+            annotationSettingsRepo = annotationSettingsRepo,
+            toolSettings = toolSettings,
+            tabStateMap = tabStateMap,
+            displayMode = pdfViewerMutableValue({ displayMode }, { displayMode = it }),
+            currentActiveOffset = pdfViewerMutableValue({ currentActiveOffset }, { currentActiveOffset = it }),
+            currentActiveScale = pdfViewerMutableValue({ currentActiveScale }, { currentActiveScale = it }),
+            isScrollLocked = pdfViewerMutableValue({ isScrollLocked }, { isScrollLocked = it }),
+            lockedState = pdfViewerMutableValue({ lockedState }, { lockedState = it }),
+            ocrLanguage = pdfViewerMutableValue({ ocrLanguage }, { ocrLanguage = it }),
+            pdfFirstPageStandaloneInSpread = pdfViewerMutableValue({ pdfFirstPageStandaloneInSpread }, { pdfFirstPageStandaloneInSpread = it }),
+            pdfPageSpreadMode = pdfViewerMutableValue({ pdfPageSpreadMode }, { pdfPageSpreadMode = it }),
+            pendingPaginationSpreadRestorePage = pdfViewerMutableValue({ pendingPaginationSpreadRestorePage }, { pendingPaginationSpreadRestorePage = it }),
+            pendingRestorePage = pdfViewerMutableValue({ pendingRestorePage }, { pendingRestorePage = it }),
+            showBars = pdfViewerMutableValue({ showBars }, { showBars = it }),
+            showInsufficientCreditsDialog = pdfViewerMutableValue({ showInsufficientCreditsDialog }, { showInsufficientCreditsDialog = it }),
+            showTopTabStrip = pdfViewerMutableValue({ showTopTabStrip }, { showTopTabStrip = it }),
+            isTopToolbarEnabled = pdfViewerMutableValue({ showTopToolbar }, { showTopToolbar = it }),
+            isBottomToolbarEnabled = pdfViewerMutableValue({ showBottomToolbar }, { showBottomToolbar = it }),
+            systemUiMode = pdfViewerMutableValue({ systemUiMode }, { systemUiMode = it }),
         )
     }
-    val paginationSpreadStarts = remember(
-        totalDisplayPages,
-        pdfSpreadSettings.pageSpreadMode,
-        pdfSpreadSettings.pdfFirstPageStandaloneInSpread
-    ) {
-        PdfSpreadLayout.spreadStartPageIndices(totalDisplayPages, pdfSpreadSettings)
-    }
-    val paginationPagerPageCount by remember(
-        displayMode,
-        totalDisplayPages,
-        paginationSpreadStarts,
-        pdfSpreadSettings.pageSpreadMode
-    ) {
-        derivedStateOf {
-            if (displayMode == DisplayMode.PAGINATION && PdfSpreadLayout.isTwoPageSpreadEnabled(pdfSpreadSettings)) {
-                paginationSpreadStarts.size.coerceAtLeast(1)
-            } else {
-                totalDisplayPages
-            }
-        }
-    }
-    val pagerState = rememberPagerState(initialPage = 0, pageCount = { paginationPagerPageCount })
+    PdfViewerDocumentSetup(surfaceState = surfaceState, setup = documentSetup)
+    surfaceState.paneSessionId = pane?.sessionId ?: 0L
+    surfaceState.paneBookId = pane?.bookId
 
-    fun paginationDisplayPageForPagerPage(pagerPage: Int): Int {
-        if (!PdfSpreadLayout.isTwoPageSpreadEnabled(pdfSpreadSettings)) {
-            return pagerPage.coerceIn(0, (totalDisplayPages - 1).coerceAtLeast(0))
-        }
-        return paginationSpreadStarts
-            .getOrElse(pagerPage.coerceIn(0, (paginationSpreadStarts.size - 1).coerceAtLeast(0))) { 0 }
-    }
-
-    fun paginationPagerPageForDisplayPage(displayPage: Int): Int {
-        if (!PdfSpreadLayout.isTwoPageSpreadEnabled(pdfSpreadSettings)) {
-            return displayPage.coerceIn(0, (paginationPagerPageCount - 1).coerceAtLeast(0))
-        }
-        val normalizedPage = PdfSpreadLayout.normalizePageIndex(displayPage, totalDisplayPages, pdfSpreadSettings)
-        val spreadIndex = paginationSpreadStarts.indexOf(normalizedPage)
-        return spreadIndex.coerceAtLeast(0).coerceIn(0, (paginationPagerPageCount - 1).coerceAtLeast(0))
-    }
-
-    suspend fun scrollPaginationToDisplayPage(displayPage: Int) {
-        pagerState.scrollToPage(paginationPagerPageForDisplayPage(displayPage))
-    }
-
-    suspend fun animatePaginationToDisplayPage(displayPage: Int) {
-        pagerState.animateScrollToPage(paginationPagerPageForDisplayPage(displayPage))
-    }
-
-    fun currentPaginationDisplayPage(): Int {
-        return paginationDisplayPageForPagerPage(pagerState.currentPage)
-    }
-
-    val currentPage by remember(
-        displayMode,
-        totalDisplayPages,
-        paginationPagerPageCount,
-        paginationSpreadStarts,
-        pdfSpreadSettings.pageSpreadMode,
-        pdfSpreadSettings.pdfFirstPageStandaloneInSpread
-    ) {
-        derivedStateOf {
-            when (displayMode) {
-                DisplayMode.PAGINATION -> currentPaginationDisplayPage()
-                DisplayMode.VERTICAL_SCROLL -> verticalReaderState.currentPage
-            }
-        }
-    }
-
-    LaunchedEffect(
-        pendingPaginationSpreadRestorePage,
-        pdfSpreadSettings.pageSpreadMode,
-        pdfSpreadSettings.pdfFirstPageStandaloneInSpread,
-        totalDisplayPages,
-        displayMode
-    ) {
-        val targetPage = pendingPaginationSpreadRestorePage ?: return@LaunchedEffect
-        if (displayMode == DisplayMode.PAGINATION && totalDisplayPages > 0) {
-            scrollPaginationToDisplayPage(targetPage)
-        }
-        pendingPaginationSpreadRestorePage = null
-    }
-    var isDocumentReady by remember { mutableStateOf(false) }
-
-    suspend fun renderSpeechBubblePrefetchBitmap(
-        document: ReaderDocument,
-        sourcePageIndex: Int
-    ): Bitmap? = withContext(Dispatchers.IO) {
-        document.openPage(sourcePageIndex)?.use { page ->
-            val pageWidth = page.getPageWidthPoint()
-            val pageHeight = page.getPageHeightPoint()
-            if (pageWidth <= 0 || pageHeight <= 0) {
-                return@withContext null
-            }
-
-            val longEdge = max(pageWidth, pageHeight).toFloat()
-            val targetLongEdge = when (document) {
-                is PdfDocumentWrapper -> 1600f.coerceAtLeast(longEdge)
-                else -> min(longEdge, 1600f)
-            }
-            val renderScale = (targetLongEdge / longEdge).coerceAtLeast(1f)
-            val renderWidth = (pageWidth * renderScale).roundToInt().coerceAtLeast(1)
-            val renderHeight = (pageHeight * renderScale).roundToInt().coerceAtLeast(1)
-            val renderBitmap = createBitmap(renderWidth, renderHeight)
-
-            try {
-                page.renderPageBitmap(
-                    bitmap = renderBitmap,
-                    startX = 0,
-                    startY = 0,
-                    drawSizeX = renderWidth,
-                    drawSizeY = renderHeight,
-                    renderAnnot = true
-                )
-                renderBitmap
-            } catch (t: Throwable) {
-                renderBitmap.recycle()
-                Timber.tag("BubbleZoom").w(t, "Failed to render bubble prefetch bitmap for page $sourcePageIndex")
-                null
-            }
-        }
-    }
-
-    fun buildSpeechBubblePrefetchOrder(): List<Int> {
-        return buildPdfBubblePrefetchOrder(
-            currentPage = currentPage,
-            totalPages = totalDisplayPages
+    PdfViewerScreenContent(
+        surfaceState = surfaceState,
+        inputs = PdfViewerScreenContentInputs(
+            activeTheme = activeTheme,
+            activity = activity,
+            annotationSettingsRepo = annotationSettingsRepo,
+            backgroundIndexingProgress = pdfViewerMutableValue({ backgroundIndexingProgress }, { backgroundIndexingProgress = it }),
+            bottomTools = bottomTools,
+            bubbleZoomDownloadProgress = bubbleZoomDownloadProgress,
+            context = context,
+            coroutineScope = coroutineScope,
+            currentActiveOffset = pdfViewerMutableValue({ currentActiveOffset }, { currentActiveOffset = it }),
+            currentActiveScale = pdfViewerMutableValue({ currentActiveScale }, { currentActiveScale = it }),
+            currentThemeId = pdfViewerMutableValue({ currentThemeId }, { currentThemeId = it }),
+            customFonts = customFonts,
+            customThemes = pdfViewerMutableValue({ customThemes }, { customThemes = it }),
+            displayMode = pdfViewerMutableValue({ displayMode }, { displayMode = it }),
+            documentCache = documentCache,
+            drawerState = drawerState,
+            excludeImages = pdfViewerMutableValue({ excludeImages }, { excludeImages = it }),
+            reverseColorMode = pdfViewerMutableValue({ reverseColorMode }, { reverseColorMode = it }),
+            executeWithOcrCheck = executeWithOcrCheck,
+            focusManager = focusManager,
+            focusRequester = focusRequester,
+            globalTextureTransparency = pdfViewerMutableValue({ globalTextureTransparency }, { globalTextureTransparency = it }),
+            hasSelectedOcrLanguage = pdfViewerMutableValue({ hasSelectedOcrLanguage }, { hasSelectedOcrLanguage = it }),
+            hiddenTools = hiddenTools,
+            initialBookmarksJson = initialBookmarksJson,
+            initialPage = initialPage,
+            isBackgroundIndexing = pdfViewerMutableValue({ isBackgroundIndexing }, { isBackgroundIndexing = it }),
+            isOss = isOss,
+            isPaneFocused = isPaneFocused,
+            isPasswordError = pdfViewerMutableValue({ isPasswordError }, { isPasswordError = it }),
+            isPdfDarkMode = isPdfDarkMode,
+            isProUser = isProUser,
+            isScrollLocked = pdfViewerMutableValue({ isScrollLocked }, { isScrollLocked = it }),
+            isSplitPane = isSplitPane,
+            keyboardController = keyboardController,
+            lockedState = pdfViewerMutableValue({ lockedState }, { lockedState = it }),
+            ocrLanguage = pdfViewerMutableValue({ ocrLanguage }, { ocrLanguage = it }),
+            onBookmarksChanged = onBookmarksChanged,
+            onNavigateBack = onNavigateBack,
+            onNavigateToPro = onNavigateToPro,
+            onOpenSplit = onOpenSplit,
+            onSavePosition = onSavePosition,
+            onUpdateBottomTools = onUpdateBottomTools,
+            onUpdateHiddenTools = onUpdateHiddenTools,
+            onUpdateToolOrder = onUpdateToolOrder,
+            ownsPaneGlobals = ownsPaneGlobals,
+            pageAspectRatios = pdfViewerMutableValue({ pageAspectRatios }, { pageAspectRatios = it }),
+            pageTurnAnimationEnabled = pdfViewerMutableValue({ pageTurnAnimationEnabled }, { pageTurnAnimationEnabled = it }),
+            pdfFirstPageStandaloneInSpread = pdfViewerMutableValue({ pdfFirstPageStandaloneInSpread }, { pdfFirstPageStandaloneInSpread = it }),
+            pdfPageSpreadMode = pdfViewerMutableValue({ pdfPageSpreadMode }, { pdfPageSpreadMode = it }),
+            pdfUri = pdfUri,
+            pendingActionAfterOcrSelection = pdfViewerMutableValue({ pendingActionAfterOcrSelection }, { pendingActionAfterOcrSelection = it }),
+            pendingPaginationSpreadRestorePage = pdfViewerMutableValue({ pendingPaginationSpreadRestorePage }, { pendingPaginationSpreadRestorePage = it }),
+            pendingRestorePage = pdfViewerMutableValue({ pendingRestorePage }, { pendingRestorePage = it }),
+            poppedUpPanelBitmap = pdfViewerMutableValue({ poppedUpPanelBitmap }, { poppedUpPanelBitmap = it }),
+            rightToLeftPagination = pdfViewerMutableValue({ rightToLeftPagination }, { rightToLeftPagination = it }),
+            screenOrientationMode = pdfViewerMutableValue({ screenOrientationMode }, { screenOrientationMode = it }),
+            searchHighlightMode = pdfViewerMutableValue({ searchHighlightMode }, { searchHighlightMode = it }),
+            showBars = pdfViewerMutableValue({ showBars }, { showBars = it }),
+            showCustomizeToolsSheet = pdfViewerMutableValue({ showCustomizeToolsSheet }, { showCustomizeToolsSheet = it }),
+            showInsufficientCreditsDialog = pdfViewerMutableValue({ showInsufficientCreditsDialog }, { showInsufficientCreditsDialog = it }),
+            showOcrLanguageDialog = pdfViewerMutableValue({ showOcrLanguageDialog }, { showOcrLanguageDialog = it }),
+            showPageNumberOverlay = pdfViewerMutableValue({ showPageNumberOverlay }, { showPageNumberOverlay = it }),
+            showPasswordDialog = pdfViewerMutableValue({ showPasswordDialog }, { showPasswordDialog = it }),
+            showReindexDialog = pdfViewerMutableValue({ showReindexDialog }, { showReindexDialog = it }),
+            showScreenOrientationSheet = pdfViewerMutableValue({ showScreenOrientationSheet }, { showScreenOrientationSheet = it }),
+            showThemePanel = pdfViewerMutableValue({ showThemePanel }, { showThemePanel = it }),
+            showTopTabStrip = pdfViewerMutableValue({ showTopTabStrip }, { showTopTabStrip = it }),
+            isTopToolbarEnabled = pdfViewerMutableValue({ showTopToolbar }, { showTopToolbar = it }),
+            isBottomToolbarEnabled = pdfViewerMutableValue({ showBottomToolbar }, { showBottomToolbar = it }),
+            showVerticalPageGap = pdfViewerMutableValue({ showVerticalPageGap }, { showVerticalPageGap = it }),
+            showVisualOptionsSheet = pdfViewerMutableValue({ showVisualOptionsSheet }, { showVisualOptionsSheet = it }),
+            summaryCacheManager = summaryCacheManager,
+            systemUiMode = pdfViewerMutableValue({ systemUiMode }, { systemUiMode = it }),
+            tabStateMap = tabStateMap,
+            tapToNavigateEnabled = pdfViewerMutableValue({ tapToNavigateEnabled }, { tapToNavigateEnabled = it }),
+            toolOrder = toolOrder,
+            toolSettings = toolSettings,
+            ttsController = ttsController,
+            ttsState = ttsState,
+            uiState = uiState,
+            viewModel = viewModel,
         )
-    }
+    )
 
-    suspend fun detectSpeechBubblesForPage(
-        sourcePageIndex: Int,
-        fallbackBitmap: Bitmap,
-        allowHighQualityFallback: Boolean = true
-    ): List<SpeechBubble> {
-        val document = pdfDocument
-        val prefetchDocument = document?.takeIf {
-            allowHighQualityFallback &&
-                !viewModel.hasCachedSpeechBubbles(bookId, sourcePageIndex)
-        }
-        val detectionBitmap = prefetchDocument
-            ?.let { renderSpeechBubblePrefetchBitmap(it, sourcePageIndex) }
-            ?: fallbackBitmap
-        val ownsBitmap = detectionBitmap !== fallbackBitmap
+}
 
-        return try {
-            val detected = viewModel.detectSpeechBubblesCached(
-                documentId = bookId,
-                pageIndex = sourcePageIndex,
-                bitmap = detectionBitmap,
-                context = context
-            )
-            if (ownsBitmap) {
-                viewModel.detectSpeechBubblesCached(
-                    documentId = bookId,
-                    pageIndex = sourcePageIndex,
-                    bitmap = fallbackBitmap,
-                    context = context
-                )
-            } else {
-                detected
-            }
-        } finally {
-            if (ownsBitmap && !detectionBitmap.isRecycled) {
-                detectionBitmap.recycle()
-            }
-        }
-    }
+private class PdfViewerScreenContentInputs(
+    val activeTheme: ReaderTheme,
+    val activity: Activity?,
+    val annotationSettingsRepo: AnnotationSettingsRepository,
+    val backgroundIndexingProgress: PdfViewerMutableValue<Float>,
+    val bottomTools: Set<String>,
+    val bubbleZoomDownloadProgress: Float?,
+    val context: Context,
+    val coroutineScope: CoroutineScope,
+    val currentActiveOffset: PdfViewerMutableValue<Offset>,
+    val currentActiveScale: PdfViewerMutableValue<Float>,
+    val currentThemeId: PdfViewerMutableValue<String>,
+    val customFonts: List<CustomFontEntity>,
+    val customThemes: PdfViewerMutableValue<List<ReaderTheme>>,
+    val displayMode: PdfViewerMutableValue<DisplayMode>,
+    val documentCache: DocumentCache,
+    val drawerState: DrawerState,
+    val excludeImages: PdfViewerMutableValue<Boolean>,
+    val reverseColorMode: PdfViewerMutableValue<PdfReverseColorMode>,
+    val executeWithOcrCheck: ((() -> Unit) -> Unit),
+    val focusManager: androidx.compose.ui.focus.FocusManager,
+    val focusRequester: FocusRequester,
+    val globalTextureTransparency: PdfViewerMutableValue<Float>,
+    val hasSelectedOcrLanguage: PdfViewerMutableValue<Boolean>,
+    val hiddenTools: Set<String>,
+    val initialBookmarksJson: String?,
+    val initialPage: Int?,
+    val isBackgroundIndexing: PdfViewerMutableValue<Boolean>,
+    val isOss: Boolean,
+    val isPaneFocused: Boolean,
+    val isPasswordError: PdfViewerMutableValue<Boolean>,
+    val isPdfDarkMode: Boolean,
+    val isProUser: Boolean,
+    val isScrollLocked: PdfViewerMutableValue<Boolean>,
+    val isSplitPane: Boolean,
+    val keyboardController: androidx.compose.ui.platform.SoftwareKeyboardController?,
+    val lockedState: PdfViewerMutableValue<Triple<Float, Float, Float>?>,
+    val ocrLanguage: PdfViewerMutableValue<OcrLanguage>,
+    val onBookmarksChanged: (bookmarksJson: String) -> Unit,
+    val onNavigateBack: () -> Unit,
+    val onNavigateToPro: () -> Unit,
+    val onOpenSplit: (() -> Unit)?,
+    val onSavePosition: suspend (uri: Uri, page: Int, totalPages: Int) -> Unit,
+    val onUpdateBottomTools: (Set<String>) -> Unit,
+    val onUpdateHiddenTools: (Set<String>) -> Unit,
+    val onUpdateToolOrder: (List<PdfReaderTool>) -> Unit,
+    val ownsPaneGlobals: Boolean,
+    val pageAspectRatios: PdfViewerMutableValue<List<Float>>,
+    val pageTurnAnimationEnabled: PdfViewerMutableValue<Boolean>,
+    val pdfFirstPageStandaloneInSpread: PdfViewerMutableValue<Boolean>,
+    val pdfPageSpreadMode: PdfViewerMutableValue<com.aryan.reader.shared.reader.ReaderPageSpreadMode>,
+    val pdfUri: Uri,
+    val pendingActionAfterOcrSelection: PdfViewerMutableValue<(() -> Unit)?>,
+    val pendingPaginationSpreadRestorePage: PdfViewerMutableValue<Int?>,
+    val pendingRestorePage: PdfViewerMutableValue<Int?>,
+    val poppedUpPanelBitmap: PdfViewerMutableValue<Bitmap?>,
+    val rightToLeftPagination: PdfViewerMutableValue<Boolean>,
+    val screenOrientationMode: PdfViewerMutableValue<com.aryan.reader.shared.reader.ReaderScreenOrientationMode>,
+    val searchHighlightMode: PdfViewerMutableValue<SearchHighlightMode>,
+    val showBars: PdfViewerMutableValue<Boolean>,
+    val showCustomizeToolsSheet: PdfViewerMutableValue<Boolean>,
+    val showInsufficientCreditsDialog: PdfViewerMutableValue<Boolean>,
+    val showOcrLanguageDialog: PdfViewerMutableValue<Boolean>,
+    val showPageNumberOverlay: PdfViewerMutableValue<Boolean>,
+    val showPasswordDialog: PdfViewerMutableValue<Boolean>,
+    val showReindexDialog: PdfViewerMutableValue<OcrLanguage?>,
+    val showScreenOrientationSheet: PdfViewerMutableValue<Boolean>,
+    val showThemePanel: PdfViewerMutableValue<Boolean>,
+    val showTopTabStrip: PdfViewerMutableValue<Boolean>,
+    val isTopToolbarEnabled: PdfViewerMutableValue<Boolean>,
+    val isBottomToolbarEnabled: PdfViewerMutableValue<Boolean>,
+    val showVerticalPageGap: PdfViewerMutableValue<Boolean>,
+    val showVisualOptionsSheet: PdfViewerMutableValue<Boolean>,
+    val summaryCacheManager: SummaryCacheManager,
+    val systemUiMode: PdfViewerMutableValue<SystemUiMode>,
+    val tabStateMap: androidx.compose.runtime.snapshots.SnapshotStateMap<String, Int>,
+    val tapToNavigateEnabled: PdfViewerMutableValue<Boolean>,
+    val toolOrder: List<PdfReaderTool>,
+    val toolSettings: AnnotationToolSettings,
+    val ttsController: TtsController,
+    val ttsState: TtsPlaybackManager.TtsState,
+    val uiState: ReaderScreenState,
+    val viewModel: MainViewModel,
+)
 
-    LaunchedEffect(
-        isBubbleZoomModeActive,
-        isDocumentReady,
-        pdfDocument,
-        bookId,
-        currentPage,
-        totalDisplayPages,
-        virtualPages
-    ) {
-        val document = pdfDocument ?: return@LaunchedEffect
-        if (!isBubbleZoomModeActive || !isDocumentReady || totalDisplayPages <= 0) {
-            return@LaunchedEffect
-        }
+@Composable
+@OptIn(UnstableApi::class, ExperimentalMaterial3Api::class)
+private fun PdfViewerScreenContent(
+    surfaceState: PdfViewerSurfaceState,
+    inputs: PdfViewerScreenContentInputs,
+) {
+    val activeTheme = inputs.activeTheme
+    val activity = inputs.activity
+    val annotationSettingsRepo = inputs.annotationSettingsRepo
+    var backgroundIndexingProgress by inputs.backgroundIndexingProgress
+    val bottomTools = inputs.bottomTools
+    val bubbleZoomDownloadProgress = inputs.bubbleZoomDownloadProgress
+    val context = inputs.context
+    val coroutineScope = inputs.coroutineScope
+    var currentActiveOffset by inputs.currentActiveOffset
+    var currentActiveScale by inputs.currentActiveScale
+    var currentThemeId by inputs.currentThemeId
+    val customFonts = inputs.customFonts
+    var customThemes by inputs.customThemes
+    var displayMode by inputs.displayMode
+    val documentCache = inputs.documentCache
+    val drawerState = inputs.drawerState
+    var excludeImages by inputs.excludeImages
+    var reverseColorMode by inputs.reverseColorMode
+    val executeWithOcrCheck = inputs.executeWithOcrCheck
+    val focusManager = inputs.focusManager
+    val focusRequester = inputs.focusRequester
+    var globalTextureTransparency by inputs.globalTextureTransparency
+    var hasSelectedOcrLanguage by inputs.hasSelectedOcrLanguage
+    val hiddenTools = inputs.hiddenTools
+    val initialBookmarksJson = inputs.initialBookmarksJson
+    val initialPage = inputs.initialPage
+    var isBackgroundIndexing by inputs.isBackgroundIndexing
+    val isOss = inputs.isOss
+    val isPaneFocused = inputs.isPaneFocused
+    var isPasswordError by inputs.isPasswordError
+    val isPdfDarkMode = inputs.isPdfDarkMode
+    val isProUser = inputs.isProUser
+    var isScrollLocked by inputs.isScrollLocked
+    val isSplitPane = inputs.isSplitPane
+    val keyboardController = inputs.keyboardController
+    var lockedState by inputs.lockedState
+    var ocrLanguage by inputs.ocrLanguage
+    val onBookmarksChanged = inputs.onBookmarksChanged
+    val onNavigateBack = inputs.onNavigateBack
+    val onNavigateToPro = inputs.onNavigateToPro
+    val onOpenSplit = inputs.onOpenSplit
+    val onSavePosition = inputs.onSavePosition
+    val onUpdateBottomTools = inputs.onUpdateBottomTools
+    val onUpdateHiddenTools = inputs.onUpdateHiddenTools
+    val onUpdateToolOrder = inputs.onUpdateToolOrder
+    val ownsPaneGlobals = inputs.ownsPaneGlobals
+    var pageAspectRatios by inputs.pageAspectRatios
+    var pdfFirstPageStandaloneInSpread by inputs.pdfFirstPageStandaloneInSpread
+    var pdfPageSpreadMode by inputs.pdfPageSpreadMode
+    val pdfUri = inputs.pdfUri
+    var pendingActionAfterOcrSelection by inputs.pendingActionAfterOcrSelection
+    var pendingPaginationSpreadRestorePage by inputs.pendingPaginationSpreadRestorePage
+    var pendingRestorePage by inputs.pendingRestorePage
+    var poppedUpPanelBitmap by inputs.poppedUpPanelBitmap
+    var rightToLeftPagination by inputs.rightToLeftPagination
+    var screenOrientationMode by inputs.screenOrientationMode
+    var searchHighlightMode by inputs.searchHighlightMode
+    var showBars by inputs.showBars
+    var showCustomizeToolsSheet by inputs.showCustomizeToolsSheet
+    var showInsufficientCreditsDialog by inputs.showInsufficientCreditsDialog
+    var showOcrLanguageDialog by inputs.showOcrLanguageDialog
+    var showPageNumberOverlay by inputs.showPageNumberOverlay
+    var showPasswordDialog by inputs.showPasswordDialog
+    var showReindexDialog by inputs.showReindexDialog
+    var showScreenOrientationSheet by inputs.showScreenOrientationSheet
+    var showThemePanel by inputs.showThemePanel
+    var showTopTabStrip by inputs.showTopTabStrip
+    var isTopToolbarEnabled by inputs.isTopToolbarEnabled
+    var isBottomToolbarEnabled by inputs.isBottomToolbarEnabled
+    var showVerticalPageGap by inputs.showVerticalPageGap
+    var showVisualOptionsSheet by inputs.showVisualOptionsSheet
+    val summaryCacheManager = inputs.summaryCacheManager
+    var systemUiMode by inputs.systemUiMode
+    val tabStateMap = inputs.tabStateMap
+    var tapToNavigateEnabled by inputs.tapToNavigateEnabled
+    var pageTurnAnimationEnabled by inputs.pageTurnAnimationEnabled
+    val toolOrder = inputs.toolOrder
+    val toolSettings = inputs.toolSettings
+    val ttsController = inputs.ttsController
+    val ttsState = inputs.ttsState
+    val uiState = inputs.uiState
+    val viewModel = inputs.viewModel
 
-        for (displayPageIndex in buildSpeechBubblePrefetchOrder()) {
-            if (!isActive) break
-
-            val sourcePageIndex = when (val virtualPage = virtualPages.getOrNull(displayPageIndex)) {
-                is VirtualPage.PdfPage -> virtualPage.pdfIndex
-                null -> displayPageIndex
-                else -> continue
-            }
-
-            if (viewModel.hasCachedSpeechBubbles(bookId, sourcePageIndex)) {
-                continue
-            }
-
-            val prefetchBitmap = renderSpeechBubblePrefetchBitmap(document, sourcePageIndex) ?: continue
-            try {
-                detectSpeechBubblesForPage(
-                    sourcePageIndex = sourcePageIndex,
-                    fallbackBitmap = prefetchBitmap,
-                    allowHighQualityFallback = false
-                )
-            } finally {
-                if (!prefetchBitmap.isRecycled) {
-                    prefetchBitmap.recycle()
-                }
-            }
-
-            kotlinx.coroutines.yield()
-        }
-    }
-
-    var jumpHistory by remember(currentBookId) { mutableStateOf(SharedPdfJumpHistory()) }
-
-    fun pruneJumpHistoryForDocument() {
-        jumpHistory = jumpHistory.pruned(totalPages)
-    }
-
-    fun recordJumpHistory(currentPageIndex: Int, targetPageIndex: Int) {
-        jumpHistory = jumpHistory.record(currentPageIndex, targetPageIndex, totalPages)
-    }
-
-    fun clearJumpHistory() {
-        jumpHistory = SharedPdfJumpHistory()
-    }
-
-    fun navigateToJumpHistoryPage(targetPageIndex: Int) {
-        if (targetPageIndex !in 0 until totalPages) {
-            pruneJumpHistoryForDocument()
-            return
-        }
-
-        coroutineScope.launch {
-            if (displayMode == DisplayMode.PAGINATION) {
-                pagerState.animateScrollToPage(targetPageIndex)
-            } else {
-                verticalReaderState.scrollToPage(targetPageIndex)
-            }
-        }
-    }
-
-    LaunchedEffect(totalPages) {
-        pruneJumpHistoryForDocument()
-    }
-
-    LaunchedEffect(currentPage, isDocumentReady, totalPages, initialScrollDone) {
-        if (isDocumentReady && totalPages > 0) {
-            if (initialScrollDone) {
-                Timber.tag("PdfPositionDebug").v("UI: Tracking | currentPage: $currentPage | pendingRestorePage updated")
-                pendingRestorePage = currentPage
-                currentBookId?.let { tabStateMap[it] = currentPage }
-            }
-        }
-    }
-
-    val lifecycleOwner = LocalLifecycleOwner.current
+    val paneInitialPage = surfaceState.paneInitialPage
+    val selectedBookIdForPane = surfaceState.selectedBookIdForPane
+    val effectivePdfUri = surfaceState.effectivePdfUri
+    val effectiveFileType = surfaceState.effectiveFileType
+    val effectiveInitialPage = surfaceState.effectiveInitialPage
+    val effectiveInitialBookmarksJson = surfaceState.effectiveInitialBookmarksJson
+    var documentPassword by surfaceState.documentPassword
+    var isPrintBlockedForPasswordProtectedPdf by surfaceState.isPrintBlockedForPasswordProtectedPdf
+    val isComicFile = surfaceState.isComicFile
+    var showNewTabSheet by surfaceState.showNewTabSheet
+    var showFileInfoDialog by surfaceState.showFileInfoDialog
+    val sheetState = surfaceState.sheetState
+    val isTabsEnabled = surfaceState.isTabsEnabled
+    val openTabs = surfaceState.openTabs
+    val activeTabBookId = surfaceState.activeTabBookId
+    val canShowPdfTabs = surfaceState.canShowPdfTabs
+    val isPdfTabStripVisible = surfaceState.isPdfTabStripVisible.value
+    val originalFileName = surfaceState.originalFileName
+    var documentMetadataTitle by surfaceState.documentMetadataTitle
+    val activeLibraryItem = surfaceState.activeLibraryItem
+    val effectiveReaderBookTitle = surfaceState.effectiveReaderBookTitle
+    var currentBookId by surfaceState.currentBookId
+    val bookId = surfaceState.bookId
+    val activeDocumentRenderKey = surfaceState.activeDocumentRenderKey
+    val view = surfaceState.view
+    var isDockDragging by surfaceState.isDockDragging
+    var initialScrollDone by surfaceState.initialScrollDone
+    val reflowBookId = surfaceState.reflowBookId
+    val hasReflowFile = surfaceState.hasReflowFile
+    var isAutoScrollModeActive by surfaceState.isAutoScrollModeActive
+    var isAutoScrollPlaying by surfaceState.isAutoScrollPlaying
+    var isAutoScrollTempPaused by surfaceState.isAutoScrollTempPaused
+    val autoScrollResumeJob = surfaceState.autoScrollResumeJob
+    var isAutoScrollCollapsed by surfaceState.isAutoScrollCollapsed
+    var ttsOverlaySize by surfaceState.ttsOverlaySize
+    var isMusicianMode by surfaceState.isMusicianMode
+    var autoScrollUseSlider by surfaceState.autoScrollUseSlider
+    var isStylusOnlyMode by surfaceState.isStylusOnlyMode
+    var showTtsControlsSheet by surfaceState.showTtsControlsSheet
+    var isKeepScreenOn by surfaceState.isKeepScreenOn
+    val isTtsPlaybackForThisPane = surfaceState.isTtsPlaybackForThisPane
+    var currentTtsMode by surfaceState.currentTtsMode
+    var showTtsSettingsSheet by surfaceState.showTtsSettingsSheet
+    var showTtsReplacementsSheet by surfaceState.showTtsReplacementsSheet
+    var ttsReplacementPreferences by surfaceState.ttsReplacementPreferences
+    val updateTtsReplacementPreferences = surfaceState.updateTtsReplacementPreferences
+    var showDictionarySettingsSheet by surfaceState.showDictionarySettingsSheet
+    var useOnlineDictionary by surfaceState.useOnlineDictionary
+    var selectedDictPackage by surfaceState.selectedDictPackage
+    var selectedTranslatePackage by surfaceState.selectedTranslatePackage
+    var selectedSearchPackage by surfaceState.selectedSearchPackage
+    val triggerAutoScrollTempPause = surfaceState.triggerAutoScrollTempPause
+    val onAutoScrollInteraction = surfaceState.onAutoScrollInteraction
+    var paginationDraggingBoxId by surfaceState.paginationDraggingBoxId
+    val showBanner = surfaceState.showBanner
+    val onOcrStateChange = surfaceState.onOcrStateChange
+    var showZoomIndicator by surfaceState.showZoomIndicator
+    var bookmarks by surfaceState.bookmarks
+    var showPenPlayground by surfaceState.showPenPlayground
+    var isEditMode by surfaceState.isEditMode
+    var isDockMinimized by surfaceState.isDockMinimized
+    var pendingNoteForNewHighlight by surfaceState.pendingNoteForNewHighlight
+    var highlightToNoteId by surfaceState.highlightToNoteId
+    val onNoteRequested = surfaceState.onNoteRequested
+    val isDrawingActive = surfaceState.isDrawingActive
+    var isAutoScrollLocal by surfaceState.isAutoScrollLocal
+    val onPrintDocument = surfaceState.onPrintDocument
+    var autoScrollSpeed by surfaceState.autoScrollSpeed
+    var autoScrollMinSpeed by surfaceState.autoScrollMinSpeed
+    var autoScrollMaxSpeed by surfaceState.autoScrollMaxSpeed
+    val onToggleAutoScrollMode = surfaceState.onToggleAutoScrollMode
+    val updateSpeed = surfaceState.updateSpeed
+    val updateMinSpeed = surfaceState.updateMinSpeed
+    val updateMaxSpeed = surfaceState.updateMaxSpeed
+    var customHighlightColors by surfaceState.customHighlightColors
+    var showHighlightColorPicker by surfaceState.showHighlightColorPicker
+    var highlightColorPickerInitialSlot by surfaceState.highlightColorPickerInitialSlot
+    var isBubbleZoomModeActive by surfaceState.isBubbleZoomModeActive
+    var showBubbleZoomDownloadDialog by surfaceState.showBubbleZoomDownloadDialog
+    var dockLocation by surfaceState.dockLocation
+    var dockOffset by surfaceState.dockOffset
+    var snapPreviewLocation by surfaceState.snapPreviewLocation
+    var paginationDraggingOffset by surfaceState.paginationDraggingOffset
+    var paginationDraggingSize by surfaceState.paginationDraggingSize
+    var paginationDragPageHeight by surfaceState.paginationDragPageHeight
+    var paginationOriginalRelSize by surfaceState.paginationOriginalRelSize
+    val window = surfaceState.window
+    // Keep all chrome visibility derived from the state this composable observes. The setup
+    // sibling also computes this value for system UI effects, but its plain bridge snapshot can
+    // otherwise lag behind a document tap during the same frame.
+    val showStandardBars = showBars && !isEditMode
+    val showTopBar = showStandardBars && isTopToolbarEnabled
+    val showBottomBar = showStandardBars && isBottomToolbarEnabled
+    var readerBrightnessSettings by surfaceState.readerBrightnessSettings
+    var showBrightnessSheet by surfaceState.showBrightnessSheet
+    val updateReaderBrightness = surfaceState.updateReaderBrightness
+    val dockHeight = surfaceState.dockHeight
+    val dockHeightPx = surfaceState.dockHeightPx.value
+    val density = surfaceState.density.value
+    val viewConfiguration = surfaceState.viewConfiguration
+    val statusBarHeightDp = surfaceState.statusBarHeightDp.value
+    val searchState = surfaceState.searchState
+    val navBarHeight = surfaceState.navBarHeight.value
+    val verticalHeaderHeight = surfaceState.verticalHeaderHeight.value
+    val topOverlayInset = surfaceState.topOverlayInset.value
+    val verticalFooterHeight = surfaceState.verticalFooterHeight.value
+    var errorMessage by surfaceState.errorMessage
+    var showToolSettings by surfaceState.showToolSettings
+    val isHighlighterSnapEnabled = surfaceState.isHighlighterSnapEnabled
+    val selectedTool = surfaceState.selectedTool.value
+    val lastPenTool = surfaceState.lastPenTool
+    val lastHighlighterTool = surfaceState.lastHighlighterTool
+    val dockPenColor = surfaceState.dockPenColor
+    val dockHighlighterColor = surfaceState.dockHighlighterColor
+    val activeToolThickness = surfaceState.activeToolThickness
+    val eraserToolThickness = surfaceState.eraserToolThickness
+    val fountainPenColor = surfaceState.fountainPenColor
+    val markerColor = surfaceState.markerColor
+    val pencilColor = surfaceState.pencilColor
+    val highlighterColor = surfaceState.highlighterColor
+    val highlighterRoundColor = surfaceState.highlighterRoundColor
+    val isCurrentToolHighlighter = surfaceState.isCurrentToolHighlighter
+    val currentSnapEnabled = surfaceState.currentSnapEnabled
+    val currentIsHighlighter = surfaceState.currentIsHighlighter
+    val penPalette = surfaceState.penPalette
+    val highlighterPalette = surfaceState.highlighterPalette
+    val currentStrokeColor = surfaceState.currentStrokeColor
+    val currentStrokeWidth = surfaceState.currentStrokeWidth
+    val currentEraserStrokeWidth = surfaceState.currentEraserStrokeWidth
+    val pdfTextRepository = surfaceState.pdfTextRepository
+    val annotationRepository = surfaceState.annotationRepository
+    val textBoxRepository = surfaceState.textBoxRepository
+    val highlightRepository = surfaceState.highlightRepository
+    var allAnnotations by surfaceState.allAnnotations
+    val undoStack = surfaceState.undoStack
+    val redoStack = surfaceState.redoStack
+    val erasedAnnotationsFromStroke = surfaceState.erasedAnnotationsFromStroke
+    var lastEraserPoint by surfaceState.lastEraserPoint
+    var annotationSession by surfaceState.annotationSession
+    val richTextRepository = surfaceState.richTextRepository
+    val richTextController = surfaceState.richTextController
+    var pdfDocument by surfaceState.pdfDocument
+    var pfdState by surfaceState.pfdState
+    var totalPages by surfaceState.totalPages
+    var currentPageScale by surfaceState.currentPageScale
+    val textBoxes = surfaceState.textBoxes
+    var selectedTextBoxId by surfaceState.selectedTextBoxId
+    val userHighlights = surfaceState.userHighlights
+    val drawingState = surfaceState.drawingState
+    val pdfiumCore = surfaceState.pdfiumCore
+    val verticalReaderState = surfaceState.verticalReaderState
+    var virtualPages by surfaceState.virtualPages
+    var loadedPageLayoutBookId by surfaceState.loadedPageLayoutBookId
+    var pageLayoutMutationVersion by surfaceState.pageLayoutMutationVersion
+    val totalDisplayPages = surfaceState.totalDisplayPages
+    val pdfSpreadSettings = surfaceState.pdfSpreadSettings
+    val paginationSpreadStarts = surfaceState.paginationSpreadStarts
+    val paginationPagerPageCount = surfaceState.paginationPagerPageCount
+    val pagerState = surfaceState.pagerState
+    val paginationDisplayPageForPagerPage = surfaceState.paginationDisplayPageForPagerPage
+    val paginationPagerPageForDisplayPage = surfaceState.paginationPagerPageForDisplayPage
+    val scrollPaginationToDisplayPage = surfaceState.scrollPaginationToDisplayPage
+    val animatePaginationToDisplayPage = surfaceState.animatePaginationToDisplayPage
+    val currentPaginationDisplayPage = surfaceState.currentPaginationDisplayPage
+    val currentPage = surfaceState.currentPage
+    var isDocumentReady by surfaceState.isDocumentReady
+    val detectSpeechBubblesForPage = surfaceState.detectSpeechBubblesForPage
+    var jumpHistory by surfaceState.jumpHistory
+    val clearJumpHistory = surfaceState.clearJumpHistory
+    val navigateToJumpHistoryPage = surfaceState.navigateToJumpHistoryPage
+    val navigateToPdfPage = surfaceState.navigateToPdfPage
+    val lifecycleOwner = surfaceState.lifecycleOwner
 
     val sidecarsReadyForCurrentBook = annotationSession.canUseFor(currentBookId)
     val textBoxesSnapshot by remember { derivedStateOf { textBoxes.toList() } }
@@ -1334,6 +1072,23 @@ fun PdfViewerScreen(
     val currentInitialScrollDone by rememberUpdatedState(initialScrollDone)
     val currentPdfUri by rememberUpdatedState(effectivePdfUri)
     val currentVisibleAllAnnotations by rememberUpdatedState(visibleAllAnnotations)
+    val currentRichTextController by rememberUpdatedState(richTextController)
+
+    val diagPaneContext = "pane=${surfaceState.paneBookId ?: "solo"} session=${surfaceState.paneSessionId} " +
+        "focused=$isPaneFocused ownsGlobals=$ownsPaneGlobals"
+    val currentDiagPaneContext by rememberUpdatedState(diagPaneContext)
+
+    val previousDiagScale = remember { mutableFloatStateOf(Float.NaN) }
+    LaunchedEffect(currentActiveScale) {
+        val previous = previousDiagScale.floatValue
+        previousDiagScale.floatValue = currentActiveScale
+        if (previous.isNaN() || abs(previous - currentActiveScale) > 0.01f) {
+            pdfSplitZoomDiag(
+                "cam.scale pane=${surfaceState.paneBookId ?: "solo"} session=${surfaceState.paneSessionId} " +
+                    "scale=${currentActiveScale.diagF()} previous=${if (previous.isNaN()) "init" else previous.diagF()}"
+            )
+        }
+    }
 
     val readerPersistence = remember(
         currentBookId,
@@ -1415,8 +1170,8 @@ fun PdfViewerScreen(
 
                 if (shouldSave) {
                     viewModel.viewModelScope.launch {
-                        if (richTextController != null) {
-                            withContext(NonCancellable) { richTextController.saveImmediate() }
+                        currentRichTextController?.let {
+                            withContext(NonCancellable) { it.saveImmediate() }
                         }
                         saveAllData(true).join()
                     }
@@ -1490,19 +1245,42 @@ fun PdfViewerScreen(
     }
 
     fun displayPageToPdfPage(displayPageIndex: Int): Int? {
-        if (displayPageIndex !in 0 until totalDisplayPages) return null
+        // Read the live surface value instead of a composition-time snapshot: this
+        // closure is captured by long-lived callbacks (remember-ed TTS starters,
+        // permission launchers) created before the document finishes loading.
+        val displayPageCount = surfaceState.totalDisplayPages
+        if (displayPageIndex !in 0 until displayPageCount) {
+            Timber.tag(TTS_DIAG_TAG).w(
+                "map.reject index=$displayPageIndex totalDisplayPages=$displayPageCount " +
+                    "totalPdfPages=$totalPages virtual=${virtualPages.pdfLayoutDebugSummary()}"
+            )
+            return null
+        }
         if (virtualPages.isEmpty()) return displayPageIndex.takeIf { it in 0 until totalPages }
 
         return when (val virtualPage = virtualPages.getOrNull(displayPageIndex)) {
             is VirtualPage.PdfPage -> virtualPage.pdfIndex.takeIf { it in 0 until totalPages }
-            is VirtualPage.BlankPage -> null
-            null -> null
+            is VirtualPage.BlankPage -> {
+                Timber.tag(TTS_DIAG_TAG).w(
+                    "map.blankPage index=$displayPageIndex totalDisplayPages=$displayPageCount " +
+                        "virtual=${virtualPages.pdfLayoutDebugSummary()}"
+                )
+                null
+            }
+            null -> {
+                Timber.tag(TTS_DIAG_TAG).w(
+                    "map.missingEntry index=$displayPageIndex totalDisplayPages=$displayPageCount " +
+                        "virtual=${virtualPages.pdfLayoutDebugSummary()}"
+                )
+                null
+            }
         }
     }
 
     fun pdfPageToDisplayPage(pdfPageIndex: Int): Int? {
+        val displayPageCount = surfaceState.totalDisplayPages
         if (pdfPageIndex !in 0 until totalPages) return null
-        if (virtualPages.isEmpty()) return pdfPageIndex.takeIf { it in 0 until totalDisplayPages }
+        if (virtualPages.isEmpty()) return pdfPageIndex.takeIf { it in 0 until displayPageCount }
 
         return virtualPages.indexOfFirst {
             it is VirtualPage.PdfPage && it.pdfIndex == pdfPageIndex
@@ -2013,6 +1791,10 @@ fun PdfViewerScreen(
         val currentP = if (displayMode == DisplayMode.PAGINATION) currentPaginationDisplayPage() else verticalReaderState.currentPage
 
         Timber.tag("PdfTextBoxDebug").d("Viewer: onInsertTextBox triggered. Target Page: $currentP, DisplayMode: $displayMode")
+        Timber.tag(PDF_TEXT_BOX_INPUT_TRACE_TAG).d(
+            "event=insert_request page=$currentP displayMode=$displayMode " +
+                "textBoxEditMode=$isDrawingActive selectedTextBoxId=${selectedTextBoxId ?: "none"}"
+        )
 
         val defaultWidth = 0.4f
         val defaultHeight = 0.1f
@@ -2046,6 +1828,11 @@ fun PdfViewerScreen(
         textBoxes.add(newBox)
         Timber.tag("PdfTextBoxDebug").i("Viewer: Added TextBox [ID: ${newBox.id}] to list. Total boxes now: ${textBoxes.size}")
         selectedTextBoxId = newBox.id
+        Timber.tag(PDF_TEXT_BOX_INPUT_TRACE_TAG).i(
+            "event=insert_created id=${newBox.id} page=${newBox.pageIndex} " +
+                "selectedTextBoxId=${selectedTextBoxId ?: "none"} textLength=${newBox.text.length} " +
+                "textBoxEditMode=$isDrawingActive"
+        )
         richTextController?.clearSelection()
         showBars = false
     }
@@ -2065,7 +1852,12 @@ fun PdfViewerScreen(
                 selectedTextBoxId = null
             } else {
                 if (!(isMusicianMode && isAutoScrollModeActive))  {
+                    val showBarsBeforeTap = showBars
                     showBars = !showBars
+                    Timber.tag("PdfToolbarTrace").d(
+                        "singleTap dispatched before=$showBarsBeforeTap after=$showBars " +
+                            "isSplitPane=$isSplitPane ownsPaneGlobals=$ownsPaneGlobals"
+                    )
                     Timber.d("Vertical Reader Clicked. showBars now: $showBars")
                 }
             }
@@ -2170,15 +1962,16 @@ fun PdfViewerScreen(
             var currentLastIndex = virtualPages.size - 1
             var pageRemoved = false
 
-            while (
-                lastPage is VirtualPage.BlankPage &&
-                !lastPage.wasManuallyAdded &&
-                currentLastIndex > highestRequiredTextPageIndex &&
-                !hasTextOnPage(currentLastIndex) &&
-                allAnnotations[currentLastIndex].isNullOrEmpty() &&
-                textBoxes.none { it.pageIndex == currentLastIndex } &&
-                userHighlights.none { it.pageIndex == currentLastIndex }
-            ) {
+            while (shouldAutoPrunePdfBlankPage(
+                    lastPage = lastPage,
+                    currentLastIndex = currentLastIndex,
+                    highestRequiredTextPageIndex = highestRequiredTextPageIndex,
+                    hasText = hasTextOnPage(currentLastIndex),
+                    hasAnnotations = !allAnnotations[currentLastIndex].isNullOrEmpty(),
+                    hasTextBoxes = textBoxes.any { it.pageIndex == currentLastIndex },
+                    hasHighlights = userHighlights.any { it.pageIndex == currentLastIndex },
+                    hasBookmark = bookmarks.any { it.pageIndex == currentLastIndex },
+                )) {
                 Timber.tag("RichTextFlow").i("Auto-pruning empty page at index $currentLastIndex.")
                 Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
                     "ui.autoPage.prune.start bookId=$activeBookId removeIndex=$currentLastIndex " +
@@ -2364,7 +2157,9 @@ fun PdfViewerScreen(
 
             if (bookmarks.any { it.pageIndex == pageIndex }) {
                 Timber.d("Bookmark exists. Removing...")
-                bookmarks = bookmarks.filterNot { it.pageIndex == pageIndex }.toSet()
+                val updatedBookmarks = bookmarks.filterNot { it.pageIndex == pageIndex }.toSet()
+                bookmarks = updatedBookmarks
+                onBookmarksChanged(serializePdfBookmarksToJson(updatedBookmarks))
             } else {
                 Timber.d("Creating new bookmark. Attempting text extraction...")
                 var extractedText = ""
@@ -2431,9 +2226,11 @@ fun PdfViewerScreen(
 
                 Timber.d("Final Bookmark Title: '$finalTitle'")
 
-                bookmarks = bookmarks + PdfBookmark(
+                val updatedBookmarks = bookmarks + PdfBookmark(
                     pageIndex = pageIndex, title = finalTitle, totalPages = totalPages
                 )
+                bookmarks = updatedBookmarks
+                onBookmarksChanged(serializePdfBookmarksToJson(updatedBookmarks))
             }
         }
     }
@@ -2668,18 +2465,22 @@ fun PdfViewerScreen(
     }
 
     val requestSaveCopy: () -> Unit = {
-        if (shouldShowAnnotationExportChoice) {
-            showSaveDialog = true
-        } else {
-            launchOriginalSaveCopy()
+        if (ownsPaneGlobals) {
+            if (shouldShowAnnotationExportChoice) {
+                showSaveDialog = true
+            } else {
+                launchOriginalSaveCopy()
+            }
         }
     }
 
     val requestShare: () -> Unit = {
-        if (shouldShowAnnotationExportChoice) {
-            showShareDialog = true
-        } else {
-            shareOriginalPdf()
+        if (ownsPaneGlobals) {
+            if (shouldShowAnnotationExportChoice) {
+                showShareDialog = true
+            } else {
+                shareOriginalPdf()
+            }
         }
     }
 
@@ -2698,7 +2499,7 @@ fun PdfViewerScreen(
     val scrubDebounceJob = remember { mutableStateOf<Job?>(null) }
     val pdfSliderChromeVisible = shouldRenderReaderSlider(
         isToggledOn = isPageSliderVisible,
-        isBottomChromeVisible = showStandardBars,
+        isBottomChromeVisible = showBottomBar,
         isSearchActive = searchState.isSearchActive
     )
 
@@ -2735,138 +2536,145 @@ fun PdfViewerScreen(
     }
 
     val saveStateAndExit = {
-        val activePage = richTextController?.activePageIndex ?: -1
-        Timber.tag("RichTextFlow").i("System Exit: isEditMode=$isEditMode, richActivePage=$activePage")
+        if (ownsPaneGlobals) {
+            val activePage = richTextController?.activePageIndex ?: -1
+            Timber.tag("RichTextFlow").i("System Exit: isEditMode=$isEditMode, richActivePage=$activePage")
 
-        if (isLoadingDocument) {
-            onNavigateBack()
-        } else {
-            ttsController.stop()
+            if (isLoadingDocument) {
+                onNavigateBack()
+            } else {
+                ttsController.stop()
 
-            viewModel.viewModelScope.launch {
-                initialScrollDone = true
+                viewModel.viewModelScope.launch {
+                    initialScrollDone = true
 
-                if (richTextController != null) {
-                    withContext(NonCancellable) {
-                        richTextController.saveImmediate()
+                    if (richTextController != null) {
+                        withContext(NonCancellable) {
+                            richTextController.saveImmediate()
+                        }
                     }
-                }
 
-                saveAllData(true).join()
+                    saveAllData(true).join()
 
-                withContext(Dispatchers.Main) {
-                    Timber.tag("PdfPositionDebug").d("Exit save complete. Navigating back.")
-                    onNavigateBack()
+                    withContext(Dispatchers.Main) {
+                        Timber.tag("PdfPositionDebug").d("Exit save complete. Navigating back.")
+                        onNavigateBack()
+                    }
                 }
             }
         }
     }
 
-    val onZoomChangeStable = remember { { scale: Float -> currentPageScale = scale } }
+    val previousReportedScale = remember { mutableFloatStateOf(Float.NaN) }
+    val onZoomChangeStable = remember {
+        { scale: Float ->
+            val previous = previousReportedScale.floatValue
+            previousReportedScale.floatValue = scale
+            if (previous.isNaN() || abs(scale - previous) > 0.01f) {
+                pdfSplitZoomDiag(
+                    "zoom.onZoomChange pane=${surfaceState.paneBookId ?: "solo"} " +
+                        "session=${surfaceState.paneSessionId} scale=${scale.diagF()} " +
+                        "previous=${if (previous.isNaN()) "init" else previous.diagF()}"
+                )
+            }
+            currentPageScale = scale
+        }
+    }
 
     val onHighlightLoadingStable = remember {
         { isLoading: Boolean -> isHighlightingLoading = isLoading }
     }
 
-    val onShowDictionaryUpsellDialogStable = remember(useOnlineDictionary) {
+    val onShowDictionaryUpsellDialogStable = remember(useOnlineDictionary, ownsPaneGlobals) {
         {
-            if (useOnlineDictionary) {
+            if (ownsPaneGlobals && useOnlineDictionary) {
                 showDictionaryUpsellDialog = true
             }
         }
     }
 
-    val onDictionaryLookupStable = remember(executeWithOcrCheck, useOnlineDictionary, selectedDictPackage, uiState.credits, isProUser) {
+    val onDictionaryLookupStable = remember(executeWithOcrCheck, useOnlineDictionary, selectedDictPackage, uiState.credits, isProUser, ownsPaneGlobals) {
         { text: String ->
-            executeWithOcrCheck {
-                val effectiveUseOnline = areReaderAiFeaturesEnabled(context) && useOnlineDictionary
+            if (ownsPaneGlobals) {
+                executeWithOcrCheck {
+                    val effectiveUseOnline = areReaderAiFeaturesEnabled(context) && useOnlineDictionary
 
-                if (effectiveUseOnline) {
-                    val wordCount = com.aryan.reader.countWords(text)
-                    if (BuildConfig.FLAVOR != "oss" && wordCount > 1 && !isProUser) {
-                        showDictionaryUpsellDialog = true
-                    } else {
-                        selectedTextForAi = text
-                        showAiDefinitionPopup = true
-                        coroutineScope.launch {
-                            val token = viewModel.getAuthToken()
-                            isAiDefinitionLoading = true
-                            aiDefinitionResult = null
-                            fetchAiDefinition(
-                                text = text,
-                                authToken = token,
-                                onUpdate = { chunk ->
-                                    val currentDefinition = aiDefinitionResult?.definition ?: ""
-                                    aiDefinitionResult = AiDefinitionResult(definition = currentDefinition + chunk)
-                                },
-                                onError = { error ->
-                                    if (error == "INSUFFICIENT_CREDITS") {
-                                        showInsufficientCreditsDialog = true
-                                        showAiDefinitionPopup = false
-                                        isAiDefinitionLoading = false
-                                    } else {
-                                        aiDefinitionResult = AiDefinitionResult(error = error)
-                                    }
-                                },
-                                onFinish = { isAiDefinitionLoading = false },
-                                context = context
-                            )
+                    if (effectiveUseOnline) {
+                        val wordCount = com.aryan.reader.countWords(text)
+                        if (BuildConfig.FLAVOR != "oss" && wordCount > 1 && !isProUser) {
+                            showDictionaryUpsellDialog = true
+                        } else {
+                            selectedTextForAi = text
+                            showAiDefinitionPopup = true
+                            coroutineScope.launch {
+                                val token = viewModel.getAuthToken()
+                                isAiDefinitionLoading = true
+                                aiDefinitionResult = null
+                                fetchAiDefinition(
+                                    text = text,
+                                    authToken = token,
+                                    onUpdate = { chunk ->
+                                        val currentDefinition = aiDefinitionResult?.definition ?: ""
+                                        aiDefinitionResult = AiDefinitionResult(definition = currentDefinition + chunk)
+                                    },
+                                    onError = { error ->
+                                        if (error == "INSUFFICIENT_CREDITS") {
+                                            showInsufficientCreditsDialog = true
+                                            showAiDefinitionPopup = false
+                                            isAiDefinitionLoading = false
+                                        } else {
+                                            aiDefinitionResult = AiDefinitionResult(error = error)
+                                        }
+                                    },
+                                    onFinish = { isAiDefinitionLoading = false },
+                                    context = context
+                                )
+                            }
                         }
-                    }
-                } else {
-                    if (!selectedDictPackage.isNullOrEmpty()) {
-                        ExternalDictionaryHelper.launchDictionary(context, selectedDictPackage!!, text)
                     } else {
-                        Toast.makeText(context, context.getString(R.string.toast_select_dictionary_first), Toast.LENGTH_SHORT).show()
-                        showDictionarySettingsSheet = true
+                        if (!selectedDictPackage.isNullOrEmpty()) {
+                            ExternalDictionaryHelper.launchDictionary(context, selectedDictPackage!!, text)
+                        } else {
+                            Toast.makeText(context, context.getString(R.string.toast_select_dictionary_first), Toast.LENGTH_SHORT).show()
+                            showDictionarySettingsSheet = true
+                        }
                     }
                 }
             }
         }
     }
 
-    val onTranslateTextStable = remember(selectedTranslatePackage) {
+    val onTranslateTextStable = remember(selectedTranslatePackage, ownsPaneGlobals) {
         { text: String ->
-            if (!selectedTranslatePackage.isNullOrEmpty()) {
-                ExternalDictionaryHelper.launchTranslate(context, selectedTranslatePackage!!, text)
-            } else {
-                Toast.makeText(context, context.getString(R.string.toast_select_translate_first), Toast.LENGTH_SHORT).show()
-                showDictionarySettingsSheet = true
+            if (ownsPaneGlobals) {
+                if (!selectedTranslatePackage.isNullOrEmpty()) {
+                    ExternalDictionaryHelper.launchTranslate(context, selectedTranslatePackage!!, text)
+                } else {
+                    Toast.makeText(context, context.getString(R.string.toast_select_translate_first), Toast.LENGTH_SHORT).show()
+                    showDictionarySettingsSheet = true
+                }
             }
         }
     }
 
-    val onSearchTextStable = remember(selectedSearchPackage) {
+    val onSearchTextStable = remember(selectedSearchPackage, ownsPaneGlobals) {
         { text: String ->
-            if (!selectedSearchPackage.isNullOrEmpty()) {
-                ExternalDictionaryHelper.launchSearch(context, selectedSearchPackage!!, text)
-            } else {
-                Toast.makeText(context, context.getString(R.string.toast_select_search_first), Toast.LENGTH_SHORT).show()
-                showDictionarySettingsSheet = true
+            if (ownsPaneGlobals) {
+                if (!selectedSearchPackage.isNullOrEmpty()) {
+                    ExternalDictionaryHelper.launchSearch(context, selectedSearchPackage!!, text)
+                } else {
+                    Toast.makeText(context, context.getString(R.string.toast_select_search_first), Toast.LENGTH_SHORT).show()
+                    showDictionarySettingsSheet = true
+                }
             }
         }
     }
 
     val onLinkClickedStable = remember { { url: String -> clickedLinkUrl = url } }
 
-    val onInternalLinkNavStable = remember(displayMode) {
-        { targetPage: Int ->
-            coroutineScope.launch {
-                if (targetPage in 0 until totalPages) {
-                    val current = if (displayMode == DisplayMode.PAGINATION) currentPaginationDisplayPage() else verticalReaderState.currentPage
-
-                    if (current != targetPage) {
-                        recordJumpHistory(current, targetPage)
-                    }
-
-                    if (displayMode == DisplayMode.PAGINATION) {
-                        animatePaginationToDisplayPage(targetPage)
-                    } else {
-                        verticalReaderState.scrollToPage(targetPage)
-                    }
-                }
-            }
-            Unit
+    val onInternalLinkNavStable: (Int) -> Unit = { targetPage ->
+        pdfPageToDisplayPage(targetPage)?.let { targetDisplayPage ->
+            navigateToPdfPage(targetDisplayPage, PdfNavigationReason.INTERNAL_LINK, true)
         }
     }
 
@@ -3150,6 +2958,9 @@ fun PdfViewerScreen(
         startCharIndex: Int? = null,
         continueSession: Boolean = false
     ) {
+        if (isSplitPane && !isPaneFocused) {
+            return
+        }
         if (BuildConfig.FLAVOR != "oss" && currentTtsMode == TtsPlaybackManager.TtsMode.CLOUD && uiState.credits <= 0) {
             showInsufficientCreditsDialog = true
             return
@@ -3161,13 +2972,24 @@ fun PdfViewerScreen(
         }
         coroutineScope.launch {
             val token = viewModel.getAuthToken()
-            val requestedDisplayPage = pageToReadOverride ?: currentPage
+            // Live read: startTts can be reached through long-lived remembered callbacks
+            // whose captured snapshot predates the document load.
+            val requestedDisplayPage = pageToReadOverride ?: surfaceState.currentPage
             val pageToRead = displayPageToPdfPage(requestedDisplayPage)
             if (pageToRead == null) {
+                Timber.tag(TTS_DIAG_TAG).w(
+                    "startTts.reject requestedDisplayPage=$requestedDisplayPage " +
+                        "currentPageSnapshot=$currentPage liveTotalDisplayPages=${surfaceState.totalDisplayPages} " +
+                        "totalPdfPages=$totalPages virtual=${virtualPages.pdfLayoutDebugSummary()}"
+                )
                 Timber.w("TTS: Ignoring blank or invalid display page $requestedDisplayPage.")
                 return@launch
             }
             val displayPageForTts = pdfPageToDisplayPage(pageToRead) ?: requestedDisplayPage
+            Timber.tag(TTS_DIAG_TAG).i(
+                "startTts.mapped displayPage=$requestedDisplayPage pdfPage=$pageToRead " +
+                    "totalDisplayPages=${surfaceState.totalDisplayPages}"
+            )
             var rawPageText: String? = null
             var tempPage: ReaderPage? = null
             var tempTextPage: ReaderTextPage? = null
@@ -3315,9 +3137,14 @@ fun PdfViewerScreen(
 
     var showPermissionRationaleDialog by remember { mutableStateOf(false) }
 
-    val startTtsWithPermissionCheck: (Int?, Int?) -> Unit = remember(context, activity, executeWithOcrCheck) {
+    val startTtsWithPermissionCheck: (Int?, Int?) -> Unit = remember(
+        context,
+        activity,
+        executeWithOcrCheck,
+        ownsPaneGlobals,
+    ) {
         { pageOverride, startCharIndex ->
-            executeWithOcrCheck {
+            if (ownsPaneGlobals) executeWithOcrCheck {
                 when {
                     ContextCompat.checkSelfPermission(
                         context, Manifest.permission.POST_NOTIFICATIONS
@@ -3343,13 +3170,18 @@ fun PdfViewerScreen(
         onDispose {
             Timber.d("Disposing sample MediaPlayer.")
             speakerPlayer.release()
-            PdfBitmapPool.clear()
-            PdfThumbnailCache.clear()
+            if (!isSplitPane) {
+                PdfBitmapPool.clear()
+                PdfThumbnailCache.clear()
+            }
         }
     }
 
-    LaunchedEffect(ttsState.sessionFinished) {
-        if (ttsState.sessionFinished && ttsState.playbackSource == "READER") {
+    LaunchedEffect(ttsState.sessionFinished, isTtsPlaybackForThisPane, isPaneFocused) {
+        if (
+            isSplitPane && (!isPaneFocused || !isTtsPlaybackForThisPane)
+        ) return@LaunchedEffect
+        if (ttsState.sessionFinished && ttsState.playbackSource == "READER" && isTtsPlaybackForThisPane) {
             val lastPlayedPage = ttsPageData?.pageIndex ?: (currentPage - 1)
             val nextPage = lastPlayedPage + 1
             if (nextPage < totalPages) {
@@ -3391,7 +3223,11 @@ fun PdfViewerScreen(
         }
     }
 
-    LaunchedEffect(ttsState.currentText, ttsPageData, ttsState.startOffsetInSource) {
+    LaunchedEffect(ttsState.currentText, ttsPageData, ttsState.startOffsetInSource, isTtsPlaybackForThisPane) {
+        if (!isTtsPlaybackForThisPane) {
+            ttsHighlightData = null
+            return@LaunchedEffect
+        }
         val currentText = ttsState.currentText
         val currentTtsData = ttsPageData
         val chunkIndex = ttsState.startOffsetInSource
@@ -3448,41 +3284,31 @@ fun PdfViewerScreen(
     LaunchedEffect(effectivePdfUri, pdfiumCore, documentPassword) {
         Timber.tag("PdfTabSync").i("UI: LaunchedEffect triggered by URI change: $effectivePdfUri")
         Timber.tag(PDF_RENAME_TRACE_TAG).i(
-            "pdfScreen.openEffect.start uri=$effectivePdfUri selectedBookId=${uiState.selectedBookId} " +
-                "activeTabBookId=${uiState.activeTabBookId} currentBookId=$currentBookId " +
+            "pdfScreen.openEffect.start uri=$effectivePdfUri selectedBookId=$selectedBookIdForPane " +
+                "activeTabBookId=$activeTabBookId currentBookId=$currentBookId " +
                 "activeItemId=${activeLibraryItem?.bookId} customName=${activeLibraryItem?.customName} " +
                 "displayName=${activeLibraryItem?.displayName} title=${activeLibraryItem?.title}"
         )
         Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
             "ui.open.start uri=$effectivePdfUri scheme=${effectivePdfUri.scheme} " +
-                "selectedBookId=${uiState.selectedBookId} previousBookId=$currentBookId " +
+                "selectedBookId=$selectedBookIdForPane previousBookId=$currentBookId " +
                 "documentPasswordSet=${documentPassword != null}"
         )
 
-        Timber.tag("PdfTabSync").d("UI: Loading State -> activeTabBookId: ${uiState.activeTabBookId}, isLoading: $isLoadingDocument")
+        Timber.tag("PdfTabSync").d("UI: Loading State -> activeTabBookId: $activeTabBookId, isLoading: $isLoadingDocument")
 
-        bookmarks = loadPdfBookmarksFromJson(uiState.initialBookmarksJson ?: initialBookmarksJson)
+        bookmarks = loadPdfBookmarksFromJson(effectiveInitialBookmarksJson)
 
         isLoadingDocument = true
         isDocumentReady = false
         errorMessage = null
         documentMetadataTitle = null
         isPrintBlockedForPasswordProtectedPdf = false
-        currentBookId = null
-        annotationSession = annotationSession.reduce(SharedPdfAnnotationSessionAction.Reset)
-        allAnnotations = emptyMap()
-        textBoxes.clear()
-        userHighlights.clear()
         virtualPages = emptyList()
         loadedPageLayoutBookId = null
         Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
             "ui.open.reset uri=$effectivePdfUri virtualCleared=true loadedLayoutBookId=$loadedPageLayoutBookId"
         )
-        selectedTextBoxId = null
-        undoStack.clear()
-        redoStack.clear()
-        erasedAnnotationsFromStroke.clear()
-        drawingState.onDrawCancel()
 
         if (showPasswordDialog) isPasswordError = false
 
@@ -3490,9 +3316,9 @@ fun PdfViewerScreen(
         flatTableOfContents = emptyList()
 
         val fastId = getFastFileId(context, effectivePdfUri)
-        val selectedId = uiState.selectedBookId
+        val selectedId = selectedBookIdForPane
         Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
-            "ui.open.ids uri=$effectivePdfUri fastId=$fastId selectedId=$selectedId activeTabBookId=${uiState.activeTabBookId}"
+            "ui.open.ids uri=$effectivePdfUri fastId=$fastId selectedId=$selectedId activeTabBookId=$activeTabBookId"
         )
         val shouldPreserveCurrentTtsSession =
             uiState.isOpeningFromTtsNotification ||
@@ -3502,19 +3328,40 @@ fun PdfViewerScreen(
                         ttsState.bookId == selectedId
                     )
 
-        if (!shouldPreserveCurrentTtsSession) {
+        if (!isSplitPane && !shouldPreserveCurrentTtsSession) {
             ttsController.stop()
         }
 
-        if (selectedId != null && selectedId != fastId) {
-            Timber.tag("FolderAnnotationSync").i("Detected ID mismatch. Legacy: $fastId, Selected: $selectedId. Initiating migration.")
-            Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
-                "ui.open.migrateFastToSelected legacyId=$fastId selectedId=$selectedId"
+        // The sidecar effect owns annotation state and only reloads it when the
+        // book id changes. Re-opening the SAME book (split panes re-run this
+        // effect, and password unlocks restart it) must not reset the sidecar
+        // session here: the sidecar load would never restart, the session would
+        // stay non-ready, and committed ink strokes would vanish instantly.
+        val openBookPlan = sharedPdfDocumentOpenBookPlan(
+            currentBookId = currentBookId,
+            fastId = fastId,
+            selectedBookId = selectedId,
+        )
+        openBookPlan.migrationTargetBookId?.let { migrationTargetBookId ->
+            Timber.tag("FolderAnnotationSync").i(
+                "Detected ID mismatch. Legacy: $fastId, Selected: $migrationTargetBookId. Initiating migration."
             )
-            viewModel.checkAndMigrateLegacyBookId(fastId, selectedId)
-            currentBookId = selectedId
-        } else {
-            currentBookId = fastId
+            Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
+                "ui.open.migrateFastToSelected legacyId=$fastId selectedId=$migrationTargetBookId"
+            )
+            viewModel.checkAndMigrateLegacyBookId(fastId, migrationTargetBookId)
+        }
+        if (openBookPlan.shouldResetSidecarState) {
+            annotationSession = annotationSession.reduce(SharedPdfAnnotationSessionAction.Reset)
+            allAnnotations = emptyMap()
+            textBoxes.clear()
+            userHighlights.clear()
+            selectedTextBoxId = null
+            undoStack.clear()
+            redoStack.clear()
+            erasedAnnotationsFromStroke.clear()
+            drawingState.onDrawCancel()
+            currentBookId = openBookPlan.bookId
         }
         Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
             "ui.open.activeId uri=$effectivePdfUri currentBookId=$currentBookId"
@@ -3548,13 +3395,13 @@ fun PdfViewerScreen(
             isPrintBlockedForPasswordProtectedPdf = cachedItem.isPasswordProtectedPdf
 
             val mapPage = tabStateMap[currentBookId!!]
-            val uiPage = uiState.initialPageInBook
-            val restorePage = if (uiState.initialPageInBookIsExplicit) {
-                uiPage ?: mapPage ?: initialPage
+            val uiPage = if (isSplitPane) paneInitialPage else uiState.initialPageInBook
+            val restorePage = if (!isSplitPane && uiState.initialPageInBookIsExplicit) {
+                uiPage ?: mapPage ?: effectiveInitialPage
             } else {
-                mapPage ?: uiPage ?: initialPage
+                mapPage ?: uiPage ?: effectiveInitialPage
             }
-            Timber.tag("PdfTabSync").d("UI: Restoring position | tabStateMap=$mapPage, uiState=$uiPage, initialPage=$initialPage")
+            Timber.tag("PdfTabSync").d("UI: Restoring position | tabStateMap=$mapPage, uiState=$uiPage, initialPage=$effectiveInitialPage")
 
             pendingRestorePage = restorePage
             initialScrollDone = false
@@ -3569,13 +3416,13 @@ fun PdfViewerScreen(
         Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i("ui.open.cacheMiss bookId=$activeBookIdForLoad")
 
         val mapPageInit = tabStateMap[currentBookId!!]
-        val uiPageInit = uiState.initialPageInBook
-        val restorePageInit = if (uiState.initialPageInBookIsExplicit) {
-            uiPageInit ?: mapPageInit ?: initialPage
+        val uiPageInit = if (isSplitPane) paneInitialPage else uiState.initialPageInBook
+        val restorePageInit = if (!isSplitPane && uiState.initialPageInBookIsExplicit) {
+            uiPageInit ?: mapPageInit ?: effectiveInitialPage
         } else {
-            mapPageInit ?: uiPageInit ?: initialPage
+            mapPageInit ?: uiPageInit ?: effectiveInitialPage
         }
-        Timber.tag("PdfTabSync").d("UI: Initial position | tabStateMap=$mapPageInit, uiState=$uiPageInit, initialPage=$initialPage")
+        Timber.tag("PdfTabSync").d("UI: Initial position | tabStateMap=$mapPageInit, uiState=$uiPageInit, initialPage=$effectiveInitialPage")
         pendingRestorePage = restorePageInit
         initialScrollDone = false
 
@@ -3587,7 +3434,7 @@ fun PdfViewerScreen(
             withContext(Dispatchers.IO) {
                 Timber.tag("PdfTabSync").v("UI: Opening document for $effectivePdfUri")
 
-                val selectedDocumentType = uiState.selectedFileType ?: FileType.PDF
+                val selectedDocumentType = effectiveFileType
                 val doc = DocumentFactory.loadDocument(context, effectivePdfUri, selectedDocumentType, documentPassword, pdfiumCore)
                 val loadedPasswordProtectedPdf = selectedDocumentType == FileType.PDF &&
                     (documentPassword != null || isPdfLikelyEncryptedForPrint(context, effectivePdfUri))
@@ -3734,10 +3581,11 @@ fun PdfViewerScreen(
                 withContext(Dispatchers.Main) {
                     if (documentPassword != null) {
                         isPasswordError = true
-                        showPasswordDialog = true
-                    } else {
-                        showPasswordDialog = true
                     }
+                    // The dialog is rendered only by the focused/active pane below. Keep
+                    // this state pending so a pane that loses focus during loading can
+                    // present the prompt when it becomes the owner again.
+                    showPasswordDialog = true
                     isLoadingDocument = false
                 }
             } else {
@@ -3751,20 +3599,31 @@ fun PdfViewerScreen(
         }
     }
 
-    LaunchedEffect(pagerState.isScrollInProgress) {
+    LaunchedEffect(pagerState.isScrollInProgress, isTtsPlaybackForThisPane, isPaneFocused) {
         if (pagerState.isScrollInProgress) {
-            if (displayMode == DisplayMode.PAGINATION && !isAutoPagingForTts && (ttsState.isPlaying || ttsState.isLoading)) {
+            if (
+                (!isSplitPane || isPaneFocused) &&
+                isTtsPlaybackForThisPane &&
+                displayMode == DisplayMode.PAGINATION &&
+                !isAutoPagingForTts &&
+                (ttsState.isPlaying || ttsState.isLoading)
+            ) {
                 ttsController.stop()
             }
         }
     }
 
     var previousPage by remember(displayMode) { mutableIntStateOf(-1) }
-    LaunchedEffect(currentPage) {
+    LaunchedEffect(currentPage, isTtsPlaybackForThisPane, isPaneFocused) {
         if (previousPage != -1 && previousPage != currentPage) {
-            if (isAutoPagingForTts) {
+            if (isAutoPagingForTts && isTtsPlaybackForThisPane && (!isSplitPane || isPaneFocused)) {
                 startTts(continueSession = true)
-            } else if (displayMode == DisplayMode.PAGINATION && (ttsState.isPlaying || ttsState.isLoading)) {
+            } else if (
+                isTtsPlaybackForThisPane &&
+                (!isSplitPane || isPaneFocused) &&
+                displayMode == DisplayMode.PAGINATION &&
+                (ttsState.isPlaying || ttsState.isLoading)
+            ) {
                 Timber.d("Page changed manually while TTS active, stopping.")
                 ttsController.stop()
             }
@@ -3782,28 +3641,38 @@ fun PdfViewerScreen(
         pdfSpreadSettings.pageSpreadMode,
         pdfSpreadSettings.pdfFirstPageStandaloneInSpread
     ) {
-        val nextPageScale = currentPageScaleAfterPdfPageChange(
-            displayMode = displayMode,
-            isScrollLocked = isScrollLocked,
-            lockedState = lockedState,
-            currentActiveScale = currentActiveScale
-        )
-        currentPageScale = nextPageScale
-        val isCurrentTwoPageSpread =
-            displayMode == DisplayMode.PAGINATION &&
+        if (displayMode == DisplayMode.PAGINATION) {
+            val nextPageScale = currentPageScaleAfterPdfPageChange(
+                displayMode = displayMode,
+                isScrollLocked = isScrollLocked,
+                lockedState = lockedState,
+                currentActiveScale = currentActiveScale
+            )
+            pdfSplitZoomDiag(
+                "pag.pageChangeScaleReset $currentDiagPaneContext page=$currentPage " +
+                    "currentScale=${currentActiveScale.diagF()} nextPageScale=${nextPageScale.diagF()} " +
+                    "locked=$isScrollLocked lockedState=${lockedState != null}"
+            )
+            currentPageScale = nextPageScale
+            val isCurrentTwoPageSpread =
                 PdfSpreadLayout.visiblePageIndices(currentPage, totalDisplayPages, pdfSpreadSettings).size > 1
-        if (isCurrentTwoPageSpread) {
-            val currentLockedState = lockedState
-            val nextPageOffset = if (isScrollLocked && currentLockedState != null) {
-                Offset(currentLockedState.second, currentLockedState.third)
-            } else {
-                Offset.Zero
+            if (isCurrentTwoPageSpread) {
+                val currentLockedState = lockedState
+                val nextPageOffset = if (isScrollLocked && currentLockedState != null) {
+                    Offset(currentLockedState.second, currentLockedState.third)
+                } else {
+                    Offset.Zero
+                }
+                currentActiveScale = nextPageScale
+                currentActiveOffset = nextPageOffset
+            } else if (!isScrollLocked) {
+                pdfSplitZoomDiag(
+                    "pag.resetToBase $currentDiagPaneContext page=$currentPage " +
+                        "wasScale=${currentActiveScale.diagF()} reason=nonSpreadPageChange"
+                )
+                currentActiveScale = 1f
+                currentActiveOffset = Offset.Zero
             }
-            currentActiveScale = nextPageScale
-            currentActiveOffset = nextPageOffset
-        } else if (displayMode == DisplayMode.PAGINATION && !isScrollLocked) {
-            currentActiveScale = 1f
-            currentActiveOffset = Offset.Zero
         }
         ocrUsedForCurrentPageTts = false
     }
@@ -3816,6 +3685,10 @@ fun PdfViewerScreen(
             currentActiveScale > 1f &&
             !isScrollLocked
         ) {
+            pdfSplitZoomDiag(
+                "pag.resetZoomTrigger $currentDiagPaneContext from=${currentActiveScale.diagF()} " +
+                    "page=$currentPage trigger=$resetZoomTrigger"
+            )
             val startScale = currentActiveScale
             val startOffset = currentActiveOffset
             Animatable(0f).animateTo(1f, animationSpec = tween(durationMillis = 300)) {
@@ -3832,9 +3705,22 @@ fun PdfViewerScreen(
     DisposableEffect(Unit) {
         onDispose {
             Timber.d("DisposableEffect: Screen disposing. Closing PDF document and PFD.")
-            ttsController.stop()
-            PdfBitmapPool.clear()
-            PdfThumbnailCache.clear()
+            if (isSplitPane) {
+                // Header close/replacement removes the composition without
+                // dispatching an Android lifecycle event. Flush this pane's
+                // latest session before releasing its renderer resources.
+                viewModel.viewModelScope.launch {
+                    currentRichTextController?.let {
+                        withContext(NonCancellable) { it.saveImmediate() }
+                    }
+                    saveAllData(true).join()
+                }
+            }
+            if (!isSplitPane) {
+                ttsController.stop()
+                PdfBitmapPool.clear()
+                PdfThumbnailCache.clear()
+            }
             documentCache.evictAll()
 
             val docToClose = pdfDocument
@@ -3864,7 +3750,7 @@ fun PdfViewerScreen(
     LaunchedEffect(effectivePdfUri, currentBookId, totalPages) {
         if (currentBookId == null || totalPages == 0) return@LaunchedEffect
         if (isBackgroundIndexing && backgroundIndexingProgress > 0f) return@LaunchedEffect
-        val selectedDocumentType = uiState.selectedFileType ?: return@LaunchedEffect
+        val selectedDocumentType = effectiveFileType
         if (selectedDocumentType != FileType.PDF && selectedDocumentType != FileType.PPTX) return@LaunchedEffect
 
         withContext(Dispatchers.IO) {
@@ -3981,8 +3867,9 @@ fun PdfViewerScreen(
 
     val imeHeight = WindowInsets.ime.getBottom(density)
 
-    val bottomScrollLimitPx = remember(isEditMode, imeHeight, navBarHeight, dockLocation, isDockMinimized, systemUiMode, showStandardBars) {
-        val effectiveNavBar = if (systemUiMode == SystemUiMode.DEFAULT || (systemUiMode == SystemUiMode.SYNC && showStandardBars)) navBarHeight else 0
+    val bottomScrollLimitPx = remember(isEditMode, imeHeight, navBarHeight, dockLocation, isDockMinimized, systemUiMode, showBottomBar) {
+        // navBarHeight is bridged as 0 for split panes (the system bar is hidden).
+        val effectiveNavBar = if (systemUiMode == SystemUiMode.DEFAULT || (systemUiMode == SystemUiMode.SYNC && showBottomBar)) navBarHeight else 0
         if (isEditMode) {
             if (imeHeight > 0) {
                 imeHeight.toFloat()
@@ -3994,7 +3881,7 @@ fun PdfViewerScreen(
                 }
             }
         } else {
-            if (showStandardBars) {
+            if (showBottomBar) {
                 with(density) { 56.dp.toPx() } + effectiveNavBar
             } else {
                 effectiveNavBar.toFloat()
@@ -4112,23 +3999,16 @@ fun PdfViewerScreen(
     }
 
     val isTtsSessionActive =
-        ((ttsState.currentText != null || ttsState.isLoading) && ttsState.playbackSource == "READER") || isAutoPagingForTts
+        ((ttsState.currentText != null || ttsState.isLoading) &&
+            ttsState.playbackSource == "READER" &&
+            isTtsPlaybackForThisPane) ||
+            (isAutoPagingForTts && isTtsPlaybackForThisPane)
+    val isTtsPlayingOrLoading = isTtsPlaybackForThisPane &&
+        (ttsState.isPlaying || ttsState.isLoading || isAutoPagingForTts)
 
     val onInternalLinkNav: (Int) -> Unit = { targetPage ->
-        coroutineScope.launch {
-            if (targetPage in 0 until totalPages) {
-                val current = if (displayMode == DisplayMode.PAGINATION) currentPaginationDisplayPage() else verticalReaderState.currentPage
-
-                if (current != targetPage) {
-                    recordJumpHistory(current, targetPage)
-                }
-
-                if (displayMode == DisplayMode.PAGINATION) {
-                    animatePaginationToDisplayPage(targetPage)
-                } else {
-                    verticalReaderState.scrollToPage(targetPage)
-                }
-            }
+        pdfPageToDisplayPage(targetPage)?.let { targetDisplayPage ->
+            navigateToPdfPage(targetDisplayPage, PdfNavigationReason.INTERNAL_LINK, true)
         }
     }
 
@@ -4153,22 +4033,8 @@ fun PdfViewerScreen(
     fun navigateToPdfSearchResult(result: SearchResult) {
         currentPdfSearchResult = result
         searchHighlightTarget = result
-
-        coroutineScope.launch {
-            val targetPage = result.locationInSource
-            val current = if (displayMode == DisplayMode.PAGINATION) currentPaginationDisplayPage() else verticalReaderState.currentPage
-
-            if (current != targetPage) {
-                recordJumpHistory(current, targetPage)
-            }
-
-            if (displayMode == DisplayMode.PAGINATION) {
-                if (currentPaginationDisplayPage() != targetPage) {
-                    scrollPaginationToDisplayPage(targetPage)
-                }
-            } else {
-                verticalReaderState.scrollToPage(targetPage)
-            }
+        pdfPageToDisplayPage(result.locationInSource)?.let { targetDisplayPage ->
+            navigateToPdfPage(targetDisplayPage, PdfNavigationReason.SEARCH_RESULT, true)
         }
     }
 
@@ -4181,7 +4047,9 @@ fun PdfViewerScreen(
         }
     }
 
-    BackHandler(enabled = true) {
+    // A split workspace delegates back to the focused pane first so its
+    // dialogs/search/editor state close before the workspace itself exits.
+    if (ownsPaneGlobals) BackHandler(enabled = true) {
         val backAction = selectMobilePdfReaderBackAction(
             MobilePdfReaderBackState(
                 passwordPromptVisible = showPasswordDialog,
@@ -4234,6 +4102,340 @@ fun PdfViewerScreen(
         }
     }
 
+    // Keep the typed surface writes in bounded groups. A single Compose lambda
+    // over all local state produces a verifier-sensitive generated constructor;
+    // these groups keep each capture set small while preserving the pane-local
+    // state accessors used by the extracted chrome and document composables.
+    bindPdfViewerSurfaceChunk {
+        surfaceState.isPageSliderVisible = pdfViewerMutableValue({ isPageSliderVisible }, { isPageSliderVisible = it })
+        surfaceState.pendingRestorePage = pdfViewerMutableValue({ pendingRestorePage }, { pendingRestorePage = it })
+        surfaceState.isLoadingDocument = pdfViewerMutableValue({ isLoadingDocument }, { isLoadingDocument = it })
+        surfaceState.displayMode = pdfViewerMutableValue({ displayMode }, { displayMode = it })
+        surfaceState.tapToNavigateEnabled = pdfViewerMutableValue({ tapToNavigateEnabled }, { tapToNavigateEnabled = it })
+        surfaceState.pageTurnAnimationEnabled = pdfViewerMutableValue({ pageTurnAnimationEnabled }, { pageTurnAnimationEnabled = it })
+        surfaceState.isScrollLocked = pdfViewerMutableValue({ isScrollLocked }, { isScrollLocked = it })
+        surfaceState.rightToLeftPagination = pdfViewerMutableValue({ rightToLeftPagination }, { rightToLeftPagination = it })
+        surfaceState.currentActiveScale = pdfViewerMutableValue({ currentActiveScale }, { currentActiveScale = it })
+        surfaceState.currentActiveOffset = pdfViewerMutableValue({ currentActiveOffset }, { currentActiveOffset = it })
+        surfaceState.showVerticalPageGap = pdfViewerMutableValue({ showVerticalPageGap }, { showVerticalPageGap = it })
+        surfaceState.searchHighlightTarget = pdfViewerMutableValue({ searchHighlightTarget }, { searchHighlightTarget = it })
+        surfaceState.isOcrModelDownloading = pdfViewerMutableValue({ isOcrModelDownloading }, { isOcrModelDownloading = it })
+        surfaceState.pageAspectRatios = pdfViewerMutableValue({ pageAspectRatios }, { pageAspectRatios = it })
+        surfaceState.globalTextureTransparency = pdfViewerMutableValue({ globalTextureTransparency }, { globalTextureTransparency = it })
+        surfaceState.excludeImages = pdfViewerMutableValue({ excludeImages }, { excludeImages = it })
+        surfaceState.reverseColorMode = pdfViewerMutableValue({ reverseColorMode }, { reverseColorMode = it })
+        surfaceState.ttsDisplayPageIndex = pdfViewerMutableValue({ ttsDisplayPageIndex }, { ttsDisplayPageIndex = it })
+        surfaceState.ttsHighlightData = pdfViewerMutableValue({ ttsHighlightData }, { ttsHighlightData = it })
+
+    }
+
+    bindPdfViewerSurfaceChunk {
+        surfaceState.searchHighlightMode = pdfViewerMutableValue({ searchHighlightMode }, { searchHighlightMode = it })
+        surfaceState.showAllTextHighlights = pdfViewerMutableValue({ showAllTextHighlights }, { showAllTextHighlights = it })
+        surfaceState.showPageNumberOverlay = pdfViewerMutableValue({ showPageNumberOverlay }, { showPageNumberOverlay = it })
+        surfaceState.selectionClearTrigger = pdfViewerMutableValue({ selectionClearTrigger }, { selectionClearTrigger = it })
+        surfaceState.resetZoomTrigger = pdfViewerMutableValue({ resetZoomTrigger }, { resetZoomTrigger = it })
+        surfaceState.lockedState = pdfViewerMutableValue({ lockedState }, { lockedState = it })
+        surfaceState.showDictionaryUpsellDialog = pdfViewerMutableValue({ showDictionaryUpsellDialog }, { showDictionaryUpsellDialog = it })
+        surfaceState.clickedLinkUrl = pdfViewerMutableValue({ clickedLinkUrl }, { clickedLinkUrl = it })
+        surfaceState.poppedUpPanelBitmap = pdfViewerMutableValue({ poppedUpPanelBitmap }, { poppedUpPanelBitmap = it })
+        surfaceState.ocrLanguage = pdfViewerMutableValue({ ocrLanguage }, { ocrLanguage = it })
+        surfaceState.systemUiMode = pdfViewerMutableValue({ systemUiMode }, { systemUiMode = it })
+        surfaceState.sliderCurrentPage = pdfViewerMutableValue({ sliderCurrentPage }, { sliderCurrentPage = it })
+        surfaceState.isFastScrubbing = pdfViewerMutableValue({ isFastScrubbing }, { isFastScrubbing = it })
+        surfaceState.showThemePanel = pdfViewerMutableValue({ showThemePanel }, { showThemePanel = it })
+        surfaceState.showVisualOptionsSheet = pdfViewerMutableValue({ showVisualOptionsSheet }, { showVisualOptionsSheet = it })
+        surfaceState.showScreenOrientationSheet = pdfViewerMutableValue({ showScreenOrientationSheet }, { showScreenOrientationSheet = it })
+        surfaceState.showSummarizationUpsellDialog = pdfViewerMutableValue({ showSummarizationUpsellDialog }, { showSummarizationUpsellDialog = it })
+        surfaceState.showAiHubSheet = pdfViewerMutableValue({ showAiHubSheet }, { showAiHubSheet = it })
+        surfaceState.showPermissionRationaleDialog = pdfViewerMutableValue({ showPermissionRationaleDialog }, { showPermissionRationaleDialog = it })
+        surfaceState.showInsufficientCreditsDialog = pdfViewerMutableValue({ showInsufficientCreditsDialog }, { showInsufficientCreditsDialog = it })
+
+    }
+
+    bindPdfViewerSurfaceChunk {
+        surfaceState.showSaveDialog = pdfViewerMutableValue({ showSaveDialog }, { showSaveDialog = it })
+        surfaceState.showShareDialog = pdfViewerMutableValue({ showShareDialog }, { showShareDialog = it })
+        surfaceState.showOcrLanguageDialog = pdfViewerMutableValue({ showOcrLanguageDialog }, { showOcrLanguageDialog = it })
+        surfaceState.showReindexDialog = pdfViewerMutableValue({ showReindexDialog }, { showReindexDialog = it })
+        surfaceState.showCustomizeToolsSheet = pdfViewerMutableValue({ showCustomizeToolsSheet }, { showCustomizeToolsSheet = it })
+        surfaceState.pendingActionAfterOcrSelection = pdfViewerMutableValue({ pendingActionAfterOcrSelection }, { pendingActionAfterOcrSelection = it })
+        surfaceState.pendingSaveMode = pdfViewerMutableValue({ pendingSaveMode }, { pendingSaveMode = it })
+        surfaceState.showBars = pdfViewerMutableValue({ showBars }, { showBars = it })
+        surfaceState.sliderStartPage = pdfViewerMutableValue({ sliderStartPage }, { sliderStartPage = it })
+        surfaceState.isHighlightingLoading = pdfViewerMutableValue({ isHighlightingLoading }, { isHighlightingLoading = it })
+        surfaceState.isAutoPagingForTts = pdfViewerMutableValue({ isAutoPagingForTts }, { isAutoPagingForTts = it })
+        surfaceState.hasSelectedOcrLanguage = pdfViewerMutableValue({ hasSelectedOcrLanguage }, { hasSelectedOcrLanguage = it })
+        surfaceState.isBackgroundIndexing = pdfViewerMutableValue({ isBackgroundIndexing }, { isBackgroundIndexing = it })
+        surfaceState.backgroundIndexingProgress = pdfViewerMutableValue({ backgroundIndexingProgress }, { backgroundIndexingProgress = it })
+        surfaceState.isOcrScanning = pdfViewerMutableValue({ isOcrScanning }, { isOcrScanning = it })
+        surfaceState.smartSearchResult = pdfViewerMutableValue({ smartSearchResult }, { smartSearchResult = it })
+        surfaceState.currentPdfSearchResult = pdfViewerMutableValue({ currentPdfSearchResult }, { currentPdfSearchResult = it })
+    }
+
+    bindPdfViewerSurfaceChunk {
+        surfaceState.activeTheme.value = activeTheme
+        surfaceState.pdfSliderChromeVisible = pdfSliderChromeVisible
+        surfaceState.ownsPaneGlobals = ownsPaneGlobals
+        surfaceState.drawerState = drawerState
+        surfaceState.ttsState = ttsState
+        surfaceState.ttsController = ttsController
+        surfaceState.isTtsPlayingOrLoading = isTtsPlayingOrLoading
+        surfaceState.context = context
+        surfaceState.coroutineScope = coroutineScope
+        surfaceState.executeWithOcrCheck = executeWithOcrCheck
+        surfaceState.keyboardController = keyboardController
+        surfaceState.isTtsSessionActive = isTtsSessionActive
+        surfaceState.startTtsWithPermissionCheck = startTtsWithPermissionCheck
+        surfaceState.isSplitPane = isSplitPane
+        surfaceState.onOpenSplit = onOpenSplit
+        surfaceState.focusRequester = focusRequester
+        surfaceState.focusManager = focusManager
+        surfaceState.hiddenTools = hiddenTools
+        surfaceState.toolOrder = toolOrder
+        surfaceState.bottomTools = bottomTools
+        surfaceState.saveStateAndExit = saveStateAndExit
+        surfaceState.viewModel = viewModel
+        surfaceState.onBookmarkClick = onBookmarkClick
+        surfaceState.onInsertPage = onInsertPage
+        surfaceState.onDeletePage = onDeletePage
+        surfaceState.saveAllData = saveAllData
+        surfaceState.uiState = uiState
+        surfaceState.requestShare = requestShare
+        surfaceState.requestSaveCopy = requestSaveCopy
+        surfaceState.onNavigateBack = onNavigateBack
+        surfaceState.calculateSnappedPoint = calculateSnappedPoint
+        surfaceState.dynamicBeyondViewportPageCount = dynamicBeyondViewportPageCount
+        surfaceState.visibleUserHighlightsByPage = visibleUserHighlightsByPage
+        surfaceState.isProUser = isProUser
+        surfaceState.onDictionaryLookupStable = onDictionaryLookupStable
+        surfaceState.onTranslateTextStable = onTranslateTextStable
+    }
+
+    bindPdfViewerSurfaceChunk {
+        surfaceState.onSearchTextStable = onSearchTextStable
+        surfaceState.onInternalLinkNav = onInternalLinkNav
+        surfaceState.onToggleBookmark = onToggleBookmark
+        surfaceState.persistInkAnnotationsNow = persistInkAnnotationsNow
+        surfaceState.displayPageRatios = displayPageRatios
+        surfaceState.onHighlightAdd = onHighlightAdd
+        surfaceState.onHighlightUpdate = onHighlightUpdate
+        surfaceState.onHighlightDelete = onHighlightDelete
+        surfaceState.allAnnotationsProvider = allAnnotationsProvider
+        surfaceState.isPdfDarkMode = isPdfDarkMode
+        surfaceState.onZoomChangeStable = onZoomChangeStable
+        surfaceState.onHighlightLoadingStable = onHighlightLoadingStable
+        surfaceState.onShowDictionaryUpsellDialogStable = onShowDictionaryUpsellDialogStable
+        surfaceState.onLinkClickedStable = onLinkClickedStable
+        surfaceState.onInternalLinkNavStable = onInternalLinkNavStable
+        surfaceState.onBookmarkClickStable = onBookmarkClickStable
+        surfaceState.onOcrStateChangeStable = onOcrStateChangeStable
+        surfaceState.onGetOcrSearchRectsStable = onGetOcrSearchRectsStable
+        surfaceState.textBoxSurfaceState.data.value = PdfViewerTextBoxSurfaceData(
+            all = visibleTextBoxes,
+            byPage = visibleTextBoxesByPage,
+        )
+        surfaceState.bottomScrollLimitPx.value = bottomScrollLimitPx
+        surfaceState.topScrollLimitPx.value = topScrollLimitPx
+        surfaceState.visibleUserHighlights = visibleUserHighlights
+        surfaceState.bubbleZoomDownloadProgress = bubbleZoomDownloadProgress
+        surfaceState.scrubDebounceJob = scrubDebounceJob
+        surfaceState.isBookmarked = isBookmarked
+        surfaceState.isReflowingThisBook = isReflowingThisBook
+        surfaceState.isOss = isOss
+        surfaceState.tabStateMap = tabStateMap
+        surfaceState.reflowProgressValue = reflowProgressValue
+        surfaceState.annotationSettingsRepo = annotationSettingsRepo
+        surfaceState.zoomIndicatorPercentage = zoomIndicatorPercentage
+        surfaceState.toolSettings = toolSettings
+        surfaceState.onInsertTextBox = onInsertTextBox
+        surfaceState.customFonts = customFonts
+        surfaceState.onSingleTapStable = onSingleTapStable
+    }
+
+    bindPdfViewerSurfaceChunk {
+        surfaceState.isAnnotationHit = { annotation: PdfAnnotation, hitPoint: PdfPoint, lastHitPoint: PdfPoint?, pageAspectRatio: Float, threshold: Float ->
+            isAnnotationHit(annotation, hitPoint, lastHitPoint, pageAspectRatio, threshold)
+        }
+        surfaceState.navigateToPdfSearchResult = { result: SearchResult -> navigateToPdfSearchResult(result) }
+    }
+
+    bindPdfViewerSurfaceChunk {
+        surfaceState.aiDefinitionResult = pdfViewerMutableValue({ aiDefinitionResult }, { aiDefinitionResult = it })
+        surfaceState.currentThemeId = pdfViewerMutableValue({ currentThemeId }, { currentThemeId = it })
+        surfaceState.customThemes = pdfViewerMutableValue({ customThemes }, { customThemes = it })
+        surfaceState.flatTableOfContents = pdfViewerMutableValue({ flatTableOfContents }, { flatTableOfContents = it })
+        surfaceState.isAiDefinitionLoading = pdfViewerMutableValue({ isAiDefinitionLoading }, { isAiDefinitionLoading = it })
+        surfaceState.isPasswordError = pdfViewerMutableValue({ isPasswordError }, { isPasswordError = it })
+        surfaceState.isShareLoading = pdfViewerMutableValue({ isShareLoading }, { isShareLoading = it })
+        surfaceState.isSummarizationLoading = pdfViewerMutableValue({ isSummarizationLoading }, { isSummarizationLoading = it })
+        surfaceState.launchAnnotatedSaveCopy = launchAnnotatedSaveCopy
+        surfaceState.launchOriginalSaveCopy = launchOriginalSaveCopy
+        surfaceState.onUpdateBottomTools = onUpdateBottomTools
+        surfaceState.onUpdateHiddenTools = onUpdateHiddenTools
+        surfaceState.onUpdateToolOrder = onUpdateToolOrder
+        surfaceState.pdfFirstPageStandaloneInSpread = pdfViewerMutableValue({ pdfFirstPageStandaloneInSpread }, { pdfFirstPageStandaloneInSpread = it })
+        surfaceState.pdfPageSpreadMode = pdfViewerMutableValue({ pdfPageSpreadMode }, { pdfPageSpreadMode = it })
+        surfaceState.pendingPaginationSpreadRestorePage = pdfViewerMutableValue({ pendingPaginationSpreadRestorePage }, { pendingPaginationSpreadRestorePage = it })
+        surfaceState.requestNotificationPermission = { permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) }
+        surfaceState.startTtsForOverlay = { startTts() }
+        surfaceState.onNavigateToPro = onNavigateToPro
+        surfaceState.clipboardManager = clipboardManager
+        surfaceState.screenOrientationMode = pdfViewerMutableValue({ screenOrientationMode }, { screenOrientationMode = it })
+        surfaceState.selectedTextForAi = pdfViewerMutableValue({ selectedTextForAi }, { selectedTextForAi = it })
+        surfaceState.shareAnnotatedPdf = shareAnnotatedPdf
+        surfaceState.shareOriginalPdf = shareOriginalPdf
+        surfaceState.showAiDefinitionPopup = pdfViewerMutableValue({ showAiDefinitionPopup }, { showAiDefinitionPopup = it })
+        surfaceState.showPasswordDialog = pdfViewerMutableValue({ showPasswordDialog }, { showPasswordDialog = it })
+        surfaceState.showTopTabStrip = pdfViewerMutableValue({ showTopTabStrip }, { showTopTabStrip = it })
+        surfaceState.isTopToolbarEnabled = pdfViewerMutableValue({ isTopToolbarEnabled }, { isTopToolbarEnabled = it })
+        surfaceState.isBottomToolbarEnabled = pdfViewerMutableValue({ isBottomToolbarEnabled }, { isBottomToolbarEnabled = it })
+        surfaceState.summarizationResult = pdfViewerMutableValue({ summarizationResult }, { summarizationResult = it })
+        surfaceState.summaryCacheManager = summaryCacheManager
+        surfaceState.summarizeCurrentPage = { authToken, onUpdate, onFinish ->
+            summarizeCurrentPage(authToken, onUpdate, onFinish)
+        }
+        surfaceState.uriHandler = uriHandler
+    }
+
+    PdfViewerScreenOverlays(surfaceState)
+}
+
+@Composable
+private fun PdfViewerScreenOverlays(surfaceState: PdfViewerSurfaceState) {
+    val activeTheme = surfaceState.activeTheme.value
+    val ownsPaneGlobals = surfaceState.ownsPaneGlobals
+    val drawerState = surfaceState.drawerState
+    val ttsState = surfaceState.ttsState
+    val bookId = surfaceState.bookId
+    val ttsController = surfaceState.ttsController
+    val context = surfaceState.context
+    val totalDisplayPages = surfaceState.totalDisplayPages
+    val verticalReaderState = surfaceState.verticalReaderState
+    val coroutineScope = surfaceState.coroutineScope
+    val isTtsSessionActive = surfaceState.isTtsSessionActive
+    val hiddenTools = surfaceState.hiddenTools
+    val toolOrder = surfaceState.toolOrder
+    val bottomTools = surfaceState.bottomTools
+    val openTabs = surfaceState.openTabs
+    val activeTabBookId = surfaceState.activeTabBookId
+    var showPenPlayground by surfaceState.showPenPlayground
+    val viewModel = surfaceState.viewModel
+    val saveAllData = surfaceState.saveAllData
+    val currentPage = surfaceState.currentPage
+    val uiState = surfaceState.uiState
+    val effectivePdfUri = surfaceState.effectivePdfUri
+    var currentBookId by surfaceState.currentBookId
+    val onNavigateBack = surfaceState.onNavigateBack
+    val activeDocumentRenderKey = surfaceState.activeDocumentRenderKey
+    var pdfDocument by surfaceState.pdfDocument
+    var totalPages by surfaceState.totalPages
+    var displayMode by surfaceState.displayMode
+    var showVerticalPageGap by surfaceState.showVerticalPageGap
+    val pdfTextRepository = surfaceState.pdfTextRepository
+    val isProUser = surfaceState.isProUser
+    val onDictionaryLookupStable = surfaceState.onDictionaryLookupStable
+    val onTranslateTextStable = surfaceState.onTranslateTextStable
+    val onSearchTextStable = surfaceState.onSearchTextStable
+    val onHighlightUpdate = surfaceState.onHighlightUpdate
+    val onHighlightDelete = surfaceState.onHighlightDelete
+    val onNoteRequested = surfaceState.onNoteRequested
+    var bookmarks by surfaceState.bookmarks
+    var virtualPages by surfaceState.virtualPages
+    val persistBookmarksNow = surfaceState.persistBookmarksNow
+    var globalTextureTransparency by surfaceState.globalTextureTransparency
+    var excludeImages by surfaceState.excludeImages
+    var reverseColorMode by surfaceState.reverseColorMode
+    var customHighlightColors by surfaceState.customHighlightColors
+    var showPageNumberOverlay by surfaceState.showPageNumberOverlay
+    var useOnlineDictionary by surfaceState.useOnlineDictionary
+    var showDictionaryUpsellDialog by surfaceState.showDictionaryUpsellDialog
+    var clickedLinkUrl by surfaceState.clickedLinkUrl
+    var highlightColorPickerInitialSlot by surfaceState.highlightColorPickerInitialSlot
+    var showHighlightColorPicker by surfaceState.showHighlightColorPicker
+    var poppedUpPanelBitmap by surfaceState.poppedUpPanelBitmap
+    val visibleUserHighlights = surfaceState.visibleUserHighlights
+    var ocrLanguage by surfaceState.ocrLanguage
+    var systemUiMode by surfaceState.systemUiMode
+    var showThemePanel by surfaceState.showThemePanel
+    var showVisualOptionsSheet by surfaceState.showVisualOptionsSheet
+    var showBrightnessSheet by surfaceState.showBrightnessSheet
+    var showScreenOrientationSheet by surfaceState.showScreenOrientationSheet
+    var showTtsSettingsSheet by surfaceState.showTtsSettingsSheet
+    var showTtsReplacementsSheet by surfaceState.showTtsReplacementsSheet
+    var showDictionarySettingsSheet by surfaceState.showDictionarySettingsSheet
+    var showSummarizationUpsellDialog by surfaceState.showSummarizationUpsellDialog
+    var showAiHubSheet by surfaceState.showAiHubSheet
+    var showPermissionRationaleDialog by surfaceState.showPermissionRationaleDialog
+    var showInsufficientCreditsDialog by surfaceState.showInsufficientCreditsDialog
+    var showBubbleZoomDownloadDialog by surfaceState.showBubbleZoomDownloadDialog
+    var showNewTabSheet by surfaceState.showNewTabSheet
+    var showFileInfoDialog by surfaceState.showFileInfoDialog
+    var showSaveDialog by surfaceState.showSaveDialog
+    var showShareDialog by surfaceState.showShareDialog
+    var showOcrLanguageDialog by surfaceState.showOcrLanguageDialog
+    var showReindexDialog by surfaceState.showReindexDialog
+    var showCustomizeToolsSheet by surfaceState.showCustomizeToolsSheet
+    var pendingActionAfterOcrSelection by surfaceState.pendingActionAfterOcrSelection
+    var pendingSaveMode by surfaceState.pendingSaveMode
+    val isOss = surfaceState.isOss
+    var hasSelectedOcrLanguage by surfaceState.hasSelectedOcrLanguage
+    val tabStateMap = surfaceState.tabStateMap
+    var isBackgroundIndexing by surfaceState.isBackgroundIndexing
+    var backgroundIndexingProgress by surfaceState.backgroundIndexingProgress
+    var currentTtsMode by surfaceState.currentTtsMode
+    val scrollPaginationToDisplayPage = surfaceState.scrollPaginationToDisplayPage
+    val currentPaginationDisplayPage = surfaceState.currentPaginationDisplayPage
+    var aiDefinitionResult by surfaceState.aiDefinitionResult
+    val canShowPdfTabs = surfaceState.canShowPdfTabs
+    var currentThemeId by surfaceState.currentThemeId
+    var customThemes by surfaceState.customThemes
+    var documentPassword by surfaceState.documentPassword
+    val effectiveReaderBookTitle = surfaceState.effectiveReaderBookTitle
+    var flatTableOfContents by surfaceState.flatTableOfContents
+    var highlightToNoteId by surfaceState.highlightToNoteId
+    var isAiDefinitionLoading by surfaceState.isAiDefinitionLoading
+    var isPasswordError by surfaceState.isPasswordError
+    var isShareLoading by surfaceState.isShareLoading
+    var isSummarizationLoading by surfaceState.isSummarizationLoading
+    val isTabsEnabled = surfaceState.isTabsEnabled
+    val launchAnnotatedSaveCopy = surfaceState.launchAnnotatedSaveCopy
+    val launchOriginalSaveCopy = surfaceState.launchOriginalSaveCopy
+    val onUpdateBottomTools = surfaceState.onUpdateBottomTools
+    val onUpdateHiddenTools = surfaceState.onUpdateHiddenTools
+    val onUpdateToolOrder = surfaceState.onUpdateToolOrder
+    var pdfFirstPageStandaloneInSpread by surfaceState.pdfFirstPageStandaloneInSpread
+    var pdfPageSpreadMode by surfaceState.pdfPageSpreadMode
+    var pendingPaginationSpreadRestorePage by surfaceState.pendingPaginationSpreadRestorePage
+    var readerBrightnessSettings by surfaceState.readerBrightnessSettings
+    val requestNotificationPermission = surfaceState.requestNotificationPermission
+    val startTtsForOverlay = surfaceState.startTtsForOverlay
+    val navigateToPdfPage = surfaceState.navigateToPdfPage
+    val onNavigateToPro = surfaceState.onNavigateToPro
+    val clipboardManager = surfaceState.clipboardManager
+    var screenOrientationMode by surfaceState.screenOrientationMode
+    val selectedBookIdForPane = surfaceState.selectedBookIdForPane
+    var selectedDictPackage by surfaceState.selectedDictPackage
+    var selectedSearchPackage by surfaceState.selectedSearchPackage
+    var selectedTextForAi by surfaceState.selectedTextForAi
+    var selectedTranslatePackage by surfaceState.selectedTranslatePackage
+    val shareAnnotatedPdf = surfaceState.shareAnnotatedPdf
+    val shareOriginalPdf = surfaceState.shareOriginalPdf
+    val sheetState = surfaceState.sheetState
+    var showAiDefinitionPopup by surfaceState.showAiDefinitionPopup
+    var showPasswordDialog by surfaceState.showPasswordDialog
+    var showTopTabStrip by surfaceState.showTopTabStrip
+    var isTopToolbarEnabled by surfaceState.isTopToolbarEnabled
+    var isBottomToolbarEnabled by surfaceState.isBottomToolbarEnabled
+    var summarizationResult by surfaceState.summarizationResult
+    val summaryCacheManager = surfaceState.summaryCacheManager
+    var ttsReplacementPreferences by surfaceState.ttsReplacementPreferences
+    val updateReaderBrightness = surfaceState.updateReaderBrightness
+    val updateTtsReplacementPreferences = surfaceState.updateTtsReplacementPreferences
+    val summarizeCurrentPage = surfaceState.summarizeCurrentPage
+    val uriHandler = surfaceState.uriHandler
+    val userHighlights = surfaceState.userHighlights
+
     SharedMobileReaderDrawer(
         drawerState = drawerState, gesturesEnabled = drawerState.isOpen, drawerContent = {
             ModalDrawerSheet(modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars)) {
@@ -4250,21 +4452,17 @@ fun PdfViewerScreen(
                     activeTabBookId = activeTabBookId,
                     usePdfFileNameAsDisplayName = uiState.usePdfFileNameAsDisplayName,
                     isTopTabStripVisible = showTopTabStrip,
+                    reverseColorMode = if (activeTheme.id == "reverse") reverseColorMode else PdfReverseColorMode.RGB,
+                    excludeImages = excludeImages,
                     customHighlightColors = customHighlightColors,
                     onPageSelected = { targetPage ->
-                        coroutineScope.launch {
-                            val current = if (displayMode == DisplayMode.PAGINATION) currentPaginationDisplayPage() else verticalReaderState.currentPage
-
-                            if (current != targetPage) {
-                                recordJumpHistory(current, targetPage)
-                            }
-
-                            if (displayMode == DisplayMode.PAGINATION) {
-                                scrollPaginationToDisplayPage(targetPage)
-                            } else {
-                                verticalReaderState.scrollToPage(targetPage)
-                            }
-                        }
+                        val targetDisplayPage = virtualPages.indexOfFirst {
+                            it is VirtualPage.PdfPage && it.pdfIndex == targetPage
+                        }.takeIf { it >= 0 } ?: targetPage
+                        navigateToPdfPage(targetDisplayPage, PdfNavigationReason.TABLE_OF_CONTENTS, true)
+                    },
+                    onDisplayPageSelected = { targetPage ->
+                        navigateToPdfPage(targetPage, PdfNavigationReason.TABLE_OF_CONTENTS, true)
                     },
                     onTabSelected = { tabBookId ->
                         coroutineScope.launch {
@@ -4296,11 +4494,15 @@ fun PdfViewerScreen(
                     onRenameBookmark = { bookmarkToRename, newTitle ->
                         if (newTitle.isNotBlank()) {
                             val updatedBookmark = bookmarkToRename.copy(title = newTitle)
-                            bookmarks = (bookmarks - bookmarkToRename) + updatedBookmark
+                            val updatedBookmarks = (bookmarks - bookmarkToRename) + updatedBookmark
+                            bookmarks = updatedBookmarks
+                            persistBookmarksNow(updatedBookmarks)
                         }
                     },
                     onDeleteBookmark = { bookmarkToDelete ->
-                        bookmarks = bookmarks - bookmarkToDelete
+                        val updatedBookmarks = bookmarks - bookmarkToDelete
+                        bookmarks = updatedBookmarks
+                        persistBookmarksNow(updatedBookmarks)
                     },
                     onDeleteHighlight = { highlightToDelete ->
                         onHighlightDelete(highlightToDelete.id)
@@ -4312,3074 +4514,12 @@ fun PdfViewerScreen(
                 )
             }
         }) {
-        @SuppressLint("UnusedMaterial3ScaffoldPaddingParameter")
-        SharedMobileReaderScaffold(
-            contentWindowInsets = WindowInsets(0, 0, 0, 0),
-        ) { _ ->
-            var stylusButtonHovering by remember { mutableStateOf(false) }
-            BoxWithConstraints(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .pointerInput(Unit) {
-                        awaitPointerEventScope {
-                            while (true) {
-                                val event = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
-                                event.changes.forEach { change ->
-                                    if (change.type == androidx.compose.ui.input.pointer.PointerType.Stylus ||
-                                        change.type == androidx.compose.ui.input.pointer.PointerType.Eraser) {
-                                        val buttons = event.buttons
-                                        Timber.tag("StylusDebug").d(
-                                            "GlobalPointer | type=${change.type}, pressed=${change.pressed}, " +
-                                                    "primary=${buttons.isPrimaryPressed}, secondary=${buttons.isSecondaryPressed}, " +
-                                                    "tertiary=${buttons.isTertiaryPressed}, back=${buttons.isBackPressed}, " +
-                                                    "forward=${buttons.isForwardPressed}"
-                                        )
-                                        if (!change.pressed) {
-                                            stylusButtonHovering = buttons.isPrimaryPressed || buttons.isSecondaryPressed
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    .onPreviewKeyEvent { keyEvent ->
-                        Timber.tag("StylusDebug").d("GlobalKey | key=${keyEvent.key}, type=${keyEvent.type}")
-                        false
-                    }
-            ) {
-                IntSize(constraints.maxWidth, constraints.maxHeight)
-                val boxConstraints = constraints
-                val boxMaxWidthFloat = boxConstraints.maxWidth.toFloat()
-                val boxMaxHeightFloat = boxConstraints.maxHeight.toFloat()
-
-                if (richTextController != null) {
-                    SharedPdfRichTextHiddenInput(
-                        controller = richTextController.sharedDelegate,
-                        enabled = isEditMode && selectedTool == InkType.TEXT,
-                        modifier = Modifier
-                            .align(Alignment.BottomStart)
-                            .windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars))
-                            .padding(start = 16.dp, bottom = 120.dp)
-                    )
-                }
-
-                // --- Main Content Area ---
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                ) {
-                    val documentPresentation = selectMobilePdfDocumentPresentation(
-                        loading = isLoadingDocument,
-                        errorPresent = errorMessage != null,
-                        documentPresent = pdfDocument != null,
-                        totalPages = totalPages,
-                    )
-                    when {
-                        documentPresentation == MobilePdfDocumentPresentation.LOADING -> {
-                            SharedMobileReaderLoadingIndicator()
-                        }
-
-                        documentPresentation == MobilePdfDocumentPresentation.ERROR -> {
-                            SharedMobileReaderCenteredError(
-                                message = errorMessage ?: stringResource(R.string.error_failed_load_pdf),
-                            )
-                        }
-
-                        documentPresentation == MobilePdfDocumentPresentation.READY -> {
-                            val stablePdfDocument = remember(activeDocumentRenderKey, pdfDocument) { StableHolder(pdfDocument!!) }
-                            when (displayMode) {
-                                DisplayMode.PAGINATION -> {
-                                    val onPaginationPreSingleTap: (Offset) -> Boolean = { tapOffset ->
-                                        val canTurnPagesByTap = tapToNavigateEnabled &&
-                                            (currentPageScale <= 1.02f || isScrollLocked)
-
-                                        if (!canTurnPagesByTap) {
-                                            false
-                                        } else {
-                                            val oneQuarterWidthPx = boxMaxWidthFloat / 4f
-                                            when {
-                                                tapOffset.x < oneQuarterWidthPx -> {
-                                                    coroutineScope.launch {
-                                                        val targetPage =
-                                                            if (rightToLeftPagination) {
-                                                                (pagerState.currentPage + 1).coerceAtMost(pagerState.pageCount - 1)
-                                                            } else {
-                                                                (pagerState.currentPage - 1).coerceAtLeast(0)
-                                                            }
-                                                        if (targetPage != pagerState.currentPage) {
-                                                            pagerState.scrollToPage(targetPage)
-                                                        }
-                                                    }
-                                                    true
-                                                }
-
-                                                tapOffset.x > (boxMaxWidthFloat - oneQuarterWidthPx) -> {
-                                                    coroutineScope.launch {
-                                                        val targetPage =
-                                                            if (rightToLeftPagination) {
-                                                                (pagerState.currentPage - 1).coerceAtLeast(0)
-                                                            } else {
-                                                                (pagerState.currentPage + 1).coerceAtMost(
-                                                                    pagerState.pageCount - 1
-                                                                )
-                                                            }
-                                                        if (targetPage != pagerState.currentPage) {
-                                                            pagerState.scrollToPage(targetPage)
-                                                        }
-                                                    }
-                                                    true
-                                                }
-
-                                                else -> false
-                                            }
-                                        }
-                                    }
-
-                                    Box(modifier = Modifier.fillMaxSize().clipToBounds()) {
-                                        HorizontalPager(
-                                            state = pagerState,
-                                            modifier = Modifier.fillMaxSize().clipToBounds(),
-                                            key = { page ->
-                                                "$activeDocumentRenderKey:${pdfSpreadSettings.pageSpreadMode}:${pdfSpreadSettings.pdfFirstPageStandaloneInSpread}:$page:${paginationDisplayPageForPagerPage(page)}"
-                                            },
-                                            beyondViewportPageCount = dynamicBeyondViewportPageCount,
-                                            reverseLayout = rightToLeftPagination,
-                                            userScrollEnabled = run {
-                                                (currentPageScale == 1f || (isScrollLocked && displayMode == DisplayMode.PAGINATION)) &&
-                                                    !(ttsState.isPlaying || ttsState.isLoading || searchState.isSearchActive) &&
-                                                    !isPageSliderVisible &&
-                                                    paginationDraggingBoxId == null
-                                            }
-                                        ) { pagerPageIndex ->
-                                            val spreadPageIndices = remember(
-                                                pagerPageIndex,
-                                                totalDisplayPages,
-                                                pdfSpreadSettings.pageSpreadMode,
-                                                pdfSpreadSettings.pdfFirstPageStandaloneInSpread
-                                            ) {
-                                                PdfSpreadLayout.visiblePageIndices(
-                                                    pageIndex = paginationDisplayPageForPagerPage(pagerPageIndex),
-                                                    pageCount = totalDisplayPages,
-                                                    settings = pdfSpreadSettings
-                                                )
-                                            }
-                                            val isVisiblePage = remember(pagerState.currentPage, pagerPageIndex) {
-                                                abs(pagerState.currentPage - pagerPageIndex) <= 1
-                                            }
-                                            val isActivePagerPage = pagerState.currentPage == pagerPageIndex
-                                            val useSharedSpreadZoom = spreadPageIndices.size > 1
-                                            val latestSpreadScale = rememberUpdatedState(currentActiveScale)
-                                            val latestSpreadOffset = rememberUpdatedState(currentActiveOffset)
-                                            val spreadPageGap = if (showVerticalPageGap) 8.dp else 0.dp
-                                            val spreadPageGapPx = with(density) { spreadPageGap.toPx() }
-                                            val spreadPageCount = spreadPageIndices.size
-                                            var spreadPanFlingJob by remember { mutableStateOf<Job?>(null) }
-                                            Row(
-                                                modifier = Modifier
-                                                    .fillMaxSize()
-                                                    .clipToBounds()
-                                                    .then(
-                                                        if (useSharedSpreadZoom) {
-                                                            Modifier
-                                                                .pointerInput(
-                                                                    useSharedSpreadZoom,
-                                                                    isDrawingActive,
-                                                                    isScrollLocked,
-                                                                    totalDisplayPages
-                                                                ) {
-                                                                    if (!useSharedSpreadZoom || isDrawingActive) return@pointerInput
-                                                                    val oneHandZoomDistancePx = with(density) {
-                                                                        PDF_ONE_HAND_ZOOM_DRAG_DISTANCE_FOR_DOUBLE_DP.dp.toPx()
-                                                                    }
-                                                                    var oneHandZoomStartScale = 1f
-                                                                    var oneHandZoomStartOffset = Offset.Zero
-                                                                    Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
-                                                                        "spread.detector.enabled scrollLocked=$isScrollLocked drawing=$isDrawingActive " +
-                                                                            "pages=$totalDisplayPages scale=${latestSpreadScale.value} offset=${latestSpreadOffset.value}"
-                                                                    )
-
-                                                                    fun spreadTargetOffset(
-                                                                        startScale: Float,
-                                                                        targetScale: Float,
-                                                                        startOffset: Offset,
-                                                                        pivot: Offset
-                                                                    ): Offset {
-                                                                        if (targetScale <= 1.1f) return Offset.Zero
-                                                                        val viewportSize = Size(size.width.toFloat(), size.height.toFloat())
-                                                                        return centeredPdfCameraOffsetForScaleChange(
-                                                                            previousScale = startScale,
-                                                                            nextScale = targetScale,
-                                                                            previousOffset = startOffset,
-                                                                            pivot = pivot,
-                                                                            viewportSize = viewportSize,
-                                                                            contentSize = viewportSize
-                                                                        )
-                                                                    }
-
-                                                                    detectPdfTapAndOneHandZoomGestures(
-                                                                        viewConfiguration = viewConfiguration,
-                                                                        canStartOneHandZoom = {
-                                                                            useSharedSpreadZoom && !isDrawingActive && !isScrollLocked
-                                                                        },
-                                                                        canHandleQuickDoubleTap = { !isScrollLocked },
-                                                                        consumeSingleTap = false,
-                                                                        onTap = { offset ->
-                                                                            Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
-                                                                                "spread.tap passthrough offset=$offset"
-                                                                            )
-                                                                        },
-                                                                        onQuickDoubleTap = quickDoubleTap@{ tapOffset ->
-                                                                            if (isScrollLocked) {
-                                                                                Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
-                                                                                    "spread.quickDoubleTap.blocked scrollLocked=true offset=$tapOffset"
-                                                                                )
-                                                                                return@quickDoubleTap
-                                                                            }
-                                                                            val startScale = latestSpreadScale.value
-                                                                            val startOffset = latestSpreadOffset.value
-                                                                            val targetScale = if (startScale > 1.1f) 1f else 2.5f
-                                                                            Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
-                                                                                "spread.quickDoubleTap offset=$tapOffset startScale=$startScale " +
-                                                                                    "targetScale=$targetScale startOffset=$startOffset"
-                                                                            )
-                                                                            val targetOffset = spreadTargetOffset(
-                                                                                startScale = startScale,
-                                                                                targetScale = targetScale,
-                                                                                startOffset = startOffset,
-                                                                                pivot = tapOffset
-                                                                            )
-                                                                            coroutineScope.launch {
-                                                                                Animatable(0f).animateTo(
-                                                                                    1f,
-                                                                                    animationSpec = tween(durationMillis = 300)
-                                                                                ) {
-                                                                                    currentActiveScale = androidx.compose.ui.util.lerp(
-                                                                                        startScale,
-                                                                                        targetScale,
-                                                                                        value
-                                                                                    )
-                                                                                    currentActiveOffset = lerp(
-                                                                                        startOffset,
-                                                                                        targetOffset,
-                                                                                        value
-                                                                                    )
-                                                                                    currentPageScale = currentActiveScale
-                                                                                }
-                                                                                if (currentActiveScale <= 1.05f) {
-                                                                                    currentActiveScale = 1f
-                                                                                    currentActiveOffset = Offset.Zero
-                                                                                    currentPageScale = 1f
-                                                                                }
-                                                                            }
-                                                                        },
-                                                                        onOneHandZoomHoldStart = { _ ->
-                                                                            Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
-                                                                                "spread.oneHandHoldStart scale=${latestSpreadScale.value} " +
-                                                                                    "offset=${latestSpreadOffset.value}"
-                                                                            )
-                                                                            spreadPanFlingJob?.cancel()
-                                                                            spreadPanFlingJob = null
-                                                                            oneHandZoomStartScale = latestSpreadScale.value
-                                                                            oneHandZoomStartOffset = latestSpreadOffset.value
-                                                                        },
-                                                                        onOneHandZoom = { _, totalDragY ->
-                                                                            val viewportCenter = Offset(size.width / 2f, size.height / 2f)
-                                                                            val nextScale = pdfOneHandZoomScale(
-                                                                                startScale = oneHandZoomStartScale,
-                                                                                totalDragY = totalDragY,
-                                                                                dragDistanceForDoublePx = oneHandZoomDistancePx,
-                                                                                minScale = 1f,
-                                                                                maxScale = PDF_MAX_ZOOM_SCALE
-                                                                            )
-                                                                            currentActiveScale = nextScale
-                                                                            currentActiveOffset = spreadTargetOffset(
-                                                                                startScale = oneHandZoomStartScale,
-                                                                                targetScale = nextScale,
-                                                                                startOffset = oneHandZoomStartOffset,
-                                                                                pivot = viewportCenter
-                                                                            )
-                                                                            Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).v(
-                                                                                "spread.oneHandUpdate dragY=$totalDragY startScale=$oneHandZoomStartScale " +
-                                                                                    "nextScale=$nextScale offset=$currentActiveOffset"
-                                                                            )
-                                                                            currentPageScale = currentActiveScale
-                                                                        },
-                                                                        onOneHandZoomEnd = { _ ->
-                                                                            Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
-                                                                                "spread.oneHandEnd scale=$currentActiveScale offset=$currentActiveOffset"
-                                                                            )
-                                                                            if (currentActiveScale > 1f && currentActiveScale < 1.05f) {
-                                                                                currentActiveScale = 1f
-                                                                                currentActiveOffset = Offset.Zero
-                                                                                currentPageScale = 1f
-                                                                            }
-                                                                        }
-                                                                    )
-                                                                }
-                                                                .pointerInput(
-                                                                    useSharedSpreadZoom,
-                                                                    isDrawingActive,
-                                                                    isScrollLocked,
-                                                                    totalDisplayPages
-                                                                ) {
-                                                                    if (!useSharedSpreadZoom || isDrawingActive) return@pointerInput
-                                                                    val touchSlop = viewConfiguration.touchSlop
-                                                                    val decay = splineBasedDecay<Float>(this)
-                                                                    val velocityTracker = VelocityTracker()
-
-                                                                    awaitEachGesture {
-                                                                        awaitFirstDown(requireUnconsumed = false)
-                                                                        spreadPanFlingJob?.cancel()
-                                                                        spreadPanFlingJob = null
-                                                                        velocityTracker.resetTracking()
-
-                                                                        var gestureScale = latestSpreadScale.value
-                                                                        var gestureOffset = latestSpreadOffset.value
-                                                                        var accumulatedZoom = 1f
-                                                                        var accumulatedPan = Offset.Zero
-                                                                        var velocityAccumulator = Offset.Zero
-                                                                        var mode = 0
-                                                                        var hasConsumedGesture = false
-
-                                                                        do {
-                                                                            val event = awaitPointerEvent()
-                                                                            val canceled = event.changes.any { it.isConsumed }
-                                                                            if (canceled) {
-                                                                                Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
-                                                                                    "spread.panDetector.canceledByConsumed mode=$mode scale=$gestureScale " +
-                                                                                        "changes=${event.changes.joinToString { change ->
-                                                                                            "pressed=${change.pressed},consumed=${change.isConsumed},moved=${change.positionChanged()}"
-                                                                                        }}"
-                                                                                )
-                                                                            }
-                                                                            if (!canceled) {
-                                                                                val pointerCount = event.changes.count { it.pressed }
-                                                                                val rawPanChange = event.calculatePan()
-                                                                                val panChange = if (isScrollLocked && pointerCount == 1) {
-                                                                                    Offset.Zero
-                                                                                } else {
-                                                                                    rawPanChange
-                                                                                }
-                                                                                val zoomChange = event.calculateZoom()
-                                                                                accumulatedZoom *= zoomChange
-                                                                                accumulatedPan += panChange
-
-                                                                                if (gestureScale > 1f) {
-                                                                                    if (mode == 0) {
-                                                                                        mode = if (pointerCount > 1 && abs(accumulatedZoom - 1f) > 0.025f) {
-                                                                                            Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
-                                                                                                "spread.panDetector.modeZoom scale=$gestureScale accumulatedZoom=$accumulatedZoom"
-                                                                                            )
-                                                                                            2
-                                                                                        } else if (accumulatedPan.getDistance() > touchSlop) {
-                                                                                            Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
-                                                                                                "spread.panDetector.modePan scale=$gestureScale accumulatedPan=$accumulatedPan"
-                                                                                            )
-                                                                                            1
-                                                                                        } else {
-                                                                                            0
-                                                                                        }
-                                                                                    }
-
-                                                                                    if (mode == 1 || mode == 2) {
-                                                                                        val oldScale = gestureScale
-                                                                                        val nextScale = if (mode == 2 && pointerCount > 1) {
-                                                                                            (gestureScale * zoomChange)
-                                                                                                .coerceIn(1f, PDF_MAX_ZOOM_SCALE)
-                                                                                        } else {
-                                                                                            gestureScale
-                                                                                        }
-                                                                                        val ratio = if (oldScale == 0f) 1f else nextScale / oldScale
-                                                                                        val previousCentroid = event.calculateCentroid(useCurrent = false)
-                                                                                        val viewportCenter = Offset(size.width / 2f, size.height / 2f)
-                                                                                        val nextOffset = if (mode == 2 && pointerCount > 1 && previousCentroid != Offset.Unspecified) {
-                                                                                            gestureOffset * ratio + (previousCentroid - viewportCenter) * (1 - ratio) + panChange
-                                                                                        } else {
-                                                                                            gestureOffset + panChange
-                                                                                        }
-
-                                                                                        gestureScale = nextScale
-                                                                                        gestureOffset = clampPdfSpreadCameraOffset(
-                                                                                            scale = gestureScale,
-                                                                                            offset = nextOffset,
-                                                                                            viewportWidth = size.width.toFloat(),
-                                                                                            viewportHeight = size.height.toFloat()
-                                                                                        )
-                                                                                        currentActiveScale = gestureScale
-                                                                                        currentActiveOffset = gestureOffset
-                                                                                        currentPageScale = gestureScale
-                                                                                        hasConsumedGesture = true
-                                                                                        if (mode == 1 && panChange != Offset.Zero && event.changes.isNotEmpty()) {
-                                                                                            velocityAccumulator += panChange
-                                                                                            velocityTracker.addPosition(
-                                                                                                event.changes[0].uptimeMillis,
-                                                                                                velocityAccumulator
-                                                                                            )
-                                                                                        }
-                                                                                        event.changes.forEach {
-                                                                                            if (it.positionChanged()) it.consume()
-                                                                                        }
-                                                                                    }
-                                                                                } else if (pointerCount > 1) {
-                                                                                    if (mode == 0) {
-                                                                                        mode = if (abs(accumulatedZoom - 1f) > 0.025f) {
-                                                                                            Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
-                                                                                                "spread.panDetector.modeZoomAtBase accumulatedZoom=$accumulatedZoom"
-                                                                                            )
-                                                                                            2
-                                                                                        } else {
-                                                                                            0
-                                                                                        }
-                                                                                    }
-
-                                                                                    if (mode == 2) {
-                                                                                        val oldScale = gestureScale
-                                                                                        val nextScale = (gestureScale * zoomChange)
-                                                                                            .coerceIn(1f, PDF_MAX_ZOOM_SCALE)
-                                                                                        val ratio = if (oldScale == 0f) 1f else nextScale / oldScale
-                                                                                        val previousCentroid = event.calculateCentroid(useCurrent = false)
-                                                                                        val viewportCenter = Offset(size.width / 2f, size.height / 2f)
-                                                                                        val nextOffset = if (previousCentroid != Offset.Unspecified) {
-                                                                                            gestureOffset * ratio + (previousCentroid - viewportCenter) * (1 - ratio) + panChange
-                                                                                        } else {
-                                                                                            gestureOffset + panChange
-                                                                                        }
-                                                                                        gestureScale = nextScale
-                                                                                        gestureOffset = clampPdfSpreadCameraOffset(
-                                                                                            scale = gestureScale,
-                                                                                            offset = nextOffset,
-                                                                                            viewportWidth = size.width.toFloat(),
-                                                                                            viewportHeight = size.height.toFloat()
-                                                                                        )
-                                                                                        currentActiveScale = gestureScale
-                                                                                        currentActiveOffset = gestureOffset
-                                                                                        currentPageScale = gestureScale
-                                                                                        hasConsumedGesture = true
-                                                                                        event.changes.forEach {
-                                                                                            if (it.positionChanged()) it.consume()
-                                                                                        }
-                                                                                    }
-                                                                                }
-                                                                            }
-                                                                        } while (!canceled && event.changes.any { it.pressed })
-
-                                                                        if (hasConsumedGesture && currentActiveScale > 1f && currentActiveScale < 1.05f) {
-                                                                            coroutineScope.launch {
-                                                                                val startScale = currentActiveScale
-                                                                                val startOffset = currentActiveOffset
-                                                                                Animatable(0f).animateTo(1f, animationSpec = tween(durationMillis = 180)) {
-                                                                                    currentActiveScale = androidx.compose.ui.util.lerp(startScale, 1f, value)
-                                                                                    currentActiveOffset =
-                                                                                        lerp(startOffset, Offset.Zero, value)
-                                                                                    currentPageScale = currentActiveScale
-                                                                                }
-                                                                                currentActiveScale = 1f
-                                                                                currentActiveOffset = Offset.Zero
-                                                                                currentPageScale = 1f
-                                                                            }
-                                                                        } else if (hasConsumedGesture && mode == 1 && currentActiveScale > 1f) {
-                                                                            val velocity = velocityTracker.calculateVelocity()
-                                                                            val flingX = if (!isScrollLocked && abs(velocity.x) > PDF_SPREAD_PAN_FLING_MIN_VELOCITY) {
-                                                                                velocity.x * PDF_SPREAD_PAN_FLING_MULTIPLIER
-                                                                            } else {
-                                                                                0f
-                                                                            }
-                                                                            val flingY = if (abs(velocity.y) > PDF_SPREAD_PAN_FLING_MIN_VELOCITY) {
-                                                                                velocity.y * PDF_SPREAD_PAN_FLING_MULTIPLIER
-                                                                            } else {
-                                                                                0f
-                                                                            }
-
-                                                                            if (flingX != 0f || flingY != 0f) {
-                                                                                spreadPanFlingJob = coroutineScope.launch {
-                                                                                    try {
-                                                                                        val startOffset = currentActiveOffset
-                                                                                        var decayedX = startOffset.x
-                                                                                        var decayedY = startOffset.y
-                                                                                        kotlinx.coroutines.coroutineScope {
-                                                                                            launch {
-                                                                                                if (flingX != 0f) {
-                                                                                                    Animatable(startOffset.x).animateDecay(flingX, decay) {
-                                                                                                        decayedX = value
-                                                                                                        currentActiveOffset = clampPdfSpreadCameraOffset(
-                                                                                                            scale = currentActiveScale,
-                                                                                                            offset = Offset(decayedX, decayedY),
-                                                                                                            viewportWidth = size.width.toFloat(),
-                                                                                                            viewportHeight = size.height.toFloat()
-                                                                                                        )
-                                                                                                    }
-                                                                                                }
-                                                                                            }
-                                                                                            launch {
-                                                                                                if (flingY != 0f) {
-                                                                                                    Animatable(startOffset.y).animateDecay(flingY, decay) {
-                                                                                                        decayedY = value
-                                                                                                        currentActiveOffset = clampPdfSpreadCameraOffset(
-                                                                                                            scale = currentActiveScale,
-                                                                                                            offset = Offset(decayedX, decayedY),
-                                                                                                            viewportWidth = size.width.toFloat(),
-                                                                                                            viewportHeight = size.height.toFloat()
-                                                                                                        )
-                                                                                                    }
-                                                                                                }
-                                                                                            }
-                                                                                        }
-                                                                                    } finally {
-                                                                                        spreadPanFlingJob = null
-                                                                                    }
-                                                                                }
-                                                                            }
-                                                                        }
-                                                                    }
-                                                                }
-                                                                .graphicsLayer {
-                                                                    scaleX = currentActiveScale
-                                                                    scaleY = currentActiveScale
-                                                                    translationX = currentActiveOffset.x
-                                                                    translationY = currentActiveOffset.y
-                                                                }
-                                                        } else {
-                                                            Modifier
-                                                        }
-                                                    ),
-                                                horizontalArrangement = Arrangement.spacedBy(spreadPageGap, Alignment.CenterHorizontally),
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                spreadPageIndices.forEach { pageIndex ->
-                                                    key(pageIndex) {
-                                                        val spreadPageWidth = if (spreadPageCount > 1) {
-                                                            val pageAspectRatio = displayPageRatios.getOrElse(pageIndex) { 1f }
-                                                            with(density) {
-                                                                pdfSpreadPageSlotWidth(
-                                                                    containerWidth = boxMaxWidthFloat,
-                                                                    containerHeight = boxMaxHeightFloat,
-                                                                    pageGap = spreadPageGapPx,
-                                                                    spreadPageCount = spreadPageCount,
-                                                                    pageAspectRatio = pageAspectRatio
-                                                                ).toDp()
-                                                            }
-                                                        } else {
-                                                            with(density) { boxMaxWidthFloat.toDp() }
-                                                        }
-                                            val isPageBookmarked by remember(bookmarks, pageIndex) {
-                                                derivedStateOf {
-                                                    bookmarks.any { it.pageIndex == pageIndex }
-                                                }
-                                            }
-                                            var ocrHighlightRects by remember {
-                                                mutableStateOf<List<RectF>>(emptyList())
-                                            }
-
-                                            LaunchedEffect(searchHighlightTarget, pageIndex) {
-                                                val target = searchHighlightTarget
-                                                ocrHighlightRects = emptyList()
-
-                                                if (target != null && target.locationInSource == pageIndex) {
-                                                    Timber.d(
-                                                        "LaunchedEffect triggered for Page $pageIndex. Checking Native..."
-                                                    )
-                                                    val pdfDocKt = (pdfDocument as? PdfDocumentWrapper)?.pdfDocument
-                                                    val hasNative = if (pdfDocKt != null) pdfTextRepository.hasNativeText(
-                                                        pdfDocKt, pageIndex
-                                                    ) else false
-                                                    Timber.d(
-                                                        "Page $pageIndex Has Native Text: $hasNative"
-                                                    )
-
-                                                    if (!hasNative) {
-                                                        Timber.d(
-                                                            "Fetching OCR rects for query: '${target.query}'"
-                                                        )
-                                                        val rects = if (pdfDocKt != null) pdfTextRepository.getOcrSearchRects(
-                                                            document = pdfDocKt,
-                                                            pageIndex = pageIndex,
-                                                            query = target.query,
-                                                            onModelDownloading = {
-                                                                isOcrModelDownloading = true
-                                                            }) else emptyList()
-                                                        Timber.d(
-                                                            "Received ${rects.size} rects from Repository."
-                                                        )
-                                                        ocrHighlightRects = rects
-                                                    } else {
-                                                        Timber.d(
-                                                            "Native text present. Skipping OCR highlighting."
-                                                        )
-                                                    }
-                                                }
-                                            }
-
-                                            val pageAnnotationsProvider =
-                                                remember(pageIndex, allAnnotationsProvider) {
-                                                    {
-                                                        allAnnotationsProvider()[pageIndex]
-                                                            ?: emptyList()
-                                                    }
-                                                }
-
-                                            val stableOcrRects = remember(ocrHighlightRects) {
-                                                StableHolder(ocrHighlightRects)
-                                            }
-
-                                            val currentSelectedTool by rememberUpdatedState(selectedTool)
-
-                                            val currentStrokeColorState by rememberUpdatedState(
-                                                currentStrokeColor
-                                            )
-                                            val currentStrokeWidthState by rememberUpdatedState(
-                                                currentStrokeWidth
-                                            )
-                                            val currentEraserStrokeWidthState by rememberUpdatedState(
-                                                currentEraserStrokeWidth
-                                            )
-
-                                            @Suppress("ControlFlowWithEmptyBody") val onDrawPagination =
-                                                remember(pageIndex) {
-                                                    { point: PdfPoint, isEraserOverride: Boolean ->
-                                                        val effectiveTool = if (isEraserOverride) InkType.ERASER else currentSelectedTool
-                                                        if (effectiveTool == InkType.TEXT) {
-                                                        } else if (effectiveTool == InkType.ERASER) {
-                                                            val eraserStrokeWidth = resolveEraserStrokeWidth(
-                                                                isEraserOverride,
-                                                                currentStrokeWidthState,
-                                                                currentEraserStrokeWidthState
-                                                            )
-                                                            val aspectRatio = pageAspectRatios.getOrElse(pageIndex) { 1f }
-                                                            val existing = allAnnotations[pageIndex] ?: emptyList()
-                                                            val toRemove = existing.filter {
-                                                                isAnnotationHit(it, point, lastEraserPoint, aspectRatio, eraserStrokeWidth)
-                                                            }
-                                                            lastEraserPoint = point
-                                                            if (toRemove.isNotEmpty()) {
-                                                                val batch =
-                                                                    erasedAnnotationsFromStroke.getOrPut(
-                                                                        pageIndex
-                                                                    ) {
-                                                                        mutableListOf()
-                                                                    }
-                                                                batch.addAll(toRemove)
-
-                                                                val newList =
-                                                                    existing - toRemove.toSet()
-                                                                allAnnotations =
-                                                                    allAnnotations + (pageIndex to newList)
-                                                            }
-                                                        } else {
-                                                            if (currentIsHighlighter && currentSnapEnabled) {
-                                                                val startPoint = drawingState.currentAnnotation?.points?.firstOrNull()
-                                                                val effectivePoint = calculateSnappedPoint(pageIndex, point, startPoint)
-                                                                drawingState.updateDrag(effectivePoint.copy(timestamp = System.currentTimeMillis()))
-                                                            } else {
-                                                                drawingState.onDraw(point.copy(timestamp = System.currentTimeMillis()))
-                                                            }
-                                                        }
-                                                    }
-                                                }
-
-                                            @Suppress("ControlFlowWithEmptyBody") val onDrawStartPagination =
-                                                remember(pageIndex) {
-                                                    { point: PdfPoint, isEraserOverride: Boolean ->
-                                                        if (showToolSettings) {
-                                                            showToolSettings = false
-                                                        } else {
-                                                            val effectiveTool = if (isEraserOverride) InkType.ERASER else currentSelectedTool
-                                                            if (effectiveTool == InkType.TEXT) {
-                                                            } else if (effectiveTool == InkType.ERASER) {
-                                                                lastEraserPoint = point
-                                                                erasedAnnotationsFromStroke.clear()
-                                                                val eraserStrokeWidth = resolveEraserStrokeWidth(
-                                                                    isEraserOverride,
-                                                                    currentStrokeWidthState,
-                                                                    currentEraserStrokeWidthState
-                                                                )
-                                                                val aspectRatio = pageAspectRatios.getOrElse(pageIndex) { 1f }
-                                                                val existing = allAnnotations[pageIndex] ?: emptyList()
-                                                                val toRemove = existing.filter {
-                                                                    isAnnotationHit(it, point, lastEraserPoint, aspectRatio, eraserStrokeWidth)
-                                                                }
-                                                                if (toRemove.isNotEmpty()) {
-                                                                    val batch =
-                                                                        erasedAnnotationsFromStroke.getOrPut(
-                                                                            pageIndex
-                                                                        ) {
-                                                                            mutableListOf()
-                                                                        }
-                                                                    batch.addAll(toRemove)
-
-                                                                    val newList =
-                                                                        existing - toRemove.toSet()
-                                                                    allAnnotations =
-                                                                        allAnnotations + (pageIndex to newList)
-                                                                }
-                                                            } else {
-                                                                val pointWithTime = point.copy(
-                                                                    timestamp = System.currentTimeMillis()
-                                                                )
-                                                                drawingState.onDrawStart(
-                                                                    pageIndex,
-                                                                    pointWithTime,
-                                                                    effectiveTool,
-                                                                    currentStrokeColorState,
-                                                                    currentStrokeWidthState
-                                                                )
-                                                            }
-                                                        }
-                                                    }
-                                                }
-
-                                            val virtualPage =
-                                                if (virtualPages.isNotEmpty()) virtualPages.getOrNull(
-                                                    pageIndex
-                                                )
-                                                else VirtualPage.PdfPage(pageIndex)
-
-                                            PdfPageComposable(
-                                                pdfDocument = stablePdfDocument,
-                                                documentKey = activeDocumentRenderKey,
-                                                pageIndex = pageIndex,
-                                                virtualPage = virtualPage,
-                                                totalPages = totalDisplayPages,
-                                                activeTheme = activeTheme,
-                                                activeTextureAlpha = 1f - globalTextureTransparency,
-                                                excludeImages = excludeImages,
-                                                isScrollLocked = if (useSharedSpreadZoom) false else isScrollLocked,
-                                                customHighlightColors = customHighlightColors,
-                                                externalScale = if (useSharedSpreadZoom) currentActiveScale else 1f,
-                                                onPaletteClick = {
-                                                    highlightColorPickerInitialSlot = PdfHighlightColor.YELLOW
-                                                    showHighlightColorPicker = true
-                                                },
-                                                onScaleChanged = { newScale ->
-                                                    if (isActivePagerPage && !useSharedSpreadZoom) {
-                                                        currentPageScale = newScale
-                                                    }
-                                                },
-                                                ttsHighlightData = if (ttsDisplayPageIndex == pageIndex) ttsHighlightData else null,
-                                                searchQuery = searchState.searchQuery,
-                                                searchHighlightMode = searchHighlightMode,
-                                                searchResultToHighlight = if (isActivePagerPage) searchHighlightTarget else null,
-                                                ocrHoverHighlights = stableOcrRects,
-                                                modifier = if (spreadPageIndices.size > 1) {
-                                                    Modifier
-                                                        .width(spreadPageWidth)
-                                                        .fillMaxHeight()
-                                                } else {
-                                                    Modifier.fillMaxSize()
-                                                },
-                                                showAllTextHighlights = showAllTextHighlights,
-                                                onHighlightLoading = { /* no-op for paginated mode */ },
-                                                onPreSingleTap = onPaginationPreSingleTap,
-                                                onSingleTap = { _ -> onSingleTapStable() },
-                                                isProUser = isProUser,
-                                                onShowDictionaryUpsellDialog = {
-                                                    if (useOnlineDictionary) {
-                                                        showDictionaryUpsellDialog = true
-                                                    }
-                                                },
-                                                onWordSelectedForAiDefinition = onDictionaryLookupStable,
-                                                onTranslateText = onTranslateTextStable,
-                                                onSearchText = onSearchTextStable,
-                                                onOcrStateChange = onOcrStateChange,
-                                                onLinkClicked = { url -> clickedLinkUrl = url },
-                                                onInternalLinkClicked = onInternalLinkNav,
-                                                isBookmarked = isPageBookmarked,
-                                                onBookmarkClick = { onToggleBookmark(pageIndex) },
-                                                isZoomEnabled = !useSharedSpreadZoom,
-                                                showPageNumberOverlay = showPageNumberOverlay,
-                                                visualScaleProvider = if (useSharedSpreadZoom) {
-                                                    { currentActiveScale }
-                                                } else {
-                                                    { 1f }
-                                                },
-                                                clearSelectionTrigger = selectionClearTrigger,
-                                                resetZoomTrigger = if (useSharedSpreadZoom) 0L else resetZoomTrigger,
-                                                pageAnnotations = pageAnnotationsProvider,
-                                                drawingState = drawingState,
-                                                onDrawStart = onDrawStartPagination,
-                                                onDraw = onDrawPagination,
-                                                selectedTool = selectedTool,
-                                                onDrawEnd = {
-                                                    val finalAnnotation = drawingState.onDrawEnd()
-                                                    if (finalAnnotation != null) {
-                                                        val pageIdx = finalAnnotation.pageIndex
-                                                        val existing =
-                                                            allAnnotations[pageIdx] ?: emptyList()
-                                                        val nextAnnotations =
-                                                            allAnnotations + (pageIdx to (existing + finalAnnotation))
-                                                        allAnnotations = nextAnnotations
-                                                        persistInkAnnotationsNow(
-                                                            nextAnnotations,
-                                                            emptyList(),
-                                                            "draw_end"
-                                                        )
-                                                        undoStack.add(
-                                                            HistoryAction.Add(
-                                                                pageIdx, finalAnnotation
-                                                            )
-                                                        )
-                                                        redoStack.clear()
-                                                    }
-
-                                                    if (selectedTool == InkType.ERASER && erasedAnnotationsFromStroke.isNotEmpty()) {
-                                                        val removalMap =
-                                                            erasedAnnotationsFromStroke.mapValues {
-                                                                it.value.toList()
-                                                            }
-                                                        persistInkAnnotationsNow(
-                                                            allAnnotations,
-                                                            removalMap.values.flatten(),
-                                                            "erase_end"
-                                                        )
-                                                        undoStack.add(
-                                                            HistoryAction.Remove(removalMap)
-                                                        )
-                                                        redoStack.clear()
-                                                        erasedAnnotationsFromStroke.clear()
-                                                    }
-                                                },
-                                                onOcrModelDownloading = {
-                                                    isOcrModelDownloading = true
-                                                },
-                                                userHighlights = visibleUserHighlightsByPage[pageIndex].orEmpty(),
-                                                onHighlightAdd = onHighlightAdd,
-                                                onHighlightUpdate = onHighlightUpdate,
-                                                onHighlightDelete = onHighlightDelete,
-                                                onNoteRequested = onNoteRequested,
-                                                onTts = { pageIdx, charIdx -> startTtsWithPermissionCheck(pageIdx, charIdx) },
-                                                activeToolThickness = currentStrokeWidthState,
-                                                eraserToolThickness = currentEraserStrokeWidthState,
-                                                lockedState = if (useSharedSpreadZoom) null else lockedState,
-                                                onZoomAndPanChanged = { newScale, newOffset ->
-                                                    if (isActivePagerPage && !useSharedSpreadZoom) {
-                                                        currentActiveScale = newScale
-                                                        currentActiveOffset = newOffset
-                                                    }
-                                                },
-                                                onDetectBubbles = { sourcePageIndex, bitmap ->
-                                                    detectSpeechBubblesForPage(sourcePageIndex, bitmap)
-                                                },
-                                                onShowPanelPopup = { bitmapWithRects ->
-                                                    val safeBitmap = bitmapWithRects.scaledToCanvasLimit()
-                                                    if (safeBitmap !== bitmapWithRects && !bitmapWithRects.isRecycled) {
-                                                        bitmapWithRects.recycle()
-                                                    }
-                                                    poppedUpPanelBitmap?.takeUnless { it.isRecycled }?.recycle()
-                                                    poppedUpPanelBitmap = safeBitmap
-                                                },
-                                                onTwoFingerSwipe = { direction ->
-                                                    coroutineScope.launch {
-                                                        val current = currentPaginationDisplayPage()
-                                                        val targetPage = if (direction > 0) {
-                                                            PdfSpreadLayout.nextPageIndex(current, totalDisplayPages, pdfSpreadSettings)
-                                                        } else {
-                                                            PdfSpreadLayout.previousPageIndex(current, totalDisplayPages, pdfSpreadSettings)
-                                                        }
-                                                        animatePaginationToDisplayPage(targetPage)
-                                                    }
-                                                },
-                                                richTextController = richTextController,
-                                                isStylusOnlyMode = isStylusOnlyMode,
-                                                stylusButtonHovering = stylusButtonHovering,
-                                                isAutoScrollPlaying = isAutoScrollPlaying,
-                                                isHighlighterSnapEnabled = isHighlighterSnapEnabled,
-                                                isEditMode = isDrawingActive,
-                                                textBoxes = visibleTextBoxesByPage[pageIndex].orEmpty(),
-                                                selectedTextBoxId = selectedTextBoxId,
-                                                onTextBoxChange = { updatedBox ->
-                                                    val idx = textBoxes.indexOfFirst { it.id == updatedBox.id }
-                                                    if (idx != -1) textBoxes[idx] = updatedBox
-                                                },
-                                                onTextBoxSelect = { id ->
-                                                    selectedTextBoxId = id
-                                                    richTextController?.clearSelection()
-                                                },
-                                                draggingBoxId = paginationDraggingBoxId,
-                                                onTextBoxDragStart = { box, _, _ ->
-                                                    Timber.tag("PdfTextBoxDebug").d("Pagination onTextBoxDragStart [ID: ${box.id}] initialized")
-                                                    val pageAspectRatio = displayPageRatios.getOrElse(pageIndex) { 1f }
-
-                                                    val containerWidthPx = boxConstraints.maxWidth
-                                                    val containerHeightPx = boxConstraints.maxHeight
-
-                                                    var renderedWidthInt = containerWidthPx
-                                                    var renderedHeightInt = (renderedWidthInt / pageAspectRatio).toInt()
-                                                    if (renderedHeightInt > containerHeightPx) {
-                                                        renderedHeightInt = containerHeightPx
-                                                        renderedWidthInt = (renderedHeightInt * pageAspectRatio).toInt()
-                                                    }
-
-                                                    val renderedWidth = renderedWidthInt.toFloat()
-                                                    val renderedHeight = renderedHeightInt.toFloat()
-
-                                                    val offsetX = (containerWidthPx - renderedWidth) / 2f
-                                                    val offsetY = (containerHeightPx - renderedHeight) / 2f
-
-                                                    paginationDraggingBoxId = box.id
-                                                    paginationOriginalRelSize = Size(box.relativeBounds.width, box.relativeBounds.height)
-
-                                                    paginationDraggingSize = Size(
-                                                        box.relativeBounds.width * renderedWidth,
-                                                        box.relativeBounds.height * renderedHeight
-                                                    )
-                                                    paginationDragPageHeight = renderedHeight
-
-                                                    val baseBoxLeft = offsetX + (box.relativeBounds.left * renderedWidth)
-                                                    val baseBoxTop = offsetY + (box.relativeBounds.top * renderedHeight)
-                                                    val centerX = containerWidthPx / 2f
-                                                    val centerY = containerHeightPx / 2f
-                                                    val screenX = (baseBoxLeft - centerX) * currentActiveScale + centerX + currentActiveOffset.x
-                                                    val screenY = (baseBoxTop - centerY) * currentActiveScale + centerY + currentActiveOffset.y
-
-                                                    paginationDraggingOffset = Offset(screenX, screenY)
-                                                },
-                                                onTextBoxDrag = { dragDelta ->
-                                                    Timber.tag("PdfTextBoxDebug").v("Pagination onTextBoxDrag delta=$dragDelta | currentOffset=$paginationDraggingOffset")
-                                                    paginationDraggingOffset += dragDelta
-
-                                                    val edgeThreshold = 60f
-                                                    val screenWidth = boxConstraints.maxWidth.toFloat()
-
-                                                    val isMovingLeft = dragDelta.x < 0
-                                                    val isMovingRight = dragDelta.x > 0
-
-                                                    if (paginationDraggingOffset.x < edgeThreshold && isMovingLeft) {
-                                                        coroutineScope.launch {
-                                                            if (pagerState.currentPage > 0 && !pagerState.isScrollInProgress) {
-                                                                pagerState.animateScrollToPage(pagerState.currentPage - 1)
-                                                            }
-                                                        }
-                                                    } else if (paginationDraggingOffset.x + paginationDraggingSize.width > screenWidth - edgeThreshold && isMovingRight) {
-                                                        coroutineScope.launch {
-                                                            if (pagerState.currentPage < pagerState.pageCount - 1 && !pagerState.isScrollInProgress) {
-                                                                pagerState.animateScrollToPage(pagerState.currentPage + 1)
-                                                            }
-                                                        }
-                                                    }
-                                                },
-                                                onTextBoxDragEnd = {
-                                                    Timber.tag("PdfTextBoxDebug").d("Pagination onTextBoxDragEnd called [ID: $paginationDraggingBoxId] | EndOffset=$paginationDraggingOffset")
-                                                    val boxId = paginationDraggingBoxId
-                                                    if (boxId != null) {
-                                                        coroutineScope.launch {
-                                                            val currentSpreadPageIndices = PdfSpreadLayout.visiblePageIndices(
-                                                                pageIndex = currentPaginationDisplayPage(),
-                                                                pageCount = totalDisplayPages,
-                                                                settings = pdfSpreadSettings
-                                                            )
-                                                            val targetPage = if (pageIndex in currentSpreadPageIndices) {
-                                                                pageIndex
-                                                            } else {
-                                                                currentSpreadPageIndices.firstOrNull() ?: currentPaginationDisplayPage()
-                                                            }
-                                                            val targetVirtualPage = virtualPages.getOrNull(targetPage)
-                                                            val pageAspectRatio = if (targetVirtualPage is VirtualPage.BlankPage) {
-                                                                if (targetVirtualPage.height > 0) targetVirtualPage.width.toFloat() / targetVirtualPage.height.toFloat() else 1f
-                                                            } else {
-                                                                displayPageRatios.getOrElse(targetPage) { 1f }
-                                                            }
-
-                                                            val containerWidthPx = boxConstraints.maxWidth
-                                                            val containerHeightPx = boxConstraints.maxHeight
-
-                                                            var renderedWidthInt = containerWidthPx
-                                                            var renderedHeightInt = (renderedWidthInt / pageAspectRatio).toInt()
-                                                            if (renderedHeightInt > containerHeightPx) {
-                                                                renderedHeightInt = containerHeightPx
-                                                                renderedWidthInt = (renderedHeightInt * pageAspectRatio).toInt()
-                                                            }
-
-                                                            val renderedWidth = renderedWidthInt.toFloat()
-                                                            val renderedHeight = renderedHeightInt.toFloat()
-                                                            val offsetX = (containerWidthPx - renderedWidth) / 2f
-                                                            val offsetY = (containerHeightPx - renderedHeight) / 2f
-
-                                                            val paddingPx = with(density) { 14.dp.toPx() }
-                                                            val padRelX = if (renderedWidth > 0) paddingPx / renderedWidth else 0f
-                                                            val padRelY = if (renderedHeight > 0) paddingPx / renderedHeight else 0f
-
-                                                            val relW = paginationOriginalRelSize.width
-                                                            val relH = paginationOriginalRelSize.height
-
-                                                            val centerX = containerWidthPx / 2f
-                                                            val centerY = containerHeightPx / 2f
-
-                                                            val unzoomedX = (paginationDraggingOffset.x - currentActiveOffset.x - centerX) / currentActiveScale + centerX
-                                                            val unzoomedY = (paginationDraggingOffset.y - currentActiveOffset.y - centerY) / currentActiveScale + centerY
-
-                                                            val rawRelX = (unzoomedX - offsetX) / renderedWidth
-                                                            val rawRelY = (unzoomedY - offsetY) / renderedHeight
-
-                                                            val maxRelX = (1f - relW - padRelX).coerceAtLeast(padRelX)
-                                                            val maxRelY = (1f - relH - padRelY).coerceAtLeast(padRelY)
-
-                                                            val finalRelX = rawRelX.coerceIn(padRelX, maxRelX)
-                                                            val finalRelY = rawRelY.coerceIn(padRelY, maxRelY)
-
-                                                            val targetOffsetUnzoomedX = offsetX + (finalRelX * renderedWidth)
-                                                            val targetOffsetUnzoomedY = offsetY + (finalRelY * renderedHeight)
-                                                            val targetOffset = Offset(
-                                                                (targetOffsetUnzoomedX - centerX) * currentActiveScale + centerX + currentActiveOffset.x,
-                                                                (targetOffsetUnzoomedY - centerY) * currentActiveScale + centerY + currentActiveOffset.y
-                                                            )
-
-                                                            val startOffset = paginationDraggingOffset
-                                                            Animatable(0f).animateTo(1f) {
-                                                                paginationDraggingOffset = lerp(startOffset, targetOffset, value)
-                                                            }
-
-                                                            val idx = textBoxes.indexOfFirst { it.id == boxId }
-                                                            if (idx != -1) {
-                                                                val oldBox = textBoxes[idx]
-                                                                val fontScale = if (paginationDragPageHeight > 0 && renderedHeight > 0)
-                                                                    paginationDragPageHeight / renderedHeight else 1f
-
-                                                                textBoxes[idx] = oldBox.copy(
-                                                                    pageIndex = targetPage,
-                                                                    relativeBounds = Rect(finalRelX, finalRelY, finalRelX + relW, finalRelY + relH),
-                                                                    fontSize = oldBox.fontSize * fontScale
-                                                                )
-                                                                selectedTextBoxId = boxId
-                                                            }
-                                                            paginationDraggingBoxId = null
-                                                        }
-                                                    } else {
-                                                        paginationDraggingBoxId = null
-                                                    }
-                                                },
-                                                onDragPageTurn = { direction ->
-                                                    coroutineScope.launch {
-                                                        val current = currentPaginationDisplayPage()
-                                                        val targetPage = if (direction > 0) {
-                                                            PdfSpreadLayout.nextPageIndex(current, totalDisplayPages, pdfSpreadSettings)
-                                                        } else {
-                                                            PdfSpreadLayout.previousPageIndex(current, totalDisplayPages, pdfSpreadSettings)
-                                                        }
-                                                        animatePaginationToDisplayPage(targetPage)
-                                                    }
-                                                },
-                                                isBubbleZoomModeActive = isBubbleZoomModeActive,
-                                                isVisible = isVisiblePage,
-                                                isActivePage = isActivePagerPage,
-                                                isScrolling = pagerState.isScrollInProgress
-                                            )
-                                                    }
-                                                }
-                                            }
-                                        }
-
-                                        if (paginationDraggingBoxId != null) {
-                                            val draggedBox = textBoxes.find { it.id == paginationDraggingBoxId }
-                                            if (draggedBox != null) {
-                                                val fontScaleRatio = if (paginationDraggingSize.height > 0)
-                                                    paginationDragPageHeight / paginationDraggingSize.height else 1f
-
-                                                val screenHeight = boxConstraints.maxHeight.toFloat()
-                                                val boxBottomY = paginationDraggingOffset.y + (paginationDraggingSize.height * currentActiveScale)
-                                                val spaceBelow = screenHeight - boxBottomY
-                                                val overlayHandlePos = if (spaceBelow < with(density) { 60.dp.toPx() }) HandlePosition.TOP else HandlePosition.BOTTOM
-
-                                                Box(
-                                                    modifier = Modifier
-                                                        .offset {
-                                                            IntOffset(
-                                                                paginationDraggingOffset.x.roundToInt(),
-                                                                paginationDraggingOffset.y.roundToInt()
-                                                            )
-                                                        }
-                                                        .graphicsLayer {
-                                                            scaleX = currentActiveScale
-                                                            scaleY = currentActiveScale
-                                                            transformOrigin = TransformOrigin(0f, 0f)
-                                                        }
-                                                ) {
-                                                    ResizableTextBox(
-                                                        box = draggedBox.copy(
-                                                            relativeBounds = Rect(0f, 0f, 1f, 1f),
-                                                            fontSize = draggedBox.fontSize * fontScaleRatio
-                                                        ),
-                                                        isSelected = true,
-                                                        isEditMode = false,
-                                                        isDarkMode = isPdfDarkMode,
-                                                        pageWidthPx = paginationDraggingSize.width,
-                                                        pageHeightPx = paginationDraggingSize.height,
-                                                        scale = currentActiveScale,
-                                                        handlePosition = overlayHandlePos,
-                                                        onBoundsChanged = {},
-                                                        onTextChanged = {},
-                                                        onSelect = {},
-                                                        onDragStart = {},
-                                                        onDrag = { _, _ -> },
-                                                        onDragEnd = {}
-                                                    )
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-
-                                DisplayMode.VERTICAL_SCROLL -> {
-                                    val headerHeight = verticalHeaderHeight
-                                    val footerHeight = verticalFooterHeight
-
-                                    val currentSelectedTool by rememberUpdatedState(selectedTool)
-                                    val currentStrokeColorState by rememberUpdatedState(
-                                        currentStrokeColor
-                                    )
-                                    val currentStrokeWidthState by rememberUpdatedState(
-                                        currentStrokeWidth
-                                    )
-                                    val currentEraserStrokeWidthState by rememberUpdatedState(
-                                        currentEraserStrokeWidth
-                                    )
-
-                                    @Suppress("ControlFlowWithEmptyBody") val onDrawStartStable =
-                                        remember {
-                                            { pageIndex: Int, point: PdfPoint, isEraserOverride: Boolean ->
-                                                if (showToolSettings) {
-                                                    showToolSettings = false
-                                                } else {
-                                                    val effectiveTool = if (isEraserOverride) InkType.ERASER else currentSelectedTool
-                                                    if (effectiveTool == InkType.TEXT) {
-                                                    } else if (effectiveTool == InkType.ERASER) {
-                                                        lastEraserPoint = point
-                                                        erasedAnnotationsFromStroke.clear()
-                                                        val eraserStrokeWidth = resolveEraserStrokeWidth(
-                                                            isEraserOverride,
-                                                            currentStrokeWidthState,
-                                                            currentEraserStrokeWidthState
-                                                        )
-
-                                                        val aspectRatio = pageAspectRatios.getOrElse(pageIndex) { 1f }
-                                                        val existing = allAnnotations[pageIndex] ?: emptyList()
-                                                        val toRemove = existing.filter {
-                                                            isAnnotationHit(it, point, lastEraserPoint, aspectRatio, eraserStrokeWidth)
-                                                        }
-                                                        if (toRemove.isNotEmpty()) {
-                                                            val batch =
-                                                                erasedAnnotationsFromStroke.getOrPut(
-                                                                    pageIndex
-                                                                ) {
-                                                                    mutableListOf()
-                                                                }
-                                                            batch.addAll(toRemove)
-
-                                                            val newList =
-                                                                existing - toRemove.toSet()
-                                                            allAnnotations =
-                                                                allAnnotations + (pageIndex to newList)
-                                                        }
-                                                    } else {
-                                                        val pointWithTime = point.copy(
-                                                            timestamp = System.currentTimeMillis()
-                                                        )
-                                                        drawingState.onDrawStart(
-                                                            pageIndex,
-                                                            pointWithTime,
-                                                            effectiveTool,
-                                                            currentStrokeColorState,
-                                                            currentStrokeWidthState
-                                                        )
-                                                    }
-                                                }
-                                            }
-                                        }
-
-                                    val onDrawStable = remember(isHighlighterSnapEnabled, isCurrentToolHighlighter, calculateSnappedPoint) {
-                                        { pageIndex: Int, point: PdfPoint, isEraserOverride: Boolean ->
-                                            val effectiveTool = if (isEraserOverride) InkType.ERASER else currentSelectedTool
-                                            if (effectiveTool == InkType.ERASER) {
-                                                val eraserStrokeWidth = resolveEraserStrokeWidth(
-                                                    isEraserOverride,
-                                                    currentStrokeWidthState,
-                                                    currentEraserStrokeWidthState
-                                                )
-                                                val aspectRatio = pageAspectRatios.getOrElse(pageIndex) { 1f }
-                                                val existing = allAnnotations[pageIndex] ?: emptyList()
-                                                val toRemove = existing.filter {
-                                                    isAnnotationHit(it, point, lastEraserPoint, aspectRatio, eraserStrokeWidth)
-                                                }
-                                                lastEraserPoint = point
-                                                if (toRemove.isNotEmpty()) {
-                                                    val batch =
-                                                        erasedAnnotationsFromStroke.getOrPut(
-                                                            pageIndex
-                                                        ) { mutableListOf() }
-                                                    batch.addAll(toRemove)
-
-                                                    val newList = existing - toRemove.toSet()
-                                                    allAnnotations =
-                                                        allAnnotations + (pageIndex to newList)
-                                                }
-                                            } else {
-                                                if (currentIsHighlighter && currentSnapEnabled) {
-                                                    val startPoint = drawingState.currentAnnotation?.points?.firstOrNull()
-                                                    val effectivePoint = calculateSnappedPoint(pageIndex, point, startPoint)
-                                                    drawingState.updateDrag(effectivePoint.copy(timestamp = System.currentTimeMillis()))
-                                                } else {
-                                                    drawingState.onDraw(point.copy(timestamp = System.currentTimeMillis()))
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    Box(modifier = Modifier
-                                        .fillMaxSize()
-                                        .clip(RectangleShape)) {
-                                        val docHolder = remember(activeDocumentRenderKey, pdfDocument) {
-                                            StableHolder(pdfDocument!!)
-                                        }
-                                        val bookmarksHolder =
-                                            remember(bookmarks) { StableHolder(bookmarks) }
-                                        val ratiosHolder = remember(displayPageRatios) {
-                                            StableHolder(displayPageRatios)
-                                        }
-
-                                        PdfVerticalReader(
-                                            state = verticalReaderState,
-                                            pdfDocument = docHolder,
-                                            documentKey = activeDocumentRenderKey,
-                                            activeTheme = activeTheme,
-                                            activeTextureAlpha = 1f - globalTextureTransparency,
-                                            excludeImages = excludeImages,
-                                            isScrollLocked = isScrollLocked,
-                                            customHighlightColors = customHighlightColors,
-                                            onPaletteClick = { showHighlightColorPicker = true },
-                                            totalPages = totalDisplayPages,
-                                            pageAspectRatios = ratiosHolder,
-                                            virtualPages = virtualPages,
-                                            headerHeight = headerHeight,
-                                            footerHeight = footerHeight,
-                                            onPageClick = onSingleTapStable,
-                                            modifier = Modifier.testTag(VERTICAL_SCROLL_TAG),
-                                            onZoomChange = onZoomChangeStable,
-                                            showAllTextHighlights = showAllTextHighlights,
-                                            onHighlightLoading = onHighlightLoadingStable,
-                                            searchQuery = searchState.searchQuery,
-                                            searchHighlightMode = searchHighlightMode,
-                                            searchResultToHighlight = searchHighlightTarget,
-                                            isProUser = isProUser,
-                                            onShowDictionaryUpsellDialog = onShowDictionaryUpsellDialogStable,
-                                            onWordSelectedForAiDefinition = onDictionaryLookupStable,
-                                            onTranslateText = onTranslateTextStable,
-                                            onSearchText = onSearchTextStable,
-                                            ttsHighlightData = ttsHighlightData,
-                                            ttsReadingPage = ttsDisplayPageIndex,
-                                            userHighlights = visibleUserHighlights,
-                                            userHighlightsByPage = visibleUserHighlightsByPage,
-                                            onHighlightAdd = onHighlightAdd,
-                                            onHighlightUpdate = onHighlightUpdate,
-                                            onHighlightDelete = onHighlightDelete,
-                                            onNoteRequested = onNoteRequested,
-                                            onTts = { pageIdx, charIdx -> startTtsWithPermissionCheck(pageIdx, charIdx) },
-                                            activeToolThickness = currentStrokeWidthState,
-                                            eraserToolThickness = currentEraserStrokeWidthState,
-                                            onLinkClicked = onLinkClickedStable,
-                                            onInternalLinkClicked = onInternalLinkNavStable,
-                                            bookmarks = bookmarksHolder,
-                                            onBookmarkClick = onBookmarkClickStable,
-                                            onOcrStateChange = onOcrStateChangeStable,
-                                            onGetOcrSearchRects = onGetOcrSearchRectsStable,
-                                            allAnnotations = allAnnotationsProvider,
-                                            drawingState = drawingState,
-                                            onDrawStart = onDrawStartStable,
-                                            isHighlighterSnapEnabled = isHighlighterSnapEnabled,
-                                            onDraw = onDrawStable,
-                                            onDrawEnd = {
-                                                val finalAnnotation = drawingState.onDrawEnd()
-                                                if (finalAnnotation != null) {
-                                                    val pageIdx = finalAnnotation.pageIndex
-                                                    val existing =
-                                                        allAnnotations[pageIdx] ?: emptyList()
-                                                    val nextAnnotations =
-                                                        allAnnotations + (pageIdx to (existing + finalAnnotation))
-                                                    allAnnotations = nextAnnotations
-                                                    persistInkAnnotationsNow(
-                                                        nextAnnotations,
-                                                        emptyList(),
-                                                        "draw_end"
-                                                    )
-                                                    undoStack.add(
-                                                        HistoryAction.Add(
-                                                            pageIdx, finalAnnotation
-                                                        )
-                                                    )
-                                                    redoStack.clear()
-                                                }
-
-                                                if (selectedTool == InkType.ERASER && erasedAnnotationsFromStroke.isNotEmpty()) {
-                                                    val removalMap =
-                                                        erasedAnnotationsFromStroke.mapValues {
-                                                            it.value.toList()
-                                                        }
-                                                    persistInkAnnotationsNow(
-                                                        allAnnotations,
-                                                        removalMap.values.flatten(),
-                                                        "erase_end"
-                                                    )
-                                                    undoStack.add(
-                                                        HistoryAction.Remove(removalMap)
-                                                    )
-                                                    redoStack.clear()
-                                                    erasedAnnotationsFromStroke.clear()
-                                                }
-                                            },
-                                            onOcrModelDownloading = {
-                                                isOcrModelDownloading = true
-                                            },
-                                            selectedTool = selectedTool,
-                                            richTextController = richTextController,
-                                            isStylusOnlyMode = isStylusOnlyMode,
-                                            stylusButtonHovering = stylusButtonHovering,
-                                            isEditMode = isDrawingActive,
-                                            textBoxes = visibleTextBoxes,
-                                            textBoxesByPage = visibleTextBoxesByPage,
-                                            selectedTextBoxId = selectedTextBoxId,
-                                            onTextBoxChange = { updatedBox ->
-                                                val idx = textBoxes.indexOfFirst { it.id == updatedBox.id }
-                                                if (idx != -1) textBoxes[idx] = updatedBox
-                                            },
-                                            onTextBoxSelect = { id ->
-                                                selectedTextBoxId = id
-                                                richTextController?.clearSelection()
-                                            },
-                                            bottomContentPaddingPx = bottomScrollLimitPx,
-                                            topContentPaddingPx = topScrollLimitPx,
-                                            onTextBoxMoved = { boxId, newPageIndex, newBounds ->
-                                                Timber.tag("PdfTextBoxDebug").d("Vertical Reader onTextBoxMoved[ID: $boxId] newPage=$newPageIndex bounds=$newBounds")
-                                                val idx = textBoxes.indexOfFirst { it.id == boxId }
-                                                if (idx != -1) {
-                                                    val oldBox = textBoxes[idx]
-                                                    textBoxes[idx] = oldBox.copy(pageIndex = newPageIndex, relativeBounds = newBounds)
-                                                }
-                                            },
-                                            isAutoScrollPlaying = isAutoScrollPlaying,
-                                            isAutoScrollTempPaused = isAutoScrollTempPaused,
-                                            autoScrollSpeed = autoScrollSpeed * 0.5f,
-                                            onInteractionListener = onAutoScrollInteraction,
-                                            lockedState = lockedState,
-                                            showPageGap = showVerticalPageGap,
-                                            showPageNumberOverlay = showPageNumberOverlay,
-                                            onZoomAndPanChanged = { newScale, newOffset ->
-                                                currentActiveScale = newScale
-                                                currentActiveOffset = newOffset
-                                            },
-                                            resetZoomTrigger = resetZoomTrigger,
-                                            isBubbleZoomModeActive = isBubbleZoomModeActive,
-                                            onDetectBubbles = { sourcePageIndex, bitmap ->
-                                                detectSpeechBubblesForPage(sourcePageIndex, bitmap)
-                                            }
-                                        )
-                                    }
-                                }
-                            }
-                        }
-
-                        totalPages == 0 && !isLoadingDocument -> {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .padding(16.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    "PDF is empty or could not be displayed.",
-                                    modifier = Modifier.padding(16.dp)
-                                )
-                            }
-                        }
-                    }
-                }
-
-                if (isMusicianMode && isAutoScrollModeActive) {
-                    @Suppress("UnusedVariable", "Unused") val density = LocalDensity.current
-
-                    var leftPulseTrigger by remember { mutableLongStateOf(0L) }
-                    var rightPulseTrigger by remember { mutableLongStateOf(0L) }
-
-                    // --- ADD THESE STATES ---
-                    var leftHoldProgress by remember { mutableFloatStateOf(0f) }
-                    var rightHoldProgress by remember { mutableFloatStateOf(0f) }
-
-                    val leftPulseAlpha by animateFloatAsState(
-                        targetValue = if (System.currentTimeMillis() - leftPulseTrigger < 150) 0.3f else 0f,
-                        animationSpec = tween(150), label = "leftPulse"
-                    )
-                    val rightPulseAlpha by animateFloatAsState(
-                        targetValue = if (System.currentTimeMillis() - rightPulseTrigger < 150) 0.3f else 0f,
-                        animationSpec = tween(150), label = "rightPulse"
-                    )
-
-                    Box(modifier = Modifier.fillMaxSize()) {
-                        val regionHeight = Modifier.fillMaxHeight(0.4f)
-                        val regionWidth = Modifier.fillMaxWidth(0.25f)
-                        val topOffset = 100.dp
-
-                        val scrollAmount = boxMaxHeightFloat * 0.75f
-
-                        // Left Region
-                        Box(
-                            modifier = regionWidth
-                                .then(regionHeight)
-                                .align(Alignment.TopStart)
-                                .offset(y = topOffset)
-                                .padding(start = 8.dp)
-                                .background(Color.White.copy(alpha = leftPulseAlpha), RoundedCornerShape(12.dp))
-                                .border(2.dp, Color.Gray.copy(alpha = 0.3f), RoundedCornerShape(12.dp))
-                                .pointerInput(Unit) {
-                                    awaitEachGesture {
-                                        val down = awaitFirstDown()
-                                        var isLongPress = false
-                                        val job = coroutineScope.launch {
-                                            val startTime = System.currentTimeMillis()
-                                            while (isActive) {
-                                                val elapsed = System.currentTimeMillis() - startTime
-                                                if (elapsed >= 1000) {
-                                                    leftHoldProgress = 0f
-                                                    isLongPress = true
-                                                    leftPulseTrigger = System.currentTimeMillis()
-                                                    triggerAutoScrollTempPause(1000L)
-
-                                                    coroutineScope.launch {
-                                                        verticalReaderState.scrollToTop()
-                                                    }
-                                                    break
-                                                }
-                                                leftHoldProgress = elapsed / 1000f
-                                                delay(16)
-                                            }
-                                        }
-
-                                        val up = waitForUpOrCancellation()
-                                        job.cancel()
-                                        leftHoldProgress = 0f
-
-                                        if (!isLongPress && up != null) {
-                                            up.consume()
-                                            Timber.tag("MusicianMode").d("Left region tapped")
-                                            leftPulseTrigger = System.currentTimeMillis()
-                                            triggerAutoScrollTempPause(600L)
-                                            coroutineScope.launch {
-                                                verticalReaderState.scrollBy(-scrollAmount)
-                                            }
-                                        }
-                                    }
-                                },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            if (leftHoldProgress > 0f) {
-                                CircularProgressIndicator(
-                                    progress = { leftHoldProgress },
-                                    modifier = Modifier.size(48.dp).alpha(0.6f),
-                                    color = MaterialTheme.colorScheme.primary,
-                                    trackColor = Color.Transparent,
-                                    strokeWidth = 4.dp
-                                )
-                                Icon(
-                                    imageVector = Icons.Default.ArrowUpward,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(24.dp).alpha(0.6f),
-                                    tint = MaterialTheme.colorScheme.primary
-                                )
-                            }
-                        }
-
-                        // Right Region
-                        Box(
-                            modifier = regionWidth
-                                .then(regionHeight)
-                                .align(Alignment.TopEnd)
-                                .offset(y = topOffset)
-                                .padding(end = 8.dp)
-                                .background(Color.White.copy(alpha = rightPulseAlpha), RoundedCornerShape(12.dp))
-                                .border(2.dp, Color.Gray.copy(alpha = 0.3f), RoundedCornerShape(12.dp))
-                                .pointerInput(totalPages) {
-                                    awaitEachGesture {
-                                        val down = awaitFirstDown()
-                                        var isLongPress = false
-                                        val job = coroutineScope.launch {
-                                            val startTime = System.currentTimeMillis()
-                                            while (isActive) {
-                                                val elapsed = System.currentTimeMillis() - startTime
-                                                if (elapsed >= 1000) {
-                                                    rightHoldProgress = 0f
-                                                    isLongPress = true
-                                                    rightPulseTrigger = System.currentTimeMillis()
-                                                    triggerAutoScrollTempPause(1000L)
-
-                                                    coroutineScope.launch {
-                                                        verticalReaderState.scrollToBottom()
-                                                    }
-                                                    break
-                                                }
-                                                rightHoldProgress = elapsed / 1000f
-                                                delay(16)
-                                            }
-                                        }
-
-                                        val up = waitForUpOrCancellation()
-                                        job.cancel()
-                                        rightHoldProgress = 0f
-
-                                        if (!isLongPress && up != null) {
-                                            up.consume()
-                                            Timber.tag("MusicianMode").d("Right region tapped")
-                                            rightPulseTrigger = System.currentTimeMillis()
-                                            triggerAutoScrollTempPause(600L)
-                                            coroutineScope.launch {
-                                                verticalReaderState.scrollBy(scrollAmount)
-                                            }
-                                        }
-                                    }
-                                },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            if (rightHoldProgress > 0f) {
-                                CircularProgressIndicator(
-                                    progress = { rightHoldProgress },
-                                    modifier = Modifier.size(48.dp).alpha(0.6f),
-                                    color = MaterialTheme.colorScheme.primary,
-                                    trackColor = Color.Transparent,
-                                    strokeWidth = 4.dp
-                                )
-                                Icon(
-                                    imageVector = Icons.Default.ArrowDownward,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(24.dp).alpha(0.6f),
-                                    tint = MaterialTheme.colorScheme.primary
-                                )
-                            }
-                        }
-                    }
-                }
-
-                // OCR language download indicator
-                AnimatedVisibility(
-                    visible = isOcrModelDownloading,
-                    enter = slideInVertically() + fadeIn(),
-                    exit = slideOutVertically() + fadeOut(),
-                    modifier = Modifier
-                        .align(Alignment.TopCenter)
-                        .fillMaxWidth()
-                        .padding(top = topOverlayInset)
-                        .padding(8.dp)
-                ) {
-                    Surface(
-                        color = MaterialTheme.colorScheme.tertiaryContainer,
-                        shape = RoundedCornerShape(8.dp),
-                        shadowElevation = 4.dp
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.Center
-                        ) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(16.dp),
-                                strokeWidth = 2.dp,
-                                color = MaterialTheme.colorScheme.onTertiaryContainer
-                            )
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Text(
-                                text = stringResource(
-                                    R.string.msg_downloading_language_pack,
-                                    stringResource(ocrLanguage.displayNameRes).substringBefore("(").trim()
-                                ),
-                                style = MaterialTheme.typography.labelLarge,
-                                color = MaterialTheme.colorScheme.onTertiaryContainer
-                            )
-                        }
-                    }
-                }
-
-                AnimatedVisibility(
-                    visible = bubbleZoomDownloadProgress != null,
-                    enter = slideInVertically() + fadeIn(),
-                    exit = slideOutVertically() + fadeOut(),
-                    modifier = Modifier
-                        .align(Alignment.TopCenter)
-                        .fillMaxWidth()
-                        // shift down slightly if the OCR indicator is also showing
-                        .padding(top = topOverlayInset + if (isOcrModelDownloading) 64.dp else 0.dp)
-                        .padding(8.dp)
-                ) {
-                    Surface(
-                        color = MaterialTheme.colorScheme.tertiaryContainer,
-                        shape = RoundedCornerShape(8.dp),
-                        shadowElevation = 4.dp
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.Center
-                        ) {
-                            val progress = bubbleZoomDownloadProgress ?: 0f
-                            if (progress > 0f) {
-                                CircularProgressIndicator(
-                                    progress = { progress },
-                                    modifier = Modifier.size(16.dp),
-                                    strokeWidth = 2.dp,
-                                    color = MaterialTheme.colorScheme.onTertiaryContainer,
-                                    trackColor = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.2f)
-                                )
-                            } else {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(16.dp),
-                                    strokeWidth = 2.dp,
-                                    color = MaterialTheme.colorScheme.onTertiaryContainer
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Text(
-                                text = stringResource(
-                                    R.string.msg_downloading_bubble_zoom_model_progress,
-                                    (progress * 100).toInt()
-                                ),
-                                style = MaterialTheme.typography.labelLarge,
-                                color = MaterialTheme.colorScheme.onTertiaryContainer
-                            )
-                        }
-                    }
-                }
-
-                val jumpBackPage = jumpHistory.backPage
-                val jumpForwardPage = jumpHistory.forwardPage
-                val effectiveNavBarForJumpBar = if (systemUiMode == SystemUiMode.DEFAULT || (systemUiMode == SystemUiMode.SYNC && showStandardBars)) with(density) { navBarHeight.toDp() } else 0.dp
-                val isPdfJumpHistoryVisible = showStandardBars && !searchState.isSearchActive && (jumpBackPage != null || jumpForwardPage != null)
-                val pdfBottomChromePadding = 56.dp + effectiveNavBarForJumpBar
-                val pdfSliderBottomPadding = pdfBottomChromePadding + if (isPdfJumpHistoryVisible) 40.dp else 0.dp
-                val pdfSliderPageBackground = if (activeTheme.backgroundColor == Color.Unspecified) Color.White else activeTheme.backgroundColor
-                val pdfSliderPageText = if (activeTheme.textColor == Color.Unspecified) Color.Black else activeTheme.textColor
-                val pdfReaderSliderColors = readerSliderChromeColors(
-                    pageBackground = pdfSliderPageBackground,
-                    pageText = pdfSliderPageText,
-                    themePrimary = MaterialTheme.colorScheme.primary
-                )
-                val pdfSliderMaxPage = (totalDisplayPages - 1).coerceAtLeast(0)
-                val pdfSliderCurrentPage = sliderCurrentPage.roundToInt().coerceIn(0, pdfSliderMaxPage)
-
-                suspend fun scrollPdfSliderToPage(pageIndex: Int) {
-                    val targetPage = pageIndex.coerceIn(0, pdfSliderMaxPage)
-                    if (displayMode == DisplayMode.PAGINATION) {
-                        scrollPaginationToDisplayPage(targetPage)
-                    } else {
-                        verticalReaderState.scrollToPage(targetPage)
-                    }
-                }
-
-                fun jumpPdfSliderToPage(pageIndex: Int) {
-                    val targetPage = pageIndex.coerceIn(0, pdfSliderMaxPage)
-                    scrubDebounceJob.value?.cancel()
-                    sliderCurrentPage = targetPage.toFloat()
-                    isFastScrubbing = false
-                    coroutineScope.launch {
-                        scrollPdfSliderToPage(targetPage)
-                    }
-                }
-
-                fun scrubPdfSliderToPage(newValue: Float) {
-                    sliderCurrentPage = newValue.coerceIn(0f, pdfSliderMaxPage.toFloat())
-                    isFastScrubbing = true
-                    scrubDebounceJob.value?.cancel()
-                    scrubDebounceJob.value = coroutineScope.launch {
-                        delay(200)
-                        if (isActive) {
-                            val targetPage = newValue.roundToInt().coerceIn(0, pdfSliderMaxPage)
-                            scrollPdfSliderToPage(targetPage)
-                            sliderCurrentPage = targetPage.toFloat()
-                            isFastScrubbing = false
-                        }
-                    }
-                }
-
-                // --- Slider UI attached to the bottom chrome ---
-                AnimatedVisibility(
-                    visible = pdfSliderChromeVisible,
-                    enter = slideInVertically { fullHeight -> fullHeight } + fadeIn(),
-                    exit = slideOutVertically { fullHeight -> fullHeight } + fadeOut(),
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(bottom = pdfSliderBottomPadding)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable(
-                                indication = null,
-                                interactionSource = remember { MutableInteractionSource() }
-                            ) {}
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 12.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            IconButton(
-                                onClick = {
-                                    jumpPdfSliderToPage(
-                                        readerSliderStepPage(
-                                            currentPage = pdfSliderCurrentPage,
-                                            delta = -1,
-                                            minPage = 0,
-                                            maxPage = pdfSliderMaxPage
-                                        )
-                                    )
-                                },
-                                enabled = pdfSliderCurrentPage > 0,
-                                modifier = Modifier.size(40.dp)
-                            ) {
-                                Icon(
-                                    Icons.AutoMirrored.Filled.NavigateBefore,
-                                    contentDescription = stringResource(R.string.desktop_previous_page),
-                                    tint = pdfReaderSliderColors.contentColor.copy(
-                                        alpha = if (pdfSliderCurrentPage > 0) 0.9f else 0.32f
-                                    )
-                                )
-                            }
-
-                            ReaderMinimalSlider(
-                                value = sliderCurrentPage.coerceIn(0f, pdfSliderMaxPage.toFloat()),
-                                onValueChange = ::scrubPdfSliderToPage,
-                                valueRange = 0f..pdfSliderMaxPage.toFloat(),
-                                enabled = pdfSliderMaxPage > 0,
-                                activeColor = pdfReaderSliderColors.activeTrackColor,
-                                inactiveColor = pdfReaderSliderColors.inactiveTrackColor,
-                                thumbColor = pdfReaderSliderColors.thumbColor,
-                                modifier = Modifier
-                                    .testTag("PdfPageSlider")
-                                    .weight(1f)
-                                    .height(32.dp)
-                            )
-
-                            IconButton(
-                                onClick = {
-                                    jumpPdfSliderToPage(
-                                        readerSliderStepPage(
-                                            currentPage = pdfSliderCurrentPage,
-                                            delta = 1,
-                                            minPage = 0,
-                                            maxPage = pdfSliderMaxPage
-                                        )
-                                    )
-                                },
-                                enabled = pdfSliderCurrentPage < pdfSliderMaxPage,
-                                modifier = Modifier.size(40.dp)
-                            ) {
-                                Icon(
-                                    Icons.AutoMirrored.Filled.NavigateNext,
-                                    contentDescription = stringResource(R.string.desktop_next_page),
-                                    tint = pdfReaderSliderColors.contentColor.copy(
-                                        alpha = if (pdfSliderCurrentPage < pdfSliderMaxPage) 0.9f else 0.32f
-                                    )
-                                )
-                            }
-                        }
-                    }
-                }
-
-                if (pdfSliderChromeVisible && isFastScrubbing) {
-                    PageScrubbingAnimation(
-                        pageLabel = pdfPageRangeLabel(
-                            pageIndex = sliderCurrentPage.roundToInt(),
-                            pageCount = totalDisplayPages,
-                            displayMode = displayMode,
-                            settings = pdfSpreadSettings
-                        )
-                    )
-                }
-
-                val isPdfTtsPlayingOrLoading = ttsState.isPlaying || ttsState.isLoading
-                val showPdfThemePanel = { showThemePanel = true }
-                val showPdfDictionarySettings = { showDictionarySettingsSheet = true }
-                val togglePdfScrollLock = {
-                    val nextLocked = !isScrollLocked
-                    isScrollLocked = nextLocked
-                    savePdfScrollLocked(context, bookId, nextLocked)
-                    if (nextLocked) {
-                        currentPageScale = currentActiveScale
-                        savePdfLockedState(context, bookId, currentActiveScale, currentActiveOffset.x, currentActiveOffset.y)
-                        lockedState = Triple(currentActiveScale, currentActiveOffset.x, currentActiveOffset.y)
-                    }
-                }
-                val showPdfSlider = {
-                    val currentPageForSlider = if (displayMode == DisplayMode.PAGINATION) currentPaginationDisplayPage() else verticalReaderState.currentPage
-                    val nextState = readerSliderToggleState(
-                        isCurrentlyToggledOn = isPageSliderVisible,
-                        currentPage = currentPageForSlider
-                    )
-                    sliderStartPage = nextState.bookmarkPosition.startPage
-                    sliderCurrentPage = nextState.bookmarkPosition.currentPage
-                    isPageSliderVisible = nextState.isToggledOn
-                    showBars = true
-                }
-                val showPdfToc = {
-                    coroutineScope.launch { drawerState.open() }
-                    Unit
-                }
-                val showPdfSearch = {
-                    executeWithOcrCheck {
-                        searchState.isSearchActive = true
-                        showBars = true
-                    }
-                }
-                val togglePdfHighlights = {
-                    if (!showAllTextHighlights && !isHighlightingLoading) {
-                        showAllTextHighlights = true
-                        isHighlightingLoading = true
-                    } else if (showAllTextHighlights) {
-                        showAllTextHighlights = false
-                        isHighlightingLoading = false
-                    }
-                }
-                val showPdfAiHub = { showAiHubSheet = true }
-                val togglePdfEditMode = {
-                    val newEditMode = !isEditMode
-                    val currentActivePage = richTextController?.activePageIndex ?: -1
-                    Timber.tag("RichTextMigration").i("Edit Toggle: $isEditMode -> $newEditMode (ActivePage: $currentActivePage)")
-
-                    if (!newEditMode && richTextController != null) {
-                        coroutineScope.launch {
-                            richTextController.saveImmediate()
-                            withContext(Dispatchers.Main) {
-                                keyboardController?.hide()
-                            }
-                        }
-                    }
-
-                    isEditMode = newEditMode
-                    if (!newEditMode) showBars = true
-                }
-                val togglePdfTts = {
-                    if (isTtsSessionActive) {
-                        Timber.d("TTS button clicked: Stopping TTS")
-                        ttsController.stop()
-                        isAutoPagingForTts = false
-                    } else {
-                        startTtsWithPermissionCheck(null, null)
-                    }
-                }
-
-                // Custom Top Bar
-                PdfTopBar(
-                    modifier = Modifier.align(Alignment.TopCenter),
-                    showStandardBars = showStandardBars,
-                    systemUiMode = systemUiMode,
-                    statusBarHeightDp = statusBarHeightDp,
-                    searchState = searchState,
-                    focusRequester = focusRequester,
-                    onCloseSearch = {
-                        searchState.isSearchActive = false
-                        searchState.onQueryChange("")
-                        keyboardController?.hide()
-                        focusManager.clearFocus()
-                    },
-                    isLoadingDocument = isLoadingDocument,
-                    errorMessage = errorMessage,
-                    currentPageForDisplay = if (displayMode == DisplayMode.PAGINATION) {
-                        currentPaginationDisplayPage()
-                    } else {
-                        verticalReaderState.currentPage
-                    },
-                    currentPageLabel = pdfPageRangeLabel(
-                        pageIndex = currentPage,
-                        pageCount = totalDisplayPages,
-                        displayMode = displayMode,
-                        settings = pdfSpreadSettings
-                    ),
-                    totalPages = totalPages,
-                    pagerStatePageCount = pagerState.pageCount,
-                    hiddenTools = hiddenTools,
-                    toolOrder = toolOrder,
-                    bottomTools = bottomTools,
-                    isScrollLocked = isScrollLocked,
-                    isEditMode = isEditMode,
-                    displayMode = displayMode,
-                    isRightToLeftPagination = rightToLeftPagination,
-                    isKeepScreenOn = isKeepScreenOn,
-                    isTtsSessionActive = isTtsSessionActive,
-                    isSliderActive = isPageSliderVisible,
-                    isBookmarked = isBookmarked,
-                    canDeletePage = virtualPages.getOrNull(currentPage) is VirtualPage.BlankPage,
-                    isReflowingThisBook = isReflowingThisBook,
-                    hasReflowFile = hasReflowFile,
-                    isPdfDocumentLoaded = pdfDocument != null,
-                    canPrintDocument = !isPrintBlockedForPasswordProtectedPdf,
-                    isTabsEnabled = isPdfTabStripVisible,
-                    openTabs = openTabs,
-                    activeTabBookId = activeTabBookId,
-                    usePdfFileNameAsDisplayName = uiState.usePdfFileNameAsDisplayName,
-                    effectiveFileType = effectiveFileType,
-                    onNavigateBack = { saveStateAndExit() },
-                    onShowThemePanel = showPdfThemePanel,
-                    onShowBrightnessControl = { showBrightnessSheet = true },
-                    onToggleScrollLock = togglePdfScrollLock,
-                    onShowDictionarySettings = showPdfDictionarySettings,
-                    onShowPenPlayground = { showPenPlayground = true },
-                    onImportSvg = {
-                        val page = if (displayMode == DisplayMode.PAGINATION) currentPaginationDisplayPage() else verticalReaderState.currentPage
-
-                        coroutineScope.launch(Dispatchers.IO) {
-                            val svgAnnotations = SvgToAnnotationConverter.importSvgFromAssets(
-                                context = context,
-                                fileName = "demo_art.svg",
-                                pageIndex = page
-                            )
-
-                            withContext(Dispatchers.Main) {
-                                if (svgAnnotations.isNotEmpty()) {
-                                    val existing = allAnnotations[page] ?: emptyList()
-                                    allAnnotations = allAnnotations + (page to (existing + svgAnnotations))
-
-                                    svgAnnotations.forEach { annot ->
-                                        undoStack.add(HistoryAction.Add(page, annot))
-                                    }
-                                    redoStack.clear()
-
-                                    showBanner(context.getString(R.string.msg_imported_svg_strokes))
-                                } else {
-                                    showBanner(
-                                        context.getString(R.string.error_import_svg_failed),
-                                        isError = true
-                                    )
-                                }
-                            }
-                        }
-                    },
-                    onShowCustomizeTools = { showCustomizeToolsSheet = true },
-                    onShowOcrLanguage = {
-                        if (!isOss) {
-                            hasSelectedOcrLanguage = true
-                            showOcrLanguageDialog = true
-                        }
-                    },
-                    onShowVisualOptions = { showVisualOptionsSheet = true },
-                    onShowScreenOrientation = { showScreenOrientationSheet = true },
-                    isTtsPlayingOrLoading = isPdfTtsPlayingOrLoading,
-                    showAllTextHighlights = showAllTextHighlights,
-                    isHighlightingLoading = isHighlightingLoading,
-                    onShowSlider = showPdfSlider,
-                    onShowToc = showPdfToc,
-                    onSearchClick = showPdfSearch,
-                    onToggleHighlights = togglePdfHighlights,
-                    onShowAiHub = showPdfAiHub,
-                    onToggleEditMode = togglePdfEditMode,
-                    onToggleTts = togglePdfTts,
-                    tapToNavigateEnabled = tapToNavigateEnabled,
-                    onToggleTapToNavigate = {
-                        tapToNavigateEnabled = !tapToNavigateEnabled
-                        saveTapToNavigateSetting(context, tapToNavigateEnabled)
-                    },
-                    onChangeDisplayMode = { displayMode = it },
-                    onSetRightToLeftPagination = { enabled ->
-                        rightToLeftPagination = enabled
-                        savePdfRightToLeftPagination(context, enabled)
-                    },
-                    onToggleKeepScreenOn = {
-                        isKeepScreenOn = !isKeepScreenOn
-                        saveKeepScreenOn(context, isKeepScreenOn)
-                    },
-                    onStartAutoScroll = {
-                        isAutoScrollModeActive = true
-                        isAutoScrollPlaying = true
-                        showBars = !isMusicianMode
-                    },
-                    onShowTtsSettings = { showTtsSettingsSheet = true },
-                    onShowTtsReplacements = { showTtsReplacementsSheet = true },
-                    onToggleBookmark = onBookmarkClick,
-                    onShowFileInfo = { showFileInfoDialog = true },
-                    onInsertPage = onInsertPage,
-                    onDeletePage = onDeletePage,
-                    onReflowAction = {
-                        coroutineScope.launch {
-                            if (richTextController != null) {
-                                withContext(NonCancellable) { richTextController.saveImmediate() }
-                            }
-                            saveAllData(true).join()
-
-                            val resolvedPage = if (!initialScrollDone && currentPage == 0) {
-                                pendingRestorePage ?: 0
-                            } else {
-                                currentPage
-                            }
-
-                            if (hasReflowFile) {
-                                val item = uiState.allRecentFiles.find { it.bookId == reflowBookId }
-                                if (item != null) {
-                                    viewModel.switchToFileSeamlessly(item, resolvedPage)
-                                } else {
-                                    viewModel.generateAndImportReflowFile(bookId, effectivePdfUri, originalFileName, resolvedPage)
-                                }
-                            } else {
-                                viewModel.generateAndImportReflowFile(bookId, effectivePdfUri, originalFileName, resolvedPage)
-                            }
-                        }
-                    },
-                    onShare = requestShare,
-                    onSaveCopy = requestSaveCopy,
-                    onPrint = onPrintDocument,
-                    onTabClick = { tabBookId ->
-                        coroutineScope.launch {
-                            currentBookId?.let { tabStateMap[it] = currentPage }
-                            saveAllData(true).join()
-                            viewModel.switchTab(tabBookId)
-                        }
-                    },
-                    onTabClose = { tabBookId ->
-                        coroutineScope.launch {
-                            val isSelected = tabBookId == activeTabBookId
-                            if (isSelected) saveAllData(true).join()
-                            viewModel.closeTab(tabBookId)
-                            if (isSelected && openTabs.size == 1) {
-                                onNavigateBack()
-                            }
-                        }
-                    },
-                    onNewTabClick = { showNewTabSheet = true },
-                    onGenerateDemoAnnotations = {
-                        val page = if (displayMode == DisplayMode.PAGINATION) currentPaginationDisplayPage() else verticalReaderState.currentPage
-                        val demoAnnots = DemoAnnotationGenerator.generateDemoAnnotations(page)
-
-                        if (demoAnnots.isNotEmpty()) {
-                            Timber.d("Debug: Generating ${demoAnnots.size} demo annotations for page $page")
-                            val existing = allAnnotations[page] ?: emptyList()
-                            allAnnotations = allAnnotations + (page to (existing + demoAnnots))
-
-                            demoAnnots.forEach { annot ->
-                                undoStack.add(HistoryAction.Add(page, annot))
-                            }
-                            redoStack.clear()
-                        }
-                    }
-                )
-
-                ReflowProgressOverlay(
-                    modifier = Modifier
-                        .align(Alignment.TopCenter)
-                        .padding(top = topOverlayInset)
-                        .fillMaxWidth()
-                        .padding(horizontal = 8.dp),
-                    showStandardBars = showStandardBars,
-                    isReflowingThisBook = isReflowingThisBook,
-                    reflowProgressValue = reflowProgressValue
-                )
-
-                // Search Results Panel
-                AnimatedVisibility(
-                    visible = searchState.isSearchActive && searchState.showSearchResultsPanel,
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(top = topOverlayInset)
-                            .background(MaterialTheme.colorScheme.surface)
-                    ) {
-                        if (isBackgroundIndexing) {
-                            Surface(
-                                color = MaterialTheme.colorScheme.secondaryContainer,
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(
-                                        horizontal = 16.dp, vertical = 8.dp
-                                    ), verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(12.dp),
-                                        strokeWidth = 2.dp,
-                                        color = MaterialTheme.colorScheme.onSecondaryContainer
-                                    )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text(
-                                        text = stringResource(
-                                            R.string.msg_indexing_pages_progress,
-                                            (backgroundIndexingProgress * 100f).roundToInt()
-                                                .coerceIn(0, 100)
-                                        ),
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSecondaryContainer
-                                    )
-                                }
-                            }
-                        }
-
-                        if (!(searchState.isSearchInProgress && isOcrScanning)) {
-
-                            // NEW PANEL LOGIC
-                            val resultState = smartSearchResult
-                            if (resultState is SmartSearchResult.Exact) {
-                                PdfSearchResultsList(
-                                    results = resultState.matches, onResultClick = { result ->
-                                        navigateToPdfSearchResult(result)
-                                        searchState.showSearchResultsPanel = false
-                                        keyboardController?.hide()
-                                    }, modifier = Modifier.fillMaxSize()
-                                )
-                            } else if (resultState is SmartSearchResult.Paged) {
-                                val lazyPagingItems =
-                                    resultState.pagingData.collectAsLazyPagingItems()
-                                PdfSearchResultsPanel(
-                                    lazyResults = lazyPagingItems,
-                                    totalPageCount = resultState.totalPageCount,
-                                    onResultClick = { result ->
-                                        navigateToPdfSearchResult(result)
-                                        searchState.showSearchResultsPanel = false
-                                        keyboardController?.hide()
-                                    },
-                                    modifier = Modifier.fillMaxSize()
-                                )
-                            }
-                        }
-                    }
-                }
-
-                // Search Navigation Controls
-                AnimatedVisibility(
-                    visible = searchState.isSearchActive && !searchState.showSearchResultsPanel && smartSearchResult != null,
-                    enter = slideInVertically(animationSpec = tween(200)) { it } + fadeIn(animationSpec = tween(200)),
-                    exit = slideOutVertically(animationSpec = tween(200)) { it } + fadeOut(animationSpec = tween(200)),
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(bottom = 24.dp + if (systemUiMode == SystemUiMode.DEFAULT || (systemUiMode == SystemUiMode.SYNC && showStandardBars)) with(density) { navBarHeight.toDp() } else 0.dp)
-                ) {
-                    val currentResult = currentPdfSearchResult
-                    val searchData = smartSearchResult
-
-                    val (displayText, isPrevEnabled, isNextEnabled) = remember(
-                        currentResult,
-                        searchData
-                    ) {
-                        when (searchData) {
-                            is SmartSearchResult.Exact -> {
-                                val index = if (currentResult != null) searchData.matches.indexOf(
-                                    currentResult
-                                )
-                                else -1
-                                val text =
-                                    if (index >= 0) context.getString(
-                                        R.string.pdf_search_result_position,
-                                        index + 1,
-                                        searchData.matches.size
-                                    )
-                                    else context.resources.getQuantityString(
-                                        R.plurals.search_results_count,
-                                        searchData.matches.size,
-                                        searchData.matches.size
-                                    )
-                                Triple(text, index > 0, index < searchData.matches.size - 1)
-                            }
-
-                            is SmartSearchResult.Paged -> {
-                                val page = currentResult?.locationInSource
-                                val text = if (page != null) context.getString(R.string.pdf_page_short, page + 1)
-                                else context.getString(R.string.msg_search_pages_count, searchData.totalPageCount)
-                                Triple(text, true, true)
-                            }
-
-                            else -> Triple("", false, false)
-                        }
-                    }
-
-                    SearchNavigationPill(
-                        text = displayText,
-                        mode = searchHighlightMode,
-                        onToggleMode = {
-                            searchHighlightMode =
-                                if (searchHighlightMode == SearchHighlightMode.ALL) SearchHighlightMode.FOCUSED
-                                else SearchHighlightMode.ALL
-                        },
-                        onPrev = {
-                            coroutineScope.launch {
-                                when (searchData) {
-                                    is SmartSearchResult.Exact -> {
-                                        val index =
-                                            if (currentResult != null) searchData.matches.indexOf(
-                                                currentResult
-                                            )
-                                            else -1
-                                        if (index > 0) {
-                                            navigateToPdfSearchResult(
-                                                searchData.matches[index - 1]
-                                            )
-                                        }
-                                    }
-
-                                    is SmartSearchResult.Paged -> {
-                                        val prev = pdfTextRepository.getPrevResult(
-                                            currentBookId!!,
-                                            searchState.searchQuery,
-                                            currentPdfSearchResult
-                                        )
-                                        if (prev != null) navigateToPdfSearchResult(prev)
-                                    }
-
-                                    else -> {}
-                                }
-                            }
-                        },
-                        onNext = {
-                            coroutineScope.launch {
-                                when (searchData) {
-                                    is SmartSearchResult.Exact -> {
-                                        val index =
-                                            if (currentResult != null) searchData.matches.indexOf(
-                                                currentResult
-                                            )
-                                            else -1
-                                        if (index >= 0 && index < searchData.matches.size - 1) {
-                                            navigateToPdfSearchResult(
-                                                searchData.matches[index + 1]
-                                            )
-                                        } else if (index == -1 && searchData.matches.isNotEmpty()) {
-                                            navigateToPdfSearchResult(searchData.matches[0])
-                                        }
-                                    }
-
-                                    is SmartSearchResult.Paged -> {
-                                        val next = pdfTextRepository.getNextResult(
-                                            currentBookId!!,
-                                            searchState.searchQuery,
-                                            currentPdfSearchResult
-                                        )
-                                        if (next != null) navigateToPdfSearchResult(next)
-                                    }
-
-                                    else -> {}
-                                }
-                            }
-                        },
-                        onTextClick = { searchState.showSearchResultsPanel = true },
-                        isPrevEnabled = isPrevEnabled,
-                        isNextEnabled = isNextEnabled
-                    )
-                }
-
-                PdfJumpHistoryBar(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(bottom = pdfBottomChromePadding),
-                    showStandardBars = showStandardBars,
-                    searchStateActive = searchState.isSearchActive,
-                    backPage = jumpBackPage,
-                    forwardPage = jumpForwardPage,
-                    onBack = {
-                        jumpBackPage?.let { target ->
-                            jumpHistory = jumpHistory.stepBack()
-                            navigateToJumpHistoryPage(target)
-                        }
-                    },
-                    onForward = {
-                        jumpForwardPage?.let { target ->
-                            jumpHistory = jumpHistory.stepForward()
-                            navigateToJumpHistoryPage(target)
-                        }
-                    },
-                    onClear = { clearJumpHistory() }
-                )
-
-                // Bottom Bar
-                PdfBottomBar(
-                    modifier = Modifier.align(Alignment.BottomCenter),
-                    showStandardBars = showStandardBars,
-                    searchStateActive = searchState.isSearchActive,
-                    systemUiMode = systemUiMode,
-                    navBarHeightDp = with(density) { navBarHeight.toDp() },
-                    hiddenTools = hiddenTools,
-                    toolOrder = toolOrder,
-                    bottomTools = bottomTools,
-                    isTtsPlayingOrLoading = isPdfTtsPlayingOrLoading,
-                    showAllTextHighlights = showAllTextHighlights,
-                    isHighlightingLoading = isHighlightingLoading,
-                    isEditMode = isEditMode,
-                    isScrollLocked = isScrollLocked,
-                    isTtsSessionActive = isTtsSessionActive,
-                    isSliderActive = isPageSliderVisible,
-                    ttsErrorMessage = null,
-                    onShowThemePanel = showPdfThemePanel,
-                    onShowBrightnessControl = { showBrightnessSheet = true },
-                    onToggleScrollLock = togglePdfScrollLock,
-                    onShowDictionarySettings = showPdfDictionarySettings,
-                    onShowSlider = showPdfSlider,
-                    onShowToc = showPdfToc,
-                    onSearchClick = showPdfSearch,
-                    onToggleHighlights = togglePdfHighlights,
-                    onShowAiHub = showPdfAiHub,
-                    onToggleEditMode = togglePdfEditMode,
-                    onToggleTts = togglePdfTts,
-                    onShowScreenOrientation = { showScreenOrientationSheet = true },
-                    showBubbleZoom = isComicFile,
-                    isBubbleZoomModeActive = isBubbleZoomModeActive,
-                    onToggleBubbleZoom = {
-                        if (isOss) {
-                            showBanner(
-                                "Bubble Zoom is only available in Playstore version of Episteme",
-                                isError = true
-                            )
-                        } else if (!isBubbleZoomModeActive && !viewModel.isSpeechBubbleModelAvailable(context)) {
-                            showBubbleZoomDownloadDialog = true
-                        } else {
-                            isBubbleZoomModeActive = !isBubbleZoomModeActive
-                        }
-                    }
-                )
-
-                if (isEditMode) {
-                    val density = LocalDensity.current
-
-                    val popupPlacementConfig =
-                        remember(dockLocation, dockOffset, boxMaxHeightFloat, dockHeightPx) {
-                            val margin = 16.dp
-                            val dockTopY = when (dockLocation) {
-                                DockLocation.TOP -> 0f
-                                DockLocation.BOTTOM -> boxMaxHeightFloat - dockHeightPx
-                                DockLocation.FLOATING -> dockOffset.y
-                            }
-
-                            val dockBottomY = dockTopY + dockHeightPx
-                            val dockCenterY = dockTopY + (dockHeightPx / 2f)
-                            val isDockInBottomHalf = dockCenterY > (boxMaxHeightFloat / 2f)
-
-                            if (isDockInBottomHalf) {
-                                val distFromBottom = boxMaxHeightFloat - dockTopY
-                                val paddingBottom = with(density) { distFromBottom.toDp() } + margin
-                                Triple(Alignment.BottomCenter, 0.dp, paddingBottom.coerceAtLeast(0.dp))
-                            } else {
-                                val paddingTop = with(density) { dockBottomY.toDp() } + margin
-                                Triple(Alignment.TopCenter, paddingTop.coerceAtLeast(0.dp), 0.dp)
-                            }
-                        }
-
-                    val (popupAlign, popupTopPad, popupBottomPad) = popupPlacementConfig
-
-                    Box(modifier = Modifier.fillMaxSize()) {
-                        AnimatedVisibility(
-                            visible = showToolSettings,
-                            enter = fadeIn(),
-                            exit = fadeOut(),
-                            modifier = Modifier
-                                .align(popupAlign)
-                                .padding(top = popupTopPad, bottom = popupBottomPad)
-                                .testTag("ToolSettingsPopup")
-                        ) {
-                            val currentPalette =
-                                if (isCurrentToolHighlighter) highlighterPalette else penPalette
-
-                            ToolSettingsPopup(
-                                selectedTool = selectedTool,
-                                activeToolThickness = activeToolThickness,
-                                fountainPenColor = fountainPenColor,
-                                markerColor = markerColor,
-                                pencilColor = pencilColor,
-                                highlighterColor = highlighterColor,
-                                highlighterRoundColor = highlighterRoundColor,
-                                activePalette = currentPalette,
-                                onToolTypeChanged = { newType ->
-                                    annotationSettingsRepo.updateSelectedTool(newType)
-                                },
-                                onColorChanged = { color ->
-                                    annotationSettingsRepo.updateToolColor(selectedTool, color)
-                                },
-                                onThicknessChanged = { thickness ->
-                                    annotationSettingsRepo.updateToolThickness(
-                                        selectedTool, thickness
-                                    )
-                                },
-                                onPaletteChange = { newPalette ->
-                                    if (isCurrentToolHighlighter) {
-                                        annotationSettingsRepo.updateHighlighterPalette(
-                                            newPalette
-                                        )
-                                    } else {
-                                        annotationSettingsRepo.updatePenPalette(newPalette)
-                                    }
-                                },
-                                isHighlighterSnapEnabled = isHighlighterSnapEnabled,
-                                onSnapToggle = { annotationSettingsRepo.updateHighlighterSnap(it) }
-                            )
-                        }
-
-                        snapPreviewLocation?.let { location ->
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(dockHeight)
-                                    .align(
-                                        if (location == DockLocation.TOP) Alignment.TopCenter
-                                        else Alignment.BottomCenter
-                                    )
-                                    .background(Color.Black)
-                            )
-                        }
-
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .then(
-                                    when {
-                                        isDockDragging -> Modifier
-                                        dockLocation == DockLocation.TOP -> Modifier
-                                        dockLocation == DockLocation.BOTTOM -> Modifier
-                                        else -> Modifier
-                                    }
-                                )
-                        ) {
-                            val dragModifier =
-                                if (isDockDragging || dockLocation == DockLocation.FLOATING) {
-                                    Modifier.offset {
-                                        IntOffset(
-                                            dockOffset.x.roundToInt(), dockOffset.y.roundToInt()
-                                        )
-                                    }
-                                } else {
-                                    Modifier
-                                }
-
-                            val alignModifier = when {
-                                isDockDragging || dockLocation == DockLocation.FLOATING -> Modifier
-                                dockLocation == DockLocation.TOP -> Modifier.align(Alignment.TopCenter)
-                                dockLocation == DockLocation.BOTTOM -> Modifier.align(Alignment.BottomCenter)
-                                else -> Modifier
-                            }
-
-                            val widthModifier =
-                                if ((dockLocation == DockLocation.TOP || dockLocation == DockLocation.BOTTOM) && !isDockDragging) {
-                                    Modifier.fillMaxWidth()
-                                } else {
-                                    Modifier.padding(
-                                        horizontal = 16.dp
-                                    )
-                                }
-
-                            val effectiveNavBarForDock = if (systemUiMode == SystemUiMode.DEFAULT) with(density) { navBarHeight.toDp() } else 0.dp
-                            val paddingModifier =
-                                if ((dockLocation == DockLocation.TOP || dockLocation == DockLocation.BOTTOM) && !isDockDragging) {
-                                    Modifier.padding(
-                                        bottom = if (dockLocation == DockLocation.BOTTOM) effectiveNavBarForDock else 0.dp,
-                                        top = if (dockLocation == DockLocation.TOP && systemUiMode == SystemUiMode.DEFAULT) statusBarHeightDp else 0.dp
-                                    )
-                                } else {
-                                    Modifier.padding(vertical = 16.dp)
-                                }
-
-                            val isSticky =
-                                (dockLocation == DockLocation.TOP || dockLocation == DockLocation.BOTTOM) && !isDockDragging
-
-                            Box(
-                                modifier = Modifier
-                                    .then(alignModifier)
-                                    .then(dragModifier)
-                                    .pointerInput(dockLocation, isDockMinimized) {
-                                        val onDragStart: (Offset) -> Unit = {
-                                            isDockDragging = true
-
-                                            val startX = (boxMaxWidthFloat / 2) - (size.width / 2)
-
-                                            if (dockLocation == DockLocation.BOTTOM) {
-                                                dockOffset = Offset(
-                                                    startX, boxMaxHeightFloat - dockHeightPx - 50f
-                                                )
-                                            } else if (dockLocation == DockLocation.TOP) {
-                                                dockOffset = Offset(startX, 50f)
-                                            }
-                                        }
-
-                                        val onDrag: (
-                                            PointerInputChange, Offset
-                                        ) -> Unit = { change, dragAmount ->
-                                            change.consume()
-                                            dockOffset += dragAmount
-
-                                            val topSnapThreshold = 150f
-                                            val bottomSnapThreshold = boxMaxHeightFloat - 250f
-
-                                            snapPreviewLocation = when {
-                                                dockOffset.y < topSnapThreshold -> DockLocation.TOP
-                                                dockOffset.y > bottomSnapThreshold -> DockLocation.BOTTOM
-                                                else -> null
-                                            }
-                                        }
-
-                                        val onDragEnd: () -> Unit = {
-                                            isDockDragging = false
-                                            if (snapPreviewLocation != null) {
-                                                dockLocation = snapPreviewLocation!!
-                                                snapPreviewLocation = null
-                                            } else {
-                                                dockLocation = DockLocation.FLOATING
-                                                val safeX = dockOffset.x.coerceIn(
-                                                    0f, boxMaxWidthFloat - 100f
-                                                )
-                                                val safeY = dockOffset.y.coerceIn(
-                                                    0f, boxMaxHeightFloat - dockHeightPx
-                                                )
-                                                dockOffset = Offset(safeX, safeY)
-                                            }
-                                            saveDockState(
-                                                context, dockLocation, dockOffset
-                                            )
-                                        }
-
-                                        val onDragCancel: () -> Unit = {
-                                            isDockDragging = false
-                                            snapPreviewLocation = null
-                                        }
-
-                                        if (dockLocation == DockLocation.FLOATING) {
-                                            detectDragGestures(
-                                                onDragStart = onDragStart,
-                                                onDrag = onDrag,
-                                                onDragEnd = onDragEnd,
-                                                onDragCancel = onDragCancel
-                                            )
-                                        } else {
-                                            detectDragGesturesAfterLongPress(
-                                                onDragStart = onDragStart,
-                                                onDrag = onDrag,
-                                                onDragEnd = onDragEnd,
-                                                onDragCancel = onDragCancel
-                                            )
-                                        }
-                                    }) {
-                                AnnotationDock(
-                                    selectedTool = selectedTool,
-                                    activePenColor = dockPenColor,
-                                    activeHighlighterColor = dockHighlighterColor,
-                                    lastPenTool = lastPenTool,
-                                    lastHighlighterTool = lastHighlighterTool,
-                                    isStylusOnlyMode = isStylusOnlyMode,
-                                    onToggleStylusOnlyMode = {
-                                        isStylusOnlyMode = !isStylusOnlyMode
-                                        saveStylusOnlyMode(context, isStylusOnlyMode)
-                                    },
-                                    onToolClick = { clickedTool ->
-                                        if (clickedTool == InkType.TEXT) {
-                                            annotationSettingsRepo.updateSelectedTool(
-                                                clickedTool
-                                            )
-                                            showToolSettings = false
-                                        } else if (selectedTool == clickedTool) {
-                                            if (clickedTool == InkType.PEN || clickedTool == InkType.FOUNTAIN_PEN || clickedTool == InkType.PENCIL || clickedTool == InkType.HIGHLIGHTER || clickedTool == InkType.HIGHLIGHTER_ROUND || clickedTool == InkType.ERASER) {
-                                                showToolSettings = !showToolSettings
-                                            }
-                                        } else {
-                                            if (showToolSettings) {
-                                                coroutineScope.launch {
-                                                    showToolSettings = false
-                                                    delay(250)
-                                                    annotationSettingsRepo.updateSelectedTool(
-                                                        clickedTool
-                                                    )
-                                                    showToolSettings = true
-                                                }
-                                            } else {
-                                                annotationSettingsRepo.updateSelectedTool(
-                                                    clickedTool
-                                                )
-                                            }
-                                        }
-                                    },
-                                    onUndo = {
-                                        if (undoStack.isNotEmpty()) {
-                                            val action = undoStack.removeAt(undoStack.lastIndex)
-                                            when (action) {
-                                                is HistoryAction.Add -> {
-                                                    val pageIndex = action.pageIndex
-                                                    val annotation = action.annotation
-                                                    val pageAnnotations =
-                                                        allAnnotations[pageIndex] ?: emptyList()
-
-                                                    val newForPage = pageAnnotations - annotation
-                                                    allAnnotations =
-                                                        allAnnotations + (pageIndex to newForPage)
-
-                                                    redoStack.add(action)
-                                                }
-
-                                                is HistoryAction.Remove -> {
-                                                    var currentAllAnnotations = allAnnotations
-                                                    action.items.forEach { (pageIndex, annotations) ->
-                                                        val pageList =
-                                                            currentAllAnnotations[pageIndex]
-                                                                ?: emptyList()
-                                                        currentAllAnnotations =
-                                                            currentAllAnnotations + (pageIndex to (pageList + annotations))
-                                                    }
-                                                    allAnnotations = currentAllAnnotations
-
-                                                    redoStack.add(action)
-                                                }
-                                            }
-                                        }
-                                    },
-                                    onRedo = {
-                                        if (redoStack.isNotEmpty()) {
-                                            val action = redoStack.removeAt(redoStack.lastIndex)
-                                            when (action) {
-                                                is HistoryAction.Add -> {
-                                                    val pageIndex = action.pageIndex
-                                                    val annotation = action.annotation
-                                                    val pageAnnotations =
-                                                        allAnnotations[pageIndex] ?: emptyList()
-
-                                                    val newForPage = pageAnnotations + annotation
-                                                    allAnnotations =
-                                                        allAnnotations + (pageIndex to newForPage)
-
-                                                    undoStack.add(action)
-                                                }
-
-                                                is HistoryAction.Remove -> {
-                                                    var currentAllAnnotations = allAnnotations
-                                                    action.items.forEach { (pageIndex, annotations) ->
-                                                        val pageList =
-                                                            currentAllAnnotations[pageIndex]
-                                                                ?: emptyList()
-                                                        val newForPage =
-                                                            pageList - annotations.toSet()
-                                                        currentAllAnnotations =
-                                                            currentAllAnnotations + (pageIndex to newForPage)
-                                                    }
-                                                    allAnnotations = currentAllAnnotations
-
-                                                    undoStack.add(action)
-                                                }
-                                            }
-                                        }
-                                    },
-                                    onClose = {
-                                        richTextController?.clearSelection()
-                                        isEditMode = false
-                                        isDockMinimized = false
-                                        showBars = true
-                                    },
-                                    canUndo = undoStack.isNotEmpty(),
-                                    canRedo = redoStack.isNotEmpty(),
-                                    isSticky = isSticky,
-                                    modifier = Modifier
-                                        .then(widthModifier)
-                                        .then(paddingModifier),
-                                    isMinimized = isDockMinimized,
-                                    onToggleMinimize = { isDockMinimized = !isDockMinimized })
-                            }
-                        }
-                    }
-                }
-
-                val ttsReadingPage = ttsDisplayPageIndex
-
-                val isTtsPageVisible by remember(
-                    ttsReadingPage,
-                    displayMode,
-                    verticalReaderState.firstVisiblePage,
-                    verticalReaderState.lastVisiblePage
-                ) {
-                    derivedStateOf {
-                        if (displayMode != DisplayMode.VERTICAL_SCROLL || ttsReadingPage == null) {
-                            true
-                        } else {
-                            ttsReadingPage in verticalReaderState.firstVisiblePage..verticalReaderState.lastVisiblePage
-                        }
-                    }
-                }
-
-                val showScrollToTtsFab by remember(
-                    displayMode,
-                    isTtsSessionActive,
-                    isTtsPageVisible
-                ) {
-                    derivedStateOf {
-                        displayMode == DisplayMode.VERTICAL_SCROLL && isTtsSessionActive && !isTtsPageVisible
-                    }
-                }
-
-                AnimatedVisibility(
-                    visible = showScrollToTtsFab,
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(bottom = if (showBars) 56.dp + 16.dp else 16.dp),
-                    enter = fadeIn(),
-                    exit = fadeOut()
-                ) {
-                    val isTtsPageBelow = (ttsReadingPage ?: 0) > verticalReaderState.currentPage
-                    FloatingActionButton(
-                        onClick = {
-                            ttsReadingPage?.let {
-                                coroutineScope.launch { verticalReaderState.scrollToPage(it) }
-                            }
-                        },
-                        shape = CircleShape,
-                        containerColor = Color.Black.copy(alpha = 0.7f),
-                        contentColor = Color.White,
-                        elevation = FloatingActionButtonDefaults.elevation(0.dp, 0.dp, 0.dp, 0.dp)
-                    ) {
-                        Icon(
-                            imageVector = if (isTtsPageBelow) Icons.Default.ArrowDownward
-                            else Icons.Default.ArrowUpward,
-                            contentDescription = stringResource(R.string.content_desc_scroll_to_reading_page)
-                        )
-                    }
-                }
-
-                AnimatedVisibility(
-                    visible = showZoomIndicator,
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(top = 88.dp, end = 16.dp),
-                    enter = fadeIn(),
-                    exit = fadeOut()
-                ) {
-                    ZoomPercentageIndicator(
-                        percentage = zoomIndicatorPercentage,
-                        onResetZoomClick = {
-                            resetZoomTrigger = System.currentTimeMillis()
-                        }
-                    )
-                }
-
-                val isImeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
-                var isTextAnnotationPopupVisible by remember { mutableStateOf(false) }
-                val showTextDock = isEditMode && selectedTool == InkType.TEXT && (isImeVisible || isTextAnnotationPopupVisible || selectedTextBoxId != null)
-
-                if (showTextDock && richTextController != null) {
-
-                    val bottomPadding = if (dockLocation == DockLocation.BOTTOM && !isDockMinimized) {
-                        80.dp
-                    } else {
-                        16.dp
-                    }
-
-                    val currentDensity = LocalDensity.current
-                    val imeHeightPx = WindowInsets.ime.getBottom(currentDensity)
-                    val isImeVisible = imeHeightPx > 0
-                    val windowHeightPx = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                        window?.windowManager?.currentWindowMetrics?.bounds?.height()
-                    } else {
-                        null
-                    } ?: view.rootView.height
-                    val applyImePadding = shouldApplyPdfTextDockImePadding(
-                        layoutHeightPx = constraints.maxHeight,
-                        windowHeightPx = windowHeightPx,
-                        imeHeightPx = imeHeightPx
-                    )
-
-                    val extraPadding = if (isImeVisible) 0.dp else bottomPadding
-
-                    val effectiveStyle by remember(selectedTextBoxId, textBoxes, richTextController.currentStyle, displayPageRatios, boxMaxWidthFloat) {
-                        derivedStateOf {
-                            if (selectedTextBoxId != null) {
-                                val box = textBoxes.find { it.id == selectedTextBoxId }
-                                if (box != null) {
-                                    val pageRatio = displayPageRatios.getOrElse(box.pageIndex) { 1f }
-                                    val estimatedPageHeightPx = if (pageRatio > 0) boxMaxWidthFloat / pageRatio else boxMaxWidthFloat
-
-                                    val fontSizePx = box.fontSize * estimatedPageHeightPx
-                                    val fontSizeSp = with(currentDensity) { fontSizePx.toSp() }
-
-                                    SpanStyle(
-                                        color = box.color,
-                                        background = box.backgroundColor,
-                                        fontSize = fontSizeSp,
-                                        fontWeight = if (box.isBold) FontWeight.Bold else FontWeight.Normal,
-                                        fontStyle = if (box.isItalic) FontStyle.Italic else FontStyle.Normal,
-                                        textDecoration = run {
-                                            val decs = mutableListOf<TextDecoration>()
-                                            if (box.isUnderline) decs.add(TextDecoration.Underline)
-                                            if (box.isStrikeThrough) decs.add(TextDecoration.LineThrough)
-                                            if (decs.isEmpty()) TextDecoration.None else TextDecoration.combine(decs)
-                                        }
-                                    )
-                                } else richTextController.currentStyle
-                            } else {
-                                richTextController.currentStyle
-                            }
-                        }
-                    }
-
-                    Box(modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
-                        .then(
-                            when {
-                                applyImePadding -> Modifier.windowInsetsPadding(
-                                    WindowInsets.ime.union(WindowInsets.navigationBars)
-                                )
-                                !isImeVisible -> Modifier.windowInsetsPadding(WindowInsets.navigationBars)
-                                else -> Modifier
-                            }
-                        )
-                        .padding(bottom = extraPadding)
-                    ) {
-                        TextAnnotationDock(
-                            currentStyle = effectiveStyle,
-                            textColorPalette = penPalette,
-                            onTextColorPaletteChange = { newPalette ->
-                                annotationSettingsRepo.updatePenPalette(newPalette)
-                            },
-                            backgroundColorPalette = highlighterPalette,
-                            onBackgroundColorPaletteChange = { newPalette ->
-                                annotationSettingsRepo.updateHighlighterPalette(newPalette)
-                            },
-                            onUpdateStyle = { newStyle ->
-                                val newConfig = TextStyleConfig(
-                                    colorArgb = newStyle.color.toArgb(),
-                                    backgroundColorArgb = newStyle.background.toArgb(),
-                                    fontSize = newStyle.fontSize.value,
-                                    isBold = newStyle.fontWeight == FontWeight.Bold,
-                                    isItalic = newStyle.fontStyle == FontStyle.Italic,
-                                    isUnderline = newStyle.textDecoration?.contains(TextDecoration.Underline) == true,
-                                    isStrikeThrough = newStyle.textDecoration?.contains(TextDecoration.LineThrough) == true,
-                                    fontPath = toolSettings.textStyle.fontPath,
-                                    fontName = toolSettings.textStyle.fontName
-                                )
-                                annotationSettingsRepo.updateTextStyle(newConfig)
-
-                                if (selectedTextBoxId != null) {
-                                    val idx = textBoxes.indexOfFirst { it.id == selectedTextBoxId }
-                                    if (idx != -1) {
-                                        val old = textBoxes[idx]
-                                        val pageRatio = displayPageRatios.getOrElse(old.pageIndex) { 1f }
-                                        val estimatedPageHeightPx = if (pageRatio > 0) boxMaxWidthFloat / pageRatio else boxMaxWidthFloat
-
-                                        val newFontSizePx = with(currentDensity) { newStyle.fontSize.toPx() }
-                                        val newFontSizeNorm = if (estimatedPageHeightPx > 0) newFontSizePx / estimatedPageHeightPx else old.fontSize
-
-                                        textBoxes[idx] = old.copy(
-                                            color = newStyle.color,
-                                            backgroundColor = newStyle.background,
-                                            fontSize = newFontSizeNorm,
-                                            isBold = newStyle.fontWeight == FontWeight.Bold,
-                                            isItalic = newStyle.fontStyle == FontStyle.Italic,
-                                            isUnderline = newStyle.textDecoration?.contains(TextDecoration.Underline) == true,
-                                            isStrikeThrough = newStyle.textDecoration?.contains(TextDecoration.LineThrough) == true
-                                        )
-                                    }
-                                } else {
-                                    richTextController.updateCurrentStyle(newStyle)
-                                }
-                            },
-                            onApplyToSelection = {},
-                            onClose = { keyboardController?.hide() },
-                            onPopupStateChange = { isVisible ->
-                                isTextAnnotationPopupVisible = isVisible
-                                richTextController.showCursorOverride = !isVisible
-                            },
-                            onInsertTextBox = onInsertTextBox,
-                            onClearTextBoxSelection = {
-                                selectedTextBoxId = null
-                                richTextController.clearSelection()
-                            },
-                            bottomDockPadding = 0.dp,
-                            customFonts = customFonts,
-                            onImportFont = viewModel::importFont,
-                            onFontSelected = { name, path ->
-                                Timber.tag("PdfFontDebug").i("UI Action: Font Selected -> Name: $name, Path: $path")
-                                val currentConfig = toolSettings.textStyle
-                                val newConfig = currentConfig.copy(fontPath = path, fontName = name)
-                                annotationSettingsRepo.updateTextStyle(newConfig)
-
-                                if (selectedTextBoxId != null) {
-                                    val idx = textBoxes.indexOfFirst { it.id == selectedTextBoxId }
-                                    if (idx != -1) {
-                                        val oldBox = textBoxes[idx]
-                                        textBoxes[idx] = oldBox.copy(fontPath = path, fontName = name)
-                                    }
-                                } else {
-                                    richTextController.let { controller ->
-                                        val style = SpanStyle(
-                                            color = Color(newConfig.colorArgb),
-                                            background = Color(newConfig.backgroundColorArgb),
-                                            fontSize = newConfig.fontSize.sp,
-                                            fontWeight = if (newConfig.isBold) FontWeight.Bold else FontWeight.Normal,
-                                            fontStyle = if (newConfig.isItalic) FontStyle.Italic else FontStyle.Normal,
-                                            textDecoration = run {
-                                                val decs = mutableListOf<TextDecoration>()
-                                                if (newConfig.isUnderline) decs.add(TextDecoration.Underline)
-                                                if (newConfig.isStrikeThrough) decs.add(TextDecoration.LineThrough)
-                                                if (decs.isEmpty()) TextDecoration.None else TextDecoration.combine(decs)
-                                            },
-                                            fontFamily = PdfFontCache.getFontFamily(path)
-                                        )
-                                        controller.updateCurrentStyle(style, path, name)
-                                    }
-                                }
-                            },
-                            currentFontName = remember(selectedTextBoxId, textBoxes, toolSettings.textStyle) {
-                                if (selectedTextBoxId != null) {
-                                    val box = textBoxes.find { it.id == selectedTextBoxId }
-                                    box?.fontName ?: box?.fontPath?.let { File(it).nameWithoutExtension }
-                                } else {
-                                    toolSettings.textStyle.fontName ?: toolSettings.textStyle.fontPath?.let { File(it).nameWithoutExtension }
-                                }
-                            },
-                        )
-                    }
-                }
-
-                val effectiveNavBarPaddingForOverlays = if (systemUiMode == SystemUiMode.DEFAULT || (systemUiMode == SystemUiMode.SYNC && showStandardBars)) with(density) { navBarHeight.toDp() } else 0.dp
-                val autoScrollPadding by animateDpAsState(
-                    targetValue = if (showStandardBars) (56.dp + 16.dp + effectiveNavBarPaddingForOverlays) else (16.dp + effectiveNavBarPaddingForOverlays),
-                    label = "AutoScrollPadding"
-                )
-
-                val ttsOverlayPadding by animateDpAsState(
-                    targetValue = if (showStandardBars) (56.dp + 16.dp + effectiveNavBarPaddingForOverlays) else (16.dp + effectiveNavBarPaddingForOverlays),
-                    label = "TtsOverlayPadding"
-                )
-
-                val ttsAlignmentBias by animateFloatAsState(
-                    targetValue = readerTtsOverlayAlignmentBias(ttsOverlaySize),
-                    label = "TtsAlignAnimation"
-                )
-
-                AnimatedVisibility(
-                    visible = isTtsSessionActive && showBars,
-                    enter = slideInVertically(animationSpec = tween(200)) { it } + fadeIn(animationSpec = tween(200)),
-                    exit = slideOutVertically(animationSpec = tween(200)) { it } + fadeOut(animationSpec = tween(200)),
-                    modifier = Modifier
-                        .align(BiasAlignment(ttsAlignmentBias, 1f))
-                        .padding(bottom = ttsOverlayPadding)
-                        .padding(horizontal = 16.dp)
-                ) {
-                    TtsOverlayControls(
-                        ttsController = ttsController,
-                        ttsState = ttsState,
-                        currentTtsMode = currentTtsMode,
-                        overlaySize = ttsOverlaySize,
-                        onOverlaySizeChange = { newSize ->
-                            ttsOverlaySize = newSize
-                            saveReaderTtsOverlaySize(context, newSize)
-                        },
-                        onLocateCurrentChunk = {
-                            ttsDisplayPageIndex?.let { targetPage ->
-                                coroutineScope.launch {
-                                    if (displayMode == DisplayMode.PAGINATION) {
-                                        pagerState.scrollToPage(targetPage)
-                                    } else {
-                                        verticalReaderState.scrollToPage(targetPage)
-                                    }
-                                }
-                            }
-                        },
-                        onOpenTtsSettings = { showTtsSettingsSheet = true },
-                        onClose = {
-                            ttsController.stop()
-                            isAutoPagingForTts = false
-                        },
-                        credits = uiState.credits
-                    )
-                }
-
-                val isAutoScrollControlsVisible = isAutoScrollModeActive
-
-                val alignmentBias by animateFloatAsState(
-                    targetValue = if (isAutoScrollCollapsed) 1f else 0f,
-                    label = "AutoScrollAlignAnimation"
-                )
-
-                AnimatedVisibility(
-                    visible = isAutoScrollControlsVisible,
-                    enter = slideInVertically(animationSpec = tween(200)) { it } + fadeIn(animationSpec = tween(200)),
-                    exit = slideOutVertically(animationSpec = tween(200)) { it } + fadeOut(animationSpec = tween(200)),
-                    modifier = Modifier
-                        .align(BiasAlignment(alignmentBias, 1f))
-                        .padding(bottom = autoScrollPadding)
-                        .padding(horizontal = 16.dp)
-                ) {
-                    AutoScrollControls(
-                        isPlaying = isAutoScrollPlaying,
-                        isTempPaused = isAutoScrollTempPaused,
-                        onPlayPauseToggle = {
-                            if (isAutoScrollPlaying) {
-                                isAutoScrollPlaying = false
-                                isAutoScrollTempPaused = false
-                                autoScrollResumeJob.value?.cancel()
-                            } else {
-                                isAutoScrollPlaying = true
-                                isAutoScrollTempPaused = false
-                            }
-                        },
-                        speed = autoScrollSpeed,
-                        minSpeed = autoScrollMinSpeed,
-                        maxSpeed = autoScrollMaxSpeed,
-                        onSpeedChange = { updateSpeed(it) },
-                        onMinSpeedChange = { newMin ->
-                            updateMinSpeed(newMin)
-                            if (!isAutoScrollLocal) {
-                                if (autoScrollMaxSpeed < newMin) {
-                                    autoScrollMaxSpeed = newMin
-                                    savePdfAutoScrollMaxSpeed(context, newMin)
-                                }
-                                if (autoScrollSpeed < newMin) {
-                                    autoScrollSpeed = newMin
-                                    savePdfAutoScrollSpeed(context, newMin)
-                                } else if (autoScrollSpeed > autoScrollMaxSpeed) {
-                                    autoScrollSpeed = autoScrollMaxSpeed
-                                    savePdfAutoScrollSpeed(context, autoScrollMaxSpeed)
-                                }
-                            }
-                        },
-                        onMaxSpeedChange = { newMax ->
-                            updateMaxSpeed(newMax)
-                            if (!isAutoScrollLocal) {
-                                if (autoScrollMinSpeed > newMax) {
-                                    autoScrollMinSpeed = newMax
-                                    savePdfAutoScrollMinSpeed(context, newMax)
-                                }
-                                if (autoScrollSpeed > newMax) {
-                                    autoScrollSpeed = newMax
-                                    savePdfAutoScrollSpeed(context, newMax)
-                                } else if (autoScrollSpeed < autoScrollMinSpeed) {
-                                    autoScrollSpeed = autoScrollMinSpeed
-                                    savePdfAutoScrollSpeed(context, autoScrollMinSpeed)
-                                }
-                            }
-                        },
-                        onClose = {
-                            isAutoScrollModeActive = false
-                            isAutoScrollPlaying = false
-                            showBars = true
-                        },
-                        isCollapsed = isAutoScrollCollapsed,
-                        onCollapseChange = { isAutoScrollCollapsed = it },
-                        isMusicianMode = isMusicianMode,
-                        onMusicianModeToggle = {
-                            val newMode = !isMusicianMode
-                            isMusicianMode = newMode
-                            savePdfMusicianMode(context, newMode)
-                            if (newMode) {
-                                showBars = false
-                            }
-                            Timber.d("Musician mode toggled: $newMode")
-                        },
-                        useSlider = autoScrollUseSlider,
-                        onInputModeToggle = {
-                            autoScrollUseSlider = !autoScrollUseSlider
-                            savePdfAutoScrollUseSlider(context, autoScrollUseSlider)
-                        },
-                        isLocalMode = isAutoScrollLocal,
-                        onLocalModeToggle = onToggleAutoScrollMode,
-                        onScrollToTop = {
-                            if (isAutoScrollPlaying) {
-                                triggerAutoScrollTempPause(1000L)
-                            }
-                            coroutineScope.launch {
-                                verticalReaderState.scrollToTop()
-                            }
-                        }
-                    )
-                }
-            }
-        }
+        PdfViewerReaderSurface(surfaceState)
     }
 
     // Keep the long-lived reader state above separate from transient overlays.
     // Besides isolating recomposition concerns, this prevents this screen's JVM
     // method from exceeding the platform's 64 KB bytecode limit.
-    PdfViewerTransientOverlays {
     if (showAiHubSheet) {
         val currentPageForDisplay = if (displayMode == DisplayMode.PAGINATION) {
             currentPaginationDisplayPage()
@@ -7414,8 +4554,8 @@ fun PdfViewerScreen(
 
                         val token = viewModel.getAuthToken()
                         summarizeCurrentPage(
-                            authToken = token,
-                            onUpdate = { result ->
+                            token,
+                            { result ->
                                 if (result.error == "INSUFFICIENT_CREDITS") {
                                     showInsufficientCreditsDialog = true
                                     showAiHubSheet = false
@@ -7423,7 +4563,8 @@ fun PdfViewerScreen(
                                 } else {
                                     summarizationResult = result
                                 }
-                            }, onFinish = {
+                            },
+                            {
                                 isSummarizationLoading = false
                                 val finalSummary = summarizationResult?.summary
                                 if (!finalSummary.isNullOrBlank() && summarizationResult?.error == null) {
@@ -7459,11 +4600,11 @@ fun PdfViewerScreen(
             icon = null,
             onConfirm = {
                 showPermissionRationaleDialog = false
-                permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                requestNotificationPermission()
             },
             onDismiss = {
                 showPermissionRationaleDialog = false
-                startTts()
+                startTtsForOverlay()
             },
         )
     }
@@ -7557,7 +4698,7 @@ fun PdfViewerScreen(
     }
     // --- END PANEL POPUP ---
 
-    if (showPasswordDialog) {
+    if (ownsPaneGlobals && showPasswordDialog) {
         SharedMobilePdfPasswordDialog(
             labels = SharedMobilePdfPasswordLabels(
                 title = stringResource(R.string.title_password_protected),
@@ -7939,10 +5080,16 @@ fun PdfViewerScreen(
             isVisible = true,
             currentThemeId = currentThemeId,
             excludeImages = excludeImages,
+            reverseColorMode = reverseColorMode,
             onExcludeImagesChange = {
                 excludeImages = it
                 com.aryan.reader.saveExcludeImages(context, it)
             },
+            onReverseColorModeChange = {
+                reverseColorMode = it
+                com.aryan.reader.savePdfReverseColorMode(context, it)
+            },
+            showReverseColorOption = true,
             showExcludeImagesOption = true,
             builtInThemes = PdfBuiltInThemes,
             globalTextureTransparency = globalTextureTransparency,
@@ -8075,6 +5222,8 @@ fun PdfViewerScreen(
             firstPageStandaloneInSpread = pdfFirstPageStandaloneInSpread,
             showVerticalPageGap = showVerticalPageGap,
             showPageNumberOverlay = showPageNumberOverlay,
+            showTopToolbar = isTopToolbarEnabled,
+            showBottomToolbar = isBottomToolbarEnabled,
             onPageSpreadModeChange = { mode ->
                 pendingPaginationSpreadRestorePage = currentPage
                 pdfPageSpreadMode = mode
@@ -8097,6 +5246,14 @@ fun PdfViewerScreen(
                 showPageNumberOverlay = isVisible
                 savePdfPageNumberOverlayVisible(context, isVisible)
             },
+            onShowTopToolbarChange = { isVisible ->
+                isTopToolbarEnabled = isVisible
+                savePdfTopToolbarVisible(context, isVisible)
+            },
+            onShowBottomToolbarChange = { isVisible ->
+                isBottomToolbarEnabled = isVisible
+                savePdfBottomToolbarVisible(context, isVisible)
+            },
             onDismiss = { showVisualOptionsSheet = false }
         )
     }
@@ -8114,7 +5271,7 @@ fun PdfViewerScreen(
         isFileInfoVisible = showFileInfoDialog,
         onFileInfoVisibleChange = { showFileInfoDialog = it },
         uiState = uiState,
-        primaryBookId = uiState.selectedBookId,
+        primaryBookId = selectedBookIdForPane,
         secondaryBookId = currentBookId ?: activeTabBookId,
         uriString = effectivePdfUri.toString(),
         viewModel = viewModel
@@ -8130,6 +5287,5656 @@ fun PdfViewerScreen(
             onDismiss = { showCustomizeToolsSheet = false }
         )
     }
+}
+private class PdfViewerDocumentSetupInputs(
+    val uiState: ReaderScreenState,
+    val pdfUri: Uri,
+    val initialPage: Int?,
+    val initialBookmarksJson: String?,
+    val onBookmarksChanged: (String) -> Unit,
+    val pane: PdfViewerPane?,
+    val viewModel: MainViewModel,
+    val isPaneFocused: Boolean,
+    val isSplitPane: Boolean,
+    val ownsPaneGlobals: Boolean,
+    val context: Context,
+    val coroutineScope: CoroutineScope,
+    val ttsController: TtsController,
+    val ttsState: TtsPlaybackManager.TtsState,
+    val customFonts: List<CustomFontEntity>,
+    val bubbleZoomDownloadProgress: Float?,
+    val annotationSettingsRepo: AnnotationSettingsRepository,
+    val toolSettings: AnnotationToolSettings,
+    val tabStateMap: androidx.compose.runtime.snapshots.SnapshotStateMap<String, Int>,
+    val displayMode: PdfViewerMutableValue<DisplayMode>,
+    val currentActiveOffset: PdfViewerMutableValue<Offset>,
+    val currentActiveScale: PdfViewerMutableValue<Float>,
+    val isScrollLocked: PdfViewerMutableValue<Boolean>,
+    val lockedState: PdfViewerMutableValue<Triple<Float, Float, Float>?>,
+    val ocrLanguage: PdfViewerMutableValue<OcrLanguage>,
+    val pdfFirstPageStandaloneInSpread: PdfViewerMutableValue<Boolean>,
+    val pdfPageSpreadMode: PdfViewerMutableValue<com.aryan.reader.shared.reader.ReaderPageSpreadMode>,
+    val pendingPaginationSpreadRestorePage: PdfViewerMutableValue<Int?>,
+    val pendingRestorePage: PdfViewerMutableValue<Int?>,
+    val showBars: PdfViewerMutableValue<Boolean>,
+    val showInsufficientCreditsDialog: PdfViewerMutableValue<Boolean>,
+    val showTopTabStrip: PdfViewerMutableValue<Boolean>,
+    val isTopToolbarEnabled: PdfViewerMutableValue<Boolean>,
+    val isBottomToolbarEnabled: PdfViewerMutableValue<Boolean>,
+    val systemUiMode: PdfViewerMutableValue<SystemUiMode>,
+)
+
+@Composable
+@OptIn(UnstableApi::class, ExperimentalMaterial3Api::class)
+private fun PdfViewerDocumentSetup(
+    surfaceState: PdfViewerSurfaceState,
+    setup: PdfViewerDocumentSetupInputs,
+) {
+    val uiState = setup.uiState
+    val pdfUri = setup.pdfUri
+    val initialPage = setup.initialPage
+    val initialBookmarksJson = setup.initialBookmarksJson
+    val onBookmarksChanged = setup.onBookmarksChanged
+    val pane = setup.pane
+    val viewModel = setup.viewModel
+    val isPaneFocused = setup.isPaneFocused
+    val isSplitPane = setup.isSplitPane
+    val ownsPaneGlobals = setup.ownsPaneGlobals
+    val context = setup.context
+    val coroutineScope = setup.coroutineScope
+    val ttsController = setup.ttsController
+    val ttsState = setup.ttsState
+    val customFonts = setup.customFonts
+    val bubbleZoomDownloadProgress = setup.bubbleZoomDownloadProgress
+    val annotationSettingsRepo = setup.annotationSettingsRepo
+    val toolSettings = setup.toolSettings
+    val tabStateMap = setup.tabStateMap
+    var displayMode by setup.displayMode
+    var currentActiveOffset by setup.currentActiveOffset
+    var currentActiveScale by setup.currentActiveScale
+    var isScrollLocked by setup.isScrollLocked
+    var lockedState by setup.lockedState
+    var ocrLanguage by setup.ocrLanguage
+    var pdfFirstPageStandaloneInSpread by setup.pdfFirstPageStandaloneInSpread
+    var pdfPageSpreadMode by setup.pdfPageSpreadMode
+    var pendingPaginationSpreadRestorePage by setup.pendingPaginationSpreadRestorePage
+    var pendingRestorePage by setup.pendingRestorePage
+    var showBars by setup.showBars
+    var isTopToolbarEnabled by setup.isTopToolbarEnabled
+    var showInsufficientCreditsDialog by setup.showInsufficientCreditsDialog
+    var showTopTabStrip by setup.showTopTabStrip
+    var systemUiMode by setup.systemUiMode
+
+    val paneBookId = pane?.bookId
+    val paneInitialPage = pane?.initialPage
+    val paneInitialBookmarksJson = pane?.initialBookmarksJson
+    val selectedBookIdForPane = paneBookId ?: uiState.selectedBookId
+    val effectivePdfUri = pane?.pdfUri ?: uiState.selectedPdfUri ?: pdfUri
+    val effectiveFileType = if (pane != null) FileType.PDF else uiState.selectedFileType ?: FileType.PDF
+    val effectiveInitialPage = paneInitialPage ?: initialPage
+    val effectiveInitialBookmarksJson = paneInitialBookmarksJson ?: initialBookmarksJson
+    var documentPassword by rememberSaveable(effectivePdfUri.toString()) { mutableStateOf<String?>(null) }
+    var isPrintBlockedForPasswordProtectedPdf by rememberSaveable(effectivePdfUri.toString()) { mutableStateOf(false) }
+    val isComicFile = effectiveFileType in COMIC_ARCHIVE_FILE_TYPES
+
+    var showNewTabSheet by remember { mutableStateOf(false) }
+    var showFileInfoDialog by remember { mutableStateOf(false) }
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
+
+    val isTabsEnabled = !isSplitPane && uiState.isTabsEnabled
+    val openTabs = if (isSplitPane) emptyList() else uiState.openTabs
+    val activeTabBookId = if (isSplitPane) null else uiState.activeTabBookId
+    val canShowPdfTabs = isTabsEnabled && openTabs.isNotEmpty() && effectiveFileType == FileType.PDF
+    val isPdfTabStripVisible = canShowPdfTabs && showTopTabStrip
+    val originalFileName by remember(uiState.allRecentFiles, uiState.rawLibraryFiles, uiState.recentFiles, selectedBookIdForPane, effectivePdfUri) {
+        derivedStateOf {
+            (selectedBookIdForPane?.let { selectedId ->
+                uiState.allRecentFiles.find { it.bookId == selectedId }
+                    ?: uiState.rawLibraryFiles.find { it.bookId == selectedId }
+                    ?: uiState.recentFiles.find { it.bookId == selectedId }
+            } ?: uiState.allRecentFiles.find { it.uriString == effectivePdfUri.toString() }
+                ?: uiState.rawLibraryFiles.find { it.uriString == effectivePdfUri.toString() }
+                ?: uiState.recentFiles.find { it.uriString == effectivePdfUri.toString() })?.displayName
+                ?: effectivePdfUri.lastPathSegment ?: "Document.pdf"
+        }
+    }
+    var documentMetadataTitle by remember { mutableStateOf<String?>(null) }
+    val activeLibraryItem by remember(uiState.allRecentFiles, uiState.rawLibraryFiles, uiState.recentFiles, selectedBookIdForPane, effectivePdfUri) {
+        derivedStateOf {
+            selectedBookIdForPane?.let { selectedId ->
+                uiState.allRecentFiles.find { it.bookId == selectedId }
+                    ?: uiState.rawLibraryFiles.find { it.bookId == selectedId }
+                    ?: uiState.recentFiles.find { it.bookId == selectedId }
+            } ?: uiState.allRecentFiles.find { it.uriString == effectivePdfUri.toString() }
+                ?: uiState.rawLibraryFiles.find { it.uriString == effectivePdfUri.toString() }
+                ?: uiState.recentFiles.find { it.uriString == effectivePdfUri.toString() }
+        }
+    }
+    val readerDisplayTitle by remember(activeLibraryItem, uiState.usePdfFileNameAsDisplayName, originalFileName) {
+        derivedStateOf {
+            activeLibraryItem
+                ?.cardTitle(uiState.usePdfFileNameAsDisplayName)
+                ?: originalFileName
+        }
+    }
+    val effectiveReaderBookTitle by remember(activeLibraryItem, documentMetadataTitle, readerDisplayTitle) {
+        derivedStateOf {
+            activeLibraryItem?.customName?.takeIf { it.isNotBlank() }
+                ?: documentMetadataTitle?.takeIf { it.isNotBlank() }
+                ?: readerDisplayTitle
+        }
+    }
+    var currentBookId by remember(paneBookId, effectivePdfUri) { mutableStateOf(paneBookId) }
+    val bookId = currentBookId ?: effectivePdfUri.toString().hashCode().toString()
+    val activeDocumentRenderKey = currentBookId ?: effectivePdfUri.toString()
+    val view = LocalView.current
+    var isDockDragging by remember { mutableStateOf(false) }
+    var initialScrollDone by remember { mutableStateOf(false) }
+
+    LaunchedEffect(
+        activeLibraryItem,
+        documentMetadataTitle,
+        readerDisplayTitle,
+        effectiveReaderBookTitle,
+        originalFileName,
+        currentBookId,
+        selectedBookIdForPane,
+        effectivePdfUri
+    ) {
+        Timber.tag(PDF_RENAME_TRACE_TAG).i(
+            "pdfScreen.titleResolved selectedBookId=$selectedBookIdForPane currentBookId=$currentBookId " +
+                "uri=$effectivePdfUri activeItemId=${activeLibraryItem?.bookId} " +
+                "displayName=${activeLibraryItem?.displayName} title=${activeLibraryItem?.title} " +
+                "customName=${activeLibraryItem?.customName} documentMetadataTitle=$documentMetadataTitle " +
+                "originalFileName=$originalFileName readerDisplayTitle=$readerDisplayTitle " +
+                "effectiveReaderBookTitle=$effectiveReaderBookTitle usePdfFileName=${uiState.usePdfFileNameAsDisplayName}"
+        )
+    }
+
+    val reflowBookId = remember(bookId) { "${bookId}_reflow" }
+    val hasReflowFile by remember(uiState.allRecentFiles, reflowBookId, isSplitPane) {
+        derivedStateOf {
+            !isSplitPane && uiState.allRecentFiles.any { it.bookId == reflowBookId && !it.isDeleted }
+        }
+    }
+
+    LaunchedEffect(bookId) {
+        showBars = false
+        val savedIsScrollLocked = loadPdfScrollLocked(context, bookId)
+        val savedLockedState = loadPdfLockedState(context, bookId)
+        val activeCamera = activePdfCameraAfterLockPreferenceLoad(
+            isScrollLocked = savedIsScrollLocked,
+            lockedState = savedLockedState
+        )
+        isScrollLocked = savedIsScrollLocked
+        lockedState = savedLockedState
+        currentActiveScale = activeCamera.first
+        currentActiveOffset = activeCamera.second
+        pdfSplitZoomDiag(
+            "cam.restoreLock bookId=$bookId locked=$savedIsScrollLocked " +
+                "scale=${activeCamera.first.diagF()} offset=(${activeCamera.second.x.diagF()},${activeCamera.second.y.diagF()})"
+        )
+    }
+
+    var isAutoScrollModeActive by remember { mutableStateOf(false) }
+    var isAutoScrollPlaying by remember { mutableStateOf(false) }
+    var isAutoScrollTempPaused by remember { mutableStateOf(false) }
+    val autoScrollResumeJob = remember { mutableStateOf<Job?>(null) }
+    var isAutoScrollCollapsed by remember { mutableStateOf(false) }
+    var ttsOverlaySize by remember(context) { mutableStateOf(loadReaderTtsOverlaySize(context)) }
+
+    var isMusicianMode by remember { mutableStateOf(loadPdfMusicianMode(context)) }
+    var autoScrollUseSlider by remember { mutableStateOf(loadPdfAutoScrollUseSlider(context)) }
+    var isStylusOnlyMode by remember { mutableStateOf(loadStylusOnlyMode(context)) }
+    var showTtsControlsSheet by remember { mutableStateOf(false) }
+    var isKeepScreenOn by remember { mutableStateOf(loadKeepScreenOn(context)) }
+    val isTtsPlaybackForThisPane = !isSplitPane || (ownsPaneGlobals && ttsState.bookId == bookId)
+    ttsState.currentText
+    var currentTtsMode by remember {
+        mutableStateOf(
+            com.aryan.reader.tts.loadTtsMode(context).let {
+                if (BuildConfig.FLAVOR == "oss" && !isByokCloudTtsAvailable(context)) TtsPlaybackManager.TtsMode.BASE else it
+            }
+        )
+    }
+    var showTtsSettingsSheet by remember { mutableStateOf(false) }
+    var showTtsReplacementsSheet by remember { mutableStateOf(false) }
+    var ttsReplacementPreferences by remember { mutableStateOf(loadTtsReplacementPreferences(context)) }
+    val updateTtsReplacementPreferences: (ReaderTtsReplacementPreferences) -> Unit = { next ->
+        ttsReplacementPreferences = next
+        saveTtsReplacementPreferences(context, next)
+    }
+
+    DisposableEffect(isKeepScreenOn, isSplitPane, ownsPaneGlobals) {
+        view.keepScreenOn = isKeepScreenOn && ownsPaneGlobals
+        onDispose {
+            view.keepScreenOn = false
+        }
+    }
+
+    var showDictionarySettingsSheet by remember { mutableStateOf(false) }
+    var useOnlineDictionary by remember { mutableStateOf(loadUseOnlineDict(context)) }
+    var selectedDictPackage by remember { mutableStateOf(loadExternalDictPackage(context)) }
+    var selectedTranslatePackage by remember { mutableStateOf(loadExternalTranslatePackage(context)) }
+    var selectedSearchPackage by remember { mutableStateOf(loadExternalSearchPackage(context)) }
+
+    fun triggerAutoScrollTempPause(durationMs: Long) {
+        if (!isAutoScrollModeActive || !isAutoScrollPlaying) return
+        autoScrollResumeJob.value?.cancel()
+        isAutoScrollTempPaused = true
+        autoScrollResumeJob.value = coroutineScope.launch {
+            delay(durationMs)
+            if (isActive && isAutoScrollModeActive && isAutoScrollPlaying) {
+                isAutoScrollTempPaused = false
+            }
+        }
+    }
+
+    val onAutoScrollInteraction = remember {
+        {
+            if (isAutoScrollPlaying) {
+                triggerAutoScrollTempPause(300L)
+            }
+        }
+    }
+
+    var paginationDraggingBoxId by remember { mutableStateOf<String?>(null) }
+
+
+    fun showBanner(message: String, isError: Boolean = false, isPersistent: Boolean = false) {
+        viewModel.showBanner(message, isError, isPersistent)
+    }
+    val onOcrStateChange: (Boolean) -> Unit = {}
+
+    var showZoomIndicator by remember { mutableStateOf(false) }
+    var bookmarks by remember(effectivePdfUri) { mutableStateOf(loadPdfBookmarksFromJson(effectiveInitialBookmarksJson)) }
+
+    var showPenPlayground by rememberSaveable { mutableStateOf(false) }
+    var isEditMode by rememberSaveable { mutableStateOf(false) }
+    var isDockMinimized by rememberSaveable { mutableStateOf(false) }
+
+    var pendingNoteForNewHighlight by remember { mutableStateOf(false) }
+    var highlightToNoteId by remember { mutableStateOf<String?>(null) }
+    val onNoteRequested: (String?) -> Unit = { id ->
+        if (id != null) {
+            highlightToNoteId = id
+        } else {
+            pendingNoteForNewHighlight = true
+        }
+    }
+
+    val isDrawingActive by remember(isEditMode, isDockMinimized) {
+        derivedStateOf { isEditMode && !isDockMinimized }
+    }
+
+    var isAutoScrollLocal by remember { mutableStateOf(loadPdfAutoScrollLocalMode(context, bookId)) }
+
+    LaunchedEffect(bookId) {
+        isAutoScrollLocal = loadPdfAutoScrollLocalMode(context, bookId)
+    }
+
+    val onPrintDocument: () -> Unit = onPrintDocument@{
+        if (!ownsPaneGlobals) return@onPrintDocument
+        if (isPrintBlockedForPasswordProtectedPdf) {
+            showBanner(context.getString(R.string.error_print_password_protected), isError = true)
+            return@onPrintDocument
+        }
+        val printManager = context.getSystemService(Context.PRINT_SERVICE) as PrintManager
+        val jobName = "${context.getString(R.string.app_name)} - $originalFileName"
+
+        try {
+            Timber.tag("PdfPrint").d("Starting print job: $jobName")
+            printManager.print(
+                jobName,
+                PdfPrintDocumentAdapter(context, effectivePdfUri, originalFileName),
+                null
+            )
+        } catch (e: Exception) {
+            Timber.tag("PdfPrint").e(e, "Failed to initialize print job")
+            showBanner(context.getString(R.string.error_open_print_settings), isError = true)
+        }
+    }
+
+    val initialSettings = remember(isAutoScrollLocal, bookId) {
+        if (isAutoScrollLocal) {
+            loadPdfAutoScrollLocalSettings(context, bookId) ?: Triple(
+                loadPdfAutoScrollSpeed(context),
+                loadPdfAutoScrollMinSpeed(context),
+                loadPdfAutoScrollMaxSpeed(context)
+            )
+        } else {
+            Triple(
+                loadPdfAutoScrollSpeed(context),
+                loadPdfAutoScrollMinSpeed(context),
+                loadPdfAutoScrollMaxSpeed(context)
+            )
+        }
+    }
+
+    var autoScrollSpeed by remember { mutableFloatStateOf(initialSettings.first) }
+    var autoScrollMinSpeed by remember { mutableFloatStateOf(initialSettings.second) }
+    var autoScrollMaxSpeed by remember { mutableFloatStateOf(initialSettings.third) }
+
+    LaunchedEffect(initialSettings) {
+        autoScrollSpeed = initialSettings.first
+        autoScrollMinSpeed = initialSettings.second
+        autoScrollMaxSpeed = initialSettings.third
+    }
+
+    val onToggleAutoScrollMode = { newIsLocal: Boolean ->
+        isAutoScrollLocal = newIsLocal
+        savePdfAutoScrollLocalMode(context, bookId, newIsLocal)
+
+        if (newIsLocal) {
+            val existingLocal = loadPdfAutoScrollLocalSettings(context, bookId)
+            if (existingLocal == null) {
+                savePdfAutoScrollLocalSettings(context, bookId, autoScrollSpeed, autoScrollMinSpeed, autoScrollMaxSpeed)
+            } else {
+                autoScrollSpeed = existingLocal.first
+                autoScrollMinSpeed = existingLocal.second
+                autoScrollMaxSpeed = existingLocal.third
+            }
+        } else {
+            autoScrollSpeed = loadPdfAutoScrollSpeed(context)
+            autoScrollMinSpeed = loadPdfAutoScrollMinSpeed(context)
+            autoScrollMaxSpeed = loadPdfAutoScrollMaxSpeed(context)
+        }
+    }
+
+    val updateSpeed = { newSpeed: Float ->
+        autoScrollSpeed = newSpeed
+        if (isAutoScrollLocal) {
+            savePdfAutoScrollLocalSettings(context, bookId, newSpeed, autoScrollMinSpeed, autoScrollMaxSpeed)
+        } else {
+            savePdfAutoScrollSpeed(context, newSpeed)
+        }
+    }
+
+    val updateMinSpeed = { newMin: Float ->
+        autoScrollMinSpeed = newMin
+        if (isAutoScrollLocal) {
+            var currentMax = autoScrollMaxSpeed
+            var currentSpeed = autoScrollSpeed
+            if (currentMax < newMin) { currentMax = newMin; autoScrollMaxSpeed = newMin }
+            if (currentSpeed < newMin) { currentSpeed = newMin; autoScrollSpeed = newMin }
+            else if (currentSpeed > currentMax) { currentSpeed = currentMax; autoScrollSpeed = currentMax }
+            savePdfAutoScrollLocalSettings(context, bookId, currentSpeed, newMin, currentMax)
+        } else {
+            savePdfAutoScrollMinSpeed(context, newMin)
+        }
+    }
+
+    val updateMaxSpeed = { newMax: Float ->
+        autoScrollMaxSpeed = newMax
+        if (isAutoScrollLocal) {
+            var currentMin = autoScrollMinSpeed
+            var currentSpeed = autoScrollSpeed
+            if (currentMin > newMax) { currentMin = newMax; autoScrollMinSpeed = newMax }
+            if (currentSpeed > newMax) { currentSpeed = newMax; autoScrollSpeed = newMax }
+            else if (currentSpeed < currentMin) { currentSpeed = currentMin; autoScrollSpeed = currentMin }
+            savePdfAutoScrollLocalSettings(context, bookId, currentSpeed, currentMin, newMax)
+        } else {
+            savePdfAutoScrollMaxSpeed(context, newMax)
+        }
+    }
+
+    val (initialDockLocation, initialDockOffset) = remember(context) { loadDockState(context) }
+
+    var customHighlightColors by remember { mutableStateOf(loadCustomHighlightColors(context)) }
+    var showHighlightColorPicker by remember { mutableStateOf(false) }
+    var highlightColorPickerInitialSlot by remember { mutableStateOf(PdfHighlightColor.YELLOW) }
+    var isBubbleZoomModeActive by remember { mutableStateOf(false) }
+    var showBubbleZoomDownloadDialog by remember { mutableStateOf(false) }
+
+    LaunchedEffect(isComicFile) {
+        if (!isComicFile) {
+            isBubbleZoomModeActive = false
+            showBubbleZoomDownloadDialog = false
+        }
+    }
+
+    var dockLocation by remember { mutableStateOf(initialDockLocation) }
+    var dockOffset by remember { mutableStateOf(initialDockOffset) }
+    var snapPreviewLocation by remember { mutableStateOf<DockLocation?>(null) }
+    var paginationDraggingOffset by remember { mutableStateOf(Offset.Zero) }
+    var paginationDraggingSize by remember { mutableStateOf(Size.Zero) }
+    var paginationDragPageHeight by remember { mutableFloatStateOf(0f) }
+    var paginationOriginalRelSize by remember { mutableStateOf(Size.Zero) }
+
+    LaunchedEffect(Unit) {
+        if (dockLocation == DockLocation.FLOATING && dockOffset == Offset.Zero) {
+            dockLocation = DockLocation.BOTTOM
+        }
+    }
+
+    val window = (view.context as? Activity)?.window
+    val showStandardBars = showBars && !isEditMode
+    val showTopBar = showStandardBars && isTopToolbarEnabled
+    var readerBrightnessSettings by remember { mutableStateOf(loadReaderBrightnessSettings(context)) }
+    var showBrightnessSheet by remember { mutableStateOf(false) }
+    if (ownsPaneGlobals) {
+        ReaderBrightnessEffect(window, readerBrightnessSettings)
+    }
+
+    val updateReaderBrightness: (com.aryan.reader.ReaderBrightnessSettings) -> Unit = { settings ->
+        readerBrightnessSettings = settings
+        saveReaderBrightnessSettings(context, settings)
+    }
+
+    DisposableEffect(window, view, isSplitPane, ownsPaneGlobals) {
+        onDispose {
+            if (ownsPaneGlobals) window?.let {
+                WindowCompat.getInsetsController(it, view).show(WindowInsetsCompat.Type.systemBars())
+            }
+        }
+    }
+
+    LaunchedEffect(systemUiMode, showStandardBars, isSplitPane, ownsPaneGlobals) {
+        if (!ownsPaneGlobals) return@LaunchedEffect
+        if (window != null) {
+            val insetsController = WindowCompat.getInsetsController(window, view)
+            // Split view is immersive: the workspace owns the screen, so the
+            // system navigation bar hides away (a swipe reveals it
+            // transiently). The status bar stays visible for the workspace
+            // toolbar above the panes.
+            val visibility = if (isSplitPane) {
+                MobileReaderSystemBarsVisibility(statusBarsVisible = true, navigationBarsVisible = false)
+            } else {
+                mobilePdfSystemBarsVisibility(systemUiMode, showStandardBars)
+            }
+            if (visibility.statusBarsVisible) insetsController.show(WindowInsetsCompat.Type.statusBars())
+            else insetsController.hide(WindowInsetsCompat.Type.statusBars())
+            if (visibility.navigationBarsVisible) insetsController.show(WindowInsetsCompat.Type.navigationBars())
+            else insetsController.hide(WindowInsetsCompat.Type.navigationBars())
+            if (!visibility.statusBarsVisible || !visibility.navigationBarsVisible) {
+                insetsController.systemBarsBehavior =
+                    WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            }
+        }
+    }
+
+    val dockHeight = 64.dp
+    val dockHeightPx = with(LocalDensity.current) { dockHeight.toPx() }
+    val density = LocalDensity.current
+    val viewConfiguration = LocalViewConfiguration.current
+
+    val statusBarHeightDp = with(density) { WindowInsets.statusBars.getTop(density).toDp() }
+    val dummySearcher: suspend (String) -> List<SearchResult> = { emptyList() }
+    val searchState = rememberSearchState(scope = coroutineScope, searcher = dummySearcher)
+    val navBarHeight = WindowInsets.systemBars.getBottom(density)
+    // Split view hides the system navigation bar; panes must not reserve its
+    // height or every pane's bottom chrome floats above a phantom bar.
+    val effectiveNavBarHeight = if (isSplitPane) 0 else navBarHeight
+
+    val targetVerticalHeaderHeight = remember(
+        dockLocation,
+        snapPreviewLocation,
+        isEditMode,
+        isDockDragging,
+        systemUiMode,
+        statusBarHeightDp,
+        isSplitPane
+    ) {
+        if (!isEditMode) {
+            0.dp
+        } else {
+            val isStickyTop = dockLocation == DockLocation.TOP && !isDockDragging
+            val isPreviewingTop = snapPreviewLocation == DockLocation.TOP
+            if (isStickyTop || isPreviewingTop) {
+                // Split panes sit below the workspace toolbar, which already
+                // pads for the status bar.
+                dockHeight + if (systemUiMode == SystemUiMode.DEFAULT && !isSplitPane) statusBarHeightDp else 0.dp
+            } else 0.dp
+        }
+    }
+
+    val verticalHeaderHeight by animateDpAsState(
+        targetValue = targetVerticalHeaderHeight,
+        animationSpec = tween(durationMillis = 200),
+        label = "verticalHeaderHeight"
+    )
+
+    val targetTopOverlayInset = remember(
+        showTopBar,
+        systemUiMode,
+        statusBarHeightDp,
+        isPdfTabStripVisible,
+        isSplitPane
+    ) {
+        if (!showTopBar) {
+            0.dp
+        } else {
+            var inset = 56.dp
+            // A split pane sits below the workspace toolbar, which already
+            // pads for the status bar; adding it again would double-pad the
+            // pane's own toolbar.
+            val isStatusBarVisible = !isSplitPane &&
+                (
+                    systemUiMode == SystemUiMode.DEFAULT ||
+                        (systemUiMode == SystemUiMode.SYNC && showStandardBars)
+                    )
+
+            if (isStatusBarVisible) {
+                inset += statusBarHeightDp
+            }
+            if (isPdfTabStripVisible) {
+                inset += PdfTabStripHeight
+            }
+            inset
+        }
+    }
+
+    val topOverlayInset by animateDpAsState(
+        targetValue = targetTopOverlayInset,
+        animationSpec = tween(durationMillis = 200),
+        label = "topOverlayInset"
+    )
+
+    val verticalFooterHeight by remember(
+        dockLocation,
+        snapPreviewLocation,
+        isEditMode,
+        isDockDragging,
+        systemUiMode,
+        navBarHeight,
+        density
+    ) {
+        derivedStateOf {
+            if (!isEditMode) {
+                0.dp
+            } else {
+                val isStickyBottom = dockLocation == DockLocation.BOTTOM && !isDockDragging
+                val isPreviewingBottom = snapPreviewLocation == DockLocation.BOTTOM
+
+                if (isStickyBottom || isPreviewingBottom) {
+                    dockHeight + if (systemUiMode == SystemUiMode.DEFAULT) with(density) { effectiveNavBarHeight.toDp() } else 0.dp
+                } else 0.dp
+            }
+        }
+    }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(ocrLanguage) { OcrHelper.init(ocrLanguage) }
+
+    LaunchedEffect(displayMode) { saveDisplayMode(context, displayMode) }
+
+    LaunchedEffect(bookId, currentActiveScale, currentActiveOffset, isScrollLocked) {
+        if (isScrollLocked) {
+            val requestedCamera = currentActiveScale to currentActiveOffset
+            delay(500)
+            Timber.tag("PdfLockDiagnostic").d("SAVING: BookId=$bookId | Scale=${requestedCamera.first} | X=${requestedCamera.second.x} | Y=${requestedCamera.second.y}")
+
+            lockedState = Triple(requestedCamera.first, requestedCamera.second.x, requestedCamera.second.y)
+            savePdfLockedState(context, bookId, requestedCamera.first, requestedCamera.second.x, requestedCamera.second.y)
+        }
+    }
+
+    LaunchedEffect(ttsState.errorMessage, isTtsPlaybackForThisPane, isPaneFocused) {
+        if (isSplitPane && (!isPaneFocused || !isTtsPlaybackForThisPane)) return@LaunchedEffect
+        ttsState.errorMessage?.let { message ->
+            if (message == "INSUFFICIENT_CREDITS") {
+                showInsufficientCreditsDialog = true
+                ttsController.stop()
+            } else {
+                showBanner(message, isError = true)
+            }
+        }
+    }
+
+    LaunchedEffect(errorMessage) {
+        errorMessage?.let { showBanner(it, isError = true) }
+    }
+
+    var showToolSettings by rememberSaveable { mutableStateOf(false) }
+    val isHighlighterSnapEnabled = toolSettings.isHighlighterSnapEnabled
+
+    val selectedTool = toolSettings.getActiveTool()
+
+    val lastPenTool = toolSettings.getLastPenTool()
+    val lastHighlighterTool = toolSettings.getLastHighlighterTool()
+    val dockPenColor = toolSettings.getToolColor(lastPenTool)
+    val dockHighlighterColor = toolSettings.getToolColor(lastHighlighterTool)
+
+    val activeToolColor = toolSettings.getToolColor(selectedTool)
+    val activeToolThickness = toolSettings.getToolThickness(selectedTool)
+    val eraserToolThickness = toolSettings.getToolThickness(InkType.ERASER)
+
+    val fountainPenColor = toolSettings.getToolColor(InkType.FOUNTAIN_PEN)
+    val markerColor = toolSettings.getToolColor(InkType.PEN)
+    val pencilColor = toolSettings.getToolColor(InkType.PENCIL)
+    val highlighterColor = toolSettings.getToolColor(InkType.HIGHLIGHTER)
+    val highlighterRoundColor = toolSettings.getToolColor(InkType.HIGHLIGHTER_ROUND)
+
+    val isCurrentToolHighlighter =
+        selectedTool == InkType.HIGHLIGHTER || selectedTool == InkType.HIGHLIGHTER_ROUND
+
+    val currentSnapEnabled by rememberUpdatedState(isHighlighterSnapEnabled)
+    val currentIsHighlighter by rememberUpdatedState(isCurrentToolHighlighter)
+
+    val penPalette = remember(toolSettings.penPaletteArgb) { toolSettings.getPenPalette() }
+    val highlighterPalette =
+        remember(toolSettings.highlighterPaletteArgb) { toolSettings.getHighlighterPalette() }
+
+    val currentStrokeColor by remember(activeToolColor) { derivedStateOf { activeToolColor } }
+    val currentStrokeWidth by remember(activeToolThickness) { derivedStateOf { activeToolThickness } }
+    val currentEraserStrokeWidth by remember(eraserToolThickness) { derivedStateOf { eraserToolThickness } }
+
+    val pdfTextRepository = remember(context) { PdfTextRepository(context) }
+    val annotationRepository = remember(context) { PdfAnnotationRepository(context) }
+    val textBoxRepository = remember(context) { PdfTextBoxRepository(context) }
+    val highlightRepository = remember(context) { PdfHighlightRepository(context) }
+
+    var allAnnotations by remember { mutableStateOf<Map<Int, List<PdfAnnotation>>>(emptyMap()) }
+
+    val undoStack = remember { mutableStateListOf<HistoryAction>() }
+    val redoStack = remember { mutableStateListOf<HistoryAction>() }
+
+    val erasedAnnotationsFromStroke = remember {
+        mutableStateMapOf<Int, MutableList<PdfAnnotation>>()
+    }
+
+    var lastEraserPoint by remember { mutableStateOf<PdfPoint?>(null) }
+
+    var annotationSession by remember { mutableStateOf(SharedPdfAnnotationSessionState()) }
+
+    val richTextRepository = remember(context) { PdfRichTextRepository(context) }
+    val richTextController = remember(currentBookId) {
+        if (currentBookId != null) RichTextController(
+            richTextRepository,
+            coroutineScope,
+            currentBookId!!,
+            viewModel::onPdfSidecarsCommitted,
+        )
+        else null
+    }
+    var pdfDocument by remember { mutableStateOf<ReaderDocument?>(null) }
+    var pfdState by remember { mutableStateOf<ParcelFileDescriptor?>(null) }
+    var totalPages by remember { mutableIntStateOf(0) }
+    var currentPageScale by remember { mutableFloatStateOf(1f) }
+    val textBoxes = remember { mutableStateListOf<PdfTextBox>() }
+    var selectedTextBoxId by rememberSaveable { mutableStateOf<String?>(null) }
+    val userHighlights = remember { mutableStateListOf<PdfUserHighlight>() }
+    val drawingState = remember { PdfDrawingState() }
+    val pdfiumCore = remember { PdfiumCoreProvider.core }
+    val verticalReaderState = rememberVerticalPdfReaderState()
+    var virtualPages by remember { mutableStateOf<List<VirtualPage>>(emptyList()) }
+    var loadedPageLayoutBookId by remember { mutableStateOf<String?>(null) }
+    var pageLayoutMutationVersion by remember(currentBookId) { mutableLongStateOf(0L) }
+    val totalDisplayPages by remember(virtualPages, totalPages) {
+        derivedStateOf { if (virtualPages.isNotEmpty()) virtualPages.size else totalPages }
+    }
+    val pdfSpreadSettings = remember(pdfPageSpreadMode, pdfFirstPageStandaloneInSpread) {
+        ReaderSettings(
+            pageSpreadMode = pdfPageSpreadMode,
+            pdfFirstPageStandaloneInSpread = pdfFirstPageStandaloneInSpread
+        )
+    }
+    val paginationSpreadStarts = remember(
+        totalDisplayPages,
+        pdfSpreadSettings.pageSpreadMode,
+        pdfSpreadSettings.pdfFirstPageStandaloneInSpread
+    ) {
+        PdfSpreadLayout.spreadStartPageIndices(totalDisplayPages, pdfSpreadSettings)
+    }
+    val paginationPagerPageCount by remember(
+        displayMode,
+        totalDisplayPages,
+        paginationSpreadStarts,
+        pdfSpreadSettings.pageSpreadMode
+    ) {
+        derivedStateOf {
+            if (displayMode == DisplayMode.PAGINATION && PdfSpreadLayout.isTwoPageSpreadEnabled(pdfSpreadSettings)) {
+                paginationSpreadStarts.size.coerceAtLeast(1)
+            } else {
+                totalDisplayPages
+            }
+        }
+    }
+    val pagerState = rememberPagerState(initialPage = 0, pageCount = { paginationPagerPageCount })
+
+    fun paginationDisplayPageForPagerPage(pagerPage: Int): Int {
+        if (!PdfSpreadLayout.isTwoPageSpreadEnabled(pdfSpreadSettings)) {
+            return pagerPage.coerceIn(0, (totalDisplayPages - 1).coerceAtLeast(0))
+        }
+        return paginationSpreadStarts
+            .getOrElse(pagerPage.coerceIn(0, (paginationSpreadStarts.size - 1).coerceAtLeast(0))) { 0 }
+    }
+
+    fun paginationPagerPageForDisplayPage(displayPage: Int): Int {
+        if (!PdfSpreadLayout.isTwoPageSpreadEnabled(pdfSpreadSettings)) {
+            return displayPage.coerceIn(0, (paginationPagerPageCount - 1).coerceAtLeast(0))
+        }
+        val normalizedPage = PdfSpreadLayout.normalizePageIndex(displayPage, totalDisplayPages, pdfSpreadSettings)
+        val spreadIndex = paginationSpreadStarts.indexOf(normalizedPage)
+        return spreadIndex.coerceAtLeast(0).coerceIn(0, (paginationPagerPageCount - 1).coerceAtLeast(0))
+    }
+
+    suspend fun scrollPaginationToDisplayPage(displayPage: Int) {
+        pagerState.scrollToPage(paginationPagerPageForDisplayPage(displayPage))
+    }
+
+    suspend fun animatePaginationToDisplayPage(displayPage: Int) {
+        pagerState.animateScrollToPage(paginationPagerPageForDisplayPage(displayPage))
+    }
+
+    fun currentPaginationDisplayPage(): Int {
+        val pagerPage = authoritativePdfPaginationPageIndex(
+            currentPageIndex = pagerState.currentPage,
+            settledPageIndex = pagerState.settledPage,
+            isScrollInProgress = pagerState.isScrollInProgress,
+        ) ?: pagerState.currentPage
+        return paginationDisplayPageForPagerPage(pagerPage)
+    }
+
+    val currentPage by remember(
+        displayMode,
+        totalDisplayPages,
+        paginationPagerPageCount,
+        paginationSpreadStarts,
+        pdfSpreadSettings.pageSpreadMode,
+        pdfSpreadSettings.pdfFirstPageStandaloneInSpread
+    ) {
+        derivedStateOf {
+            when (displayMode) {
+                DisplayMode.PAGINATION -> currentPaginationDisplayPage()
+                DisplayMode.VERTICAL_SCROLL -> verticalReaderState.currentPage
+            }
+        }
+    }
+
+    LaunchedEffect(
+        pendingPaginationSpreadRestorePage,
+        pdfSpreadSettings.pageSpreadMode,
+        pdfSpreadSettings.pdfFirstPageStandaloneInSpread,
+        totalDisplayPages,
+        displayMode
+    ) {
+        val targetPage = pendingPaginationSpreadRestorePage ?: return@LaunchedEffect
+        if (displayMode == DisplayMode.PAGINATION && totalDisplayPages > 0) {
+            scrollPaginationToDisplayPage(targetPage)
+        }
+        pendingPaginationSpreadRestorePage = null
+    }
+    var isDocumentReady by remember { mutableStateOf(false) }
+
+    suspend fun renderSpeechBubblePrefetchBitmap(
+        document: ReaderDocument,
+        sourcePageIndex: Int
+    ): Bitmap? = withContext(Dispatchers.IO) {
+        document.openPage(sourcePageIndex)?.use { page ->
+            val pageWidth = page.getPageWidthPoint()
+            val pageHeight = page.getPageHeightPoint()
+            if (pageWidth <= 0 || pageHeight <= 0) {
+                return@withContext null
+            }
+
+            val longEdge = max(pageWidth, pageHeight).toFloat()
+            val targetLongEdge = when (document) {
+                is PdfDocumentWrapper -> 1600f.coerceAtLeast(longEdge)
+                else -> min(longEdge, 1600f)
+            }
+            val renderScale = (targetLongEdge / longEdge).coerceAtLeast(1f)
+            val renderWidth = (pageWidth * renderScale).roundToInt().coerceAtLeast(1)
+            val renderHeight = (pageHeight * renderScale).roundToInt().coerceAtLeast(1)
+            val renderBitmap = createBitmap(renderWidth, renderHeight)
+
+            try {
+                page.renderPageBitmap(
+                    bitmap = renderBitmap,
+                    startX = 0,
+                    startY = 0,
+                    drawSizeX = renderWidth,
+                    drawSizeY = renderHeight,
+                    renderAnnot = true
+                )
+                renderBitmap
+            } catch (t: Throwable) {
+                renderBitmap.recycle()
+                Timber.tag("BubbleZoom").w(t, "Failed to render bubble prefetch bitmap for page $sourcePageIndex")
+                null
+            }
+        }
+    }
+
+    fun buildSpeechBubblePrefetchOrder(): List<Int> {
+        return buildPdfBubblePrefetchOrder(
+            currentPage = currentPage,
+            totalPages = totalDisplayPages
+        )
+    }
+
+    suspend fun detectSpeechBubblesForPage(
+        sourcePageIndex: Int,
+        fallbackBitmap: Bitmap,
+        allowHighQualityFallback: Boolean = true
+    ): List<SpeechBubble> {
+        val document = pdfDocument
+        val prefetchDocument = document?.takeIf {
+            allowHighQualityFallback &&
+                !viewModel.hasCachedSpeechBubbles(bookId, sourcePageIndex)
+        }
+        val detectionBitmap = prefetchDocument
+            ?.let { renderSpeechBubblePrefetchBitmap(it, sourcePageIndex) }
+            ?: fallbackBitmap
+        val ownsBitmap = detectionBitmap !== fallbackBitmap
+
+        return try {
+            val detected = viewModel.detectSpeechBubblesCached(
+                documentId = bookId,
+                pageIndex = sourcePageIndex,
+                bitmap = detectionBitmap,
+                context = context
+            )
+            if (ownsBitmap) {
+                viewModel.detectSpeechBubblesCached(
+                    documentId = bookId,
+                    pageIndex = sourcePageIndex,
+                    bitmap = fallbackBitmap,
+                    context = context
+                )
+            } else {
+                detected
+            }
+        } finally {
+            if (ownsBitmap && !detectionBitmap.isRecycled) {
+                detectionBitmap.recycle()
+            }
+        }
+    }
+
+    LaunchedEffect(
+        isBubbleZoomModeActive,
+        isDocumentReady,
+        pdfDocument,
+        bookId,
+        currentPage,
+        totalDisplayPages,
+        virtualPages
+    ) {
+        val document = pdfDocument ?: return@LaunchedEffect
+        if (!isBubbleZoomModeActive || !isDocumentReady || totalDisplayPages <= 0) {
+            return@LaunchedEffect
+        }
+
+        for (displayPageIndex in buildSpeechBubblePrefetchOrder()) {
+            if (!isActive) break
+
+            val sourcePageIndex = when (val virtualPage = virtualPages.getOrNull(displayPageIndex)) {
+                is VirtualPage.PdfPage -> virtualPage.pdfIndex
+                null -> displayPageIndex
+                else -> continue
+            }
+
+            if (viewModel.hasCachedSpeechBubbles(bookId, sourcePageIndex)) {
+                continue
+            }
+
+            val prefetchBitmap = renderSpeechBubblePrefetchBitmap(document, sourcePageIndex) ?: continue
+            try {
+                detectSpeechBubblesForPage(
+                    sourcePageIndex = sourcePageIndex,
+                    fallbackBitmap = prefetchBitmap,
+                    allowHighQualityFallback = false
+                )
+            } finally {
+                if (!prefetchBitmap.isRecycled) {
+                    prefetchBitmap.recycle()
+                }
+            }
+
+            kotlinx.coroutines.yield()
+        }
+    }
+
+    var jumpHistory by remember(currentBookId) { mutableStateOf(SharedPdfJumpHistory()) }
+
+    fun pruneJumpHistoryForDocument() {
+        jumpHistory = jumpHistory.pruned(totalDisplayPages)
+    }
+
+    fun recordJumpHistory(currentPageIndex: Int, targetPageIndex: Int) {
+        jumpHistory = jumpHistory.record(currentPageIndex, targetPageIndex, totalDisplayPages)
+    }
+
+    fun clearJumpHistory() {
+        jumpHistory = SharedPdfJumpHistory()
+    }
+
+    fun currentPdfDisplayPage(): Int {
+        val lastDisplayPage = (totalDisplayPages - 1).coerceAtLeast(0)
+        val page = if (displayMode == DisplayMode.PAGINATION) {
+            currentPaginationDisplayPage()
+        } else {
+            verticalReaderState.latestCurrentPage()
+        }
+        return page.coerceIn(0, lastDisplayPage)
+    }
+
+    fun navigateToPdfPage(
+        targetPageIndex: Int,
+        reason: PdfNavigationReason,
+        recordHistory: Boolean = true,
+    ) {
+        if (totalDisplayPages <= 0) return
+
+        val targetPage = targetPageIndex.coerceIn(0, totalDisplayPages - 1)
+        if (recordHistory) {
+            val currentPage = currentPdfDisplayPage()
+            if (currentPage != targetPage) {
+                recordJumpHistory(currentPage, targetPage)
+            }
+        }
+
+        coroutineScope.launch {
+            if (displayMode == DisplayMode.PAGINATION) {
+                if (reason.animatesPagination()) {
+                    animatePaginationToDisplayPage(targetPage)
+                } else {
+                    scrollPaginationToDisplayPage(targetPage)
+                }
+            } else {
+                verticalReaderState.scrollToPage(targetPage)
+            }
+        }
+    }
+
+    fun navigateToJumpHistoryPage(targetPageIndex: Int) {
+        if (targetPageIndex !in 0 until totalDisplayPages) {
+            pruneJumpHistoryForDocument()
+            return
+        }
+        navigateToPdfPage(targetPageIndex, PdfNavigationReason.JUMP_HISTORY, recordHistory = false)
+    }
+
+    LaunchedEffect(totalDisplayPages) {
+        pruneJumpHistoryForDocument()
+    }
+
+    LaunchedEffect(currentPage, isDocumentReady, totalPages, initialScrollDone) {
+        if (isDocumentReady && totalPages > 0) {
+            if (initialScrollDone) {
+                Timber.tag("PdfPositionDebug").v("UI: Tracking | currentPage: $currentPage | pendingRestorePage updated")
+                pendingRestorePage = currentPage
+                currentBookId?.let { tabStateMap[it] = currentPage }
+            }
+        }
+    }
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+
+    surfaceState.paneInitialPage = paneInitialPage
+    surfaceState.selectedBookIdForPane = selectedBookIdForPane
+    surfaceState.effectivePdfUri = effectivePdfUri
+    surfaceState.effectiveFileType = effectiveFileType
+    surfaceState.effectiveInitialPage = effectiveInitialPage
+    surfaceState.effectiveInitialBookmarksJson = effectiveInitialBookmarksJson
+    surfaceState.documentPassword = pdfViewerMutableValue({ documentPassword }, { documentPassword = it })
+    surfaceState.isPrintBlockedForPasswordProtectedPdf = pdfViewerMutableValue({ isPrintBlockedForPasswordProtectedPdf }, { isPrintBlockedForPasswordProtectedPdf = it })
+    surfaceState.isComicFile = isComicFile
+    surfaceState.showNewTabSheet = pdfViewerMutableValue({ showNewTabSheet }, { showNewTabSheet = it })
+    surfaceState.showFileInfoDialog = pdfViewerMutableValue({ showFileInfoDialog }, { showFileInfoDialog = it })
+    surfaceState.sheetState = sheetState
+    surfaceState.isTabsEnabled = isTabsEnabled
+    surfaceState.openTabs = openTabs
+    surfaceState.activeTabBookId = activeTabBookId
+    surfaceState.canShowPdfTabs = canShowPdfTabs
+    surfaceState.isPdfTabStripVisible.value = isPdfTabStripVisible
+    surfaceState.originalFileName = originalFileName
+    surfaceState.documentMetadataTitle = pdfViewerMutableValue({ documentMetadataTitle }, { documentMetadataTitle = it })
+    surfaceState.activeLibraryItem = activeLibraryItem
+    surfaceState.effectiveReaderBookTitle = effectiveReaderBookTitle
+    surfaceState.currentBookId = pdfViewerMutableValue({ currentBookId }, { currentBookId = it })
+    surfaceState.bookId = bookId
+    surfaceState.activeDocumentRenderKey = activeDocumentRenderKey
+    surfaceState.view = view
+    surfaceState.isDockDragging = pdfViewerMutableValue({ isDockDragging }, { isDockDragging = it })
+    surfaceState.initialScrollDone = pdfViewerMutableValue({ initialScrollDone }, { initialScrollDone = it })
+    surfaceState.reflowBookId = reflowBookId
+    surfaceState.hasReflowFile = hasReflowFile
+    surfaceState.isAutoScrollModeActive = pdfViewerMutableValue({ isAutoScrollModeActive }, { isAutoScrollModeActive = it })
+    surfaceState.isAutoScrollPlaying = pdfViewerMutableValue({ isAutoScrollPlaying }, { isAutoScrollPlaying = it })
+    surfaceState.isAutoScrollTempPaused = pdfViewerMutableValue({ isAutoScrollTempPaused }, { isAutoScrollTempPaused = it })
+    surfaceState.autoScrollResumeJob = autoScrollResumeJob
+    surfaceState.isAutoScrollCollapsed = pdfViewerMutableValue({ isAutoScrollCollapsed }, { isAutoScrollCollapsed = it })
+    surfaceState.ttsOverlaySize = pdfViewerMutableValue({ ttsOverlaySize }, { ttsOverlaySize = it })
+    surfaceState.isMusicianMode = pdfViewerMutableValue({ isMusicianMode }, { isMusicianMode = it })
+    surfaceState.autoScrollUseSlider = pdfViewerMutableValue({ autoScrollUseSlider }, { autoScrollUseSlider = it })
+    surfaceState.isStylusOnlyMode = pdfViewerMutableValue({ isStylusOnlyMode }, { isStylusOnlyMode = it })
+    surfaceState.showTtsControlsSheet = pdfViewerMutableValue({ showTtsControlsSheet }, { showTtsControlsSheet = it })
+    surfaceState.isKeepScreenOn = pdfViewerMutableValue({ isKeepScreenOn }, { isKeepScreenOn = it })
+    surfaceState.isTtsPlaybackForThisPane = isTtsPlaybackForThisPane
+    surfaceState.currentTtsMode = pdfViewerMutableValue({ currentTtsMode }, { currentTtsMode = it })
+    surfaceState.showTtsSettingsSheet = pdfViewerMutableValue({ showTtsSettingsSheet }, { showTtsSettingsSheet = it })
+    surfaceState.showTtsReplacementsSheet = pdfViewerMutableValue({ showTtsReplacementsSheet }, { showTtsReplacementsSheet = it })
+    surfaceState.ttsReplacementPreferences = pdfViewerMutableValue({ ttsReplacementPreferences }, { ttsReplacementPreferences = it })
+    surfaceState.updateTtsReplacementPreferences = updateTtsReplacementPreferences
+    surfaceState.showDictionarySettingsSheet = pdfViewerMutableValue({ showDictionarySettingsSheet }, { showDictionarySettingsSheet = it })
+    surfaceState.useOnlineDictionary = pdfViewerMutableValue({ useOnlineDictionary }, { useOnlineDictionary = it })
+    surfaceState.selectedDictPackage = pdfViewerMutableValue({ selectedDictPackage }, { selectedDictPackage = it })
+    surfaceState.selectedTranslatePackage = pdfViewerMutableValue({ selectedTranslatePackage }, { selectedTranslatePackage = it })
+    surfaceState.selectedSearchPackage = pdfViewerMutableValue({ selectedSearchPackage }, { selectedSearchPackage = it })
+    surfaceState.triggerAutoScrollTempPause = { durationMs -> triggerAutoScrollTempPause(durationMs) }
+    surfaceState.onAutoScrollInteraction = onAutoScrollInteraction
+    surfaceState.paginationDraggingBoxId = pdfViewerMutableValue({ paginationDraggingBoxId }, { paginationDraggingBoxId = it })
+    surfaceState.showBanner = PdfViewerBanner { message, isError, isPersistent -> showBanner(message, isError, isPersistent) }
+    surfaceState.onOcrStateChange = onOcrStateChange
+    surfaceState.showZoomIndicator = pdfViewerMutableValue({ showZoomIndicator }, { showZoomIndicator = it })
+    surfaceState.bookmarks = pdfViewerMutableValue({ bookmarks }, { bookmarks = it })
+    surfaceState.persistBookmarksNow = { updatedBookmarks ->
+        onBookmarksChanged(serializePdfBookmarksToJson(updatedBookmarks))
+    }
+    surfaceState.showPenPlayground = pdfViewerMutableValue({ showPenPlayground }, { showPenPlayground = it })
+    surfaceState.isEditMode = pdfViewerMutableValue({ isEditMode }, { isEditMode = it })
+    surfaceState.isDockMinimized = pdfViewerMutableValue({ isDockMinimized }, { isDockMinimized = it })
+    surfaceState.pendingNoteForNewHighlight = pdfViewerMutableValue({ pendingNoteForNewHighlight }, { pendingNoteForNewHighlight = it })
+    surfaceState.highlightToNoteId = pdfViewerMutableValue({ highlightToNoteId }, { highlightToNoteId = it })
+    surfaceState.onNoteRequested = onNoteRequested
+    surfaceState.isDrawingActive = isDrawingActive
+    surfaceState.isAutoScrollLocal = pdfViewerMutableValue({ isAutoScrollLocal }, { isAutoScrollLocal = it })
+    surfaceState.onPrintDocument = onPrintDocument
+    surfaceState.autoScrollSpeed = pdfViewerMutableValue({ autoScrollSpeed }, { autoScrollSpeed = it })
+    surfaceState.autoScrollMinSpeed = pdfViewerMutableValue({ autoScrollMinSpeed }, { autoScrollMinSpeed = it })
+    surfaceState.autoScrollMaxSpeed = pdfViewerMutableValue({ autoScrollMaxSpeed }, { autoScrollMaxSpeed = it })
+    surfaceState.onToggleAutoScrollMode = onToggleAutoScrollMode
+    surfaceState.updateSpeed = updateSpeed
+    surfaceState.updateMinSpeed = updateMinSpeed
+    surfaceState.updateMaxSpeed = updateMaxSpeed
+    surfaceState.customHighlightColors = pdfViewerMutableValue({ customHighlightColors }, { customHighlightColors = it })
+    surfaceState.showHighlightColorPicker = pdfViewerMutableValue({ showHighlightColorPicker }, { showHighlightColorPicker = it })
+    surfaceState.highlightColorPickerInitialSlot = pdfViewerMutableValue({ highlightColorPickerInitialSlot }, { highlightColorPickerInitialSlot = it })
+    surfaceState.isBubbleZoomModeActive = pdfViewerMutableValue({ isBubbleZoomModeActive }, { isBubbleZoomModeActive = it })
+    surfaceState.showBubbleZoomDownloadDialog = pdfViewerMutableValue({ showBubbleZoomDownloadDialog }, { showBubbleZoomDownloadDialog = it })
+    surfaceState.dockLocation = pdfViewerMutableValue({ dockLocation }, { dockLocation = it })
+    surfaceState.dockOffset = pdfViewerMutableValue({ dockOffset }, { dockOffset = it })
+    surfaceState.snapPreviewLocation = pdfViewerMutableValue({ snapPreviewLocation }, { snapPreviewLocation = it })
+    surfaceState.paginationDraggingOffset = pdfViewerMutableValue({ paginationDraggingOffset }, { paginationDraggingOffset = it })
+    surfaceState.paginationDraggingSize = pdfViewerMutableValue({ paginationDraggingSize }, { paginationDraggingSize = it })
+    surfaceState.paginationDragPageHeight = pdfViewerMutableValue({ paginationDragPageHeight }, { paginationDragPageHeight = it })
+    surfaceState.paginationOriginalRelSize = pdfViewerMutableValue({ paginationOriginalRelSize }, { paginationOriginalRelSize = it })
+    surfaceState.window = window
+    surfaceState.readerBrightnessSettings = pdfViewerMutableValue({ readerBrightnessSettings }, { readerBrightnessSettings = it })
+    surfaceState.showBrightnessSheet = pdfViewerMutableValue({ showBrightnessSheet }, { showBrightnessSheet = it })
+    surfaceState.updateReaderBrightness = updateReaderBrightness
+    surfaceState.dockHeight = dockHeight
+    surfaceState.dockHeightPx.value = dockHeightPx
+    surfaceState.density.value = density
+    surfaceState.viewConfiguration = viewConfiguration
+    surfaceState.statusBarHeightDp.value = statusBarHeightDp
+    surfaceState.searchState = searchState
+    surfaceState.navBarHeight.value = effectiveNavBarHeight
+    surfaceState.verticalHeaderHeight.value = verticalHeaderHeight
+    surfaceState.topOverlayInset.value = topOverlayInset
+    surfaceState.verticalFooterHeight.value = verticalFooterHeight
+    surfaceState.errorMessage = pdfViewerMutableValue({ errorMessage }, { errorMessage = it })
+    surfaceState.showToolSettings = pdfViewerMutableValue({ showToolSettings }, { showToolSettings = it })
+    surfaceState.isHighlighterSnapEnabled = isHighlighterSnapEnabled
+    surfaceState.selectedTool.value = selectedTool
+    surfaceState.lastPenTool = lastPenTool
+    surfaceState.lastHighlighterTool = lastHighlighterTool
+    surfaceState.dockPenColor = dockPenColor
+    surfaceState.dockHighlighterColor = dockHighlighterColor
+    surfaceState.activeToolThickness = activeToolThickness
+    surfaceState.eraserToolThickness = eraserToolThickness
+    surfaceState.fountainPenColor = fountainPenColor
+    surfaceState.markerColor = markerColor
+    surfaceState.pencilColor = pencilColor
+    surfaceState.highlighterColor = highlighterColor
+    surfaceState.highlighterRoundColor = highlighterRoundColor
+    surfaceState.isCurrentToolHighlighter = isCurrentToolHighlighter
+    surfaceState.currentSnapEnabled = currentSnapEnabled
+    surfaceState.currentIsHighlighter = currentIsHighlighter
+    surfaceState.penPalette = penPalette
+    surfaceState.highlighterPalette = highlighterPalette
+    surfaceState.currentStrokeColor = currentStrokeColor
+    surfaceState.currentStrokeWidth = currentStrokeWidth
+    surfaceState.currentEraserStrokeWidth = currentEraserStrokeWidth
+    surfaceState.pdfTextRepository = pdfTextRepository
+    surfaceState.annotationRepository = annotationRepository
+    surfaceState.textBoxRepository = textBoxRepository
+    surfaceState.highlightRepository = highlightRepository
+    surfaceState.allAnnotations = pdfViewerMutableValue({ allAnnotations }, { allAnnotations = it })
+    surfaceState.undoStack = undoStack
+    surfaceState.redoStack = redoStack
+    surfaceState.erasedAnnotationsFromStroke = erasedAnnotationsFromStroke
+    surfaceState.lastEraserPoint = pdfViewerMutableValue({ lastEraserPoint }, { lastEraserPoint = it })
+    surfaceState.annotationSession = pdfViewerMutableValue({ annotationSession }, { annotationSession = it })
+    surfaceState.richTextRepository = richTextRepository
+    surfaceState.richTextController = richTextController
+    surfaceState.pdfDocument = pdfViewerMutableValue({ pdfDocument }, { pdfDocument = it })
+    surfaceState.pfdState = pdfViewerMutableValue({ pfdState }, { pfdState = it })
+    surfaceState.totalPages = pdfViewerMutableValue({ totalPages }, { totalPages = it })
+    surfaceState.currentPageScale = pdfViewerMutableValue({ currentPageScale }, { currentPageScale = it })
+    surfaceState.textBoxes = textBoxes
+    surfaceState.selectedTextBoxId = pdfViewerMutableValue({ selectedTextBoxId }, { selectedTextBoxId = it })
+    surfaceState.userHighlights = userHighlights
+    surfaceState.drawingState = drawingState
+    surfaceState.pdfiumCore = pdfiumCore
+    surfaceState.verticalReaderState = verticalReaderState
+    surfaceState.virtualPages = pdfViewerMutableValue({ virtualPages }, { virtualPages = it })
+    surfaceState.loadedPageLayoutBookId = pdfViewerMutableValue({ loadedPageLayoutBookId }, { loadedPageLayoutBookId = it })
+    surfaceState.pageLayoutMutationVersion = pdfViewerMutableValue({ pageLayoutMutationVersion }, { pageLayoutMutationVersion = it })
+    if (surfaceState.totalDisplayPages != totalDisplayPages) {
+        Timber.tag(TTS_DIAG_TAG).i(
+            "bind.totalDisplayPages value=$totalDisplayPages totalPdfPages=$totalPages " +
+                "virtual=${virtualPages.pdfLayoutDebugSummary()}"
+        )
+    }
+    surfaceState.totalDisplayPages = totalDisplayPages
+    surfaceState.pdfSpreadSettings = pdfSpreadSettings
+    surfaceState.paginationSpreadStarts = paginationSpreadStarts
+    surfaceState.paginationPagerPageCount = paginationPagerPageCount
+    surfaceState.pagerState = pagerState
+    surfaceState.paginationDisplayPageForPagerPage = { value -> paginationDisplayPageForPagerPage(value) }
+    surfaceState.paginationPagerPageForDisplayPage = { value -> paginationPagerPageForDisplayPage(value) }
+    surfaceState.scrollPaginationToDisplayPage = PdfViewerSuspendPageAction { displayPage -> scrollPaginationToDisplayPage(displayPage) }
+    surfaceState.animatePaginationToDisplayPage = PdfViewerSuspendPageAction { displayPage -> animatePaginationToDisplayPage(displayPage) }
+    surfaceState.currentPaginationDisplayPage = { currentPaginationDisplayPage() }
+    surfaceState.currentPdfDisplayPage = { currentPdfDisplayPage() }
+    surfaceState.currentPage = currentPage
+    surfaceState.isDocumentReady = pdfViewerMutableValue({ isDocumentReady }, { isDocumentReady = it })
+    surfaceState.detectSpeechBubblesForPage = PdfViewerSpeechBubbleDetector { sourcePageIndex, fallbackBitmap, allowHighQualityFallback -> detectSpeechBubblesForPage(sourcePageIndex, fallbackBitmap, allowHighQualityFallback) }
+    surfaceState.jumpHistory = pdfViewerMutableValue({ jumpHistory }, { jumpHistory = it })
+    surfaceState.clearJumpHistory = { clearJumpHistory() }
+    surfaceState.navigateToJumpHistoryPage = { value -> navigateToJumpHistoryPage(value) }
+    surfaceState.navigateToPdfPage = { value, reason, recordHistory ->
+        navigateToPdfPage(value, reason, recordHistory)
+    }
+    surfaceState.lifecycleOwner = lifecycleOwner
+}
+
+/** Immutable per-composition context shared by each extracted pager page. */
+private data class PdfViewerPaginationPageState(
+    val surfaceState: PdfViewerSurfaceState,
+    val stablePdfDocument: StableHolder<ReaderDocument>,
+    val boxMaxWidth: Int,
+    val boxMaxHeight: Int,
+    val stylusButtonHovering: Boolean,
+)
+
+/**
+ * The text-box snapshots consumed by the independently recomposed PDF surface.
+ *
+ * Keeping the complete list and its page index together ensures that a text edit publishes one
+ * consistent snapshot to both vertical scrolling and pagination surfaces.
+ */
+internal data class PdfViewerTextBoxSurfaceData(
+    val all: List<PdfTextBox> = emptyList(),
+    val byPage: Map<Int, List<PdfTextBox>> = emptyMap(),
+)
+
+/** Compose-observable holder for the text-box snapshots shared by the PDF surfaces. */
+internal class PdfViewerTextBoxSurfaceState {
+    val data = mutableStateOf(PdfViewerTextBoxSurfaceData())
+}
+
+/**
+ * Stable bridge between the reader's stateful screen and the extracted PDF surface.
+ *
+ * It keeps business state out of the bridge. The parent binds each current value or accessor on
+ * every composition, while the surface reads the typed aliases below; the small Compose state
+ * cells are limited to setup-produced metrics that must invalidate independently recomposed
+ * surface groups. Keeping this bridge no-arg avoids the verifier-sensitive constructor generated
+ * for the old 250-parameter Scaffold/BoxWithConstraints lambda and preserves the existing pane
+ * ownership semantics.
+ */
+@Stable
+private class PdfViewerSurfaceState {
+    var richTextController: RichTextController? = null
+    val selectedTool: androidx.compose.runtime.MutableState<InkType> = mutableStateOf(InkType.PEN)
+    var density: androidx.compose.runtime.MutableState<androidx.compose.ui.unit.Density> =
+        mutableStateOf(androidx.compose.ui.unit.Density(1f))
+    lateinit var searchState: ReaderSearchState
+    /**
+     * The document surface is kept behind a stable bridge, so this value must be observable.
+     * A plain field here lets the parent bind a new theme without invalidating already composed
+     * vertical or paginated PDF pages; those pages then appear to update only after another input
+     * causes an unrelated recomposition.
+     */
+    val activeTheme = mutableStateOf(PdfBuiltInThemes[0])
+    var pdfSliderChromeVisible: Boolean by androidx.compose.runtime.mutableStateOf(false)
+    lateinit var pdfSpreadSettings: ReaderSettings
+    var ownsPaneGlobals: Boolean by androidx.compose.runtime.mutableStateOf(false)
+    lateinit var drawerState: DrawerState
+
+    // TTS and page-mapping values must be Compose-observable: several consumer scopes
+    // read them as plain `val` snapshots, so a non-observable field would freeze those
+    // snapshots until an unrelated recomposition (overlay/toolbar staleness bugs).
+    var ttsState: TtsPlaybackManager.TtsState by androidx.compose.runtime.mutableStateOf(
+        TtsPlaybackManager.TtsState()
+    )
+    lateinit var bookId: String
+    lateinit var ttsController: TtsController
+    var isTtsPlayingOrLoading: Boolean by androidx.compose.runtime.mutableStateOf(false)
+    lateinit var context: Context
+    var totalDisplayPages: Int by androidx.compose.runtime.mutableStateOf(0)
+    lateinit var paginationSpreadStarts: List<Int>
+    lateinit var pagerState: androidx.compose.foundation.pager.PagerState
+    lateinit var verticalReaderState: VerticalPdfReaderState
+    lateinit var isPageSliderVisible: PdfViewerMutableValue<Boolean>
+    lateinit var coroutineScope: CoroutineScope
+    lateinit var executeWithOcrCheck: ((() -> Unit) -> Unit)
+    lateinit var isEditMode: PdfViewerMutableValue<Boolean>
+    var keyboardController: androidx.compose.ui.platform.SoftwareKeyboardController? = null
+    var isTtsSessionActive: Boolean = false
+    lateinit var startTtsWithPermissionCheck: (Int?, Int?) -> Unit
+    var isSplitPane: Boolean = false
+    var paneSessionId: Long = 0L
+    var paneBookId: String? = null
+    var onOpenSplit: (() -> Unit)? = null
+    var statusBarHeightDp: androidx.compose.runtime.MutableState<androidx.compose.ui.unit.Dp> = mutableStateOf(0.dp)
+    lateinit var focusRequester: FocusRequester
+    lateinit var focusManager: androidx.compose.ui.focus.FocusManager
+    lateinit var hiddenTools: Set<String>
+    lateinit var toolOrder: List<PdfReaderTool>
+    lateinit var bottomTools: Set<String>
+    var isPdfTabStripVisible: androidx.compose.runtime.MutableState<Boolean> = mutableStateOf(false)
+    var openTabs: List<RecentFileItem> by androidx.compose.runtime.mutableStateOf(emptyList())
+    var activeTabBookId: String? by androidx.compose.runtime.mutableStateOf(null)
+    lateinit var effectiveFileType: FileType
+    lateinit var saveStateAndExit: () -> Unit
+    lateinit var showPenPlayground: PdfViewerMutableValue<Boolean>
+    lateinit var viewModel: MainViewModel
+    lateinit var onBookmarkClick: () -> Unit
+    lateinit var onInsertPage: () -> Unit
+    lateinit var onDeletePage: () -> Unit
+    lateinit var saveAllData: (Boolean) -> Job
+    var currentPage: Int by androidx.compose.runtime.mutableStateOf(0)
+    lateinit var pendingRestorePage: PdfViewerMutableValue<Int?>
+    var hasReflowFile: Boolean = false
+    lateinit var uiState: ReaderScreenState
+    lateinit var reflowBookId: String
+    lateinit var effectivePdfUri: Uri
+    lateinit var originalFileName: String
+    lateinit var requestShare: () -> Unit
+    lateinit var requestSaveCopy: () -> Unit
+    lateinit var onPrintDocument: () -> Unit
+    lateinit var currentBookId: PdfViewerMutableValue<String?>
+    lateinit var onNavigateBack: () -> Unit
+    lateinit var jumpHistory: PdfViewerMutableValue<SharedPdfJumpHistory>
+    var isComicFile: Boolean by androidx.compose.runtime.mutableStateOf(false)
+    var dockHeightPx: androidx.compose.runtime.MutableState<Float> = mutableStateOf(0f)
+    var window: android.view.Window? = null
+    lateinit var view: android.view.View
+    lateinit var activeDocumentRenderKey: String
+    var isHighlighterSnapEnabled: Boolean = false
+    var isCurrentToolHighlighter: Boolean = false
+    lateinit var calculateSnappedPoint: (Int, PdfPoint, PdfPoint?) -> PdfPoint
+    lateinit var isLoadingDocument: PdfViewerMutableValue<Boolean>
+    lateinit var errorMessage: PdfViewerMutableValue<String?>
+    lateinit var pdfDocument: PdfViewerMutableValue<ReaderDocument?>
+    lateinit var totalPages: PdfViewerMutableValue<Int>
+    lateinit var displayMode: PdfViewerMutableValue<DisplayMode>
+    lateinit var tapToNavigateEnabled: PdfViewerMutableValue<Boolean>
+    lateinit var pageTurnAnimationEnabled: PdfViewerMutableValue<Boolean>
+    lateinit var currentPageScale: PdfViewerMutableValue<Float>
+    lateinit var isScrollLocked: PdfViewerMutableValue<Boolean>
+    lateinit var rightToLeftPagination: PdfViewerMutableValue<Boolean>
+    var dynamicBeyondViewportPageCount: Int by androidx.compose.runtime.mutableStateOf(0)
+    lateinit var textBoxes: androidx.compose.runtime.snapshots.SnapshotStateList<PdfTextBox>
+    lateinit var paginationDraggingBoxId: PdfViewerMutableValue<String?>
+    var isDrawingActive: Boolean = false
+    lateinit var viewConfiguration: androidx.compose.ui.platform.ViewConfiguration
+    lateinit var currentActiveScale: PdfViewerMutableValue<Float>
+    lateinit var currentActiveOffset: PdfViewerMutableValue<Offset>
+    lateinit var showVerticalPageGap: PdfViewerMutableValue<Boolean>
+    lateinit var pdfTextRepository: PdfTextRepository
+    var visibleUserHighlightsByPage: Map<Int, List<PdfUserHighlight>> by androidx.compose.runtime.mutableStateOf(
+        emptyMap()
+    )
+    val textBoxSurfaceState = PdfViewerTextBoxSurfaceState()
+    var isProUser: Boolean by androidx.compose.runtime.mutableStateOf(false)
+    lateinit var onDictionaryLookupStable: (String) -> Unit
+    lateinit var onTranslateTextStable: (String) -> Unit
+    lateinit var onSearchTextStable: (String) -> Unit
+    lateinit var onInternalLinkNav: (Int) -> Unit
+    lateinit var onOcrStateChange: (Boolean) -> Unit
+    lateinit var onToggleBookmark: (Int) -> Unit
+    var paginationPagerPageCount: Int by androidx.compose.runtime.mutableStateOf(0)
+    lateinit var drawingState: PdfDrawingState
+    lateinit var persistInkAnnotationsNow: (Map<Int, List<PdfAnnotation>>, Collection<PdfAnnotation>, String) -> Job
+    lateinit var selectedTextBoxId: PdfViewerMutableValue<String?>
+    lateinit var displayPageRatios: List<Float>
+    lateinit var onHighlightAdd: (Int, Pair<Int, Int>, String, PdfHighlightColor, HighlightStyle) -> Unit
+    lateinit var onHighlightUpdate: (String, PdfHighlightColor, HighlightStyle?) -> Unit
+    lateinit var onHighlightDelete: (String) -> Unit
+    lateinit var onNoteRequested: (String?) -> Unit
+    lateinit var bookmarks: PdfViewerMutableValue<Set<PdfBookmark>>
+    lateinit var persistBookmarksNow: (Set<PdfBookmark>) -> Unit
+    lateinit var searchHighlightTarget: PdfViewerMutableValue<SearchResult?>
+    lateinit var isOcrModelDownloading: PdfViewerMutableValue<Boolean>
+    lateinit var allAnnotationsProvider: () -> Map<Int, List<PdfAnnotation>>
+    var currentStrokeColor: Color = Color.Unspecified
+    var currentStrokeWidth: Float = 0f
+    var currentEraserStrokeWidth: Float = 0f
+    lateinit var erasedAnnotationsFromStroke: androidx.compose.runtime.snapshots.SnapshotStateMap<Int, MutableList<PdfAnnotation>>
+    lateinit var pageAspectRatios: PdfViewerMutableValue<List<Float>>
+    lateinit var allAnnotations: PdfViewerMutableValue<Map<Int, List<PdfAnnotation>>>
+    lateinit var lastEraserPoint: PdfViewerMutableValue<PdfPoint?>
+    var currentIsHighlighter: Boolean = false
+    var currentSnapEnabled: Boolean = false
+    lateinit var showToolSettings: PdfViewerMutableValue<Boolean>
+    lateinit var virtualPages: PdfViewerMutableValue<List<VirtualPage>>
+    lateinit var globalTextureTransparency: PdfViewerMutableValue<Float>
+    lateinit var excludeImages: PdfViewerMutableValue<Boolean>
+    lateinit var reverseColorMode: PdfViewerMutableValue<PdfReverseColorMode>
+    lateinit var customHighlightColors: PdfViewerMutableValue<Map<PdfHighlightColor, Color>>
+    lateinit var ttsDisplayPageIndex: PdfViewerMutableValue<Int?>
+    lateinit var ttsHighlightData: PdfViewerMutableValue<TtsHighlightData?>
+    lateinit var searchHighlightMode: PdfViewerMutableValue<SearchHighlightMode>
+    lateinit var showAllTextHighlights: PdfViewerMutableValue<Boolean>
+    lateinit var showPageNumberOverlay: PdfViewerMutableValue<Boolean>
+    lateinit var selectionClearTrigger: PdfViewerMutableValue<Long>
+    lateinit var resetZoomTrigger: PdfViewerMutableValue<Long>
+    lateinit var lockedState: PdfViewerMutableValue<Triple<Float, Float, Float>?>
+    lateinit var isStylusOnlyMode: PdfViewerMutableValue<Boolean>
+    lateinit var isAutoScrollPlaying: PdfViewerMutableValue<Boolean>
+    lateinit var isBubbleZoomModeActive: PdfViewerMutableValue<Boolean>
+    lateinit var useOnlineDictionary: PdfViewerMutableValue<Boolean>
+    lateinit var showDictionaryUpsellDialog: PdfViewerMutableValue<Boolean>
+    lateinit var clickedLinkUrl: PdfViewerMutableValue<String?>
+    lateinit var undoStack: androidx.compose.runtime.snapshots.SnapshotStateList<HistoryAction>
+    lateinit var redoStack: androidx.compose.runtime.snapshots.SnapshotStateList<HistoryAction>
+    lateinit var paginationOriginalRelSize: PdfViewerMutableValue<Size>
+    lateinit var paginationDraggingSize: PdfViewerMutableValue<Size>
+    lateinit var paginationDragPageHeight: PdfViewerMutableValue<Float>
+    lateinit var paginationDraggingOffset: PdfViewerMutableValue<Offset>
+    lateinit var highlightColorPickerInitialSlot: PdfViewerMutableValue<PdfHighlightColor>
+    lateinit var showHighlightColorPicker: PdfViewerMutableValue<Boolean>
+    lateinit var poppedUpPanelBitmap: PdfViewerMutableValue<Bitmap?>
+    var isPdfDarkMode: Boolean = false
+    // These values are produced by the setup sibling but consumed by independently recomposed
+    // document/chrome groups. Keep them in stable Compose state so inset animations and system-bar
+    // visibility changes invalidate the consumers exactly like the pre-extraction locals did.
+    var verticalHeaderHeight: androidx.compose.runtime.MutableState<androidx.compose.ui.unit.Dp> = mutableStateOf(0.dp)
+    var verticalFooterHeight: androidx.compose.runtime.MutableState<androidx.compose.ui.unit.Dp> = mutableStateOf(0.dp)
+    lateinit var onZoomChangeStable: (Float) -> Unit
+    lateinit var onHighlightLoadingStable: (Boolean) -> Unit
+    lateinit var onShowDictionaryUpsellDialogStable: () -> Unit
+    lateinit var onLinkClickedStable: (String) -> Unit
+    lateinit var onInternalLinkNavStable: (Int) -> Unit
+    lateinit var onBookmarkClickStable: (Int) -> Unit
+    lateinit var onOcrStateChangeStable: (Boolean) -> Unit
+    lateinit var onGetOcrSearchRectsStable: suspend (Int, String) -> List<RectF>
+    var bottomScrollLimitPx: androidx.compose.runtime.MutableState<Float> = mutableStateOf(0f)
+    var topScrollLimitPx: androidx.compose.runtime.MutableState<Float> = mutableStateOf(0f)
+    lateinit var onAutoScrollInteraction: () -> Unit
+    lateinit var visibleUserHighlights: List<PdfUserHighlight>
+    lateinit var isAutoScrollTempPaused: PdfViewerMutableValue<Boolean>
+    lateinit var autoScrollSpeed: PdfViewerMutableValue<Float>
+    lateinit var isMusicianMode: PdfViewerMutableValue<Boolean>
+    lateinit var isAutoScrollModeActive: PdfViewerMutableValue<Boolean>
+    lateinit var autoScrollResumeJob: androidx.compose.runtime.MutableState<Job?>
+    var topOverlayInset: androidx.compose.runtime.MutableState<androidx.compose.ui.unit.Dp> = mutableStateOf(0.dp)
+    lateinit var ocrLanguage: PdfViewerMutableValue<OcrLanguage>
+    var bubbleZoomDownloadProgress: Float? = null
+    lateinit var systemUiMode: PdfViewerMutableValue<SystemUiMode>
+    var navBarHeight: androidx.compose.runtime.MutableState<Int> = mutableStateOf(0)
+    lateinit var sliderCurrentPage: PdfViewerMutableValue<Float>
+    lateinit var scrubDebounceJob: androidx.compose.runtime.MutableState<Job?>
+    lateinit var isFastScrubbing: PdfViewerMutableValue<Boolean>
+    lateinit var showThemePanel: PdfViewerMutableValue<Boolean>
+    lateinit var showVisualOptionsSheet: PdfViewerMutableValue<Boolean>
+    lateinit var showBrightnessSheet: PdfViewerMutableValue<Boolean>
+    lateinit var showScreenOrientationSheet: PdfViewerMutableValue<Boolean>
+    lateinit var showTtsControlsSheet: PdfViewerMutableValue<Boolean>
+    lateinit var showTtsSettingsSheet: PdfViewerMutableValue<Boolean>
+    lateinit var showTtsReplacementsSheet: PdfViewerMutableValue<Boolean>
+    lateinit var showDictionarySettingsSheet: PdfViewerMutableValue<Boolean>
+    lateinit var showSummarizationUpsellDialog: PdfViewerMutableValue<Boolean>
+    lateinit var showAiHubSheet: PdfViewerMutableValue<Boolean>
+    lateinit var showPermissionRationaleDialog: PdfViewerMutableValue<Boolean>
+    lateinit var showInsufficientCreditsDialog: PdfViewerMutableValue<Boolean>
+    lateinit var showBubbleZoomDownloadDialog: PdfViewerMutableValue<Boolean>
+    lateinit var showNewTabSheet: PdfViewerMutableValue<Boolean>
+    lateinit var showFileInfoDialog: PdfViewerMutableValue<Boolean>
+    lateinit var showSaveDialog: PdfViewerMutableValue<Boolean>
+    lateinit var showShareDialog: PdfViewerMutableValue<Boolean>
+    lateinit var showOcrLanguageDialog: PdfViewerMutableValue<Boolean>
+    lateinit var showReindexDialog: PdfViewerMutableValue<OcrLanguage?>
+    lateinit var showCustomizeToolsSheet: PdfViewerMutableValue<Boolean>
+    lateinit var pendingActionAfterOcrSelection: PdfViewerMutableValue<(() -> Unit)?>
+    lateinit var pendingSaveMode: PdfViewerMutableValue<SaveMode?>
+    lateinit var showBars: PdfViewerMutableValue<Boolean>
+    lateinit var sliderStartPage: PdfViewerMutableValue<Int>
+    lateinit var isHighlightingLoading: PdfViewerMutableValue<Boolean>
+    lateinit var isAutoPagingForTts: PdfViewerMutableValue<Boolean>
+    lateinit var isKeepScreenOn: PdfViewerMutableValue<Boolean>
+    var isBookmarked: Boolean = false
+    var isReflowingThisBook: Boolean = false
+    lateinit var isPrintBlockedForPasswordProtectedPdf: PdfViewerMutableValue<Boolean>
+    var isOss: Boolean = false
+    lateinit var hasSelectedOcrLanguage: PdfViewerMutableValue<Boolean>
+    lateinit var initialScrollDone: PdfViewerMutableValue<Boolean>
+    lateinit var tabStateMap: androidx.compose.runtime.snapshots.SnapshotStateMap<String, Int>
+    var reflowProgressValue: Float = 0f
+    lateinit var isBackgroundIndexing: PdfViewerMutableValue<Boolean>
+    lateinit var backgroundIndexingProgress: PdfViewerMutableValue<Float>
+    lateinit var isOcrScanning: PdfViewerMutableValue<Boolean>
+    lateinit var smartSearchResult: PdfViewerMutableValue<SmartSearchResult?>
+    lateinit var currentPdfSearchResult: PdfViewerMutableValue<SearchResult?>
+    lateinit var dockLocation: PdfViewerMutableValue<DockLocation>
+    lateinit var dockOffset: PdfViewerMutableValue<Offset>
+    lateinit var highlighterPalette: List<Color>
+    lateinit var penPalette: List<Color>
+    var activeToolThickness: Float = 0f
+    var fountainPenColor: Color = Color.Unspecified
+    var markerColor: Color = Color.Unspecified
+    var pencilColor: Color = Color.Unspecified
+    var highlighterColor: Color = Color.Unspecified
+    var highlighterRoundColor: Color = Color.Unspecified
+    lateinit var annotationSettingsRepo: AnnotationSettingsRepository
+    lateinit var snapPreviewLocation: PdfViewerMutableValue<DockLocation?>
+    var dockHeight: androidx.compose.ui.unit.Dp = 0.dp
+    lateinit var isDockDragging: PdfViewerMutableValue<Boolean>
+    lateinit var isDockMinimized: PdfViewerMutableValue<Boolean>
+    var dockPenColor: Color = Color.Unspecified
+    var dockHighlighterColor: Color = Color.Unspecified
+    lateinit var lastPenTool: InkType
+    lateinit var lastHighlighterTool: InkType
+    lateinit var showZoomIndicator: PdfViewerMutableValue<Boolean>
+    var zoomIndicatorPercentage: Int by mutableStateOf(0)
+    lateinit var toolSettings: AnnotationToolSettings
+    lateinit var onInsertTextBox: () -> Unit
+    lateinit var customFonts: List<CustomFontEntity>
+    lateinit var ttsOverlaySize: PdfViewerMutableValue<ReaderTtsOverlaySize>
+    lateinit var currentTtsMode: PdfViewerMutableValue<TtsPlaybackManager.TtsMode>
+    lateinit var isAutoScrollCollapsed: PdfViewerMutableValue<Boolean>
+    lateinit var autoScrollMinSpeed: PdfViewerMutableValue<Float>
+    lateinit var autoScrollMaxSpeed: PdfViewerMutableValue<Float>
+    lateinit var autoScrollUseSlider: PdfViewerMutableValue<Boolean>
+    lateinit var isAutoScrollLocal: PdfViewerMutableValue<Boolean>
+    lateinit var onSingleTapStable: () -> Unit
+    lateinit var updateSpeed: (Float) -> Unit
+    lateinit var updateMinSpeed: (Float) -> Unit
+    lateinit var updateMaxSpeed: (Float) -> Unit
+    lateinit var onToggleAutoScrollMode: (Boolean) -> Unit
+    lateinit var triggerAutoScrollTempPause: (Long) -> Unit
+    lateinit var paginationDisplayPageForPagerPage: (Int) -> Int
+    lateinit var scrollPaginationToDisplayPage: PdfViewerSuspendPageAction
+    lateinit var animatePaginationToDisplayPage: PdfViewerSuspendPageAction
+    lateinit var currentPaginationDisplayPage: () -> Int
+    lateinit var currentPdfDisplayPage: () -> Int
+    lateinit var detectSpeechBubblesForPage: PdfViewerSpeechBubbleDetector
+    lateinit var clearJumpHistory: () -> Unit
+    lateinit var navigateToJumpHistoryPage: (Int) -> Unit
+    lateinit var navigateToPdfPage: (Int, PdfNavigationReason, Boolean) -> Unit
+    lateinit var isAnnotationHit: (PdfAnnotation, PdfPoint, PdfPoint?, Float, Float) -> Boolean
+    lateinit var navigateToPdfSearchResult: (SearchResult) -> Unit
+    lateinit var showBanner: PdfViewerBanner
+    lateinit var aiDefinitionResult: PdfViewerMutableValue<AiDefinitionResult?>
+    var canShowPdfTabs: Boolean = false
+    lateinit var currentThemeId: PdfViewerMutableValue<String>
+    lateinit var customThemes: PdfViewerMutableValue<List<ReaderTheme>>
+    lateinit var documentPassword: PdfViewerMutableValue<String?>
+    lateinit var effectiveReaderBookTitle: String
+    lateinit var flatTableOfContents: PdfViewerMutableValue<List<TocEntry>>
+    lateinit var highlightToNoteId: PdfViewerMutableValue<String?>
+    lateinit var isAiDefinitionLoading: PdfViewerMutableValue<Boolean>
+    lateinit var isPasswordError: PdfViewerMutableValue<Boolean>
+    lateinit var isShareLoading: PdfViewerMutableValue<Boolean>
+    lateinit var isSummarizationLoading: PdfViewerMutableValue<Boolean>
+    var isTabsEnabled: Boolean = false
+    lateinit var launchAnnotatedSaveCopy: () -> Unit
+    lateinit var launchOriginalSaveCopy: () -> Unit
+    lateinit var onUpdateBottomTools: (Set<String>) -> Unit
+    lateinit var onUpdateHiddenTools: (Set<String>) -> Unit
+    lateinit var onUpdateToolOrder: (List<PdfReaderTool>) -> Unit
+    lateinit var pdfFirstPageStandaloneInSpread: PdfViewerMutableValue<Boolean>
+    lateinit var pdfPageSpreadMode: PdfViewerMutableValue<com.aryan.reader.shared.reader.ReaderPageSpreadMode>
+    lateinit var pendingPaginationSpreadRestorePage: PdfViewerMutableValue<Int?>
+    lateinit var readerBrightnessSettings: PdfViewerMutableValue<com.aryan.reader.ReaderBrightnessSettings>
+    lateinit var requestNotificationPermission: () -> Unit
+    lateinit var startTtsForOverlay: () -> Unit
+    lateinit var onNavigateToPro: () -> Unit
+    lateinit var clipboardManager: androidx.compose.ui.platform.ClipboardManager
+    var paneInitialPage: Int? = null
+    var effectiveInitialPage: Int? = null
+    var effectiveInitialBookmarksJson: String? = null
+    lateinit var documentMetadataTitle: PdfViewerMutableValue<String?>
+    var activeLibraryItem: RecentFileItem? = null
+    var isTtsPlaybackForThisPane: Boolean = false
+    lateinit var pendingNoteForNewHighlight: PdfViewerMutableValue<Boolean>
+    var eraserToolThickness: Float = 0f
+    lateinit var annotationRepository: PdfAnnotationRepository
+    lateinit var textBoxRepository: PdfTextBoxRepository
+    lateinit var highlightRepository: PdfHighlightRepository
+    lateinit var annotationSession: PdfViewerMutableValue<SharedPdfAnnotationSessionState>
+    lateinit var richTextRepository: PdfRichTextRepository
+    lateinit var pfdState: PdfViewerMutableValue<ParcelFileDescriptor?>
+    lateinit var pdfiumCore: io.legere.pdfiumandroid.suspend.PdfiumCoreKt
+    lateinit var loadedPageLayoutBookId: PdfViewerMutableValue<String?>
+    lateinit var pageLayoutMutationVersion: PdfViewerMutableValue<Long>
+    lateinit var isDocumentReady: PdfViewerMutableValue<Boolean>
+    lateinit var lifecycleOwner: androidx.lifecycle.LifecycleOwner
+    lateinit var paginationPagerPageForDisplayPage: (Int) -> Int
+    lateinit var screenOrientationMode: PdfViewerMutableValue<com.aryan.reader.shared.reader.ReaderScreenOrientationMode>
+    var selectedBookIdForPane: String? = null
+    lateinit var selectedDictPackage: PdfViewerMutableValue<String?>
+    lateinit var selectedSearchPackage: PdfViewerMutableValue<String?>
+    lateinit var selectedTextForAi: PdfViewerMutableValue<String?>
+    lateinit var selectedTranslatePackage: PdfViewerMutableValue<String?>
+    lateinit var shareAnnotatedPdf: () -> Unit
+    lateinit var shareOriginalPdf: () -> Unit
+    lateinit var sheetState: androidx.compose.material3.SheetState
+    lateinit var showAiDefinitionPopup: PdfViewerMutableValue<Boolean>
+    lateinit var showPasswordDialog: PdfViewerMutableValue<Boolean>
+    lateinit var showTopTabStrip: PdfViewerMutableValue<Boolean>
+    lateinit var isTopToolbarEnabled: PdfViewerMutableValue<Boolean>
+    lateinit var isBottomToolbarEnabled: PdfViewerMutableValue<Boolean>
+    lateinit var summarizationResult: PdfViewerMutableValue<SummarizationResult?>
+    lateinit var summaryCacheManager: SummaryCacheManager
+    lateinit var ttsReplacementPreferences: PdfViewerMutableValue<ReaderTtsReplacementPreferences>
+    lateinit var updateReaderBrightness: (com.aryan.reader.ReaderBrightnessSettings) -> Unit
+    lateinit var updateTtsReplacementPreferences: (ReaderTtsReplacementPreferences) -> Unit
+    lateinit var summarizeCurrentPage: suspend (String?, (SummarizationResult) -> Unit, () -> Unit) -> Unit
+    lateinit var uriHandler: androidx.compose.ui.platform.UriHandler
+    lateinit var userHighlights: androidx.compose.runtime.snapshots.SnapshotStateList<PdfUserHighlight>
+    var activity: Activity? = null
+    var initialPage: Int? = null
+    var isPaneFocused: Boolean = true
+
+}
+
+private class PdfViewerMutableValue<T>(
+    private val getter: () -> T,
+    private val setter: (T) -> Unit,
+) : kotlin.properties.ReadWriteProperty<Any?, T> {
+    override operator fun getValue(thisRef: Any?, property: kotlin.reflect.KProperty<*>): T = getter()
+
+    override operator fun setValue(thisRef: Any?, property: kotlin.reflect.KProperty<*>, value: T) {
+        setter(value)
+    }
+}
+
+private fun <T> pdfViewerMutableValue(
+    getter: () -> T,
+    setter: (T) -> Unit,
+): PdfViewerMutableValue<T> = PdfViewerMutableValue(getter, setter)
+
+// Deliberately non-inline: the bounded calls above compile to small capture
+// methods instead of inlining every bridge write into PdfViewerScreenContent.
+private fun bindPdfViewerSurfaceChunk(block: () -> Unit) {
+    block()
+}
+
+private class PdfViewerBanner(
+    private val block: (String, Boolean, Boolean) -> Unit,
+) {
+    operator fun invoke(
+        message: String,
+        isError: Boolean = false,
+        isPersistent: Boolean = false,
+    ) = block(message, isError, isPersistent)
+}
+
+private class PdfViewerSpeechBubbleDetector(
+    private val block: suspend (Int, Bitmap, Boolean) -> List<SpeechBubble>,
+) {
+    suspend operator fun invoke(
+        sourcePageIndex: Int,
+        fallbackBitmap: Bitmap,
+        allowHighQualityFallback: Boolean = true,
+    ): List<SpeechBubble> = block(sourcePageIndex, fallbackBitmap, allowHighQualityFallback)
+}
+
+private class PdfViewerSuspendPageAction(
+    private val block: suspend (Int) -> Unit,
+) {
+    suspend operator fun invoke(displayPage: Int) {
+        block(displayPage)
+    }
+}
+
+@Composable
+private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewerSurfaceContent(
+    surfaceState: PdfViewerSurfaceState,
+    stylusButtonHovering: Boolean,
+) {
+    PdfViewerDocumentViewport(
+        surfaceState = surfaceState,
+        stylusButtonHovering = stylusButtonHovering,
+    )
+    PdfViewerChromeSurface(surfaceState = surfaceState)
+}
+
+@Composable
+private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewerDocumentViewport(
+    surfaceState: PdfViewerSurfaceState,
+    stylusButtonHovering: Boolean,
+) {
+    val richTextController = surfaceState.richTextController
+    val selectedTool = surfaceState.selectedTool.value
+    val density = surfaceState.density.value
+    val searchState = surfaceState.searchState
+    val activeTheme = surfaceState.activeTheme.value
+    val pdfSpreadSettings = surfaceState.pdfSpreadSettings
+    val isTtsPlayingOrLoading = surfaceState.isTtsPlayingOrLoading
+    val totalDisplayPages = surfaceState.totalDisplayPages
+    val pagerState = surfaceState.pagerState
+    val verticalReaderState = surfaceState.verticalReaderState
+    var isPageSliderVisible by surfaceState.isPageSliderVisible
+    var isEditMode by surfaceState.isEditMode
+    val startTtsWithPermissionCheck = surfaceState.startTtsWithPermissionCheck
+    val activeDocumentRenderKey = surfaceState.activeDocumentRenderKey
+    val isHighlighterSnapEnabled = surfaceState.isHighlighterSnapEnabled
+    val isCurrentToolHighlighter = surfaceState.isCurrentToolHighlighter
+    val calculateSnappedPoint = surfaceState.calculateSnappedPoint
+    var isLoadingDocument by surfaceState.isLoadingDocument
+    var errorMessage by surfaceState.errorMessage
+    var pdfDocument by surfaceState.pdfDocument
+    var totalPages by surfaceState.totalPages
+    var displayMode by surfaceState.displayMode
+    var currentPageScale by surfaceState.currentPageScale
+    var pageTurnAnimationEnabled by surfaceState.pageTurnAnimationEnabled
+    var isScrollLocked by surfaceState.isScrollLocked
+    var rightToLeftPagination by surfaceState.rightToLeftPagination
+    val dynamicBeyondViewportPageCount = surfaceState.dynamicBeyondViewportPageCount
+    val textBoxes = surfaceState.textBoxes
+    var paginationDraggingBoxId by surfaceState.paginationDraggingBoxId
+    val isDrawingActive = surfaceState.isDrawingActive
+    var currentActiveScale by surfaceState.currentActiveScale
+    var currentActiveOffset by surfaceState.currentActiveOffset
+    var showVerticalPageGap by surfaceState.showVerticalPageGap
+    val visibleUserHighlightsByPage = surfaceState.visibleUserHighlightsByPage
+    val textBoxSurfaceData = surfaceState.textBoxSurfaceState.data.value
+    val visibleTextBoxesByPage = textBoxSurfaceData.byPage
+    val isProUser = surfaceState.isProUser
+    val onDictionaryLookupStable = surfaceState.onDictionaryLookupStable
+    val onTranslateTextStable = surfaceState.onTranslateTextStable
+    val onSearchTextStable = surfaceState.onSearchTextStable
+    val onOcrStateChange = surfaceState.onOcrStateChange
+    val drawingState = surfaceState.drawingState
+    val persistInkAnnotationsNow = surfaceState.persistInkAnnotationsNow
+    var selectedTextBoxId by surfaceState.selectedTextBoxId
+    val displayPageRatios = surfaceState.displayPageRatios
+    val onHighlightAdd = surfaceState.onHighlightAdd
+    val onHighlightUpdate = surfaceState.onHighlightUpdate
+    val onHighlightDelete = surfaceState.onHighlightDelete
+    val onNoteRequested = surfaceState.onNoteRequested
+    var bookmarks by surfaceState.bookmarks
+    var searchHighlightTarget by surfaceState.searchHighlightTarget
+    var isOcrModelDownloading by surfaceState.isOcrModelDownloading
+    val allAnnotationsProvider = surfaceState.allAnnotationsProvider
+    val currentStrokeColor = surfaceState.currentStrokeColor
+    val currentStrokeWidth = surfaceState.currentStrokeWidth
+    val currentEraserStrokeWidth = surfaceState.currentEraserStrokeWidth
+    val erasedAnnotationsFromStroke = surfaceState.erasedAnnotationsFromStroke
+    var pageAspectRatios by surfaceState.pageAspectRatios
+    var allAnnotations by surfaceState.allAnnotations
+    var lastEraserPoint by surfaceState.lastEraserPoint
+    val currentIsHighlighter = surfaceState.currentIsHighlighter
+    val currentSnapEnabled = surfaceState.currentSnapEnabled
+    var showToolSettings by surfaceState.showToolSettings
+    var virtualPages by surfaceState.virtualPages
+    var globalTextureTransparency by surfaceState.globalTextureTransparency
+    var excludeImages by surfaceState.excludeImages
+    var reverseColorMode by surfaceState.reverseColorMode
+    var customHighlightColors by surfaceState.customHighlightColors
+    var ttsDisplayPageIndex by surfaceState.ttsDisplayPageIndex
+    var ttsHighlightData by surfaceState.ttsHighlightData
+    var searchHighlightMode by surfaceState.searchHighlightMode
+    var showAllTextHighlights by surfaceState.showAllTextHighlights
+    var showPageNumberOverlay by surfaceState.showPageNumberOverlay
+    var resetZoomTrigger by surfaceState.resetZoomTrigger
+    var lockedState by surfaceState.lockedState
+    var isStylusOnlyMode by surfaceState.isStylusOnlyMode
+    var isAutoScrollPlaying by surfaceState.isAutoScrollPlaying
+    var isBubbleZoomModeActive by surfaceState.isBubbleZoomModeActive
+    val undoStack = surfaceState.undoStack
+    val redoStack = surfaceState.redoStack
+    var paginationDraggingSize by surfaceState.paginationDraggingSize
+    var paginationDragPageHeight by surfaceState.paginationDragPageHeight
+    var paginationDraggingOffset by surfaceState.paginationDraggingOffset
+    var showHighlightColorPicker by surfaceState.showHighlightColorPicker
+    val isPdfDarkMode = surfaceState.isPdfDarkMode
+    val verticalHeaderHeight = surfaceState.verticalHeaderHeight.value
+    val verticalFooterHeight = surfaceState.verticalFooterHeight.value
+    val onZoomChangeStable = surfaceState.onZoomChangeStable
+    val onHighlightLoadingStable = surfaceState.onHighlightLoadingStable
+    val onShowDictionaryUpsellDialogStable = surfaceState.onShowDictionaryUpsellDialogStable
+    val onLinkClickedStable = surfaceState.onLinkClickedStable
+    val onInternalLinkNavStable = surfaceState.onInternalLinkNavStable
+    val onBookmarkClickStable = surfaceState.onBookmarkClickStable
+    val onOcrStateChangeStable = surfaceState.onOcrStateChangeStable
+    val onGetOcrSearchRectsStable = surfaceState.onGetOcrSearchRectsStable
+    val visibleTextBoxes = textBoxSurfaceData.all
+    val bottomScrollLimitPx = surfaceState.bottomScrollLimitPx.value
+    val topScrollLimitPx = surfaceState.topScrollLimitPx.value
+    val onAutoScrollInteraction = surfaceState.onAutoScrollInteraction
+    val visibleUserHighlights = surfaceState.visibleUserHighlights
+    var isAutoScrollTempPaused by surfaceState.isAutoScrollTempPaused
+    var autoScrollSpeed by surfaceState.autoScrollSpeed
+    val onSingleTapStable = surfaceState.onSingleTapStable
+    val paginationDisplayPageForPagerPage = surfaceState.paginationDisplayPageForPagerPage
+    val detectSpeechBubblesForPage = surfaceState.detectSpeechBubblesForPage
+    val isAnnotationHit = surfaceState.isAnnotationHit
+    val boxConstraints = constraints
+    LaunchedEffect(boxConstraints.maxWidth, boxConstraints.maxHeight) {
+        pdfSplitZoomDiag(
+            "viewport.resize bookId=${surfaceState.paneBookId ?: "solo"} session=${surfaceState.paneSessionId} " +
+                "viewport=${boxConstraints.maxWidth}x${boxConstraints.maxHeight} displayMode=$displayMode " +
+                "scale=${currentActiveScale.diagF()} pageScale=${currentPageScale.diagF()} locked=$isScrollLocked"
+        )
+    }
+    val hiddenRichTextInputEnabled = isPdfRichTextInputEnabled(
+        isEditMode = isEditMode,
+        selectedTool = selectedTool,
+        selectedTextBoxId = selectedTextBoxId,
+    )
+
+    LaunchedEffect(isEditMode, selectedTool, selectedTextBoxId, isDrawingActive) {
+        Timber.tag(PDF_TEXT_BOX_INPUT_TRACE_TAG).d(
+            "event=viewport_input_state selectedTool=$selectedTool pageRichTextEditMode=$isEditMode " +
+                "textBoxEditMode=$isDrawingActive selectedTextBoxId=${selectedTextBoxId ?: "none"} " +
+                "hiddenRichTextInputEnabled=$hiddenRichTextInputEnabled"
+        )
+    }
+
+    if (richTextController != null) {
+        SharedPdfRichTextHiddenInput(
+            controller = richTextController.sharedDelegate,
+            enabled = hiddenRichTextInputEnabled,
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars))
+                .padding(start = 16.dp, bottom = 120.dp)
+        )
+    }
+
+    // --- Main Content Area ---
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+    ) {
+        val documentPresentation = selectMobilePdfDocumentPresentation(
+            loading = isLoadingDocument,
+            errorPresent = errorMessage != null,
+            documentPresent = pdfDocument != null,
+            totalPages = totalPages,
+        )
+        when {
+            documentPresentation == MobilePdfDocumentPresentation.LOADING -> {
+                SharedMobileReaderLoadingIndicator()
+            }
+
+            documentPresentation == MobilePdfDocumentPresentation.ERROR -> {
+                SharedMobileReaderCenteredError(
+                    message = errorMessage ?: stringResource(R.string.error_failed_load_pdf),
+                )
+            }
+
+            documentPresentation == MobilePdfDocumentPresentation.READY -> {
+                when (displayMode) {
+                    DisplayMode.PAGINATION -> {
+                        val paginationPageState = remember(
+                            surfaceState,
+                            activeDocumentRenderKey,
+                            pdfDocument,
+                            boxConstraints.maxWidth,
+                            boxConstraints.maxHeight,
+                            stylusButtonHovering,
+                        ) {
+                            PdfViewerPaginationPageState(
+                                surfaceState = surfaceState,
+                                stablePdfDocument = StableHolder(pdfDocument!!),
+                                boxMaxWidth = boxConstraints.maxWidth,
+                                boxMaxHeight = boxConstraints.maxHeight,
+                                stylusButtonHovering = stylusButtonHovering,
+                            )
+                        }
+
+                        Box(modifier = Modifier.fillMaxSize().clipToBounds()) {
+                            var pageTurnTouchY by remember { mutableStateOf<Float?>(null) }
+                            val paginationUserScrollEnabled =
+                                (currentPageScale == 1f || (isScrollLocked && displayMode == DisplayMode.PAGINATION)) &&
+                                    !isTtsPlayingOrLoading &&
+                                    !searchState.isSearchActive &&
+                                    !isPageSliderVisible &&
+                                    paginationDraggingBoxId == null
+                            LaunchedEffect(
+                                paginationUserScrollEnabled,
+                                currentPageScale,
+                                isScrollLocked,
+                                isTtsPlayingOrLoading
+                            ) {
+                                pdfSplitZoomDiag(
+                                    "pag.userScrollEnabled=$paginationUserScrollEnabled " +
+                                        "pageScale=${currentPageScale.diagF()} scale=${currentActiveScale.diagF()} " +
+                                        "locked=$isScrollLocked tts=$isTtsPlayingOrLoading " +
+                                        "search=${searchState.isSearchActive} slider=$isPageSliderVisible " +
+                                        "dragging=${paginationDraggingBoxId != null} pagerPage=${pagerState.currentPage}"
+                                )
+                            }
+                            HorizontalPager(
+                                state = pagerState,
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .clipToBounds()
+                                    .then(
+                                        // Android benchmark: capture every gesture's touch Y so
+                                        // the realistic curl folds from the corner the reader touched.
+                                        if (pageTurnAnimationEnabled) {
+                                            Modifier.pointerInput(Unit) {
+                                                awaitPointerEventScope {
+                                                    while (true) {
+                                                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                                                        event.changes.firstOrNull { it.pressed }?.let { down ->
+                                                            pageTurnTouchY = down.position.y
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        } else {
+                                            Modifier
+                                        }
+                                    ),
+                                key = { page ->
+                                    "$activeDocumentRenderKey:${pdfSpreadSettings.pageSpreadMode}:${pdfSpreadSettings.pdfFirstPageStandaloneInSpread}:$page:${paginationDisplayPageForPagerPage(page)}"
+                                },
+                                beyondViewportPageCount = dynamicBeyondViewportPageCount,
+                                reverseLayout = rightToLeftPagination,
+                                userScrollEnabled = paginationUserScrollEnabled
+                            ) { pagerPageIndex ->
+                                PdfViewerPaginationPage(
+                                    paginationPageState = paginationPageState,
+                                    pagerPageIndex = pagerPageIndex,
+                                    pageTurnAnimationEnabled = pageTurnAnimationEnabled,
+                                    pageTurnTouchY = pageTurnTouchY,
+                                )
+                            }
+
+                            if (paginationDraggingBoxId != null) {
+                                val draggedBox = textBoxes.find { it.id == paginationDraggingBoxId }
+                                if (draggedBox != null) {
+                                    val fontScaleRatio = if (paginationDraggingSize.height > 0)
+                                        paginationDragPageHeight / paginationDraggingSize.height else 1f
+
+                                    val screenHeight = boxConstraints.maxHeight.toFloat()
+                                    val boxBottomY = paginationDraggingOffset.y + (paginationDraggingSize.height * currentActiveScale)
+                                    val spaceBelow = screenHeight - boxBottomY
+                                    val overlayHandlePos = if (spaceBelow < with(density) { 60.dp.toPx() }) HandlePosition.TOP else HandlePosition.BOTTOM
+
+                                    Box(
+                                        modifier = Modifier
+                                            .offset {
+                                                IntOffset(
+                                                    paginationDraggingOffset.x.roundToInt(),
+                                                    paginationDraggingOffset.y.roundToInt()
+                                                )
+                                            }
+                                            .graphicsLayer {
+                                                scaleX = currentActiveScale
+                                                scaleY = currentActiveScale
+                                                transformOrigin = TransformOrigin(0f, 0f)
+                                            }
+                                    ) {
+                                        ResizableTextBox(
+                                            box = draggedBox.copy(
+                                                relativeBounds = Rect(0f, 0f, 1f, 1f),
+                                                fontSize = draggedBox.fontSize * fontScaleRatio
+                                            ),
+                                            isSelected = true,
+                                            isEditMode = false,
+                                            isDarkMode = isPdfDarkMode,
+                                            pageWidthPx = paginationDraggingSize.width,
+                                            pageHeightPx = paginationDraggingSize.height,
+                                            scale = currentActiveScale,
+                                            handlePosition = overlayHandlePos,
+                                            onBoundsChanged = {},
+                                            onTextChanged = {},
+                                            onSelect = {},
+                                            onDragStart = {},
+                                            onDrag = { _, _ -> },
+                                            onDragEnd = {}
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    DisplayMode.VERTICAL_SCROLL -> {
+                        val headerHeight = verticalHeaderHeight
+                        val footerHeight = verticalFooterHeight
+
+                        val currentSelectedTool by rememberUpdatedState(selectedTool)
+                        val currentStrokeColorState by rememberUpdatedState(
+                            currentStrokeColor
+                        )
+                        val currentStrokeWidthState by rememberUpdatedState(
+                            currentStrokeWidth
+                        )
+                        val currentEraserStrokeWidthState by rememberUpdatedState(
+                            currentEraserStrokeWidth
+                        )
+
+                        @Suppress("ControlFlowWithEmptyBody") val onDrawStartStable =
+                            remember {
+                                { pageIndex: Int, point: PdfPoint, isEraserOverride: Boolean ->
+                                    if (showToolSettings) {
+                                        showToolSettings = false
+                                    } else {
+                                        val effectiveTool = if (isEraserOverride) InkType.ERASER else currentSelectedTool
+                                        if (effectiveTool == InkType.TEXT) {
+                                        } else if (effectiveTool == InkType.ERASER) {
+                                            lastEraserPoint = point
+                                            erasedAnnotationsFromStroke.clear()
+                                            val eraserStrokeWidth = resolveEraserStrokeWidth(
+                                                isEraserOverride,
+                                                currentStrokeWidthState,
+                                                currentEraserStrokeWidthState
+                                            )
+
+                                            val aspectRatio = pageAspectRatios.getOrElse(pageIndex) { 1f }
+                                            val existing = allAnnotations[pageIndex] ?: emptyList()
+                                            val toRemove = existing.filter {
+                                                isAnnotationHit(it, point, lastEraserPoint, aspectRatio, eraserStrokeWidth)
+                                            }
+                                            if (toRemove.isNotEmpty()) {
+                                                val batch =
+                                                    erasedAnnotationsFromStroke.getOrPut(
+                                                        pageIndex
+                                                    ) {
+                                                        mutableListOf()
+                                                    }
+                                                batch.addAll(toRemove)
+
+                                                val newList =
+                                                    existing - toRemove.toSet()
+                                                allAnnotations =
+                                                    allAnnotations + (pageIndex to newList)
+                                            }
+                                        } else {
+                                            val pointWithTime = point.copy(
+                                                timestamp = System.currentTimeMillis()
+                                            )
+                                            drawingState.onDrawStart(
+                                                pageIndex,
+                                                pointWithTime,
+                                                effectiveTool,
+                                                currentStrokeColorState,
+                                                currentStrokeWidthState
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                        val onDrawStable = remember(isHighlighterSnapEnabled, isCurrentToolHighlighter, calculateSnappedPoint) {
+                            { pageIndex: Int, point: PdfPoint, isEraserOverride: Boolean ->
+                                val effectiveTool = if (isEraserOverride) InkType.ERASER else currentSelectedTool
+                                if (effectiveTool == InkType.ERASER) {
+                                    val eraserStrokeWidth = resolveEraserStrokeWidth(
+                                        isEraserOverride,
+                                        currentStrokeWidthState,
+                                        currentEraserStrokeWidthState
+                                    )
+                                    val aspectRatio = pageAspectRatios.getOrElse(pageIndex) { 1f }
+                                    val existing = allAnnotations[pageIndex] ?: emptyList()
+                                    val toRemove = existing.filter {
+                                        isAnnotationHit(it, point, lastEraserPoint, aspectRatio, eraserStrokeWidth)
+                                    }
+                                    lastEraserPoint = point
+                                    if (toRemove.isNotEmpty()) {
+                                        val batch =
+                                            erasedAnnotationsFromStroke.getOrPut(
+                                                pageIndex
+                                            ) { mutableListOf() }
+                                        batch.addAll(toRemove)
+
+                                        val newList = existing - toRemove.toSet()
+                                        allAnnotations =
+                                            allAnnotations + (pageIndex to newList)
+                                    }
+                                } else {
+                                    if (currentIsHighlighter && currentSnapEnabled) {
+                                        val startPoint = drawingState.currentAnnotation?.points?.firstOrNull()
+                                        val effectivePoint = calculateSnappedPoint(pageIndex, point, startPoint)
+                                        drawingState.updateDrag(effectivePoint.copy(timestamp = System.currentTimeMillis()))
+                                    } else {
+                                        drawingState.onDraw(point.copy(timestamp = System.currentTimeMillis()))
+                                    }
+                                }
+                            }
+                        }
+
+                        Box(modifier = Modifier
+                            .fillMaxSize()
+                            .clip(RectangleShape)) {
+                            val docHolder = remember(activeDocumentRenderKey, pdfDocument) {
+                                StableHolder(pdfDocument!!)
+                            }
+                            val bookmarksHolder =
+                                remember(bookmarks) { StableHolder(bookmarks) }
+                            val ratiosHolder = remember(displayPageRatios) {
+                                StableHolder(displayPageRatios)
+                            }
+
+                            PdfVerticalReader(
+                                state = verticalReaderState,
+                                pdfDocument = docHolder,
+                                documentKey = activeDocumentRenderKey,
+                                activeTheme = activeTheme,
+                                activeTextureAlpha = 1f - globalTextureTransparency,
+                                excludeImages = excludeImages,
+                                reverseColorMode = reverseColorMode,
+                                isScrollLocked = isScrollLocked,
+                                customHighlightColors = customHighlightColors,
+                                onPaletteClick = { showHighlightColorPicker = true },
+                                totalPages = totalDisplayPages,
+                                pageAspectRatios = ratiosHolder,
+                                virtualPages = virtualPages,
+                                headerHeight = headerHeight,
+                                footerHeight = footerHeight,
+                                onPageClick = onSingleTapStable,
+                                modifier = Modifier.testTag(VERTICAL_SCROLL_TAG),
+                                onZoomChange = onZoomChangeStable,
+                                showAllTextHighlights = showAllTextHighlights,
+                                onHighlightLoading = onHighlightLoadingStable,
+                                searchQuery = searchState.searchQuery,
+                                searchHighlightMode = searchHighlightMode,
+                                searchResultToHighlight = searchHighlightTarget,
+                                isProUser = isProUser,
+                                onShowDictionaryUpsellDialog = onShowDictionaryUpsellDialogStable,
+                                onWordSelectedForAiDefinition = onDictionaryLookupStable,
+                                onTranslateText = onTranslateTextStable,
+                                onSearchText = onSearchTextStable,
+                                ttsHighlightData = ttsHighlightData,
+                                ttsReadingPage = ttsDisplayPageIndex,
+                                userHighlights = visibleUserHighlights,
+                                userHighlightsByPage = visibleUserHighlightsByPage,
+                                onHighlightAdd = onHighlightAdd,
+                                onHighlightUpdate = onHighlightUpdate,
+                                onHighlightDelete = onHighlightDelete,
+                                onNoteRequested = onNoteRequested,
+                                onTts = { pageIdx, charIdx -> startTtsWithPermissionCheck(pageIdx, charIdx) },
+                                activeToolThickness = currentStrokeWidthState,
+                                eraserToolThickness = currentEraserStrokeWidthState,
+                                onLinkClicked = onLinkClickedStable,
+                                onInternalLinkClicked = onInternalLinkNavStable,
+                                bookmarks = bookmarksHolder,
+                                onBookmarkClick = onBookmarkClickStable,
+                                onOcrStateChange = onOcrStateChangeStable,
+                                onGetOcrSearchRects = onGetOcrSearchRectsStable,
+                                allAnnotations = allAnnotationsProvider,
+                                drawingState = drawingState,
+                                onDrawStart = onDrawStartStable,
+                                isHighlighterSnapEnabled = isHighlighterSnapEnabled,
+                                onDraw = onDrawStable,
+                                onDrawEnd = {
+                                    val finalAnnotation = drawingState.onDrawEnd()
+                                    if (finalAnnotation != null) {
+                                        val pageIdx = finalAnnotation.pageIndex
+                                        val existing =
+                                            allAnnotations[pageIdx] ?: emptyList()
+                                        val nextAnnotations =
+                                            allAnnotations + (pageIdx to (existing + finalAnnotation))
+                                        allAnnotations = nextAnnotations
+                                        persistInkAnnotationsNow(
+                                            nextAnnotations,
+                                            emptyList(),
+                                            "draw_end"
+                                        )
+                                        undoStack.add(
+                                            HistoryAction.Add(
+                                                pageIdx, finalAnnotation
+                                            )
+                                        )
+                                        redoStack.clear()
+                                    }
+
+                                    if (selectedTool == InkType.ERASER && erasedAnnotationsFromStroke.isNotEmpty()) {
+                                        val removalMap =
+                                            erasedAnnotationsFromStroke.mapValues {
+                                                it.value.toList()
+                                            }
+                                        persistInkAnnotationsNow(
+                                            allAnnotations,
+                                            removalMap.values.flatten(),
+                                            "erase_end"
+                                        )
+                                        undoStack.add(
+                                            HistoryAction.Remove(removalMap)
+                                        )
+                                        redoStack.clear()
+                                        erasedAnnotationsFromStroke.clear()
+                                    }
+                                },
+                                onOcrModelDownloading = {
+                                    isOcrModelDownloading = true
+                                },
+                                selectedTool = selectedTool,
+                                richTextController = richTextController,
+                                isStylusOnlyMode = isStylusOnlyMode,
+                                stylusButtonHovering = stylusButtonHovering,
+                                isEditMode = isDrawingActive,
+                                textBoxes = visibleTextBoxes,
+                                textBoxesByPage = visibleTextBoxesByPage,
+                                selectedTextBoxId = selectedTextBoxId,
+                                onTextBoxChange = { updatedBox ->
+                                    val idx = textBoxes.indexOfFirst { it.id == updatedBox.id }
+                                    val previousLength = textBoxes.getOrNull(idx)?.text?.length
+                                    Timber.tag(PDF_TEXT_BOX_INPUT_TRACE_TAG).d(
+                                        "event=viewer_value_change path=vertical id=${updatedBox.id} " +
+                                            "page=${updatedBox.pageIndex} oldLength=${previousLength ?: -1} " +
+                                            "newLength=${updatedBox.text.length} matched=${idx != -1} " +
+                                            "selected=${updatedBox.id == selectedTextBoxId} textBoxEditMode=$isDrawingActive"
+                                    )
+                                    if (idx != -1) textBoxes[idx] = updatedBox
+                                },
+                                onTextBoxSelect = { id ->
+                                    Timber.tag(PDF_TEXT_BOX_INPUT_TRACE_TAG).d(
+                                        "event=viewer_select path=vertical id=$id " +
+                                            "selectedBefore=${selectedTextBoxId ?: "none"} textBoxEditMode=$isDrawingActive"
+                                    )
+                                    selectedTextBoxId = id
+                                    richTextController?.clearSelection()
+                                },
+                                bottomContentPaddingPx = bottomScrollLimitPx,
+                                topContentPaddingPx = topScrollLimitPx,
+                                onTextBoxMoved = { boxId, newPageIndex, newBounds ->
+                                    Timber.tag("PdfTextBoxDebug").d("Vertical Reader onTextBoxMoved[ID: $boxId] newPage=$newPageIndex bounds=$newBounds")
+                                    val idx = textBoxes.indexOfFirst { it.id == boxId }
+                                    if (idx != -1) {
+                                        val oldBox = textBoxes[idx]
+                                        textBoxes[idx] = oldBox.copy(pageIndex = newPageIndex, relativeBounds = newBounds)
+                                    }
+                                },
+                                isAutoScrollPlaying = isAutoScrollPlaying,
+                                isAutoScrollTempPaused = isAutoScrollTempPaused,
+                                autoScrollSpeed = autoScrollSpeed * 0.5f,
+                                onInteractionListener = onAutoScrollInteraction,
+                                lockedState = lockedState,
+                                showPageGap = showVerticalPageGap,
+                                showPageNumberOverlay = showPageNumberOverlay,
+                                onZoomAndPanChanged = { newScale, newOffset ->
+                                    currentActiveScale = newScale
+                                    currentActiveOffset = newOffset
+                                },
+                                resetZoomTrigger = resetZoomTrigger,
+                                isBubbleZoomModeActive = isBubbleZoomModeActive,
+                                onDetectBubbles = { sourcePageIndex, bitmap ->
+                                    detectSpeechBubblesForPage(sourcePageIndex, bitmap)
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+
+            totalPages == 0 && !isLoadingDocument -> {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(16.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        "PDF is empty or could not be displayed.",
+                        modifier = Modifier.padding(16.dp)
+                    )
+                }
+            }
+        }
+    }
+
+
+}
+
+@Composable
+private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewerChromeSurface(
+    surfaceState: PdfViewerSurfaceState,
+) {
+    PdfViewerChromeMusicianAndIndicators(surfaceState)
+    PdfViewerChromeNavigation(surfaceState)
+    PdfViewerChromeBottomAndEditing(surfaceState)
+    PdfViewerChromeTts(surfaceState)
+}
+
+@Composable
+private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewerChromeMusicianAndIndicators(
+    surfaceState: PdfViewerSurfaceState,
+) {
+        val density = surfaceState.density.value
+        val verticalReaderState = surfaceState.verticalReaderState
+        val coroutineScope = surfaceState.coroutineScope
+        var totalPages by surfaceState.totalPages
+        var isOcrModelDownloading by surfaceState.isOcrModelDownloading
+        var isMusicianMode by surfaceState.isMusicianMode
+        var isAutoScrollModeActive by surfaceState.isAutoScrollModeActive
+        val topOverlayInset = surfaceState.topOverlayInset.value
+        var ocrLanguage by surfaceState.ocrLanguage
+        val bubbleZoomDownloadProgress = surfaceState.bubbleZoomDownloadProgress
+        val triggerAutoScrollTempPause = surfaceState.triggerAutoScrollTempPause
+    val boxMaxWidthFloat = constraints.maxWidth.toFloat()
+    val boxMaxHeightFloat = constraints.maxHeight.toFloat()
+
+    if (isMusicianMode && isAutoScrollModeActive) {
+        @Suppress("UnusedVariable", "Unused") val density = LocalDensity.current
+
+        var leftPulseTrigger by remember { mutableLongStateOf(0L) }
+        var rightPulseTrigger by remember { mutableLongStateOf(0L) }
+
+        // --- ADD THESE STATES ---
+        var leftHoldProgress by remember { mutableFloatStateOf(0f) }
+        var rightHoldProgress by remember { mutableFloatStateOf(0f) }
+
+        val leftPulseAlpha by animateFloatAsState(
+            targetValue = if (System.currentTimeMillis() - leftPulseTrigger < 150) 0.3f else 0f,
+            animationSpec = tween(150), label = "leftPulse"
+        )
+        val rightPulseAlpha by animateFloatAsState(
+            targetValue = if (System.currentTimeMillis() - rightPulseTrigger < 150) 0.3f else 0f,
+            animationSpec = tween(150), label = "rightPulse"
+        )
+
+        Box(modifier = Modifier.fillMaxSize()) {
+            val regionHeight = Modifier.fillMaxHeight(0.4f)
+            val regionWidth = Modifier.fillMaxWidth(0.25f)
+            val topOffset = 100.dp
+
+            val scrollAmount = boxMaxHeightFloat * 0.75f
+
+            // Left Region
+            Box(
+                modifier = regionWidth
+                    .then(regionHeight)
+                    .align(Alignment.TopStart)
+                    .offset(y = topOffset)
+                    .padding(start = 8.dp)
+                    .background(Color.White.copy(alpha = leftPulseAlpha), RoundedCornerShape(12.dp))
+                    .border(2.dp, Color.Gray.copy(alpha = 0.3f), RoundedCornerShape(12.dp))
+                    .pointerInput(Unit) {
+                        awaitEachGesture {
+                            val down = awaitFirstDown()
+                            var isLongPress = false
+                            val job = coroutineScope.launch {
+                                val startTime = System.currentTimeMillis()
+                                while (isActive) {
+                                    val elapsed = System.currentTimeMillis() - startTime
+                                    if (elapsed >= 1000) {
+                                        leftHoldProgress = 0f
+                                        isLongPress = true
+                                        leftPulseTrigger = System.currentTimeMillis()
+                                        triggerAutoScrollTempPause(1000L)
+
+                                        coroutineScope.launch {
+                                            verticalReaderState.scrollToTop()
+                                        }
+                                        break
+                                    }
+                                    leftHoldProgress = elapsed / 1000f
+                                    delay(16)
+                                }
+                            }
+
+                            val up = waitForUpOrCancellation()
+                            job.cancel()
+                            leftHoldProgress = 0f
+
+                            if (!isLongPress && up != null) {
+                                up.consume()
+                                Timber.tag("MusicianMode").d("Left region tapped")
+                                leftPulseTrigger = System.currentTimeMillis()
+                                triggerAutoScrollTempPause(600L)
+                                coroutineScope.launch {
+                                    verticalReaderState.scrollBy(-scrollAmount)
+                                }
+                            }
+                        }
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                if (leftHoldProgress > 0f) {
+                    CircularProgressIndicator(
+                        progress = { leftHoldProgress },
+                        modifier = Modifier.size(48.dp).alpha(0.6f),
+                        color = MaterialTheme.colorScheme.primary,
+                        trackColor = Color.Transparent,
+                        strokeWidth = 4.dp
+                    )
+                    Icon(
+                        imageVector = Icons.Default.ArrowUpward,
+                        contentDescription = null,
+                        modifier = Modifier.size(24.dp).alpha(0.6f),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+
+            // Right Region
+            Box(
+                modifier = regionWidth
+                    .then(regionHeight)
+                    .align(Alignment.TopEnd)
+                    .offset(y = topOffset)
+                    .padding(end = 8.dp)
+                    .background(Color.White.copy(alpha = rightPulseAlpha), RoundedCornerShape(12.dp))
+                    .border(2.dp, Color.Gray.copy(alpha = 0.3f), RoundedCornerShape(12.dp))
+                    .pointerInput(totalPages) {
+                        awaitEachGesture {
+                            val down = awaitFirstDown()
+                            var isLongPress = false
+                            val job = coroutineScope.launch {
+                                val startTime = System.currentTimeMillis()
+                                while (isActive) {
+                                    val elapsed = System.currentTimeMillis() - startTime
+                                    if (elapsed >= 1000) {
+                                        rightHoldProgress = 0f
+                                        isLongPress = true
+                                        rightPulseTrigger = System.currentTimeMillis()
+                                        triggerAutoScrollTempPause(1000L)
+
+                                        coroutineScope.launch {
+                                            verticalReaderState.scrollToBottom()
+                                        }
+                                        break
+                                    }
+                                    rightHoldProgress = elapsed / 1000f
+                                    delay(16)
+                                }
+                            }
+
+                            val up = waitForUpOrCancellation()
+                            job.cancel()
+                            rightHoldProgress = 0f
+
+                            if (!isLongPress && up != null) {
+                                up.consume()
+                                Timber.tag("MusicianMode").d("Right region tapped")
+                                rightPulseTrigger = System.currentTimeMillis()
+                                triggerAutoScrollTempPause(600L)
+                                coroutineScope.launch {
+                                    verticalReaderState.scrollBy(scrollAmount)
+                                }
+                            }
+                        }
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                if (rightHoldProgress > 0f) {
+                    CircularProgressIndicator(
+                        progress = { rightHoldProgress },
+                        modifier = Modifier.size(48.dp).alpha(0.6f),
+                        color = MaterialTheme.colorScheme.primary,
+                        trackColor = Color.Transparent,
+                        strokeWidth = 4.dp
+                    )
+                    Icon(
+                        imageVector = Icons.Default.ArrowDownward,
+                        contentDescription = null,
+                        modifier = Modifier.size(24.dp).alpha(0.6f),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+        }
+    }
+
+    // OCR language download indicator
+    AnimatedVisibility(
+        visible = isOcrModelDownloading,
+        enter = slideInVertically() + fadeIn(),
+        exit = slideOutVertically() + fadeOut(),
+        modifier = Modifier
+            .align(Alignment.TopCenter)
+            .fillMaxWidth()
+            .padding(top = topOverlayInset)
+            .padding(8.dp)
+    ) {
+        Surface(
+            color = MaterialTheme.colorScheme.tertiaryContainer,
+            shape = RoundedCornerShape(8.dp),
+            shadowElevation = 4.dp
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center
+            ) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(16.dp),
+                    strokeWidth = 2.dp,
+                    color = MaterialTheme.colorScheme.onTertiaryContainer
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Text(
+                    text = stringResource(
+                        R.string.msg_downloading_language_pack,
+                        stringResource(ocrLanguage.displayNameRes).substringBefore("(").trim()
+                    ),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onTertiaryContainer
+                )
+            }
+        }
+    }
+
+    AnimatedVisibility(
+        visible = bubbleZoomDownloadProgress != null,
+        enter = slideInVertically() + fadeIn(),
+        exit = slideOutVertically() + fadeOut(),
+        modifier = Modifier
+            .align(Alignment.TopCenter)
+            .fillMaxWidth()
+            // shift down slightly if the OCR indicator is also showing
+            .padding(top = topOverlayInset + if (isOcrModelDownloading) 64.dp else 0.dp)
+            .padding(8.dp)
+    ) {
+        Surface(
+            color = MaterialTheme.colorScheme.tertiaryContainer,
+            shape = RoundedCornerShape(8.dp),
+            shadowElevation = 4.dp
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center
+            ) {
+                val progress = bubbleZoomDownloadProgress ?: 0f
+                if (progress > 0f) {
+                    CircularProgressIndicator(
+                        progress = { progress },
+                        modifier = Modifier.size(16.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.onTertiaryContainer,
+                        trackColor = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.2f)
+                    )
+                } else {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.onTertiaryContainer
+                    )
+                }
+                Spacer(modifier = Modifier.width(12.dp))
+                Text(
+                    text = stringResource(
+                        R.string.msg_downloading_bubble_zoom_model_progress,
+                        (progress * 100).toInt()
+                    ),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onTertiaryContainer
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewerChromeNavigation(
+    surfaceState: PdfViewerSurfaceState,
+) {
+        val richTextController = surfaceState.richTextController
+        val density = surfaceState.density.value
+        val searchState = surfaceState.searchState
+        val activeTheme = surfaceState.activeTheme.value
+        val pdfSliderChromeVisible = surfaceState.pdfSliderChromeVisible
+        val pdfSpreadSettings = surfaceState.pdfSpreadSettings
+        val ownsPaneGlobals = surfaceState.ownsPaneGlobals
+        val drawerState = surfaceState.drawerState
+        val ttsState = surfaceState.ttsState
+        val bookId = surfaceState.bookId
+        val ttsController = surfaceState.ttsController
+        val isTtsPlayingOrLoading = surfaceState.isTtsPlayingOrLoading
+        val context = surfaceState.context
+        val totalDisplayPages = surfaceState.totalDisplayPages
+        val pagerState = surfaceState.pagerState
+        val verticalReaderState = surfaceState.verticalReaderState
+        var isPageSliderVisible by surfaceState.isPageSliderVisible
+        val coroutineScope = surfaceState.coroutineScope
+        val executeWithOcrCheck = surfaceState.executeWithOcrCheck
+        var isEditMode by surfaceState.isEditMode
+        val keyboardController = surfaceState.keyboardController
+        val isTtsSessionActive = surfaceState.isTtsSessionActive
+        val startTtsWithPermissionCheck = surfaceState.startTtsWithPermissionCheck
+        val isSplitPane = surfaceState.isSplitPane
+        val onOpenSplit = surfaceState.onOpenSplit
+        val statusBarHeightDp = surfaceState.statusBarHeightDp.value
+        val focusRequester = surfaceState.focusRequester
+        val focusManager = surfaceState.focusManager
+        val hiddenTools = surfaceState.hiddenTools
+        val toolOrder = surfaceState.toolOrder
+        val bottomTools = surfaceState.bottomTools
+        val isPdfTabStripVisible = surfaceState.isPdfTabStripVisible.value
+        val openTabs = surfaceState.openTabs
+        val activeTabBookId = surfaceState.activeTabBookId
+        val effectiveFileType = surfaceState.effectiveFileType
+        val saveStateAndExit = surfaceState.saveStateAndExit
+        var showPenPlayground by surfaceState.showPenPlayground
+        val viewModel = surfaceState.viewModel
+        val onBookmarkClick = surfaceState.onBookmarkClick
+        val onInsertPage = surfaceState.onInsertPage
+        val onDeletePage = surfaceState.onDeletePage
+        val saveAllData = surfaceState.saveAllData
+        val currentPage = surfaceState.currentPage
+        var pendingRestorePage by surfaceState.pendingRestorePage
+        val hasReflowFile = surfaceState.hasReflowFile
+        val uiState = surfaceState.uiState
+        val reflowBookId = surfaceState.reflowBookId
+        val effectivePdfUri = surfaceState.effectivePdfUri
+        val originalFileName = surfaceState.originalFileName
+        val requestShare = surfaceState.requestShare
+        val requestSaveCopy = surfaceState.requestSaveCopy
+        val onPrintDocument = surfaceState.onPrintDocument
+        var currentBookId by surfaceState.currentBookId
+        val onNavigateBack = surfaceState.onNavigateBack
+        var jumpHistory by surfaceState.jumpHistory
+        var isLoadingDocument by surfaceState.isLoadingDocument
+        var errorMessage by surfaceState.errorMessage
+        var pdfDocument by surfaceState.pdfDocument
+        var totalPages by surfaceState.totalPages
+        var displayMode by surfaceState.displayMode
+        var tapToNavigateEnabled by surfaceState.tapToNavigateEnabled
+        var pageTurnAnimationEnabled by surfaceState.pageTurnAnimationEnabled
+        var currentPageScale by surfaceState.currentPageScale
+        var isScrollLocked by surfaceState.isScrollLocked
+        var rightToLeftPagination by surfaceState.rightToLeftPagination
+        var currentActiveScale by surfaceState.currentActiveScale
+        var currentActiveOffset by surfaceState.currentActiveOffset
+        val pdfTextRepository = surfaceState.pdfTextRepository
+        val onToggleBookmark = surfaceState.onToggleBookmark
+        var allAnnotations by surfaceState.allAnnotations
+        var virtualPages by surfaceState.virtualPages
+        var searchHighlightMode by surfaceState.searchHighlightMode
+        var showAllTextHighlights by surfaceState.showAllTextHighlights
+        var lockedState by surfaceState.lockedState
+        var isAutoScrollPlaying by surfaceState.isAutoScrollPlaying
+        var showDictionaryUpsellDialog by surfaceState.showDictionaryUpsellDialog
+        val undoStack = surfaceState.undoStack
+        val redoStack = surfaceState.redoStack
+        var isMusicianMode by surfaceState.isMusicianMode
+        var isAutoScrollModeActive by surfaceState.isAutoScrollModeActive
+        val topOverlayInset = surfaceState.topOverlayInset.value
+        var systemUiMode by surfaceState.systemUiMode
+        val navBarHeight = surfaceState.navBarHeight.value
+        var sliderCurrentPage by surfaceState.sliderCurrentPage
+        val scrubDebounceJob = surfaceState.scrubDebounceJob
+        var isFastScrubbing by surfaceState.isFastScrubbing
+        var showThemePanel by surfaceState.showThemePanel
+        var showVisualOptionsSheet by surfaceState.showVisualOptionsSheet
+        var showBrightnessSheet by surfaceState.showBrightnessSheet
+        var showScreenOrientationSheet by surfaceState.showScreenOrientationSheet
+        var showTtsControlsSheet by surfaceState.showTtsControlsSheet
+        var showTtsSettingsSheet by surfaceState.showTtsSettingsSheet
+        var showTtsReplacementsSheet by surfaceState.showTtsReplacementsSheet
+        var showDictionarySettingsSheet by surfaceState.showDictionarySettingsSheet
+        var showSummarizationUpsellDialog by surfaceState.showSummarizationUpsellDialog
+        var showAiHubSheet by surfaceState.showAiHubSheet
+        var showPermissionRationaleDialog by surfaceState.showPermissionRationaleDialog
+        var showInsufficientCreditsDialog by surfaceState.showInsufficientCreditsDialog
+        var showBubbleZoomDownloadDialog by surfaceState.showBubbleZoomDownloadDialog
+        var showNewTabSheet by surfaceState.showNewTabSheet
+        var showFileInfoDialog by surfaceState.showFileInfoDialog
+        var showSaveDialog by surfaceState.showSaveDialog
+        var showShareDialog by surfaceState.showShareDialog
+        var showOcrLanguageDialog by surfaceState.showOcrLanguageDialog
+        var showReindexDialog by surfaceState.showReindexDialog
+        var showCustomizeToolsSheet by surfaceState.showCustomizeToolsSheet
+        var pendingActionAfterOcrSelection by surfaceState.pendingActionAfterOcrSelection
+        var pendingSaveMode by surfaceState.pendingSaveMode
+        var showBars by surfaceState.showBars
+        // Read the pane-owned Compose state in the chrome itself. The setup and
+        // surface functions are siblings, so a plain snapshot copied by setup
+        // can otherwise lag behind a tap handled by the document viewport.
+        var isTopToolbarEnabled by surfaceState.isTopToolbarEnabled
+        var isBottomToolbarEnabled by surfaceState.isBottomToolbarEnabled
+        val showStandardBars = showBars && !isEditMode
+        val showTopBar = showStandardBars && isTopToolbarEnabled
+        val showBottomBar = showStandardBars && isBottomToolbarEnabled
+        LaunchedEffect(showBars, isEditMode, ownsPaneGlobals) {
+            Timber.tag("PdfToolbarTrace").d(
+                "chrome recomposed showBars=$showBars isEditMode=$isEditMode " +
+                    "visible=$showStandardBars ownsPaneGlobals=$ownsPaneGlobals"
+            )
+        }
+        var sliderStartPage by surfaceState.sliderStartPage
+        var isHighlightingLoading by surfaceState.isHighlightingLoading
+        var isAutoPagingForTts by surfaceState.isAutoPagingForTts
+        var isKeepScreenOn by surfaceState.isKeepScreenOn
+        val isBookmarked = surfaceState.isBookmarked
+        val isReflowingThisBook = surfaceState.isReflowingThisBook
+        var isPrintBlockedForPasswordProtectedPdf by surfaceState.isPrintBlockedForPasswordProtectedPdf
+        val isOss = surfaceState.isOss
+        var hasSelectedOcrLanguage by surfaceState.hasSelectedOcrLanguage
+        var initialScrollDone by surfaceState.initialScrollDone
+        val tabStateMap = surfaceState.tabStateMap
+        val reflowProgressValue = surfaceState.reflowProgressValue
+        var isBackgroundIndexing by surfaceState.isBackgroundIndexing
+        var backgroundIndexingProgress by surfaceState.backgroundIndexingProgress
+        var isOcrScanning by surfaceState.isOcrScanning
+        var smartSearchResult by surfaceState.smartSearchResult
+        var currentPdfSearchResult by surfaceState.currentPdfSearchResult
+        val currentPaginationDisplayPage = surfaceState.currentPaginationDisplayPage
+        val currentPdfDisplayPage = surfaceState.currentPdfDisplayPage
+        val clearJumpHistory = surfaceState.clearJumpHistory
+        val navigateToJumpHistoryPage = surfaceState.navigateToJumpHistoryPage
+        val navigateToPdfPage = surfaceState.navigateToPdfPage
+        val navigateToPdfSearchResult = surfaceState.navigateToPdfSearchResult
+        val showBanner = surfaceState.showBanner
+    val boxMaxWidthFloat = constraints.maxWidth.toFloat()
+    val boxMaxHeightFloat = constraints.maxHeight.toFloat()
+
+    val jumpBackPage = jumpHistory.backPage
+    val jumpForwardPage = jumpHistory.forwardPage
+    val effectiveNavBarForJumpBar = if (systemUiMode == SystemUiMode.DEFAULT || (systemUiMode == SystemUiMode.SYNC && showBottomBar)) with(density) { navBarHeight.toDp() } else 0.dp
+    val isPdfJumpHistoryVisible = showBottomBar && !searchState.isSearchActive && (jumpBackPage != null || jumpForwardPage != null)
+    val pdfBottomChromePadding = 56.dp + effectiveNavBarForJumpBar
+    val pdfSliderBottomPadding = pdfBottomChromePadding + if (isPdfJumpHistoryVisible) 40.dp else 0.dp
+    val pdfSliderPageBackground = if (activeTheme.backgroundColor == Color.Unspecified) Color.White else activeTheme.backgroundColor
+    val pdfSliderPageText = if (activeTheme.textColor == Color.Unspecified) Color.Black else activeTheme.textColor
+    val pdfReaderSliderColors = readerSliderChromeColors(
+        pageBackground = pdfSliderPageBackground,
+        pageText = pdfSliderPageText,
+        themePrimary = MaterialTheme.colorScheme.primary
+    )
+    val pdfSliderMaxPage = (totalDisplayPages - 1).coerceAtLeast(0)
+    val pdfSliderCurrentPage = sliderCurrentPage.roundToInt().coerceIn(0, pdfSliderMaxPage)
+
+    fun jumpPdfSliderToPage(pageIndex: Int) {
+        val targetPage = pageIndex.coerceIn(0, pdfSliderMaxPage)
+        scrubDebounceJob.value?.cancel()
+        sliderCurrentPage = targetPage.toFloat()
+        isFastScrubbing = false
+        navigateToPdfPage(targetPage, PdfNavigationReason.PAGE_SLIDER, true)
+    }
+
+    fun scrubPdfSliderToPage(newValue: Float) {
+        sliderCurrentPage = newValue.coerceIn(0f, pdfSliderMaxPage.toFloat())
+        isFastScrubbing = true
+        scrubDebounceJob.value?.cancel()
+        scrubDebounceJob.value = coroutineScope.launch {
+            delay(200)
+            if (isActive) {
+                val targetPage = newValue.roundToInt().coerceIn(0, pdfSliderMaxPage)
+                navigateToPdfPage(targetPage, PdfNavigationReason.PAGE_SLIDER, true)
+                sliderCurrentPage = targetPage.toFloat()
+                isFastScrubbing = false
+            }
+        }
+    }
+
+    // --- Slider UI attached to the bottom chrome ---
+    AnimatedVisibility(
+        visible = pdfSliderChromeVisible,
+        enter = slideInVertically { fullHeight -> fullHeight } + fadeIn(),
+        exit = slideOutVertically { fullHeight -> fullHeight } + fadeOut(),
+        modifier = Modifier
+            .align(Alignment.BottomCenter)
+            .padding(bottom = pdfSliderBottomPadding)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(
+                    indication = null,
+                    interactionSource = remember { MutableInteractionSource() }
+                ) {}
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                IconButton(
+                    onClick = {
+                        jumpPdfSliderToPage(
+                            readerSliderStepPage(
+                                currentPage = pdfSliderCurrentPage,
+                                delta = -1,
+                                minPage = 0,
+                                maxPage = pdfSliderMaxPage
+                            )
+                        )
+                    },
+                    enabled = pdfSliderCurrentPage > 0,
+                    modifier = Modifier.size(40.dp)
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.NavigateBefore,
+                        contentDescription = stringResource(R.string.desktop_previous_page),
+                        tint = pdfReaderSliderColors.contentColor.copy(
+                            alpha = if (pdfSliderCurrentPage > 0) 0.9f else 0.32f
+                        )
+                    )
+                }
+
+                ReaderMinimalSlider(
+                    value = sliderCurrentPage.coerceIn(0f, pdfSliderMaxPage.toFloat()),
+                    onValueChange = ::scrubPdfSliderToPage,
+                    valueRange = 0f..pdfSliderMaxPage.toFloat(),
+                    enabled = pdfSliderMaxPage > 0,
+                    activeColor = pdfReaderSliderColors.activeTrackColor,
+                    inactiveColor = pdfReaderSliderColors.inactiveTrackColor,
+                    thumbColor = pdfReaderSliderColors.thumbColor,
+                    modifier = Modifier
+                        .testTag("PdfPageSlider")
+                        .weight(1f)
+                        .height(32.dp)
+                )
+
+                IconButton(
+                    onClick = {
+                        jumpPdfSliderToPage(
+                            readerSliderStepPage(
+                                currentPage = pdfSliderCurrentPage,
+                                delta = 1,
+                                minPage = 0,
+                                maxPage = pdfSliderMaxPage
+                            )
+                        )
+                    },
+                    enabled = pdfSliderCurrentPage < pdfSliderMaxPage,
+                    modifier = Modifier.size(40.dp)
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.NavigateNext,
+                        contentDescription = stringResource(R.string.desktop_next_page),
+                        tint = pdfReaderSliderColors.contentColor.copy(
+                            alpha = if (pdfSliderCurrentPage < pdfSliderMaxPage) 0.9f else 0.32f
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    if (pdfSliderChromeVisible && isFastScrubbing) {
+        PageScrubbingAnimation(
+            pageLabel = pdfPageRangeLabel(
+                pageIndex = sliderCurrentPage.roundToInt(),
+                pageCount = totalDisplayPages,
+                displayMode = displayMode,
+                settings = pdfSpreadSettings
+            )
+        )
+    }
+
+    LaunchedEffect(ownsPaneGlobals) {
+        if (!ownsPaneGlobals) {
+            // Reader-local page/annotation state remains intact, but
+            // process-global dialogs and controllers must not remain
+            // owned by a pane after focus or app activity changes.
+            showThemePanel = false
+            showVisualOptionsSheet = false
+            showBrightnessSheet = false
+            showScreenOrientationSheet = false
+            showTtsControlsSheet = false
+            showTtsSettingsSheet = false
+            showTtsReplacementsSheet = false
+            showDictionarySettingsSheet = false
+            showDictionaryUpsellDialog = false
+            showSummarizationUpsellDialog = false
+            showAiHubSheet = false
+            showPermissionRationaleDialog = false
+            showInsufficientCreditsDialog = false
+            showBubbleZoomDownloadDialog = false
+            showNewTabSheet = false
+            showFileInfoDialog = false
+            showSaveDialog = false
+            showShareDialog = false
+            showOcrLanguageDialog = false
+            showReindexDialog = null
+            showCustomizeToolsSheet = false
+            pendingActionAfterOcrSelection = null
+            pendingSaveMode = null
+            drawerState.close()
+            if (ttsState.bookId == bookId) ttsController.stop()
+            showBars = false
+        }
+    }
+
+    val isPdfTtsPlayingOrLoading = isTtsPlayingOrLoading
+    val showPdfThemePanel = { if (ownsPaneGlobals) showThemePanel = true }
+    val showPdfDictionarySettings = { if (ownsPaneGlobals) showDictionarySettingsSheet = true }
+    val togglePdfScrollLock = {
+        if (ownsPaneGlobals) {
+            val nextLocked = !isScrollLocked
+            isScrollLocked = nextLocked
+            savePdfScrollLocked(context, bookId, nextLocked)
+            if (nextLocked) {
+                currentPageScale = currentActiveScale
+                savePdfLockedState(context, bookId, currentActiveScale, currentActiveOffset.x, currentActiveOffset.y)
+                lockedState = Triple(currentActiveScale, currentActiveOffset.x, currentActiveOffset.y)
+            }
+        }
+    }
+    val showPdfSlider = {
+        if (ownsPaneGlobals) {
+            val currentPageForSlider = if (displayMode == DisplayMode.PAGINATION) currentPaginationDisplayPage() else verticalReaderState.currentPage
+            val nextState = readerSliderToggleState(
+                isCurrentlyToggledOn = isPageSliderVisible,
+                currentPage = currentPageForSlider
+            )
+            sliderStartPage = nextState.bookmarkPosition.startPage
+            sliderCurrentPage = nextState.bookmarkPosition.currentPage
+            isPageSliderVisible = nextState.isToggledOn
+            showBars = true
+        }
+    }
+    val showPdfToc = {
+        if (ownsPaneGlobals) coroutineScope.launch { drawerState.open() }
+        Unit
+    }
+    val showPdfSearch = {
+        if (ownsPaneGlobals) {
+            executeWithOcrCheck {
+                searchState.isSearchActive = true
+                showBars = true
+            }
+        }
+    }
+    val togglePdfHighlights = {
+        if (ownsPaneGlobals) {
+            if (!showAllTextHighlights && !isHighlightingLoading) {
+                showAllTextHighlights = true
+                isHighlightingLoading = true
+            } else if (showAllTextHighlights) {
+                showAllTextHighlights = false
+                isHighlightingLoading = false
+            }
+        }
+    }
+    val showPdfAiHub = { if (ownsPaneGlobals) showAiHubSheet = true }
+    val togglePdfEditMode = {
+        if (ownsPaneGlobals) {
+            val newEditMode = !isEditMode
+            val currentActivePage = richTextController?.activePageIndex ?: -1
+            Timber.tag("RichTextMigration").i("Edit Toggle: $isEditMode -> $newEditMode (ActivePage: $currentActivePage)")
+
+            if (!newEditMode && richTextController != null) {
+                coroutineScope.launch {
+                    richTextController.saveImmediate()
+                    withContext(Dispatchers.Main) {
+                        keyboardController?.hide()
+                    }
+                }
+            }
+
+            isEditMode = newEditMode
+            if (!newEditMode) showBars = true
+        }
+    }
+    val togglePdfTts = {
+        if (ownsPaneGlobals) {
+            if (isTtsSessionActive) {
+                Timber.d("TTS button clicked: Stopping TTS")
+                ttsController.stop()
+                isAutoPagingForTts = false
+            } else {
+                startTtsWithPermissionCheck(null, null)
+            }
+        }
+    }
+
+    // Custom Top Bar
+    PdfTopBar(
+        modifier = Modifier.align(Alignment.TopCenter),
+        showStandardBars = showTopBar,
+        systemUiMode = systemUiMode,
+        // The workspace toolbar already pads the status bar in split view;
+        // adding it again double-pads the pane's own toolbar.
+        statusBarHeightDp = if (isSplitPane) 0.dp else statusBarHeightDp,
+        searchState = searchState,
+        focusRequester = focusRequester,
+        onCloseSearch = {
+            searchState.isSearchActive = false
+            searchState.onQueryChange("")
+            keyboardController?.hide()
+            focusManager.clearFocus()
+        },
+        isLoadingDocument = isLoadingDocument,
+        errorMessage = errorMessage,
+        currentPageForDisplay = if (displayMode == DisplayMode.PAGINATION) {
+            currentPaginationDisplayPage()
+        } else {
+            verticalReaderState.currentPage
+        },
+        currentPageLabel = pdfPageRangeLabel(
+            pageIndex = currentPage,
+            pageCount = totalDisplayPages,
+            displayMode = displayMode,
+            settings = pdfSpreadSettings
+        ),
+        totalPages = totalPages,
+        pagerStatePageCount = pagerState.pageCount,
+        hiddenTools = hiddenTools,
+        toolOrder = toolOrder,
+        bottomTools = bottomTools,
+        isScrollLocked = isScrollLocked,
+        isEditMode = isEditMode,
+        displayMode = displayMode,
+        isRightToLeftPagination = rightToLeftPagination,
+        isKeepScreenOn = isKeepScreenOn,
+        isTtsSessionActive = isTtsSessionActive,
+        isSliderActive = isPageSliderVisible,
+        isBookmarked = isBookmarked,
+        canDeletePage = virtualPages.getOrNull(currentPage) is VirtualPage.BlankPage,
+        isReflowingThisBook = isReflowingThisBook,
+        hasReflowFile = hasReflowFile,
+        isPdfDocumentLoaded = pdfDocument != null,
+        canPrintDocument = !isPrintBlockedForPasswordProtectedPdf,
+        isTabsEnabled = isPdfTabStripVisible,
+        openTabs = openTabs,
+        activeTabBookId = activeTabBookId,
+        usePdfFileNameAsDisplayName = uiState.usePdfFileNameAsDisplayName,
+        effectiveFileType = effectiveFileType,
+        onNavigateBack = { if (ownsPaneGlobals) saveStateAndExit() },
+        onOpenSplit = if (!isSplitPane) onOpenSplit else null,
+        onShowThemePanel = showPdfThemePanel,
+        onShowBrightnessControl = { if (ownsPaneGlobals) showBrightnessSheet = true },
+        onToggleScrollLock = togglePdfScrollLock,
+        onShowDictionarySettings = showPdfDictionarySettings,
+        onShowPenPlayground = { if (ownsPaneGlobals) showPenPlayground = true },
+        onImportSvg = {
+            if (!ownsPaneGlobals) return@PdfTopBar
+            val page = if (displayMode == DisplayMode.PAGINATION) currentPaginationDisplayPage() else verticalReaderState.currentPage
+
+            coroutineScope.launch(Dispatchers.IO) {
+                val svgAnnotations = SvgToAnnotationConverter.importSvgFromAssets(
+                    context = context,
+                    fileName = "demo_art.svg",
+                    pageIndex = page
+                )
+
+                withContext(Dispatchers.Main) {
+                    if (svgAnnotations.isNotEmpty()) {
+                        val existing = allAnnotations[page] ?: emptyList()
+                        allAnnotations = allAnnotations + (page to (existing + svgAnnotations))
+
+                        svgAnnotations.forEach { annot ->
+                            undoStack.add(HistoryAction.Add(page, annot))
+                        }
+                        redoStack.clear()
+
+                        showBanner(context.getString(R.string.msg_imported_svg_strokes))
+                    } else {
+                        showBanner(
+                            context.getString(R.string.error_import_svg_failed),
+                            isError = true
+                        )
+                    }
+                }
+            }
+        },
+        onShowCustomizeTools = { if (ownsPaneGlobals) showCustomizeToolsSheet = true },
+        onShowOcrLanguage = {
+            if (ownsPaneGlobals && !isOss) {
+                hasSelectedOcrLanguage = true
+                showOcrLanguageDialog = true
+            }
+        },
+        onShowVisualOptions = { if (ownsPaneGlobals) showVisualOptionsSheet = true },
+        onShowScreenOrientation = { if (ownsPaneGlobals) showScreenOrientationSheet = true },
+        isTtsPlayingOrLoading = isPdfTtsPlayingOrLoading,
+        showAllTextHighlights = showAllTextHighlights,
+        isHighlightingLoading = isHighlightingLoading,
+        onShowSlider = showPdfSlider,
+        onShowToc = showPdfToc,
+        onSearchClick = showPdfSearch,
+        onToggleHighlights = togglePdfHighlights,
+        onShowAiHub = showPdfAiHub,
+        onToggleEditMode = togglePdfEditMode,
+        onToggleTts = togglePdfTts,
+        tapToNavigateEnabled = tapToNavigateEnabled,
+        onToggleTapToNavigate = {
+            if (ownsPaneGlobals) {
+                tapToNavigateEnabled = !tapToNavigateEnabled
+                saveTapToNavigateSetting(context, tapToNavigateEnabled)
+            }
+        },
+        pageTurnAnimationEnabled = pageTurnAnimationEnabled,
+        onTogglePageTurnAnimation = {
+            if (ownsPaneGlobals) {
+                pageTurnAnimationEnabled = !pageTurnAnimationEnabled
+                savePageTurnAnimationSetting(context, pageTurnAnimationEnabled)
+            }
+        },
+        onChangeDisplayMode = { if (ownsPaneGlobals) displayMode = it },
+        onSetRightToLeftPagination = { enabled ->
+            if (ownsPaneGlobals) {
+                rightToLeftPagination = enabled
+                savePdfRightToLeftPagination(context, enabled)
+            }
+        },
+        onToggleKeepScreenOn = {
+            if (ownsPaneGlobals) {
+                isKeepScreenOn = !isKeepScreenOn
+                saveKeepScreenOn(context, isKeepScreenOn)
+            }
+        },
+        onStartAutoScroll = {
+            if (ownsPaneGlobals) {
+                isAutoScrollModeActive = true
+                isAutoScrollPlaying = true
+                showBars = !isMusicianMode
+            }
+        },
+        onShowTtsSettings = { if (ownsPaneGlobals) showTtsSettingsSheet = true },
+        onShowTtsReplacements = { if (ownsPaneGlobals) showTtsReplacementsSheet = true },
+        onToggleBookmark = onBookmarkClick,
+        onShowFileInfo = { if (ownsPaneGlobals) showFileInfoDialog = true },
+        onInsertPage = onInsertPage,
+        onDeletePage = onDeletePage,
+        onReflowAction = {
+            if (!ownsPaneGlobals) return@PdfTopBar
+            coroutineScope.launch {
+                if (richTextController != null) {
+                    withContext(NonCancellable) { richTextController.saveImmediate() }
+                }
+                saveAllData(true).join()
+
+                val resolvedPage = if (!initialScrollDone && currentPage == 0) {
+                    pendingRestorePage ?: 0
+                } else {
+                    currentPage
+                }
+
+                if (hasReflowFile) {
+                    val item = uiState.allRecentFiles.find { it.bookId == reflowBookId }
+                    if (item != null) {
+                        viewModel.switchToFileSeamlessly(item, resolvedPage)
+                    } else {
+                        viewModel.generateAndImportReflowFile(bookId, effectivePdfUri, originalFileName, resolvedPage)
+                    }
+                } else {
+                    viewModel.generateAndImportReflowFile(bookId, effectivePdfUri, originalFileName, resolvedPage)
+                }
+            }
+        },
+        onShare = requestShare,
+        onSaveCopy = requestSaveCopy,
+        onPrint = onPrintDocument,
+        onTabClick = { tabBookId ->
+            coroutineScope.launch {
+                currentBookId?.let { tabStateMap[it] = currentPage }
+                saveAllData(true).join()
+                viewModel.switchTab(tabBookId)
+            }
+        },
+        onTabClose = { tabBookId ->
+            if (!ownsPaneGlobals) return@PdfTopBar
+            coroutineScope.launch {
+                val isSelected = tabBookId == activeTabBookId
+                if (isSelected) saveAllData(true).join()
+                viewModel.closeTab(tabBookId)
+                if (isSelected && openTabs.size == 1) {
+                    onNavigateBack()
+                }
+            }
+        },
+        onNewTabClick = { if (ownsPaneGlobals) showNewTabSheet = true },
+        onGenerateDemoAnnotations = {
+            if (!ownsPaneGlobals) return@PdfTopBar
+            val page = if (displayMode == DisplayMode.PAGINATION) currentPaginationDisplayPage() else verticalReaderState.currentPage
+            val demoAnnots = DemoAnnotationGenerator.generateDemoAnnotations(page)
+
+            if (demoAnnots.isNotEmpty()) {
+                Timber.d("Debug: Generating ${demoAnnots.size} demo annotations for page $page")
+                val existing = allAnnotations[page] ?: emptyList()
+                allAnnotations = allAnnotations + (page to (existing + demoAnnots))
+
+                demoAnnots.forEach { annot ->
+                    undoStack.add(HistoryAction.Add(page, annot))
+                }
+                redoStack.clear()
+            }
+        }
+    )
+
+    ReflowProgressOverlay(
+        modifier = Modifier
+            .align(Alignment.TopCenter)
+            .padding(top = topOverlayInset)
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp),
+        showStandardBars = showTopBar,
+        isReflowingThisBook = isReflowingThisBook,
+        reflowProgressValue = reflowProgressValue
+    )
+
+    // Search Results Panel
+    AnimatedVisibility(
+        visible = searchState.isSearchActive && searchState.showSearchResultsPanel,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(top = topOverlayInset)
+                .background(MaterialTheme.colorScheme.surface)
+        ) {
+            if (isBackgroundIndexing) {
+                Surface(
+                    color = MaterialTheme.colorScheme.secondaryContainer,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(
+                            horizontal = 16.dp, vertical = 8.dp
+                        ), verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(12.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = stringResource(
+                                R.string.msg_indexing_pages_progress,
+                                (backgroundIndexingProgress * 100f).roundToInt()
+                                    .coerceIn(0, 100)
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer
+                        )
+                    }
+                }
+            }
+
+            if (!(searchState.isSearchInProgress && isOcrScanning)) {
+
+                // NEW PANEL LOGIC
+                val resultState = smartSearchResult
+                if (resultState is SmartSearchResult.Exact) {
+                    PdfSearchResultsList(
+                        results = resultState.matches, onResultClick = { result ->
+                            navigateToPdfSearchResult(result)
+                            searchState.showSearchResultsPanel = false
+                            keyboardController?.hide()
+                        }, modifier = Modifier.fillMaxSize()
+                    )
+                } else if (resultState is SmartSearchResult.Paged) {
+                    val lazyPagingItems =
+                        resultState.pagingData.collectAsLazyPagingItems()
+                    PdfSearchResultsPanel(
+                        lazyResults = lazyPagingItems,
+                        totalPageCount = resultState.totalPageCount,
+                        onResultClick = { result ->
+                            navigateToPdfSearchResult(result)
+                            searchState.showSearchResultsPanel = false
+                            keyboardController?.hide()
+                        },
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+            }
+        }
+    }
+
+    // Search Navigation Controls
+    AnimatedVisibility(
+        visible = searchState.isSearchActive && !searchState.showSearchResultsPanel && smartSearchResult != null,
+        enter = slideInVertically(animationSpec = tween(200)) { it } + fadeIn(animationSpec = tween(200)),
+        exit = slideOutVertically(animationSpec = tween(200)) { it } + fadeOut(animationSpec = tween(200)),
+        modifier = Modifier
+            .align(Alignment.BottomCenter)
+            .padding(bottom = 24.dp + if (systemUiMode == SystemUiMode.DEFAULT || (systemUiMode == SystemUiMode.SYNC && showBottomBar)) with(density) { navBarHeight.toDp() } else 0.dp)
+    ) {
+        val currentResult = currentPdfSearchResult
+        val searchData = smartSearchResult
+
+        val (displayText, isPrevEnabled, isNextEnabled) = remember(
+            currentResult,
+            searchData
+        ) {
+            when (searchData) {
+                is SmartSearchResult.Exact -> {
+                    val index = if (currentResult != null) searchData.matches.indexOf(
+                        currentResult
+                    )
+                    else -1
+                    val text =
+                        if (index >= 0) context.getString(
+                            R.string.pdf_search_result_position,
+                            index + 1,
+                            searchData.matches.size
+                        )
+                        else context.resources.getQuantityString(
+                            R.plurals.search_results_count,
+                            searchData.matches.size,
+                            searchData.matches.size
+                        )
+                    Triple(text, index > 0, index < searchData.matches.size - 1)
+                }
+
+                is SmartSearchResult.Paged -> {
+                    val page = currentResult?.locationInSource
+                    val text = if (page != null) context.getString(R.string.pdf_page_short, page + 1)
+                    else context.getString(R.string.msg_search_pages_count, searchData.totalPageCount)
+                    Triple(text, true, true)
+                }
+
+                else -> Triple("", false, false)
+            }
+        }
+
+        SearchNavigationPill(
+            text = displayText,
+            mode = searchHighlightMode,
+            onToggleMode = {
+                searchHighlightMode =
+                    if (searchHighlightMode == SearchHighlightMode.ALL) SearchHighlightMode.FOCUSED
+                    else SearchHighlightMode.ALL
+            },
+            onPrev = {
+                coroutineScope.launch {
+                    when (searchData) {
+                        is SmartSearchResult.Exact -> {
+                            val index =
+                                if (currentResult != null) searchData.matches.indexOf(
+                                    currentResult
+                                )
+                                else -1
+                            if (index > 0) {
+                                navigateToPdfSearchResult(
+                                    searchData.matches[index - 1]
+                                )
+                            }
+                        }
+
+                        is SmartSearchResult.Paged -> {
+                            val prev = pdfTextRepository.getPrevResult(
+                                currentBookId!!,
+                                searchState.searchQuery,
+                                currentPdfSearchResult
+                            )
+                            if (prev != null) navigateToPdfSearchResult(prev)
+                        }
+
+                        else -> {}
+                    }
+                }
+            },
+            onNext = {
+                coroutineScope.launch {
+                    when (searchData) {
+                        is SmartSearchResult.Exact -> {
+                            val index =
+                                if (currentResult != null) searchData.matches.indexOf(
+                                    currentResult
+                                )
+                                else -1
+                            if (index >= 0 && index < searchData.matches.size - 1) {
+                                navigateToPdfSearchResult(
+                                    searchData.matches[index + 1]
+                                )
+                            } else if (index == -1 && searchData.matches.isNotEmpty()) {
+                                navigateToPdfSearchResult(searchData.matches[0])
+                            }
+                        }
+
+                        is SmartSearchResult.Paged -> {
+                            val next = pdfTextRepository.getNextResult(
+                                currentBookId!!,
+                                searchState.searchQuery,
+                                currentPdfSearchResult
+                            )
+                            if (next != null) navigateToPdfSearchResult(next)
+                        }
+
+                        else -> {}
+                    }
+                }
+            },
+            onTextClick = { searchState.showSearchResultsPanel = true },
+            isPrevEnabled = isPrevEnabled,
+            isNextEnabled = isNextEnabled
+        )
+    }
+
+    PdfJumpHistoryBar(
+        modifier = Modifier
+            .align(Alignment.BottomCenter)
+            .padding(bottom = pdfBottomChromePadding),
+        showStandardBars = showBottomBar,
+        searchStateActive = searchState.isSearchActive,
+        backPage = jumpBackPage,
+        forwardPage = jumpForwardPage,
+        onBack = {
+            val refreshedHistory = jumpHistory.updateCurrentLocation(
+                currentPageIndex = currentPdfDisplayPage(),
+                pageCount = totalDisplayPages,
+            )
+            val target = refreshedHistory.backPage
+            jumpHistory = if (target != null) {
+                refreshedHistory.stepBack()
+            } else {
+                refreshedHistory
+            }
+            if (target != null) {
+                navigateToJumpHistoryPage(target)
+            }
+        },
+        onForward = {
+            val refreshedHistory = jumpHistory.updateCurrentLocation(
+                currentPageIndex = currentPdfDisplayPage(),
+                pageCount = totalDisplayPages,
+            )
+            val target = refreshedHistory.forwardPage
+            jumpHistory = if (target != null) {
+                refreshedHistory.stepForward()
+            } else {
+                refreshedHistory
+            }
+            if (target != null) {
+                navigateToJumpHistoryPage(target)
+            }
+        },
+        onClear = { clearJumpHistory() }
+    )
+}
+
+@Composable
+private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewerChromeBottomAndEditing(
+    surfaceState: PdfViewerSurfaceState,
+) {
+        val richTextController = surfaceState.richTextController
+        val selectedTool = surfaceState.selectedTool.value
+        val density = surfaceState.density.value
+        val searchState = surfaceState.searchState
+        val ownsPaneGlobals = surfaceState.ownsPaneGlobals
+        val isTtsPlayingOrLoading = surfaceState.isTtsPlayingOrLoading
+        val context = surfaceState.context
+        var isPageSliderVisible by surfaceState.isPageSliderVisible
+        val coroutineScope = surfaceState.coroutineScope
+        var isEditMode by surfaceState.isEditMode
+        val isTtsSessionActive = surfaceState.isTtsSessionActive
+        val statusBarHeightDp = surfaceState.statusBarHeightDp.value
+        val hiddenTools = surfaceState.hiddenTools
+        val toolOrder = surfaceState.toolOrder
+        val bottomTools = surfaceState.bottomTools
+        val isSplitPane = surfaceState.isSplitPane
+        val onOpenSplit = surfaceState.onOpenSplit
+        val viewModel = surfaceState.viewModel
+        val isComicFile = surfaceState.isComicFile
+        val dockHeightPx = surfaceState.dockHeightPx.value
+        val isHighlighterSnapEnabled = surfaceState.isHighlighterSnapEnabled
+        val isCurrentToolHighlighter = surfaceState.isCurrentToolHighlighter
+        var isScrollLocked by surfaceState.isScrollLocked
+        var allAnnotations by surfaceState.allAnnotations
+        var showToolSettings by surfaceState.showToolSettings
+        var showAllTextHighlights by surfaceState.showAllTextHighlights
+        var isStylusOnlyMode by surfaceState.isStylusOnlyMode
+        var isBubbleZoomModeActive by surfaceState.isBubbleZoomModeActive
+        val undoStack = surfaceState.undoStack
+        val redoStack = surfaceState.redoStack
+        var systemUiMode by surfaceState.systemUiMode
+        val navBarHeight = surfaceState.navBarHeight.value
+        var showBrightnessSheet by surfaceState.showBrightnessSheet
+        var showScreenOrientationSheet by surfaceState.showScreenOrientationSheet
+        var showBubbleZoomDownloadDialog by surfaceState.showBubbleZoomDownloadDialog
+        var showBars by surfaceState.showBars
+        var isBottomToolbarEnabled by surfaceState.isBottomToolbarEnabled
+        val showStandardBars = showBars && !isEditMode
+        val showBottomBar = showStandardBars && isBottomToolbarEnabled
+        var isHighlightingLoading by surfaceState.isHighlightingLoading
+        val isOss = surfaceState.isOss
+        var dockLocation by surfaceState.dockLocation
+        var dockOffset by surfaceState.dockOffset
+        val highlighterPalette = surfaceState.highlighterPalette
+        val penPalette = surfaceState.penPalette
+        val activeToolThickness = surfaceState.activeToolThickness
+        val fountainPenColor = surfaceState.fountainPenColor
+        val markerColor = surfaceState.markerColor
+        val pencilColor = surfaceState.pencilColor
+        val highlighterColor = surfaceState.highlighterColor
+        val highlighterRoundColor = surfaceState.highlighterRoundColor
+        val annotationSettingsRepo = surfaceState.annotationSettingsRepo
+        var snapPreviewLocation by surfaceState.snapPreviewLocation
+        val dockHeight = surfaceState.dockHeight
+        var isDockDragging by surfaceState.isDockDragging
+        var isDockMinimized by surfaceState.isDockMinimized
+        val dockPenColor = surfaceState.dockPenColor
+        val dockHighlighterColor = surfaceState.dockHighlighterColor
+        val lastPenTool = surfaceState.lastPenTool
+        val lastHighlighterTool = surfaceState.lastHighlighterTool
+        val showBanner = surfaceState.showBanner
+        val bookId = surfaceState.bookId
+        val ttsState = surfaceState.ttsState
+        val ttsController = surfaceState.ttsController
+        val drawerState = surfaceState.drawerState
+        val executeWithOcrCheck = surfaceState.executeWithOcrCheck
+        val startTtsWithPermissionCheck = surfaceState.startTtsWithPermissionCheck
+        var currentActiveScale by surfaceState.currentActiveScale
+        var currentActiveOffset by surfaceState.currentActiveOffset
+        var currentPageScale by surfaceState.currentPageScale
+        var lockedState by surfaceState.lockedState
+        var displayMode by surfaceState.displayMode
+        val verticalReaderState = surfaceState.verticalReaderState
+        val currentPaginationDisplayPage = surfaceState.currentPaginationDisplayPage
+        var sliderStartPage by surfaceState.sliderStartPage
+        var sliderCurrentPage by surfaceState.sliderCurrentPage
+        var showThemePanel by surfaceState.showThemePanel
+        var showDictionarySettingsSheet by surfaceState.showDictionarySettingsSheet
+        var showAiHubSheet by surfaceState.showAiHubSheet
+        var isAutoPagingForTts by surfaceState.isAutoPagingForTts
+        val keyboardController = surfaceState.keyboardController
+        val isPdfTtsPlayingOrLoading = isTtsPlayingOrLoading
+        val showPdfThemePanel = { if (ownsPaneGlobals) showThemePanel = true }
+        val showPdfDictionarySettings = { if (ownsPaneGlobals) showDictionarySettingsSheet = true }
+        val togglePdfScrollLock = {
+            if (ownsPaneGlobals) {
+                val nextLocked = !isScrollLocked
+                isScrollLocked = nextLocked
+                savePdfScrollLocked(context, bookId, nextLocked)
+                if (nextLocked) {
+                    currentPageScale = currentActiveScale
+                    savePdfLockedState(context, bookId, currentActiveScale, currentActiveOffset.x, currentActiveOffset.y)
+                    lockedState = Triple(currentActiveScale, currentActiveOffset.x, currentActiveOffset.y)
+                }
+            }
+        }
+        val showPdfSlider = {
+            if (ownsPaneGlobals) {
+                val currentPageForSlider = if (displayMode == DisplayMode.PAGINATION) currentPaginationDisplayPage() else verticalReaderState.currentPage
+                val nextState = readerSliderToggleState(
+                    isCurrentlyToggledOn = isPageSliderVisible,
+                    currentPage = currentPageForSlider
+                )
+                sliderStartPage = nextState.bookmarkPosition.startPage
+                sliderCurrentPage = nextState.bookmarkPosition.currentPage
+                isPageSliderVisible = nextState.isToggledOn
+                showBars = true
+            }
+        }
+        val showPdfToc = {
+            if (ownsPaneGlobals) coroutineScope.launch { drawerState.open() }
+            Unit
+        }
+        val showPdfSearch = {
+            if (ownsPaneGlobals) {
+                executeWithOcrCheck {
+                    searchState.isSearchActive = true
+                    showBars = true
+                }
+            }
+        }
+        val togglePdfHighlights = {
+            if (ownsPaneGlobals) {
+                if (!showAllTextHighlights && !isHighlightingLoading) {
+                    showAllTextHighlights = true
+                    isHighlightingLoading = true
+                } else if (showAllTextHighlights) {
+                    showAllTextHighlights = false
+                    isHighlightingLoading = false
+                }
+            }
+        }
+        val showPdfAiHub = { if (ownsPaneGlobals) showAiHubSheet = true }
+        val togglePdfEditMode = {
+            if (ownsPaneGlobals) {
+                val newEditMode = !isEditMode
+                val currentActivePage = richTextController?.activePageIndex ?: -1
+                Timber.tag("RichTextMigration").i("Edit Toggle: $isEditMode -> $newEditMode (ActivePage: $currentActivePage)")
+
+                if (!newEditMode && richTextController != null) {
+                    coroutineScope.launch {
+                        richTextController.saveImmediate()
+                        withContext(Dispatchers.Main) {
+                            keyboardController?.hide()
+                        }
+                    }
+                }
+
+                isEditMode = newEditMode
+                if (!newEditMode) showBars = true
+            }
+        }
+        val togglePdfTts = {
+            if (ownsPaneGlobals) {
+                if (isTtsSessionActive) {
+                    Timber.d("TTS button clicked: Stopping TTS")
+                    ttsController.stop()
+                    isAutoPagingForTts = false
+                } else {
+                    startTtsWithPermissionCheck(null, null)
+                }
+            }
+        }
+    val boxMaxWidthFloat = constraints.maxWidth.toFloat()
+    val boxMaxHeightFloat = constraints.maxHeight.toFloat()
+
+    // Bottom Bar
+    PdfBottomBar(
+        modifier = Modifier.align(Alignment.BottomCenter),
+        showStandardBars = showBottomBar,
+        searchStateActive = searchState.isSearchActive,
+        systemUiMode = systemUiMode,
+        navBarHeightDp = with(density) { navBarHeight.toDp() },
+        hiddenTools = hiddenTools,
+        toolOrder = toolOrder,
+        bottomTools = bottomTools,
+        isTtsPlayingOrLoading = isPdfTtsPlayingOrLoading,
+        showAllTextHighlights = showAllTextHighlights,
+        isHighlightingLoading = isHighlightingLoading,
+        isEditMode = isEditMode,
+        isScrollLocked = isScrollLocked,
+        isTtsSessionActive = isTtsSessionActive,
+        isSliderActive = isPageSliderVisible,
+        ttsErrorMessage = null,
+        onShowThemePanel = showPdfThemePanel,
+        onShowBrightnessControl = { if (ownsPaneGlobals) showBrightnessSheet = true },
+        onToggleScrollLock = togglePdfScrollLock,
+        onShowDictionarySettings = showPdfDictionarySettings,
+        onShowSlider = showPdfSlider,
+        onOpenSplit = if (!isSplitPane) onOpenSplit else null,
+        onShowToc = showPdfToc,
+        onSearchClick = showPdfSearch,
+        onToggleHighlights = togglePdfHighlights,
+        onShowAiHub = showPdfAiHub,
+        onToggleEditMode = togglePdfEditMode,
+        onToggleTts = togglePdfTts,
+        onShowScreenOrientation = { if (ownsPaneGlobals) showScreenOrientationSheet = true },
+        showBubbleZoom = isComicFile,
+        isBubbleZoomModeActive = isBubbleZoomModeActive,
+        onToggleBubbleZoom = {
+            if (!ownsPaneGlobals) {
+                return@PdfBottomBar
+            } else if (isOss) {
+                showBanner(
+                    "Bubble Zoom is only available in Playstore version of Episteme",
+                    isError = true
+                )
+            } else if (!isBubbleZoomModeActive && !viewModel.isSpeechBubbleModelAvailable(context)) {
+                showBubbleZoomDownloadDialog = true
+            } else {
+                isBubbleZoomModeActive = !isBubbleZoomModeActive
+            }
+        }
+    )
+
+    if (isEditMode) {
+        val density = LocalDensity.current
+
+        val popupPlacementConfig =
+            remember(dockLocation, dockOffset, boxMaxHeightFloat, dockHeightPx) {
+                val margin = 16.dp
+                val dockTopY = when (dockLocation) {
+                    DockLocation.TOP -> 0f
+                    DockLocation.BOTTOM -> boxMaxHeightFloat - dockHeightPx
+                    DockLocation.FLOATING -> dockOffset.y
+                }
+
+                val dockBottomY = dockTopY + dockHeightPx
+                val dockCenterY = dockTopY + (dockHeightPx / 2f)
+                val isDockInBottomHalf = dockCenterY > (boxMaxHeightFloat / 2f)
+
+                if (isDockInBottomHalf) {
+                    val distFromBottom = boxMaxHeightFloat - dockTopY
+                    val paddingBottom = with(density) { distFromBottom.toDp() } + margin
+                    Triple(Alignment.BottomCenter, 0.dp, paddingBottom.coerceAtLeast(0.dp))
+                } else {
+                    val paddingTop = with(density) { dockBottomY.toDp() } + margin
+                    Triple(Alignment.TopCenter, paddingTop.coerceAtLeast(0.dp), 0.dp)
+                }
+            }
+
+        val (popupAlign, popupTopPad, popupBottomPad) = popupPlacementConfig
+
+        Box(modifier = Modifier.fillMaxSize()) {
+            AnimatedVisibility(
+                visible = showToolSettings,
+                enter = fadeIn(),
+                exit = fadeOut(),
+                modifier = Modifier
+                    .align(popupAlign)
+                    .padding(top = popupTopPad, bottom = popupBottomPad)
+                    .testTag("ToolSettingsPopup")
+            ) {
+                val currentPalette =
+                    if (isCurrentToolHighlighter) highlighterPalette else penPalette
+
+                ToolSettingsPopup(
+                    selectedTool = selectedTool,
+                    activeToolThickness = activeToolThickness,
+                    fountainPenColor = fountainPenColor,
+                    markerColor = markerColor,
+                    pencilColor = pencilColor,
+                    highlighterColor = highlighterColor,
+                    highlighterRoundColor = highlighterRoundColor,
+                    activePalette = currentPalette,
+                    onToolTypeChanged = { newType ->
+                        annotationSettingsRepo.updateSelectedTool(newType)
+                    },
+                    onColorChanged = { color ->
+                        annotationSettingsRepo.updateToolColor(selectedTool, color)
+                    },
+                    onThicknessChanged = { thickness ->
+                        annotationSettingsRepo.updateToolThickness(
+                            selectedTool, thickness
+                        )
+                    },
+                    onPaletteChange = { newPalette ->
+                        if (isCurrentToolHighlighter) {
+                            annotationSettingsRepo.updateHighlighterPalette(
+                                newPalette
+                            )
+                        } else {
+                            annotationSettingsRepo.updatePenPalette(newPalette)
+                        }
+                    },
+                    isHighlighterSnapEnabled = isHighlighterSnapEnabled,
+                    onSnapToggle = { annotationSettingsRepo.updateHighlighterSnap(it) }
+                )
+            }
+
+            snapPreviewLocation?.let { location ->
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(dockHeight)
+                        .align(
+                            if (location == DockLocation.TOP) Alignment.TopCenter
+                            else Alignment.BottomCenter
+                        )
+                        .background(Color.Black)
+                )
+            }
+
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .then(
+                        when {
+                            isDockDragging -> Modifier
+                            dockLocation == DockLocation.TOP -> Modifier
+                            dockLocation == DockLocation.BOTTOM -> Modifier
+                            else -> Modifier
+                        }
+                    )
+            ) {
+                val dragModifier =
+                    if (isDockDragging || dockLocation == DockLocation.FLOATING) {
+                        Modifier.offset {
+                            IntOffset(
+                                dockOffset.x.roundToInt(), dockOffset.y.roundToInt()
+                            )
+                        }
+                    } else {
+                        Modifier
+                    }
+
+                val alignModifier = when {
+                    isDockDragging || dockLocation == DockLocation.FLOATING -> Modifier
+                    dockLocation == DockLocation.TOP -> Modifier.align(Alignment.TopCenter)
+                    dockLocation == DockLocation.BOTTOM -> Modifier.align(Alignment.BottomCenter)
+                    else -> Modifier
+                }
+
+                val widthModifier =
+                    if ((dockLocation == DockLocation.TOP || dockLocation == DockLocation.BOTTOM) && !isDockDragging) {
+                        Modifier.fillMaxWidth()
+                    } else {
+                        Modifier.padding(
+                            horizontal = 16.dp
+                        )
+                    }
+
+                val effectiveNavBarForDock = if (systemUiMode == SystemUiMode.DEFAULT) with(density) { navBarHeight.toDp() } else 0.dp
+                val paddingModifier =
+                    if ((dockLocation == DockLocation.TOP || dockLocation == DockLocation.BOTTOM) && !isDockDragging) {
+                        Modifier.padding(
+                            bottom = if (dockLocation == DockLocation.BOTTOM) effectiveNavBarForDock else 0.dp,
+                            top = if (dockLocation == DockLocation.TOP && systemUiMode == SystemUiMode.DEFAULT) statusBarHeightDp else 0.dp
+                        )
+                    } else {
+                        Modifier.padding(vertical = 16.dp)
+                    }
+
+                val isSticky =
+                    (dockLocation == DockLocation.TOP || dockLocation == DockLocation.BOTTOM) && !isDockDragging
+
+                Box(
+                    modifier = Modifier
+                        .then(alignModifier)
+                        .then(dragModifier)
+                        .pointerInput(dockLocation, isDockMinimized) {
+                            val onDragStart: (Offset) -> Unit = {
+                                isDockDragging = true
+
+                                val startX = (boxMaxWidthFloat / 2) - (size.width / 2)
+
+                                if (dockLocation == DockLocation.BOTTOM) {
+                                    dockOffset = Offset(
+                                        startX, boxMaxHeightFloat - dockHeightPx - 50f
+                                    )
+                                } else if (dockLocation == DockLocation.TOP) {
+                                    dockOffset = Offset(startX, 50f)
+                                }
+                            }
+
+                            val onDrag: (
+                                PointerInputChange, Offset
+                            ) -> Unit = { change, dragAmount ->
+                                change.consume()
+                                dockOffset += dragAmount
+
+                                val topSnapThreshold = 150f
+                                val bottomSnapThreshold = boxMaxHeightFloat - 250f
+
+                                snapPreviewLocation = when {
+                                    dockOffset.y < topSnapThreshold -> DockLocation.TOP
+                                    dockOffset.y > bottomSnapThreshold -> DockLocation.BOTTOM
+                                    else -> null
+                                }
+                            }
+
+                            val onDragEnd: () -> Unit = {
+                                isDockDragging = false
+                                if (snapPreviewLocation != null) {
+                                    dockLocation = snapPreviewLocation!!
+                                    snapPreviewLocation = null
+                                } else {
+                                    dockLocation = DockLocation.FLOATING
+                                    val safeX = dockOffset.x.coerceIn(
+                                        0f, boxMaxWidthFloat - 100f
+                                    )
+                                    val safeY = dockOffset.y.coerceIn(
+                                        0f, boxMaxHeightFloat - dockHeightPx
+                                    )
+                                    dockOffset = Offset(safeX, safeY)
+                                }
+                                saveDockState(
+                                    context, dockLocation, dockOffset
+                                )
+                            }
+
+                            val onDragCancel: () -> Unit = {
+                                isDockDragging = false
+                                snapPreviewLocation = null
+                            }
+
+                            if (dockLocation == DockLocation.FLOATING) {
+                                detectDragGestures(
+                                    onDragStart = onDragStart,
+                                    onDrag = onDrag,
+                                    onDragEnd = onDragEnd,
+                                    onDragCancel = onDragCancel
+                                )
+                            } else {
+                                detectDragGesturesAfterLongPress(
+                                    onDragStart = onDragStart,
+                                    onDrag = onDrag,
+                                    onDragEnd = onDragEnd,
+                                    onDragCancel = onDragCancel
+                                )
+                            }
+                        }) {
+                    AnnotationDock(
+                        selectedTool = selectedTool,
+                        activePenColor = dockPenColor,
+                        activeHighlighterColor = dockHighlighterColor,
+                        lastPenTool = lastPenTool,
+                        lastHighlighterTool = lastHighlighterTool,
+                        isStylusOnlyMode = isStylusOnlyMode,
+                        onToggleStylusOnlyMode = {
+                            isStylusOnlyMode = !isStylusOnlyMode
+                            saveStylusOnlyMode(context, isStylusOnlyMode)
+                        },
+                        onToolClick = { clickedTool ->
+                            if (clickedTool == InkType.TEXT) {
+                                annotationSettingsRepo.updateSelectedTool(
+                                    clickedTool
+                                )
+                                showToolSettings = false
+                            } else if (selectedTool == clickedTool) {
+                                if (clickedTool == InkType.PEN || clickedTool == InkType.FOUNTAIN_PEN || clickedTool == InkType.PENCIL || clickedTool == InkType.HIGHLIGHTER || clickedTool == InkType.HIGHLIGHTER_ROUND || clickedTool == InkType.ERASER) {
+                                    showToolSettings = !showToolSettings
+                                }
+                            } else {
+                                if (showToolSettings) {
+                                    coroutineScope.launch {
+                                        showToolSettings = false
+                                        delay(250)
+                                        annotationSettingsRepo.updateSelectedTool(
+                                            clickedTool
+                                        )
+                                        showToolSettings = true
+                                    }
+                                } else {
+                                    annotationSettingsRepo.updateSelectedTool(
+                                        clickedTool
+                                    )
+                                }
+                            }
+                        },
+                        onUndo = {
+                            if (undoStack.isNotEmpty()) {
+                                val action = undoStack.removeAt(undoStack.lastIndex)
+                                when (action) {
+                                    is HistoryAction.Add -> {
+                                        val pageIndex = action.pageIndex
+                                        val annotation = action.annotation
+                                        val pageAnnotations =
+                                            allAnnotations[pageIndex] ?: emptyList()
+
+                                        val newForPage = pageAnnotations - annotation
+                                        allAnnotations =
+                                            allAnnotations + (pageIndex to newForPage)
+
+                                        redoStack.add(action)
+                                    }
+
+                                    is HistoryAction.Remove -> {
+                                        var currentAllAnnotations = allAnnotations
+                                        action.items.forEach { (pageIndex, annotations) ->
+                                            val pageList =
+                                                currentAllAnnotations[pageIndex]
+                                                    ?: emptyList()
+                                            currentAllAnnotations =
+                                                currentAllAnnotations + (pageIndex to (pageList + annotations))
+                                        }
+                                        allAnnotations = currentAllAnnotations
+
+                                        redoStack.add(action)
+                                    }
+                                }
+                            }
+                        },
+                        onRedo = {
+                            if (redoStack.isNotEmpty()) {
+                                val action = redoStack.removeAt(redoStack.lastIndex)
+                                when (action) {
+                                    is HistoryAction.Add -> {
+                                        val pageIndex = action.pageIndex
+                                        val annotation = action.annotation
+                                        val pageAnnotations =
+                                            allAnnotations[pageIndex] ?: emptyList()
+
+                                        val newForPage = pageAnnotations + annotation
+                                        allAnnotations =
+                                            allAnnotations + (pageIndex to newForPage)
+
+                                        undoStack.add(action)
+                                    }
+
+                                    is HistoryAction.Remove -> {
+                                        var currentAllAnnotations = allAnnotations
+                                        action.items.forEach { (pageIndex, annotations) ->
+                                            val pageList =
+                                                currentAllAnnotations[pageIndex]
+                                                    ?: emptyList()
+                                            val newForPage =
+                                                pageList - annotations.toSet()
+                                            currentAllAnnotations =
+                                                currentAllAnnotations + (pageIndex to newForPage)
+                                        }
+                                        allAnnotations = currentAllAnnotations
+
+                                        undoStack.add(action)
+                                    }
+                                }
+                            }
+                        },
+                        onClose = {
+                            richTextController?.clearSelection()
+                            isEditMode = false
+                            isDockMinimized = false
+                            showBars = true
+                        },
+                        canUndo = undoStack.isNotEmpty(),
+                        canRedo = redoStack.isNotEmpty(),
+                        isSticky = isSticky,
+                        modifier = Modifier
+                            .then(widthModifier)
+                            .then(paddingModifier),
+                        isMinimized = isDockMinimized,
+                        onToggleMinimize = { isDockMinimized = !isDockMinimized })
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewerChromeTts(
+    surfaceState: PdfViewerSurfaceState,
+) {
+        val richTextController = surfaceState.richTextController
+        val selectedTool = surfaceState.selectedTool.value
+        val density = surfaceState.density.value
+        val ownsPaneGlobals = surfaceState.ownsPaneGlobals
+        val ttsState = surfaceState.ttsState
+        val ttsController = surfaceState.ttsController
+        val context = surfaceState.context
+        val pagerState = surfaceState.pagerState
+        val verticalReaderState = surfaceState.verticalReaderState
+        val coroutineScope = surfaceState.coroutineScope
+        var isEditMode by surfaceState.isEditMode
+        val keyboardController = surfaceState.keyboardController
+        val isTtsSessionActive = surfaceState.isTtsSessionActive
+        val viewModel = surfaceState.viewModel
+        val currentPage = surfaceState.currentPage
+        val uiState = surfaceState.uiState
+        val window = surfaceState.window
+        val view = surfaceState.view
+        var displayMode by surfaceState.displayMode
+        val textBoxes = surfaceState.textBoxes
+        var selectedTextBoxId by surfaceState.selectedTextBoxId
+        val displayPageRatios = surfaceState.displayPageRatios
+        var ttsDisplayPageIndex by surfaceState.ttsDisplayPageIndex
+        var resetZoomTrigger by surfaceState.resetZoomTrigger
+        var isAutoScrollPlaying by surfaceState.isAutoScrollPlaying
+        var isAutoScrollTempPaused by surfaceState.isAutoScrollTempPaused
+        var autoScrollSpeed by surfaceState.autoScrollSpeed
+        var isMusicianMode by surfaceState.isMusicianMode
+        var isAutoScrollModeActive by surfaceState.isAutoScrollModeActive
+        val autoScrollResumeJob = surfaceState.autoScrollResumeJob
+        var systemUiMode by surfaceState.systemUiMode
+        val navBarHeight = surfaceState.navBarHeight.value
+        var showTtsSettingsSheet by surfaceState.showTtsSettingsSheet
+        var showBars by surfaceState.showBars
+        var isBottomToolbarEnabled by surfaceState.isBottomToolbarEnabled
+        val showStandardBars = showBars && !isEditMode
+        val showBottomBar = showStandardBars && isBottomToolbarEnabled
+        var isAutoPagingForTts by surfaceState.isAutoPagingForTts
+        var dockLocation by surfaceState.dockLocation
+        val highlighterPalette = surfaceState.highlighterPalette
+        val penPalette = surfaceState.penPalette
+        val annotationSettingsRepo = surfaceState.annotationSettingsRepo
+        var isDockMinimized by surfaceState.isDockMinimized
+        var showZoomIndicator by surfaceState.showZoomIndicator
+        val zoomIndicatorPercentage = surfaceState.zoomIndicatorPercentage
+        val toolSettings = surfaceState.toolSettings
+        val onInsertTextBox = surfaceState.onInsertTextBox
+        val customFonts = surfaceState.customFonts
+        var ttsOverlaySize by surfaceState.ttsOverlaySize
+        var currentTtsMode by surfaceState.currentTtsMode
+        var isAutoScrollCollapsed by surfaceState.isAutoScrollCollapsed
+        var autoScrollMinSpeed by surfaceState.autoScrollMinSpeed
+        var autoScrollMaxSpeed by surfaceState.autoScrollMaxSpeed
+        var autoScrollUseSlider by surfaceState.autoScrollUseSlider
+        var isAutoScrollLocal by surfaceState.isAutoScrollLocal
+        val updateSpeed = surfaceState.updateSpeed
+        val updateMinSpeed = surfaceState.updateMinSpeed
+        val updateMaxSpeed = surfaceState.updateMaxSpeed
+        val onToggleAutoScrollMode = surfaceState.onToggleAutoScrollMode
+        val triggerAutoScrollTempPause = surfaceState.triggerAutoScrollTempPause
+    val boxMaxWidthFloat = constraints.maxWidth.toFloat()
+    val boxMaxHeightFloat = constraints.maxHeight.toFloat()
+
+    val ttsReadingPage = ttsDisplayPageIndex
+
+    val isTtsPageVisible by remember(
+        ttsReadingPage,
+        displayMode,
+        verticalReaderState.firstVisiblePage,
+        verticalReaderState.lastVisiblePage
+    ) {
+        derivedStateOf {
+            if (displayMode != DisplayMode.VERTICAL_SCROLL || ttsReadingPage == null) {
+                true
+            } else {
+                ttsReadingPage in verticalReaderState.firstVisiblePage..verticalReaderState.lastVisiblePage
+            }
+        }
+    }
+
+    val showScrollToTtsFab by remember(
+        displayMode,
+        isTtsSessionActive,
+        isTtsPageVisible
+    ) {
+        derivedStateOf {
+            displayMode == DisplayMode.VERTICAL_SCROLL && isTtsSessionActive && !isTtsPageVisible
+        }
+    }
+
+    AnimatedVisibility(
+        visible = showScrollToTtsFab,
+        modifier = Modifier
+            .align(Alignment.BottomCenter)
+            .padding(bottom = if (showBars) 56.dp + 16.dp else 16.dp),
+        enter = fadeIn(),
+        exit = fadeOut()
+    ) {
+        val isTtsPageBelow = (ttsReadingPage ?: 0) > verticalReaderState.currentPage
+        FloatingActionButton(
+            onClick = {
+                ttsReadingPage?.let {
+                    coroutineScope.launch { verticalReaderState.scrollToPage(it) }
+                }
+            },
+            shape = CircleShape,
+            containerColor = Color.Black.copy(alpha = 0.7f),
+            contentColor = Color.White,
+            elevation = FloatingActionButtonDefaults.elevation(0.dp, 0.dp, 0.dp, 0.dp)
+        ) {
+            Icon(
+                imageVector = if (isTtsPageBelow) Icons.Default.ArrowDownward
+                else Icons.Default.ArrowUpward,
+                contentDescription = stringResource(R.string.content_desc_scroll_to_reading_page)
+            )
+        }
+    }
+
+    AnimatedVisibility(
+        visible = showZoomIndicator,
+        modifier = Modifier
+            .align(Alignment.TopEnd)
+            .padding(top = 88.dp, end = 16.dp),
+        enter = fadeIn(),
+        exit = fadeOut()
+    ) {
+        ZoomPercentageIndicator(
+            percentage = zoomIndicatorPercentage,
+            onResetZoomClick = {
+                resetZoomTrigger = System.currentTimeMillis()
+            }
+        )
+    }
+
+    val isImeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    var isTextAnnotationPopupVisible by remember { mutableStateOf(false) }
+    val showTextDock = isEditMode && selectedTool == InkType.TEXT && (isImeVisible || isTextAnnotationPopupVisible || selectedTextBoxId != null)
+
+    if (showTextDock && richTextController != null) {
+
+        val bottomPadding = if (dockLocation == DockLocation.BOTTOM && !isDockMinimized) {
+            80.dp
+        } else {
+            16.dp
+        }
+
+        val currentDensity = LocalDensity.current
+        val imeHeightPx = WindowInsets.ime.getBottom(currentDensity)
+        val isImeVisible = imeHeightPx > 0
+        val windowHeightPx = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            window?.windowManager?.currentWindowMetrics?.bounds?.height()
+        } else {
+            null
+        } ?: view.rootView.height
+        val applyImePadding = shouldApplyPdfTextDockImePadding(
+            layoutHeightPx = constraints.maxHeight,
+            windowHeightPx = windowHeightPx,
+            imeHeightPx = imeHeightPx
+        )
+
+        val extraPadding = if (isImeVisible) 0.dp else bottomPadding
+
+        val effectiveStyle by remember(selectedTextBoxId, textBoxes, richTextController.currentStyle, displayPageRatios, boxMaxWidthFloat) {
+            derivedStateOf {
+                if (selectedTextBoxId != null) {
+                    val box = textBoxes.find { it.id == selectedTextBoxId }
+                    if (box != null) {
+                        val pageRatio = displayPageRatios.getOrElse(box.pageIndex) { 1f }
+                        val estimatedPageHeightPx = if (pageRatio > 0) boxMaxWidthFloat / pageRatio else boxMaxWidthFloat
+
+                        val fontSizePx = box.fontSize * estimatedPageHeightPx
+                        val fontSizeSp = with(currentDensity) { fontSizePx.toSp() }
+
+                        SpanStyle(
+                            color = box.color,
+                            background = box.backgroundColor,
+                            fontSize = fontSizeSp,
+                            fontWeight = if (box.isBold) FontWeight.Bold else FontWeight.Normal,
+                            fontStyle = if (box.isItalic) FontStyle.Italic else FontStyle.Normal,
+                            textDecoration = run {
+                                val decs = mutableListOf<TextDecoration>()
+                                if (box.isUnderline) decs.add(TextDecoration.Underline)
+                                if (box.isStrikeThrough) decs.add(TextDecoration.LineThrough)
+                                if (decs.isEmpty()) TextDecoration.None else TextDecoration.combine(decs)
+                            }
+                        )
+                    } else richTextController.currentStyle
+                } else {
+                    richTextController.currentStyle
+                }
+            }
+        }
+
+        Box(modifier = Modifier
+            .align(Alignment.BottomCenter)
+            .fillMaxWidth()
+            .then(
+                when {
+                    applyImePadding -> Modifier.windowInsetsPadding(
+                        WindowInsets.ime.union(WindowInsets.navigationBars)
+                    )
+                    !isImeVisible -> Modifier.windowInsetsPadding(WindowInsets.navigationBars)
+                    else -> Modifier
+                }
+            )
+            .padding(bottom = extraPadding)
+        ) {
+            TextAnnotationDock(
+                currentStyle = effectiveStyle,
+                textColorPalette = penPalette,
+                onTextColorPaletteChange = { newPalette ->
+                    annotationSettingsRepo.updatePenPalette(newPalette)
+                },
+                backgroundColorPalette = highlighterPalette,
+                onBackgroundColorPaletteChange = { newPalette ->
+                    annotationSettingsRepo.updateHighlighterPalette(newPalette)
+                },
+                onUpdateStyle = { newStyle ->
+                    Timber.tag(PDF_TEXT_BOX_INPUT_TRACE_TAG).d(
+                        "event=style_update target=${if (selectedTextBoxId == null) "page_rich_text" else "legacy_text_box"} " +
+                            "selectedTextBoxId=${selectedTextBoxId ?: "none"} fontSize=${newStyle.fontSize.value} " +
+                            "bold=${newStyle.fontWeight == FontWeight.Bold} italic=${newStyle.fontStyle == FontStyle.Italic} " +
+                            "underline=${newStyle.textDecoration?.contains(TextDecoration.Underline) == true} " +
+                            "strike=${newStyle.textDecoration?.contains(TextDecoration.LineThrough) == true}"
+                    )
+                    val newConfig = TextStyleConfig(
+                        colorArgb = newStyle.color.toArgb(),
+                        backgroundColorArgb = newStyle.background.toArgb(),
+                        fontSize = newStyle.fontSize.value,
+                        isBold = newStyle.fontWeight == FontWeight.Bold,
+                        isItalic = newStyle.fontStyle == FontStyle.Italic,
+                        isUnderline = newStyle.textDecoration?.contains(TextDecoration.Underline) == true,
+                        isStrikeThrough = newStyle.textDecoration?.contains(TextDecoration.LineThrough) == true,
+                        fontPath = toolSettings.textStyle.fontPath,
+                        fontName = toolSettings.textStyle.fontName
+                    )
+                    annotationSettingsRepo.updateTextStyle(newConfig)
+
+                    if (selectedTextBoxId != null) {
+                        val idx = textBoxes.indexOfFirst { it.id == selectedTextBoxId }
+                        if (idx != -1) {
+                            val old = textBoxes[idx]
+                            val pageRatio = displayPageRatios.getOrElse(old.pageIndex) { 1f }
+                            val estimatedPageHeightPx = if (pageRatio > 0) boxMaxWidthFloat / pageRatio else boxMaxWidthFloat
+
+                            val newFontSizePx = with(currentDensity) { newStyle.fontSize.toPx() }
+                            val newFontSizeNorm = if (estimatedPageHeightPx > 0) newFontSizePx / estimatedPageHeightPx else old.fontSize
+
+                            textBoxes[idx] = old.copy(
+                                color = newStyle.color,
+                                backgroundColor = newStyle.background,
+                                fontSize = newFontSizeNorm,
+                                isBold = newStyle.fontWeight == FontWeight.Bold,
+                                isItalic = newStyle.fontStyle == FontStyle.Italic,
+                                isUnderline = newStyle.textDecoration?.contains(TextDecoration.Underline) == true,
+                                isStrikeThrough = newStyle.textDecoration?.contains(TextDecoration.LineThrough) == true
+                            )
+                        }
+                    } else {
+                        richTextController.updateCurrentStyle(newStyle)
+                    }
+                },
+                onApplyToSelection = {},
+                onClose = { keyboardController?.hide() },
+                onPopupStateChange = { isVisible ->
+                    isTextAnnotationPopupVisible = isVisible
+                    richTextController.showCursorOverride = !isVisible
+                },
+                onInsertTextBox = onInsertTextBox,
+                onClearTextBoxSelection = {
+                    selectedTextBoxId = null
+                    richTextController.clearSelection()
+                },
+                bottomDockPadding = 0.dp,
+                customFonts = customFonts,
+                onImportFont = viewModel::importFont,
+                onFontSelected = { name, path ->
+                    Timber.tag("PdfFontDebug").i("UI Action: Font Selected -> Name: $name, Path: $path")
+                    Timber.tag(PDF_TEXT_BOX_INPUT_TRACE_TAG).d(
+                        "event=style_font_update target=${if (selectedTextBoxId == null) "page_rich_text" else "legacy_text_box"} " +
+                            "selectedTextBoxId=${selectedTextBoxId ?: "none"}"
+                    )
+                    val currentConfig = toolSettings.textStyle
+                    val newConfig = currentConfig.copy(fontPath = path, fontName = name)
+                    annotationSettingsRepo.updateTextStyle(newConfig)
+
+                    if (selectedTextBoxId != null) {
+                        val idx = textBoxes.indexOfFirst { it.id == selectedTextBoxId }
+                        if (idx != -1) {
+                            val oldBox = textBoxes[idx]
+                            textBoxes[idx] = oldBox.copy(fontPath = path, fontName = name)
+                        }
+                    } else {
+                        richTextController.let { controller ->
+                            val style = SpanStyle(
+                                color = Color(newConfig.colorArgb),
+                                background = Color(newConfig.backgroundColorArgb),
+                                fontSize = newConfig.fontSize.sp,
+                                fontWeight = if (newConfig.isBold) FontWeight.Bold else FontWeight.Normal,
+                                fontStyle = if (newConfig.isItalic) FontStyle.Italic else FontStyle.Normal,
+                                textDecoration = run {
+                                    val decs = mutableListOf<TextDecoration>()
+                                    if (newConfig.isUnderline) decs.add(TextDecoration.Underline)
+                                    if (newConfig.isStrikeThrough) decs.add(TextDecoration.LineThrough)
+                                    if (decs.isEmpty()) TextDecoration.None else TextDecoration.combine(decs)
+                                },
+                                fontFamily = PdfFontCache.getFontFamily(path)
+                            )
+                            controller.updateCurrentStyle(style, path, name)
+                        }
+                    }
+                },
+                currentFontName = remember(selectedTextBoxId, textBoxes, toolSettings.textStyle) {
+                    if (selectedTextBoxId != null) {
+                        val box = textBoxes.find { it.id == selectedTextBoxId }
+                        box?.fontName ?: box?.fontPath?.let { File(it).nameWithoutExtension }
+                    } else {
+                        toolSettings.textStyle.fontName ?: toolSettings.textStyle.fontPath?.let { File(it).nameWithoutExtension }
+                    }
+                },
+            )
+        }
+    }
+
+    val effectiveNavBarPaddingForOverlays = if (systemUiMode == SystemUiMode.DEFAULT || (systemUiMode == SystemUiMode.SYNC && showStandardBars)) with(density) { navBarHeight.toDp() } else 0.dp
+    val autoScrollPadding by animateDpAsState(
+        targetValue = if (showBottomBar) (56.dp + 16.dp + effectiveNavBarPaddingForOverlays) else (16.dp + effectiveNavBarPaddingForOverlays),
+        label = "AutoScrollPadding"
+    )
+
+    val ttsOverlayPadding by animateDpAsState(
+        targetValue = if (showBottomBar) (56.dp + 16.dp + effectiveNavBarPaddingForOverlays) else (16.dp + effectiveNavBarPaddingForOverlays),
+        label = "TtsOverlayPadding"
+    )
+
+    val ttsAlignmentBias by animateFloatAsState(
+        targetValue = readerTtsOverlayAlignmentBias(ttsOverlaySize),
+        label = "TtsAlignAnimation"
+    )
+
+    AnimatedVisibility(
+        visible = isTtsSessionActive && showBars && ownsPaneGlobals,
+        enter = slideInVertically(animationSpec = tween(200)) { it } + fadeIn(animationSpec = tween(200)),
+        exit = slideOutVertically(animationSpec = tween(200)) { it } + fadeOut(animationSpec = tween(200)),
+        modifier = Modifier
+            .align(BiasAlignment(ttsAlignmentBias, 1f))
+            .padding(bottom = ttsOverlayPadding)
+            .padding(horizontal = 16.dp)
+    ) {
+        TtsOverlayControls(
+            ttsController = ttsController,
+            ttsState = ttsState,
+            currentTtsMode = currentTtsMode,
+            overlaySize = ttsOverlaySize,
+            onOverlaySizeChange = { newSize ->
+                ttsOverlaySize = newSize
+                saveReaderTtsOverlaySize(context, newSize)
+            },
+            onLocateCurrentChunk = {
+                ttsDisplayPageIndex?.let { targetPage ->
+                    coroutineScope.launch {
+                        if (displayMode == DisplayMode.PAGINATION) {
+                            pagerState.scrollToPage(targetPage)
+                        } else {
+                            verticalReaderState.scrollToPage(targetPage)
+                        }
+                    }
+                }
+            },
+            onOpenTtsSettings = { if (ownsPaneGlobals) showTtsSettingsSheet = true },
+            onClose = {
+                ttsController.stop()
+                isAutoPagingForTts = false
+            },
+            credits = uiState.credits
+        )
+    }
+
+    val isAutoScrollControlsVisible = isAutoScrollModeActive
+
+    val alignmentBias by animateFloatAsState(
+        targetValue = if (isAutoScrollCollapsed) 1f else 0f,
+        label = "AutoScrollAlignAnimation"
+    )
+
+    AnimatedVisibility(
+        visible = isAutoScrollControlsVisible,
+        enter = slideInVertically(animationSpec = tween(200)) { it } + fadeIn(animationSpec = tween(200)),
+        exit = slideOutVertically(animationSpec = tween(200)) { it } + fadeOut(animationSpec = tween(200)),
+        modifier = Modifier
+            .align(BiasAlignment(alignmentBias, 1f))
+            .padding(bottom = autoScrollPadding)
+            .padding(horizontal = 16.dp)
+    ) {
+        AutoScrollControls(
+            isPlaying = isAutoScrollPlaying,
+            isTempPaused = isAutoScrollTempPaused,
+            onPlayPauseToggle = {
+                if (isAutoScrollPlaying) {
+                    isAutoScrollPlaying = false
+                    isAutoScrollTempPaused = false
+                    autoScrollResumeJob.value?.cancel()
+                } else {
+                    isAutoScrollPlaying = true
+                    isAutoScrollTempPaused = false
+                }
+            },
+            speed = autoScrollSpeed,
+            minSpeed = autoScrollMinSpeed,
+            maxSpeed = autoScrollMaxSpeed,
+            onSpeedChange = { updateSpeed(it) },
+            onMinSpeedChange = { newMin ->
+                updateMinSpeed(newMin)
+                if (!isAutoScrollLocal) {
+                    if (autoScrollMaxSpeed < newMin) {
+                        autoScrollMaxSpeed = newMin
+                        savePdfAutoScrollMaxSpeed(context, newMin)
+                    }
+                    if (autoScrollSpeed < newMin) {
+                        autoScrollSpeed = newMin
+                        savePdfAutoScrollSpeed(context, newMin)
+                    } else if (autoScrollSpeed > autoScrollMaxSpeed) {
+                        autoScrollSpeed = autoScrollMaxSpeed
+                        savePdfAutoScrollSpeed(context, autoScrollMaxSpeed)
+                    }
+                }
+            },
+            onMaxSpeedChange = { newMax ->
+                updateMaxSpeed(newMax)
+                if (!isAutoScrollLocal) {
+                    if (autoScrollMinSpeed > newMax) {
+                        autoScrollMinSpeed = newMax
+                        savePdfAutoScrollMinSpeed(context, newMax)
+                    }
+                    if (autoScrollSpeed > newMax) {
+                        autoScrollSpeed = newMax
+                        savePdfAutoScrollSpeed(context, newMax)
+                    } else if (autoScrollSpeed < autoScrollMinSpeed) {
+                        autoScrollSpeed = autoScrollMinSpeed
+                        savePdfAutoScrollSpeed(context, autoScrollMinSpeed)
+                    }
+                }
+            },
+            onClose = {
+                isAutoScrollModeActive = false
+                isAutoScrollPlaying = false
+                showBars = true
+            },
+            isCollapsed = isAutoScrollCollapsed,
+            onCollapseChange = { isAutoScrollCollapsed = it },
+            isMusicianMode = isMusicianMode,
+            onMusicianModeToggle = {
+                val newMode = !isMusicianMode
+                isMusicianMode = newMode
+                savePdfMusicianMode(context, newMode)
+                if (newMode) {
+                    showBars = false
+                }
+                Timber.d("Musician mode toggled: $newMode")
+            },
+            useSlider = autoScrollUseSlider,
+            onInputModeToggle = {
+                autoScrollUseSlider = !autoScrollUseSlider
+                savePdfAutoScrollUseSlider(context, autoScrollUseSlider)
+            },
+            isLocalMode = isAutoScrollLocal,
+            onLocalModeToggle = onToggleAutoScrollMode,
+            onScrollToTop = {
+                if (isAutoScrollPlaying) {
+                    triggerAutoScrollTempPause(1000L)
+                }
+                coroutineScope.launch {
+                    verticalReaderState.scrollToTop()
+                }
+            }
+        )
+    }
+}
+
+/**
+ * Aspect-fits a page with [aspectRatio] (width/height) inside the available area.
+ *
+ * The realistic page curl must fold the drawn PDF page, not the letterboxed pager
+ * slot, so the turn sheet is sized to this rect. Each display page is measured with
+ * its own ratio from [displayPageRatios], which keeps mixed page sizes (portrait and
+ * landscape pages in one document, inserted blanks) turning correctly.
+ */
+internal fun pdfPaginationTurnSheetSize(
+    availableWidth: Dp,
+    availableHeight: Dp,
+    aspectRatio: Float,
+): DpSize {
+    val safeAspectRatio = if (aspectRatio > 0f) aspectRatio else 1f
+    val widthLimited = availableWidth / availableHeight <= safeAspectRatio
+    val fittedWidth = if (widthLimited) availableWidth else availableHeight * safeAspectRatio
+    return DpSize(width = fittedWidth, height = fittedWidth / safeAspectRatio)
+}
+
+@Composable
+private fun PdfViewerPaginationPage(
+    paginationPageState: PdfViewerPaginationPageState,
+    pagerPageIndex: Int,
+    pageTurnAnimationEnabled: Boolean,
+    pageTurnTouchY: Float?,
+) {
+    val surfaceState = paginationPageState.surfaceState
+    val diagPaneContext = "pane=${surfaceState.paneBookId ?: "solo"} session=${surfaceState.paneSessionId}"
+    val boxMaxWidthFloat = paginationPageState.boxMaxWidth.toFloat()
+    val boxMaxHeightFloat = paginationPageState.boxMaxHeight.toFloat()
+    val stablePdfDocument = paginationPageState.stablePdfDocument
+    val stylusButtonHovering = paginationPageState.stylusButtonHovering
+    val richTextController = surfaceState.richTextController
+    val selectedTool = surfaceState.selectedTool.value
+    val density = surfaceState.density.value
+    val searchState = surfaceState.searchState
+    val activeTheme = surfaceState.activeTheme.value
+    val pdfSpreadSettings = surfaceState.pdfSpreadSettings
+    val totalDisplayPages = surfaceState.totalDisplayPages
+    val pagerState = surfaceState.pagerState
+    val coroutineScope = surfaceState.coroutineScope
+    var isEditMode by surfaceState.isEditMode
+    val startTtsWithPermissionCheck = surfaceState.startTtsWithPermissionCheck
+    val onBookmarkClick = surfaceState.onBookmarkClick
+    val currentPage = surfaceState.currentPage
+    val activeDocumentRenderKey = surfaceState.activeDocumentRenderKey
+    val isHighlighterSnapEnabled = surfaceState.isHighlighterSnapEnabled
+    val calculateSnappedPoint = surfaceState.calculateSnappedPoint
+    var pdfDocument by surfaceState.pdfDocument
+    var totalPages by surfaceState.totalPages
+    var tapToNavigateEnabled by surfaceState.tapToNavigateEnabled
+    var currentPageScale by surfaceState.currentPageScale
+    var isScrollLocked by surfaceState.isScrollLocked
+    var rightToLeftPagination by surfaceState.rightToLeftPagination
+    // Android-benchmark realistic page turn: disabled while zoomed because the page
+    // zoom transform would rescale the curl's counter-translation.
+    val realisticPageTurnActive = pageTurnAnimationEnabled && currentPageScale <= 1f
+    val pagePaperColor = pdfPaginatedPagePaperColor(activeTheme)
+    val textBoxes = surfaceState.textBoxes
+    var paginationDraggingBoxId by surfaceState.paginationDraggingBoxId
+    val isDrawingActive = surfaceState.isDrawingActive
+    val viewConfiguration = surfaceState.viewConfiguration
+    var currentActiveScale by surfaceState.currentActiveScale
+    var currentActiveOffset by surfaceState.currentActiveOffset
+    var showVerticalPageGap by surfaceState.showVerticalPageGap
+    val pdfTextRepository = surfaceState.pdfTextRepository
+    val visibleUserHighlightsByPage = surfaceState.visibleUserHighlightsByPage
+    val visibleTextBoxesByPage = surfaceState.textBoxSurfaceState.data.value.byPage
+    val isProUser = surfaceState.isProUser
+    val onDictionaryLookupStable = surfaceState.onDictionaryLookupStable
+    val onTranslateTextStable = surfaceState.onTranslateTextStable
+    val onSearchTextStable = surfaceState.onSearchTextStable
+    val onInternalLinkNav = surfaceState.onInternalLinkNav
+    val onOcrStateChange = surfaceState.onOcrStateChange
+    val onToggleBookmark = surfaceState.onToggleBookmark
+    val drawingState = surfaceState.drawingState
+    val persistInkAnnotationsNow = surfaceState.persistInkAnnotationsNow
+    var selectedTextBoxId by surfaceState.selectedTextBoxId
+    val displayPageRatios = surfaceState.displayPageRatios
+    val onHighlightAdd = surfaceState.onHighlightAdd
+    val onHighlightUpdate = surfaceState.onHighlightUpdate
+    val onHighlightDelete = surfaceState.onHighlightDelete
+    val onNoteRequested = surfaceState.onNoteRequested
+    var bookmarks by surfaceState.bookmarks
+    var searchHighlightTarget by surfaceState.searchHighlightTarget
+    var isOcrModelDownloading by surfaceState.isOcrModelDownloading
+    val allAnnotationsProvider = surfaceState.allAnnotationsProvider
+    val currentStrokeColor = surfaceState.currentStrokeColor
+    val currentStrokeWidth = surfaceState.currentStrokeWidth
+    val currentEraserStrokeWidth = surfaceState.currentEraserStrokeWidth
+    val erasedAnnotationsFromStroke = surfaceState.erasedAnnotationsFromStroke
+    var pageAspectRatios by surfaceState.pageAspectRatios
+    var allAnnotations by surfaceState.allAnnotations
+    var lastEraserPoint by surfaceState.lastEraserPoint
+    val currentIsHighlighter = surfaceState.currentIsHighlighter
+    val currentSnapEnabled = surfaceState.currentSnapEnabled
+    var showToolSettings by surfaceState.showToolSettings
+    var virtualPages by surfaceState.virtualPages
+    var globalTextureTransparency by surfaceState.globalTextureTransparency
+    var excludeImages by surfaceState.excludeImages
+    var reverseColorMode by surfaceState.reverseColorMode
+    var customHighlightColors by surfaceState.customHighlightColors
+    var ttsDisplayPageIndex by surfaceState.ttsDisplayPageIndex
+    var ttsHighlightData by surfaceState.ttsHighlightData
+    var searchHighlightMode by surfaceState.searchHighlightMode
+    var showAllTextHighlights by surfaceState.showAllTextHighlights
+    var showPageNumberOverlay by surfaceState.showPageNumberOverlay
+    var selectionClearTrigger by surfaceState.selectionClearTrigger
+    var resetZoomTrigger by surfaceState.resetZoomTrigger
+    var lockedState by surfaceState.lockedState
+    var isStylusOnlyMode by surfaceState.isStylusOnlyMode
+    var isAutoScrollPlaying by surfaceState.isAutoScrollPlaying
+    var isBubbleZoomModeActive by surfaceState.isBubbleZoomModeActive
+    var useOnlineDictionary by surfaceState.useOnlineDictionary
+    var showDictionaryUpsellDialog by surfaceState.showDictionaryUpsellDialog
+    var clickedLinkUrl by surfaceState.clickedLinkUrl
+    val undoStack = surfaceState.undoStack
+    val redoStack = surfaceState.redoStack
+    var paginationOriginalRelSize by surfaceState.paginationOriginalRelSize
+    var paginationDraggingSize by surfaceState.paginationDraggingSize
+    var paginationDragPageHeight by surfaceState.paginationDragPageHeight
+    var paginationDraggingOffset by surfaceState.paginationDraggingOffset
+    var highlightColorPickerInitialSlot by surfaceState.highlightColorPickerInitialSlot
+    var showHighlightColorPicker by surfaceState.showHighlightColorPicker
+    var poppedUpPanelBitmap by surfaceState.poppedUpPanelBitmap
+    val isBookmarked = surfaceState.isBookmarked
+    val activeToolThickness = surfaceState.activeToolThickness
+    val onSingleTapStable = surfaceState.onSingleTapStable
+    val paginationDisplayPageForPagerPage = surfaceState.paginationDisplayPageForPagerPage
+    val animatePaginationToDisplayPage = surfaceState.animatePaginationToDisplayPage
+    val currentPaginationDisplayPage = surfaceState.currentPaginationDisplayPage
+    val detectSpeechBubblesForPage = surfaceState.detectSpeechBubblesForPage
+    val isAnnotationHit = surfaceState.isAnnotationHit
+    val onPaginationPreSingleTap: (Offset) -> Boolean = { tapOffset ->
+        val canTurnPagesByTap = tapToNavigateEnabled &&
+            (currentPageScale <= 1.02f || isScrollLocked)
+
+        if (!canTurnPagesByTap) {
+            false
+        } else {
+            val oneQuarterWidthPx = boxMaxWidthFloat / 4f
+            suspend fun turnPager(targetPage: Int) {
+                if (targetPage != pagerState.currentPage) {
+                    // Android-benchmark realistic turn: single-step manual turns snap
+                    // with tween(700) so the curl tracks the pager animation.
+                    if (shouldPlayRealisticPdfPageTurn(realisticPageTurnActive, pagerState.currentPage, targetPage)) {
+                        pagerState.animateScrollToPage(targetPage, animationSpec = RealisticPdfPageTurnAnimationSpec)
+                    } else {
+                        pagerState.scrollToPage(targetPage)
+                    }
+                }
+            }
+            when {
+                tapOffset.x < oneQuarterWidthPx -> {
+                    coroutineScope.launch {
+                        val targetPage =
+                            if (rightToLeftPagination) {
+                                (pagerState.currentPage + 1).coerceAtMost(pagerState.pageCount - 1)
+                            } else {
+                                (pagerState.currentPage - 1).coerceAtLeast(0)
+                            }
+                        turnPager(targetPage)
+                    }
+                    true
+                }
+
+                tapOffset.x > (boxMaxWidthFloat - oneQuarterWidthPx) -> {
+                    coroutineScope.launch {
+                        val targetPage =
+                            if (rightToLeftPagination) {
+                                (pagerState.currentPage - 1).coerceAtLeast(0)
+                            } else {
+                                (pagerState.currentPage + 1).coerceAtMost(
+                                    pagerState.pageCount - 1
+                                )
+                            }
+                        turnPager(targetPage)
+                    }
+                    true
+                }
+
+                else -> false
+            }
+        }
+    }
+
+    val spreadPageIndices = remember(
+        pagerPageIndex,
+        totalDisplayPages,
+        pdfSpreadSettings.pageSpreadMode,
+        pdfSpreadSettings.pdfFirstPageStandaloneInSpread
+    ) {
+        PdfSpreadLayout.visiblePageIndices(
+            pageIndex = paginationDisplayPageForPagerPage(pagerPageIndex),
+            pageCount = totalDisplayPages,
+            settings = pdfSpreadSettings
+        )
+    }
+    val isVisiblePage = remember(pagerState.currentPage, pagerPageIndex) {
+        abs(pagerState.currentPage - pagerPageIndex) <= 1
+    }
+    val isActivePagerPage = pagerState.currentPage == pagerPageIndex
+    val useSharedSpreadZoom = spreadPageIndices.size > 1
+    val latestSpreadScale = rememberUpdatedState(currentActiveScale)
+    val latestSpreadOffset = rememberUpdatedState(currentActiveOffset)
+    val spreadPageGap = if (showVerticalPageGap) 8.dp else 0.dp
+    val spreadPageGapPx = with(density) { spreadPageGap.toPx() }
+    val spreadPageCount = spreadPageIndices.size
+    var spreadPanFlingJob by remember { mutableStateOf<Job?>(null) }
+    // Pager natural position: the curl's counter-translation cancels the pager's own
+    // translation while |offset| < 1 (Android benchmark), and the curling page draws
+    // above the incoming one.
+    val turnPageOffset =
+        if (realisticPageTurnActive) {
+            (pagerPageIndex - pagerState.currentPage) - pagerState.currentPageOffsetFraction
+        } else {
+            0f
+        }
+    val turnSlotModifier = if (realisticPageTurnActive) {
+        Modifier
+            .zIndex(-turnPageOffset)
+            .graphicsLayer {
+                if (turnPageOffset <= 1f && turnPageOffset > -1f) {
+                    translationX = -turnPageOffset * size.width
+                }
+            }
+    } else {
+        Modifier
+    }
+    val turnSheetModifier = if (realisticPageTurnActive) {
+        Modifier
+            .graphicsLayer {
+                if (turnPageOffset != 0f) {
+                    shadowElevation = 10f
+                    shape = RectangleShape
+                    clip = false
+                }
+            }
+            .realisticPageCurl(
+                pageOffsetProvider = { turnPageOffset },
+                touchYProvider = { pageTurnTouchY },
+                paperColor = pagePaperColor
+            )
+    } else {
+        Modifier
+    }
+    Row(
+        modifier = Modifier
+            .then(turnSlotModifier)
+            .fillMaxSize()
+            .clipToBounds()
+            .then(
+                if (useSharedSpreadZoom) {
+                    Modifier
+                        .pointerInput(
+                            useSharedSpreadZoom,
+                            isDrawingActive,
+                            isScrollLocked,
+                            totalDisplayPages
+                        ) {
+                            if (!useSharedSpreadZoom || isDrawingActive) return@pointerInput
+                            val oneHandZoomDistancePx = with(density) {
+                                PDF_ONE_HAND_ZOOM_DRAG_DISTANCE_FOR_DOUBLE_DP.dp.toPx()
+                            }
+                            var oneHandZoomStartScale = 1f
+                            var oneHandZoomStartOffset = Offset.Zero
+                            pdfSplitZoomDiag(
+                                "spread.detector.restart $diagPaneContext sharedZoom=$useSharedSpreadZoom " +
+                                    "scrollLocked=$isScrollLocked drawing=$isDrawingActive pages=$totalDisplayPages " +
+                                    "scale=${latestSpreadScale.value.diagF()} offset=${latestSpreadOffset.value}"
+                            )
+                            Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
+                                "spread.detector.enabled scrollLocked=$isScrollLocked drawing=$isDrawingActive " +
+                                    "pages=$totalDisplayPages scale=${latestSpreadScale.value} offset=${latestSpreadOffset.value}"
+                            )
+
+                            fun spreadTargetOffset(
+                                startScale: Float,
+                                targetScale: Float,
+                                startOffset: Offset,
+                                pivot: Offset
+                            ): Offset {
+                                if (targetScale <= 1.1f) return Offset.Zero
+                                val viewportSize = Size(size.width.toFloat(), size.height.toFloat())
+                                return centeredPdfCameraOffsetForScaleChange(
+                                    previousScale = startScale,
+                                    nextScale = targetScale,
+                                    previousOffset = startOffset,
+                                    pivot = pivot,
+                                    viewportSize = viewportSize,
+                                    contentSize = viewportSize
+                                )
+                            }
+
+                            detectPdfTapAndOneHandZoomGestures(
+                                viewConfiguration = viewConfiguration,
+                                canStartOneHandZoom = {
+                                    useSharedSpreadZoom && !isDrawingActive && !isScrollLocked
+                                },
+                                canHandleQuickDoubleTap = { !isScrollLocked },
+                                consumeSingleTap = false,
+                                onTap = { offset ->
+                                    Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
+                                        "spread.tap passthrough offset=$offset"
+                                    )
+                                },
+                                onQuickDoubleTap = quickDoubleTap@{ tapOffset ->
+                                    if (isScrollLocked) {
+                                        Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
+                                            "spread.quickDoubleTap.blocked scrollLocked=true offset=$tapOffset"
+                                        )
+                                        pdfSplitZoomDiag(
+                                            "spread.quickDoubleTap.blocked $diagPaneContext " +
+                                                "reason=scrollLocked scale=${latestSpreadScale.value.diagF()}"
+                                        )
+                                        return@quickDoubleTap
+                                    }
+                                    val startScale = latestSpreadScale.value
+                                    val startOffset = latestSpreadOffset.value
+                                    val targetScale = pdfDoubleTapTargetScale(startScale)
+                                    Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
+                                        "spread.quickDoubleTap offset=$tapOffset startScale=$startScale " +
+                                            "targetScale=$targetScale startOffset=$startOffset"
+                                    )
+                                    val targetOffset = spreadTargetOffset(
+                                        startScale = startScale,
+                                        targetScale = targetScale,
+                                        startOffset = startOffset,
+                                        pivot = tapOffset
+                                    )
+                                    pdfSplitZoomDiag(
+                                        "spread.quickDoubleTap $diagPaneContext tap=$tapOffset " +
+                                            "startScale=${startScale.diagF()} targetScale=${targetScale.diagF()} " +
+                                            "targetOffset=$targetOffset startOffset=$startOffset"
+                                    )
+                                    coroutineScope.launch {
+                                        Animatable(0f).animateTo(
+                                            1f,
+                                            animationSpec = tween(durationMillis = 300)
+                                        ) {
+                                            currentActiveScale = androidx.compose.ui.util.lerp(
+                                                startScale,
+                                                targetScale,
+                                                value
+                                            )
+                                            currentActiveOffset = lerp(
+                                                startOffset,
+                                                targetOffset,
+                                                value
+                                            )
+                                            currentPageScale = currentActiveScale
+                                        }
+                                        if (currentActiveScale <= 1.05f) {
+                                            currentActiveScale = 1f
+                                            currentActiveOffset = Offset.Zero
+                                            currentPageScale = 1f
+                                        }
+                                    }
+                                },
+                                onOneHandZoomHoldStart = { _ ->
+                                    Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
+                                        "spread.oneHandHoldStart scale=${latestSpreadScale.value} " +
+                                            "offset=${latestSpreadOffset.value}"
+                                    )
+                                    spreadPanFlingJob?.cancel()
+                                    spreadPanFlingJob = null
+                                    oneHandZoomStartScale = latestSpreadScale.value
+                                    oneHandZoomStartOffset = latestSpreadOffset.value
+                                },
+                                onOneHandZoom = { _, totalDragY ->
+                                    val viewportCenter = Offset(size.width / 2f, size.height / 2f)
+                                    val nextScale = pdfOneHandZoomScale(
+                                        startScale = oneHandZoomStartScale,
+                                        totalDragY = totalDragY,
+                                        dragDistanceForDoublePx = oneHandZoomDistancePx,
+                                        minScale = 1f,
+                                        maxScale = PDF_MAX_ZOOM_SCALE
+                                    )
+                                    currentActiveScale = nextScale
+                                    currentActiveOffset = spreadTargetOffset(
+                                        startScale = oneHandZoomStartScale,
+                                        targetScale = nextScale,
+                                        startOffset = oneHandZoomStartOffset,
+                                        pivot = viewportCenter
+                                    )
+                                    Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).v(
+                                        "spread.oneHandUpdate dragY=$totalDragY startScale=$oneHandZoomStartScale " +
+                                            "nextScale=$nextScale offset=$currentActiveOffset"
+                                    )
+                                    currentPageScale = currentActiveScale
+                                },
+                                onOneHandZoomEnd = { _ ->
+                                    Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
+                                        "spread.oneHandEnd scale=$currentActiveScale offset=$currentActiveOffset"
+                                    )
+                                    if (currentActiveScale > 1f && currentActiveScale < 1.05f) {
+                                        currentActiveScale = 1f
+                                        currentActiveOffset = Offset.Zero
+                                        currentPageScale = 1f
+                                    }
+                                }
+                            )
+                        }
+                        .pointerInput(
+                            useSharedSpreadZoom,
+                            isDrawingActive,
+                            isScrollLocked,
+                            totalDisplayPages
+                        ) {
+                            if (!useSharedSpreadZoom || isDrawingActive) return@pointerInput
+                            val touchSlop = viewConfiguration.touchSlop
+                            val decay = splineBasedDecay<Float>(this)
+                            val velocityTracker = VelocityTracker()
+
+                            awaitEachGesture {
+                                awaitFirstDown(requireUnconsumed = false)
+                                spreadPanFlingJob?.cancel()
+                                spreadPanFlingJob = null
+                                velocityTracker.resetTracking()
+
+                                var gestureScale = latestSpreadScale.value
+                                var gestureOffset = latestSpreadOffset.value
+                                var accumulatedZoom = 1f
+                                var accumulatedPan = Offset.Zero
+                                var velocityAccumulator = Offset.Zero
+                                var mode = 0
+                                var hasConsumedGesture = false
+
+                                do {
+                                    val event = awaitPointerEvent()
+                                    val canceled = event.changes.any { it.isConsumed }
+                                    if (canceled) {
+                                        Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
+                                            "spread.panDetector.canceledByConsumed mode=$mode scale=$gestureScale " +
+                                                "changes=${event.changes.joinToString { change ->
+                                                    "pressed=${change.pressed},consumed=${change.isConsumed},moved=${change.positionChanged()}"
+                                                }}"
+                                        )
+                                        pdfSplitZoomDiag(
+                                            "spread.panDetector.canceledByConsumed $diagPaneContext mode=$mode " +
+                                                "scale=${gestureScale.diagF()} zoomAccum=${accumulatedZoom.diagF()}"
+                                        )
+                                    }
+                                    if (!canceled) {
+                                        val pointerCount = event.changes.count { it.pressed }
+                                        val rawPanChange = event.calculatePan()
+                                        val panChange = if (isScrollLocked && pointerCount == 1) {
+                                            Offset.Zero
+                                        } else {
+                                            rawPanChange
+                                        }
+                                        val zoomChange = event.calculateZoom()
+                                        accumulatedZoom *= zoomChange
+                                        accumulatedPan += panChange
+
+                                        if (gestureScale > 1f) {
+                                            if (mode == 0) {
+                                                mode = if (pointerCount > 1 && abs(accumulatedZoom - 1f) > 0.025f) {
+                                                    Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
+                                                        "spread.panDetector.modeZoom scale=$gestureScale accumulatedZoom=$accumulatedZoom"
+                                                    )
+                                                    pdfSplitZoomDiag(
+                                                        "spread.modeZoom $diagPaneContext pointers=$pointerCount " +
+                                                            "scale=${gestureScale.diagF()} zoomAccum=${accumulatedZoom.diagF()}"
+                                                    )
+                                                    2
+                                                } else if (accumulatedPan.getDistance() > touchSlop) {
+                                                    Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
+                                                        "spread.panDetector.modePan scale=$gestureScale accumulatedPan=$accumulatedPan"
+                                                    )
+                                                    pdfSplitZoomDiag(
+                                                        "spread.modePan $diagPaneContext pointers=$pointerCount " +
+                                                            "scale=${gestureScale.diagF()} panAccum=$accumulatedPan"
+                                                    )
+                                                    1
+                                                } else {
+                                                    0
+                                                }
+                                            }
+
+                                            if (mode == 1 || mode == 2) {
+                                                val oldScale = gestureScale
+                                                val nextScale = if (mode == 2 && pointerCount > 1) {
+                                                    (gestureScale * zoomChange)
+                                                        .coerceIn(1f, PDF_MAX_ZOOM_SCALE)
+                                                } else {
+                                                    gestureScale
+                                                }
+                                                val ratio = if (oldScale == 0f) 1f else nextScale / oldScale
+                                                val previousCentroid = event.calculateCentroid(useCurrent = false)
+                                                val viewportCenter = Offset(size.width / 2f, size.height / 2f)
+                                                val nextOffset = if (mode == 2 && pointerCount > 1 && previousCentroid != Offset.Unspecified) {
+                                                    gestureOffset * ratio + (previousCentroid - viewportCenter) * (1 - ratio) + panChange
+                                                } else {
+                                                    gestureOffset + panChange
+                                                }
+
+                                                gestureScale = nextScale
+                                                gestureOffset = clampPdfSpreadCameraOffset(
+                                                    scale = gestureScale,
+                                                    offset = nextOffset,
+                                                    viewportWidth = size.width.toFloat(),
+                                                    viewportHeight = size.height.toFloat()
+                                                )
+                                                currentActiveScale = gestureScale
+                                                currentActiveOffset = gestureOffset
+                                                currentPageScale = gestureScale
+                                                hasConsumedGesture = true
+                                                if (mode == 1 && panChange != Offset.Zero && event.changes.isNotEmpty()) {
+                                                    velocityAccumulator += panChange
+                                                    velocityTracker.addPosition(
+                                                        event.changes[0].uptimeMillis,
+                                                        velocityAccumulator
+                                                    )
+                                                }
+                                                event.changes.forEach {
+                                                    if (it.positionChanged()) it.consume()
+                                                }
+                                            }
+                                        } else if (pointerCount > 1) {
+                                            if (mode == 0) {
+                                                mode = if (abs(accumulatedZoom - 1f) > 0.025f) {
+                                                    Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
+                                                        "spread.panDetector.modeZoomAtBase accumulatedZoom=$accumulatedZoom"
+                                                    )
+                                                    pdfSplitZoomDiag(
+                                                        "spread.modeZoomAtBase $diagPaneContext " +
+                                                            "pointers=$pointerCount zoomAccum=${accumulatedZoom.diagF()}"
+                                                    )
+                                                    2
+                                                } else {
+                                                    0
+                                                }
+                                            }
+
+                                            if (mode == 2) {
+                                                val oldScale = gestureScale
+                                                val nextScale = (gestureScale * zoomChange)
+                                                    .coerceIn(1f, PDF_MAX_ZOOM_SCALE)
+                                                val ratio = if (oldScale == 0f) 1f else nextScale / oldScale
+                                                val previousCentroid = event.calculateCentroid(useCurrent = false)
+                                                val viewportCenter = Offset(size.width / 2f, size.height / 2f)
+                                                val nextOffset = if (previousCentroid != Offset.Unspecified) {
+                                                    gestureOffset * ratio + (previousCentroid - viewportCenter) * (1 - ratio) + panChange
+                                                } else {
+                                                    gestureOffset + panChange
+                                                }
+                                                gestureScale = nextScale
+                                                gestureOffset = clampPdfSpreadCameraOffset(
+                                                    scale = gestureScale,
+                                                    offset = nextOffset,
+                                                    viewportWidth = size.width.toFloat(),
+                                                    viewportHeight = size.height.toFloat()
+                                                )
+                                                currentActiveScale = gestureScale
+                                                currentActiveOffset = gestureOffset
+                                                currentPageScale = gestureScale
+                                                hasConsumedGesture = true
+                                                event.changes.forEach {
+                                                    if (it.positionChanged()) it.consume()
+                                                }
+                                            }
+                                        }
+                                    }
+                                } while (!canceled && event.changes.any { it.pressed })
+
+                                if (hasConsumedGesture) {
+                                    pdfSplitZoomDiag(
+                                        "spread.gestureEnd $diagPaneContext mode=$mode " +
+                                            "scale=${currentActiveScale.diagF()} offset=${currentActiveOffset}"
+                                    )
+                                }
+
+                                if (hasConsumedGesture && currentActiveScale > 1f && currentActiveScale < 1.05f) {
+                                    pdfSplitZoomDiag(
+                                        "spread.snapBackToBase $diagPaneContext scale=${currentActiveScale.diagF()} " +
+                                            "offset=${currentActiveOffset}"
+                                    )
+                                    coroutineScope.launch {
+                                        val startScale = currentActiveScale
+                                        val startOffset = currentActiveOffset
+                                        Animatable(0f).animateTo(1f, animationSpec = tween(durationMillis = 180)) {
+                                            currentActiveScale = androidx.compose.ui.util.lerp(startScale, 1f, value)
+                                            currentActiveOffset =
+                                                lerp(startOffset, Offset.Zero, value)
+                                            currentPageScale = currentActiveScale
+                                        }
+                                        currentActiveScale = 1f
+                                        currentActiveOffset = Offset.Zero
+                                        currentPageScale = 1f
+                                    }
+                                } else if (hasConsumedGesture && mode == 1 && currentActiveScale > 1f) {
+                                    val velocity = velocityTracker.calculateVelocity()
+                                    val flingX = if (!isScrollLocked && abs(velocity.x) > PDF_SPREAD_PAN_FLING_MIN_VELOCITY) {
+                                        velocity.x * PDF_SPREAD_PAN_FLING_MULTIPLIER
+                                    } else {
+                                        0f
+                                    }
+                                    val flingY = if (abs(velocity.y) > PDF_SPREAD_PAN_FLING_MIN_VELOCITY) {
+                                        velocity.y * PDF_SPREAD_PAN_FLING_MULTIPLIER
+                                    } else {
+                                        0f
+                                    }
+
+                                    if (flingX != 0f || flingY != 0f) {
+                                        spreadPanFlingJob = coroutineScope.launch {
+                                            try {
+                                                val startOffset = currentActiveOffset
+                                                var decayedX = startOffset.x
+                                                var decayedY = startOffset.y
+                                                kotlinx.coroutines.coroutineScope {
+                                                    launch {
+                                                        if (flingX != 0f) {
+                                                            Animatable(startOffset.x).animateDecay(flingX, decay) {
+                                                                decayedX = value
+                                                                currentActiveOffset = clampPdfSpreadCameraOffset(
+                                                                    scale = currentActiveScale,
+                                                                    offset = Offset(decayedX, decayedY),
+                                                                    viewportWidth = size.width.toFloat(),
+                                                                    viewportHeight = size.height.toFloat()
+                                                                )
+                                                            }
+                                                        }
+                                                    }
+                                                    launch {
+                                                        if (flingY != 0f) {
+                                                            Animatable(startOffset.y).animateDecay(flingY, decay) {
+                                                                decayedY = value
+                                                                currentActiveOffset = clampPdfSpreadCameraOffset(
+                                                                    scale = currentActiveScale,
+                                                                    offset = Offset(decayedX, decayedY),
+                                                                    viewportWidth = size.width.toFloat(),
+                                                                    viewportHeight = size.height.toFloat()
+                                                                )
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            } finally {
+                                                spreadPanFlingJob = null
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        .graphicsLayer {
+                            scaleX = currentActiveScale
+                            scaleY = currentActiveScale
+                            translationX = currentActiveOffset.x
+                            translationY = currentActiveOffset.y
+                        }
+                } else {
+                    Modifier
+                }
+            ),
+        horizontalArrangement = Arrangement.spacedBy(spreadPageGap, Alignment.CenterHorizontally),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        spreadPageIndices.forEach { pageIndex ->
+            key(pageIndex) {
+                val spreadPageWidth = if (spreadPageCount > 1) {
+                    val pageAspectRatio = displayPageRatios.getOrElse(pageIndex) { 1f }
+                    with(density) {
+                        pdfSpreadPageSlotWidth(
+                            containerWidth = boxMaxWidthFloat,
+                            containerHeight = boxMaxHeightFloat,
+                            pageGap = spreadPageGapPx,
+                            spreadPageCount = spreadPageCount,
+                            pageAspectRatio = pageAspectRatio
+                        ).toDp()
+                    }
+                } else {
+                    with(density) { boxMaxWidthFloat.toDp() }
+                }
+                // Fold the drawn page, not the slot: each display page uses its own
+                // aspect ratio, so mixed page sizes turn with their own fitted rect.
+                val turnSheetSize = if (realisticPageTurnActive) {
+                    pdfPaginationTurnSheetSize(
+                        availableWidth = spreadPageWidth,
+                        availableHeight = with(density) { boxMaxHeightFloat.toDp() },
+                        aspectRatio = displayPageRatios.getOrElse(pageIndex) { 1f },
+                    )
+                } else {
+                    null
+                }
+    val isPageBookmarked by remember(bookmarks, pageIndex) {
+        derivedStateOf {
+            bookmarks.any { it.pageIndex == pageIndex }
+        }
+    }
+    var ocrHighlightRects by remember {
+        mutableStateOf<List<RectF>>(emptyList())
+    }
+
+    LaunchedEffect(searchHighlightTarget, pageIndex) {
+        val target = searchHighlightTarget
+        ocrHighlightRects = emptyList()
+
+        if (target != null && target.locationInSource == pageIndex) {
+            Timber.d(
+                "LaunchedEffect triggered for Page $pageIndex. Checking Native..."
+            )
+            val pdfDocKt = (pdfDocument as? PdfDocumentWrapper)?.pdfDocument
+            val hasNative = if (pdfDocKt != null) pdfTextRepository.hasNativeText(
+                pdfDocKt, pageIndex
+            ) else false
+            Timber.d(
+                "Page $pageIndex Has Native Text: $hasNative"
+            )
+
+            if (!hasNative) {
+                Timber.d(
+                    "Fetching OCR rects for query: '${target.query}'"
+                )
+                val rects = if (pdfDocKt != null) pdfTextRepository.getOcrSearchRects(
+                    document = pdfDocKt,
+                    pageIndex = pageIndex,
+                    query = target.query,
+                    onModelDownloading = {
+                        isOcrModelDownloading = true
+                    }) else emptyList()
+                Timber.d(
+                    "Received ${rects.size} rects from Repository."
+                )
+                ocrHighlightRects = rects
+            } else {
+                Timber.d(
+                    "Native text present. Skipping OCR highlighting."
+                )
+            }
+        }
+    }
+
+    val pageAnnotationsProvider =
+        remember(pageIndex, allAnnotationsProvider) {
+            {
+                allAnnotationsProvider()[pageIndex]
+                    ?: emptyList()
+            }
+        }
+
+    val stableOcrRects = remember(ocrHighlightRects) {
+        StableHolder(ocrHighlightRects)
+    }
+
+    val currentSelectedTool by rememberUpdatedState(selectedTool)
+
+    val currentStrokeColorState by rememberUpdatedState(
+        currentStrokeColor
+    )
+    val currentStrokeWidthState by rememberUpdatedState(
+        currentStrokeWidth
+    )
+    val currentEraserStrokeWidthState by rememberUpdatedState(
+        currentEraserStrokeWidth
+    )
+
+    @Suppress("ControlFlowWithEmptyBody") val onDrawPagination =
+        remember(pageIndex) {
+            { point: PdfPoint, isEraserOverride: Boolean ->
+                val effectiveTool = if (isEraserOverride) InkType.ERASER else currentSelectedTool
+                if (effectiveTool == InkType.TEXT) {
+                } else if (effectiveTool == InkType.ERASER) {
+                    val eraserStrokeWidth = resolveEraserStrokeWidth(
+                        isEraserOverride,
+                        currentStrokeWidthState,
+                        currentEraserStrokeWidthState
+                    )
+                    val aspectRatio = pageAspectRatios.getOrElse(pageIndex) { 1f }
+                    val existing = allAnnotations[pageIndex] ?: emptyList()
+                    val toRemove = existing.filter {
+                        isAnnotationHit(it, point, lastEraserPoint, aspectRatio, eraserStrokeWidth)
+                    }
+                    lastEraserPoint = point
+                    if (toRemove.isNotEmpty()) {
+                        val batch =
+                            erasedAnnotationsFromStroke.getOrPut(
+                                pageIndex
+                            ) {
+                                mutableListOf()
+                            }
+                        batch.addAll(toRemove)
+
+                        val newList =
+                            existing - toRemove.toSet()
+                        allAnnotations =
+                            allAnnotations + (pageIndex to newList)
+                    }
+                } else {
+                    if (currentIsHighlighter && currentSnapEnabled) {
+                        val startPoint = drawingState.currentAnnotation?.points?.firstOrNull()
+                        val effectivePoint = calculateSnappedPoint(pageIndex, point, startPoint)
+                        drawingState.updateDrag(effectivePoint.copy(timestamp = System.currentTimeMillis()))
+                    } else {
+                        drawingState.onDraw(point.copy(timestamp = System.currentTimeMillis()))
+                    }
+                }
+            }
+        }
+
+    @Suppress("ControlFlowWithEmptyBody") val onDrawStartPagination =
+        remember(pageIndex) {
+            { point: PdfPoint, isEraserOverride: Boolean ->
+                if (showToolSettings) {
+                    showToolSettings = false
+                } else {
+                    val effectiveTool = if (isEraserOverride) InkType.ERASER else currentSelectedTool
+                    if (effectiveTool == InkType.TEXT) {
+                    } else if (effectiveTool == InkType.ERASER) {
+                        lastEraserPoint = point
+                        erasedAnnotationsFromStroke.clear()
+                        val eraserStrokeWidth = resolveEraserStrokeWidth(
+                            isEraserOverride,
+                            currentStrokeWidthState,
+                            currentEraserStrokeWidthState
+                        )
+                        val aspectRatio = pageAspectRatios.getOrElse(pageIndex) { 1f }
+                        val existing = allAnnotations[pageIndex] ?: emptyList()
+                        val toRemove = existing.filter {
+                            isAnnotationHit(it, point, lastEraserPoint, aspectRatio, eraserStrokeWidth)
+                        }
+                        if (toRemove.isNotEmpty()) {
+                            val batch =
+                                erasedAnnotationsFromStroke.getOrPut(
+                                    pageIndex
+                                ) {
+                                    mutableListOf()
+                                }
+                            batch.addAll(toRemove)
+
+                            val newList =
+                                existing - toRemove.toSet()
+                            allAnnotations =
+                                allAnnotations + (pageIndex to newList)
+                        }
+                    } else {
+                        val pointWithTime = point.copy(
+                            timestamp = System.currentTimeMillis()
+                        )
+                        drawingState.onDrawStart(
+                            pageIndex,
+                            pointWithTime,
+                            effectiveTool,
+                            currentStrokeColorState,
+                            currentStrokeWidthState
+                        )
+                    }
+                }
+            }
+        }
+
+    val virtualPage =
+        if (virtualPages.isNotEmpty()) virtualPages.getOrNull(
+            pageIndex
+        )
+        else VirtualPage.PdfPage(pageIndex)
+
+    PdfPageComposable(
+        pdfDocument = stablePdfDocument,
+        documentKey = activeDocumentRenderKey,
+        pageIndex = pageIndex,
+        virtualPage = virtualPage,
+        totalPages = totalDisplayPages,
+        activeTheme = activeTheme,
+        activeTextureAlpha = 1f - globalTextureTransparency,
+        excludeImages = excludeImages,
+        reverseColorMode = reverseColorMode,
+        isScrollLocked = if (useSharedSpreadZoom) false else isScrollLocked,
+        customHighlightColors = customHighlightColors,
+        externalScale = if (useSharedSpreadZoom) currentActiveScale else 1f,
+        onPaletteClick = {
+            highlightColorPickerInitialSlot = PdfHighlightColor.YELLOW
+            showHighlightColorPicker = true
+        },
+        onScaleChanged = { newScale ->
+            if (isActivePagerPage && !useSharedSpreadZoom) {
+                if (abs(newScale - currentPageScale) > 0.01f) {
+                    pdfSplitZoomDiag(
+                        "pag.onScaleChanged $diagPaneContext page=$pageIndex " +
+                            "scale=${newScale.diagF()} previous=${currentPageScale.diagF()}"
+                    )
+                }
+                currentPageScale = newScale
+            }
+        },
+        ttsHighlightData = if (ttsDisplayPageIndex == pageIndex) ttsHighlightData else null,
+        searchQuery = searchState.searchQuery,
+        searchHighlightMode = searchHighlightMode,
+        searchResultToHighlight = if (isActivePagerPage) searchHighlightTarget else null,
+        ocrHoverHighlights = stableOcrRects,
+        modifier = turnSheetModifier.then(
+            when {
+                turnSheetSize != null -> Modifier.size(turnSheetSize)
+                spreadPageIndices.size > 1 -> Modifier.width(spreadPageWidth).fillMaxHeight()
+                else -> Modifier.fillMaxSize()
+            }
+        ),
+        showAllTextHighlights = showAllTextHighlights,
+        onHighlightLoading = { /* no-op for paginated mode */ },
+        onPreSingleTap = onPaginationPreSingleTap,
+        onSingleTap = { _ -> onSingleTapStable() },
+        isProUser = isProUser,
+        onShowDictionaryUpsellDialog = {
+            if (useOnlineDictionary) {
+                showDictionaryUpsellDialog = true
+            }
+        },
+        onWordSelectedForAiDefinition = onDictionaryLookupStable,
+        onTranslateText = onTranslateTextStable,
+        onSearchText = onSearchTextStable,
+        onOcrStateChange = onOcrStateChange,
+        onLinkClicked = { url -> clickedLinkUrl = url },
+        onInternalLinkClicked = onInternalLinkNav,
+        isBookmarked = isPageBookmarked,
+        onBookmarkClick = { onToggleBookmark(pageIndex) },
+        isZoomEnabled = !useSharedSpreadZoom,
+        showPageNumberOverlay = showPageNumberOverlay,
+        visualScaleProvider = if (useSharedSpreadZoom) {
+            { currentActiveScale }
+        } else {
+            { 1f }
+        },
+        clearSelectionTrigger = selectionClearTrigger,
+        resetZoomTrigger = if (useSharedSpreadZoom) 0L else resetZoomTrigger,
+        pageAnnotations = pageAnnotationsProvider,
+        drawingState = drawingState,
+        onDrawStart = onDrawStartPagination,
+        onDraw = onDrawPagination,
+        selectedTool = selectedTool,
+        onDrawEnd = {
+            val finalAnnotation = drawingState.onDrawEnd()
+            if (finalAnnotation != null) {
+                val pageIdx = finalAnnotation.pageIndex
+                val existing =
+                    allAnnotations[pageIdx] ?: emptyList()
+                val nextAnnotations =
+                    allAnnotations + (pageIdx to (existing + finalAnnotation))
+                allAnnotations = nextAnnotations
+                persistInkAnnotationsNow(
+                    nextAnnotations,
+                    emptyList(),
+                    "draw_end"
+                )
+                undoStack.add(
+                    HistoryAction.Add(
+                        pageIdx, finalAnnotation
+                    )
+                )
+                redoStack.clear()
+            }
+
+            if (selectedTool == InkType.ERASER && erasedAnnotationsFromStroke.isNotEmpty()) {
+                val removalMap =
+                    erasedAnnotationsFromStroke.mapValues {
+                        it.value.toList()
+                    }
+                persistInkAnnotationsNow(
+                    allAnnotations,
+                    removalMap.values.flatten(),
+                    "erase_end"
+                )
+                undoStack.add(
+                    HistoryAction.Remove(removalMap)
+                )
+                redoStack.clear()
+                erasedAnnotationsFromStroke.clear()
+            }
+        },
+        onOcrModelDownloading = {
+            isOcrModelDownloading = true
+        },
+        userHighlights = visibleUserHighlightsByPage[pageIndex].orEmpty(),
+        onHighlightAdd = onHighlightAdd,
+        onHighlightUpdate = onHighlightUpdate,
+        onHighlightDelete = onHighlightDelete,
+        onNoteRequested = onNoteRequested,
+        onTts = { pageIdx, charIdx -> startTtsWithPermissionCheck(pageIdx, charIdx) },
+        activeToolThickness = currentStrokeWidthState,
+        eraserToolThickness = currentEraserStrokeWidthState,
+        lockedState = if (useSharedSpreadZoom) null else lockedState,
+        onZoomAndPanChanged = { newScale, newOffset ->
+            if (isActivePagerPage && !useSharedSpreadZoom) {
+                if (abs(newScale - currentActiveScale) > 0.01f) {
+                    pdfSplitZoomDiag(
+                        "pag.onZoomAndPan $diagPaneContext page=$pageIndex " +
+                            "scale=${newScale.diagF()} previous=${currentActiveScale.diagF()} offset=$newOffset"
+                    )
+                }
+                currentActiveScale = newScale
+                currentActiveOffset = newOffset
+            }
+        },
+        onDetectBubbles = { sourcePageIndex, bitmap ->
+            detectSpeechBubblesForPage(sourcePageIndex, bitmap)
+        },
+        onShowPanelPopup = { bitmapWithRects ->
+            val safeBitmap = bitmapWithRects.scaledToCanvasLimit()
+            if (safeBitmap !== bitmapWithRects && !bitmapWithRects.isRecycled) {
+                bitmapWithRects.recycle()
+            }
+            poppedUpPanelBitmap?.takeUnless { it.isRecycled }?.recycle()
+            poppedUpPanelBitmap = safeBitmap
+        },
+        onTwoFingerSwipe = { direction ->
+            coroutineScope.launch {
+                val current = currentPaginationDisplayPage()
+                val targetPage = if (direction > 0) {
+                    PdfSpreadLayout.nextPageIndex(current, totalDisplayPages, pdfSpreadSettings)
+                } else {
+                    PdfSpreadLayout.previousPageIndex(current, totalDisplayPages, pdfSpreadSettings)
+                }
+                animatePaginationToDisplayPage(targetPage)
+            }
+        },
+        richTextController = richTextController,
+        isStylusOnlyMode = isStylusOnlyMode,
+        stylusButtonHovering = stylusButtonHovering,
+        isAutoScrollPlaying = isAutoScrollPlaying,
+        isHighlighterSnapEnabled = isHighlighterSnapEnabled,
+        isEditMode = isDrawingActive,
+        textBoxes = visibleTextBoxesByPage[pageIndex].orEmpty(),
+        selectedTextBoxId = selectedTextBoxId,
+        onTextBoxChange = { updatedBox ->
+            val idx = textBoxes.indexOfFirst { it.id == updatedBox.id }
+            val previousLength = textBoxes.getOrNull(idx)?.text?.length
+            Timber.tag(PDF_TEXT_BOX_INPUT_TRACE_TAG).d(
+                "event=viewer_value_change path=pagination id=${updatedBox.id} " +
+                    "page=${updatedBox.pageIndex} oldLength=${previousLength ?: -1} " +
+                    "newLength=${updatedBox.text.length} matched=${idx != -1} " +
+                    "selected=${updatedBox.id == selectedTextBoxId} textBoxEditMode=$isDrawingActive"
+            )
+            if (idx != -1) textBoxes[idx] = updatedBox
+        },
+        onTextBoxSelect = { id ->
+            Timber.tag(PDF_TEXT_BOX_INPUT_TRACE_TAG).d(
+                "event=viewer_select path=pagination id=$id " +
+                    "selectedBefore=${selectedTextBoxId ?: "none"} textBoxEditMode=$isDrawingActive"
+            )
+            selectedTextBoxId = id
+            richTextController?.clearSelection()
+        },
+        draggingBoxId = paginationDraggingBoxId,
+        onTextBoxDragStart = { box, _, _ ->
+            Timber.tag("PdfTextBoxDebug").d("Pagination onTextBoxDragStart [ID: ${box.id}] initialized")
+            val pageAspectRatio = displayPageRatios.getOrElse(pageIndex) { 1f }
+
+            val containerWidthPx = paginationPageState.boxMaxWidth
+            val containerHeightPx = paginationPageState.boxMaxHeight
+
+            var renderedWidthInt = containerWidthPx
+            var renderedHeightInt = (renderedWidthInt / pageAspectRatio).toInt()
+            if (renderedHeightInt > containerHeightPx) {
+                renderedHeightInt = containerHeightPx
+                renderedWidthInt = (renderedHeightInt * pageAspectRatio).toInt()
+            }
+
+            val renderedWidth = renderedWidthInt.toFloat()
+            val renderedHeight = renderedHeightInt.toFloat()
+
+            val offsetX = (containerWidthPx - renderedWidth) / 2f
+            val offsetY = (containerHeightPx - renderedHeight) / 2f
+
+            paginationDraggingBoxId = box.id
+            paginationOriginalRelSize = Size(box.relativeBounds.width, box.relativeBounds.height)
+
+            paginationDraggingSize = Size(
+                box.relativeBounds.width * renderedWidth,
+                box.relativeBounds.height * renderedHeight
+            )
+            paginationDragPageHeight = renderedHeight
+
+            val baseBoxLeft = offsetX + (box.relativeBounds.left * renderedWidth)
+            val baseBoxTop = offsetY + (box.relativeBounds.top * renderedHeight)
+            val centerX = containerWidthPx / 2f
+            val centerY = containerHeightPx / 2f
+            val screenX = (baseBoxLeft - centerX) * currentActiveScale + centerX + currentActiveOffset.x
+            val screenY = (baseBoxTop - centerY) * currentActiveScale + centerY + currentActiveOffset.y
+
+            paginationDraggingOffset = Offset(screenX, screenY)
+        },
+        onTextBoxDrag = { dragDelta ->
+            Timber.tag("PdfTextBoxDebug").v("Pagination onTextBoxDrag delta=$dragDelta | currentOffset=$paginationDraggingOffset")
+            paginationDraggingOffset += dragDelta
+
+            val edgeThreshold = 60f
+            val screenWidth = paginationPageState.boxMaxWidth.toFloat()
+
+            val isMovingLeft = dragDelta.x < 0
+            val isMovingRight = dragDelta.x > 0
+
+            if (paginationDraggingOffset.x < edgeThreshold && isMovingLeft) {
+                coroutineScope.launch {
+                    if (pagerState.currentPage > 0 && !pagerState.isScrollInProgress) {
+                        pagerState.animateScrollToPage(pagerState.currentPage - 1)
+                    }
+                }
+            } else if (paginationDraggingOffset.x + paginationDraggingSize.width > screenWidth - edgeThreshold && isMovingRight) {
+                coroutineScope.launch {
+                    if (pagerState.currentPage < pagerState.pageCount - 1 && !pagerState.isScrollInProgress) {
+                        pagerState.animateScrollToPage(pagerState.currentPage + 1)
+                    }
+                }
+            }
+        },
+        onTextBoxDragEnd = {
+            Timber.tag("PdfTextBoxDebug").d("Pagination onTextBoxDragEnd called [ID: $paginationDraggingBoxId] | EndOffset=$paginationDraggingOffset")
+            val boxId = paginationDraggingBoxId
+            if (boxId != null) {
+                coroutineScope.launch {
+                    val currentSpreadPageIndices = PdfSpreadLayout.visiblePageIndices(
+                        pageIndex = currentPaginationDisplayPage(),
+                        pageCount = totalDisplayPages,
+                        settings = pdfSpreadSettings
+                    )
+                    val targetPage = if (pageIndex in currentSpreadPageIndices) {
+                        pageIndex
+                    } else {
+                        currentSpreadPageIndices.firstOrNull() ?: currentPaginationDisplayPage()
+                    }
+                    val targetVirtualPage = virtualPages.getOrNull(targetPage)
+                    val pageAspectRatio = if (targetVirtualPage is VirtualPage.BlankPage) {
+                        if (targetVirtualPage.height > 0) targetVirtualPage.width.toFloat() / targetVirtualPage.height.toFloat() else 1f
+                    } else {
+                        displayPageRatios.getOrElse(targetPage) { 1f }
+                    }
+
+                    val containerWidthPx = paginationPageState.boxMaxWidth
+                    val containerHeightPx = paginationPageState.boxMaxHeight
+
+                    var renderedWidthInt = containerWidthPx
+                    var renderedHeightInt = (renderedWidthInt / pageAspectRatio).toInt()
+                    if (renderedHeightInt > containerHeightPx) {
+                        renderedHeightInt = containerHeightPx
+                        renderedWidthInt = (renderedHeightInt * pageAspectRatio).toInt()
+                    }
+
+                    val renderedWidth = renderedWidthInt.toFloat()
+                    val renderedHeight = renderedHeightInt.toFloat()
+                    val offsetX = (containerWidthPx - renderedWidth) / 2f
+                    val offsetY = (containerHeightPx - renderedHeight) / 2f
+
+                    val paddingPx = with(density) { 14.dp.toPx() }
+                    val padRelX = if (renderedWidth > 0) paddingPx / renderedWidth else 0f
+                    val padRelY = if (renderedHeight > 0) paddingPx / renderedHeight else 0f
+
+                    val relW = paginationOriginalRelSize.width
+                    val relH = paginationOriginalRelSize.height
+
+                    val centerX = containerWidthPx / 2f
+                    val centerY = containerHeightPx / 2f
+
+                    val unzoomedX = (paginationDraggingOffset.x - currentActiveOffset.x - centerX) / currentActiveScale + centerX
+                    val unzoomedY = (paginationDraggingOffset.y - currentActiveOffset.y - centerY) / currentActiveScale + centerY
+
+                    val rawRelX = (unzoomedX - offsetX) / renderedWidth
+                    val rawRelY = (unzoomedY - offsetY) / renderedHeight
+
+                    val maxRelX = (1f - relW - padRelX).coerceAtLeast(padRelX)
+                    val maxRelY = (1f - relH - padRelY).coerceAtLeast(padRelY)
+
+                    val finalRelX = rawRelX.coerceIn(padRelX, maxRelX)
+                    val finalRelY = rawRelY.coerceIn(padRelY, maxRelY)
+
+                    val targetOffsetUnzoomedX = offsetX + (finalRelX * renderedWidth)
+                    val targetOffsetUnzoomedY = offsetY + (finalRelY * renderedHeight)
+                    val targetOffset = Offset(
+                        (targetOffsetUnzoomedX - centerX) * currentActiveScale + centerX + currentActiveOffset.x,
+                        (targetOffsetUnzoomedY - centerY) * currentActiveScale + centerY + currentActiveOffset.y
+                    )
+
+                    val startOffset = paginationDraggingOffset
+                    Animatable(0f).animateTo(1f) {
+                        paginationDraggingOffset = lerp(startOffset, targetOffset, value)
+                    }
+
+                    val idx = textBoxes.indexOfFirst { it.id == boxId }
+                    if (idx != -1) {
+                        val oldBox = textBoxes[idx]
+                        val fontScale = if (paginationDragPageHeight > 0 && renderedHeight > 0)
+                            paginationDragPageHeight / renderedHeight else 1f
+
+                        textBoxes[idx] = oldBox.copy(
+                            pageIndex = targetPage,
+                            relativeBounds = Rect(finalRelX, finalRelY, finalRelX + relW, finalRelY + relH),
+                            fontSize = oldBox.fontSize * fontScale
+                        )
+                        selectedTextBoxId = boxId
+                    }
+                    paginationDraggingBoxId = null
+                }
+            } else {
+                paginationDraggingBoxId = null
+            }
+        },
+        onDragPageTurn = { direction ->
+            coroutineScope.launch {
+                val current = currentPaginationDisplayPage()
+                val targetPage = if (direction > 0) {
+                    PdfSpreadLayout.nextPageIndex(current, totalDisplayPages, pdfSpreadSettings)
+                } else {
+                    PdfSpreadLayout.previousPageIndex(current, totalDisplayPages, pdfSpreadSettings)
+                }
+                animatePaginationToDisplayPage(targetPage)
+            }
+        },
+        isBubbleZoomModeActive = isBubbleZoomModeActive,
+        isVisible = isVisiblePage,
+        isActivePage = isActivePagerPage,
+        isScrolling = pagerState.isScrollInProgress
+    )
+            }
+        }
+    }
+}
+
+@SuppressLint("UnusedMaterial3ScaffoldPaddingParameter")
+@Composable
+private fun PdfViewerReaderSurface(surfaceState: PdfViewerSurfaceState) {
+    SharedMobileReaderScaffold(
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
+    ) { _ ->
+            val stylusButtonHoveringState = remember { mutableStateOf(false) }
+            BoxWithConstraints(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .pointerInput(Unit) {
+                        awaitPointerEventScope {
+                            while (true) {
+                                val event = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
+                                event.changes.forEach { change ->
+                                    if (change.type == androidx.compose.ui.input.pointer.PointerType.Stylus ||
+                                        change.type == androidx.compose.ui.input.pointer.PointerType.Eraser) {
+                                        val buttons = event.buttons
+                                        Timber.tag("StylusDebug").d(
+                                            "GlobalPointer | type=${change.type}, pressed=${change.pressed}, " +
+                                                    "primary=${buttons.isPrimaryPressed}, secondary=${buttons.isSecondaryPressed}, " +
+                                                    "tertiary=${buttons.isTertiaryPressed}, back=${buttons.isBackPressed}, " +
+                                                    "forward=${buttons.isForwardPressed}"
+                                        )
+                                        if (!change.pressed) {
+                                            stylusButtonHoveringState.value = buttons.isPrimaryPressed || buttons.isSecondaryPressed
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    .onPreviewKeyEvent { keyEvent ->
+                        Timber.tag("StylusDebug").d("GlobalKey | key=${keyEvent.key}, type=${keyEvent.type}")
+                        false
+                    }
+            ) {
+                PdfViewerSurfaceContent(
+                    surfaceState = surfaceState,
+                    stylusButtonHovering = stylusButtonHoveringState.value,
+                )
+            }
     }
 }
 

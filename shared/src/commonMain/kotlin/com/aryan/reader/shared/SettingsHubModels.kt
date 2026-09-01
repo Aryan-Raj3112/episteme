@@ -571,7 +571,8 @@ data class SharedSettingsHubModel(
             SharedSettingsAction.SIGN_IN,
             SharedSettingsAction.SIGN_OUT,
             SharedSettingsAction.CLOUD_SYNC,
-            SharedSettingsAction.FOLDER_SYNC
+            SharedSettingsAction.FOLDER_SYNC,
+            SharedSettingsAction.DEVICE_MANAGEMENT
         )
     }
 
@@ -590,7 +591,6 @@ data class SharedSettingsHubModel(
             SharedSettingsAction.TEST_PANEL_DETECTION,
             SharedSettingsAction.TEST_SPEECH_BUBBLE_DETECTION,
             SharedSettingsAction.EXPORT_LOGS,
-            SharedSettingsAction.DEVICE_MANAGEMENT,
             SharedSettingsAction.HELP_FEEDBACK,
             SharedSettingsAction.SUPPORT,
             SharedSettingsAction.ABOUT
@@ -649,7 +649,12 @@ data class SharedSettingsHubInput(
     val accountAvailable: Boolean = true,
     val includeAccountAuthActions: Boolean = true,
     val syncAvailable: Boolean = true,
-    val cloudSyncEligible: Boolean = true,
+    /**
+     * Optional setup state supplied by platforms that can guide the user to
+     * the missing account or Drive authorization step. A null value keeps the
+     * legacy platform gate for hosts without that setup flow.
+     */
+    val cloudSyncSetupIntent: CloudSyncSetupIntent? = null,
     val folderSyncAvailable: Boolean = true,
     val aiSettingsAvailable: Boolean = true,
     val ttsSettingsAvailable: Boolean = true,
@@ -667,6 +672,8 @@ data class SharedSettingsHubInput(
     val includeReaderTabs: Boolean = true,
     val includeHideReaderAi: Boolean = true,
     val includeCloudLocalDataClear: Boolean = false,
+    /** Exposes the platform's safe, app-owned recent-log export. */
+    val includeDiagnosticLogExport: Boolean = false,
     val supportProjectAvailable: Boolean = true,
     val languageTitle: String = "Language",
     val languageSummary: String = "Choose the app language",
@@ -776,15 +783,29 @@ fun sharedSettingsHubModel(input: SharedSettingsHubInput): SharedSettingsHubMode
                     }
                 }
                 if (input.syncAvailable && input.featurePolicy.aiAndCloud) {
-                    val syncEnabled = input.isProUser && input.cloudSyncEligible
+                    val setupIntent = input.cloudSyncSetupIntent
+                    val syncEnabled = when (setupIntent) {
+                        null -> input.isProUser
+                        CloudSyncSetupIntent.READY -> input.isProUser
+                        else -> true
+                    }
                     add(
                         SharedSettingsItemModel(
                             action = SharedSettingsAction.CLOUD_SYNC,
                             title = "Cloud library sync",
-                            summary = when {
-                                !input.isProUser -> "A Pro account is required for cloud sync."
-                                !input.cloudSyncEligible -> "Link Google and authorize Google Drive to enable sync."
-                                else -> "Sync library metadata across signed-in devices."
+                            summary = when (setupIntent) {
+                                CloudSyncSetupIntent.NEEDS_PRO,
+                                null -> if (!input.isProUser) {
+                                    "A Pro account is required for cloud sync."
+                                } else {
+                                    "Sync library metadata across signed-in devices."
+                                }
+                                CloudSyncSetupIntent.NEEDS_GOOGLE_LINK ->
+                                    "Link Google to enable cloud sync."
+                                CloudSyncSetupIntent.NEEDS_DRIVE_AUTH ->
+                                    "Authorize Google Drive to enable sync."
+                                CloudSyncSetupIntent.READY ->
+                                    "Sync library metadata across signed-in devices."
                             },
                             kind = SharedSettingsItemKind.TOGGLE,
                             enabled = syncEnabled,
@@ -797,9 +818,12 @@ fun sharedSettingsHubModel(input: SharedSettingsHubInput): SharedSettingsHubMode
                         SharedSettingsItemModel(
                             action = SharedSettingsAction.FOLDER_SYNC,
                             title = "Folder backup and sync",
-                            summary = "Keep selected local folders represented in the library",
-                            kind = SharedSettingsItemKind.TOGGLE,
-                            checked = input.isFolderSyncEnabled
+                            summary = "Choose which local folders to back up to Drive",
+                            // Folder sync is an explicit folder selection
+                            // surface, so it opens a secondary screen rather
+                            // than behaving like the single cloud-library
+                            // switch.
+                            kind = SharedSettingsItemKind.CONTROL,
                         )
                     )
                 }
@@ -872,7 +896,7 @@ fun sharedSettingsHubModel(input: SharedSettingsHubInput): SharedSettingsHubMode
                         )
                     )
                 }
-                if (input.isDebugBuild) {
+                if (input.isDebugBuild && input.platform == SharedSettingsPlatform.ANDROID) {
                     add(
                         SharedSettingsItemModel(
                             action = SharedSettingsAction.TEST_PANEL_DETECTION,
@@ -887,6 +911,8 @@ fun sharedSettingsHubModel(input: SharedSettingsHubInput): SharedSettingsHubMode
                             summary = "Run the local speech-bubble detection diagnostic"
                         )
                     )
+                }
+                if (input.isDebugBuild) {
                     add(
                         SharedSettingsItemModel(
                             action = SharedSettingsAction.EXPORT_LOGS,
@@ -905,6 +931,16 @@ fun sharedSettingsHubModel(input: SharedSettingsHubInput): SharedSettingsHubMode
                             )
                         )
                     }
+                }
+                if (input.includeDiagnosticLogExport && !input.isDebugBuild) {
+                    add(
+                        SharedSettingsItemModel(
+                            action = SharedSettingsAction.EXPORT_LOGS,
+                            title = "Export logs",
+                            summary = "Share recent diagnostic logs collected by the app",
+                            kind = SharedSettingsItemKind.NAVIGATION
+                        )
+                    )
                 }
             }
         ),

@@ -14,6 +14,7 @@ import androidx.core.content.edit
 import com.aryan.reader.epubreader.PREF_CUSTOM_THEMES
 import com.aryan.reader.epubreader.PREF_READER_THEME
 import com.aryan.reader.shared.ReaderTextureFilePrefix
+import com.aryan.reader.shared.pdf.PdfReverseColorMode
 import org.json.JSONArray
 import org.json.JSONObject
 import timber.log.Timber
@@ -55,6 +56,7 @@ fun getImportedTextures(context: Context): List<String> {
 }
 
 const val PREF_EXCLUDE_IMAGES = "exclude_images"
+const val PREF_PDF_REVERSE_COLOR_MODE = "pdf_reverse_color_mode"
 
 fun saveExcludeImages(context: Context, excludeImages: Boolean) {
     val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
@@ -64,6 +66,16 @@ fun saveExcludeImages(context: Context, excludeImages: Boolean) {
 fun loadExcludeImages(context: Context): Boolean {
     val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
     return prefs.getBoolean(PREF_EXCLUDE_IMAGES, false)
+}
+
+fun savePdfReverseColorMode(context: Context, mode: PdfReverseColorMode) {
+    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+    prefs.edit { putString(PREF_PDF_REVERSE_COLOR_MODE, mode.id) }
+}
+
+fun loadPdfReverseColorMode(context: Context): PdfReverseColorMode {
+    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+    return PdfReverseColorMode.fromId(prefs.getString(PREF_PDF_REVERSE_COLOR_MODE, null))
 }
 
 fun saveCustomThemes(context: Context, themes: List<ReaderTheme>) {

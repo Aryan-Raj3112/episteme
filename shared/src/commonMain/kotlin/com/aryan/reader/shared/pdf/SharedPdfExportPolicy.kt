@@ -22,8 +22,6 @@ fun sharedPdfExportMode(state: SharedPdfReaderState): SharedPdfExportMode {
 
 fun sharedPdfExportMode(snapshot: SharedPdfExportSnapshot): SharedPdfExportMode {
     val state = snapshot.state
-    if (state.blankPageInsertions.isNotEmpty()) return SharedPdfExportMode.UNSUPPORTED_VIRTUAL_PAGES
-
     val richDocument = SharedPdfRichTextSerializer.decode(state.richTextDocumentJson)
     val hasRichText = richDocument.text.any { !it.isWhitespace() }
     val hasRenderableRichText = snapshot.richTextPageLayouts.any { it.visibleText.any { char -> !char.isWhitespace() } }
@@ -34,6 +32,7 @@ fun sharedPdfExportMode(snapshot: SharedPdfExportSnapshot): SharedPdfExportMode 
     if (hasMalformedText) return SharedPdfExportMode.UNSUPPORTED_TEXT_CONTENT
 
     return if (
+        state.blankPageInsertions.isNotEmpty() ||
         SharedPdfAnnotationExportMapper.build(state.annotations).hasPdfAnnotations ||
         textAnnotations.any { it.text.isNotBlank() } || hasRenderableRichText
     ) {

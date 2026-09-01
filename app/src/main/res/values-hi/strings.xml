@@ -341,6 +341,7 @@
     <string name="banner_clearing_cloud_local_data">सारा क्लाउड और स्थानीय डेटा साफ हो रहा है…</string>
     <string name="banner_cloud_local_data_cleared">सारा क्लाउड और स्थानीय डेटा सफलतापूर्वक साफ हुआ।</string>
     <string name="error_clear_all_data">त्रुटि: सारा डेटा साफ करने में विफल।</string>
+    <string name="error_cloud_delete_pending">क्लाउड तक नहीं पहुँच सके। आपका डिलीट अगली बार ऑनलाइन होने पर अपने आप पूरा हो जाएगा।</string>
     <string name="banner_local_data_cleared">सारा स्थानीय डेटा साफ हुआ।</string>
     <string name="error_sign_in_failed">साइन इन विफल। कृपया फिर कोशिश करें।</string>
     <string name="error_no_google_account">Google खाता नहीं मिला। नई इंस्टॉल पर ऐसा हो सकता है, कृपया थोड़ी देर बाद फिर कोशिश करें।</string>

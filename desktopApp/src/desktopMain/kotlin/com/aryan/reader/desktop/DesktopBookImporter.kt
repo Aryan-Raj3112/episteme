@@ -21,6 +21,30 @@ internal class DesktopBookImporter(
         return File(booksDirectory, fileName)
     }
 
+    /**
+     * Deletes an app-managed imported book file. Storage is content-addressed
+     * and may be shared between library entries, so the file is removed only
+     * when it lives inside the managed books directory and no other entry
+     * still references it. User-owned paths (folder-sync sources etc.) are
+     * never touched.
+     */
+    fun deleteImportedBookFileIfUnreferenced(
+        path: String?,
+        otherReferencingPaths: Collection<String>
+    ): Boolean {
+        val file = path?.let(::File)?.takeIf { it.isFile } ?: return false
+        val managedDirectory = runCatching { booksDirectory.canonicalFile }.getOrNull() ?: return false
+        val canonical = runCatching { file.canonicalFile }.getOrNull() ?: return false
+        if (canonical.parentFile != managedDirectory) return false
+        val stillReferenced = otherReferencingPaths.any { candidate ->
+            if (candidate == path) return@any true
+            val candidateFile = candidate?.let(::File) ?: return@any false
+            runCatching { candidateFile.canonicalFile == canonical }.getOrDefault(false)
+        }
+        if (stillReferenced) return false
+        return file.delete()
+    }
+
     fun prepareImports(files: List<ImportedBookFile>): DesktopPreparedImport {
         val preparedFiles = mutableListOf<ImportedBookFile>()
         var failedCount = 0

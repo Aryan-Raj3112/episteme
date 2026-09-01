@@ -56,14 +56,15 @@ kotlin {
 
 android {
     namespace = "com.aryan.reader"
-    compileSdk = 36
+    compileSdk = 37
+    compileSdkMinor = 0
 
     defaultConfig {
         applicationId = "com.aryan.reader"
         minSdk = 26
         targetSdk = 36
-        versionCode = 58
-        versionName = "1.0.53"
+        versionCode = 59
+        versionName = "1.0.54"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         externalNativeBuild {
@@ -247,7 +248,7 @@ dependencies {
     androidTestImplementation("androidx.test:rules:1.7.0")
     androidTestImplementation("androidx.test.espresso:espresso-web:3.7.0")
     androidTestImplementation("com.google.truth:truth:1.4.2")
-    androidTestImplementation("androidx.navigation:navigation-testing:2.9.6")
+    androidTestImplementation("androidx.navigation:navigation-testing:2.10.0")
     androidTestImplementation("io.mockk:mockk-android:1.13.11") {
         exclude(group = "org.junit.jupiter")
     }
@@ -263,7 +264,7 @@ dependencies {
     implementation("androidx.appcompat:appcompat:1.7.1")
 
     //noinspection GradleDependency (Updating these might cause the custom toolbox in pagination to break)
-    implementation("androidx.navigation:navigation-compose:2.9.6")
+    implementation("androidx.navigation:navigation-compose:2.10.0")
     //noinspection GradleDependency
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.2")
     //noinspection GradleDependency
@@ -321,6 +322,7 @@ dependencies {
     implementation("androidx.core:core-splashscreen:1.2.0")
 
     testImplementation("junit:junit:4.13.2")
+    testImplementation("com.google.truth:truth:1.4.2")
     testImplementation("io.mockk:mockk-android:1.14.9")
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation("org.json:json:20251224")

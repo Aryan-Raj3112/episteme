@@ -27,6 +27,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
@@ -52,6 +54,7 @@ fun SharedAndroidUnifiedTopBar(
     modifier: Modifier = Modifier,
 ) {
     val focusManager = LocalFocusManager.current
+    val focusRequester = remember { FocusRequester() }
     var searchFocused by remember { mutableStateOf(false) }
     Surface(shadowElevation = 1.dp, modifier = modifier.fillMaxWidth()) {
         Row(
@@ -68,6 +71,7 @@ fun SharedAndroidUnifiedTopBar(
                     value = searchQuery,
                     onValueChange = onSearchQueryChange,
                     modifier = Modifier.weight(1f).padding(horizontal = 4.dp)
+                        .focusRequester(focusRequester)
                         .onFocusChanged { searchFocused = it.isFocused }
                         .testTag("UnifiedLibrarySearch"),
                     shape = CircleShape,

@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
@@ -78,11 +79,13 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextDecoration
@@ -360,10 +363,18 @@ fun SharedPdfInteractionDock(
                 SharedPdfInteractionDivider()
 
                 if (onToggleStylusOnlyMode != null) {
+                    val stylusOnlyLabel = readerString("pdf_stylus_only_mode", "Stylus-only mode")
+                    val stylusOnlyState = readerString(
+                        if (isStylusOnlyMode) "common_enabled" else "common_disabled",
+                        if (isStylusOnlyMode) "On" else "Off"
+                    )
                     ReaderTooltipIconButton(
-                        tooltip = readerString("pdf_stylus_only_mode", "Stylus-only mode"),
+                        tooltip = stylusOnlyLabel,
                         onClick = { onToggleStylusOnlyMode() },
-                        modifier = Modifier.size(36.dp)
+                        // Keep the compact 36dp visual while preserving the
+                        // platform-recommended minimum target for Pencil and
+                        // VoiceOver users.
+                        modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp)
                     ) {
                         Box(
                             modifier = Modifier
@@ -371,7 +382,12 @@ fun SharedPdfInteractionDock(
                                 .clip(CircleShape)
                                 .background(
                                     if (isStylusOnlyMode) Color.White.copy(alpha = 0.15f) else Color.Transparent
-                                ),
+                                )
+                                .semantics {
+                                    contentDescription = stylusOnlyLabel
+                                    stateDescription = stylusOnlyState
+                                    selected = isStylusOnlyMode
+                                },
                             contentAlignment = Alignment.Center
                         ) {
                             SharedPdfAndroidPathIcon(
@@ -1481,6 +1497,7 @@ fun SharedPdfTextBoxEditorOverlay(
     canvasSize: IntSize,
     onTextChange: (String) -> Unit,
     onBoundsChange: (PdfPageBounds) -> Unit,
+    customFontFamilies: Map<String, FontFamily> = emptyMap(),
     onGlobalDragStart: (() -> Unit)? = null,
     onGlobalDrag: ((Offset) -> Unit)? = null,
     onGlobalDragEnd: (() -> Unit)? = null,
@@ -1546,7 +1563,8 @@ fun SharedPdfTextBoxEditorOverlay(
                 lineHeight = with(density) { (fontSizePx * 1.25f).toSp() },
                 fontWeight = if (style.isBold) FontWeight.Bold else FontWeight.Normal,
                 fontStyle = if (style.isItalic) FontStyle.Italic else FontStyle.Normal,
-                fontFamily = sharedPdfFontFamily(style.fontName ?: style.fontPath),
+                fontFamily = sharedPdfFontFamily(style.fontPath, customFontFamilies)
+                    ?: sharedPdfFontFamily(style.fontName, customFontFamilies),
                 textDecoration = style.textDecoration
             ),
             cursorBrush = SolidColor(textColor),

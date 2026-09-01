@@ -218,7 +218,7 @@ class PdfZoomLockStateTest {
         val spreadSettings = ReaderSettings(pageSpreadMode = ReaderPageSpreadMode.TWO_PAGE)
 
         assertEquals(
-            "5 / 5",
+            "5/5",
             pdfPageRangeText(
                 pageIndex = 99,
                 pageCount = 5,
@@ -227,7 +227,7 @@ class PdfZoomLockStateTest {
             )
         )
         assertEquals(
-            "Page 5 of 5",
+            "5/5",
             pdfPageRangeLabel(
                 pageIndex = 99,
                 pageCount = 5,
@@ -236,7 +236,7 @@ class PdfZoomLockStateTest {
             )
         )
         assertEquals(
-            "3-4 / 10",
+            "3-4/10",
             pdfPageRangeText(
                 pageIndex = 2,
                 pageCount = 10,
@@ -245,7 +245,7 @@ class PdfZoomLockStateTest {
             )
         )
         assertEquals(
-            "Pages 3-4 of 10",
+            "3-4/10",
             pdfPageRangeLabel(
                 pageIndex = 2,
                 pageCount = 10,

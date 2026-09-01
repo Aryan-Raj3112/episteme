@@ -22,6 +22,7 @@ import com.aryan.reader.shared.ReaderTtsChunk
 import com.aryan.reader.shared.ReaderTtsProgress
 import com.aryan.reader.shared.ReaderExternalLookupAction
 import com.aryan.reader.shared.ReaderExternalLookupService
+import com.aryan.reader.shared.normalizeReaderHref
 import com.aryan.reader.shared.LocalTtsInterruptionAction
 import com.aryan.reader.shared.LocalTtsInterruptionEvent
 import com.aryan.reader.shared.LocalTtsInterruptionState
@@ -29,20 +30,36 @@ import com.aryan.reader.shared.externalLookupUrl
 import com.aryan.reader.shared.ios.loadIosEpubBook
 import com.aryan.reader.shared.ios.IosTtsAudioInterruption
 import com.aryan.reader.shared.ios.IosTtsAudioInterruptionMonitor
+import com.aryan.reader.shared.opds.SharedOpdsStreamRequest
 import com.aryan.reader.shared.reduce
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.cinterop.ObjCSignatureOverride
 import kotlinx.cinterop.CValue
 import kotlinx.cinterop.addressOf
+import kotlinx.cinterop.pin
 import kotlinx.cinterop.usePinned
 import kotlinx.cinterop.useContents
 import platform.CoreGraphics.CGRectMake
+import platform.Foundation.NSData
+import platform.Foundation.NSMutableData
 import platform.Foundation.NSURL
+import platform.Foundation.NSURLResponse
 import platform.Foundation.NSTemporaryDirectory
 import platform.Foundation.NSRange
 import platform.Foundation.NSUserDefaults
+import platform.Foundation.dataWithLength
 import platform.UIKit.UIApplication
 import platform.UIKit.UIColor
 import platform.UIKit.UIActivityViewController
@@ -57,6 +74,8 @@ import platform.WebKit.WKUserScript
 import platform.WebKit.WKUserScriptInjectionTime
 import platform.WebKit.WKWebView
 import platform.WebKit.WKWebViewConfiguration
+import platform.WebKit.WKURLSchemeHandlerProtocol
+import platform.WebKit.WKURLSchemeTaskProtocol
 import platform.AVFAudio.AVSpeechBoundary
 import platform.AVFAudio.AVSpeechSynthesizer
 import platform.AVFAudio.AVSpeechSynthesizerDelegateProtocol
@@ -78,6 +97,7 @@ import platform.darwin.NSObject
 import platform.posix.fclose
 import platform.posix.fopen
 import platform.posix.fwrite
+import platform.posix.memcpy
 
 @Composable
 internal actual fun rememberSharedMobileEpubLoadState(book: BookItem): SharedMobileEpubLoadState {
@@ -107,13 +127,26 @@ internal actual fun SharedMobileEpubWebView(
     navigationScript: String?,
     navigationRequestId: Long,
     onBridgeMessage: (method: String, payload: String) -> Unit,
+    positionController: SharedMobileEpubWebViewController?,
+    streamPageLoader: SharedMobileEpubStreamPageLoader?,
+    streamPageUnavailableLabel: String,
     modifier: Modifier
 ) {
     val latestBridgeMessage by rememberUpdatedState(onBridgeMessage)
-    val coordinator = remember {
-        IosEpubWebViewCoordinator { method, payload -> latestBridgeMessage(method, payload) }
+    val coordinator = remember(streamPageLoader) {
+        IosEpubWebViewCoordinator(
+            streamPageLoader = streamPageLoader,
+            streamPageUnavailableLabel = streamPageUnavailableLabel,
+            onBridgeMessage = { method, payload -> latestBridgeMessage(method, payload) },
+        )
     }
     coordinator.onBridgeMessage = { method, payload -> latestBridgeMessage(method, payload) }
+    coordinator.streamPageLoader = streamPageLoader
+    coordinator.streamPageUnavailableLabel = streamPageUnavailableLabel
+    DisposableEffect(positionController, coordinator) {
+        positionController?.attach { callback -> coordinator.captureCurrentLocator(callback) }
+        onDispose { positionController?.detach() }
+    }
     UIKitView(
         factory = coordinator::createWebView,
         modifier = modifier,
@@ -136,7 +169,7 @@ internal actual fun SharedMobileEpubWebView(
 }
 
 internal actual fun openSharedMobileEpubExternalLink(url: String): Boolean {
-    val normalized = if (url.trim().startsWith("//")) "https:${url.trim()}" else url.trim()
+    val normalized = normalizeReaderHref(url)
     val target = NSURL.URLWithString(normalized) ?: return false
     return UIApplication.sharedApplication.openURL(target)
 }
@@ -645,10 +678,16 @@ private class IosSharedMobileEpubSpeechDelegate(
 }
 
 private class IosEpubWebViewCoordinator(
+    var streamPageLoader: SharedMobileEpubStreamPageLoader?,
+    var streamPageUnavailableLabel: String,
     var onBridgeMessage: (String, String) -> Unit
 ) {
     private val messageHandler = IosEpubScriptMessageHandler(::handleBridgeMessage)
     private val navigationDelegate = IosEpubNavigationDelegate(::documentDidFinishLoading)
+    private val streamPageSchemeHandler = IosOpdsStreamPageSchemeHandler(
+        loader = { streamPageLoader },
+        unavailablePageLabel = { streamPageUnavailableLabel },
+    )
     private var activeWebView: WKWebView? = null
     private var contentChunks: List<String> = emptyList()
     private var loadedHtmlHash: Int? = null
@@ -672,6 +711,10 @@ private class IosEpubWebViewCoordinator(
         val configuration = WKWebViewConfiguration().apply {
             userContentController = contentController
             defaultWebpagePreferences.allowsContentJavaScript = true
+            setURLSchemeHandler(
+                streamPageSchemeHandler,
+                forURLScheme = SharedOpdsStreamRequest.ResourceScheme,
+            )
         }
         return WKWebView(frame = CGRectMake(0.0, 0.0, 0.0, 0.0), configuration = configuration).apply {
             activeWebView = this
@@ -735,6 +778,15 @@ private class IosEpubWebViewCoordinator(
     }
 
     private fun handleBridgeMessage(method: String, payload: String) {
+        if (method == "readerCopyText") {
+            val text = runCatching {
+                Json.parseToJsonElement(payload).jsonObject["text"]?.jsonPrimitive?.contentOrNull
+            }.getOrNull()?.takeIf { it.isNotEmpty() }
+            if (text != null) {
+                writeSharedClipboard(label = "Copied Text", text = text)
+            }
+            return
+        }
         if (method == "readerChunkRequested") {
             val index = IosEpubChunkIndexRegex.find(payload)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: return
             val chunk = contentChunks.getOrNull(index) ?: return
@@ -747,7 +799,22 @@ private class IosEpubWebViewCoordinator(
         onBridgeMessage(method, payload)
     }
 
+    fun captureCurrentLocator(callback: (String?) -> Unit) {
+        val webView = activeWebView
+        if (webView == null) {
+            callback(null)
+            return
+        }
+        webView.evaluateJavaScript(
+            SharedMobileEpubCaptureCurrentPositionScript,
+            completionHandler = { result, _ ->
+                callback(decodeSharedMobileJavascriptResult(result?.toString()))
+            }
+        )
+    }
+
     fun release(webView: WKWebView) {
+        streamPageSchemeHandler.release()
         webView.stopLoading()
         webView.navigationDelegate = null
         webView.configuration.userContentController.removeScriptMessageHandlerForName(IosEpubBridgeName)
@@ -756,6 +823,86 @@ private class IosEpubWebViewCoordinator(
         loadedHtmlHash = null
         loadedHtmlLength = -1
     }
+}
+
+private class IosOpdsStreamPageSchemeHandler(
+    private val loader: () -> SharedMobileEpubStreamPageLoader?,
+    private val unavailablePageLabel: () -> String,
+) : NSObject(), WKURLSchemeHandlerProtocol {
+    // WKURLSchemeHandler callbacks are delivered on the main run loop. Keeping
+    // task bookkeeping and WebKit response callbacks on Main avoids racing the
+    // mutable task map while the authenticated loader suspends for I/O.
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private val taskJobs = mutableMapOf<WKURLSchemeTaskProtocol, Job>()
+
+    @ObjCSignatureOverride
+    override fun webView(webView: WKWebView, startURLSchemeTask: WKURLSchemeTaskProtocol) {
+        val task = startURLSchemeTask
+        val resourceUrl = task.request.URL?.absoluteString.orEmpty()
+        val job = scope.launch {
+            val currentLoader = loader()
+            val response = runCatching {
+                currentLoader?.loadPage(resourceUrl)
+            }.getOrNull() ?: unavailablePageResponse(unavailablePageLabel())
+            ensureActive()
+            val url = task.request.URL ?: return@launch
+            task.didReceiveResponse(
+                NSURLResponse(
+                    uRL = url,
+                    MIMEType = response.mimeType,
+                    expectedContentLength = response.bytes.size.toLong(),
+                    textEncodingName = null,
+                )
+            )
+            task.didReceiveData(response.bytes.toNSData())
+            task.didFinish()
+        }
+        taskJobs[task] = job
+        job.invokeOnCompletion { taskJobs.remove(task) }
+    }
+
+    @ObjCSignatureOverride
+    override fun webView(webView: WKWebView, stopURLSchemeTask: WKURLSchemeTaskProtocol) {
+        taskJobs.remove(stopURLSchemeTask)?.cancel()
+    }
+
+    fun release() {
+        taskJobs.values.toList().forEach(Job::cancel)
+        taskJobs.clear()
+        scope.cancel()
+    }
+
+    private fun unavailablePageResponse(label: String): SharedMobileEpubStreamPageResponse {
+        val safeLabel = label
+            .ifBlank { "\u2026" }
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+        return SharedMobileEpubStreamPageResponse(
+            bytes = IosOpdsUnavailablePageSvg.replace("%LABEL%", safeLabel).encodeToByteArray(),
+            mimeType = "image/svg+xml",
+        )
+    }
+}
+
+private const val IosOpdsUnavailablePageSvg = """
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="1200" viewBox="0 0 800 1200">
+  <rect width="800" height="1200" fill="#424242"/>
+  <text x="400" y="600" fill="#ffffff" font-family="sans-serif" font-size="40" text-anchor="middle">%LABEL%</text>
+</svg>
+"""
+
+private fun ByteArray.toNSData(): NSData {
+    val data = NSMutableData.dataWithLength(size.toULong()) ?: NSMutableData()
+    if (isNotEmpty()) {
+        val pinned = pin()
+        try {
+            memcpy(data.mutableBytes, pinned.addressOf(0), size.toULong())
+        } finally {
+            pinned.unpin()
+        }
+    }
+    return data
 }
 
 private class IosEpubNavigationDelegate(
@@ -788,10 +935,13 @@ private val IosEpubBridgeBootstrapScript = """
       function post(method, payload) {
         try {
           window.webkit.messageHandlers.$IosEpubBridgeName.postMessage(String(method || '') + '\n' + String(payload || '{}'));
-        } catch (_) {}
+          return true;
+        } catch (_) {
+          return false;
+        }
       }
       window.kmpJsBridge = {
-        callNative: function (method, payload) { post(method, payload); }
+        callNative: function (method, payload) { return post(method, payload); }
       };
       window.readerDisableLinkFallback = true;
       if (!window.readerIosPointerBridgeInstalled) {

@@ -68,10 +68,143 @@ class PdfVerticalReaderPolicyTest {
     }
 
     @Test
+    fun `viewport resize centers under zoomed width and clamps preserved pan`() {
+        // Split divider drag shrinks the pane: a pan from the wider viewport
+        // must land inside the new bounds or the next pinch jumps to the edge.
+        assertEquals(
+            -400f,
+            preservedPdfVerticalPanXAfterViewportResize(
+                panX = -900f,
+                zoom = 2f,
+                viewportWidth = 400f,
+            ),
+        )
+        // Narrower-than-viewport content stays centered.
+        assertEquals(
+            100f,
+            preservedPdfVerticalPanXAfterViewportResize(
+                panX = 0f,
+                zoom = 0.5f,
+                viewportWidth = 400f,
+            ),
+        )
+        // Valid pans from a same-width viewport are untouched.
+        assertEquals(
+            -160f,
+            preservedPdfVerticalPanXAfterViewportResize(
+                panX = -160f,
+                zoom = 2f,
+                viewportWidth = 400f,
+            ),
+        )
+        // Degenerate inputs fall back to a safe centered camera.
+        assertEquals(
+            0f,
+            preservedPdfVerticalPanXAfterViewportResize(panX = -50f, zoom = 0f, viewportWidth = 400f),
+        )
+        assertEquals(
+            0f,
+            preservedPdfVerticalPanXAfterViewportResize(panX = -50f, zoom = 2f, viewportWidth = 0f),
+        )
+    }
+
+    @Test
     fun `geometry refinement only resets zoom close to landscape fit scale`() {
         assertTrue(isPdfVerticalZoomNearFit(currentZoom = 0.54f, fitZoom = 0.5f))
         assertFalse(isPdfVerticalZoomNearFit(currentZoom = 0.88f, fitZoom = 0.5f))
         assertFalse(isPdfVerticalZoomNearFit(currentZoom = 1.1f, fitZoom = 0.5f))
+    }
+
+    @Test
+    fun `first real layout always refits the placeholder camera`() {
+        assertTrue(
+            pdfVerticalResizeShouldRefit(
+                currentZoom = 1f,
+                fitZoom = 0.654f,
+                isFirstRealLayout = true,
+            )
+        )
+        assertTrue(
+            pdfVerticalResizeShouldRefit(
+                currentZoom = 2f,
+                fitZoom = 1f,
+                isFirstRealLayout = true,
+            )
+        )
+    }
+
+    @Test
+    fun `fit zoom fills viewport width for standard portrait pages`() {
+        assertEquals(
+            1f,
+            pdfVerticalFitZoomScale(
+                pageAspectRatios = listOf(0.7077f),
+                viewportWidthPx = 1080f,
+                viewportHeightPx = 2340f,
+            )
+        )
+    }
+
+    @Test
+    fun `fit zoom shrinks so a single page fits inside short split panes`() {
+        assertEquals(
+            0.654f,
+            pdfVerticalFitZoomScale(
+                pageAspectRatios = listOf(0.7077f),
+                viewportWidthPx = 1080f,
+                viewportHeightPx = 1031f,
+            ),
+            absoluteTolerance = 0.001f
+        )
+        assertEquals(
+            0.7798f,
+            pdfVerticalFitZoomScale(
+                pageAspectRatios = listOf(0.7077f),
+                viewportWidthPx = 1080f,
+                viewportHeightPx = 1222f,
+            ),
+            absoluteTolerance = 0.001f
+        )
+    }
+
+    @Test
+    fun `fit zoom never exceeds width fill and handles degenerate input`() {
+        assertEquals(
+            1f,
+            pdfVerticalFitZoomScale(
+                pageAspectRatios = listOf(2f),
+                viewportWidthPx = 1080f,
+                viewportHeightPx = 2340f,
+            )
+        )
+        assertEquals(1f, pdfVerticalFitZoomScale(emptyList(), 1080f, 2340f))
+        assertEquals(1f, pdfVerticalFitZoomScale(listOf(0.7f), 0f, 2340f))
+        assertEquals(1f, pdfVerticalFitZoomScale(listOf(0.7f), 1080f, 0f))
+    }
+
+    @Test
+    fun `later refinements preserve user zoom unless near fit`() {
+        assertFalse(
+            pdfVerticalResizeShouldRefit(
+                currentZoom = 1f,
+                fitZoom = 0.654f,
+                isFirstRealLayout = false,
+            )
+        )
+        assertTrue(
+            pdfVerticalResizeShouldRefit(
+                currentZoom = 0.68f,
+                fitZoom = 0.654f,
+                isFirstRealLayout = false,
+            )
+        )
+        assertTrue(
+            pdfVerticalResizeShouldRefit(
+                currentZoom = 1f,
+                fitZoom = 1f,
+                isFirstRealLayout = false,
+            )
+        )
     }
 
     @Test

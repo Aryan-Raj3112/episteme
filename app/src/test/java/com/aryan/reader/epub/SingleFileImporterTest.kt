@@ -306,6 +306,85 @@ class SingleFileImporterTest {
         assertTrue(html.contains("&lt;tag&gt;"))
     }
 
+    @Test
+    fun `large plain text import splits into bounded chapter files without full-file buffering`() = runTest {
+        val importer = SingleFileImporter(contextWithCache(temp.newFolder("txt-large-cache")))
+
+        val line = "Paragraph line long enough to fill the chapter target buffer quickly, with a marker."
+        val text = buildString {
+            repeat(3_000) { index ->
+                append(line).append(" #").append(index)
+                append("\n\n")
+            }
+        }
+
+        val book = importer.importSingleFile(
+            inputStream = ByteArrayInputStream(text.toByteArray()),
+            type = FileType.TXT,
+            originalBookNameHint = "Large.txt",
+            bookId = "large-txt-book"
+        )
+
+        assertTrue(book.chapters.size > 1)
+        book.chapters.forEach { chapter ->
+            val file = File(book.extractionBasePath, chapter.htmlFilePath)
+            assertTrue(file.isFile)
+            assertTrue(file.length() > 0)
+        }
+        val first = File(book.extractionBasePath, book.chapters.first().htmlFilePath).readText()
+        assertTrue(first.contains("${line} #0"))
+        val last = File(book.extractionBasePath, book.chapters.last().htmlFilePath).readText()
+        assertTrue(last.contains("${line} #2999"))
+        // Chapter splits happen on paragraph boundaries and each chapter's trailing
+        // paragraph gap is trimmed, so rejoining with the gap restores the source text.
+        assertEquals(text.trim(), book.chapters.joinToString("\n\n") { it.plainTextContent })
+    }
+
+    @Test
+    fun `plain text import decodes utf-16 bom and gbk streams`() = runTest {
+        val importer = SingleFileImporter(contextWithCache(temp.newFolder("txt-encodings-cache")))
+
+        val utf16Text = "First chapter line 中文\n\nSecond paragraph"
+        val utf16Book = importer.importSingleFile(
+            inputStream = ByteArrayInputStream(
+                byteArrayOf(0xFF.toByte(), 0xFE.toByte()) + utf16Text.toByteArray(Charsets.UTF_16LE)
+            ),
+            type = FileType.TXT,
+            originalBookNameHint = "Utf16.txt",
+            bookId = "utf16-book"
+        )
+        assertEquals(utf16Text, utf16Book.chapters.single().plainTextContent)
+
+        val gbkText = buildString {
+            repeat(20) { index ->
+                append("第").append(index).append("章 中文内容测试：这是一段简体中文正文，用于字符集自动检测。\n\n")
+            }
+        }
+        val gbkBook = importer.importSingleFile(
+            inputStream = ByteArrayInputStream(gbkText.toByteArray(charset("GBK"))),
+            type = FileType.TXT,
+            originalBookNameHint = "Gbk.txt",
+            bookId = "gbk-book"
+        )
+        assertEquals(gbkText.trim(), gbkBook.chapters.single().plainTextContent)
+    }
+
+    @Test
+    fun `empty plain text import still writes a placeholder chapter`() = runTest {
+        val importer = SingleFileImporter(contextWithCache(temp.newFolder("txt-empty-cache")))
+
+        val book = importer.importSingleFile(
+            inputStream = ByteArrayInputStream(ByteArray(0)),
+            type = FileType.TXT,
+            originalBookNameHint = "Empty.txt",
+            bookId = "empty-txt-book"
+        )
+
+        assertEquals(1, book.chapters.size)
+        val html = File(book.extractionBasePath, book.chapters.single().htmlFilePath).readText()
+        assertTrue(html.contains("(Empty File)"))
+    }
+
     private fun contextWithCache(cacheDir: File): Context {
         val context = mockk<Context>()
         every { context.cacheDir } returns cacheDir

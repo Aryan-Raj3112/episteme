@@ -23,6 +23,60 @@ import kotlin.test.assertTrue
 class NonReaderLayoutModelsTest {
 
     @Test
+    fun `unified library model only exposes continue reading on unfiltered home`() {
+        val book = book(id = "reading", progress = 42f)
+
+        assertTrue(
+            mobileUnifiedLibraryModel(
+                viewState = MobileUnifiedLibraryViewState(
+                    filter = MobileUnifiedLibraryFilter.ALL,
+                    query = "",
+                    searchActive = false,
+                ),
+                visibleBooks = listOf(book),
+                continueReading = book,
+            ).showContinueReading,
+        )
+        assertFalse(
+            mobileUnifiedLibraryModel(
+                viewState = MobileUnifiedLibraryViewState(
+                    filter = MobileUnifiedLibraryFilter.READING,
+                    query = "",
+                    searchActive = false,
+                ),
+                visibleBooks = listOf(book),
+                continueReading = book,
+            ).showContinueReading,
+        )
+        assertFalse(
+            mobileUnifiedLibraryModel(
+                viewState = MobileUnifiedLibraryViewState(
+                    filter = MobileUnifiedLibraryFilter.ALL,
+                    query = "reading",
+                    searchActive = true,
+                ),
+                visibleBooks = listOf(book),
+                continueReading = book,
+            ).showContinueReading,
+        )
+    }
+
+    @Test
+    fun `unified library model marks active home search as results mode`() {
+        val model = mobileUnifiedLibraryModel(
+            viewState = MobileUnifiedLibraryViewState(
+                query = "missing",
+                searchActive = true,
+            ),
+            visibleBooks = emptyList(),
+            continueReading = null,
+        )
+
+        assertTrue(model.showSearchResults)
+        assertFalse(model.showContinueReading)
+    }
+
+    @Test
     fun `unified library filtering matches Android progress and text rules`() {
         val unread = book(id = "unread", displayName = "Alpha.epub", progress = 0f)
         val reading = book(id = "reading", displayName = "Beta.pdf", progress = 42f, author = "Ada")
@@ -33,6 +87,25 @@ class NonReaderLayoutModelsTest {
         assertEquals(listOf(finished), mobileUnifiedLibraryBooks(books, MobileUnifiedLibraryFilter.FINISHED, ""))
         assertEquals(listOf(unread), mobileUnifiedLibraryBooks(books, MobileUnifiedLibraryFilter.UNREAD, ""))
         assertEquals(listOf(reading), mobileUnifiedLibraryBooks(books, MobileUnifiedLibraryFilter.ALL, "ada"))
+    }
+
+    @Test
+    fun `unified library applies persisted filters and sort order`() {
+        val folder = SyncedFolder("folder://downloads", "Downloads", lastScanTime = 0L)
+        val beta = book("beta", title = "Beta", sourceFolder = "Downloads")
+        val alpha = book("alpha", title = "Alpha", sourceFolder = "Downloads")
+        val outsideFolder = book("outside", title = "Outside")
+
+        val visible = mobileUnifiedLibraryBooks(
+            books = listOf(beta, outsideFolder, alpha),
+            filter = MobileUnifiedLibraryFilter.ALL,
+            query = "",
+            libraryFilters = LibraryFilters(sourceFolders = setOf(folder.uriString))
+                .withIosFolderFilterIdentities(listOf(folder)),
+            sortOrder = SortOrder.TITLE_ASC,
+        )
+
+        assertEquals(listOf("alpha", "beta"), visible.map { it.id })
     }
 
     @Test

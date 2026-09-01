@@ -25,7 +25,8 @@ fun resolveReaderParagraphStyle(
     baseTextStyle: TextStyle,
     cssStyle: CssStyle,
     isParagraph: Boolean,
-    userTextAlign: TextAlign?
+    userTextAlign: TextAlign?,
+    honorUserLineHeight: Boolean = false
 ): ParagraphStyle {
     val merged = baseTextStyle.toParagraphStyle().merge(cssStyle.paragraphStyle)
     return ParagraphStyle(
@@ -35,7 +36,9 @@ fun resolveReaderParagraphStyle(
         ),
         textDirection = merged.textDirection.takeUnless { it == TextDirection.Unspecified }
             ?: TextDirection.ContentOrLtr,
-        lineHeight = if (isParagraph && baseTextStyle.lineHeight.isSpecified) {
+        // Mirror the WebView engine: publication line-height wins unless the reader
+        // explicitly moved away from the default line-height multiplier.
+        lineHeight = if (isParagraph && honorUserLineHeight && baseTextStyle.lineHeight.isSpecified) {
             baseTextStyle.lineHeight
         } else {
             merged.lineHeight
@@ -123,7 +126,12 @@ fun readerWordSpacingOffsets(
     val boundedEnd = end.coerceIn(boundedStart, text.length)
     val spacing = cssStyle.wordSpacing
     if (!spacing.isSpecified || spacing.value == 0f || boundedStart >= boundedEnd) return emptyList()
-    return (boundedStart until boundedEnd).filter { text[it] == ' ' }
+    // CSS word-spacing applies to every word-separator character; restricting the synthetic
+    // letter-spacing spans to separators keeps Arabic/Latin shaping intact.
+    return (boundedStart until boundedEnd).filter { offset ->
+        val char = text[offset]
+        char == ' ' || char == '\u00A0' || char == '\u2009' || char == '\u2005' || char == '\t'
+    }
 }
 
 fun readerContentBlockStyle(

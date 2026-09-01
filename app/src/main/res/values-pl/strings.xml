@@ -341,6 +341,7 @@
     <string name="banner_clearing_cloud_local_data">Czyszczenie wszystkich danych w chmurze i lokalnych…</string>
     <string name="banner_cloud_local_data_cleared">Wszystkie dane w chmurze i lokalne zostały wyczyszczone.</string>
     <string name="error_clear_all_data">Błąd: nie udało się wyczyścić wszystkich danych.</string>
+    <string name="error_cloud_delete_pending">Nie udało się połączyć z chmurą. Usuwanie zostanie automatycznie zakończone po ponownym połączeniu z internetem.</string>
     <string name="banner_local_data_cleared">Wszystkie dane lokalne wyczyszczone.</string>
     <string name="error_sign_in_failed">Logowanie nie powiodło się. Spróbuj ponownie.</string>
     <string name="error_no_google_account">Nie można znaleźć konta Google. Może się to zdarzyć po świeżej instalacji, spróbuj ponownie za chwilę.</string>

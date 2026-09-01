@@ -39,7 +39,7 @@ fun <S, B> SharedAndroidUnifiedShelves(
     noShelvesLabel: String,
     shelfKey: (S) -> String,
     shelfName: (S) -> String,
-    shelfBookCountLabel: (S) -> String,
+    shelfBookCountLabel: @Composable (S) -> String,
     bookKey: (B) -> String,
     onShelfSelected: (S) -> Unit,
     bookCard: @Composable (B) -> Unit,

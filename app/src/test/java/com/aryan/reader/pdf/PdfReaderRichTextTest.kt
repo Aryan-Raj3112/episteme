@@ -322,7 +322,9 @@ class PdfReaderRichTextTest {
         repository.load("missing")
         assertEquals(GlobalRichDocument("", emptyList()), repository.document.value)
 
-        repository.getFileForSync("corrupt").writeText("{not json")
+        repository.getFileForSync("corrupt")
+            .apply { parentFile.mkdirs() }
+            .writeText("{not json")
         repository.load("corrupt")
 
         assertEquals(GlobalRichDocument("", emptyList()), repository.document.value)

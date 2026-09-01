@@ -61,7 +61,10 @@ internal suspend fun loadIosPdfEmbeddedAnnotations(
                                     index = index,
                                     subtype = subtype,
                                     bounds = bounds,
-                                    contents = annotation.iosPdfString("Contents").ifBlank { annotation.iosPdfString("RC") },
+                                    contents = annotation.iosPdfString("Contents").ifBlank {
+                                        // /RC is XHTML markup; never surface it raw.
+                                        sharedPdfEmbeddedAnnotationRichText(annotation.iosPdfString("RC"))
+                                    },
                                     author = annotation.iosPdfString("T"),
                                     name = name,
                                     inReplyTo = annotation.iosPdfLinkedName("IRT"),

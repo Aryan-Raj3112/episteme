@@ -539,11 +539,58 @@ class EpubParserUnitTest {
         assertFalse(missing.hasReadableExtractedContent())
     }
 
+    @Test
+    fun `createEpubBook parses epub3 belongs-to-collection series metadata`() = runTest {
+        val cacheDir = temp.newFolder("cache-epub3")
+        val extractionDir = temp.newFolder("extract-epub3")
+        val parser = EpubParser(contextWithCache(cacheDir))
+
+        val book = parser.createEpubBook(
+            inputStream = ByteArrayInputStream(epub3CollectionSeriesEpubBytes()),
+            bookId = "book-id-epub3",
+            shouldUseToc = false,
+            originalBookNameHint = "adventures.epub",
+            parseContent = true,
+            extractionDirOverride = extractionDir
+        )
+
+        assertEquals("Sherlock Holmes", book.seriesName)
+        assertEquals(3.0, book.seriesIndex)
+    }
+
     private fun contextWithCache(cacheDir: File): Context {
         val context = mockk<Context>()
         every { context.cacheDir } returns cacheDir
         return context
     }
+
+    private fun epub3CollectionSeriesEpubBytes(): ByteArray = zipBytes(
+        "META-INF/container.xml" to """
+            <container version="1.0">
+                <rootfiles><rootfile full-path="OEBPS/content.opf"/></rootfiles>
+            </container>
+        """.trimIndent(),
+        "OEBPS/content.opf" to """
+            <package xmlns:dc="http://purl.org/dc/elements/1.1/" version="3.0">
+                <metadata>
+                    <dc:title>The Adventures of Sherlock Holmes</dc:title>
+                    <dc:creator>Arthur Conan Doyle</dc:creator>
+                    <dc:language>en</dc:language>
+                    <meta property="dcterms:modified">2026-07-12T00:00:00Z</meta>
+                    <meta id="c1" property="belongs-to-collection">Sherlock Holmes</meta>
+                    <meta refines="#c1" property="collection-type">series</meta>
+                    <meta refines="#c1" property="group-position">3</meta>
+                </metadata>
+                <manifest>
+                    <item id="chap1" href="chapters/chapter1.xhtml" media-type="application/xhtml+xml"/>
+                </manifest>
+                <spine>
+                    <itemref idref="chap1"/>
+                </spine>
+            </package>
+        """.trimIndent(),
+        "OEBPS/chapters/chapter1.xhtml" to "<html><body><p>One</p></body></html>"
+    )
 
     private fun sampleEpubBytes(author: String = "Jane Writer"): ByteArray = zipBytes(
         "META-INF/container.xml" to """

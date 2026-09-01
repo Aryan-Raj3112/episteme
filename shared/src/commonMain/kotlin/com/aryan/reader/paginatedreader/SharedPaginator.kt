@@ -40,6 +40,29 @@ suspend fun paginateReaderBlocks(
         return styled.withReaderExpectedHeight(measurementProvider.measure(styled) + spaceBetweenBlocks)
     }
 
+    /**
+     * Prepares a split head and accepts it only if its remeasured height (including collapsed
+     * spacing) still fits the current page. Splitters can disagree with the final remeasure by
+     * more than rounding on decorated containers; committing such a fragment unchecked is what
+     * produced bottom-of-page overflows, so a rejected fragment falls back to the unsplit path
+     * (push to next page, or force-place when the page is empty).
+     */
+    suspend fun verifiedSplitPart(
+        block: ContentBlock,
+        spaceBetweenBlocks: Int,
+        heightForSplittingPx: Int
+    ): ContentBlock? {
+        val prepared = preparedSplitPart(block, spaceBetweenBlocks)
+        if (prepared.expectedHeight <= remainingHeight) return prepared
+        onCutoffDiagnostic(
+            "cutoff_probe layer=android_paginator_split_fragment_rejected page=${pageIndex + 1} " +
+                "block=${block.blockIndex} kind=${block::class.simpleName ?: "Block"} " +
+                "fragmentExpectedPx=${prepared.expectedHeight} remainingPx=$remainingHeight " +
+                "heightForSplittingPx=$heightForSplittingPx textChars=${block.paginationTextCharCount()}"
+        )
+        return null
+    }
+
     fun commitPage(reason: String) {
         onPageGapDiagnostic(
             "decision=commit_page reason=$reason page=${pageIndex + 1} remainingPx=$remainingHeight " +
@@ -79,11 +102,17 @@ suspend fun paginateReaderBlocks(
             !block.style.avoidsReaderPageBreakInside() &&
             heightForSplitting > 50
         ) {
-            measurementProvider.split(block, heightForSplitting)?.let { (part1, part2) ->
-                currentPageContent += preparedSplitPart(part1, spaceBetweenBlocks)
-                remainingBlocks.add(0, part2)
-                commitPage("incremental_vertical_container_split")
-                continue
+            val probeSplit = measurementProvider.split(block, heightForSplitting)
+            if (probeSplit != null) {
+                val prepared = verifiedSplitPart(probeSplit.first, spaceBetweenBlocks, heightForSplitting)
+                if (prepared != null) {
+                    currentPageContent += prepared
+                    remainingBlocks.add(0, probeSplit.second)
+                    commitPage("incremental_vertical_container_split")
+                    continue
+                }
+                // Rejected fragment: fall through to the full-measure path, which will either
+                // split again with verified placement or push the whole block to the next page.
             }
         }
 
@@ -122,47 +151,79 @@ suspend fun paginateReaderBlocks(
 
         var wasSplit = false
         if (heightForSplitting > 50) {
+            // CSS break-inside:avoid is best-effort. A block taller than a full page can never
+            // be placed readably, so the avoid hint is dropped and it is fragmented like any
+            // other oversized block.
+            val avoidsPageBreak = block.style.avoidsReaderPageBreakInside()
+            val maySplitInPlace = !avoidsPageBreak || blockHeight > pageHeight
+            if (avoidsPageBreak && maySplitInPlace) {
+                onCutoffDiagnostic(
+                    "cutoff_probe layer=android_paginator_break_avoid_relaxed page=${pageIndex + 1} " +
+                        "block=${block.blockIndex} kind=${block::class.simpleName ?: "Block"} " +
+                        "blockHeightPx=$blockHeight pageHeightPx=$pageHeight"
+                )
+            }
             when (block) {
-                is ParagraphBlock -> if (!block.style.avoidsReaderPageBreakInside()) {
+                is ParagraphBlock -> if (maySplitInPlace) {
                     measurementProvider.split(block, heightForSplitting)?.let { (part1, part2) ->
                         if (part1.content.isNotEmpty()) {
-                            val prepared = preparedSplitPart(part1, spaceBetweenBlocks) as ParagraphBlock
-                            currentPageContent += prepared
-                            if (part2.content.isNotEmpty()) remainingBlocks.add(0, part2)
-                            wasSplit = true
+                            val prepared = verifiedSplitPart(part1, spaceBetweenBlocks, heightForSplitting)
+                            if (prepared != null) {
+                                currentPageContent += prepared
+                                if (part2.content.isNotEmpty()) remainingBlocks.add(0, part2)
+                                wasSplit = true
+                            }
                         }
                     }
                 }
-                is WrappingContentBlock -> if (!block.style.avoidsReaderPageBreakInside()) {
+                is WrappingContentBlock -> if (maySplitInPlace) {
                     measurementProvider.split(block, heightForSplitting)?.let { (part1, part2) ->
                         if (part1.paragraphsToWrap.any { it.content.isNotBlank() }) {
-                            currentPageContent += preparedSplitPart(part1, spaceBetweenBlocks)
-                            if (part2.isNotEmpty()) remainingBlocks.addAll(0, part2)
+                            val prepared = verifiedSplitPart(part1, spaceBetweenBlocks, heightForSplitting)
+                            if (prepared != null) {
+                                currentPageContent += prepared
+                                if (part2.isNotEmpty()) remainingBlocks.addAll(0, part2)
+                                wasSplit = true
+                            }
+                        }
+                    }
+                }
+                is TableBlock -> if (maySplitInPlace) {
+                    measurementProvider.split(block, heightForSplitting)?.let { (part1, part2) ->
+                        val prepared = verifiedSplitPart(part1, spaceBetweenBlocks, heightForSplitting)
+                        if (prepared != null) {
+                            currentPageContent += prepared
+                            remainingBlocks.add(0, part2)
                             wasSplit = true
                         }
                     }
                 }
-                is TableBlock -> if (!block.style.avoidsReaderPageBreakInside()) {
+                is FlexContainerBlock -> if (maySplitInPlace) {
                     measurementProvider.split(block, heightForSplitting)?.let { (part1, part2) ->
-                        currentPageContent += preparedSplitPart(part1, spaceBetweenBlocks)
-                        remainingBlocks.add(0, part2)
-                        wasSplit = true
-                    }
-                }
-                is FlexContainerBlock -> if (!block.style.avoidsReaderPageBreakInside()) {
-                    measurementProvider.split(block, heightForSplitting)?.let { (part1, part2) ->
-                        currentPageContent += preparedSplitPart(part1, spaceBetweenBlocks)
-                        remainingBlocks.add(0, part2)
-                        wasSplit = true
+                        val prepared = verifiedSplitPart(part1, spaceBetweenBlocks, heightForSplitting)
+                        if (prepared != null) {
+                            currentPageContent += prepared
+                            remainingBlocks.add(0, part2)
+                            wasSplit = true
+                        }
                     }
                 }
                 is ChantScoreBlock -> measurementProvider.split(block, heightForSplitting)?.let { (part1, part2) ->
                     val measured = part1.withReaderExpectedHeight(
                         measurementProvider.measure(part1) + spaceBetweenBlocks
                     )
-                    currentPageContent += measured
-                    remainingBlocks.add(0, part2)
-                    wasSplit = true
+                    if (measured.expectedHeight <= remainingHeight) {
+                        currentPageContent += measured
+                        remainingBlocks.add(0, part2)
+                        wasSplit = true
+                    } else {
+                        onCutoffDiagnostic(
+                            "cutoff_probe layer=android_paginator_split_fragment_rejected page=${pageIndex + 1} " +
+                                "block=${block.blockIndex} kind=ChantScoreBlock " +
+                                "fragmentExpectedPx=${measured.expectedHeight} remainingPx=$remainingHeight " +
+                                "heightForSplittingPx=$heightForSplitting"
+                        )
+                    }
                 }
                 else -> Unit
             }

@@ -121,6 +121,109 @@ class TtsLifecycleSourceTest {
         assertTrue(managerSource.contains("directLocalTtsPlayer.shutdown()"))
     }
 
+    @Test
+    fun `direct local speech requests audio focus before the engine speaks`() {
+        val source = sourceFile("com/aryan/reader/tts/TtsPlaybackManager.kt").readText()
+        val startLocalChunkBody = source.substringAfter("private fun startLocalChunk")
+            .substringBefore("private fun enqueueLocalLookahead")
+
+        assertTrue(startLocalChunkBody.contains("directLocalAudioFocusManager.requestFocus()"))
+        assertTrue(
+            startLocalChunkBody.indexOf("directLocalAudioFocusManager.requestFocus()") <
+                startLocalChunkBody.indexOf("directLocalTtsPlayer.speak(")
+        )
+        assertTrue(startLocalChunkBody.contains("publishLocalChunkState(chunkIndex, isLoading = false, isPlaying = false)"))
+    }
+
+    @Test
+    fun `stopping direct local tts abandons audio focus`() {
+        val source = sourceFile("com/aryan/reader/tts/TtsPlaybackManager.kt").readText()
+        val stopBody = source.substringAfter("private fun handleStopTts")
+            .substringBefore("fun stopForAppTaskRemoval")
+
+        assertTrue(stopBody.contains("directLocalAudioFocusManager.abandonFocus()"))
+
+        val finishBody = source.substringAfter("private fun handleLocalChunkDone")
+            .substringBefore("override fun onError")
+        assertTrue(finishBody.contains("directLocalAudioFocusManager.abandonFocus()"))
+
+        val releaseBody = source.substringAfter("fun release()")
+            .substringBefore("override fun onPlaybackStateChanged")
+        assertTrue(releaseBody.contains("directLocalAudioFocusManager.abandonFocus()"))
+    }
+
+    @Test
+    fun `focus interruptions route through the shared interruption policy`() {
+        val source = sourceFile("com/aryan/reader/tts/TtsPlaybackManager.kt").readText()
+
+        assertTrue(source.contains("LocalTtsInterruptionEvent.Began(playbackWasActive"))
+        assertTrue(source.contains("LocalTtsInterruptionEvent.Ended(systemAllowsResume = canResume)"))
+        assertTrue(source.contains("LocalTtsInterruptionEvent.OutputBecameNoisy(playbackWasActive"))
+        assertTrue(source.contains("LocalTtsInterruptionAction.PAUSE") || source.contains("LocalTtsInterruptionAction.RESUME"))
+    }
+
+    @Test
+    fun `playback anchor runs only while local speech is active`() {
+        val managerSource = sourceFile("com/aryan/reader/tts/TtsPlaybackManager.kt").readText()
+
+        val startLocalChunkBody = managerSource.substringAfter("private fun startLocalChunk")
+            .substringBefore("private fun enqueueLocalLookahead")
+        assertTrue(startLocalChunkBody.contains("directLocalPlaybackAnchor.start()"))
+        assertTrue(
+            "anchor must start after focus is granted",
+            startLocalChunkBody.indexOf("directLocalAudioFocusManager.requestFocus()") <
+                startLocalChunkBody.indexOf("directLocalPlaybackAnchor.start()")
+        )
+
+        val pauseBody = managerSource.substringAfter("private fun pauseLocalSpeech")
+            .substringBefore("fun stopFromTransport")
+        assertTrue(pauseBody.contains("directLocalPlaybackAnchor.pause()"))
+
+        val stopBody = managerSource.substringAfter("private fun handleStopTts")
+            .substringBefore("fun stopForAppTaskRemoval")
+        assertTrue(stopBody.contains("directLocalPlaybackAnchor.pause()"))
+
+        val releaseBody = managerSource.substringAfter("fun release()")
+            .substringBefore("override fun onPlaybackStateChanged")
+        assertTrue(releaseBody.contains("directLocalPlaybackAnchor.release()"))
+
+        val anchorSource = sourceFile("com/aryan/reader/tts/DirectLocalTtsPlaybackAnchor.kt").readText()
+        assertTrue(anchorSource.contains("/* handleAudioFocus = */ false"))
+        assertTrue(anchorSource.contains("Player.REPEAT_MODE_ONE"))
+    }
+
+    @Test
+    fun `last playback service is recorded for media button resumption`() {
+        val managerSource = sourceFile("com/aryan/reader/tts/TtsPlaybackManager.kt").readText()
+        assertTrue(managerSource.contains("MediaButtonRouting.recordPlaybackService(appContext, TtsService::class.java.name)"))
+
+        val audiobookSource = sourceFile("com/aryan/reader/audiobook/AudiobookPlayback.kt").readText()
+        assertTrue(audiobookSource.contains("AudiobookPlaybackService::class.java"))
+    }
+
+    @Test
+    fun `session control updates hop to the main looper before mutating the media session`() {
+        val managerSource = sourceFile("com/aryan/reader/tts/TtsPlaybackManager.kt").readText()
+        val updateControlsBody = managerSource.substringAfter("private fun updateSessionControls")
+            .substringBefore("private fun createCustomLayout")
+
+        // Media3's MediaSessionCompat playback state updater reads the custom layout fields on
+        // the main looper while setCustomLayout/setMediaButtonPreferences mutate them on the
+        // caller thread. A non-main caller shrinking the list between the size and get reads
+        // crashes the session with IndexOutOfBoundsException, so the mutation must be marshalled.
+        assertTrue(
+            updateControlsBody.contains("if (Looper.myLooper() != Looper.getMainLooper())")
+        )
+        assertTrue(
+            updateControlsBody.contains("scope.launch(Dispatchers.Main) { updateSessionControls(state) }")
+        )
+        assertTrue(
+            "session mutations must only run after the main-thread hop",
+            updateControlsBody.indexOf("Looper.myLooper() != Looper.getMainLooper()") <
+                updateControlsBody.indexOf("session.setMediaButtonPreferences")
+        )
+    }
+
     private fun sourceFile(relativePath: String): File {
         val candidates = listOf(
             File("src/main/java/$relativePath"),

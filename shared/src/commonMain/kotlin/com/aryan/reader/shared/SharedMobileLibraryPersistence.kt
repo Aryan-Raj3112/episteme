@@ -39,6 +39,7 @@ fun SharedLibrarySnapshot.toSharedMobileReaderState(): SharedReaderScreenState {
         readerToolbarPreferences = readerToolbarPreferences,
         readerHighlightPalette = readerHighlightPalette,
         pdfHighlighterPalette = pdfHighlighterPalette,
+        pdfHighlighterSnapEnabled = pdfHighlighterSnapEnabled,
         readerTtsReplacementPreferences = readerTtsReplacementPreferences,
         readerBookReplacementPreferences = readerBookReplacementPreferences,
         cloudBookTombstones = bookTombstones,
@@ -54,7 +55,11 @@ fun SharedLibrarySnapshot.toSharedMobileReaderState(): SharedReaderScreenState {
     ).let(base::withLibraryFeatureState)
 }
 
-private fun SharedReaderScreenState.toLibraryFeatureState() = LibraryFeatureState(
+/**
+ * Extracts the library-only slice consumed by [SharedLibraryStateProjector]
+ * from the full reader screen state. Shared by every platform shell.
+ */
+fun SharedReaderScreenState.toLibraryFeatureState() = LibraryFeatureState(
     sortOrder = sortOrder,
     filters = libraryFilters,
     syncedFolders = syncedFolders,
@@ -64,7 +69,8 @@ private fun SharedReaderScreenState.toLibraryFeatureState() = LibraryFeatureStat
     tabs = AppTabState(isTabsEnabled, openTabIds, activeTabBookId),
 )
 
-private fun SharedReaderScreenState.withLibraryFeatureState(feature: LibraryFeatureState) = copy(
+/** Copies a projection result back onto the originating reader screen state. */
+fun SharedReaderScreenState.withLibraryFeatureState(feature: LibraryFeatureState) = copy(
     sortOrder = feature.sortOrder,
     shelves = feature.shelves,
     viewingShelfId = feature.viewingShelfId,
@@ -102,6 +108,7 @@ fun SharedReaderScreenState.toSharedMobileLibrarySnapshot(): SharedLibrarySnapsh
             name = shelf.name,
             isSmart = shelf.type == ShelfType.SMART,
             smartRulesJson = shelf.smartRulesJson,
+            modifiedAt = shelf.modifiedAt,
         )
     }
     val shelfRefs = persistentShelves.filter { it.type == ShelfType.MANUAL }.flatMap { shelf ->
@@ -151,6 +158,7 @@ fun SharedReaderScreenState.toSharedMobileLibrarySnapshot(): SharedLibrarySnapsh
         readerToolbarPreferences = readerToolbarPreferences,
         readerHighlightPalette = readerHighlightPalette,
         pdfHighlighterPalette = pdfHighlighterPalette,
+        pdfHighlighterSnapEnabled = pdfHighlighterSnapEnabled,
         readerTtsReplacementPreferences = readerTtsReplacementPreferences,
         readerBookReplacementPreferences = readerBookReplacementPreferences,
     )

@@ -46,6 +46,23 @@ class PdfReaderPreferencesTest {
     }
 
     @Test
+    fun `persisted orders gain the split view tool beside the dictionary tool`() {
+        val legacyOrder = PdfReaderTool.entries
+            .filter { it != PdfReaderTool.SPLIT_VIEW }
+            .joinToString(",") { it.name }
+        val prefs = InMemorySharedPreferences(PDF_TOOL_ORDER_KEY to legacyOrder)
+        val context = contextWithPrefs(prefs)
+
+        val order = loadPdfToolOrder(context)
+        val expectedTools = PdfReaderTool.entries.filter(::isPdfReaderToolAvailable)
+
+        assertEquals(PdfReaderTool.DICTIONARY, order.first())
+        assertEquals(PdfReaderTool.SPLIT_VIEW, order[1])
+        assertEquals(expectedTools.size, order.size)
+        assertEquals(expectedTools.toSet(), order.toSet())
+    }
+
+    @Test
     fun `tool preferences save hidden bottom and explicit order`() {
         val prefs = InMemorySharedPreferences()
         val context = contextWithPrefs(prefs)

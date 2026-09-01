@@ -3,6 +3,7 @@ package com.aryan.reader.pdf
 import android.graphics.RectF
 import com.aryan.reader.shared.pdf.PdfEmbeddedAnnotationThreadItem
 import com.aryan.reader.shared.pdf.PdfPageBounds
+import com.aryan.reader.shared.pdf.PdfiumAnnotationSubtype
 import com.aryan.reader.shared.pdf.buildPdfEmbeddedAnnotationThreadPlan
 
 data class EmbeddedAnnotation(
@@ -29,6 +30,7 @@ internal fun groupEmbeddedAnnotationsForDisplay(
                 bounds = annotation.rect.toSharedBounds(),
                 hasVisibleText = !annotation.contents.isNullOrBlank(),
                 hasVisibleReply = annotation.replies.any { !it.contents.isNullOrBlank() },
+                isPopupAttachment = annotation.subtype == PdfiumAnnotationSubtype.POPUP,
             )
         },
         geometryTolerance = 10f,

@@ -3,16 +3,72 @@ package com.aryan.reader.shared.ui
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import com.aryan.reader.shared.BookItem
+import com.aryan.reader.shared.ReaderAiByokSettings
+import com.aryan.reader.shared.ReaderCloudTtsState
 import com.aryan.reader.shared.ReaderTtsChunk
 import com.aryan.reader.shared.ReaderTtsProgress
 import com.aryan.reader.shared.ReaderExternalLookupAction
 import com.aryan.reader.shared.reader.SharedEpubBook
+import com.aryan.reader.shared.ReaderLocator
 
 internal data class SharedMobileEpubLoadState(
     val isLoading: Boolean = true,
     val book: SharedEpubBook? = null,
     val errorMessage: String? = null
 )
+
+/**
+ * Position boundary for the platform WebView reader.
+ *
+ * Normal scroll reports travel through the JavaScript bridge and therefore
+ * cannot be assumed to have reached Compose when a jump control is tapped.
+ * The platform may provide a direct JavaScript query; the last observed
+ * locator remains a safe fallback while the document is loading or being
+ * released.
+ */
+class SharedMobileEpubWebViewController {
+    private var requestCurrentPosition: (((String?) -> Unit) -> Unit)? = null
+    private var latestObservedLocator: ReaderLocator? = null
+
+    internal fun attach(requester: ((String?) -> Unit) -> Unit) {
+        requestCurrentPosition = requester
+    }
+
+    internal fun detach() {
+        requestCurrentPosition = null
+    }
+
+    internal fun updateObservedLocator(locator: ReaderLocator) {
+        latestObservedLocator = locator
+    }
+
+    fun captureCurrentLocator(onResult: (ReaderLocator?) -> Unit) {
+        val requester = requestCurrentPosition
+        if (requester == null) {
+            onResult(latestObservedLocator)
+            return
+        }
+        requester { rawPayload ->
+            val queried = rawPayload?.sharedMobileEpubLocatorOrNull()
+            if (queried != null) latestObservedLocator = queried
+            onResult(queried ?: latestObservedLocator)
+        }
+    }
+}
+
+data class SharedMobileEpubStreamPageResponse(
+    val bytes: ByteArray,
+    val mimeType: String,
+)
+
+/**
+ * Optional platform resource boundary for authenticated remote OPDS-PSE pages.
+ * The URL passed here is a credential-free reader-opds-page resource URI; the
+ * platform implementation resolves credentials from its persisted catalog store.
+ */
+interface SharedMobileEpubStreamPageLoader {
+    suspend fun loadPage(resourceUrl: String): SharedMobileEpubStreamPageResponse?
+}
 
 @Composable
 internal expect fun rememberSharedMobileEpubLoadState(book: BookItem): SharedMobileEpubLoadState
@@ -25,6 +81,9 @@ internal expect fun SharedMobileEpubWebView(
     navigationScript: String?,
     navigationRequestId: Long,
     onBridgeMessage: (method: String, payload: String) -> Unit,
+    positionController: SharedMobileEpubWebViewController? = null,
+    streamPageLoader: SharedMobileEpubStreamPageLoader? = null,
+    streamPageUnavailableLabel: String,
     modifier: Modifier = Modifier
 )
 
@@ -32,7 +91,7 @@ internal expect fun openSharedMobileEpubExternalLink(url: String): Boolean
 internal expect fun openSharedMobileEpubLookup(action: ReaderExternalLookupAction, text: String): Boolean
 internal expect fun shareSharedMobileEpubImage(bytes: ByteArray, fileName: String): Boolean
 
-/** iOS currently exposes device speech only; cloud TTS stays out of the shared mobile reader. */
+/** Platform-backed device speech remains separate from shared cloud TTS. */
 enum class SharedMobileEpubLocalTtsState { IDLE, SPEAKING, PAUSED }
 
 data class SharedMobileEpubVoice(
@@ -77,3 +136,41 @@ interface SharedMobileEpubLocalTts {
 
 @Composable
 internal expect fun rememberSharedMobileEpubLocalTts(): SharedMobileEpubLocalTts
+
+/**
+ * Platform audio boundary for Gemini Live cloud reading on mobile.
+ *
+ * The reader planner, gates, settings model, and controls stay shared. The
+ * platform owns the WebSocket, PCM/WAV cache, audio session, and player. A
+ * nullable value keeps Android's existing MediaSession-backed adapter intact
+ * while iOS supplies its native implementation.
+ */
+interface SharedMobileEpubCloudTts {
+    val state: ReaderCloudTtsState
+
+    fun configure(
+        settings: ReaderAiByokSettings,
+        isSignedIn: Boolean,
+        isProUser: Boolean,
+        credits: Int,
+        authToken: String?,
+        workerUrl: String,
+    )
+
+    fun start(
+        chunks: List<ReaderTtsChunk>,
+        bookTitle: String,
+        bookId: String? = null,
+        startChunkIndex: Int = 0,
+        playWhenReady: Boolean = true,
+    )
+
+    fun pause()
+    fun resume()
+    fun skipPrevious()
+    fun skipNext()
+    fun setVoice(identifier: String)
+    fun clearCache()
+    fun stop()
+    fun release()
+}

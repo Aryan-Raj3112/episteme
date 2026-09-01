@@ -54,6 +54,9 @@ interface AudiobookDao {
 
     @Query("UPDATE audiobooks SET positionMs = :positionMs, playbackSpeed = :speed WHERE bookId = :bookId")
     suspend fun updatePlayback(bookId: String, positionMs: Long, speed: Float)
+
+    @Query("DELETE FROM audiobooks")
+    suspend fun clearAll()
 }
 
 data class ImportedAudiobook(val book: RecentFileEntity, val audio: AudiobookEntity)

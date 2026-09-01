@@ -23,4 +23,20 @@ class PdfLegacyPageBookmarksTest {
         assertEquals(emptySet(), LegacyPdfPageBookmarkCodec.decode("{}"))
         assertEquals(emptySet(), LegacyPdfPageBookmarkCodec.decode("["))
     }
+
+    @Test
+    fun `legacy bookmark decoder rejects impossible page metadata`() {
+        assertEquals(
+            emptySet(),
+            LegacyPdfPageBookmarkCodec.decode(
+                """
+                [
+                    {"pageIndex":-1,"title":"negative","totalPages":10},
+                    {"pageIndex":10,"title":"past end","totalPages":10},
+                    {"pageIndex":0,"title":"no pages","totalPages":0}
+                ]
+                """.trimIndent()
+            )
+        )
+    }
 }

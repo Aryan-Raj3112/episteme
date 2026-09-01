@@ -28,6 +28,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Book
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Ai
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
@@ -59,9 +60,7 @@ import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChanged
-import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
@@ -127,13 +126,16 @@ internal fun SharedMobilePdfTextSelectionOverlay(
     onExistingHighlightTap: (SharedPdfAnnotation) -> Unit,
     onHighlight: (PdfTextSelectionRange, String, List<PdfPageBounds>, Int, HighlightStyle, Boolean) -> Unit,
     onReadAloud: (Int) -> Unit,
+    onAiDefine: ((String) -> Unit)? = null,
+    onClipboardError: ((String) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     if (canvasSize.width <= 0 || canvasSize.height <= 0) return
     val session = textSession
     val linkBounds = remember(session) { session?.linkBoundsNormalized().orEmpty() }
     val scope = rememberCoroutineScope()
-    val clipboard = LocalClipboardManager.current
+    val copiedTextLabel = readerString("clip_label_copied_text", "Copied Text")
+    val clipboardErrorMessage = readerString("error_copy_to_clipboard", "Could not copy to clipboard")
     val density = LocalDensity.current
     val teardropWidthDp = 24.dp
     val teardropHeightDp = 24.dp
@@ -504,7 +506,8 @@ internal fun SharedMobilePdfTextSelectionOverlay(
                     applyRangeUpdate(null, emptyList(), null)
                 },
                 onCopy = { text ->
-                    clipboard.setText(AnnotatedString(text))
+                    val result = writeSharedClipboard(copiedTextLabel, text)
+                    if (!result.success) onClipboardError?.invoke(clipboardErrorMessage)
                     applyRangeUpdate(null, emptyList(), null)
                 },
                 onDefine = { text ->
@@ -523,6 +526,7 @@ internal fun SharedMobilePdfTextSelectionOverlay(
                     state.range?.let { onReadAloud(it.start) }
                     applyRangeUpdate(null, emptyList(), null)
                 },
+                onAiDefine = onAiDefine,
                 onSelectAll = {
                     val s = session ?: return@SharedMobilePdfSelectionMenu
                     scope.launch { computeAndApply(PdfTextSelectionRange(0, s.pageCharCount)) }
@@ -711,6 +715,7 @@ private fun SharedMobilePdfSelectionMenu(
     onTranslate: (String) -> Unit,
     onSearch: (String) -> Unit,
     onReadAloud: () -> Unit,
+    onAiDefine: ((String) -> Unit)?,
     onSelectAll: () -> Unit
 ) {
     var selectedStyle by remember { mutableStateOf(HighlightStyle.BACKGROUND) }
@@ -772,6 +777,9 @@ private fun SharedMobilePdfSelectionMenu(
                 add(SharedMobilePdfMenuAction(Res.drawable.copy, "Copy") { onCopy(selectedText) })
                 add(SharedMobilePdfMenuAction(imageVector = Icons.AutoMirrored.Filled.VolumeUp, label = "Read aloud") { onReadAloud() })
                 if (readerExternalLookupActionsAvailable(selectedText.length)) {
+                    onAiDefine?.let { define ->
+                        add(SharedMobilePdfMenuAction(imageVector = Icons.Default.Ai, label = "AI define") { define(selectedText) })
+                    }
                     add(SharedMobilePdfMenuAction(imageVector = Icons.Default.Book, label = "Define") { onDefine(selectedText) })
                     add(SharedMobilePdfMenuAction(Res.drawable.translate, "Translate") { onTranslate(selectedText) })
                     add(SharedMobilePdfMenuAction(imageVector = Icons.Default.Search, label = "Search") { onSearch(selectedText) })

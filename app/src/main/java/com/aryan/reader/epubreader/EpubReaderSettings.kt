@@ -154,6 +154,7 @@ private const val SYSTEM_UI_MODE_KEY = "reader_system_ui_mode"
 private const val PAGE_INFO_MODE_KEY = "reader_page_info_mode"
 private const val PAGE_INFO_POSITION_KEY = "reader_page_info_position"
 private const val PULL_TO_TURN_ENABLED_KEY = "reader_pull_to_turn_enabled"
+private const val HIDE_IMAGES_KEY = "reader_hide_images"
 private const val NATIVE_VERTICAL_RENDERER_KEY = "reader_native_vertical_renderer"
 
 const val DEFAULT_FONT_SIZE_VAL = 1.0f
@@ -326,6 +327,16 @@ fun savePullToTurn(context: Context, enabled: Boolean) {
 fun loadPullToTurn(context: Context): Boolean {
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
     return prefs.getBoolean(PULL_TO_TURN_ENABLED_KEY, true)
+}
+
+fun saveHideImages(context: Context, hideImages: Boolean) {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit { putBoolean(HIDE_IMAGES_KEY, hideImages) }
+}
+
+fun loadHideImages(context: Context): Boolean {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    return prefs.getBoolean(HIDE_IMAGES_KEY, false)
 }
 
 fun saveNativeVerticalRenderer(context: Context, enabled: Boolean) {
@@ -1063,6 +1074,8 @@ fun VisualOptionsSheet(
     onPullToTurnChange: (Boolean) -> Unit,
     pullToTurnMultiplier: Float,
     onPullToTurnMultiplierChange: (Float) -> Unit,
+    hideImages: Boolean,
+    onHideImagesChange: (Boolean) -> Unit,
     onDismiss: () -> Unit
 ) {
     val configuration = LocalConfiguration.current
@@ -1078,6 +1091,8 @@ fun VisualOptionsSheet(
         onPullToTurnChange = onPullToTurnChange,
         pullToTurnMultiplier = pullToTurnMultiplier,
         onPullToTurnMultiplierChange = onPullToTurnMultiplierChange,
+        hideImages = hideImages,
+        onHideImagesChange = onHideImagesChange,
         maxSheetHeight = maxSheetHeight,
         labels = SharedReaderVisualOptionsLabels(
             title = stringResource(R.string.menu_visual_options),
@@ -1094,7 +1109,9 @@ fun VisualOptionsSheet(
             seamlessChapterDescription = stringResource(R.string.visual_options_seamless_chapter_desc),
             pullDistance = stringResource(R.string.setting_pull_distance_change_chapter),
             shortDistance = stringResource(R.string.label_short),
-            longDistance = stringResource(R.string.label_long)
+            longDistance = stringResource(R.string.label_long),
+            hideImages = stringResource(R.string.visual_options_hide_images),
+            hideImagesDescription = stringResource(R.string.visual_options_hide_images_desc)
         ),
         onDismiss = onDismiss
     )

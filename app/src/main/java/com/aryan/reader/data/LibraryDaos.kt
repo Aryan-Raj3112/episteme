@@ -43,6 +43,12 @@ interface ShelfDao {
 
     @Query("SELECT * FROM book_shelf_cross_ref WHERE shelfId = :shelfId")
     suspend fun getCrossRefsForShelf(shelfId: String): List<BookShelfCrossRef>
+
+    @Query("DELETE FROM book_shelf_cross_ref")
+    suspend fun clearAllBookShelfCrossRefs()
+
+    @Query("DELETE FROM shelves")
+    suspend fun clearAll()
 }
 
 @Dao
@@ -70,4 +76,10 @@ interface TagDao {
 
     @Query("DELETE FROM tags WHERE id = :tagId")
     suspend fun deleteTag(tagId: String)
+
+    @Query("DELETE FROM book_tag_cross_ref")
+    suspend fun clearAllBookTagCrossRefs()
+
+    @Query("DELETE FROM tags")
+    suspend fun clearAll()
 }

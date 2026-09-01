@@ -4,8 +4,10 @@ import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.FileType
 import com.aryan.reader.shared.ReaderPlatform
 import com.aryan.reader.shared.SharedFileCapabilities
-import com.aryan.reader.shared.reader.SharedJvmBookLoadSemanticMode
+import com.aryan.reader.shared.reader.MobileEpubMetaElement
+import com.aryan.reader.shared.reader.SharedBookLoadSemanticMode
 import com.aryan.reader.shared.reader.SharedJvmBookLoader
+import com.aryan.reader.shared.reader.resolveMobileEpubSeries
 import java.awt.Color
 import java.awt.Font
 import java.awt.RenderingHints
@@ -40,6 +42,9 @@ data class DesktopFolderMetadataExtractionStats(
 object DesktopFolderMetadataExtractor {
     private const val MAX_TEXT_SOURCE_CHARS = 256 * 1024
     private const val MAX_PREVIEW_TEXT_CHARS = 2_400
+
+    private val META_CLOSE_TAG_REGEX = Regex("""</\s*meta\s*>""", RegexOption.IGNORE_CASE)
+    private val TAG_REGEX = Regex("<[^>]*>")
 
     private val textMetadataTypes = setOf(
         FileType.PDF,
@@ -257,15 +262,48 @@ object DesktopFolderMetadataExtractor {
                     }
                 }
 
+            val series = resolveMobileEpubSeries(parseOpfMetaElements(opf))
             return ExtractedBookMetadata(
                 title = opf.tagText("title"),
                 author = opf.tagText("creator"),
                 description = opf.tagInnerContent("description"),
-                seriesName = opf.metaContent("calibre:series"),
-                seriesIndex = opf.metaContent("calibre:series_index")?.toDoubleOrNull(),
+                seriesName = series?.name,
+                seriesIndex = series?.index,
                 cover = cover
             )
         }
+    }
+
+    /**
+     * Extracts every OPF `<meta>` element so the shared resolver can read both the legacy
+     * Calibre name/content form and the EPUB 3 belongs-to-collection/refines form.
+     */
+    private fun parseOpfMetaElements(opf: String): List<MobileEpubMetaElement> {
+        return Regex("""<meta\s+[^>]*>""", RegexOption.IGNORE_CASE)
+            .findAll(opf)
+            .mapNotNull { match ->
+                val openTag = match.value
+                val text = if (openTag.endsWith("/>")) {
+                    null
+                } else {
+                    META_CLOSE_TAG_REGEX.find(opf, startIndex = match.range.last + 1)?.let { close ->
+                        opf.substring(match.range.last + 1, close.range.first)
+                            .replace(TAG_REGEX, " ")
+                            .decodeEntities()
+                            .trim()
+                            .takeIf { it.isNotEmpty() }
+                    }
+                }
+                MobileEpubMetaElement(
+                    id = openTag.attr("id").decodedAttrValue(),
+                    name = openTag.attr("name").decodedAttrValue(),
+                    property = openTag.attr("property").decodedAttrValue(),
+                    content = openTag.attr("content").decodedAttrValue(),
+                    text = text,
+                    refines = openTag.attr("refines").decodedAttrValue()
+                )
+            }
+            .toList()
     }
 
     private fun parseEpubRootfilePath(containerXml: String): String? {
@@ -463,7 +501,7 @@ object DesktopFolderMetadataExtractor {
         return SharedJvmBookLoader.load(
             file = file,
             type = type,
-            semanticMode = SharedJvmBookLoadSemanticMode.SKIP
+            semanticMode = SharedBookLoadSemanticMode.SKIP
         )
             .chapters
             .firstOrNull { it.plainText.isNotBlank() }
@@ -655,16 +693,7 @@ object DesktopFolderMetadataExtractor {
             .orEmpty()
     }
 
-    private fun String.metaContent(name: String): String? {
-        return Regex("""<meta\s+[^>]*>""", RegexOption.IGNORE_CASE)
-            .findAll(this)
-            .firstOrNull { it.value.attr("name").equals(name, ignoreCase = true) }
-            ?.value
-            ?.attr("content")
-            ?.decodeEntities()
-            ?.trim()
-            ?.takeIf { it.isNotBlank() }
-    }
+    private fun String.decodedAttrValue(): String? = decodeEntities().trim().takeIf { it.isNotEmpty() }
 
     private fun String.decodeEntities(): String {
         return replace("&nbsp;", " ")

@@ -35,6 +35,7 @@ import timber.log.Timber
 import java.io.File
 
 private const val TXT_FORMAT_TRACE_TAG = "TxtFormatTrace"
+private const val BLANK_PAGE_DIAG_TAG = "EpubBlankDiag"
 private const val MAX_INITIAL_WEBVIEW_CHUNKS = 8
 private const val ESTIMATED_READER_CHUNK_ELEMENT_HEIGHT_PX = 72
 
@@ -153,6 +154,18 @@ suspend fun loadChapterContent(
             val bodyNodes = doc.body().childNodes().toList()
             val htmlChunks = splitBodyNodesIntoReaderChunks(bodyNodes)
             val chunkPreviewSource = htmlChunks.firstOrNull()?.html.orEmpty()
+            run {
+                val firstChild = doc.body().children().firstOrNull()
+                Timber.tag(BLANK_PAGE_DIAG_TAG).d(
+                    "event=android_chunk_diag chapter=${chapterIndex + 1} file=${chapter.contentFilePath().txtFormatTracePreview()} " +
+                        "headChars=${head.length} headHasViewportMeta=${head.contains("name=\"viewport\"")} " +
+                        "bodyElementChildren=${doc.body().children().size} " +
+                        "firstChildTag=${firstChild?.tagName()} firstChildDir=${firstChild?.attr("dir").orEmpty()} " +
+                        "chunks=${htmlChunks.size} " +
+                        "chunkChars=[${htmlChunks.joinToString(",") { it.html.length.toString() }}] " +
+                        "elementCounts=[${htmlChunks.joinToString(",") { it.elementCount.toString() }}]"
+                )
+            }
             Timber.tag(TXT_FORMAT_TRACE_TAG).d(
                 "event=android_txt_chunk_split chapter=${chapterIndex + 1} file=${chapter.contentFilePath().txtFormatTracePreview()} " +
                     "headChars=${head.length} bodyNodes=${bodyNodes.size} chunks=${htmlChunks.size} " +

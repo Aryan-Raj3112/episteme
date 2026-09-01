@@ -50,8 +50,9 @@ data class SharedPdfTextDraft(
 
 object SharedPdfTextAnnotationDefaults {
     private const val AndroidTextBoxFontReferencePx = 500f
-    private const val MinPageRelativeFontSize = 0.012f
-    private const val MaxPageRelativeFontSize = 0.12f
+    const val MinPageRelativeFontSize = 0.012f
+    const val MaxPageRelativeFontSize = 0.12f
+    private const val DefaultDisplayFontSize = 16f
 
     val fontSizes: List<Float> = listOf(12f, 14f, 16f, 18f, 20f, 24f, 30f)
 
@@ -176,24 +177,37 @@ object SharedPdfTextAnnotationDefaults {
     }
 
     internal fun displayFontSizeToPageRelative(fontSize: Float): Float {
-        return (fontSize / AndroidTextBoxFontReferencePx)
-            .coerceIn(MinPageRelativeFontSize, MaxPageRelativeFontSize)
+        val safeDisplayFontSize = fontSize.takeIf { it.isFinite() } ?: DefaultDisplayFontSize
+        return sanitizePageRelativeFontSize(safeDisplayFontSize / AndroidTextBoxFontReferencePx)
     }
 
     internal fun pageRelativeFontSizeToDisplay(fontSize: Float): Float {
-        return if (fontSize in 0f..1f) {
-            (fontSize * AndroidTextBoxFontReferencePx).coerceIn(8f, 48f)
+        val safeFontSize = fontSize.takeIf { it.isFinite() } ?: displayFontSizeToPageRelative(DefaultDisplayFontSize)
+        return if (safeFontSize in 0f..1f) {
+            (sanitizePageRelativeFontSize(safeFontSize) * AndroidTextBoxFontReferencePx).coerceIn(8f, 48f)
         } else {
-            fontSize.coerceIn(8f, 96f)
+            safeFontSize.coerceIn(8f, 96f)
         }
     }
 
     internal fun legacyFontSizeToPageRelative(fontSize: Float): Float {
-        return if (fontSize in 0f..1f) {
-            fontSize.coerceIn(MinPageRelativeFontSize, MaxPageRelativeFontSize)
+        val safeFontSize = fontSize.takeIf { it.isFinite() } ?: DefaultDisplayFontSize
+        return if (safeFontSize in 0f..1f) {
+            sanitizePageRelativeFontSize(safeFontSize)
         } else {
-            displayFontSizeToPageRelative(fontSize)
+            displayFontSizeToPageRelative(safeFontSize)
         }
+    }
+
+    /**
+     * Text sizes are stored as a fraction of the PDF page height. Keep that
+     * invariant at every persistence/render boundary so corrupt or legacy
+     * absolute-pixel values cannot become full-page text overlays.
+     */
+    fun sanitizePageRelativeFontSize(fontSize: Float): Float {
+        val safeFontSize = fontSize.takeIf { it.isFinite() }
+            ?: displayFontSizeToPageRelative(DefaultDisplayFontSize)
+        return safeFontSize.coerceIn(MinPageRelativeFontSize, MaxPageRelativeFontSize)
     }
 }
 
@@ -401,9 +415,41 @@ fun SharedPdfAnnotation.sharedPdfTextPageRelativeFontSize(): Float {
         ?: SharedPdfTextAnnotationDefaults.displayFontSizeToPageRelative(fontSize)
 }
 
+/** Canonicalizes text annotation geometry and font units before state/render use. */
+fun SharedPdfAnnotation.sanitizedSharedPdfTextAnnotation(): SharedPdfAnnotation {
+    if (kind != PdfAnnotationKind.TEXT) return this
+    val safePageRelativeFontSize = sharedPdfTextPageRelativeFontSize()
+    return copy(
+        bounds = bounds?.sanitizedForSharedPdf(allowEmpty = true),
+        boundsList = boundsList.mapNotNull { it.sanitizedForSharedPdf(allowEmpty = true) },
+        fontSize = SharedPdfTextAnnotationDefaults.pageRelativeFontSizeToDisplay(safePageRelativeFontSize),
+        pageRelativeFontSize = safePageRelativeFontSize
+    )
+}
+
 fun SharedPdfAnnotation.sharedPdfTextFontSizePx(canvasSize: IntSize): Float {
     val pageHeightPx = canvasSize.height.coerceAtLeast(1).toFloat()
     return (sharedPdfTextPageRelativeFontSize() * pageHeightPx).coerceAtLeast(1f)
+}
+
+internal fun PdfPageBounds.sanitizedForSharedPdf(allowEmpty: Boolean = false): PdfPageBounds? {
+    if (!left.isFinite() || !top.isFinite() || !right.isFinite() || !bottom.isFinite()) return null
+    val normalizedLeft = minOf(left, right).coerceIn(0f, 1f)
+    val normalizedTop = minOf(top, bottom).coerceIn(0f, 1f)
+    val normalizedRight = maxOf(left, right).coerceIn(normalizedLeft, 1f)
+    val normalizedBottom = maxOf(top, bottom).coerceIn(normalizedTop, 1f)
+    val hasArea = if (allowEmpty) {
+        normalizedRight >= normalizedLeft && normalizedBottom >= normalizedTop
+    } else {
+        normalizedRight > normalizedLeft && normalizedBottom > normalizedTop
+    }
+    if (!hasArea) return null
+    return PdfPageBounds(
+        left = normalizedLeft,
+        top = normalizedTop,
+        right = normalizedRight,
+        bottom = normalizedBottom
+    )
 }
 
 private fun PdfPageBounds.coercedToPage(): PdfPageBounds {

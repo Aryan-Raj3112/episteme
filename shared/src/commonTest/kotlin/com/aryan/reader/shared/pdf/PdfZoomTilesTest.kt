@@ -63,8 +63,32 @@ class PdfZoomTilesTest {
         assertEquals(2.5f, pdfVerticalDoubleTapTargetScale(0.9f))
         assertEquals(2.5f, pdfVerticalDoubleTapTargetScale(1f))
         assertEquals(1f, pdfVerticalDoubleTapTargetScale(2.5f))
-        assertEquals(2.5f, pdfVerticalDoubleTapTargetScale(0.8f, fitScale = 0.8f))
         assertEquals(0.8f, pdfVerticalDoubleTapTargetScale(2.5f, fitScale = 0.8f))
+    }
+
+    @Test
+    fun verticalDoubleTapCyclesFitThenFullThenMaxWhenFitIsBelowFullZoom() {
+        val fit = 0.7f
+        assertEquals(1f, pdfVerticalDoubleTapTargetScale(fit, fitScale = fit))
+        assertEquals(2.5f, pdfVerticalDoubleTapTargetScale(1f, fitScale = fit))
+        assertEquals(fit, pdfVerticalDoubleTapTargetScale(2.5f, fitScale = fit))
+    }
+
+    @Test
+    fun verticalDoubleTapCycleAdvancesFromPinchedScalesViaNearestState() {
+        val fit = 0.7f
+        assertEquals(2.5f, pdfVerticalDoubleTapTargetScale(0.9f, fitScale = fit))
+        assertEquals(fit, pdfVerticalDoubleTapTargetScale(1.8f, fitScale = fit))
+        assertEquals(1f, pdfVerticalDoubleTapTargetScale(0.72f, fitScale = fit))
+    }
+
+    @Test
+    fun verticalDoubleTapKeepsToggleWhenFitMeetsOrExceedsFullZoom() {
+        assertEquals(2.5f, pdfVerticalDoubleTapTargetScale(1f, fitScale = 1f))
+        assertEquals(1f, pdfVerticalDoubleTapTargetScale(2.5f, fitScale = 1f))
+        assertEquals(1f, pdfVerticalDoubleTapTargetScale(1.2f, fitScale = 1f))
+        assertEquals(2.5f, pdfVerticalDoubleTapTargetScale(1f, fitScale = 1.2f))
+        assertEquals(1.2f, pdfVerticalDoubleTapTargetScale(2.5f, fitScale = 1.2f))
     }
 
     @Test

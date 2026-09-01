@@ -17,8 +17,11 @@ import kotlinx.serialization.json.longOrNull
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import com.aryan.reader.shared.pdf.SharedPdfHighlighterPalette
+import com.aryan.reader.shared.pdf.SharedPdfCloudSidecarSnapshot
 import com.aryan.reader.shared.pdf.SharedPdfReaderViewport
+import com.aryan.reader.shared.pdf.PdfReverseColorMode
 import com.aryan.reader.shared.reader.ReaderBookmark
+import com.aryan.reader.shared.reader.DefaultPdfReaderSettings
 import com.aryan.reader.shared.reader.ReaderPageSpreadMode
 import com.aryan.reader.shared.reader.ReaderReadingMode
 import com.aryan.reader.shared.reader.ReaderSettings
@@ -58,17 +61,20 @@ data class SharedLibrarySnapshot(
     val customAppThemes: List<CustomAppTheme> = emptyList(),
     val customReaderThemes: List<ReaderTheme> = emptyList(),
     val readerDefaultSettings: ReaderSettings = ReaderSettings(),
-    val pdfReaderDefaultSettings: ReaderSettings = ReaderSettings(themeId = "no_theme"),
+    val pdfReaderDefaultSettings: ReaderSettings = DefaultPdfReaderSettings,
     val desktopReaderDefaultsVersion: Int = 0,
     val readerToolbarPreferences: ReaderToolbarPreferences = ReaderToolbarPreferences(),
     val readerHighlightPalette: ReaderHighlightPalette = ReaderHighlightPalette(),
     val pdfHighlighterPalette: SharedPdfHighlighterPalette = SharedPdfHighlighterPalette(),
+    val pdfHighlighterSnapEnabled: Boolean = false,
     val readerTtsReplacementPreferences: ReaderTtsReplacementPreferences = ReaderTtsReplacementPreferences(),
-    val readerBookReplacementPreferences: ReaderBookReplacementPreferences = ReaderBookReplacementPreferences()
+    val readerBookReplacementPreferences: ReaderBookReplacementPreferences = ReaderBookReplacementPreferences(),
+    /** Raw PDF sidecars transported alongside the library snapshot. */
+    val pdfSidecars: List<SharedPdfCloudSidecarSnapshot> = emptyList()
 )
 
 object SharedLibrarySnapshotJson {
-    private const val SCHEMA_VERSION = 30
+    private const val SCHEMA_VERSION = 31
 
     private val json = Json {
         prettyPrint = true
@@ -148,8 +154,8 @@ object SharedLibrarySnapshotJson {
             readerDefaultSettings = readerDefaultSettings.migrateLegacyDefaultReadingMode(schemaVersion),
             pdfReaderDefaultSettings = root["pdfReaderDefaultSettings"]
                 ?.takeUnless { it is JsonNull }
-                ?.asReaderSettingsOrNull()
-                ?: ReaderSettings(themeId = "no_theme"),
+                ?.asReaderSettingsOrNull(DefaultPdfReaderSettings)
+                ?: DefaultPdfReaderSettings,
             desktopReaderDefaultsVersion = root.int("desktopReaderDefaultsVersion", 0),
             readerToolbarPreferences = root["readerToolbarPreferences"]
                 ?.takeUnless { it is JsonNull }
@@ -163,6 +169,7 @@ object SharedLibrarySnapshotJson {
                 ?.takeUnless { it is JsonNull }
                 ?.asSharedPdfHighlighterPaletteOrNull()
                 ?: SharedPdfHighlighterPalette(),
+            pdfHighlighterSnapEnabled = root.boolean("pdfHighlighterSnapEnabled", false),
             readerTtsReplacementPreferences = root["readerTtsReplacementPreferences"]
                 ?.takeUnless { it is JsonNull }
                 ?.let { ReaderTtsReplacementPreferencesJson.fromJsonElement(it) }
@@ -170,7 +177,9 @@ object SharedLibrarySnapshotJson {
             readerBookReplacementPreferences = root["readerBookReplacementPreferences"]
                 ?.takeUnless { it is JsonNull }
                 ?.let { ReaderBookReplacementPreferencesJson.decodeOrEmpty(it.toString()) }
-                ?: ReaderBookReplacementPreferences()
+                ?: ReaderBookReplacementPreferences(),
+            pdfSidecars = root.array("pdfSidecars")
+                .mapNotNull { it.asSharedPdfCloudSidecarSnapshotOrNull() }
         )
     }
 
@@ -221,12 +230,14 @@ object SharedLibrarySnapshotJson {
                 "readerToolbarPreferences" to snapshot.readerToolbarPreferences.sanitized().toJsonObject(),
                 "readerHighlightPalette" to snapshot.readerHighlightPalette.sanitized().toJsonObject(),
                 "pdfHighlighterPalette" to snapshot.pdfHighlighterPalette.sanitized().toJsonObject(),
+                "pdfHighlighterSnapEnabled" to JsonPrimitive(snapshot.pdfHighlighterSnapEnabled),
                 "readerTtsReplacementPreferences" to ReaderTtsReplacementPreferencesJson.toJsonElement(
                     snapshot.readerTtsReplacementPreferences,
                 ),
                 "readerBookReplacementPreferences" to json.parseToJsonElement(
                     ReaderBookReplacementPreferencesJson.encode(snapshot.readerBookReplacementPreferences)
-                )
+                ),
+                "pdfSidecars" to JsonArray(snapshot.pdfSidecars.map { it.toJsonObject() })
             )
         )
         return json.encodeToString(JsonElement.serializer(), root)
@@ -369,7 +380,9 @@ private fun JsonElement.asShelfRecordOrNull(): ShelfRecord? {
         id = obj.string("id") ?: return null,
         name = obj.string("name") ?: return null,
         isSmart = obj.boolean("isSmart", false),
-        smartRulesJson = obj.string("smartRulesJson")
+        smartRulesJson = obj.string("smartRulesJson"),
+        modifiedAt = obj.long("modifiedAt", obj.long("lastModifiedTimestamp")),
+        isDeleted = obj.boolean("isDeleted", false),
     )
 }
 
@@ -379,6 +392,17 @@ private fun JsonElement.asCloudBookTombstoneOrNull(): CloudBookTombstone? {
         bookId = obj.string("bookId") ?: return null,
         type = obj.string("type"),
         deletedAt = obj.long("deletedAt"),
+    )
+}
+
+private fun JsonElement.asSharedPdfCloudSidecarSnapshotOrNull(): SharedPdfCloudSidecarSnapshot? {
+    val obj = runCatching { jsonObject }.getOrNull() ?: return null
+    val bookId = obj.string("bookId")?.takeIf { it.isNotBlank() } ?: return null
+    val data = obj.string("data")?.takeIf { it.isNotBlank() } ?: return null
+    return SharedPdfCloudSidecarSnapshot(
+        bookId = bookId,
+        timestamp = obj.long("timestamp"),
+        data = data,
     )
 }
 
@@ -483,6 +507,16 @@ private fun JsonElement.asAppFontPreferenceOrNull(): AppFontPreference? {
     ).sanitized()
 }
 
+private fun SharedPdfCloudSidecarSnapshot.toJsonObject(): JsonObject {
+    return JsonObject(
+        mapOf(
+            "bookId" to JsonPrimitive(bookId),
+            "timestamp" to JsonPrimitive(timestamp.coerceAtLeast(0L)),
+            "data" to JsonPrimitive(data),
+        )
+    )
+}
+
 private fun BookItem.toJsonObject(): JsonObject {
     return JsonObject(
         mapOf(
@@ -539,7 +573,9 @@ private fun ShelfRecord.toJsonObject(): JsonObject {
             "id" to JsonPrimitive(id),
             "name" to JsonPrimitive(name),
             "isSmart" to JsonPrimitive(isSmart),
-            "smartRulesJson" to smartRulesJson.asJson()
+            "smartRulesJson" to smartRulesJson.asJson(),
+            "modifiedAt" to JsonPrimitive(modifiedAt),
+            "isDeleted" to JsonPrimitive(isDeleted),
         )
     )
 }
@@ -671,9 +707,10 @@ private fun List<Int>.asIntJsonArray(): JsonArray {
     return JsonArray(map { JsonPrimitive(it) })
 }
 
-private fun JsonElement.asReaderSettingsOrNull(): ReaderSettings? {
+private fun JsonElement.asReaderSettingsOrNull(
+    defaults: ReaderSettings = ReaderSettings(),
+): ReaderSettings? {
     val obj = runCatching { jsonObject }.getOrNull() ?: return null
-    val defaults = ReaderSettings()
     return ReaderSettings(
         fontSize = obj.int("fontSize") ?: defaults.fontSize,
         fontWeight = obj.int("fontWeight") ?: defaults.fontWeight,
@@ -726,8 +763,16 @@ private fun JsonElement.asReaderSettingsOrNull(): ReaderSettings? {
             "pdfFirstPageStandaloneInSpread",
             defaults.pdfFirstPageStandaloneInSpread
         ),
+        pdfReverseColorMode = obj.string("pdfReverseColorMode")
+            ?.let(PdfReverseColorMode::fromId)
+            ?: defaults.pdfReverseColorMode,
+        pdfPreserveImageColors = obj.boolean(
+            "pdfPreserveImageColors",
+            defaults.pdfPreserveImageColors
+        ),
         seamlessChapterNavigation = obj.boolean("seamlessChapterNavigation", defaults.seamlessChapterNavigation),
-        chapterTurnDragMultiplier = obj.float("chapterTurnDragMultiplier") ?: defaults.chapterTurnDragMultiplier
+        chapterTurnDragMultiplier = obj.float("chapterTurnDragMultiplier") ?: defaults.chapterTurnDragMultiplier,
+        hideImages = obj.boolean("hideImages", defaults.hideImages)
     )
 }
 
@@ -878,8 +923,11 @@ private fun ReaderSettings?.asJson(): JsonElement {
             "pdfVerticalPageGapVisible" to JsonPrimitive(settings.pdfVerticalPageGapVisible),
             "pdfPageNumberOverlayVisible" to JsonPrimitive(settings.pdfPageNumberOverlayVisible),
             "pdfFirstPageStandaloneInSpread" to JsonPrimitive(settings.pdfFirstPageStandaloneInSpread),
+            "pdfReverseColorMode" to JsonPrimitive(settings.pdfReverseColorMode.id),
+            "pdfPreserveImageColors" to JsonPrimitive(settings.pdfPreserveImageColors),
             "seamlessChapterNavigation" to JsonPrimitive(settings.seamlessChapterNavigation),
-            "chapterTurnDragMultiplier" to JsonPrimitive(settings.chapterTurnDragMultiplier)
+            "chapterTurnDragMultiplier" to JsonPrimitive(settings.chapterTurnDragMultiplier),
+            "hideImages" to JsonPrimitive(settings.hideImages)
         )
     )
 }

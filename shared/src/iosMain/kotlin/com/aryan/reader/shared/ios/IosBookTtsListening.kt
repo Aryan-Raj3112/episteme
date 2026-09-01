@@ -22,10 +22,12 @@ import com.aryan.reader.shared.SharedBookTtsListeningProgress
 import com.aryan.reader.shared.SharedTtsListenStartPolicy
 import com.aryan.reader.shared.calculateSharedTtsAudiobookProgress
 import com.aryan.reader.shared.currentTimestamp
+import com.aryan.reader.shared.advanceSharedSleepTimer
 import com.aryan.reader.shared.reduce
 import com.aryan.reader.shared.splitSharedTtsListenChunks
 import com.aryan.reader.shared.reader.loadSharedEpubTtsChapters
 import com.aryan.reader.shared.pdf.IosPdfiumRuntime
+import com.aryan.reader.shared.pdf.PdfTextProcessing
 import com.aryan.reader.shared.pdfium.c.FPDF_DOCUMENT
 import com.aryan.reader.shared.pdfium.c.FPDF_CloseDocument
 import com.aryan.reader.shared.pdfium.c.FPDF_ClosePage
@@ -75,6 +77,14 @@ import platform.AVFAudio.AVSpeechSynthesizerDelegateProtocol
 import platform.AVFAudio.AVSpeechUtterance
 import platform.AVFAudio.setActive
 import platform.Foundation.NSFileManager
+import platform.MediaPlayer.MPMediaItemPropertyArtist
+import platform.MediaPlayer.MPMediaItemPropertyTitle
+import platform.MediaPlayer.MPNowPlayingInfoCenter
+import platform.MediaPlayer.MPNowPlayingInfoPropertyPlaybackRate
+import platform.MediaPlayer.MPNowPlayingInfoPropertyPlaybackQueueCount
+import platform.MediaPlayer.MPNowPlayingInfoPropertyPlaybackQueueIndex
+import platform.MediaPlayer.MPRemoteCommandCenter
+import platform.MediaPlayer.MPRemoteCommandHandlerStatusSuccess
 import platform.Foundation.NSRange
 import platform.darwin.NSObject
 import platform.Foundation.NSURL
@@ -83,13 +93,17 @@ import platform.Foundation.NSUserDefaults
 internal const val IOS_TTS_LISTEN_TAG = "ReaderBookTtsIOS"
 
 internal fun iosTtsListenLog(message: String) {
+    IosDiagnosticLogStore.record(IOS_TTS_LISTEN_TAG, message)
     println("[$IOS_TTS_LISTEN_TAG] $message")
 }
 
 internal fun iosTtsListenLogError(message: String, error: Throwable?) {
+    IosDiagnosticLogStore.record(IOS_TTS_LISTEN_TAG, message)
     println("[$IOS_TTS_LISTEN_TAG] $message")
     error?.let {
-        println("[$IOS_TTS_LISTEN_TAG]   ${it::class.simpleName}: ${it.message}")
+        val detail = "  ${it::class.simpleName}: ${it.message}"
+        IosDiagnosticLogStore.record(IOS_TTS_LISTEN_TAG, detail)
+        println("[$IOS_TTS_LISTEN_TAG]$detail")
         it.printStackTrace()
     }
 }
@@ -149,6 +163,9 @@ internal class IosBookTtsListeningController {
     private var generation = 0L
     private var activeUtterance: AVSpeechUtterance? = null
     private var currentBookId: String? = null
+    private var currentBookTitle = ""
+    private var currentBookAuthor: String? = null
+    private var remoteCommandsInstalled = false
     private var currentChunks: List<IosTtsListenChunk> = emptyList()
     private var currentChunkIndex = -1
     private var currentChapterIndex = 0
@@ -235,6 +252,8 @@ internal class IosBookTtsListeningController {
                 return@launch
             }
             currentBookId = bookId
+            currentBookTitle = book.title?.takeIf(String::isNotBlank) ?: book.displayName
+            currentBookAuthor = book.author
             chapterCount = content.chapters.size
             currentChapterIndex = readableChapter
             currentChunks = content.chapters[readableChapter].chunks
@@ -256,9 +275,11 @@ internal class IosBookTtsListeningController {
             )
             persistNow(progressFor(readableChapter, startChunk, completed = false))
             configureAudioSession(active = true)
+            installBookTtsRemoteCommands()
             generation += 1
             iosTtsListenLog("start() speaking chapter=$readableChapter chunk=$startChunk of ${currentChunks.size} chunks")
             speakChunkAt(startChunk, fromOffset = 0, wantsPlayback = true)
+            updateBookTtsNowPlaying()
         }
     }
 
@@ -280,6 +301,7 @@ internal class IosBookTtsListeningController {
         synthesizer.stopSpeakingAtBoundary(AVSpeechBoundary.AVSpeechBoundaryImmediate)
         state = state.copy(isPlaying = false, isLoading = false)
         persistNow(progressFor(state.chapterIndex, currentChunkIndex.coerceAtLeast(0), completed = false))
+        updateBookTtsNowPlaying()
     }
 
     fun resume() {
@@ -289,6 +311,7 @@ internal class IosBookTtsListeningController {
         iosTtsListenLog("resume() chunk=$currentChunkIndex wordOffset=$latestWordOffset")
         wantsPlayback = true
         speakChunkAt(currentChunkIndex, latestWordOffset, wantsPlayback = true)
+        updateBookTtsNowPlaying()
     }
 
     fun stop() {
@@ -305,6 +328,7 @@ internal class IosBookTtsListeningController {
         wantsPlayback = false
         state = SharedBookTtsListenState(sessionEndedByStop = true)
         deactivateAudioSession()
+        clearBookTtsNowPlaying()
     }
 
     fun release() {
@@ -379,13 +403,16 @@ internal class IosBookTtsListeningController {
         }
         sleepTimerJob?.cancel()
         sleepTimerJob = scope.launch {
-            var remainingMs = minutes * 60_000L
-            while (remainingMs > 0) {
-                state = state.copy(sleepTimerRemainingMs = remainingMs)
+            var remainingSeconds = minutes * 60
+            while (remainingSeconds > 0) {
+                state = state.copy(sleepTimerRemainingMs = remainingSeconds * 1_000L)
                 delay(1_000)
-                remainingMs -= 1_000
+                // Keep the timer anchored to actual speech, matching Android's
+                // shared contract. Pausing TTS must pause the countdown too.
+                remainingSeconds = advanceSharedSleepTimer(remainingSeconds, state.isPlaying)
             }
             state = state.copy(sleepTimerRemainingMs = 0L)
+            sleepTimerJob = null
             stopForSleepTimer()
         }
     }
@@ -501,6 +528,7 @@ internal class IosBookTtsListeningController {
         )
         publishTranscript(chunkIndex)
         schedulePersist(chunkIndex)
+        updateBookTtsNowPlaying()
     }
 
     private fun utteranceFinished(utterance: AVSpeechUtterance) {
@@ -566,7 +594,13 @@ internal class IosBookTtsListeningController {
         generation += 1
         invalidateActiveUtterance()
         synthesizer.stopSpeakingAtBoundary(AVSpeechBoundary.AVSpeechBoundaryImmediate)
-        state = state.copy(isLoading = false, isPlaying = false, sleepTimerRemainingMs = 0L)
+        currentChunks = emptyList()
+        currentChunkIndex = -1
+        currentBookId = null
+        wantsPlayback = false
+        state = SharedBookTtsListenState(sessionEndedByStop = true)
+        deactivateAudioSession()
+        clearBookTtsNowPlaying()
     }
 
     private fun chunkProgress(chunkIndex: Int): Float =
@@ -628,7 +662,7 @@ internal class IosBookTtsListeningController {
 
     private var lastContentError: String? = null
 
-    private fun loadContentOrNull(
+    private suspend fun loadContentOrNull(
         book: BookItem,
         replacements: ReaderTtsReplacementPreferences,
     ): IosTtsListenBook? {
@@ -652,7 +686,7 @@ internal class IosBookTtsListeningController {
         return result.getOrNull()
     }
 
-    private fun buildIosTtsListenContent(
+    private suspend fun buildIosTtsListenContent(
         book: BookItem,
         replacements: ReaderTtsReplacementPreferences,
     ): IosTtsListenBook {
@@ -735,7 +769,7 @@ internal class IosBookTtsListeningController {
         }
     }
 
-    private fun buildIosPdfListenChapters(
+    private suspend fun buildIosPdfListenChapters(
         book: BookItem,
         replacements: ReaderTtsReplacementPreferences,
     ): List<IosTtsListenChapter> {
@@ -746,6 +780,7 @@ internal class IosBookTtsListeningController {
             val normalized = rawText
                 .replace("\r\n", "\n")
                 .replace(Regex("\\n{3,}"), "\n\n")
+                .let(PdfTextProcessing::joinHyphenatedLineBreaks)
                 .trim()
             var searchFrom = 0
             val chunks = splitSharedTtsListenChunks(normalized).map { chunkText ->
@@ -769,7 +804,7 @@ internal class IosBookTtsListeningController {
         }
     }
 
-    private fun extractIosPdfPageTexts(path: String): List<String> {
+    private suspend fun extractIosPdfPageTexts(path: String): List<String> {
         val resolved = path
             .trim()
             .takeIf { it.isNotBlank() }
@@ -781,13 +816,16 @@ internal class IosBookTtsListeningController {
                 }
             }
             ?: return emptyList()
-        IosPdfiumRuntime.ensureInitialized()
-        val document = FPDF_LoadDocument(resolved, null) ?: return emptyList()
-        return try {
-            val pageCount = FPDF_GetPageCount(document).toInt()
-            (0 until pageCount).map { pageIndex -> extractIosPdfPageText(document, pageIndex) }
-        } finally {
-            FPDF_CloseDocument(document)
+        // PDFium is not thread-safe: serialize against rendering, search, and outline work
+        // exactly like the shared reader pipeline does.
+        return IosPdfiumRuntime.withPdfium {
+            val document = FPDF_LoadDocument(resolved, null) ?: return@withPdfium emptyList()
+            try {
+                val pageCount = FPDF_GetPageCount(document).toInt()
+                (0 until pageCount).map { pageIndex -> extractIosPdfPageText(document, pageIndex) }
+            } finally {
+                FPDF_CloseDocument(document)
+            }
         }
     }
 
@@ -827,6 +865,67 @@ internal class IosBookTtsListeningController {
     private fun deactivateAudioSession() {
         if (audioSessionActive) {
             configureAudioSession(active = false)
+        }
+    }
+
+    /**
+     * Lock-screen/Control-Center controls for book listening, matching the media
+     * notification Android shows for its TTS foreground service.
+     */
+    private fun installBookTtsRemoteCommands() {
+        if (remoteCommandsInstalled) return
+        remoteCommandsInstalled = true
+        val commands = MPRemoteCommandCenter.sharedCommandCenter()
+        commands.playCommand.addTargetWithHandler {
+            resume()
+            MPRemoteCommandHandlerStatusSuccess
+        }
+        commands.pauseCommand.addTargetWithHandler {
+            pause()
+            MPRemoteCommandHandlerStatusSuccess
+        }
+        commands.stopCommand.addTargetWithHandler {
+            stop()
+            MPRemoteCommandHandlerStatusSuccess
+        }
+        commands.nextTrackCommand.addTargetWithHandler {
+            moveByChunk(1)
+            MPRemoteCommandHandlerStatusSuccess
+        }
+        commands.previousTrackCommand.addTargetWithHandler {
+            moveByChunk(-1)
+            MPRemoteCommandHandlerStatusSuccess
+        }
+    }
+
+    private fun updateBookTtsNowPlaying() {
+        if (!remoteCommandsInstalled) return
+        MPNowPlayingInfoCenter.defaultCenter().nowPlayingInfo = mapOf(
+            MPMediaItemPropertyTitle to currentBookTitle,
+            MPMediaItemPropertyArtist to state.chapterTitle.orEmpty().ifBlank { "Reading" },
+            MPNowPlayingInfoPropertyPlaybackQueueIndex to state.chunkIndex,
+            MPNowPlayingInfoPropertyPlaybackQueueCount to state.chunkCount,
+            MPNowPlayingInfoPropertyPlaybackRate to if (state.isPlaying) state.speechRate.toDouble() else 0.0,
+        )
+        val commands = MPRemoteCommandCenter.sharedCommandCenter()
+        commands.previousTrackCommand.enabled = state.chunkIndex > 0
+        commands.nextTrackCommand.enabled = state.chunkIndex in 0 until (state.chunkCount - 1)
+    }
+
+    private fun clearBookTtsNowPlaying() {
+        if (!remoteCommandsInstalled) return
+        remoteCommandsInstalled = false
+        MPNowPlayingInfoCenter.defaultCenter().nowPlayingInfo = null
+        val commands = MPRemoteCommandCenter.sharedCommandCenter()
+        for (command in listOf(
+            commands.playCommand,
+            commands.pauseCommand,
+            commands.stopCommand,
+            commands.nextTrackCommand,
+            commands.previousTrackCommand,
+        )) {
+            command.removeTarget(null)
+            command.enabled = true
         }
     }
 }

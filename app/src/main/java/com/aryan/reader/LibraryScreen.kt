@@ -148,6 +148,7 @@ import coil.decode.SvgDecoder
 import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.data.TagEntity
 import com.aryan.reader.shared.AnnotationExportFormat
+import com.aryan.reader.shared.CloudFolderSyncSelection
 import com.aryan.reader.opds.OpdsAcquisition
 import com.aryan.reader.opds.OpdsCatalog
 import com.aryan.reader.opds.OpdsDownloadState
@@ -155,6 +156,7 @@ import com.aryan.reader.opds.OpdsEntry
 import com.aryan.reader.opds.OpdsRepository
 import com.aryan.reader.opds.OpdsViewModel
 import com.aryan.reader.shared.LOCAL_FOLDER_SYNC_DATA_DIR
+import com.aryan.reader.shared.ui.SharedAnnotationExportFormatDialog
 import com.aryan.reader.shared.ui.SharedMobileLibraryFilterChips
 import com.aryan.reader.shared.ui.SharedMobileLibraryBookListCardFrame
 import com.aryan.reader.shared.ui.SharedMobileLibraryFilterDialog
@@ -162,11 +164,13 @@ import com.aryan.reader.shared.ui.SharedMobileLibraryFilterLabels
 import com.aryan.reader.shared.ui.SharedMobileLibrarySearchTopBar
 import com.aryan.reader.shared.ui.SharedMobileLibrarySortControl
 import com.aryan.reader.shared.ui.SharedMobileShelfListCardFrame
+import com.aryan.reader.shared.ui.sharedAnnotationExportFormatOptions
 import com.aryan.reader.shared.opds.SharedOpdsLocalBookMatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import org.jsoup.Jsoup
 import timber.log.Timber
@@ -192,6 +196,18 @@ fun LibraryScreen(
     }
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val canUseCloudFolderSync = uiState.canUseCloudFolderSync()
+    var cloudFolderSelection by remember(uiState.currentUser?.uid) {
+        mutableStateOf(viewModel.cloudFolderSyncSelection())
+    }
+    LaunchedEffect(uiState.currentUser?.uid) {
+        cloudFolderSelection = viewModel.cloudFolderSyncSelection()
+    }
+    LaunchedEffect(Unit) {
+        CloudFolderSyncEvents.stateChanged.collect {
+            cloudFolderSelection = viewModel.cloudFolderSyncSelection()
+        }
+    }
     val selectedItems = uiState.contextualActionItems
     val isContextualModeActive = selectedItems.isNotEmpty()
     val selectedShelves = uiState.contextualActionShelfIds
@@ -324,12 +340,34 @@ fun LibraryScreen(
         }
     }
 
+    val saveJsonAnnotationsLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument(AnnotationExportFormat.JSON.mimeType)
+    ) { uri ->
+        val exportText = pendingAnnotationExportText
+        pendingAnnotationExportText = null
+        if (uri != null && exportText != null) {
+            viewModel.saveAnnotationExport(exportText, uri)
+        }
+    }
+
+    val saveCsvAnnotationsLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument(AnnotationExportFormat.CSV.mimeType)
+    ) { uri ->
+        val exportText = pendingAnnotationExportText
+        pendingAnnotationExportText = null
+        if (uri != null && exportText != null) {
+            viewModel.saveAnnotationExport(exportText, uri)
+        }
+    }
+
     fun exportAnnotationsItem(item: RecentFileItem, format: AnnotationExportFormat) {
         viewModel.prepareAnnotationExport(item, format) { prepared ->
             pendingAnnotationExportText = prepared.contents
             when (format) {
                 AnnotationExportFormat.MARKDOWN -> saveMarkdownAnnotationsLauncher.launch(prepared.fileName)
                 AnnotationExportFormat.TEXT -> saveTextAnnotationsLauncher.launch(prepared.fileName)
+                AnnotationExportFormat.JSON -> saveJsonAnnotationsLauncher.launch(prepared.fileName)
+                AnnotationExportFormat.CSV -> saveCsvAnnotationsLauncher.launch(prepared.fileName)
             }
         }
     }
@@ -435,36 +473,39 @@ fun LibraryScreen(
                 )
             },
             onDeleteCatalogStreams = viewModel::deleteStreamedBooksForCatalog,
+            onShowBanner = viewModel::showBanner,
             onSettingsClick = { navController.navigateIfReady(com.aryan.reader.shared.ui.SharedMobileAppDestination.SETTINGS) },
-            usePdfFileNameAsDisplayName = uiState.usePdfFileNameAsDisplayName
+            usePdfFileNameAsDisplayName = uiState.usePdfFileNameAsDisplayName,
+            cloudFolderSelection = cloudFolderSelection.takeIf { canUseCloudFolderSync },
+            cloudSyncEnabled = uiState.isSyncEnabled,
+            isProUser = canUseCloudFolderSync,
+            onCloudFolderSettingsClick = if (canUseCloudFolderSync) {
+                { navController.navigateIfReady(com.aryan.reader.shared.ui.SharedMobileAppDestination.FOLDER_SYNC_SETTINGS) }
+            } else null,
+            onIncomingCloudFolderClick = if (canUseCloudFolderSync) {
+                { rootId -> viewModel.showIncomingCloudFolderPrompt(rootId) }
+            } else null,
         )
 
 
         showAnnotationExportFormatDialogFor?.let { item ->
-            AlertDialog(
-                onDismissRequest = { showAnnotationExportFormatDialogFor = null },
-                title = { Text(stringResource(R.string.dialog_export_annotations_title)) },
-                text = {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        TextButton(onClick = {
-                            showAnnotationExportFormatDialogFor = null
-                            exportAnnotationsItem(item, AnnotationExportFormat.MARKDOWN)
-                        }) {
-                            Text(stringResource(R.string.export_annotations_markdown))
-                        }
-                        TextButton(onClick = {
-                            showAnnotationExportFormatDialogFor = null
-                            exportAnnotationsItem(item, AnnotationExportFormat.TEXT)
-                        }) {
-                            Text(stringResource(R.string.export_annotations_text))
-                        }
-                    }
-                },
-                confirmButton = {},
-                dismissButton = {
-                    TextButton(onClick = { showAnnotationExportFormatDialogFor = null }) {
-                        Text(stringResource(R.string.action_cancel))
-                    }
+            SharedAnnotationExportFormatDialog(
+                title = stringResource(R.string.dialog_export_annotations_title),
+                cancelLabel = stringResource(R.string.action_cancel),
+                options = sharedAnnotationExportFormatOptions(
+                    markdownLabel = stringResource(R.string.export_annotations_markdown),
+                    markdownDescription = stringResource(R.string.export_annotations_markdown_description),
+                    textLabel = stringResource(R.string.export_annotations_text),
+                    textDescription = stringResource(R.string.export_annotations_text_description),
+                    jsonLabel = stringResource(R.string.export_annotations_json),
+                    jsonDescription = stringResource(R.string.export_annotations_json_description),
+                    csvLabel = stringResource(R.string.export_annotations_csv),
+                    csvDescription = stringResource(R.string.export_annotations_csv_description)
+                ),
+                onDismiss = { showAnnotationExportFormatDialogFor = null },
+                onExport = { format ->
+                    showAnnotationExportFormatDialogFor = null
+                    exportAnnotationsItem(item, format)
                 }
             )
         }
@@ -740,8 +781,14 @@ fun LibraryScreenContent(
     onOpdsBookDownloaded: (Uri, String) -> Unit,
     onStreamOpdsBook: (OpdsEntry, OpdsCatalog?) -> Unit,
     onDeleteCatalogStreams: (String) -> Unit,
+    onShowBanner: (String) -> Unit,
     onSettingsClick: () -> Unit,
     usePdfFileNameAsDisplayName: Boolean,
+    cloudFolderSelection: CloudFolderSyncSelection? = null,
+    cloudSyncEnabled: Boolean = false,
+    isProUser: Boolean = false,
+    onCloudFolderSettingsClick: (() -> Unit)? = null,
+    onIncomingCloudFolderClick: ((String) -> Unit)? = null,
 ) {
     val selectedBookIds = remember(selectedItems) { selectedItems.mapTo(mutableSetOf()) { it.bookId } }
     com.aryan.reader.shared.ui.SharedAndroidLibraryScaffold(
@@ -861,6 +908,11 @@ fun LibraryScreenContent(
                     syncedFolders, rawLibraryFiles, onSelectSyncFolderClick, onRemoveFolderClick,
                     onFolderLocalSyncChange, onEditFolderFiltersClick, onScanNowClick, onSyncMetadataClick,
                     isLoading || isRefreshing,
+                    cloudFolderSelection = cloudFolderSelection,
+                    cloudSyncEnabled = cloudSyncEnabled,
+                    isProUser = isProUser,
+                    onCloudFolderSettingsClick = onCloudFolderSettingsClick,
+                    onIncomingCloudFolderClick = onIncomingCloudFolderClick,
                 )
                 3 -> if (!BuildConfig.IS_OFFLINE) OpdsTab(
                     localLibraryFiles = rawLibraryFiles,
@@ -868,6 +920,8 @@ fun LibraryScreenContent(
                     onReadBook = onItemClick,
                     onStreamBook = onStreamOpdsBook,
                     onDeleteCatalogStreams = onDeleteCatalogStreams,
+                    onShowBanner = onShowBanner,
+                    syncedFolders = syncedFolders,
                 )
             }
         },
@@ -1429,7 +1483,12 @@ internal fun FolderSyncScreen(
     onEditFolderFiltersClick: (SyncedFolder, Set<FileType>) -> Unit,
     onScanNowClick: () -> Unit,
     onSyncMetadataClick: () -> Unit,
-    isLoading: Boolean
+    isLoading: Boolean,
+    cloudFolderSelection: CloudFolderSyncSelection? = null,
+    cloudSyncEnabled: Boolean = false,
+    isProUser: Boolean = false,
+    onCloudFolderSettingsClick: (() -> Unit)? = null,
+    onIncomingCloudFolderClick: ((String) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val dateFormat = remember { SimpleDateFormat("MMM d, h:mm a", Locale.getDefault()) }
@@ -1451,7 +1510,7 @@ internal fun FolderSyncScreen(
         isLoading = isLoading,
         strings = com.aryan.reader.shared.ui.SharedAndroidFolderSyncStrings(
             addFolder = stringResource(R.string.fab_add_folder),
-            addDescription = "Add",
+            addDescription = stringResource(R.string.action_add),
             scanning = stringResource(R.string.scanning),
             scanAll = stringResource(R.string.scan_all),
             syncMetadata = stringResource(R.string.sync_meta),
@@ -1459,7 +1518,7 @@ internal fun FolderSyncScreen(
             emptyMessage = stringResource(R.string.sync_folders_desc),
             selectFolder = stringResource(R.string.action_select_folder),
             localSyncDisabled = stringResource(R.string.folder_local_sync_disabled),
-            optionsDescription = "Options",
+            optionsDescription = stringResource(R.string.content_desc_options),
             editFilters = stringResource(R.string.menu_edit_filters),
             disableLocalSync = stringResource(R.string.menu_disable_folder_local_sync),
             enableLocalSync = stringResource(R.string.menu_enable_folder_local_sync),
@@ -1476,6 +1535,13 @@ internal fun FolderSyncScreen(
             disableDialogDescription = stringResource(R.string.dialog_disable_folder_local_sync_desc, LOCAL_FOLDER_SYNC_DATA_DIR),
             disableRemoveData = stringResource(R.string.action_disable_remove_sync_data),
             disableKeepData = stringResource(R.string.action_disable_keep_sync_data),
+            cloudSettings = stringResource(R.string.folder_sync_settings_title),
+            cloudSyncOn = stringResource(R.string.folder_sync_cloud_backup_on),
+            cloudSyncOff = stringResource(R.string.folder_sync_cloud_sync_off),
+            cloudDeviceOnly = stringResource(R.string.folder_sync_device_only),
+            cloudDownloaded = stringResource(R.string.folder_sync_cloud_downloaded),
+            cloudAvailable = stringResource(R.string.folder_sync_cloud_available),
+            cloudChooseAction = stringResource(R.string.folder_sync_cloud_choose_action),
         ),
         onAddFolder = onAddFolderClick,
         onRemoveFolder = onRemoveFolderClick,
@@ -1485,6 +1551,11 @@ internal fun FolderSyncScreen(
         onSyncMetadata = onSyncMetadataClick,
         formatLastScan = { dateFormat.format(Date(it)) },
         syncIcon = { Icon(painterResource(R.drawable.sync), null, Modifier.size(18.dp)) },
+        cloudFolderSelection = cloudFolderSelection,
+        cloudSyncEnabled = cloudSyncEnabled,
+        isProUser = isProUser,
+        onCloudFolderSettingsClick = onCloudFolderSettingsClick,
+        onOpenIncomingCloudFolder = onIncomingCloudFolderClick,
     )
 }
 
@@ -1526,6 +1597,8 @@ fun OpdsTab(
     onReadBook: (RecentFileItem) -> Unit,
     onStreamBook: (OpdsEntry, OpdsCatalog?) -> Unit,
     onDeleteCatalogStreams: (String) -> Unit,
+    onShowBanner: (String) -> Unit,
+    syncedFolders: List<SyncedFolder>,
     opdsViewModel: OpdsViewModel = viewModel()
 ) {
     val uiState by opdsViewModel.uiState.collectAsStateWithLifecycle()
@@ -1552,10 +1625,18 @@ fun OpdsTab(
         onRemoveCatalog = { opdsViewModel.removeCatalog(it.id) },
         onDeleteCatalogStreams = onDeleteCatalogStreams,
         onDownloadBook = { entry, acquisition ->
-            opdsViewModel.downloadBook(entry, acquisition, context) { downloadedUri ->
-                onBookDownloaded(downloadedUri, entry.title)
-            }
+            opdsViewModel.downloadBook(
+                entry, acquisition, context,
+                onDownloaded = { downloadedUri ->
+                    onBookDownloaded(downloadedUri, entry.title)
+                },
+                onDownloadedToFolder = { folderName ->
+                    onShowBanner(context.getString(R.string.banner_downloaded_to_folder, entry.title, folderName))
+                }
+            )
         },
+        onDownloadLocationChange = opdsViewModel::setDownloadLocation,
+        syncedFolders = syncedFolders,
         onReadBook = { sharedBook ->
             localLibraryFiles.firstOrNull { it.bookId == sharedBook.id }?.let(onReadBook)
         },

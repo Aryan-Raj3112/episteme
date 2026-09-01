@@ -175,7 +175,9 @@ object SharedPdfRichTextSerializer {
                     end = requireNotNull(obj.int("e")),
                     color = requireNotNull(obj.int("c")),
                     backgroundColor = obj.int("bg") ?: Color.Transparent.toArgb(),
-                    fontSizeNorm = requireNotNull(obj.float("sz")),
+                    fontSizeNorm = SharedPdfTextAnnotationDefaults.sanitizePageRelativeFontSize(
+                        requireNotNull(obj.float("sz"))
+                    ),
                     isBold = obj.boolean("b") ?: false,
                     isItalic = obj.boolean("i") ?: false,
                     isUnderline = obj.boolean("u") ?: false,
@@ -246,7 +248,8 @@ object SharedPdfRichTextMapper {
 
                 val localStart = intersectionStart - safeGlobalStart
                 val localEnd = intersectionEnd - safeGlobalStart
-                val fontSizePx = if (pageHeightPx > 0) span.fontSizeNorm * pageHeightPx else 16f
+                val fontSizeNorm = SharedPdfTextAnnotationDefaults.sanitizePageRelativeFontSize(span.fontSizeNorm)
+                val fontSizePx = if (pageHeightPx > 0) fontSizeNorm * pageHeightPx else 16f
                 addStyle(
                     style = SpanStyle(
                         color = Color(span.color),
@@ -316,7 +319,7 @@ object SharedPdfRichTextMapper {
                 if (pageHeightPx > 0) effective.fontSize.value / pageHeightPx else 0.015f
             } else {
                 0.015f
-            }
+            }.let(SharedPdfTextAnnotationDefaults::sanitizePageRelativeFontSize)
 
             val newSpan = SharedPdfRichSpan(
                 start = start,
@@ -369,7 +372,8 @@ class SharedPdfRichTextPaginationEngine {
         previousLayouts: List<SharedPdfRichPageLayout> = emptyList(),
         dirtyGlobalIndex: Int = 0
     ): List<SharedPdfRichPageLayout> {
-        val totalLen = globalText.length
+        val sanitizedGlobalText = globalText.withSanitizedSharedPdfRichFontSizes(pageHeightPx)
+        val totalLen = sanitizedGlobalText.length
         SharedPdfRichTextLog.d(
             "paginate start textLen=$totalLen page=${pageWidthPx.richLogFloat()}x${pageHeightPx.richLogFloat()} " +
                 "margin=${marginX.richLogFloat()},${marginY.richLogFloat()} prev=${previousLayouts.size} dirty=$dirtyGlobalIndex"
@@ -398,7 +402,7 @@ class SharedPdfRichTextPaginationEngine {
         val newPages = mutableListOf<SharedPdfRichPageLayout>()
         var currentPageIndex = 0
         var segmentStart = 0
-        val rawText = globalText.text
+        val rawText = sanitizedGlobalText.text
 
         while (segmentStart < totalLen) {
             val breakIndex = rawText.indexOf(SHARED_PDF_PAGE_BREAK_CHAR, startIndex = segmentStart)
@@ -407,7 +411,7 @@ class SharedPdfRichTextPaginationEngine {
             val segmentEnd = if (hasExplicitBreak) breakIndex + 1 else totalLen
 
             currentPageIndex = newPages.appendMeasuredRichTextSegment(
-                globalText = globalText,
+                globalText = sanitizedGlobalText,
                 segmentStart = segmentStart,
                 contentEnd = contentEnd,
                 explicitBreakEnd = if (hasExplicitBreak) segmentEnd else null,
@@ -422,7 +426,7 @@ class SharedPdfRichTextPaginationEngine {
         }
 
         val result = newPages.withTrailingBlankRichTextPageIfNeeded(
-            globalText = globalText,
+            globalText = sanitizedGlobalText,
             pageHeightPx = pageHeightPx
         )
         SharedPdfRichTextLog.d("paginate done -> ${result.richLayoutSummary()}")
@@ -1658,10 +1662,11 @@ class SharedPdfRichTextController(
 }
 
 fun SharedPdfTextStyleConfig.toSharedPdfRichSpanStyle(): SpanStyle {
+    val safeFontSize = fontSize.takeIf { it.isFinite() && it > 0f }?.coerceIn(8f, 96f) ?: 16f
     return SpanStyle(
         color = Color(colorArgb),
         background = Color(backgroundColorArgb),
-        fontSize = fontSize.sp,
+        fontSize = safeFontSize.sp,
         fontWeight = if (isBold) FontWeight.Bold else FontWeight.Normal,
         fontStyle = if (isItalic) FontStyle.Italic else FontStyle.Normal,
         textDecoration = richTextDecoration(isUnderline, isStrikeThrough)
@@ -1681,6 +1686,46 @@ internal fun AnnotatedString.withScaledSharedPdfRichFontSizes(scale: Float): Ann
             } else {
                 style
             },
+            start = range.start,
+            end = range.end
+        )
+    }
+    paragraphStyles.forEach { range ->
+        builder.addStyle(range.item, range.start, range.end)
+    }
+    getStringAnnotations(
+        tag = SHARED_PDF_RICH_FONT_PATH_TAG,
+        start = 0,
+        end = length
+    ).forEach { annotation ->
+        builder.addStringAnnotation(
+            tag = annotation.tag,
+            annotation = annotation.item,
+            start = annotation.start,
+            end = annotation.end
+        )
+    }
+    return builder.toAnnotatedString()
+}
+
+/**
+ * Keeps interactive and restored rich-text spans in the same bounded unit as
+ * the persisted document (a fraction of the current page height).
+ */
+internal fun AnnotatedString.withSanitizedSharedPdfRichFontSizes(pageHeightPx: Float): AnnotatedString {
+    if (spanStyles.none { it.item.fontSize.isSp }) return this
+    val safePageHeight = pageHeightPx.takeIf { it.isFinite() && it > 0f } ?: 1_000f
+    val minFontSize = SharedPdfTextAnnotationDefaults.MinPageRelativeFontSize * safePageHeight
+    val maxFontSize = SharedPdfTextAnnotationDefaults.MaxPageRelativeFontSize * safePageHeight
+    val builder = AnnotatedString.Builder(text)
+    spanStyles.forEach { range ->
+        val style = range.item
+        val safeFontSize = style.fontSize.value
+            .takeIf { it.isFinite() && it > 0f }
+            ?.coerceIn(minFontSize, maxFontSize)
+            ?: (16f.coerceIn(minFontSize, maxFontSize))
+        builder.addStyle(
+            style = if (style.fontSize.isSp) style.copy(fontSize = safeFontSize.sp) else style,
             start = range.start,
             end = range.end
         )

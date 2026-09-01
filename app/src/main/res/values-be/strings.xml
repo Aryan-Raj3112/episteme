@@ -341,6 +341,7 @@
     <string name="banner_clearing_cloud_local_data">Ачыстка ўсіх воблачных і лакальных даных…</string>
     <string name="banner_cloud_local_data_cleared">Усе воблачныя і лакальныя даныя паспяхова ачышчаны.</string>
     <string name="error_clear_all_data">Памылка: не ўдалося ачысціць усе даныя.</string>
+    <string name="error_cloud_delete_pending">Не ўдалося злучыцца з воблакам. Выдаленне завяршыцца аўтаматычна пры наступным падключэнні да інтэрнэту.</string>
     <string name="banner_local_data_cleared">Усе лакальныя даныя ачышчаны.</string>
     <string name="error_sign_in_failed">Уваход не ўдаўся. Паспрабуйце зноў.</string>
     <string name="error_no_google_account">Не ўдалося знайсці ўліковы запіс Google. Гэта можа адбыцца пасля свежай усталёўкі, паспрабуйце зноў праз хвіліну.</string>

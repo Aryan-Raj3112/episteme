@@ -28,8 +28,14 @@ data class FolderBookMetadata(
     val originalAuthor: String? = null,
     val originalSeriesName: String? = null,
     val originalSeriesIndex: Double? = null,
-    val originalDescription: String? = null
+    val originalDescription: String? = null,
+    val schemaVersion: Int = com.aryan.reader.shared.LOCAL_FOLDER_SYNC_METADATA_SCHEMA_VERSION,
+    val presentFields: Set<String> = emptySet(),
 ) {
+    fun hasExplicitField(name: String): Boolean =
+        schemaVersion >= com.aryan.reader.shared.LOCAL_FOLDER_SYNC_METADATA_SCHEMA_VERSION &&
+            name in presentFields
+
     fun toJsonString(): String {
         return toSharedFolderBookMetadata().toJsonString()
     }
@@ -68,7 +74,9 @@ fun FolderBookMetadata.toSharedFolderBookMetadata(): SharedFolderBookMetadata {
         originalAuthor = originalAuthor,
         originalSeriesName = originalSeriesName,
         originalSeriesIndex = originalSeriesIndex,
-        originalDescription = originalDescription
+        originalDescription = originalDescription,
+        schemaVersion = schemaVersion,
+        presentFields = presentFields,
     )
 }
 
@@ -97,7 +105,9 @@ fun SharedFolderBookMetadata.toFolderBookMetadata(): FolderBookMetadata {
         originalAuthor = originalAuthor,
         originalSeriesName = originalSeriesName,
         originalSeriesIndex = originalSeriesIndex,
-        originalDescription = originalDescription
+        originalDescription = originalDescription,
+        schemaVersion = schemaVersion,
+        presentFields = presentFields,
     )
 }
 
@@ -109,8 +119,8 @@ fun FolderBookMetadata.toRecentFileItem(uriString: String?, coverPath: String?, 
         displayName = this.displayName,
         timestamp = System.currentTimeMillis(),
         coverImagePath = coverPath,
-        title = this.displayName.substringBeforeLast('.', this.displayName),
-        author = null,
+        title = this.title ?: this.displayName.substringBeforeLast('.', this.displayName),
+        author = this.author,
         lastChapterIndex = this.lastChapterIndex,
         lastPage = this.lastPage,
         lastPositionCfi = this.lastPositionCfi,
@@ -125,13 +135,13 @@ fun FolderBookMetadata.toRecentFileItem(uriString: String?, coverPath: String?, 
         sourceFolderUri = sourceFolderUri,
         customName = this.customName,
         highlightsJson = this.highlightsJson,
-        seriesName = null,
-        seriesIndex = null,
-        description = null,
-        originalTitle = null,
-        originalAuthor = null,
-        originalSeriesName = null,
-        originalSeriesIndex = null,
-        originalDescription = null
+        seriesName = this.seriesName,
+        seriesIndex = this.seriesIndex,
+        description = this.description,
+        originalTitle = this.originalTitle,
+        originalAuthor = this.originalAuthor,
+        originalSeriesName = this.originalSeriesName,
+        originalSeriesIndex = this.originalSeriesIndex,
+        originalDescription = this.originalDescription
     )
 }

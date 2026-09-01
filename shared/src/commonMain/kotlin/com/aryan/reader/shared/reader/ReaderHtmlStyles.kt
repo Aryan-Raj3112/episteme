@@ -38,6 +38,7 @@ internal fun readerDocumentStyles(
               --reader-vertical-page-width: max(0px, calc(100% - (var(--reader-margin-x) * 2)));
               --reader-paragraph-spacing: ${settings.paragraphSpacing};
               --reader-image-scale: ${settings.readerImageScaleCss()};
+              --reader-hide-images: ${if (settings.hideImages) "none" else "block"};
               --reader-align: $align;
               --reader-family: $family;
             }
@@ -55,6 +56,14 @@ internal fun readerDocumentStyles(
             html {
               scrollbar-color: var(--reader-scrollbar-thumb) var(--reader-scrollbar-track);
               scrollbar-width: thin;
+            }
+            /*
+             * Publication CSS frequently pins root heights (e.g. html { height: calc(100% - 10px) }),
+             * which collapses or clips the reader document. Keep the reader-owned height model.
+             */
+            html.reader-vertical-root,
+            html.reader-paginated-root {
+              height: auto !important;
             }
             html.reader-vertical-root {
               width: 100%;
@@ -93,6 +102,7 @@ internal fun readerDocumentStyles(
             body.reader-vertical {
               width: 100%;
               max-width: 100%;
+              height: auto !important;
               min-height: 100vh;
               min-height: 100dvh;
               min-width: 0;
@@ -280,6 +290,9 @@ internal fun readerDocumentStyles(
             img, svg, video {
               max-width: var(--reader-image-scale);
               height: auto;
+            }
+            img {
+              display: var(--reader-hide-images);
             }
             table {
               max-width: 100%;

@@ -95,6 +95,8 @@ import com.aryan.reader.readerFontDiagnosticSummary
 import com.aryan.reader.shared.detectFontVariant
 import com.aryan.reader.shared.familyFilenameSignature
 import com.aryan.reader.shared.fontWeightCssDescriptor
+import com.aryan.reader.shared.isReaderExternalHref
+import com.aryan.reader.shared.normalizeReaderHref
 import com.aryan.reader.shared.ui.SharedSelectionMenuRect
 import com.aryan.reader.shared.ui.SharedSelectionMenuSize
 import com.aryan.reader.shared.ui.SharedSelectionMenuViewport
@@ -112,6 +114,7 @@ import java.net.URI
 private const val TAG_LINK_NAV = "LINK_NAV"
 private const val TAG_VERTICAL_JITTER = "EpubVerticalJitter"
 private const val TAG_ANDROID_HIGHLIGHT_RENDER_DIAG = "AndroidHighlightRenderDiag"
+private const val TAG_BLANK_PAGE_DIAG = "EpubBlankDiag"
 private val READER_WEB_VIEW_JS_INTERFACES = arrayOf(
     "PageInfoReporter",
     "ProgressReporter",
@@ -215,6 +218,85 @@ internal fun WebSettings.applyReaderResponsiveViewportPolicy(
 ) {
     useWideViewPort = policy.useWideViewPort
     loadWithOverviewMode = policy.loadWithOverviewMode
+}
+
+private val READER_LAYOUT_DIAGNOSTICS_JS = """
+    (function () {
+      function cs(el) {
+        if (!el) return null;
+        var s = getComputedStyle(el);
+        return { h: s.height, ox: s.overflowX, oy: s.overflowY, wc: s.willChange, pos: s.position };
+      }
+      function rect(el) {
+        if (!el) return null;
+        var b = el.getBoundingClientRect();
+        return [Math.round(b.left), Math.round(b.top), Math.round(b.width), Math.round(b.height)];
+      }
+      function heightRules() {
+        var found = [];
+        try {
+          for (var i = 0; i < document.styleSheets.length; i++) {
+            var sheet = document.styleSheets[i];
+            var owner = sheet.ownerNode;
+            var label = owner && owner.id ? owner.id : (owner && owner.tagName ? owner.tagName.toLowerCase() : ('sheet' + i));
+            var href = sheet.href ? sheet.href.split('/').pop() : null;
+            var rules;
+            try { rules = sheet.cssRules; } catch (e) { found.push(label + ':' + href + ':DENIED'); continue; }
+            for (var r = 0; r < rules.length; r++) {
+              var rule = rules[r];
+              if (!rule.selectorText || !rule.style) continue;
+              var sel = rule.selectorText.toLowerCase();
+              if (sel.indexOf('html') === -1 && sel.indexOf('body') === -1) continue;
+              var h = rule.style.height;
+              var mh = rule.style.minHeight;
+              if (h || mh) found.push(label + (href ? '(' + href + ')' : '') + ' ' + sel + ' {h:' + h + ';mh:' + mh + '}');
+            }
+          }
+        } catch (e) { found.push('scan-error:' + e); }
+        return found.slice(0, 20);
+      }
+      var c = document.getElementById('content-container');
+      var chunks = [].slice.call(document.querySelectorAll('.chunk-container'));
+      var vv = window.visualViewport;
+      var meta = document.querySelector('meta[name="viewport"]');
+      return JSON.stringify({
+        iw: window.innerWidth, ih: window.innerHeight, dpr: window.devicePixelRatio,
+        vvs: vv ? vv.scale : null, vvw: vv ? Math.round(vv.width) : null,
+        sx: Math.round(window.scrollX || 0), sy: Math.round(window.scrollY || 0),
+        seTop: document.scrollingElement ? Math.round(document.scrollingElement.scrollTop) : -1,
+        se: document.scrollingElement === document.documentElement ? 'html' : (document.scrollingElement === document.body ? 'body' : 'other'),
+        compat: document.compatMode,
+        doctype: document.doctype ? document.doctype.name : 'none',
+        htmlCount: document.getElementsByTagName('html').length,
+        bodySH: document.body ? document.body.scrollHeight : null,
+        htmlSH: document.documentElement.scrollHeight,
+        htmlRect: rect(document.documentElement),
+        bodyRect: rect(document.body),
+        fontsStatus: document.fonts ? document.fonts.status : 'n/a',
+        viewportMeta: meta ? meta.getAttribute('content') : null,
+        html: cs(document.documentElement),
+        body: cs(document.body),
+        cc: cs(c),
+        ccRect: rect(c),
+        chunkTotal: chunks.length,
+        chunkEmpty: chunks.filter(function (d) { return d.innerHTML.trim() === ''; }).length,
+        chunk0Rect: rect(chunks[0]),
+        chunk0StyleH: chunks[0] ? (chunks[0].style.height || null) : null,
+        firstChunkHeights: chunks.slice(0, 5).map(function (d) { return Math.round(d.getBoundingClientRect().height); }),
+        heightRules: heightRules()
+      });
+    })();
+""".trimIndent()
+
+private fun dumpReaderLayoutDiagnostics(view: WebView?, reason: String) {
+    if (view == null || !view.isAttachedToWindow) return
+    runCatching {
+        view.evaluateJavascript(READER_LAYOUT_DIAGNOSTICS_JS) { result ->
+            Timber.tag(TAG_BLANK_PAGE_DIAG).d("layoutDiag reason=$reason result=${result.orEmpty()}")
+        }
+    }.onFailure {
+        Timber.tag(TAG_BLANK_PAGE_DIAG).w(it, "layoutDiag reason=$reason failed")
+    }
 }
 
 private fun getFontCssInjection(): String {
@@ -596,6 +678,7 @@ fun ChapterWebView(
     currentVerticalMargin: Float,
     currentFontWeight: Int,
     currentLetterSpacing: Float,
+    hideImages: Boolean,
     onChapterInitiallyScrolled: () -> Unit,
     modifier: Modifier = Modifier,
     onTap: () -> Unit,
@@ -729,7 +812,8 @@ fun ChapterWebView(
             currentFontWeight,
             currentLetterSpacing,
             currentFontFamily,
-            currentTextAlign
+            currentTextAlign,
+            hideImages
         ) {
             val runtimeApplierState = remember { WebViewRuntimeApplierState() }
             var isReaderRuntimeReady by remember { mutableStateOf(false) }
@@ -949,8 +1033,9 @@ fun ChapterWebView(
                         override fun shouldOverrideUrlLoading(
                             view: WebView?, request: WebResourceRequest?
                         ): Boolean {
-                            val url = request?.url?.toString()
-                            if (url != null && (url.startsWith("http://") || url.startsWith("https://"))) {
+                            val rawUrl = request?.url?.toString()
+                            val url = rawUrl?.let(::normalizeReaderHref)
+                            if (url != null && isReaderExternalHref(url)) {
                                 Timber.tag(TAG_LINK_NAV)
                                     .d("[EXTERNAL-INTERCEPT] url='$url' from chapter '$chapterTitle'")
                                 showExternalLinkDialog = url
@@ -996,6 +1081,14 @@ fun ChapterWebView(
                             Timber.d(
                                 "onPageFinished. Injecting CSS and Font: ${currentFontFamily.fontFamilyName}"
                             )
+                            view?.let { webView ->
+                                listOf(600L, 3_000L).forEach { delayMillis ->
+                                    webView.postDelayed(
+                                        { dumpReaderLayoutDiagnostics(webView, "pageFinished+${delayMillis}ms") },
+                                        delayMillis
+                                    )
+                                }
+                            }
 
                             view?.evaluateJavascript(jsToInject, null)
 
@@ -1032,7 +1125,7 @@ fun ChapterWebView(
                                             if (!anchor) return;
                                             var rawHref = anchor.getAttribute('href') || '';
                                             if (!rawHref) return;
-                                            if (/^(https?:|mailto:|tel:|javascript:)/i.test(rawHref)) return;
+                                            if (/^(https?:|mailto:|tel:|sms:|geo:|javascript:)/i.test(rawHref)) return;
                                             if (/^\/\//.test(rawHref)) return;
                                             event.preventDefault();
                                             var resolvedHref = anchor.href || rawHref;
@@ -1089,13 +1182,14 @@ fun ChapterWebView(
                                 currentHorizontalMargin,
                                 currentVerticalMargin,
                                 currentFontWeight,
-                                currentLetterSpacing
+                                currentLetterSpacing,
+                                hideImages
                             ).joinToString(separator = "|")
                             runtimeApplierState.tocFragmentsJson = fragmentsJson
                             runtimeApplierState.highlightsJson = highlightsJson
 
                             view?.evaluateJavascript(
-                                "javascript:window.updateReaderStyles($currentFontSize, $currentLineHeight, '$fontNameForJs', '${currentTextAlign.cssValue}', $currentParagraphGap, $currentImageSize, $currentHorizontalMargin, $currentVerticalMargin, $currentFontWeight, $currentLetterSpacing);",
+                                "javascript:window.updateReaderStyles($currentFontSize, $currentLineHeight, '$fontNameForJs', '${currentTextAlign.cssValue}', $currentParagraphGap, $currentImageSize, $currentHorizontalMargin, $currentVerticalMargin, $currentFontWeight, $currentLetterSpacing, $hideImages);",
                                 null
                             )
 
@@ -1250,6 +1344,10 @@ fun ChapterWebView(
                         builtInZoomControls = false
                         displayZoomControls = false
                         applyReaderResponsiveViewportPolicy()
+                        Timber.tag(TAG_BLANK_PAGE_DIAG).d(
+                            "webViewSettings wideViewPort=$useWideViewPort overviewMode=$loadWithOverviewMode " +
+                                "textZoom=$textZoom layoutAlgorithm=$layoutAlgorithm"
+                        )
                     }
                     isVerticalScrollBarEnabled = false
                     isHorizontalScrollBarEnabled = false
@@ -1261,6 +1359,12 @@ fun ChapterWebView(
                     val txtTraceContainsTxtClass = initialHtmlContent.contains("reader-txt-preformatted")
                     val txtTraceContainsInlinePreWrap = initialHtmlContent.contains("white-space: pre-wrap !important")
                     val txtTraceContainsAlbumMarker = initialHtmlContent.contains("===========CD 1=============")
+                    Timber.tag(TAG_BLANK_PAGE_DIAG).d(
+                        "webviewLoad key=${key.toString().txtFormatTracePreview()} baseUrl=${baseUrl.orEmpty().txtFormatTracePreview()} " +
+                            "htmlChars=${initialHtmlContent.length} " +
+                            "hasViewportMeta=${initialHtmlContent.contains("name=\"viewport\"")} " +
+                            "chunkContainers=${initialHtmlContent.split("class='chunk-container'").size - 1}"
+                    )
                     Timber.tag(TxtFormatTraceTag).d(
                         "event=android_webview_load key=${key.toString().txtFormatTracePreview()} baseUrl=${baseUrl.orEmpty().txtFormatTracePreview()} " +
                             "htmlChars=${initialHtmlContent.length} newlines=${initialHtmlContent.count { it == '\n' }} " +
@@ -1312,7 +1416,8 @@ fun ChapterWebView(
                         currentHorizontalMargin,
                         currentVerticalMargin,
                         currentFontWeight,
-                        currentLetterSpacing
+                        currentLetterSpacing,
+                        hideImages
                     ).joinToString(separator = "|")
                     val fontCssChanged = runtimeApplierState.fontCss != combinedCss
                     val styleChanged = runtimeApplierState.styleSignature != styleSignature
@@ -1351,7 +1456,7 @@ fun ChapterWebView(
                     if (styleChanged) {
                         runtimeApplierState.styleSignature = styleSignature
                         webView.evaluateJavascript(
-                            "javascript:window.updateReaderStyles($currentFontSize, $currentLineHeight, '$fontNameForJs', '${currentTextAlign.cssValue}', $currentParagraphGap, $currentImageSize, $currentHorizontalMargin, $currentVerticalMargin, $currentFontWeight, $currentLetterSpacing);",
+                            "javascript:window.updateReaderStyles($currentFontSize, $currentLineHeight, '$fontNameForJs', '${currentTextAlign.cssValue}', $currentParagraphGap, $currentImageSize, $currentHorizontalMargin, $currentVerticalMargin, $currentFontWeight, $currentLetterSpacing, $hideImages);",
                             null
                         )
                     }

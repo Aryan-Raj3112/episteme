@@ -100,6 +100,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
@@ -153,6 +154,8 @@ import com.aryan.reader.paginatedreader.data.BookCacheDatabase
 import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.ReaderBookReplacementPreferences
 import com.aryan.reader.shared.ReaderLocator as SharedReaderLocator
+import com.aryan.reader.shared.reader.paintOnlyColorOverlayText
+import com.aryan.reader.shared.reader.withoutForegroundColorSpans
 import com.aryan.reader.shared.ui.sharedAcceleratedLazyWheelScroll
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -193,6 +196,7 @@ fun NativeVerticalReaderScreen(
     lineHeightMultiplier: Float,
     paragraphGapMultiplier: Float,
     imageSizeMultiplier: Float,
+    hideImages: Boolean = false,
     horizontalMarginMultiplier: Float,
     verticalMarginMultiplier: Float,
     fontFamily: FontFamily,
@@ -205,9 +209,11 @@ fun NativeVerticalReaderScreen(
     initialLocator: Locator? = null,
     initialPageIndexInBook: Int = 0,
     scrollRequestPage: Int? = null,
+    scrollRequestPageAnimated: Boolean = true,
     scrollRequestLocator: Locator? = null,
     scrollRequestLocatorId: Long = 0L,
     scrollRequestLocatorKeepVisible: Boolean = false,
+    scrollRequestLocatorAnimated: Boolean = true,
     scrollRequestProgressPercent: Float? = null,
     scrollRequestProgressId: Long = 0L,
     scrollDeltaRequest: Float? = null,
@@ -363,6 +369,7 @@ fun NativeVerticalReaderScreen(
             userTextAlign,
             paragraphGapMultiplier,
             imageSizeMultiplier,
+            hideImages,
             verticalMarginMultiplier,
             bookReplacementSignature,
             bookReplacementFileId
@@ -433,7 +440,9 @@ fun NativeVerticalReaderScreen(
                 mathMLRenderer = mathMLRenderer,
                 userTextAlign = userTextAlign,
                 paragraphGapMultiplier = paragraphGapMultiplier,
+                userLineHeightMultiplier = lineHeightMultiplier,
                 imageSizeMultiplier = imageSizeMultiplier,
+                hideImages = hideImages,
                 verticalMarginMultiplier = verticalMarginMultiplier,
                 bookReplacementPreferences = bookReplacementPreferences,
                 bookReplacementFileId = bookReplacementFileId
@@ -729,20 +738,27 @@ fun NativeVerticalReaderScreen(
             }
         }
 
-        LaunchedEffect(scrollRequestPage, totalPageCount, flowChapters, rootWindowBounds) {
+        LaunchedEffect(scrollRequestPage, scrollRequestPageAnimated, totalPageCount, flowChapters, rootWindowBounds) {
             val requestedPage = scrollRequestPage ?: return@LaunchedEffect
             if (totalPageCount <= 0 || flowChapters == null || rootWindowBounds == Rect.Zero) return@LaunchedEffect
-            if (scrollToCompatPage(requestedPage, animate = true)) {
+            if (scrollToCompatPage(requestedPage, animate = scrollRequestPageAnimated)) {
                 onScrollRequestConsumed()
             }
         }
 
-        LaunchedEffect(scrollRequestLocatorId, scrollRequestLocator, scrollRequestLocatorKeepVisible, flowChapters, rootWindowBounds) {
+        LaunchedEffect(
+            scrollRequestLocatorId,
+            scrollRequestLocator,
+            scrollRequestLocatorKeepVisible,
+            scrollRequestLocatorAnimated,
+            flowChapters,
+            rootWindowBounds,
+        ) {
             val requestedLocator = scrollRequestLocator ?: return@LaunchedEffect
             if (flowChapters == null || rootWindowBounds == Rect.Zero) return@LaunchedEffect
             if (scrollToFlowLocator(
                     locator = requestedLocator,
-                    animate = scrollRequestLocatorKeepVisible,
+                    animate = scrollRequestLocatorAnimated,
                     keepVisible = scrollRequestLocatorKeepVisible
                 )
             ) {
@@ -1064,6 +1080,7 @@ fun NativeVerticalReaderScreen(
                                     pageIndex = chapterIndex,
                                     textStyle = textStyle,
                                     imageSizeMultiplier = imageSizeMultiplier,
+                                    hideImages = hideImages,
                                     searchQuery = searchQuery,
                                     searchHighlightColor = searchHighlightColor,
                                     ttsHighlightInfo = ttsHighlightInfo,
@@ -1461,6 +1478,7 @@ internal fun NativeVerticalPage(
     pageIndex: Int,
     textStyle: TextStyle,
     imageSizeMultiplier: Float,
+    hideImages: Boolean = false,
     searchQuery: String,
     searchHighlightColor: Color,
     ttsHighlightInfo: TtsHighlightInfo?,
@@ -1497,6 +1515,7 @@ internal fun NativeVerticalPage(
                 pageIndex = pageIndex,
                 textStyle = textStyle,
                 imageSizeMultiplier = imageSizeMultiplier,
+                hideImages = hideImages,
                 searchQuery = searchQuery,
                 searchHighlightColor = searchHighlightColor,
                 ttsHighlightInfo = ttsHighlightInfo,
@@ -1527,6 +1546,7 @@ internal fun NativeVerticalContentBlock(
     pageIndex: Int,
     textStyle: TextStyle,
     imageSizeMultiplier: Float,
+    hideImages: Boolean = false,
     searchQuery: String,
     searchHighlightColor: Color,
     ttsHighlightInfo: TtsHighlightInfo?,
@@ -1567,6 +1587,7 @@ internal fun NativeVerticalContentBlock(
                 block = block,
                 textStyle = textStyle,
                 imageSizeMultiplier = imageSizeMultiplier,
+                hideImages = hideImages,
                 modifier = styledModifier,
                 searchQuery = searchQuery,
                 ttsHighlightInfo = ttsHighlightInfo,
@@ -1595,6 +1616,7 @@ internal fun NativeVerticalContentBlock(
                     pageIndex = pageIndex,
                     textStyle = textStyle,
                     imageSizeMultiplier = imageSizeMultiplier,
+                    hideImages = hideImages,
                     searchQuery = searchQuery,
                     searchHighlightColor = searchHighlightColor,
                     ttsHighlightInfo = ttsHighlightInfo,
@@ -1649,6 +1671,7 @@ internal fun NativeVerticalContentBlock(
                     childBlock = block,
                     textStyle = textStyle,
                     imageSizeMultiplier = imageSizeMultiplier,
+                    hideImages = hideImages,
                     searchQuery = searchQuery,
                     searchHighlightColor = searchHighlightColor,
                     ttsHighlightInfo = ttsHighlightInfo,
@@ -2972,6 +2995,18 @@ internal fun TextWithEmphasis(
             themeTextColor = style.color.takeIf { it.isSpecified } ?: themeTextColor
         )
     }
+    // Foreground colors are paint-only. Removing them from the layout input
+    // keeps contextual OpenType shaping continuous across color-only spans.
+    // A second text input restores colors through native character-level paint
+    // spans, which can color an attached mark without recoloring its base.
+    val shapingDisplayText = remember(displayText) {
+        displayText.withoutForegroundColorSpans()
+    }
+    val paintOnlyColorOverlayText = remember(displayText, style.color) {
+        displayText.paintOnlyColorOverlayText(
+            baseColor = style.color.takeIf { it.isSpecified } ?: Color.Unspecified
+        )
+    }
 
     data class EmphasisMarkInfo(val center: Offset, val radius: Float, val color: Color)
     data class HighlightDrawInfo(val path: Path, val color: Color, val style: HighlightStyle, val range: IntRange)
@@ -3342,7 +3377,9 @@ internal fun TextWithEmphasis(
         logCutoffIfNeeded(textLayoutResult, layoutCoordinates, currentPageContentBounds)
     }
 
-    Text(text = displayText, style = style, modifier = modifier
+    Box(modifier = modifier) {
+        Text(text = shapingDisplayText, style = style, modifier = Modifier
+        .fillMaxWidth()
         .onGloballyPositioned {
             layoutCoordinates = it
             logCutoffIfNeeded(textLayoutResult, it)
@@ -3469,7 +3506,17 @@ internal fun TextWithEmphasis(
             onRegisterLayout?.invoke(it, layoutCoordinates!!)
         }
         logCutoffIfNeeded(it, layoutCoordinates)
-    })
+        })
+        if (paintOnlyColorOverlayText.isNotEmpty()) {
+            Text(
+                text = paintOnlyColorOverlayText,
+                modifier = Modifier
+                    .matchParentSize()
+                    .clearAndSetSemantics {},
+                style = style.copy(color = Color.Transparent)
+            )
+        }
+    }
 }
 
 @SuppressLint("BinaryOperationInTimber")

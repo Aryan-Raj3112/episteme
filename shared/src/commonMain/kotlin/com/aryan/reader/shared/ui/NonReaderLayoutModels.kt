@@ -570,23 +570,27 @@ internal fun mobileUnifiedLibraryBooks(
     books: List<BookItem>,
     filter: MobileUnifiedLibraryFilter,
     query: String,
+    libraryFilters: LibraryFilters = LibraryFilters(),
+    sortOrder: SortOrder = SortOrder.RECENT,
 ): List<BookItem> {
     val normalizedQuery = query.trim()
-    return books.filter { book ->
-        val progress = book.progressPercentage ?: 0f
-        val matchesFilter = when (filter) {
-            MobileUnifiedLibraryFilter.ALL -> true
-            MobileUnifiedLibraryFilter.READING -> progress in 0.01f..<100f
-            MobileUnifiedLibraryFilter.FINISHED -> progress >= 100f
-            MobileUnifiedLibraryFilter.UNREAD -> progress <= 0f
-        }
-        matchesFilter && (
-            normalizedQuery.isBlank() ||
-                listOf(book.displayName, book.title, book.author).any {
-                    it?.contains(normalizedQuery, ignoreCase = true) == true
+    val filteredBooks = applyLibraryFilters(books, libraryFilters)
+        .filter { book ->
+            val progress = book.progressPercentage ?: 0f
+            val matchesFilter = when (filter) {
+                MobileUnifiedLibraryFilter.ALL -> true
+                MobileUnifiedLibraryFilter.READING -> progress in 0.01f..<100f
+                MobileUnifiedLibraryFilter.FINISHED -> progress >= 100f
+                MobileUnifiedLibraryFilter.UNREAD -> progress <= 0f
+            }
+            matchesFilter && (
+                normalizedQuery.isBlank() ||
+                    listOf(book.displayName, book.title, book.author).any {
+                        it?.contains(normalizedQuery, ignoreCase = true) == true
+                    }
+                )
                 }
-            )
-    }
+    return sortBooks(filteredBooks, sortOrder)
 }
 
 internal fun mobileUnifiedContinueReadingBook(books: List<BookItem>): BookItem? =

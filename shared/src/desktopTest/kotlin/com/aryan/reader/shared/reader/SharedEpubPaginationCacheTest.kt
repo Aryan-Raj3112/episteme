@@ -17,7 +17,7 @@ class SharedEpubPaginationCacheTest {
     fun `page cache round trips measured pages`() = runBlocking {
         val root = Files.createTempDirectory("reader-page-cache").toFile()
         try {
-            val cache = SharedEpubPaginationCache(root)
+            val cache = SharedEpubPaginationCache(JvmSharedEpubPageCacheStorage(root))
             val book = cacheBook()
             val settings = ReaderSettings(fontSize = 19, lineSpacing = 1.5f)
             val viewport = ReaderViewportSpec(widthPx = 960, heightPx = 720)
@@ -50,7 +50,7 @@ class SharedEpubPaginationCacheTest {
     fun `page cache misses when viewport or chapter content changes`() = runBlocking {
         val root = Files.createTempDirectory("reader-page-cache").toFile()
         try {
-            val cache = SharedEpubPaginationCache(root)
+            val cache = SharedEpubPaginationCache(JvmSharedEpubPageCacheStorage(root))
             val book = cacheBook()
             val settings = ReaderSettings()
             val viewport = ReaderViewportSpec(widthPx = 900, heightPx = 700)
@@ -88,7 +88,7 @@ class SharedEpubPaginationCacheTest {
     fun `chapter page cache round trips one measured chapter`() = runBlocking {
         val root = Files.createTempDirectory("reader-page-cache").toFile()
         try {
-            val cache = SharedEpubPaginationCache(root)
+            val cache = SharedEpubPaginationCache(JvmSharedEpubPageCacheStorage(root))
             val book = cacheBook().copy(
                 chapters = listOf(
                     cacheBook().chapters.first(),
@@ -133,7 +133,7 @@ class SharedEpubPaginationCacheTest {
     fun `chapter page cache can save a measured chapter without whole book pages`() = runBlocking {
         val root = Files.createTempDirectory("reader-page-cache").toFile()
         try {
-            val cache = SharedEpubPaginationCache(root)
+            val cache = SharedEpubPaginationCache(JvmSharedEpubPageCacheStorage(root))
             val book = cacheBook().copy(
                 chapters = listOf(
                     cacheBook().chapters.first(),
@@ -178,7 +178,7 @@ class SharedEpubPaginationCacheTest {
     fun `pagination cache key changes for spread mode`() {
         val root = Files.createTempDirectory("reader-page-cache").toFile()
         try {
-            val cache = SharedEpubPaginationCache(root)
+            val cache = SharedEpubPaginationCache(JvmSharedEpubPageCacheStorage(root))
             val book = cacheBook()
             val viewport = ReaderViewportSpec(widthPx = 960, heightPx = 720)
             val single = cache.keyFor(book, ReaderSettings(pageSpreadMode = ReaderPageSpreadMode.SINGLE), viewport)
@@ -194,7 +194,7 @@ class SharedEpubPaginationCacheTest {
     fun `page cache ignores semanticless pages for semantic books`() = runBlocking {
         val root = Files.createTempDirectory("reader-page-cache").toFile()
         try {
-            val cache = SharedEpubPaginationCache(root)
+            val cache = SharedEpubPaginationCache(JvmSharedEpubPageCacheStorage(root))
             val book = cacheBook().copy(
                 chapters = listOf(
                     cacheBook().chapters.first().copy(
@@ -237,7 +237,7 @@ class SharedEpubPaginationCacheTest {
     fun `clear all removes persisted and memory pagination pages`() = runBlocking {
         val root = Files.createTempDirectory("reader-page-cache").toFile()
         try {
-            val cache = SharedEpubPaginationCache(root)
+            val cache = SharedEpubPaginationCache(JvmSharedEpubPageCacheStorage(root))
             val book = cacheBook()
             val settings = ReaderSettings()
             val viewport = ReaderViewportSpec(widthPx = 960, heightPx = 720)
@@ -285,7 +285,7 @@ class SharedEpubPaginationCacheTest {
                 ReaderViewportSpec(widthPx = 902, heightPx = 700),
                 ReaderViewportSpec(widthPx = 903, heightPx = 700)
             )
-            val writer = SharedEpubPaginationCache(root)
+            val writer = SharedEpubPaginationCache(JvmSharedEpubPageCacheStorage(root))
 
             viewports.take(3).forEachIndexed { index, viewport ->
                 writer.save(book, settings, viewport, pages)
@@ -296,7 +296,7 @@ class SharedEpubPaginationCacheTest {
                 file.setLastModified((index + 1) * 1_000L)
             }
             writer.save(book, settings, viewports.last(), pages)
-            val reader = SharedEpubPaginationCache(root)
+            val reader = SharedEpubPaginationCache(JvmSharedEpubPageCacheStorage(root))
 
             assertNull(reader.load(book, settings, viewports.first()))
             assertNotNull(reader.load(book, settings, viewports.last()))

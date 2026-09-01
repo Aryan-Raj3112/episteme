@@ -51,7 +51,7 @@ class IosPdfSaveCopyTest {
     }
 
     @Test
-    fun unsupportedVirtualPagesDoNotInvokeTheExporter() = runTest {
+    fun virtualPagesUseTheNativeExporter() = runTest {
         val source = temporaryPdfPath()
         NSFileManager.defaultManager.createFileAtPath(source, contents = null, attributes = null)
         var called = false
@@ -63,8 +63,9 @@ class IosPdfSaveCopyTest {
             exporter = { _, _, _, _ -> called = true; true },
         )
 
-        assertIs<IosPdfSaveCopyPreparation.Unavailable>(result)
-        assertEquals(false, called)
+        assertIs<IosPdfSaveCopyPreparation.Ready>(result)
+        assertEquals(true, called)
+        result.book.path?.let { NSFileManager.defaultManager.removeItemAtPath(it, error = null) }
         NSFileManager.defaultManager.removeItemAtPath(source, error = null)
     }
 

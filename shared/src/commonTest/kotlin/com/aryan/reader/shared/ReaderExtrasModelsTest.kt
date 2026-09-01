@@ -172,6 +172,18 @@ class ReaderExtrasModelsTest {
     }
 
     @Test
+    fun `cloud tts mode and voice settings keep canonical android ids`() {
+        val settings = ReaderAiByokSettings(
+            ttsModel = GEMINI_CLOUD_TTS_MODEL_ID,
+            ttsSpeakerId = "Kore",
+        ).sanitized()
+
+        assertEquals(GEMINI_CLOUD_TTS_MODEL_ID, settings.ttsModel)
+        assertEquals("Kore", settings.ttsSpeakerId)
+        assertFalse(settings.isByokCloudTtsAvailable)
+    }
+
+    @Test
     fun `server backed reader AI and cloud tts availability do not require BYOK keys`() {
         val serverBacked = ReaderAiByokSettings(
             serverBackedReaderAiFeatures = true,

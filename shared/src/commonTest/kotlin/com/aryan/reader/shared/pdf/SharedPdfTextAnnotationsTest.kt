@@ -47,6 +47,33 @@ class SharedPdfTextAnnotationsTest {
     }
 
     @Test
+    fun `imported font family survives annotation sidecar round trip`() {
+        val style = SharedPdfTextStyleConfig(
+            fontName = "Acme Serif",
+            fontPath = "/library/fonts/acme-serif.ttf",
+            fontSize = 18f,
+            isBold = true,
+        )
+        val annotation = SharedPdfTextAnnotationDefaults.createAnnotation(
+            id = "text-custom-font",
+            pageIndex = 0,
+            anchor = PdfPagePoint(0.2f, 0.25f),
+            canvasSize = IntSize(800, 1_200),
+            text = "Imported family",
+            style = style,
+            createdAt = 42L,
+        )
+
+        val restored = SharedPdfAnnotationSerializer.decode(
+            SharedPdfAnnotationSerializer.encode(listOf(annotation))
+        ).single()
+
+        assertEquals("Acme Serif", restored.fontName)
+        assertEquals("/library/fonts/acme-serif.ttf", restored.fontPath)
+        assertEquals(style.copy(pageRelativeFontSize = 0.036f), restored.sharedPdfTextStyle())
+    }
+
+    @Test
     fun `withSharedPdfTextStyle replaces all style fields only`() {
         val original = SharedPdfAnnotation(
             id = "text-2",
@@ -97,6 +124,29 @@ class SharedPdfTextAnnotationsTest {
         )
 
         assertEquals(45f, annotation.sharedPdfTextFontSizePx(canvasSize), 0.0001f)
+    }
+
+    @Test
+    fun `legacy text box values migrate and clamp at the shared decode boundary`() {
+        val decoded = SharedPdfLegacyTextBoxCodec.decode(
+            """[{"id":"legacy","pageIndex":0,"text":"note","color":-16777216,"backgroundColor":0,"fontSize":16,"bounds":{"left":-1,"top":2,"right":2,"bottom":-1}}]"""
+        )
+
+        assertEquals(1, decoded.size)
+        assertEquals(0.032f, decoded.single().fontSize, 0.0001f)
+        assertEquals(PdfPageBounds(0f, 0f, 1f, 1f), decoded.single().bounds)
+    }
+
+    @Test
+    fun `non finite and oversized text sizes use a bounded shared value`() {
+        assertEquals(
+            0.032f,
+            SharedPdfTextAnnotationDefaults.sanitizePageRelativeFontSize(Float.NaN)
+        )
+        assertEquals(
+            SharedPdfTextAnnotationDefaults.MaxPageRelativeFontSize,
+            SharedPdfTextAnnotationDefaults.sanitizePageRelativeFontSize(100f)
+        )
     }
 
     @Test

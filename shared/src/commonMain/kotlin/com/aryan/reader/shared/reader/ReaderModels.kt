@@ -4,6 +4,7 @@ import com.aryan.reader.paginatedreader.SemanticBlock
 import com.aryan.reader.shared.PageInfoMode
 import com.aryan.reader.shared.PageInfoPosition
 import com.aryan.reader.shared.SystemUiMode
+import com.aryan.reader.shared.pdf.PdfReverseColorMode
 
 data class SharedEpubBook(
     val id: String,
@@ -109,12 +110,29 @@ data class ReaderSettings(
     val pdfVerticalPageGapVisible: Boolean = true,
     val pdfPageNumberOverlayVisible: Boolean = true,
     val pdfFirstPageStandaloneInSpread: Boolean = false,
+    /** Okular-compatible colour transform used by the PDF reverse theme. */
+    val pdfReverseColorMode: PdfReverseColorMode = PdfReverseColorMode.RGB,
+    val pdfPreserveImageColors: Boolean = false,
     val seamlessChapterNavigation: Boolean = true,
-    val chapterTurnDragMultiplier: Float = 1.0f
+    val chapterTurnDragMultiplier: Float = 1.0f,
+    val hideImages: Boolean = false
 ) {
     val resolvedHorizontalMargin: Int get() = horizontalMargin ?: margin
     val resolvedVerticalMargin: Int get() = verticalMargin ?: margin
 }
+
+/**
+ * Defaults for a new PDF reader session.
+ *
+ * PDF tap-to-turn is opt-in on Android (the benchmark implementation). Keep
+ * that format-specific default separate from [ReaderSettings]' generic EPUB
+ * defaults, where tap navigation remains enabled by default.
+ */
+val DefaultPdfReaderSettings: ReaderSettings = ReaderSettings(
+    themeId = "no_theme",
+    tapToNavigateEnabled = false,
+    systemUiMode = SystemUiMode.SYNC,
+)
 
 data class ReaderLayoutSignature(
     val fontSize: Int,
@@ -130,7 +148,8 @@ data class ReaderLayoutSignature(
     val paragraphSpacing: Float,
     val imageScale: Float,
     val pageSpreadMode: ReaderPageSpreadMode,
-    val customFontPath: String?
+    val customFontPath: String?,
+    val hideImages: Boolean
 )
 
 data class ReaderAppearanceSignature(
@@ -139,7 +158,8 @@ data class ReaderAppearanceSignature(
     val textureId: String?,
     val textureAlpha: Float,
     val backgroundColorArgb: Long?,
-    val textColorArgb: Long?
+    val textColorArgb: Long?,
+    val pdfReverseColorMode: PdfReverseColorMode = PdfReverseColorMode.RGB,
 )
 
 fun ReaderSettings.layoutSignature(): ReaderLayoutSignature {
@@ -157,7 +177,8 @@ fun ReaderSettings.layoutSignature(): ReaderLayoutSignature {
         paragraphSpacing = paragraphSpacing,
         imageScale = imageScale,
         pageSpreadMode = pageSpreadMode,
-        customFontPath = customFontPath
+        customFontPath = customFontPath,
+        hideImages = hideImages
     )
 }
 
@@ -168,7 +189,8 @@ fun ReaderSettings.appearanceSignature(): ReaderAppearanceSignature {
         textureId = textureId,
         textureAlpha = textureAlpha,
         backgroundColorArgb = backgroundColorArgb,
-        textColorArgb = textColorArgb
+        textColorArgb = textColorArgb,
+        pdfReverseColorMode = pdfReverseColorMode
     )
 }
 

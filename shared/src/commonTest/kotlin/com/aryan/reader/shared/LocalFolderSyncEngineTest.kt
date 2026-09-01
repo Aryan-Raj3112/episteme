@@ -53,7 +53,7 @@ class LocalFolderSyncEngineTest {
 
         val book = result.state.rawLibraryBooks.single()
         assertEquals("local_Book.pdf", book.id)
-        assertEquals("Book", book.title)
+        assertEquals("Remote Title", book.title)
         assertEquals(4, book.lastPageIndex)
         assertEquals(25f, book.progressPercentage)
         assertEquals("C:/Library", book.sourceFolder)
@@ -84,7 +84,7 @@ class LocalFolderSyncEngineTest {
         )
 
         val book = result.state.rawLibraryBooks.single()
-        assertEquals("Local", book.title)
+        assertEquals("Remote", book.title)
         assertEquals(80f, book.progressPercentage)
         assertEquals(1, result.stats.remoteMetadataUpdates)
     }
@@ -291,6 +291,54 @@ class LocalFolderSyncEngineTest {
     }
 
     @Test
+    fun `partial folder scan keeps missing books and scan watermark`() {
+        val missing = book(id = "local_Missing.pdf", path = "C:/Library/Missing.pdf")
+        val folder = syncedFolder().copy(lastScanTime = 800L)
+        val state = SharedReaderScreenState(
+            rawLibraryBooks = listOf(missing),
+            syncedFolders = listOf(folder),
+            lastFolderScanTime = 800L
+        )
+
+        val result = LocalFolderSyncEngine.syncFolder(
+            state = state,
+            folder = folder,
+            files = emptyList(),
+            remoteMetadata = emptyMap(),
+            nowMillis = 1_000L,
+            scanStatus = LocalFolderScanStatus.PARTIAL
+        )
+
+        assertEquals(listOf(missing), result.state.rawLibraryBooks)
+        assertTrue(result.removedBookIds.isEmpty())
+        assertEquals(0, result.stats.removedBooks)
+        assertEquals(800L, result.state.syncedFolders.single().lastScanTime)
+        assertEquals(800L, result.state.lastFolderScanTime)
+    }
+
+    @Test
+    fun `metadata-only pass does not advance physical scan watermark`() {
+        val folder = syncedFolder().copy(lastScanTime = 800L)
+        val state = SharedReaderScreenState(
+            syncedFolders = listOf(folder),
+            lastFolderScanTime = 800L
+        )
+
+        val result = LocalFolderSyncEngine.syncFolder(
+            state = state,
+            folder = folder,
+            files = emptyList(),
+            remoteMetadata = emptyMap(),
+            nowMillis = 1_000L,
+            metadataOnly = true,
+            scanStatus = LocalFolderScanStatus.NOT_SCANNED
+        )
+
+        assertEquals(800L, result.state.syncedFolders.single().lastScanTime)
+        assertEquals(800L, result.state.lastFolderScanTime)
+    }
+
+    @Test
     fun `sync ignores unknown scanned files even with default allowed types`() {
         val result = LocalFolderSyncEngine.syncFolder(
             state = SharedReaderScreenState(),
@@ -410,7 +458,7 @@ class LocalFolderSyncEngineTest {
     }
 
     @Test
-    fun `metadata sidecar ignores legacy editable metadata`() {
+    fun `metadata sidecar carries editable metadata and keeps v1 compatibility`() {
         val local = book(id = "local_Book.pdf")
             .copy(
                 isRecent = true,
@@ -428,16 +476,18 @@ class LocalFolderSyncEngineTest {
 
         val metadata = local.toSharedFolderBookMetadata() ?: error("Expected sidecar")
         val legacyMetadata = metadata.copy(
-            title = "Legacy Sidecar Title",
-            author = "Legacy Sidecar Author",
-            seriesName = "Legacy Sidecar Series",
-            seriesIndex = 2.0,
-            description = "<p>Legacy summary</p>",
-            originalTitle = "Legacy Original Title",
-            originalAuthor = "Legacy Original Author",
-            originalSeriesName = "Legacy Original Series",
-            originalSeriesIndex = 1.0,
-            originalDescription = "Legacy original summary"
+            schemaVersion = 1,
+            presentFields = emptySet(),
+            title = null,
+            author = null,
+            seriesName = null,
+            seriesIndex = null,
+            description = null,
+            originalTitle = null,
+            originalAuthor = null,
+            originalSeriesName = null,
+            originalSeriesIndex = null,
+            originalDescription = null,
         )
         val restored = metadata.toBookItem(
             file = scannedFile("Book.pdf", "Book.pdf"),
@@ -450,15 +500,59 @@ class LocalFolderSyncEngineTest {
             nowMillis = 2_000L
         )
 
-        assertNull(metadata.title)
-        assertNull(metadata.description)
-        assertNull(metadata.originalTitle)
-        assertEquals("Stale", restored.title)
-        assertNull(restored.author)
-        assertNull(restored.seriesName)
-        assertNull(restored.description)
+        assertEquals("Edited Title", metadata.title)
+        assertEquals("Edited Author", metadata.author)
+        assertEquals("Edited Series", metadata.seriesName)
+        assertEquals("<p>Edited summary</p>", metadata.description)
+        assertEquals("Original Title", metadata.originalTitle)
+        assertEquals("Edited Title", restored.title)
+        assertEquals("Edited Author", restored.author)
+        assertEquals("Edited Series", restored.seriesName)
+        assertEquals("<p>Edited summary</p>", restored.description)
         assertEquals("Stale", restoredFromLegacy.title)
         assertNull(restoredFromLegacy.author)
+    }
+
+    @Test
+    fun `v2 metadata sidecar preserves explicit editable clears`() {
+        val existing = book(
+            id = "local_Book.pdf",
+            title = "Old title",
+            progress = 65f,
+        ).copy(
+            author = "Old author",
+            seriesName = "Old series",
+            titleSortKey = "Custom name",
+        )
+        val metadata = SharedFolderBookMetadata(
+            bookId = existing.id,
+            title = null,
+            author = null,
+            displayName = existing.displayName,
+            type = existing.type.name,
+            lastChapterIndex = null,
+            lastPage = null,
+            lastPositionCfi = null,
+            progressPercentage = 0f,
+            isRecent = true,
+            lastModifiedTimestamp = 99L,
+            bookmarksJson = null,
+            locatorBlockIndex = null,
+            locatorCharOffset = null,
+            customName = null,
+            highlightsJson = null,
+            seriesName = null,
+        )
+        val restored = SharedFolderBookMetadata.fromJsonString(metadata.toJsonString())
+            ?.toBookItem(scannedFile("Book.pdf", "Book.pdf"), existing = existing, nowMillis = 100L)
+            ?: error("Expected metadata")
+
+        assertNull(restored.title)
+        assertNull(restored.author)
+        assertNull(restored.seriesName)
+        assertNull(restored.titleSortKey)
+        assertEquals(0f, restored.progressPercentage)
+        assertNull(restored.readerPosition)
     }
 
     @Test
@@ -607,7 +701,36 @@ class LocalFolderSyncEngineTest {
             locatorBlockIndex = null,
             locatorCharOffset = null,
             customName = null,
-            highlightsJson = null
+            highlightsJson = null,
+            presentFields = sidecarPresentFields
         )
     }
+
+    private val sidecarPresentFields = setOf(
+        "bookId",
+        "schemaVersion",
+        "title",
+        "author",
+        "displayName",
+        "type",
+        "lastChapterIndex",
+        "lastPage",
+        "lastPositionCfi",
+        "progressPercentage",
+        "isRecent",
+        "lastModifiedTimestamp",
+        "bookmarksJson",
+        "locatorBlockIndex",
+        "locatorCharOffset",
+        "customName",
+        "highlightsJson",
+        "seriesName",
+        "seriesIndex",
+        "description",
+        "originalTitle",
+        "originalAuthor",
+        "originalSeriesName",
+        "originalSeriesIndex",
+        "originalDescription"
+    )
 }

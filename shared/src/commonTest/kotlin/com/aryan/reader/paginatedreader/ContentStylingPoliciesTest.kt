@@ -61,9 +61,26 @@ class ContentStylingPoliciesTest {
         )
         assertEquals(TextAlign.Left, paragraph.textAlign)
         assertEquals(TextDirection.ContentOrLtr, paragraph.textDirection)
-        assertEquals(20.sp, paragraph.lineHeight)
+        // Publication line-height wins unless the reader explicitly overrides it.
+        assertEquals(12.sp, paragraph.lineHeight)
         assertEquals(Hyphens.Auto, paragraph.hyphens)
         assertEquals(LineBreak.Simple, paragraph.lineBreak)
+
+        val overriddenParagraph = resolveReaderParagraphStyle(
+            baseTextStyle = TextStyle(lineHeight = 20.sp),
+            cssStyle = CssStyle(
+                paragraphStyle = ParagraphStyle(
+                    textAlign = TextAlign.Justify,
+                    textDirection = TextDirection.Unspecified,
+                    lineHeight = 12.sp
+                ),
+                hyphens = "auto"
+            ),
+            isParagraph = true,
+            userTextAlign = null,
+            honorUserLineHeight = true
+        )
+        assertEquals(20.sp, overriddenParagraph.lineHeight)
 
         assertEquals(FontFamily.Monospace, resolveReaderBlockFontFamily(FontFamily.Monospace, FontFamily.Serif))
         assertEquals(FontFamily.Serif, resolveReaderBlockFontFamily(FontFamily.SansSerif, FontFamily.Serif))

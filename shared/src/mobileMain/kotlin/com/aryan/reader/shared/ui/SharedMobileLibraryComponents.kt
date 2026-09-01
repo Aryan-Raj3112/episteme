@@ -989,8 +989,7 @@ internal fun SharedMobileBookGridSection(
     downloadingBookIds: Set<String>,
     onOpenBook: (BookItem) -> Unit,
     onLongPressBook: (BookItem) -> Unit,
-    onTogglePinned: (BookItem) -> Unit,
-    onShowBookInfo: (BookItem) -> Unit
+    onTogglePinned: (BookItem) -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(title, style = MaterialTheme.typography.titleLarge)
@@ -1013,8 +1012,7 @@ internal fun SharedMobileBookGridSection(
                             onLongPressBook(book)
                         }
                     },
-                    onTogglePinned = { onTogglePinned(book) },
-                    onShowBookInfo = { onShowBookInfo(book) }
+                    onTogglePinned = { onTogglePinned(book) }
                 )
             }
         }
@@ -1030,7 +1028,6 @@ internal fun SharedMobileBookList(
     onOpenBook: (BookItem) -> Unit,
     onLongPressBook: (BookItem) -> Unit,
     onTogglePinned: (BookItem) -> Unit,
-    onShowBookInfo: (BookItem) -> Unit = {},
     empty: @Composable () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -1056,8 +1053,7 @@ internal fun SharedMobileBookList(
                         onLongPressBook(book)
                     }
                 },
-                onTogglePinned = { onTogglePinned(book) },
-                onShowBookInfo = { onShowBookInfo(book) }
+                onTogglePinned = { onTogglePinned(book) }
             )
         }
     }
@@ -1073,7 +1069,6 @@ internal fun SharedMobileBookCard(
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     onTogglePinned: () -> Unit,
-    onShowBookInfo: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     ElevatedCard(
@@ -1097,19 +1092,6 @@ internal fun SharedMobileBookCard(
                         .fillMaxWidth()
                         .aspectRatio(0.74f)
                 )
-                IconButton(
-                    onClick = onShowBookInfo,
-                    modifier = Modifier.align(Alignment.TopEnd)
-                ) {
-                    Surface(shape = CircleShape, color = Color.Black.copy(alpha = 0.48f)) {
-                        Icon(
-                            Icons.Default.MoreVert,
-                            contentDescription = "Book details",
-                            tint = Color.White,
-                            modifier = Modifier.padding(6.dp).size(18.dp)
-                        )
-                    }
-                }
                 if (downloading) {
                     Surface(
                         modifier = Modifier.matchParentSize(),
@@ -1159,8 +1141,7 @@ internal fun SharedMobileLibraryListItem(
     downloading: Boolean = false,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
-    onTogglePinned: () -> Unit,
-    onShowBookInfo: () -> Unit
+    onTogglePinned: () -> Unit
 ) {
     ElevatedCard(
         modifier = Modifier

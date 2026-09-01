@@ -43,4 +43,7 @@ interface SharedMobileHomeActions {
     fun openExternalFileBehavior()
     fun toggleStrictFileFilter()
     fun togglePdfFileNameDisplay()
+    fun toggleReaderAi() {}
+    fun clearReflowCache() {}
+    fun exportLogs() {}
 }

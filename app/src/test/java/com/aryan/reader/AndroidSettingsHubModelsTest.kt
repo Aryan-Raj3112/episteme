@@ -165,7 +165,7 @@ class AndroidSettingsHubModelsTest {
     }
 
     @Test
-    fun `cloud sync row is gated by pro state`() {
+    fun `cloud sync row remains actionable for free users so settings can open upgrade`() {
         val freeSync = sharedSettingsHubModel(
             androidSettingsHubInput(
                 uiState = ReaderScreenState(isProUser = false),
@@ -183,7 +183,8 @@ class AndroidSettingsHubModelsTest {
             )
         ).visibleNestedItems().single { it.action == SharedSettingsAction.CLOUD_SYNC }
 
-        assertFalse(freeSync.enabled)
+        assertTrue(freeSync.enabled)
+        assertTrue(freeSync.summary.contains("Pro"))
         assertTrue(proSync.enabled)
     }
 }

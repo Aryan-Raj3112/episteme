@@ -158,20 +158,20 @@ class SettingsHubModelsTest {
     }
 
     @Test
-    fun `cloud sync row requires both pro and platform account eligibility`() {
+    fun `cloud sync row remains actionable while account setup is required`() {
         val item = sharedSettingsHubModel(
             SharedSettingsHubInput(
                 platform = SharedSettingsPlatform.IOS,
                 isSignedIn = true,
                 isProUser = true,
                 syncAvailable = true,
-                cloudSyncEligible = false,
+                cloudSyncSetupIntent = CloudSyncSetupIntent.NEEDS_DRIVE_AUTH,
             )
         ).page(SharedSettingsDestination.SYNC_ACCOUNTS)
             .items
             .single { it.action == SharedSettingsAction.CLOUD_SYNC }
 
-        assertFalse(item.enabled)
+        assertTrue(item.enabled)
         assertTrue(item.summary.contains("Google"))
     }
 
@@ -183,7 +183,7 @@ class SettingsHubModelsTest {
                 isSignedIn = true,
                 isProUser = true,
                 syncAvailable = true,
-                cloudSyncEligible = true,
+                cloudSyncSetupIntent = CloudSyncSetupIntent.READY,
                 isSyncEnabled = true,
             )
         ).page(SharedSettingsDestination.SYNC_ACCOUNTS)

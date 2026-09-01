@@ -50,6 +50,7 @@ import androidx.compose.ui.Modifier
 import com.aryan.reader.R
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
@@ -92,6 +93,16 @@ private const val TEXT_BOX_DRAG_PILL_VISUAL_HEIGHT_DP = 24f
 private const val TEXT_BOX_DRAG_PILL_TOUCH_WIDTH_DP = 72f
 private const val TEXT_BOX_DRAG_PILL_TOUCH_HEIGHT_DP = 48f
 private const val TEXT_BOX_DRAG_PILL_GAP_DP = 8f
+
+/** Stable tag for tracing text-box selection, focus, and IME value delivery. */
+internal const val PDF_TEXT_BOX_INPUT_TRACE_TAG = "PdfTextBoxInputTrace"
+
+/** A selected legacy text box owns the IME instead of the page rich-text editor. */
+internal fun isPdfRichTextInputEnabled(
+    isEditMode: Boolean,
+    selectedTool: InkType,
+    selectedTextBoxId: String?,
+): Boolean = isEditMode && selectedTool == InkType.TEXT && selectedTextBoxId == null
 
 // Eagerly consumes pointer events so parent scaled pan/zoom gestures don't intercept it
 suspend fun PointerInputScope.detectEagerDragGestures(
@@ -178,6 +189,8 @@ fun ResizableTextBox(
     val handleColor = if (isDarkMode) Color.White else Color.Black
 
     var isDraggingOrResizing by remember { mutableStateOf(false) }
+    var isTextFieldFocused by remember { mutableStateOf(false) }
+    val isTextInputEnabled = isEditMode && isSelected
 
     val fontFamily = remember(box.fontPath, box.fontName) {
         Timber.tag("PdfFontDebug").d("Rendering Box ${box.id}: FontPath=${box.fontPath}, FontName=${box.fontName}")
@@ -196,6 +209,21 @@ fun ResizableTextBox(
     androidx.compose.runtime.SideEffect {
         Timber.tag("PdfTextBoxDebug").v("ResizableTextBox Recompose [ID: ${box.id}] | isSelected=$isSelected | scale=$scale | pagePx=${pageWidthPx}x${pageHeightPx} | bounds=${box.relativeBounds}")
     }
+    LaunchedEffect(
+        box.id,
+        box.pageIndex,
+        isSelected,
+        isEditMode,
+        isTextInputEnabled,
+        isTextFieldFocused,
+        box.text.length
+    ) {
+        Timber.tag(PDF_TEXT_BOX_INPUT_TRACE_TAG).d(
+            "event=compose id=${box.id} page=${box.pageIndex} selected=$isSelected " +
+                "editMode=$isEditMode enabled=$isTextInputEnabled focused=$isTextFieldFocused " +
+                "textLength=${box.text.length}"
+        )
+    }
     var currentRectPx by remember {
         mutableStateOf(
             Rect(
@@ -207,9 +235,33 @@ fun ResizableTextBox(
         )
     }
 
-    LaunchedEffect(isSelected) {
+    LaunchedEffect(
+        isSelected,
+        isEditMode,
+        box.color,
+        box.backgroundColor,
+        box.fontSize,
+        box.isBold,
+        box.isItalic,
+        box.isUnderline,
+        box.isStrikeThrough,
+        box.fontPath,
+        box.fontName,
+    ) {
+        Timber.tag(PDF_TEXT_BOX_INPUT_TRACE_TAG).d(
+            "event=selection_or_style_state id=${box.id} page=${box.pageIndex} selected=$isSelected " +
+                "editMode=$isEditMode enabled=$isTextInputEnabled focused=$isTextFieldFocused " +
+                "textLength=${box.text.length}"
+        )
         if (isSelected && isEditMode) {
-            focusRequester.requestFocus()
+            val requestResult = runCatching { focusRequester.requestFocus() }
+            Timber.tag(PDF_TEXT_BOX_INPUT_TRACE_TAG).d(
+                "event=request_focus id=${box.id} page=${box.pageIndex} reason=selection_or_style " +
+                    "selected=$isSelected " +
+                    "editMode=$isEditMode enabled=$isTextInputEnabled result=${requestResult.getOrNull()} " +
+                    "error=${requestResult.exceptionOrNull()?.javaClass?.simpleName ?: "none"}"
+            )
+            requestResult.getOrThrow()
         }
     }
 
@@ -300,6 +352,10 @@ fun ResizableTextBox(
                     .pointerInput(Unit) {
                         detectTapGestures {
                             Timber.tag("PdfTextBoxDebug").d("TextBox Tapped[ID: ${box.id}]")
+                            Timber.tag(PDF_TEXT_BOX_INPUT_TRACE_TAG).d(
+                                "event=select_tap id=${box.id} page=${box.pageIndex} " +
+                                    "selectedBefore=$isSelected editMode=$isEditMode enabled=$isTextInputEnabled"
+                            )
                             currentOnSelect()
                         }
                     }
@@ -309,12 +365,29 @@ fun ResizableTextBox(
             ) {
                 BasicTextField(
                     value = box.text,
-                    onValueChange = currentOnTextChanged,
+                    onValueChange = { newText ->
+                        Timber.tag(PDF_TEXT_BOX_INPUT_TRACE_TAG).d(
+                            "event=value_change id=${box.id} page=${box.pageIndex} " +
+                                "oldLength=${box.text.length} newLength=${newText.length} " +
+                                "selected=$isSelected editMode=$isEditMode enabled=$isTextInputEnabled " +
+                                "focused=$isTextFieldFocused"
+                        )
+                        currentOnTextChanged(newText)
+                    },
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(8.dp)
                         .verticalScroll(rememberScrollState())
-                        .focusRequester(focusRequester),
+                        .focusRequester(focusRequester)
+                        .onFocusChanged { focusState ->
+                            isTextFieldFocused = focusState.isFocused
+                            Timber.tag(PDF_TEXT_BOX_INPUT_TRACE_TAG).d(
+                                "event=focus_changed id=${box.id} page=${box.pageIndex} " +
+                                    "focused=${focusState.isFocused} captured=${focusState.isCaptured} " +
+                                    "selected=$isSelected editMode=$isEditMode enabled=$isTextInputEnabled " +
+                                    "textLength=${box.text.length}"
+                            )
+                        },
                     textStyle = TextStyle(
                         color = box.color,
                         background = box.backgroundColor,

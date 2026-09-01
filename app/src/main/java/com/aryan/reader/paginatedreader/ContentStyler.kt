@@ -25,6 +25,7 @@ class ContentStyler(
     extractionBasePath: String,
     userTextAlign: TextAlign?,
     paragraphGapMultiplier: Float,
+    userLineHeightMultiplier: Float = 1f,
     adaptThemeColors: Boolean = true
 ) {
     private val delegate = SharedContentStyler(
@@ -36,6 +37,7 @@ class ContentStyler(
         themeTextColor = themeTextColor,
         userTextAlign = userTextAlign,
         paragraphGapMultiplier = paragraphGapMultiplier,
+        userLineHeightMultiplier = userLineHeightMultiplier,
         adaptThemeColors = adaptThemeColors,
         applyThemeToSvg = { svg -> applyThemeToSvg(svg, baseTextStyle.color) },
         embedImagesInSvg = { svg -> embedImagesInSvg(svg, chapterAbsPath, extractionBasePath) },

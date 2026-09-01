@@ -107,6 +107,9 @@ interface BookTtsListeningProgressDao {
 
     @Query("DELETE FROM book_tts_listening_progress WHERE bookId = :bookId")
     suspend fun delete(bookId: String)
+
+    @Query("DELETE FROM book_tts_listening_progress")
+    suspend fun clearAll()
 }
 
 data class ListeningChapter(

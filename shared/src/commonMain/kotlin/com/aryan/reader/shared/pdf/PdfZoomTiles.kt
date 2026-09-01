@@ -132,7 +132,16 @@ fun planPdfZoomTiles(
 fun pdfVerticalDoubleTapTargetScale(scale: Float, fitScale: Float = 1f): Float {
     val safeFit = fitScale.takeIf { it.isFinite() && it > 0f } ?: PDF_MIN_ZOOM_SCALE
     val safeScale = scale.takeIf { it.isFinite() && it > 0f } ?: safeFit
-    return if (safeScale <= safeFit + 0.05f) 2.5f else safeFit
+    if (safeFit < PDF_MIN_ZOOM_SCALE) {
+        val fitToOneMidpoint = (safeFit + PDF_MIN_ZOOM_SCALE) / 2f
+        val oneToMaxMidpoint = (PDF_MIN_ZOOM_SCALE + PDF_DOUBLE_TAP_ZOOM_SCALE) / 2f
+        return when {
+            safeScale < fitToOneMidpoint -> PDF_MIN_ZOOM_SCALE
+            safeScale < oneToMaxMidpoint -> PDF_DOUBLE_TAP_ZOOM_SCALE
+            else -> safeFit
+        }
+    }
+    return if (safeScale <= safeFit + 0.05f) PDF_DOUBLE_TAP_ZOOM_SCALE else safeFit
 }
 
 fun pdfZoomIndicatorPercent(scale: Float): Int =

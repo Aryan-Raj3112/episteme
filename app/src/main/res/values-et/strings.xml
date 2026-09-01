@@ -362,6 +362,7 @@
     <string name="banner_clearing_cloud_local_data">Kõigi pilve- ja kohalike andmete kustutamine…</string>
     <string name="banner_cloud_local_data_cleared">Kõik pilve- ja kohalikud andmed kustutati edukalt.</string>
     <string name="error_clear_all_data">Viga: kõigi andmete kustutamine ebaõnnestus.</string>
+    <string name="error_cloud_delete_pending">Pilvega ei saanud ühendust. Teie kustutamine lõpetatakse automaatselt järgmisel võrguühenduse korral.</string>
     <string name="banner_local_data_cleared">Kõik kohalikud andmed kustutati.</string>
     <string name="error_sign_in_failed">Sisselogimine ebaõnnestus. Palun proovi uuesti.</string>
     <string name="error_no_google_account">Ei leitud Google konto. See võib juhtuda värske installi korral, proovige mõne aja pärast uuesti.</string>
@@ -627,6 +628,8 @@
     <string name="visual_options_seamless_chapter_desc">Laadi lõpust mööda kerides kohe järgmine/eelmine peatükk, ilma tõmmake värskendamiseks animatsioonita.</string>
     <string name="visual_options_edge_padding">Eemalda servapolsterdus</string>
     <string name="visual_options_edge_padding_desc">Eemaldab horisontaalse vahe vasakust ja paremast servast.</string>
+    <string name="visual_options_hide_images">Peida pildid</string>
+    <string name="visual_options_hide_images_desc">Lülita see sisse, et lugeda raamatut kõikide piltide peidetult.</string>
     <string name="reader_brightness_title">Heledus</string>
     <string name="reader_brightness_system">Kasutage süsteemi heledust</string>
     <string name="reader_brightness_system_desc">Järgib seadme heleduse seadistust.</string>
@@ -1536,8 +1539,14 @@
     <string name="dialog_delete_tag_desc">Delete tag &quot;%1$s&quot;? It will be removed from every book.</string>
     <string name="action_export_annotations">Export annotations</string>
     <string name="dialog_export_annotations_title">Export annotations</string>
-    <string name="export_annotations_markdown">Markdown (.md)</string>
-    <string name="export_annotations_text">Text (.txt)</string>
+    <string name="export_annotations_markdown">Markdown</string>
+    <string name="export_annotations_text">Plain text</string>
+    <string name="export_annotations_json">JSON</string>
+    <string name="export_annotations_csv">CSV</string>
+    <string name="export_annotations_markdown_description">Formatted document with headings and quotes</string>
+    <string name="export_annotations_text_description">Simple readable list of highlights and notes</string>
+    <string name="export_annotations_json_description">Structured data for apps and backups</string>
+    <string name="export_annotations_csv_description">Spreadsheet-friendly table of annotations</string>
     <string name="label_cover">Cover</string>
     <string name="label_current_cover_kept">Current cover will be kept</string>
     <string name="label_current_cover">Current cover</string>

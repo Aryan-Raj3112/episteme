@@ -22,10 +22,14 @@ package com.aryan.reader.pdf
 import android.content.Context
 import android.graphics.Bitmap
 import android.net.Uri
+import android.os.ParcelFileDescriptor
 import timber.log.Timber
 import androidx.core.graphics.createBitmap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.File
+import java.net.URI
+import java.net.URLDecoder
 
 private const val TAG = "PdfCoverGenerator"
 
@@ -43,7 +47,7 @@ class PdfCoverGenerator(context: Context) {
     suspend fun generateCover(pdfUri: Uri, targetHeight: Int = 800): Bitmap? {
         return withContext(Dispatchers.IO) {
             try {
-                appContext.contentResolver.openFileDescriptor(pdfUri, "r").use { pfd ->
+                openFileDescriptor(pdfUri).use { pfd ->
                     if (pfd == null) {
                         Timber.e("Failed to open ParcelFileDescriptor for URI: $pdfUri")
                         null
@@ -88,5 +92,30 @@ class PdfCoverGenerator(context: Context) {
                 null
             }
         }
+    }
+
+    private fun openFileDescriptor(uri: Uri): ParcelFileDescriptor? {
+        return if (uri.scheme.equals("file", ignoreCase = true)) {
+            fileFromUri(uri)?.takeIf(File::isFile)?.let {
+                ParcelFileDescriptor.open(it, ParcelFileDescriptor.MODE_READ_ONLY)
+            }
+        } else {
+            appContext.contentResolver.openFileDescriptor(uri, "r")
+        }
+    }
+
+    private fun fileFromUri(uri: Uri): File? {
+        if (!uri.scheme.equals("file", ignoreCase = true)) return null
+        runCatching { File(URI(uri.toString())) }.getOrNull()?.let { return it }
+        uri.path?.takeIf { it.isNotBlank() }?.let { return File(it) }
+        val rawPath = uri.toString().removePrefix("file:").takeIf { it.isNotBlank() } ?: return null
+        val normalizedPath = when {
+            rawPath.startsWith("///") -> rawPath.drop(3)
+            rawPath.length > 2 && rawPath[0] == '/' && rawPath[2] == ':' -> rawPath.drop(1)
+            else -> rawPath
+        }
+        return runCatching {
+            File(URLDecoder.decode(normalizedPath, Charsets.UTF_8.name()))
+        }.getOrNull()
     }
 }

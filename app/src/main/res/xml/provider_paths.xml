@@ -2,5 +2,4 @@
 <paths>
     <!-- Corresponds to context.cacheDir/shared_files/ -->
     <cache-path name="shared_files" path="shared_files/" />
-    <cache-path name="cache_root" path="." />
 </paths>

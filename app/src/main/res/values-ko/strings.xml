@@ -341,6 +341,7 @@
     <string name="banner_clearing_cloud_local_data">모든 클라우드 및 로컬 데이터 지우는 중…</string>
     <string name="banner_cloud_local_data_cleared">모든 클라우드 및 로컬 데이터가 지워졌습니다.</string>
     <string name="error_clear_all_data">오류: 모든 데이터를 지우지 못했습니다.</string>
+    <string name="error_cloud_delete_pending">클라우드에 연결할 수 없습니다. 삭제는 다음에 온라인이 될 때 자동으로 완료됩니다.</string>
     <string name="banner_local_data_cleared">모든 로컬 데이터가 지워졌습니다.</string>
     <string name="error_sign_in_failed">로그인에 실패했습니다. 다시 시도하세요.</string>
     <string name="error_no_google_account">Google 계정을 찾을 수 없습니다. 새로 설치한 직후 발생할 수 있으니 잠시 후 다시 시도하세요.</string>

@@ -33,6 +33,57 @@ class ReaderJumpHistoryTest {
     }
 
     @Test
+    fun `jump history refreshes current locator before stepping back`() {
+        val page1 = locator(chapter = 0, cfi = "page-1").copy(pageIndex = 0)
+        val page20 = locator(chapter = 0, cfi = "page-20").copy(pageIndex = 19)
+        val page22 = locator(chapter = 0, cfi = "page-22").copy(pageIndex = 21)
+
+        val refreshed = ReaderJumpHistory()
+            .record(currentLocator = page1, targetLocator = page20, chapterCount = 1)
+            .updateCurrentLocation(currentLocator = page22, chapterCount = 1)
+        val steppedBack = refreshed.stepBack()
+        val steppedForward = steppedBack.stepForward()
+
+        assertEquals(listOf(page1, page22), refreshed.locators)
+        assertEquals(page1, steppedBack.locators[steppedBack.cursor])
+        assertEquals(page22, steppedBack.forwardLocator)
+        assertEquals(page22, steppedForward.locators[steppedForward.cursor])
+    }
+
+    @Test
+    fun `jump history ignores invalid current locator refreshes`() {
+        val history = ReaderJumpHistory()
+            .record(
+                currentLocator = locator(chapter = 0, cfi = "page-1"),
+                targetLocator = locator(chapter = 0, cfi = "page-20"),
+                chapterCount = 1
+            )
+
+        assertEquals(
+            history,
+            history.updateCurrentLocation(
+                currentLocator = locator(chapter = 1, cfi = "outside"),
+                chapterCount = 1
+            )
+        )
+        assertEquals(history, history.updateCurrentLocation(currentLocator = null, chapterCount = 1))
+    }
+
+    @Test
+    fun `jump history refresh keeps stable cfi identity while updating metadata`() {
+        val start = locator(chapter = 0, cfi = "start")
+        val previous = locator(chapter = 0, cfi = "stable").copy(pageIndex = 20)
+        val current = previous.copy(pageIndex = 22)
+
+        val refreshed = ReaderJumpHistory()
+            .record(currentLocator = start, targetLocator = previous, chapterCount = 1)
+            .updateCurrentLocation(currentLocator = current, chapterCount = 1)
+
+        assertEquals(current, refreshed.locators.last())
+        assertTrue(previous.hasSameJumpLocation(refreshed.locators.last()))
+    }
+
+    @Test
     fun `ignores invalid and duplicate jumps prunes chapters and caps entries`() {
         val unchanged = ReaderJumpHistory()
             .record(currentLocator = locator(chapter = 0, cfi = "same"), targetLocator = locator(chapter = 0, cfi = "same"), chapterCount = 3)

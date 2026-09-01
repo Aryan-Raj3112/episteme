@@ -3,12 +3,15 @@ package com.aryan.reader.shared.ui
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.ImageBitmap
 import com.aryan.reader.shared.BookItem
+import com.aryan.reader.shared.pdf.PdfReverseColorMode
 
 internal data class SharedMobilePdfPageRender(
     val pageCount: Int = 1,
     /** The rendered page's width divided by its height. */
     val aspectRatio: Float = DefaultSharedMobilePdfPageAspectRatio,
     val bitmap: ImageBitmap? = null,
+    /** Non-null when the reverse transform is already baked into [bitmap]. */
+    val rasterizedReverseColorMode: PdfReverseColorMode? = null,
     val errorMessage: String? = null,
     val openError: SharedMobilePdfOpenError? = null,
 )
@@ -27,7 +30,9 @@ internal fun sharedMobilePdfOpenErrorForPdfiumCode(code: Long): SharedMobilePdfO
 
 internal data class SharedMobilePdfTileRender(
     val request: com.aryan.reader.shared.pdf.PdfZoomTileRequest,
-    val bitmap: ImageBitmap
+    val bitmap: ImageBitmap,
+    /** Non-null when the reverse transform is already baked into [bitmap]. */
+    val rasterizedReverseColorMode: PdfReverseColorMode? = null,
 )
 
 internal data class SharedMobilePdfPageThumbnail(
@@ -51,6 +56,8 @@ internal expect fun rememberSharedMobilePdfPageRender(
     pageIndex: Int,
     zoomScale: Float = 1f,
     password: String? = null,
+    reverseColorMode: PdfReverseColorMode = PdfReverseColorMode.RGB,
+    preserveImageColors: Boolean = false,
 ): SharedMobilePdfPageRender
 
 @Composable
@@ -58,6 +65,8 @@ internal expect fun rememberSharedMobilePdfPageThumbnail(
     book: BookItem,
     pageIndex: Int,
     password: String? = null,
+    reverseColorMode: PdfReverseColorMode = PdfReverseColorMode.RGB,
+    preserveImageColors: Boolean = false,
 ): SharedMobilePdfPageThumbnail
 
 @Composable
@@ -68,6 +77,8 @@ internal expect fun rememberSharedMobilePdfTileRenders(
     zoomScale: Float,
     visibleBounds: com.aryan.reader.shared.pdf.PdfPageBounds?,
     password: String? = null,
+    reverseColorMode: PdfReverseColorMode = PdfReverseColorMode.RGB,
+    preserveImageColors: Boolean = false,
 ): List<SharedMobilePdfTileRender>
 
 /**

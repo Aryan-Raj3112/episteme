@@ -19,9 +19,12 @@
  */
 package com.aryan.reader
 
+import android.content.ActivityNotFoundException
 import android.os.Build
 import timber.log.Timber
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.RequiresApi
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -45,11 +48,16 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.windowsizeclass.WindowSizeClass
+import androidx.compose.material3.windowsizeclass.WindowWidthSizeClass
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -63,7 +71,14 @@ import com.aryan.reader.epubreader.EpubReaderScreen
 import com.aryan.reader.feedback.FeedbackScreen
 import com.aryan.reader.feedback.SupportProjectScreen
 import com.aryan.reader.pdf.PdfViewerScreen
+import com.aryan.reader.pdf.PdfSplitPdfPicker
+import com.aryan.reader.pdf.PdfSplitReaderScreen
 import com.aryan.reader.shared.ReaderFeatureSurface
+import com.aryan.reader.shared.CloudFolderIncomingChoice
+import com.aryan.reader.shared.CloudFolderIncomingFolderPrompt
+import com.aryan.reader.shared.PdfSplitPaneState
+import com.aryan.reader.shared.TTS_PLAYBACK_SOURCE_AUDIOBOOK
+import com.aryan.reader.shared.samePdfDocument
 import com.aryan.reader.shared.ui.SharedMobileAppDestination
 import com.aryan.reader.tts.ReaderTtsMiniBar
 import com.aryan.reader.tts.readerTtsMiniBarBottomPaddingDp
@@ -151,6 +166,9 @@ private suspend fun NavHostController.syncRouteTo(destination: SharedMobileAppDe
     }
 }
 
+private fun incomingPromptKey(prompt: CloudFolderIncomingFolderPrompt): String =
+    "${prompt.rootId}:${prompt.root.manifestRevision}"
+
 @androidx.annotation.OptIn(UnstableApi::class)
 @OptIn(ExperimentalMaterial3Api::class)
 @RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
@@ -162,10 +180,60 @@ fun AppNavigation(
 ) {
     Timber.d("AppNavigation composable invoked.")
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val incomingFolderPrompt by viewModel.incomingCloudFolderPrompt.collectAsStateWithLifecycle()
     val currentBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = currentBackStackEntry?.destination?.route
     val ttsController = viewModel.ttsController
     val ttsState by ttsController.ttsState.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    var showPdfSplitPicker by remember { mutableStateOf(false) }
+    var pendingIncomingBindPrompt by remember {
+        mutableStateOf<CloudFolderIncomingFolderPrompt?>(null)
+    }
+    var dismissedIncomingFolderKey by remember { mutableStateOf<String?>(null) }
+    var processingIncomingFolderKey by remember { mutableStateOf<String?>(null) }
+    val incomingCloudFolderLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree(),
+    ) { uri ->
+        val prompt = pendingIncomingBindPrompt
+        pendingIncomingBindPrompt = null
+        if (prompt == null) {
+            processingIncomingFolderKey = null
+            return@rememberLauncherForActivityResult
+        }
+        if (uri == null) {
+            // Picker cancellation is not a persisted decision. Leave the
+            // prompt visible so the user can retry the binding.
+            processingIncomingFolderKey = null
+            return@rememberLauncherForActivityResult
+        }
+
+        viewModel.recordIncomingCloudFolderChoice(
+            prompt = prompt,
+            choice = CloudFolderIncomingChoice.BIND_LOCAL_FOLDER,
+            localFolderUri = uri,
+            onPersisted = { persisted ->
+                processingIncomingFolderKey = null
+                if (persisted) {
+                    dismissedIncomingFolderKey = incomingPromptKey(prompt)
+                } else {
+                    dismissedIncomingFolderKey = null
+                    viewModel.refreshCloudFolderSyncState()
+                }
+            },
+        )
+    }
+    LaunchedEffect(incomingFolderPrompt?.rootId, incomingFolderPrompt?.root?.manifestRevision) {
+        // A newer manifest revision is a new decision.  A cancellation of the
+        // SAF picker leaves the current prompt visible and retryable. Keep an
+        // active picker association across a metadata refresh so a worker
+        // discovering a newer revision cannot orphan the user's URI result.
+        dismissedIncomingFolderKey = null
+        if (incomingFolderPrompt == null) {
+            pendingIncomingBindPrompt = null
+            processingIncomingFolderKey = null
+        }
+    }
     val currentDestination = SharedMobileAppDestination.fromRoute(currentRoute)
     val isOnReaderRoute = currentDestination?.isReader == true
     val showTtsMiniBar = shouldShowReaderTtsMiniBar(
@@ -180,6 +248,8 @@ fun AppNavigation(
         hasPreviousBackStackEntry = navController.previousBackStackEntry != null,
         isCurrentEntryResumed = currentBackStackEntry?.lifecycle?.currentState == Lifecycle.State.RESUMED
     )
+    val shouldHandleReaderBack = shouldInterceptBack ||
+        (currentDestination == SharedMobileAppDestination.PDF_VIEWER && uiState.pdfSplitWorkspace.isOpen)
 
     LaunchedEffect(currentRoute, uiState.selectedFileType, uiState.isLoading, uiState.selectedEpubBook, uiState.selectedPdfUri) {
         if (!uiState.isLoading && shouldSyncSelectedFileRoute(currentRoute)) {
@@ -209,9 +279,15 @@ fun AppNavigation(
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        BackHandler(enabled = shouldInterceptBack) {
+        BackHandler(enabled = shouldHandleReaderBack) {
             when (currentDestination) {
-                SharedMobileAppDestination.PDF_VIEWER,
+                SharedMobileAppDestination.PDF_VIEWER -> {
+                    if (uiState.pdfSplitWorkspace.isOpen) {
+                        viewModel.closePdfSplitWorkspace()
+                    } else {
+                        viewModel.clearSelectedFile()
+                    }
+                }
                 SharedMobileAppDestination.EPUB_READER -> viewModel.clearSelectedFile()
                 else -> navController.popBackStackIfReady()
             }
@@ -259,28 +335,78 @@ fun AppNavigation(
                 )
                 Timber.i("Displaying PDF Viewer for URI: $pdfUri, initialPage: $initialPage")
                 Box(modifier = Modifier.fillMaxSize()) {
-                    PdfViewerScreen(
-                        pdfUri = pdfUri,
-                        initialPage = initialPage,
-                        initialBookmarksJson = initialBookmarksJson,
-                        isProUser = uiState.isProUser,
-                        onNavigateBack = {
-                            Timber.d("Back action triggered from PDF Viewer.")
-                            viewModel.clearSelectedFile()
-                        },
-                        onSavePosition = viewModel::savePdfReadingPosition,
-                        onBookmarksChanged = { bookmarksJson ->
-                            if (bookId != null) {
-                                viewModel.saveBookmarks(bookId, bookmarksJson)
-                            } else {
-                                Timber.w("Could not find bookId to save PDF bookmarks for URI: ${uiState.selectedPdfUri}")
-                            }
-                        },
-                        onNavigateToPro = {
-                            navController.navigateIfReady(SharedMobileAppDestination.PRO, popUpToStart = true)
-                        },
-                        viewModel = viewModel
-                    )
+                    if (uiState.pdfSplitWorkspace.isOpen) {
+                        PdfSplitReaderScreen(
+                            workspace = uiState.pdfSplitWorkspace,
+                            availablePdfs = uiState.rawLibraryFiles.filter {
+                                it.type == FileType.PDF && !it.isDeleted && it.isAvailable
+                            },
+                            isProUser = uiState.isProUser,
+                            usePdfFileNameAsDisplayName = uiState.usePdfFileNameAsDisplayName,
+                            viewModel = viewModel,
+                            onFocusPane = { pane, sessionId ->
+                                viewModel.focusPdfSplitPane(
+                                    pane = pane,
+                                    expectedSessionId = sessionId,
+                                )
+                            },
+                            onClosePane = { pane, sessionId ->
+                                val remainsOpen = viewModel.closePdfSplitPane(
+                                    pane = pane,
+                                    expectedSessionId = sessionId,
+                                )
+                                if (!remainsOpen) viewModel.clearSelectedFile()
+                            },
+                            onCloseWorkspace = viewModel::closePdfSplitWorkspace,
+                            onSwapPanes = viewModel::swapPdfSplitPanes,
+                            onDividerChange = { fraction, orientation, revision ->
+                                viewModel.setPdfSplitDividerFraction(
+                                    fraction = fraction,
+                                    orientation = orientation,
+                                    expectedRevision = revision,
+                                )
+                            },
+                            onOpenDocument = { selectedBookId, targetPane, sessionId, revision ->
+                                viewModel.openPdfSplitPane(
+                                    bookId = selectedBookId,
+                                    targetPane = targetPane,
+                                    expectedRevision = revision,
+                                    expectedSessionId = sessionId,
+                                )
+                            },
+                            onNavigateToPro = {
+                                navController.navigateIfReady(SharedMobileAppDestination.PRO, popUpToStart = true)
+                            },
+                        )
+                    } else {
+                        PdfViewerScreen(
+                            pdfUri = pdfUri,
+                            initialPage = initialPage,
+                            initialBookmarksJson = initialBookmarksJson,
+                            isProUser = uiState.isProUser,
+                            onNavigateBack = {
+                                Timber.d("Back action triggered from PDF Viewer.")
+                                viewModel.clearSelectedFile()
+                            },
+                            onSavePosition = viewModel::savePdfReadingPosition,
+                            onBookmarksChanged = { bookmarksJson ->
+                                if (bookId != null) {
+                                    viewModel.saveBookmarks(
+                                        bookId = bookId,
+                                        bookmarksJson = bookmarksJson,
+                                        documentUri = pdfUri,
+                                    )
+                                } else {
+                                    Timber.w("Could not find bookId to save PDF bookmarks for URI: ${uiState.selectedPdfUri}")
+                                }
+                            },
+                            onNavigateToPro = {
+                                navController.navigateIfReady(SharedMobileAppDestination.PRO, popUpToStart = true)
+                            },
+                            viewModel = viewModel,
+                            onOpenSplit = { showPdfSplitPicker = true },
+                        )
+                    }
 
                     if (uiState.isLoading) {
                         Box(
@@ -294,6 +420,32 @@ fun AppNavigation(
                     }
 
                     CustomTopBanner(bannerMessage = uiState.bannerMessage)
+                }
+                if (showPdfSplitPicker && !uiState.pdfSplitWorkspace.isOpen) {
+                    PdfSplitPdfPicker(
+                        availablePdfs = uiState.rawLibraryFiles.filter {
+                                it.type == FileType.PDF &&
+                                !it.isDeleted &&
+                                it.isAvailable &&
+                                it.uriString?.let { uri ->
+                                    !PdfSplitPaneState(
+                                        bookId = it.bookId,
+                                        uriString = uri,
+                                    ).samePdfDocument(
+                                        PdfSplitPaneState(
+                                            bookId = bookId.orEmpty(),
+                                            uriString = uiState.selectedPdfUri?.toString().orEmpty(),
+                                        ),
+                                    )
+                                } == true
+                        },
+                        usePdfFileNameAsDisplayName = uiState.usePdfFileNameAsDisplayName,
+                        onDismiss = { showPdfSplitPicker = false },
+                        onDocumentSelected = { item ->
+                            showPdfSplitPicker = false
+                            viewModel.openPdfSplit(item.bookId)
+                        },
+                    )
                 }
             } else if (uiState.isLoading) {
                 Timber.d("PDF URI is null but loading is in progress. Showing loading indicator.")
@@ -437,10 +589,113 @@ fun AppNavigation(
             SettingsScreen(
                 viewModel = viewModel,
                 navController = navController,
-                onBackClick = { navController.popBackStackIfReady() }
+                onBackClick = { navController.popBackStackIfReady() },
             )
         }
+        composable(route = SharedMobileAppDestination.FOLDER_SYNC_SETTINGS.route) {
+            if (uiState.canUseCloudFolderSync()) {
+                CloudFolderSyncSettingsScreen(
+                    viewModel = viewModel,
+                    onBackClick = { navController.popBackStackIfReady() },
+                )
+            } else {
+                // A stale/deep-linked route must not expose cloud-folder
+                // mutations after sign-out or entitlement loss.
+                LaunchedEffect(Unit) {
+                    navController.awaitReadyForBackStackChange()
+                    navController.popBackStackIfReady()
+                }
+            }
         }
+        }
+
+        // TTS-audiobook notification taps are application-scoped.  Keeping
+        // this sheet outside the routes means the playback surface opens over
+        // the home, reader, and settings routes alike, without disturbing the
+        // running TTS session.
+        uiState.pendingAudiobookTtsPlayerTarget?.let { target ->
+            val liveChapterTitle = ttsState.chapterTitle?.takeIf {
+                ttsState.playbackSource == TTS_PLAYBACK_SOURCE_AUDIOBOOK &&
+                    ttsState.bookId == target.bookId
+            }
+            val playerItem = remember(target, liveChapterTitle) {
+                target.toTtsAudiobookUiItem().let { item ->
+                    liveChapterTitle?.let { item.copy(chapter = it) } ?: item
+                }
+            }
+            AudiobookPlayerSheet(
+                item = playerItem,
+                onBeforePlay = {},
+                onDismiss = { viewModel.dismissAudiobookTtsPlayerTarget(target.bookId) },
+            )
+        }
+
+        // Incoming folder decisions are application-scoped.  Keeping this
+        // overlay outside Settings means device 2 is prompted on the home,
+        // reader, and settings routes alike, with exactly one dialog owner.
+        incomingFolderPrompt
+            ?.takeUnless { incomingPromptKey(it) == dismissedIncomingFolderKey }
+            ?.let { prompt ->
+                CloudFolderIncomingFolderPromptDialog(
+                    prompt = prompt,
+                    onChoice = { choice ->
+                        if (choice != CloudFolderIncomingChoice.BIND_LOCAL_FOLDER) {
+                            val key = incomingPromptKey(prompt)
+                            if (processingIncomingFolderKey != key) {
+                                processingIncomingFolderKey = key
+                                viewModel.recordIncomingCloudFolderChoice(
+                                    prompt = prompt,
+                                    choice = choice,
+                                    onPersisted = { persisted ->
+                                        processingIncomingFolderKey = null
+                                        if (persisted) {
+                                            dismissedIncomingFolderKey = key
+                                        } else {
+                                            dismissedIncomingFolderKey = null
+                                            viewModel.refreshCloudFolderSyncState()
+                                        }
+                                    },
+                                )
+                            }
+                        }
+                    },
+                    onBindLocalFolder = {
+                        val key = incomingPromptKey(prompt)
+                        if (processingIncomingFolderKey != key) {
+                            processingIncomingFolderKey = key
+                            pendingIncomingBindPrompt = prompt
+                            try {
+                                incomingCloudFolderLauncher.launch(null)
+                            } catch (_: ActivityNotFoundException) {
+                                pendingIncomingBindPrompt = null
+                                processingIncomingFolderKey = null
+                                viewModel.showBanner(
+                                    context.getString(R.string.error_folder_selection_unsupported),
+                                    isError = true,
+                                )
+                            }
+                        }
+                    },
+                    onDismiss = {
+                        val key = incomingPromptKey(prompt)
+                        if (processingIncomingFolderKey != key) {
+                            processingIncomingFolderKey = key
+                            viewModel.dismissIncomingCloudFolderPrompt(
+                                prompt.rootId,
+                                onPersisted = { persisted ->
+                                    processingIncomingFolderKey = null
+                                    if (persisted) {
+                                        dismissedIncomingFolderKey = key
+                                    } else {
+                                        dismissedIncomingFolderKey = null
+                                        viewModel.refreshCloudFolderSyncState()
+                                    }
+                                },
+                            )
+                        }
+                    },
+                )
+            }
 
         AnimatedVisibility(
             visible = showTtsMiniBar,

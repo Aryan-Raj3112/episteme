@@ -496,18 +496,17 @@ object FontFamilySerializer : KSerializer<FontFamily?> {
     override val descriptor = PrimitiveSerialDescriptor("FontFamily", PrimitiveKind.STRING)
 
     override fun serialize(encoder: Encoder, value: FontFamily?) {
-        val name = FontFamilyMapper.fontFamilyToName(value ?: return encoder.encodeNull())
-        if (name != null) {
-            encoder.encodeString(name)
-        } else {
-            encoder.encodeNull()
-        }
+        // ProtoBuf rejects encodeNull for optional properties, and custom families loaded
+        // from book-embedded @font-face files have no reverse mapping. Persist the empty
+        // string in both cases; deserialization degrades those spans to an unspecified
+        // family instead of crashing persistence.
+        val name = value?.let(FontFamilyMapper::fontFamilyToName).orEmpty()
+        encoder.encodeString(name)
     }
 
     override fun deserialize(decoder: Decoder): FontFamily? {
-        if (decoder.decodeNotNullMark()) {
-            return FontFamilyMapper.nameToFontFamily(decoder.decodeString())
-        }
-        return null
+        if (!decoder.decodeNotNullMark()) return null
+        val name = decoder.decodeString()
+        return name.takeIf { it.isNotBlank() }?.let(FontFamilyMapper::nameToFontFamily)
     }
 }

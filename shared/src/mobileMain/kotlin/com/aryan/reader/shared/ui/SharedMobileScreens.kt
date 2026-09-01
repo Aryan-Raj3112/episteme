@@ -1,6 +1,7 @@
 package com.aryan.reader.shared.ui
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -17,11 +18,13 @@ import androidx.compose.material.icons.filled.Ai
 import androidx.compose.material.icons.filled.Feedback
 import androidx.compose.material.icons.filled.FolderSpecial
 import androidx.compose.material.icons.filled.Fonts
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.VerifiedUser
+import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -37,15 +40,25 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import com.aryan.reader.shared.UserData
 
 @Composable
 fun SharedMobileAppDrawerContent(
-    currentUser: UserData?,
-    isProUser: Boolean,
-    credits: Int,
+    account: MobileAccountPresentation = MobileAccountPresentation(),
+    accountAvatar: @Composable (UserData, Modifier) -> Unit = { _, modifier ->
+        Icon(
+            imageVector = Icons.Default.AccountCircle,
+            contentDescription = readerString("content_desc_profile", "Profile"),
+            modifier = modifier,
+            tint = MaterialTheme.colorScheme.primary,
+        )
+    },
     isSyncEnabled: Boolean,
     isFolderSyncEnabled: Boolean,
     onSignInClick: () -> Unit,
@@ -61,12 +74,17 @@ fun SharedMobileAppDrawerContent(
     onPrivacyPolicyClick: () -> Unit,
     onTermsClick: () -> Unit,
     onLicensesClick: () -> Unit,
-    isStandardEdition: Boolean = false,
-    aiSettingsAvailable: Boolean = true,
+    drawerCapabilities: MobileAppDrawerCapabilities = MobileAppDrawerCapabilities.GLOBAL,
+    onAboutClick: (() -> Unit)? = null,
+    onSupportProjectClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     ModalDrawerSheet(modifier = modifier) {
         Column(modifier = Modifier.fillMaxSize()) {
+            val currentUser = account.currentUser
+            val isProUser = account.isProUser
+            val credits = account.credits
+            val edition = account.edition
             if (currentUser != null) {
                 Column(
                     modifier = Modifier
@@ -75,14 +93,11 @@ fun SharedMobileAppDrawerContent(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.AccountCircle,
-                        contentDescription = "Profile",
-                        modifier = Modifier.size(80.dp),
-                        tint = MaterialTheme.colorScheme.primary
-                    )
+                    accountAvatar(currentUser, Modifier.size(80.dp))
                     Text(
-                        text = currentUser.displayName ?: currentUser.email ?: "Signed in",
+                        text = currentUser.displayName
+                            ?: currentUser.email
+                            ?: readerString("desktop_signed_in", "Signed in"),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold
                     )
@@ -105,7 +120,11 @@ fun SharedMobileAppDrawerContent(
                         ) {
                             Icon(Icons.Default.VerifiedUser, contentDescription = null, modifier = Modifier.size(16.dp))
                             Text(
-                                if (isStandardEdition) "Standard version" else "$credits credits",
+                                if (edition == MobileAppEdition.STANDARD) {
+                                    readerString("drawer_standard_version", "Standard version")
+                                } else {
+                                    readerString("credits_count", "%1\$d Credits", credits)
+                                },
                                 style = MaterialTheme.typography.labelMedium
                             )
                         }
@@ -115,17 +134,85 @@ fun SharedMobileAppDrawerContent(
                 Spacer(Modifier.height(8.dp))
                 NavigationDrawerItem(
                     icon = { Icon(Icons.Default.AccountCircle, contentDescription = null) },
-                    label = { Text("Sign in with Google") },
+                    label = {
+                        Text(
+                            account.signInLabel
+                                ?: mobileAccountSignInLabel(account.supportedSignInProviders)
+                        )
+                    },
                     selected = false,
                     onClick = onSignInClick,
-                    modifier = Modifier.padding(horizontal = 12.dp)
+                    modifier = Modifier.padding(horizontal = 12.dp).testTag("MobileDrawerSignIn")
                 )
                 Text(
-                    text = if (isStandardEdition) "Sync account and app settings." else "Sync account, Pro features, and credits.",
+                    text = account.signedOutDescription ?: if (edition == MobileAppEdition.STANDARD) {
+                        readerString(
+                            "drawer_signed_out_standard_desc",
+                            "Sync account and app settings.",
+                        )
+                    } else {
+                        readerString(
+                            "drawer_signed_out_desc",
+                            "Sync account, Pro features, and credits.",
+                        )
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 28.dp, vertical = 10.dp)
                 )
+                account.legalDisclosure?.let { disclosure ->
+                    val annotatedDisclosure = buildAnnotatedString {
+                        append(disclosure.text)
+                        disclosure.termsLabel
+                            ?.takeIf(String::isNotEmpty)
+                            ?.let { label ->
+                                val start = disclosure.text.indexOf(label)
+                                if (start >= 0) {
+                                    addStringAnnotation("terms", label, start, start + label.length)
+                                    addStyle(
+                                        SpanStyle(
+                                            color = MaterialTheme.colorScheme.primary,
+                                            textDecoration = TextDecoration.Underline,
+                                        ),
+                                        start,
+                                        start + label.length,
+                                    )
+                                }
+                            }
+                        disclosure.privacyLabel
+                            ?.takeIf(String::isNotEmpty)
+                            ?.let { label ->
+                                val start = disclosure.text.indexOf(label)
+                                if (start >= 0) {
+                                    addStringAnnotation("privacy", label, start, start + label.length)
+                                    addStyle(
+                                        SpanStyle(
+                                            color = MaterialTheme.colorScheme.primary,
+                                            textDecoration = TextDecoration.Underline,
+                                        ),
+                                        start,
+                                        start + label.length,
+                                    )
+                                }
+                            }
+                    }
+                    @Suppress("DEPRECATION")
+                    ClickableText(
+                        text = annotatedDisclosure,
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        ),
+                        modifier = Modifier.padding(horizontal = 28.dp, vertical = 2.dp),
+                        onClick = { offset ->
+                            when {
+                                annotatedDisclosure.getStringAnnotations("terms", offset, offset).isNotEmpty() ->
+                                    onTermsClick()
+                                annotatedDisclosure.getStringAnnotations("privacy", offset, offset).isNotEmpty() ->
+                                    onPrivacyPolicyClick()
+                            }
+                        },
+                    )
+                }
             }
 
             HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
@@ -135,34 +222,63 @@ fun SharedMobileAppDrawerContent(
                 label = {
                     Text(
                         when {
-                            isStandardEdition -> "Standard version"
-                            isProUser -> "Pro unlocked"
-                            else -> "Upgrade to Pro"
+                            edition == MobileAppEdition.STANDARD -> readerString("drawer_standard_version", "Standard version")
+                            isProUser -> readerString("drawer_pro_unlocked", "Pro unlocked")
+                            else -> readerString("drawer_upgrade_pro", "Upgrade to Pro")
                         }
                     )
                 },
                 selected = false,
                 onClick = onProClick,
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp).testTag("MobileDrawerPro")
             )
 
-            NavigationDrawerItem(
-                icon = { Icon(Icons.Default.Sync, contentDescription = null) },
-                label = { Text("Sync library") },
-                selected = false,
-                onClick = { onSyncToggle(!isSyncEnabled) },
-                badge = { Switch(checked = isSyncEnabled, onCheckedChange = onSyncToggle) },
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
-            )
+            // Android only exposes cloud sync after account sign-in. Keep the
+            // same gate here so signed-out users do not see a control that
+            // cannot be enabled, and make the Pro prerequisite visible in
+            // the control state instead of accepting a no-op tap.
+            if (currentUser != null) {
+                NavigationDrawerItem(
+                    icon = { Icon(Icons.Default.Sync, contentDescription = null) },
+                    label = { Text(readerString("drawer_sync_library", "Sync library")) },
+                    selected = false,
+                    onClick = {
+                        if (isProUser) onSyncToggle(!isSyncEnabled) else onProClick()
+                    },
+                    badge = {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            if (!isProUser) {
+                                Icon(
+                                    imageVector = Icons.Default.VerifiedUser,
+                                    contentDescription = readerString("content_desc_pro_feature", "Pro feature"),
+                                    modifier = Modifier.size(20.dp),
+                                    tint = MaterialTheme.colorScheme.primary,
+                                )
+                            }
+                            Switch(
+                                checked = isSyncEnabled,
+                                enabled = isProUser,
+                                onCheckedChange = { enabled ->
+                                    if (isProUser) onSyncToggle(enabled) else onProClick()
+                                },
+                            )
+                        }
+                    },
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp).testTag("MobileDrawerSync")
+                )
+            }
 
-            if (isSyncEnabled) {
+            if (currentUser != null && isSyncEnabled) {
                 NavigationDrawerItem(
                     icon = { Icon(Icons.Default.FolderSpecial, contentDescription = null) },
                     label = {
                         Column {
-                            Text("Backup local folders")
+                            Text(readerString("drawer_backup_local_folders", "Backup local folders"))
                             Text(
-                                "Keep folder metadata synced.",
+                                readerString("drawer_backup_desc", "Keep folder metadata synced."),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -171,57 +287,77 @@ fun SharedMobileAppDrawerContent(
                     selected = false,
                     onClick = { onFolderSyncToggle(!isFolderSyncEnabled) },
                     badge = { Switch(checked = isFolderSyncEnabled, onCheckedChange = onFolderSyncToggle) },
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp).testTag("MobileDrawerFolderSync")
                 )
             }
 
             HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
 
-            NavigationDrawerItem(
-                icon = { Icon(Icons.Default.Settings, contentDescription = null) },
-                label = { Text("Settings") },
-                selected = false,
-                onClick = onSettingsClick,
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
-            )
-            NavigationDrawerItem(
-                icon = { Icon(Icons.Default.Palette, contentDescription = null) },
-                label = { Text("App theme") },
-                selected = false,
-                onClick = onAppThemeClick,
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
-            )
-            NavigationDrawerItem(
-                icon = { Icon(Icons.Default.Fonts, contentDescription = null) },
-                label = { Text("Custom fonts") },
-                selected = false,
-                onClick = onFontsClick,
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
-            )
-            if (aiSettingsAvailable) {
-                NavigationDrawerItem(
-                    icon = { Icon(Icons.Default.Ai, contentDescription = null) },
-                    label = { Text("AI settings") },
-                    selected = false,
-                    onClick = onAiSettingsClick,
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
-                )
+            mobileAppDrawerModel(drawerCapabilities).items.forEach { item ->
+                when (item) {
+                    MobileAppDrawerItem.SETTINGS -> NavigationDrawerItem(
+                        icon = { Icon(Icons.Default.Settings, contentDescription = null) },
+                        label = { Text(readerString("settings", "Settings")) },
+                        selected = false,
+                        onClick = onSettingsClick,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp).testTag("MobileDrawerSettings")
+                    )
+                    MobileAppDrawerItem.ABOUT -> onAboutClick?.let { onClick ->
+                        NavigationDrawerItem(
+                            icon = { Icon(Icons.Default.Info, contentDescription = null) },
+                            label = { Text(readerString("about_title", "About")) },
+                            selected = false,
+                            onClick = onClick,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp).testTag("MobileDrawerAbout")
+                        )
+                    }
+                    MobileAppDrawerItem.APP_THEME -> NavigationDrawerItem(
+                        icon = { Icon(Icons.Default.Palette, contentDescription = null) },
+                        label = { Text(readerString("app_theme_title", "App theme")) },
+                        selected = false,
+                        onClick = onAppThemeClick,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp).testTag("MobileDrawerTheme")
+                    )
+                    MobileAppDrawerItem.FONTS -> NavigationDrawerItem(
+                        icon = { Icon(Icons.Default.Fonts, contentDescription = null) },
+                        label = { Text(readerString("drawer_custom_fonts", "Custom fonts")) },
+                        selected = false,
+                        onClick = onFontsClick,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp).testTag("MobileDrawerFonts")
+                    )
+                    MobileAppDrawerItem.AI_SETTINGS -> NavigationDrawerItem(
+                        icon = { Icon(Icons.Default.Ai, contentDescription = null) },
+                        label = { Text(readerString("ai_settings_title", "AI settings")) },
+                        selected = false,
+                        onClick = onAiSettingsClick,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp).testTag("MobileDrawerAiSettings")
+                    )
+                    MobileAppDrawerItem.SUPPORT_PROJECT -> onSupportProjectClick?.let { onClick ->
+                        NavigationDrawerItem(
+                            icon = { Icon(Icons.Outlined.FavoriteBorder, contentDescription = null) },
+                            label = { Text(readerString("drawer_support_project", "Support project")) },
+                            selected = false,
+                            onClick = onClick,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp).testTag("MobileDrawerSupport")
+                        )
+                    }
+                    MobileAppDrawerItem.HELP_FEEDBACK -> NavigationDrawerItem(
+                        icon = { Icon(Icons.Default.Feedback, contentDescription = null) },
+                        label = { Text(readerString("drawer_help_feedback", "Help & Feedback")) },
+                        selected = false,
+                        onClick = onFeedbackClick,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp).testTag("MobileDrawerFeedback")
+                    )
+                }
             }
-            NavigationDrawerItem(
-                icon = { Icon(Icons.Default.Feedback, contentDescription = null) },
-                label = { Text("Help & Feedback") },
-                selected = false,
-                onClick = onFeedbackClick,
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
-            )
 
             if (currentUser != null) {
                 NavigationDrawerItem(
                     icon = { Icon(Icons.Default.Logout, contentDescription = null) },
-                    label = { Text("Sign out") },
+                    label = { Text(readerString("drawer_sign_out", "Sign out")) },
                     selected = false,
                     onClick = onSignOutClick,
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp).testTag("MobileDrawerSignOut")
                 )
             }
 

@@ -5,6 +5,7 @@ import com.aryan.reader.shared.reader.ReaderSettings
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class PdfViewerSessionPolicyTest {
@@ -41,8 +42,53 @@ class PdfViewerSessionPolicyTest {
         assertEquals(2.25f, sharedCurrentPageScaleAfterPdfPageChange(true, true, locked, 1f))
         assertEquals(1f, sharedCurrentPageScaleAfterPdfPageChange(false, true, locked, 2.25f))
         val spread = ReaderSettings(pageSpreadMode = ReaderPageSpreadMode.TWO_PAGE)
-        assertEquals("1-2 / 10", sharedPdfPageRangeText(0, 10, true, spread))
-        assertEquals("Pages 1-2 of 10", sharedPdfPageRangeLabel(0, 10, true, spread))
-        assertEquals("Page 4 of 10", sharedPdfPageRangeLabel(3, 10, false, spread))
+        assertEquals("1-2/10", sharedPdfPageRangeText(0, 10, true, spread))
+        assertEquals("1-2/10", sharedPdfPageRangeLabel(0, 10, true, spread))
+        assertEquals("4/10", sharedPdfPageRangeLabel(3, 10, false, spread))
+    }
+
+    @Test
+    fun `document open plan keeps sidecar state for the already loaded book`() {
+        // Split panes and password unlocks re-open the SAME book: sidecar state
+        // must survive or committed ink strokes vanish and never persist.
+        val sameBook = sharedPdfDocumentOpenBookPlan(
+            currentBookId = "book-a",
+            fastId = "file_100",
+            selectedBookId = "book-a",
+        )
+        assertEquals("book-a", sameBook.bookId)
+        assertEquals("book-a", sameBook.migrationTargetBookId)
+        assertTrue(sameBook.shouldMigrateLegacyBookId)
+        assertFalse(sameBook.shouldResetSidecarState)
+
+        val newBook = sharedPdfDocumentOpenBookPlan(
+            currentBookId = "book-a",
+            fastId = "file_100",
+            selectedBookId = "book-b",
+        )
+        assertEquals("book-b", newBook.bookId)
+        assertEquals("book-b", newBook.migrationTargetBookId)
+        assertTrue(newBook.shouldMigrateLegacyBookId)
+        assertTrue(newBook.shouldResetSidecarState)
+
+        val fastIdOnly = sharedPdfDocumentOpenBookPlan(
+            currentBookId = "book-a",
+            fastId = "file_100",
+            selectedBookId = null,
+        )
+        assertEquals("file_100", fastIdOnly.bookId)
+        assertNull(fastIdOnly.migrationTargetBookId)
+        assertFalse(fastIdOnly.shouldMigrateLegacyBookId)
+        assertTrue(fastIdOnly.shouldResetSidecarState)
+
+        val selectedMatchesFastId = sharedPdfDocumentOpenBookPlan(
+            currentBookId = "file_100",
+            fastId = "file_100",
+            selectedBookId = "file_100",
+        )
+        assertEquals("file_100", selectedMatchesFastId.bookId)
+        assertNull(selectedMatchesFastId.migrationTargetBookId)
+        assertFalse(selectedMatchesFastId.shouldMigrateLegacyBookId)
+        assertFalse(selectedMatchesFastId.shouldResetSidecarState)
     }
 }

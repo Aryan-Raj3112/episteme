@@ -57,6 +57,18 @@ class PdfReaderSessionTest {
     }
 
     @Test
+    fun `legacy persisted reader keeps bookmarks while the document page count is unknown`() {
+        val restored = SharedPdfReaderStateSerializer.decode(
+            raw = """{"pageIndex":0,"bookmarks":[{"pageIndex":9,"label":"Chapter"}]}""",
+            fallbackPageCount = 1,
+            fallbackPageIndex = 0,
+        )
+
+        assertEquals(10, restored?.pageCount)
+        assertEquals(listOf(9), restored?.bookmarks?.map { it.pageIndex })
+    }
+
+    @Test
     fun `legacy persisted reader without position uses library restore page`() {
         val restored = SharedPdfReaderStateSerializer.decode(
             raw = """{"displayMode":"VERTICAL_SCROLL"}""",
@@ -102,6 +114,20 @@ class PdfReaderSessionTest {
 
         assertEquals("sepia", themed.themeId)
         assertEquals("sepia", restored?.themeId)
+    }
+
+    @Test
+    fun `reverse color mode and image policy persist while legacy state defaults to rgb`() {
+        val state = SharedPdfReaderState.initial(pageCount = 2)
+            .reduce(SharedPdfReaderAction.ReverseColorModeChanged(PdfReverseColorMode.LUMA_SRGB_LINEAR))
+            .reduce(SharedPdfReaderAction.PreserveImageColorsChanged(true))
+        val restored = SharedPdfReaderStateSerializer.decode(SharedPdfReaderStateSerializer.encode(state))
+        val legacy = SharedPdfReaderStateSerializer.decode("""{"pageIndex":0,"pageCount":2}""")
+
+        assertEquals(PdfReverseColorMode.LUMA_SRGB_LINEAR, restored?.reverseColorMode)
+        assertEquals(true, restored?.preserveImageColors)
+        assertEquals(PdfReverseColorMode.RGB, legacy?.reverseColorMode)
+        assertEquals(false, legacy?.preserveImageColors)
     }
 
     @Test
@@ -390,10 +416,10 @@ class PdfReaderSessionTest {
 
     @Test
     fun `shared page range label formats single pages and spreads`() {
-        assertEquals("Page 3 of 10", sharedPdfPageRangeLabel("3", 10))
-        assertEquals("Pages 2-3 of 10", sharedPdfPageRangeLabel("2-3", 10))
-        assertEquals("Page 1 of 1", sharedPdfPageRangeLabel("", 1))
-        assertEquals("Pages 4-5 of 12", sharedPdfPageRangeLabel("4-5", 12))
+        assertEquals("3/10", sharedPdfPageRangeLabel("3", 10))
+        assertEquals("2-3/10", sharedPdfPageRangeLabel("2-3", 10))
+        assertEquals("1/1", sharedPdfPageRangeLabel("", 1))
+        assertEquals("4-5/12", sharedPdfPageRangeLabel("4-5", 12))
     }
 
     @Test
@@ -525,6 +551,36 @@ class PdfReaderSessionTest {
         assertEquals(8, steppedBack.forwardPage)
         assertEquals(listOf(0, 4, 2), branched.pages)
         assertEquals(4, branched.backPage)
+    }
+
+    @Test
+    fun `jump history refreshes current page before stepping back`() {
+        val page1 = 0
+        val page20 = 19
+        val page22 = 21
+
+        val refreshed = SharedPdfJumpHistory()
+            .record(currentPageIndex = page1, targetPageIndex = page20, pageCount = 30)
+            .updateCurrentLocation(currentPageIndex = page22, pageCount = 30)
+        val steppedBack = refreshed.stepBack()
+        val steppedForward = steppedBack.stepForward()
+
+        assertEquals(listOf(page1, page22), refreshed.pages)
+        assertEquals(page1, steppedBack.pages[steppedBack.cursor])
+        assertEquals(page22, steppedBack.forwardPage)
+        assertEquals(page22, steppedForward.pages[steppedForward.cursor])
+    }
+
+    @Test
+    fun `jump history ignores invalid current refreshes`() {
+        val history = SharedPdfJumpHistory()
+            .record(currentPageIndex = 0, targetPageIndex = 19, pageCount = 30)
+
+        assertEquals(
+            history,
+            history.updateCurrentLocation(currentPageIndex = 30, pageCount = 30)
+        )
+        assertEquals(history, history.updateCurrentLocation(currentPageIndex = 21, pageCount = 0))
     }
 
     @Test

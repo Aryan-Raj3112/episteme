@@ -341,6 +341,7 @@
     <string name="banner_clearing_cloud_local_data">Đang xóa toàn bộ dữ liệu đám mây và cục bộ…</string>
     <string name="banner_cloud_local_data_cleared">Đã xóa thành công toàn bộ dữ liệu đám mây và cục bộ.</string>
     <string name="error_clear_all_data">Lỗi: Không thể xóa tất cả dữ liệu.</string>
+    <string name="error_cloud_delete_pending">Không thể kết nối với đám mây. Việc xóa của bạn sẽ tự động hoàn tất khi bạn trực tuyến trở lại.</string>
     <string name="banner_local_data_cleared">Đã xóa toàn bộ dữ liệu cục bộ.</string>
     <string name="error_sign_in_failed">Đăng nhập thất bại. Vui lòng thử lại.</string>
     <string name="error_no_google_account">Không tìm thấy tài khoản Google. Điều này có thể xảy ra sau khi cài mới, vui lòng thử lại sau giây lát.</string>
@@ -591,6 +592,8 @@
     <string name="visual_options_seamless_chapter_desc">Tải ngay chương tiếp theo/trước đó khi cuộn qua cuối, không có hoạt ảnh kéo để làm mới.</string>
     <string name="visual_options_edge_padding">Xóa khoảng đệm cạnh</string>
     <string name="visual_options_edge_padding_desc">Xóa khoảng trống ngang ở cạnh trái và phải.</string>
+    <string name="visual_options_hide_images">Ẩn hình ảnh</string>
+    <string name="visual_options_hide_images_desc">Bật tùy chọn này để đọc với tất cả hình ảnh trong sách được ẩn.</string>
     <string name="dict_app_label_search">Tìm kiếm</string>
     <string name="error_opening_dictionary">Lỗi khi mở từ điển</string>
     <string name="error_opening_translate">Lỗi khi mở ứng dụng dịch</string>
@@ -1535,8 +1538,14 @@
     <string name="dialog_delete_tag_desc">Delete tag "%1$s"? It will be removed from every book.</string>
     <string name="action_export_annotations">Export annotations</string>
     <string name="dialog_export_annotations_title">Export annotations</string>
-    <string name="export_annotations_markdown">Markdown (.md)</string>
-    <string name="export_annotations_text">Text (.txt)</string>
+    <string name="export_annotations_markdown">Markdown</string>
+    <string name="export_annotations_text">Plain text</string>
+    <string name="export_annotations_json">JSON</string>
+    <string name="export_annotations_csv">CSV</string>
+    <string name="export_annotations_markdown_description">Formatted document with headings and quotes</string>
+    <string name="export_annotations_text_description">Simple readable list of highlights and notes</string>
+    <string name="export_annotations_json_description">Structured data for apps and backups</string>
+    <string name="export_annotations_csv_description">Spreadsheet-friendly table of annotations</string>
     <string name="language_estonian">Eesti (Estonian)</string>
     <string name="label_cover">Cover</string>
     <string name="label_current_cover_kept">Current cover will be kept</string>

@@ -259,29 +259,99 @@ data class MobileEpubMetadata(
     val description: String?
 )
 
-/** Android's exact OPF metadata defaults and Calibre-series precedence. */
+/** Raw `<meta>` element from an OPF package document with its attributes and text value intact. */
+data class MobileEpubMetaElement(
+    val id: String? = null,
+    val name: String? = null,
+    val property: String? = null,
+    val content: String? = null,
+    val text: String? = null,
+    val refines: String? = null
+)
+
+/** Series name and optional position resolved from OPF metadata. */
+data class MobileEpubSeriesMetadata(
+    val name: String,
+    val index: Double?
+)
+
+private const val MOBILE_EPUB_COLLECTION_PROPERTY = "belongs-to-collection"
+private const val MOBILE_EPUB_SERIES_TYPE_PROPERTY = "collection-type"
+private const val MOBILE_EPUB_SERIES_TYPE_VALUE = "series"
+private const val MOBILE_EPUB_GROUP_POSITION_PROPERTY = "group-position"
+
+private fun MobileEpubMetaElement.value(): String? =
+    content?.takeIf(String::isNotBlank) ?: text?.takeIf(String::isNotBlank)
+
+private fun MobileEpubMetaElement.refinedTargetId(): String? =
+    refines?.trim()?.removePrefix("#")?.takeIf(String::isNotBlank)
+
+private fun String.normalizeMobileEpubText(): String? =
+    replace(Regex("\\s+"), " ").trim().takeIf { it.isNotEmpty() }
+
+/**
+ * Mirrors Calibre's OPF3 reader precedence (`read_series`): prefer an EPUB 3
+ * `belongs-to-collection` element refined as a series, where `group-position`
+ * carries the index; otherwise fall back to the legacy `calibre:series` /
+ * `calibre:series_index` name/content metas, keeping Android's last-entry-wins rule.
+ */
+fun resolveMobileEpubSeries(metaElements: List<MobileEpubMetaElement>): MobileEpubSeriesMetadata? {
+    val refinementsByTargetId = mutableMapOf<String, MutableList<MobileEpubMetaElement>>()
+    metaElements.forEach { element ->
+        val targetId = element.refinedTargetId() ?: return@forEach
+        if (element.property.isNullOrBlank()) return@forEach
+        refinementsByTargetId.getOrPut(targetId) { mutableListOf() }.add(element)
+    }
+
+    metaElements.forEach { element ->
+        if (!element.property.equals(MOBILE_EPUB_COLLECTION_PROPERTY, ignoreCase = true)) return@forEach
+        // Collection elements without an id are skipped because refines cannot attach to them.
+        val id = element.id?.takeIf(String::isNotBlank) ?: return@forEach
+        val seriesName = element.value()?.normalizeMobileEpubText() ?: return@forEach
+        val refinements = refinementsByTargetId[id].orEmpty()
+        val isSeriesCollection = refinements.any {
+            it.property.equals(MOBILE_EPUB_SERIES_TYPE_PROPERTY, ignoreCase = true) &&
+                it.value().equals(MOBILE_EPUB_SERIES_TYPE_VALUE, ignoreCase = true)
+        }
+        if (!isSeriesCollection) return@forEach
+        val groupPosition = refinements.firstOrNull {
+            it.property.equals(MOBILE_EPUB_GROUP_POSITION_PROPERTY, ignoreCase = true)
+        }?.value()?.toDoubleOrNull()
+        return MobileEpubSeriesMetadata(name = seriesName, index = groupPosition)
+    }
+
+    var seriesName: String? = null
+    var seriesIndex: Double? = null
+    metaElements.forEach { element ->
+        when {
+            element.name.equals("calibre:series", ignoreCase = true) ->
+                seriesName = element.content?.normalizeMobileEpubText()
+            element.name.equals("calibre:series_index", ignoreCase = true) ->
+                seriesIndex = element.content?.toDoubleOrNull()
+        }
+    }
+    val resolvedName = seriesName ?: return null
+    return MobileEpubSeriesMetadata(name = resolvedName, index = seriesIndex)
+}
+
+/** Android's exact OPF metadata defaults plus shared Calibre-series resolution across EPUB 2 and 3 forms. */
 fun resolveMobileEpubMetadata(
     sourceFileName: String,
     title: String?,
     author: String?,
     language: String?,
     description: String?,
-    metaEntries: List<Pair<String?, String?>>
+    metaElements: List<MobileEpubMetaElement>
 ): MobileEpubMetadata {
     val resolvedTitle = title ?: sourceFileName.substringAfterLast('/').substringBeforeLast('.')
-    var seriesName: String? = null
-    var seriesIndex: Double? = null
-    metaEntries.forEach { (name, content) ->
-        if (name == "calibre:series") seriesName = content
-        if (name == "calibre:series_index") seriesIndex = content?.toDoubleOrNull()
-    }
+    val series = resolveMobileEpubSeries(metaElements)
     return MobileEpubMetadata(
         fileName = resolvedTitle.replace("/", "_"),
         title = resolvedTitle,
         author = author ?: "Unknown Author",
         language = language ?: "en",
-        seriesName = seriesName,
-        seriesIndex = seriesIndex,
+        seriesName = series?.name,
+        seriesIndex = series?.index,
         description = description
     )
 }

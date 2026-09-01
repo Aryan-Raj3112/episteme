@@ -14,6 +14,16 @@ import FirebaseCore
 @main
 struct ReaderApp: App {
     init() {
+#if DEBUG
+        // UI tests launch a fresh logical library without deleting user files.
+        // Keep this debug-only so production launches never clear persisted
+        // preferences or reader sessions.
+        if ProcessInfo.processInfo.arguments.contains("-episteme.ui-testing-reset-state"),
+           let bundleIdentifier = Bundle.main.bundleIdentifier {
+            UserDefaults.standard.removePersistentDomain(forName: bundleIdentifier)
+            UserDefaults.standard.synchronize()
+        }
+#endif
 #if canImport(FirebaseCore)
         if FirebaseApp.app() == nil, FirebaseOptions.defaultOptions() != nil {
             FirebaseApp.configure()

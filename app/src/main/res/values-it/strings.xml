@@ -341,6 +341,7 @@
     <string name="banner_clearing_cloud_local_data">Cancellazione di tutti i dati cloud e locali…</string>
     <string name="banner_cloud_local_data_cleared">Tutti i dati cloud e locali sono stati cancellati correttamente.</string>
     <string name="error_clear_all_data">Errore: impossibile cancellare tutti i dati.</string>
+    <string name="error_cloud_delete_pending">Impossibile raggiungere il cloud. L\'eliminazione verrà completata automaticamente al prossimo accesso online.</string>
     <string name="banner_local_data_cleared">Tutti i dati locali sono stati cancellati.</string>
     <string name="error_sign_in_failed">Accesso non riuscito. Riprova.</string>
     <string name="error_no_google_account">Impossibile trovare un account Google. Può succedere dopo una nuova installazione; riprova tra poco.</string>

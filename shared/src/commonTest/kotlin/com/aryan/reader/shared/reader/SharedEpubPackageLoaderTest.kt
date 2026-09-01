@@ -1,5 +1,8 @@
 package com.aryan.reader.shared.reader
 
+import com.aryan.reader.paginatedreader.SemanticHeader
+import com.aryan.reader.paginatedreader.SemanticList
+import com.aryan.reader.paginatedreader.SemanticParagraph
 import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
 import kotlin.test.Test
@@ -122,6 +125,54 @@ class SharedEpubPackageLoaderTest {
         assertEquals(listOf("X", "Y"), chapters.map(SharedEpubChapter::title))
         assertFalse(chapters.first().plainText.contains("Name target"))
         assertTrue(chapters.first().plainText.contains("Chosen X body"))
+    }
+
+    @Test
+    fun `chapters carry block level cfi semantic blocks`() {
+        val archive = MapEpubArchive(
+            mapOf(
+                "META-INF/container.xml" to "<container><rootfiles><rootfile full-path=\"book.opf\"/></rootfiles></container>".encodeToByteArray(),
+                "book.opf" to """
+                    <package><metadata/><manifest>
+                      <item id="whole" href="whole.xhtml" media-type="application/xhtml+xml"/>
+                      <item id="split" href="split.xhtml" media-type="application/xhtml+xml"/>
+                      <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+                    </manifest><spine toc="ncx"><itemref idref="whole"/><itemref idref="split"/></spine></package>
+                """.trimIndent().encodeToByteArray(),
+                "whole.xhtml" to """
+                    <html><body><h1>Heading</h1><p>First paragraph</p><ul><li>Item one</li></ul></body></html>
+                """.trimIndent().encodeToByteArray(),
+                "split.xhtml" to """
+                    <html><body><div id="a"><p>Alpha section</p></div><div id="b"><p>Beta section</p></div></body></html>
+                """.trimIndent().encodeToByteArray(),
+                "toc.ncx" to """
+                    <ncx><navMap>
+                      <navPoint><navLabel><text>A</text></navLabel><content src="split.xhtml#a"/></navPoint>
+                      <navPoint><navLabel><text>B</text></navLabel><content src="split.xhtml#b"/></navPoint>
+                    </navMap></ncx>
+                """.trimIndent().encodeToByteArray()
+            )
+        )
+
+        val chapters = SharedEpubPackageLoader.load(archive, "blocks", "blocks.epub").chapters
+
+        val whole = chapters.single { it.id == "whole" }
+        val header = whole.semanticBlocks[0] as SemanticHeader
+        assertEquals("Heading", header.text)
+        assertEquals("/4/2/2", header.cfi)
+        assertEquals(0, header.startCharOffsetInSource)
+        val paragraph = whole.semanticBlocks[1] as SemanticParagraph
+        assertEquals("First paragraph", paragraph.text)
+        assertEquals("/4/2/4", paragraph.cfi)
+        val list = whole.semanticBlocks[2] as SemanticList
+        assertEquals("Item one", list.items[0].text)
+        assertEquals("/4/2/6", list.cfi)
+
+        val alpha = chapters.single { it.id == "split#a" }
+        val alphaParagraph = alpha.semanticBlocks.single() as SemanticParagraph
+        assertEquals("Alpha section", alphaParagraph.text)
+        assertEquals(alpha.plainText, "Alpha section")
+        assertEquals("/4/2/2", alphaParagraph.cfi)
     }
 
     @Test
@@ -280,6 +331,32 @@ class SharedEpubPackageLoaderTest {
         assertEquals("Direct Android title", book.title)
         assertEquals("Direct author", book.author)
         assertEquals("Primary series", book.seriesName)
+    }
+
+    @Test
+    fun `metadata adapter resolves epub3 collection series like Calibre`() {
+        val archive = MapEpubArchive(
+            mapOf(
+                "META-INF/container.xml" to "<container><rootfiles><rootfile full-path=\"book.opf\"/></rootfiles></container>".encodeToByteArray(),
+                "book.opf" to """
+                    <package version="3.0"><metadata>
+                      <dc:title>EPUB3 Title</dc:title>
+                      <dc:creator>Arthur Conan Doyle</dc:creator>
+                      <meta property="dcterms:modified">2026-07-12T00:00:00Z</meta>
+                      <meta id="c1" property="belongs-to-collection">Sherlock Holmes</meta>
+                      <meta refines="#c1" property="collection-type">series</meta>
+                      <meta refines="#c1" property="group-position">2.0</meta>
+                      <meta name="calibre:series" content="Legacy ignored"/>
+                    </metadata><manifest/><spine/></package>
+                """.trimIndent().encodeToByteArray()
+            )
+        )
+
+        val book = SharedEpubPackageLoader.load(archive, "epub3-series", "epub3.epub")
+
+        assertEquals("EPUB3 Title", book.title)
+        assertEquals("Sherlock Holmes", book.seriesName)
+        assertEquals(2.0, book.seriesIndex)
     }
 
     @Test

@@ -2,6 +2,9 @@ package com.aryan.reader.pdf
 
 import android.graphics.Bitmap
 import android.graphics.Rect
+import android.os.Handler
+import android.os.Looper
+import android.view.Choreographer
 import android.util.LruCache
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
@@ -20,6 +23,7 @@ import androidx.core.graphics.set
 import com.aryan.reader.pdf.data.PdfAnnotation
 import timber.log.Timber
 import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.IdentityHashMap
 import kotlin.math.PI
 import kotlin.math.atan2
 import kotlin.math.cos
@@ -144,14 +148,22 @@ internal object PdfBitmapPool {
 
     fun get(size: Int): Bitmap = get(size, size)
 
-    @Synchronized
     fun recycle(bitmap: Bitmap) {
-        // Overflow bitmaps are left for GC; HWUI may still reference recently drawn bitmaps.
-        if (!bitmap.isRecycled &&
-            pool.size < MAX_POOL_SIZE &&
-            canPoolPdfBitmap(pooledBytes(), bitmap.allocationByteCount.toLong(), maxHeapBytes)
-        ) {
-            pool.offer(bitmap)
+        // A reverse-colour transform may be reading this bitmap on a worker
+        // thread while the page is being replaced.  Do not return it to the
+        // pool until that read has completed; otherwise the next page can
+        // reuse the same native buffer and Bitmap.getPixels() aborts the app.
+        PdfBitmapUseRegistry.deferRecycle(bitmap) {
+            synchronized(this) {
+                // Overflow bitmaps are left for GC; HWUI may still reference
+                // recently drawn bitmaps.
+                if (!bitmap.isRecycled &&
+                    pool.size < MAX_POOL_SIZE &&
+                    canPoolPdfBitmap(pooledBytes(), bitmap.allocationByteCount.toLong(), maxHeapBytes)
+                ) {
+                    pool.offer(bitmap)
+                }
+            }
         }
     }
 
@@ -161,6 +173,167 @@ internal object PdfBitmapPool {
             pool.poll()
         }
     }
+}
+
+/**
+ * Small ownership gate for Bitmap work that outlives a composition frame.
+ *
+ * Compose can dispose a page while a nonlinear reverse-colour conversion is
+ * still running. Android's Bitmap API aborts the process (rather than throwing)
+ * when getPixels/copy races with recycle or pool reuse, so every asynchronous
+ * reader must hold a lease and every recycle must pass through this gate.
+ */
+internal object PdfBitmapUseRegistry {
+    private val activeLeases = IdentityHashMap<Bitmap, Int>()
+    private val pendingRecycles = IdentityHashMap<Bitmap, (() -> Unit)>()
+
+    fun <T> withLease(bitmap: Bitmap, block: () -> T): T? {
+        synchronized(this) {
+            if (bitmap.isRecycled) return null
+            activeLeases[bitmap] = (activeLeases[bitmap] ?: 0) + 1
+        }
+        return try {
+            block()
+        } finally {
+            synchronized(this) {
+                val remaining = (activeLeases[bitmap] ?: 1) - 1
+                if (remaining > 0) {
+                    activeLeases[bitmap] = remaining
+                } else {
+                    val pending = pendingRecycles.remove(bitmap)
+                    // Keep the registry lock while the deferred action runs.
+                    // If it ran after activeLeases was removed, a new lease
+                    // could be acquired in the gap and then be recycled by
+                    // this stale action.
+                    try {
+                        pending?.invoke()
+                    } finally {
+                        activeLeases.remove(bitmap)
+                    }
+                }
+            }
+        }
+    }
+
+    fun deferRecycle(bitmap: Bitmap, action: () -> Unit) {
+        val runNow = synchronized(this) {
+            if ((activeLeases[bitmap] ?: 0) > 0) {
+                // Keep the first action. A later caller may be a duplicate
+                // cleanup path; running both would double-pool/recycle.
+                pendingRecycles.putIfAbsent(bitmap, action)
+                false
+            } else {
+                true
+            }
+        }
+        if (runNow) action()
+    }
+}
+
+internal fun safeRecyclePdfBitmap(bitmap: Bitmap?) {
+    if (bitmap == null) return
+    PdfBitmapUseRegistry.deferRecycle(bitmap) {
+        if (!bitmap.isRecycled) bitmap.recycle()
+    }
+}
+
+/**
+ * Retires transformed bitmaps only after HWUI has had several frame boundaries
+ * to drop the old display list. Recycling a bitmap directly from a Compose
+ * coroutine is unsafe: the coroutine can be cancelled before the render node
+ * has stopped referring to the bitmap and libhwui aborts the process instead
+ * of reporting a recoverable exception.
+ *
+ * This queue deliberately keeps a strong reference until retirement. That is a
+ * bounded, short-lived cost and is preferable to retaining every cancelled
+ * transform until an arbitrary native GC pass. Calling [retain] cancels a
+ * pending retirement when a cached tile becomes visible again.
+ */
+internal object PdfReverseBitmapRetirement {
+    private const val RETIRE_AFTER_FRAMES = 4
+
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val pending = IdentityHashMap<Bitmap, Long>()
+    private var nextToken = 0L
+
+    fun retain(bitmap: Bitmap?) {
+        if (bitmap == null) return
+        runOnMain {
+            synchronized(this) {
+                pending.remove(bitmap)
+            }
+        }
+    }
+
+    fun schedule(bitmap: Bitmap?, reason: String) {
+        if (bitmap == null || bitmap.isRecycled) return
+        runOnMain {
+            val token = synchronized(this) {
+                if (bitmap.isRecycled || pending.containsKey(bitmap)) return@synchronized null
+                nextToken += 1
+                pending[bitmap] = nextToken
+                nextToken
+            } ?: return@runOnMain
+
+            Timber.tag("PdfReversePerf").d(
+                "bitmap-retire-scheduled bytes=${bitmap.allocationByteCount} " +
+                    "frames=$RETIRE_AFTER_FRAMES reason=$reason"
+            )
+            awaitFrame(bitmap, token, RETIRE_AFTER_FRAMES)
+        }
+    }
+
+    private fun awaitFrame(bitmap: Bitmap, token: Long, remainingFrames: Int) {
+        Choreographer.getInstance().postFrameCallback {
+            val stillPending = synchronized(this) { pending[bitmap] == token }
+            if (!stillPending) return@postFrameCallback
+
+            if (remainingFrames > 1) {
+                awaitFrame(bitmap, token, remainingFrames - 1)
+                return@postFrameCallback
+            }
+
+            synchronized(this) {
+                if (pending[bitmap] == token) pending.remove(bitmap)
+            }
+            if (!bitmap.isRecycled) {
+                val bytes = bitmap.allocationByteCount
+                safeRecyclePdfBitmap(bitmap)
+                Timber.tag("PdfReversePerf").d(
+                    "bitmap-retired bytes=$bytes"
+                )
+            }
+        }
+    }
+
+    private fun runOnMain(block: () -> Unit) {
+        if (Looper.myLooper() == Looper.getMainLooper()) block()
+        else mainHandler.post(block)
+    }
+}
+
+/**
+ * A mode change invalidates every in-flight nonlinear transform, including
+ * work belonging to a page that is still retained just outside the viewport.
+ * The transform loop checks this generation per row so the newest mode owns
+ * the single worker slot without waiting for stale multi-megapixel work.
+ */
+internal object PdfReverseTransformGeneration {
+    private var generation = 0L
+    private var activeMode: com.aryan.reader.shared.pdf.PdfReverseColorMode? = null
+
+    @Synchronized
+    fun begin(mode: com.aryan.reader.shared.pdf.PdfReverseColorMode): Long {
+        if (activeMode != mode) {
+            activeMode = mode
+            generation += 1
+            Timber.tag("PdfReversePerf").d("transform-generation=$generation mode=${mode.id}")
+        }
+        return generation
+    }
+
+    @Synchronized
+    fun isCurrent(candidate: Long): Boolean = candidate == generation
 }
 
 internal object PdfThumbnailCache {

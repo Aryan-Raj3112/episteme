@@ -49,6 +49,11 @@ import com.aryan.reader.R
 import com.aryan.reader.GEMINI_CLOUD_TTS_MODEL
 import com.aryan.reader.isByokCloudTtsAvailable
 import com.aryan.reader.loadAiByokSettings
+import com.aryan.reader.logMediaTransport
+import com.aryan.reader.pinPostedPlaybackNotification
+import com.aryan.reader.MediaNotificationBitmapLoader
+import com.aryan.reader.mediaButtonKeyEventDetails
+import com.aryan.reader.playerTransportSnapshot
 import com.aryan.reader.tts.TtsPlaybackManager.TtsMode
 import com.aryan.reader.audiobook.BookTtsSessionCoordinator
 import kotlinx.coroutines.Job
@@ -270,6 +275,19 @@ const val EXTRA_BOOK_TTS_SLEEP_MINUTES = "book_tts_sleep_minutes"
 private const val TTS_NOTIFICATION_PREVIOUS_REQUEST_CODE = 4208
 private const val TTS_NOTIFICATION_NEXT_REQUEST_CODE = 4209
 
+internal fun ensureTtsNotificationChannel(context: android.content.Context) {
+    val notificationManager = context.getSystemService(NotificationManager::class.java)
+    val channel = NotificationChannel(
+        TTS_FOREGROUND_CHANNEL_ID,
+        context.getString(R.string.tts_notification_channel_name),
+        NotificationManager.IMPORTANCE_LOW
+    ).apply {
+        description = context.getString(R.string.tts_notification_channel_desc)
+        setShowBadge(false)
+    }
+    notificationManager.createNotificationChannel(channel)
+}
+
 @UnstableApi
 private class TtsMediaNotificationProvider(
     context: android.content.Context
@@ -287,12 +305,18 @@ private class TtsMediaNotificationProvider(
         builder: NotificationCompat.Builder,
         actionFactory: MediaNotification.ActionFactory
     ): IntArray {
-        return super.addNotificationActions(
+        val actions = super.addNotificationActions(
             mediaSession,
             mediaButtons,
             builder,
             TtsNotificationActionFactory(appContext, actionFactory)
         )
+        logMediaTransport(
+            "tts-notification-actions",
+            "buttons=${mediaButtons.size} names=${mediaButtons.joinToString("|") { it.displayName.toString() }} " +
+                "actions=${actions.joinToString()} ${playerTransportSnapshot(mediaSession.player)}"
+        )
+        return actions
     }
 }
 
@@ -502,15 +526,29 @@ private class TtsSessionPlayer(
     }
 
     override fun play() {
+        logMediaTransport(
+            "tts-session-player-play",
+            "directLocal=${isDirectLocalPlayback()} localPlaying=${localIsPlaying()} ${playerTransportSnapshot(this)}"
+        )
         if (isDirectLocalPlayback()) playDirectLocal() else super.play()
     }
 
     override fun pause() {
+        logMediaTransport(
+            "tts-session-player-pause",
+            "directLocal=${isDirectLocalPlayback()} localPlaying=${localIsPlaying()} ${playerTransportSnapshot(this)}"
+        )
         if (isDirectLocalPlayback()) pauseDirectLocal() else super.pause()
     }
 
     override fun stop() {
-        if (isDirectLocalPlayback()) stopDirectLocal() else super.stop()
+        logMediaTransport(
+            "tts-session-player-stop",
+            "directLocal=${isDirectLocalPlayback()} localPlaying=${localIsPlaying()} ${playerTransportSnapshot(this)}"
+        )
+        // A transport stop (notification dismissal, headset stop, task dismissal) always ends the
+        // complete TTS session; it must never leave playback running without its session.
+        stopDirectLocal()
     }
 
     override fun getPlayWhenReady(): Boolean =
@@ -623,9 +661,27 @@ class TtsService : MediaSessionService() {
     private var bookSleepTimerJob: Job? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action != null) {
+            val keyEventDetails = if (intent.action == Intent.ACTION_MEDIA_BUTTON) {
+                " ${mediaButtonKeyEventDetails(intent)}"
+            } else {
+                ""
+            }
+            logMediaTransport(
+                "tts-on-start-command",
+                "action=${intent.action} startId=$startId$keyEventDetails " +
+                    playerTransportSnapshot(if (::player.isInitialized) player else null)
+            )
+        }
         when (intent?.action) {
             ACTION_START_BOOK_TTS -> {
                 val bookId = intent.getStringExtra(EXTRA_BOOK_TTS_BOOK_ID)
+                logMediaTransport(
+                    "tts-book-start-command",
+                    "bookId=$bookId policy=${intent.getStringExtra(EXTRA_BOOK_TTS_START_POLICY)} " +
+                        "chapter=${intent.getIntExtra(EXTRA_BOOK_TTS_CHAPTER_INDEX, -1)} " +
+                        "coordinatorReady=${::bookTtsCoordinator.isInitialized}"
+                )
                 if (!bookId.isNullOrBlank() && ::bookTtsCoordinator.isInitialized) {
                     showPreparingForegroundNotification("book-audiobook-start")
                     bookTtsCoordinator.start(
@@ -751,7 +807,19 @@ class TtsService : MediaSessionService() {
         }
 
         Timber.tag(TTS_NOTIFICATION_DIAG_TAG).i("Delegating notification update to MediaSessionService.")
+        logMediaTransport(
+            "tts-on-update-notification",
+            "startInForegroundRequired=$startInForegroundRequired " +
+                playerTransportSnapshot(if (::player.isInitialized) player else null)
+        )
         super.onUpdateNotification(session, startInForegroundRequired)
+        pinPostedPlaybackNotification(
+            context = this,
+            notificationId = TTS_FOREGROUND_NOTIFICATION_ID,
+            playWhenReady = session.player.playWhenReady,
+            playbackState = session.player.playbackState,
+            diagnosticsTag = TTS_NOTIFICATION_DIAG_TAG
+        )
     }
 
     private fun showPreparingForegroundNotification(
@@ -814,16 +882,7 @@ class TtsService : MediaSessionService() {
     }
 
     private fun ensureTtsNotificationChannel() {
-        val notificationManager = getSystemService(NotificationManager::class.java)
-        val channel = NotificationChannel(
-            TTS_FOREGROUND_CHANNEL_ID,
-            getString(R.string.tts_notification_channel_name),
-            NotificationManager.IMPORTANCE_LOW
-        ).apply {
-            description = getString(R.string.tts_notification_channel_desc)
-            setShowBadge(false)
-        }
-        notificationManager.createNotificationChannel(channel)
+        ensureTtsNotificationChannel(this)
     }
 
     private fun pendingIntentFlags(): Int {
@@ -850,6 +909,11 @@ class TtsService : MediaSessionService() {
     private fun onPlaybackSessionPreparing(bookTitle: String?, chapterTitle: String?) {
         foregroundPlaybackExpected = true
         foregroundIdleJob?.cancel()
+        logMediaTransport(
+            "tts-foreground-preparing",
+            "book=$bookTitle chapter=$chapterTitle " +
+                playerTransportSnapshot(if (::player.isInitialized) player else null)
+        )
         showPreparingForegroundNotification("START_TTS_COMMAND", bookTitle, chapterTitle)
     }
 
@@ -858,6 +922,10 @@ class TtsService : MediaSessionService() {
         foregroundIdleJob?.cancel()
         foregroundBookTitle = null
         foregroundChapterTitle = null
+        logMediaTransport(
+            "tts-foreground-stopped",
+            playerTransportSnapshot(if (::player.isInitialized) player else null)
+        )
         stopTtsForeground()
     }
 
@@ -1210,6 +1278,9 @@ class TtsService : MediaSessionService() {
         super.onCreate()
         Timber.d("TtsService created.")
         setMediaNotificationProvider(TtsMediaNotificationProvider(this))
+        // Never keep a media notification around for a stopped/idle player. Once a TTS session
+        // ends, the notification must be gone instead of lingering as Media3's basic fallback.
+        setShowNotificationForIdlePlayer(SHOW_NOTIFICATION_FOR_IDLE_PLAYER_NEVER)
         // ExoPlayer, the media session and the playback manager can be slow to initialize on
         // low-end devices. Promote immediately so a startForegroundService request cannot time
         // out while onCreate is still building those objects.
@@ -1306,11 +1377,17 @@ class TtsService : MediaSessionService() {
         mediaSession = MediaSession.Builder(this, sessionPlayer)
             .setId("reader-tts-playback")
             .setCallback(playbackManager)
+            // Serve artwork synchronously so notification re-posts never bypass the pinning path.
+            .setBitmapLoader(MediaNotificationBitmapLoader(this))
             .build()
 
         mediaSession?.let { playbackManager.setMediaSession(it) }
         playbackManager.setDirectLocalPlayerStateInvalidator(sessionPlayer::invalidateDirectLocalState)
         bookTtsCoordinator = BookTtsSessionCoordinator(this, scope, playbackManager)
+        logMediaTransport(
+            "tts-service-created",
+            "session=reader-tts-playback sessionAvailable=${mediaSession != null}"
+        )
         Timber.tag(TTS_NOTIFICATION_DIAG_TAG).i("MediaSession created and attached to playback manager. sessionAvailable=${mediaSession != null}")
     }
 
@@ -1331,12 +1408,17 @@ class TtsService : MediaSessionService() {
         Timber.tag(TTS_NOTIFICATION_DIAG_TAG).i(
             "onGetSession. package=${controllerInfo.packageName}, sessionAvailable=${mediaSession != null}"
         )
+        logMediaTransport(
+            "tts-on-get-session",
+            "package=${controllerInfo.packageName} sessionAvailable=${mediaSession != null}"
+        )
         return mediaSession
     }
 
     override fun onDestroy() {
         Timber.d("TtsService is being destroyed.")
         Timber.tag(TTS_NOTIFICATION_DIAG_TAG).w("TtsService onDestroy.")
+        logMediaTransport("tts-service-destroyed", "sessionAlive=${mediaSession != null}")
         foregroundIdleJob?.cancel()
         bookSleepTimerJob?.cancel()
         bookSleepTimerJob = null

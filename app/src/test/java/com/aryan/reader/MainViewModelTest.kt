@@ -33,6 +33,7 @@ import org.junit.After
 import org.junit.AfterClass
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -74,9 +75,14 @@ class MainViewModelTest {
         }
 
         fun clearForTest() {
-            ViewModel::class.java
-                .getDeclaredMethod("clear\$lifecycle_viewmodel_release")
-                .invoke(this)
+            // ViewModel.clear is internal with a version-mangled JVM name
+            // (clear$lifecycle_viewmodel[_release]); resolve it by prefix so the test
+            // helper survives lifecycle upgrades.
+            val clearMethod = ViewModel::class.java.declaredMethods
+                .firstOrNull { it.name.startsWith("clear\$lifecycle_viewmodel") }
+                ?: error("ViewModel.clear internal method not found for current lifecycle version")
+            clearMethod.isAccessible = true
+            clearMethod.invoke(this)
         }
     }
 
@@ -121,6 +127,8 @@ class MainViewModelTest {
         every { mockApplication.getExternalFilesDir(any()) } returns externalFilesDir
         every { mockApplication.getString(any()) } answers { "res-${firstArg<Int>()}" }
         every { mockApplication.getString(any(), *anyVararg()) } answers { "res-${firstArg<Int>()}" }
+        every { mockApplication.registerActivityLifecycleCallbacks(any()) } just Runs
+        every { mockApplication.unregisterActivityLifecycleCallbacks(any()) } just Runs
         every { mockPrefs.edit() } returns mockEditor
 
         every { mockPrefs.getString(any(), any()) } answers { secondArg() as String? }
@@ -411,6 +419,35 @@ class MainViewModelTest {
     }
 
     @Test
+    fun `saveBookmarks uses explicit book identity and skips stale queued state`() = runTest(testDispatcher) {
+        val writes = mutableListOf<String>()
+        val firstJson = "[{\"pageIndex\":1}]"
+        val latestJson = "[{\"pageIndex\":2}]"
+        coEvery {
+            anyConstructed<RecentFilesRepository>().updateBookmarks("stable-book", any())
+        } coAnswers {
+            writes += secondArg<String>()
+        }
+
+        viewModel.saveBookmarks(
+            bookId = "stable-book",
+            bookmarksJson = firstJson,
+            documentUri = mockUri("content://books/old-selection"),
+        )
+        viewModel.saveBookmarks(
+            bookId = "stable-book",
+            bookmarksJson = latestJson,
+            documentUri = mockUri("content://books/old-selection"),
+        )
+        advanceUntilIdle()
+
+        assertEquals(listOf(latestJson), writes)
+        coVerify(exactly = 0) {
+            anyConstructed<RecentFilesRepository>().getFileByUri("content://books/old-selection")
+        }
+    }
+
+    @Test
     fun `setRecentFilesLimit persists and limits visible home recents`() = runTest(testDispatcher) {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect {}
@@ -475,6 +512,42 @@ class MainViewModelTest {
         } finally {
             restored.clearForTest()
         }
+    }
+
+    @Test
+    fun `audiobook tts notification tap presents player target without opening the reader`() = runTest(testDispatcher) {
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            viewModel.uiState.collect {}
+        }
+        coEvery { anyConstructed<RecentFilesRepository>().getFileByBookId("book-1") } returns recentFile("book-1")
+
+        viewModel.openAudiobookTtsNotificationTarget("book-1")
+        advanceUntilIdle()
+
+        val state = viewModel.uiState.first { it.pendingAudiobookTtsPlayerTarget?.bookId == "book-1" }
+        assertNull(state.selectedBookId)
+        assertNull(state.selectedFileType)
+
+        viewModel.dismissAudiobookTtsPlayerTarget("book-1")
+        advanceUntilIdle()
+
+        assertNull(viewModel.uiState.first { it.pendingAudiobookTtsPlayerTarget == null }.pendingAudiobookTtsPlayerTarget)
+    }
+
+    @Test
+    fun `audiobook tts notification tap for missing book reports error without player target`() = runTest(testDispatcher) {
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            viewModel.uiState.collect {}
+        }
+        coEvery { anyConstructed<RecentFilesRepository>().getFileByBookId("missing-book") } returns null
+
+        viewModel.openAudiobookTtsNotificationTarget("missing-book")
+        advanceUntilIdle()
+
+        val state = viewModel.uiState.first {
+            it.errorMessage != null && it.pendingAudiobookTtsPlayerTarget == null
+        }
+        assertEquals("res-${R.string.error_recent_item_not_found}", state.errorMessage)
     }
 
     @Test

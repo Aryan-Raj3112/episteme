@@ -61,7 +61,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -74,6 +73,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.media3.common.util.UnstableApi
+import android.widget.Toast
 import com.aryan.reader.paginatedreader.TtsChunk
 import com.aryan.reader.tts.TtsPlaybackManager
 import com.aryan.reader.tts.loadTtsMode
@@ -276,7 +276,6 @@ fun AiResultContentView(
     onClear: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
-    val clipboardManager = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -400,7 +399,18 @@ fun AiResultContentView(
                         )
                     }
                     IconButton(onClick = {
-                        clipboardManager.setText(AnnotatedString(textToUse))
+                        val copied = copyPlainTextToClipboard(
+                            context = context,
+                            label = context.getString(R.string.action_copy),
+                            text = textToUse,
+                        )
+                        if (!copied) {
+                            Toast.makeText(
+                                context,
+                                context.getString(R.string.error_copy_to_clipboard),
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        }
                     }) {
                         Icon(
                             imageVector = Icons.Default.ContentCopy,

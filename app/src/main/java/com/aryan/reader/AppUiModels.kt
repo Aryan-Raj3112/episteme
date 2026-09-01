@@ -10,6 +10,7 @@ import com.aryan.reader.shared.LibraryAction as SharedLibraryAction
 import com.aryan.reader.shared.reconcileAvailableBooks
 import com.aryan.reader.shared.reduce
 import com.aryan.reader.shared.toggleSelection
+import com.aryan.reader.shared.PdfSplitWorkspaceState
 import java.util.Date
 
 typealias BannerMessage = com.aryan.reader.shared.BannerMessage
@@ -38,6 +39,8 @@ data class ReaderScreenState(
     val selectedEpubBook: EpubBook? = null,
     val selectedEpubUri: Uri? = null,
     val readerSession: AppReaderSessionState = AppReaderSessionState(),
+    /** The Android PDF split workspace uses a portable shared model for future iOS adoption. */
+    val pdfSplitWorkspace: PdfSplitWorkspaceState = PdfSplitWorkspaceState(),
     val tabState: AppTabState = AppTabState(),
     val shelfState: AppShelfState = AppShelfState(),
     val pinState: AppPinState = AppPinState(),
@@ -54,6 +57,11 @@ data class ReaderScreenState(
     val initialPageInBook: Int? = null,
     val initialPageInBookIsExplicit: Boolean = false,
     val isOpeningFromTtsNotification: Boolean = false,
+    /**
+     * Resolved TTS-audiobook target whose playback sheet should be presented
+     * after its notification was tapped. Cleared by the consuming surface.
+     */
+    val pendingAudiobookTtsPlayerTarget: RecentFileItem? = null,
     val shelves: List<Shelf> = emptyList(),
     val mainScreenStartPage: Int = 0,
     /** Android-only section selected inside the experimental unified library. */

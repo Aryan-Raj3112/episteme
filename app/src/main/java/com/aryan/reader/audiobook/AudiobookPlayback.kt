@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import androidx.annotation.OptIn
+import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
@@ -14,17 +15,24 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.session.CommandButton
 import androidx.media3.session.MediaController
+import androidx.media3.session.MediaNotification
 import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import androidx.media3.session.SessionToken
 import androidx.room.withTransaction
 import com.aryan.reader.data.AppDatabase
+import com.aryan.reader.logMediaTransport
+import com.aryan.reader.pinPostedPlaybackNotification
+import com.aryan.reader.mediaButtonKeyEventDetails
+import com.aryan.reader.playerTransportSnapshot
 import com.aryan.reader.shared.SharedAudiobookPlaybackRequest
 import com.aryan.reader.shared.SharedAudiobookPlaybackState
 import com.aryan.reader.shared.formatSharedAudiobookSleepTimer
 import com.aryan.reader.shared.sharedAudiobookResumePosition
+import com.google.common.collect.ImmutableList
 import com.google.common.util.concurrent.ListenableFuture
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
@@ -43,6 +51,58 @@ typealias AudiobookPlaybackState = SharedAudiobookPlaybackState
 typealias AudiobookPlaybackRequest = SharedAudiobookPlaybackRequest
 
 @OptIn(UnstableApi::class)
+private class MediaTransportDiagnosticsCallback : MediaSession.Callback {
+    override fun onConnect(
+        session: MediaSession,
+        controller: MediaSession.ControllerInfo
+    ): MediaSession.ConnectionResult {
+        logMediaTransport(
+            "audiobook-on-connect",
+            "package=${controller.packageName} uid=${controller.uid} ${playerTransportSnapshot(session.player)}"
+        )
+        return super.onConnect(session, controller)
+    }
+
+    override fun onMediaButtonEvent(
+        mediaSession: MediaSession,
+        controllerInfo: MediaSession.ControllerInfo,
+        intent: Intent
+    ): Boolean {
+        logMediaTransport(
+            "audiobook-on-media-button",
+            "package=${controllerInfo.packageName} ${mediaButtonKeyEventDetails(intent)} " +
+                playerTransportSnapshot(mediaSession.player)
+        )
+        return super.onMediaButtonEvent(mediaSession, controllerInfo, intent)
+    }
+}
+
+@OptIn(UnstableApi::class)
+private class LoggingAudiobookNotificationProvider(
+    context: Context
+) : DefaultMediaNotificationProvider(
+    context,
+    { _ -> AUDIOBOOK_NOTIFICATION_ID },
+    AUDIOBOOK_NOTIFICATION_CHANNEL_ID,
+    com.aryan.reader.R.string.audiobook_notification_channel_name
+) {
+    override fun addNotificationActions(
+        mediaSession: MediaSession,
+        mediaButtons: ImmutableList<CommandButton>,
+        builder: NotificationCompat.Builder,
+        actionFactory: MediaNotification.ActionFactory
+    ): IntArray {
+        val actions = super.addNotificationActions(mediaSession, mediaButtons, builder, actionFactory)
+        logMediaTransport(
+            "audiobook-notification-actions",
+            "buttons=${mediaButtons.size} actions=${actions.joinToString()} " +
+                playerTransportSnapshot(mediaSession.player)
+        )
+        return actions
+    }
+}
+
+@OptIn(UnstableApi::class)
 class AudiobookPlaybackService : MediaSessionService(), Player.Listener {
     private lateinit var player: ExoPlayer
     private var session: MediaSession? = null
@@ -50,17 +110,13 @@ class AudiobookPlaybackService : MediaSessionService(), Player.Listener {
     private val database by lazy { AppDatabase.getDatabase(this) }
     private var saveJob: Job? = null
     private var sleepTimerJob: Job? = null
+    private val diagnosticsCallback = MediaTransportDiagnosticsCallback()
 
     override fun onCreate() {
         super.onCreate()
-        setMediaNotificationProvider(
-            DefaultMediaNotificationProvider(
-                this,
-                { _ -> AUDIOBOOK_NOTIFICATION_ID },
-                AUDIOBOOK_NOTIFICATION_CHANNEL_ID,
-                com.aryan.reader.R.string.audiobook_notification_channel_name
-            )
-        )
+        setMediaNotificationProvider(LoggingAudiobookNotificationProvider(this))
+        // Never keep a media notification around for a stopped/idle player.
+        setShowNotificationForIdlePlayer(SHOW_NOTIFICATION_FOR_IDLE_PLAYER_NEVER)
         player = ExoPlayer.Builder(this)
             .setAudioAttributes(
                 AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_SPEECH).build(),
@@ -71,7 +127,14 @@ class AudiobookPlaybackService : MediaSessionService(), Player.Listener {
         player.addListener(this)
         session = MediaSession.Builder(this, player)
             .setId(AUDIOBOOK_MEDIA_SESSION_ID)
+            .setCallback(diagnosticsCallback)
+            // Serve artwork synchronously so notification re-posts never bypass the pinning path.
+            .setBitmapLoader(com.aryan.reader.MediaNotificationBitmapLoader(this))
             .build()
+        logMediaTransport(
+            "audiobook-service-created",
+            "session=reader-audiobook-playback sessionAvailable=${session != null}"
+        )
         saveJob = scope.launch {
             while (isActive) {
                 delay(5_000)
@@ -80,9 +143,26 @@ class AudiobookPlaybackService : MediaSessionService(), Player.Listener {
         }
     }
 
-    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = session
+    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? {
+        logMediaTransport(
+            "audiobook-on-get-session",
+            "package=${controllerInfo.packageName} sessionAvailable=${session != null}"
+        )
+        return session
+    }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action != null) {
+            val keyEventDetails = if (intent.action == Intent.ACTION_MEDIA_BUTTON) {
+                " ${mediaButtonKeyEventDetails(intent)}"
+            } else {
+                ""
+            }
+            logMediaTransport(
+                "audiobook-on-start-command",
+                "action=${intent.action} startId=$startId$keyEventDetails ${playerTransportSnapshot(player)}"
+            )
+        }
         when (intent?.action) {
             ACTION_AUDIOBOOK_STOP -> {
                 sleepTimerJob?.cancel()
@@ -132,11 +212,36 @@ class AudiobookPlaybackService : MediaSessionService(), Player.Listener {
     }
 
     override fun onIsPlayingChanged(isPlaying: Boolean) {
+        logMediaTransport(
+            "audiobook-is-playing-changed",
+            "isPlaying=$isPlaying ${playerTransportSnapshot(player)}"
+        )
+        if (isPlaying) {
+            com.aryan.reader.MediaButtonRouting.recordPlaybackService(
+                this,
+                AudiobookPlaybackService::class.java
+            )
+        }
         if (!isPlaying) scope.launch { persistPosition() }
     }
 
     override fun onPlaybackStateChanged(playbackState: Int) {
         if (playbackState == Player.STATE_ENDED) scope.launch { persistPosition(completed = true) }
+    }
+
+    override fun onUpdateNotification(session: MediaSession, startInForegroundRequired: Boolean) {
+        logMediaTransport(
+            "audiobook-on-update-notification",
+            "startInForegroundRequired=$startInForegroundRequired ${playerTransportSnapshot(player)}"
+        )
+        super.onUpdateNotification(session, startInForegroundRequired)
+        pinPostedPlaybackNotification(
+            context = this,
+            notificationId = AUDIOBOOK_NOTIFICATION_ID,
+            playWhenReady = session.player.playWhenReady,
+            playbackState = session.player.playbackState,
+            diagnosticsTag = "AUDIOBOOK_DIAG"
+        )
     }
 
     private suspend fun persistPosition(completed: Boolean = false) {
@@ -157,6 +262,7 @@ class AudiobookPlaybackService : MediaSessionService(), Player.Listener {
     }
 
     override fun onDestroy() {
+        logMediaTransport("audiobook-service-destroyed", "sessionAlive=${session != null}")
         saveJob?.cancel()
         sleepTimerJob?.cancel()
         if (::player.isInitialized) {

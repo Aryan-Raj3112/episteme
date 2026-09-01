@@ -39,7 +39,8 @@ interface AndroidBookStore {
 }
 
 interface AndroidFolderMirrorStore {
-    suspend fun syncLocalMetadataToFolder(bookId: String, force: Boolean = false)
+    /** Returns true when the metadata sidecar is present or the operation is a safe no-op. */
+    suspend fun syncLocalMetadataToFolder(bookId: String, force: Boolean = false): Boolean
     /** Returns true only after the merged sidecar has been written and read back successfully. */
     suspend fun syncLocalAnnotationsToFolder(bookId: String): Boolean
     suspend fun importAnnotationBundle(bookId: String, jsonString: String, lastModifiedTimestamp: Long? = null)

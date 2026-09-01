@@ -47,8 +47,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -83,6 +81,7 @@ internal fun SharedMobilePdfAnnotationBottomSheet(
     onUpdate: (SharedPdfAnnotation) -> Unit,
     onDelete: () -> Unit,
     onReadAloud: () -> Unit,
+    onClipboardError: ((String) -> Unit)? = null,
     onDismiss: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -93,7 +92,8 @@ internal fun SharedMobilePdfAnnotationBottomSheet(
     var commentAuthor by remember(annotation.id) { mutableStateOf(DEFAULT_SHARED_PDF_COMMENT_AUTHOR) }
     var replyTargetId by remember(annotation.id) { mutableStateOf<String?>(null) }
     var editingCommentId by remember(annotation.id) { mutableStateOf<String?>(null) }
-    val clipboard = LocalClipboardManager.current
+    val copiedTextLabel = readerString("clip_label_copied_text", "Copied Text")
+    val clipboardErrorMessage = readerString("error_copy_to_clipboard", "Could not copy to clipboard")
 
     fun updateComments(next: List<SharedPdfAnnotationComment>) {
         comments = next
@@ -139,7 +139,10 @@ internal fun SharedMobilePdfAnnotationBottomSheet(
                 Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                SharedMobilePdfAnnotationTool(icon = Res.drawable.copy, label = "Copy") { clipboard.setText(AnnotatedString(annotation.text)) }
+                SharedMobilePdfAnnotationTool(icon = Res.drawable.copy, label = "Copy") {
+                    val result = writeSharedClipboard(copiedTextLabel, annotation.text)
+                    if (!result.success) onClipboardError?.invoke(clipboardErrorMessage)
+                }
                 SharedMobilePdfAnnotationTool(imageVector = Icons.AutoMirrored.Filled.VolumeUp, label = "Read aloud", onClick = onReadAloud)
                 if (readerExternalLookupActionsAvailable(annotation.text.length)) {
                     SharedMobilePdfAnnotationTool(imageVector = Icons.Default.Book, label = "Define") {

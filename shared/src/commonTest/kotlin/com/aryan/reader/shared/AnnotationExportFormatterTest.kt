@@ -5,6 +5,11 @@ import com.aryan.reader.shared.pdf.PdfInkTool
 import com.aryan.reader.shared.pdf.PdfPageBounds
 import com.aryan.reader.shared.pdf.SharedPdfAnnotation
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationComment
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.int
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -126,6 +131,110 @@ class AnnotationExportFormatterTest {
         assertFalse(blank.hasAnnotations)
         assertEquals("", AnnotationExportFormatter.render(empty, AnnotationExportFormat.MARKDOWN))
         assertEquals("", AnnotationExportFormatter.render(blank, AnnotationExportFormat.TEXT))
+        assertEquals("", AnnotationExportFormatter.render(empty, AnnotationExportFormat.JSON))
+        assertEquals("", AnnotationExportFormatter.render(blank, AnnotationExportFormat.CSV))
+    }
+
+    @Test
+    fun `epub highlight with note exports json document`() {
+        val document = AnnotationExportFormatter.fromEpubHighlights(
+            bookTitle = "Example Book",
+            sourceType = FileType.EPUB,
+            highlights = listOf(
+                UserHighlight(
+                    id = "h1",
+                    cfi = "epubcfi(/6/2)",
+                    text = "A highlighted passage.",
+                    color = HighlightColor.YELLOW,
+                    chapterIndex = 2,
+                    note = "Remember this point."
+                )
+            )
+        )
+
+        val json = AnnotationExportFormatter.render(document, AnnotationExportFormat.JSON)
+        val root = Json.parseToJsonElement(json).jsonObject
+
+        assertEquals("Example Book", root["bookTitle"]!!.jsonPrimitive.content)
+        assertEquals("EPUB", root["sourceType"]!!.jsonPrimitive.content)
+        assertEquals(1, root["annotationCount"]!!.jsonPrimitive.int)
+        val entry = root["annotations"]!!.jsonArray.single().jsonObject
+        assertEquals("Chapter 3", entry["location"]!!.jsonPrimitive.content)
+        assertEquals("A highlighted passage.", entry["highlightedText"]!!.jsonPrimitive.content)
+        assertEquals("yellow", entry["color"]!!.jsonPrimitive.content)
+        assertEquals("Remember this point.", entry["note"]!!.jsonPrimitive.content)
+        assertTrue(entry["comments"]!!.jsonArray.isEmpty())
+    }
+
+    @Test
+    fun `pdf comment thread exports json comments with depth`() {
+        val annotations = listOf(
+            pdfHighlight(
+                id = "p1",
+                pageIndex = 0,
+                text = "First page text",
+                note = null,
+                comments = listOf(
+                    SharedPdfAnnotationComment(
+                        id = "reply",
+                        parentId = "root",
+                        author = "Bea",
+                        contents = "Reply",
+                        createdAt = 2L
+                    ),
+                    SharedPdfAnnotationComment(
+                        id = "root",
+                        author = "",
+                        contents = "Root",
+                        createdAt = 1L
+                    )
+                )
+            )
+        )
+
+        val json = AnnotationExportFormatter.render(
+            AnnotationExportFormatter.fromPdfAnnotations("PDF Book", annotations = annotations),
+            AnnotationExportFormat.JSON
+        )
+        val entry = Json.parseToJsonElement(json).jsonObject["annotations"]!!.jsonArray.single().jsonObject
+        val comments = entry["comments"]!!.jsonArray
+
+        assertEquals(2, comments.size)
+        val root = comments[0].jsonObject
+        assertEquals("Reader", root["author"]!!.jsonPrimitive.content)
+        assertEquals("Root", root["contents"]!!.jsonPrimitive.content)
+        assertEquals(0, root["depth"]!!.jsonPrimitive.int)
+        val reply = comments[1].jsonObject
+        assertEquals("Bea", reply["author"]!!.jsonPrimitive.content)
+        assertEquals("Reply", reply["contents"]!!.jsonPrimitive.content)
+        assertEquals(1, reply["depth"]!!.jsonPrimitive.int)
+    }
+
+    @Test
+    fun `csv escapes commas quotes and newlines per rfc 4180`() {
+        val document = AnnotationExportFormatter.fromEpubHighlights(
+            bookTitle = "Example Book",
+            sourceType = FileType.EPUB,
+            highlights = listOf(
+                UserHighlight(
+                    id = "h1",
+                    cfi = "desktop:0:0:4",
+                    text = "He said \"hi\", twice\r\non a new line",
+                    color = HighlightColor.YELLOW,
+                    chapterIndex = 0,
+                    note = "Plain note"
+                )
+            )
+        )
+
+        val csv = AnnotationExportFormatter.render(document, AnnotationExportFormat.CSV)
+
+        assertTrue(csv.startsWith("Location,Highlighted Text,Color,Note,Comments\r\n"))
+        assertTrue(
+            csv.contains(
+                "Chapter 1,\"He said \"\"hi\"\", twice\non a new line\",yellow,Plain note,\r\n"
+            )
+        )
     }
 
     @Test

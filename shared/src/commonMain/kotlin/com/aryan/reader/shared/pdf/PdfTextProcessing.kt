@@ -3,7 +3,18 @@ package com.aryan.reader.shared.pdf
 data class PdfProcessedText(
     val cleanText: String,
     val indexMap: List<Int>
-)
+) {
+    /**
+     * Maps a [start, endExclusive) range in [cleanText] back to raw source offsets
+     * (end exclusive). Returns null when no clean character falls inside the range.
+     */
+    fun rawRange(start: Int, endExclusive: Int): Pair<Int, Int>? {
+        if (indexMap.isEmpty()) return null
+        val first = start.coerceIn(0, indexMap.lastIndex)
+        val last = (endExclusive - 1).coerceIn(first, indexMap.lastIndex)
+        return indexMap[first] to indexMap[last] + 1
+    }
+}
 
 data class PdfOcrWord(
     val text: String,
@@ -19,12 +30,16 @@ object PdfTextProcessing {
         rawText.forEachIndexed { index, char ->
             when (char) {
                 '\n' -> {
-                    val lastChar = cleanText.trimEnd().lastOrNull()
-                    if (lastChar != null && lastChar !in ".?!" &&
-                        cleanText.isNotEmpty() && !cleanText.last().isWhitespace()
-                    ) {
-                        cleanText.append(' ')
-                        indexMap += index
+                    if (isNewlineInsideHyphenatedWord(rawText, index)) {
+                        removeTrailingHyphenFragment(cleanText, indexMap)
+                    } else {
+                        val lastChar = cleanText.trimEnd().lastOrNull()
+                        if (lastChar != null && lastChar !in ".?!" &&
+                            cleanText.isNotEmpty() && !cleanText.last().isWhitespace()
+                        ) {
+                            cleanText.append(' ')
+                            indexMap += index
+                        }
                     }
                 }
                 '\r' -> Unit
@@ -36,6 +51,59 @@ object PdfTextProcessing {
         }
         return PdfProcessedText(cleanText.toString().trim(), indexMap)
     }
+
+    /**
+     * Removes hyphens that typographically split a word across a line break
+     * ("understand-\ning" -> "understanding") while leaving every other character,
+     * including regular line breaks, untouched. Heuristic: the break hyphen must sit
+     * between two letters, and the word continuation must start right after the line
+     * break. Hyphenated compounds broken at an existing hyphen ("mother-in-\nlaw")
+     * are indistinguishable from soft wraps without a dictionary and get joined too.
+     */
+    fun joinHyphenatedLineBreaks(text: String): String = joinHyphenatedLineBreaksMapped(text).cleanText
+
+    /** [joinHyphenatedLineBreaks] with a clean-to-source index map for offset remapping. */
+    fun joinHyphenatedLineBreaksMapped(text: String): PdfProcessedText {
+        val result = StringBuilder(text.length)
+        val indexMap = mutableListOf<Int>()
+        text.forEachIndexed { index, char ->
+            if (char == '\n' && isNewlineInsideHyphenatedWord(text, index)) {
+                removeTrailingHyphenFragment(result, indexMap)
+            } else {
+                result.append(char)
+                indexMap += index
+            }
+        }
+        return PdfProcessedText(result.toString(), indexMap)
+    }
+
+    private fun isNewlineInsideHyphenatedWord(text: String, newlineIndex: Int): Boolean {
+        val after = text.getOrNull(newlineIndex + 1) ?: return false
+        if (!after.isLetter()) return false
+
+        var cursor = newlineIndex - 1
+        while (cursor >= 0 && text[cursor] != '\n' && text[cursor].isWhitespace()) cursor--
+        if (cursor < 0 || !isBreakHyphen(text[cursor])) return false
+
+        val before = text.getOrNull(cursor - 1) ?: return false
+        return before.isLetter()
+    }
+
+    private fun removeTrailingHyphenFragment(cleanText: StringBuilder, indexMap: MutableList<Int>) {
+        var removed = 0
+        while (cleanText.isNotEmpty() &&
+            (cleanText.last().isWhitespace() || isBreakHyphen(cleanText.last()))
+        ) {
+            cleanText.deleteAt(cleanText.length - 1)
+            removed++
+        }
+        repeat(removed) {
+            if (indexMap.isNotEmpty()) indexMap.removeAt(indexMap.size - 1)
+        }
+    }
+
+    private fun isBreakHyphen(char: Char): Boolean =
+        char == '-' || char == '\u2010' || char == '\u00AD'
 
     fun mergeScreenBoundsIntoLines(bounds: List<PdfPageBounds>): List<PdfPageBounds> {
         if (bounds.isEmpty()) return emptyList()

@@ -32,6 +32,7 @@ fun SharedAndroidUnifiedScaffold(
     topBar: @Composable () -> Unit,
     bottomBar: @Composable () -> Unit,
     sectionContent: @Composable (MobileUnifiedLibrarySection, PaddingValues) -> Unit,
+    showFloatingActionButton: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     Scaffold(
@@ -39,25 +40,29 @@ fun SharedAndroidUnifiedScaffold(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         bottomBar = bottomBar,
         topBar = topBar,
-        floatingActionButton = {
-            when (section) {
-                MobileUnifiedLibrarySection.HOME -> FloatingActionButton(onClick = onImport, modifier = Modifier.testTag("UnifiedLibraryImport")) {
-                    Icon(Icons.Default.Add, importDescription)
+        floatingActionButton = if (showFloatingActionButton) {
+            {
+                when (section) {
+                    MobileUnifiedLibrarySection.HOME -> FloatingActionButton(onClick = onImport, modifier = Modifier.testTag("UnifiedLibraryImport")) {
+                        Icon(Icons.Default.Add, importDescription)
+                    }
+                    MobileUnifiedLibrarySection.AUDIOBOOKS -> FloatingActionButton(onClick = onAddAudiobook, modifier = Modifier.testTag("UnifiedLibraryAddAudiobook")) {
+                        Icon(Icons.Default.Add, addAudiobookDescription)
+                    }
+                    MobileUnifiedLibrarySection.SHELVES -> if (!showingShelf) {
+                        ExtendedFloatingActionButton(
+                            onClick = onNewShelf,
+                            modifier = Modifier.testTag("UnifiedLibraryNewShelf"),
+                            icon = { Icon(Icons.Default.Add, null) },
+                            text = { Text(newShelfLabel) },
+                        )
+                    }
+                    MobileUnifiedLibrarySection.FOLDERS,
+                    MobileUnifiedLibrarySection.CATALOGS -> Unit
                 }
-                MobileUnifiedLibrarySection.AUDIOBOOKS -> FloatingActionButton(onClick = onAddAudiobook, modifier = Modifier.testTag("UnifiedLibraryAddAudiobook")) {
-                    Icon(Icons.Default.Add, addAudiobookDescription)
-                }
-                MobileUnifiedLibrarySection.SHELVES -> if (!showingShelf) {
-                    ExtendedFloatingActionButton(
-                        onClick = onNewShelf,
-                        modifier = Modifier.testTag("UnifiedLibraryNewShelf"),
-                        icon = { Icon(Icons.Default.Add, null) },
-                        text = { Text(newShelfLabel) },
-                    )
-                }
-                MobileUnifiedLibrarySection.FOLDERS,
-                MobileUnifiedLibrarySection.CATALOGS -> Unit
             }
+        } else {
+            { }
         },
     ) { padding ->
         AnimatedContent(

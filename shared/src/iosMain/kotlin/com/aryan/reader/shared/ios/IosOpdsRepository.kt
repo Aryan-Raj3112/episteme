@@ -1,5 +1,8 @@
+@file:OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
+
 package com.aryan.reader.shared.ios
 
+import com.aryan.reader.shared.SyncedFolder
 import com.aryan.reader.shared.currentTimestamp
 import com.aryan.reader.shared.opds.OpdsAcquisition
 import com.aryan.reader.shared.opds.OpdsAuthor
@@ -7,10 +10,22 @@ import com.aryan.reader.shared.opds.OpdsCatalog
 import com.aryan.reader.shared.opds.OpdsEntry
 import com.aryan.reader.shared.opds.OpdsFacet
 import com.aryan.reader.shared.opds.OpdsFeed
+import com.aryan.reader.shared.opds.OpdsStreamReference
 import com.aryan.reader.shared.opds.SharedOpdsCatalogs
+import com.aryan.reader.shared.opds.SharedOpdsDownloadLocation
+import com.aryan.reader.shared.opds.SharedOpdsDownloadLocationCodec
 import com.aryan.reader.shared.opds.SharedOpdsDownloadNamer
 import com.aryan.reader.shared.opds.SharedOpdsRepository
+import com.aryan.reader.shared.opds.SharedOpdsStreamRequest
+import com.aryan.reader.shared.opds.SharedOpdsTransferProgress
+import com.aryan.reader.shared.reader.SharedLruMemoryCache
+import com.aryan.reader.shared.reader.sharedSha256Hex
+import kotlinx.cinterop.addressOf
+import kotlinx.cinterop.pin
+import kotlinx.cinterop.usePinned
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -22,8 +37,10 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import platform.Foundation.NSData
+import platform.Foundation.NSCachesDirectory
 import platform.Foundation.NSDocumentDirectory
 import platform.Foundation.NSError
+import platform.Foundation.NSFileHandle
 import platform.Foundation.NSFileManager
 import platform.Foundation.NSHTTPURLResponse
 import platform.Foundation.NSMutableData
@@ -46,19 +63,36 @@ import platform.Foundation.NSURLSessionTask
 import platform.Foundation.NSUserDefaults
 import platform.Foundation.NSUTF8StringEncoding
 import platform.Foundation.NSUserDomainMask
+import platform.Foundation.NSTemporaryDirectory
 import platform.Foundation.HTTPMethod
+import platform.Foundation.NSFileModificationDate
+import platform.Foundation.NSSearchPathForDirectoriesInDomains
 import platform.Foundation.appendData
+import platform.Foundation.closeFile
+import platform.Foundation.dataWithContentsOfFile
 import platform.Foundation.dataTaskWithRequest
 import platform.Foundation.dataWithLength
 import platform.Foundation.create
+import platform.Foundation.fileHandleForWritingAtPath
 import platform.Foundation.lastPathComponent
 import platform.Foundation.setValue
-import platform.Foundation.writeToURL
+import platform.Foundation.timeIntervalSince1970
+import platform.Foundation.writeToFile
+import platform.Foundation.writeData
 import platform.darwin.NSObject
+import platform.posix.memcpy
+import kotlin.math.roundToLong
 
-internal class IosOpdsRepository : SharedOpdsRepository {
+private const val ProgressUpdateIntervalMs = 200L
+
+internal class IosOpdsRepository(
+    private val folderFileAdditionHandler: (folderName: String, sourcePath: String, fileName: String) -> String? = { _, _, _ -> null },
+    private val httpClient: IosOpdsHttpClient = IosUrlSessionHttpClient(),
+) : SharedOpdsRepository {
     private val parser = IosOpdsParser()
-    private val httpClient = IosUrlSessionHttpClient()
+    private val coverDataCache = SharedLruMemoryCache<String, NSData>(maxEntries = 64)
+    private val coverDataCacheMutex = Mutex()
+    private val streamPageCache = IosOpdsStreamPageCache()
 
     override fun loadCatalogs(): List<OpdsCatalog> {
         val encoded = NSUserDefaults.standardUserDefaults.stringForKey(KeyCatalogsJson)
@@ -77,6 +111,21 @@ internal class IosOpdsRepository : SharedOpdsRepository {
             SharedOpdsCatalogs.encode(catalogs),
             forKey = KeyCatalogsJson
         )
+    }
+
+    override fun loadOpdsDownloadLocation(): SharedOpdsDownloadLocation? {
+        return SharedOpdsDownloadLocationCodec.decode(
+            NSUserDefaults.standardUserDefaults.stringForKey(KeyDownloadLocationJson)
+        )
+    }
+
+    override fun saveOpdsDownloadLocation(location: SharedOpdsDownloadLocation?) {
+        val encoded = SharedOpdsDownloadLocationCodec.encode(location)
+        if (encoded == null) {
+            NSUserDefaults.standardUserDefaults.removeObjectForKey(KeyDownloadLocationJson)
+        } else {
+            NSUserDefaults.standardUserDefaults.setObject(encoded, forKey = KeyDownloadLocationJson)
+        }
     }
 
     override suspend fun fetchFeed(url: String, username: String?, password: String?): Result<OpdsFeed> {
@@ -102,29 +151,135 @@ internal class IosOpdsRepository : SharedOpdsRepository {
         entry: OpdsEntry,
         acquisition: OpdsAcquisition,
         username: String?,
-        password: String?
-    ): Result<IosDownloadedOpdsBook> {
+        password: String?,
+        destinationFolder: SyncedFolder? = null,
+        onProgress: (SharedOpdsTransferProgress) -> Unit = {},
+    ): Result<IosOpdsDownloadResult> {
         return runCatching {
-            val response = fetch(acquisition.url, username, password)
-            if (response.statusCode !in 200..299) error("HTTP ${response.statusCode}")
-            val data = response.data ?: error("Empty response body")
-            val extension = SharedOpdsDownloadNamer.resolveExtension(
-                acquisition = acquisition,
-                contentDisposition = response.headers["Content-Disposition"],
-                urlPathSegment = acquisition.url.substringBefore('?').substringBefore('#').substringAfterLast('/')
-            )
-            val fileName = SharedOpdsDownloadNamer.cleanFileName(entry.title, extension)
+            val extension: String
+            val fileName: String
             val fileUrl = documentsDirectoryUrl()
                 ?: error("Could not access iOS Documents directory")
-            val destination = fileUrl.URLByAppendingPathComponent(uniqueFileName(fileUrl, fileName))
-                ?: error("Could not create destination URL")
-            if (!data.writeToURL(destination, atomically = true)) {
-                error("Could not save downloaded file")
-            }
-            IosDownloadedOpdsBook(
-                name = destination.lastPathComponent ?: fileName,
-                path = destination.path ?: acquisition.url
+            val temporaryDirectoryUrl = NSURL.fileURLWithPath(
+                NSTemporaryDirectory().trimEnd('/'),
+                isDirectory = true,
             )
+
+            var destinationPath: String? = null
+            var outputHandle: NSFileHandle? = null
+            var completed = false
+            try {
+                val responseUrl = temporaryDirectoryUrl.URLByAppendingPathComponent(
+                    uniqueFileName(
+                        temporaryDirectoryUrl,
+                        ".opds-download-${SharedOpdsDownloadNamer.safeFileStem(entry.title)}",
+                    ),
+                ) ?: error("Could not create temporary destination URL")
+                destinationPath = responseUrl.path
+                    ?: error("Could not locate temporary download path")
+                require(
+                    NSFileManager.defaultManager.createFileAtPath(
+                        destinationPath,
+                        contents = null,
+                        attributes = null,
+                    )
+                ) {
+                    "Could not create temporary download file"
+                }
+                val downloadHandle = NSFileHandle.fileHandleForWritingAtPath(destinationPath)
+                    ?: error("Could not open temporary download file")
+                outputHandle = downloadHandle
+
+                var lastProgressTimestamp = 0L
+                val response = fetch(
+                    acquisition.url,
+                    username,
+                    password,
+                    onData = { data, receivedBytes, totalBytes ->
+                        downloadHandle.writeData(data)
+                        val now = currentTimestamp()
+                        val isFinalChunk = totalBytes != null && receivedBytes >= totalBytes
+                        if (isFinalChunk || now - lastProgressTimestamp >= ProgressUpdateIntervalMs) {
+                            onProgress(SharedOpdsTransferProgress(receivedBytes, totalBytes))
+                            lastProgressTimestamp = now
+                        }
+                    },
+                )
+                outputHandle?.closeFile()
+                outputHandle = null
+                if (response.statusCode !in 200..299) error("HTTP ${response.statusCode}")
+
+                extension = SharedOpdsDownloadNamer.resolveExtension(
+                    acquisition = acquisition,
+                    contentDisposition = response.headerValue("Content-Disposition"),
+                    urlPathSegment = acquisition.url.substringBefore('?').substringBefore('#').substringAfterLast('/'),
+                )
+                fileName = SharedOpdsDownloadNamer.cleanFileName(entry.title, extension)
+
+                if (destinationFolder != null) {
+                    val managedPath = folderFileAdditionHandler(
+                        destinationFolder.name,
+                        destinationPath,
+                        fileName,
+                    )
+                    if (managedPath != null) {
+                        NSFileManager.defaultManager.removeItemAtPath(destinationPath, error = null)
+                        completed = true
+                        return@runCatching IosOpdsDownloadResult(
+                            book = IosDownloadedOpdsBook(
+                                name = fileName,
+                                path = managedPath,
+                            ),
+                            folderName = destinationFolder.name,
+                        )
+                    }
+                } else {
+                    val finalUrl = fileUrl.URLByAppendingPathComponent(
+                        uniqueFileName(fileUrl, fileName),
+                    ) ?: error("Could not create destination URL")
+                    val finalPath = finalUrl.path ?: error("Could not locate destination path")
+                    if (finalPath != destinationPath) {
+                        if (!NSFileManager.defaultManager.moveItemAtPath(destinationPath, toPath = finalPath, error = null)) {
+                            error("Could not save downloaded file")
+                        }
+                        destinationPath = finalPath
+                    }
+                    completed = true
+                    return@runCatching IosOpdsDownloadResult(
+                        book = IosDownloadedOpdsBook(
+                            name = finalUrl.lastPathComponent ?: fileName,
+                            path = finalPath,
+                        ),
+                    )
+                }
+
+                // Match Android's behavior: if a configured folder handler cannot
+                // accept the file, keep the download usable in app storage.
+                val fallbackUrl = fileUrl.URLByAppendingPathComponent(
+                    uniqueFileName(fileUrl, fileName),
+                ) ?: error("Could not create destination URL")
+                val fallbackPath = fallbackUrl.path ?: error("Could not locate destination path")
+                if (fallbackPath != destinationPath) {
+                    if (!NSFileManager.defaultManager.moveItemAtPath(destinationPath, toPath = fallbackPath, error = null)) {
+                        error("Could not save downloaded file")
+                    }
+                    destinationPath = fallbackPath
+                }
+                completed = true
+                IosOpdsDownloadResult(
+                    book = IosDownloadedOpdsBook(
+                        name = fallbackUrl.lastPathComponent ?: fileName,
+                        path = fallbackPath,
+                    ),
+                )
+            } finally {
+                outputHandle?.closeFile()
+                if (!completed) {
+                    destinationPath?.let { path ->
+                        NSFileManager.defaultManager.removeItemAtPath(path, error = null)
+                    }
+                }
+            }
         }
     }
 
@@ -133,13 +288,96 @@ internal class IosOpdsRepository : SharedOpdsRepository {
         username: String?,
         password: String?,
     ): NSData? {
+        val cacheKey = listOf(url, username.orEmpty(), password.orEmpty()).joinToString("\u0000")
+        coverDataCacheMutex.withLock {
+            coverDataCache[cacheKey]
+        }?.let { return it }
         val response = fetch(url, username, password)
-        return response.data.takeIf { response.statusCode in 200..299 }
+        val data = response.data.takeIf { response.statusCode in 200..299 }
+        if (data != null) {
+            coverDataCacheMutex.withLock {
+                coverDataCache[cacheKey] = data
+            }
+        }
+        return data
     }
 
-    private suspend fun fetch(url: String, username: String?, password: String?): IosHttpResponse {
-        val response = httpClient.fetch(url = url, username = username, password = password)
+    internal suspend fun fetchStreamPageData(
+        reference: OpdsStreamReference,
+        pageIndex: Int,
+        maxWidth: Int = SharedOpdsStreamRequest.DefaultMaxWidth,
+    ): IosOpdsStreamPageData? {
+        if (pageIndex !in 0 until reference.count) return null
+        val catalog = reference.catalogId
+            ?.let { catalogId -> loadCatalogs().firstOrNull { it.id == catalogId } }
+        val cacheKey = streamPageCacheKey(reference, pageIndex, maxWidth, catalog)
+        streamPageCache.read(cacheKey)?.let { bytes ->
+            return IosOpdsStreamPageData(bytes = bytes, mimeType = detectImageMimeType(bytes))
+        }
+
+        val url = SharedOpdsStreamRequest.buildPageUrl(
+            reference = reference,
+            pageIndex = pageIndex,
+            maxWidth = maxWidth,
+            catalogUrl = catalog?.url,
+        )
+        val response = fetchBinary(url, catalog?.username, catalog?.password)
+        val data = response.data?.toByteArray()
+            ?.takeIf { it.isNotEmpty() }
+            ?.takeIf { response.statusCode in 200..299 }
+            ?: return null
+        streamPageCache.write(cacheKey, data)
+        return IosOpdsStreamPageData(
+            bytes = data,
+            mimeType = response.headerValue("Content-Type")
+                ?.substringBefore(';')
+                ?.trim()
+                ?.takeIf { it.startsWith("image/", ignoreCase = true) }
+                ?: detectImageMimeType(data),
+        )
+    }
+
+    private suspend fun fetch(
+        url: String,
+        username: String?,
+        password: String?,
+        onData: ((NSData, Long, Long?) -> Unit)? = null,
+    ): IosHttpResponse {
+        val response = httpClient.fetch(
+            url = url,
+            username = username,
+            password = password,
+            onData = onData,
+        )
         return toResponse(response.data, response.response, response.error)
+    }
+
+    private suspend fun fetchBinary(
+        url: String,
+        username: String?,
+        password: String?,
+    ): IosHttpResponse {
+        val response = httpClient.fetch(
+            url = url,
+            username = username,
+            password = password,
+        )
+        if (response.error != null) error(response.error.localizedDescription)
+        val httpResponse = response.response as? NSHTTPURLResponse
+        val headers = httpResponse?.allHeaderFields
+            ?.mapNotNull { (key, value) -> (key as? String)?.let { it to value.toString() } }
+            ?.toMap()
+            .orEmpty()
+        return IosHttpResponse(
+            statusCode = httpResponse?.statusCode?.toInt() ?: 200,
+            body = "",
+            data = response.data,
+            headers = headers,
+        )
+    }
+
+    private fun IosHttpResponse.headerValue(name: String): String? {
+        return headers.entries.firstOrNull { (key, _) -> key.equals(name, ignoreCase = true) }?.value
     }
 
     private fun toResponse(data: NSData?, response: NSURLResponse?, error: NSError?): IosHttpResponse {
@@ -181,7 +419,124 @@ internal class IosOpdsRepository : SharedOpdsRepository {
 
     private companion object {
         private const val KeyCatalogsJson = "reader_ios_opds_catalogs_json"
+        private const val KeyDownloadLocationJson = "reader_ios_opds_download_location_json"
     }
+}
+
+internal data class IosOpdsStreamPageData(
+    val bytes: ByteArray,
+    val mimeType: String,
+)
+
+private class IosOpdsStreamPageCache(
+    private val maxMemoryEntries: Int = 32,
+    private val maxDiskEntries: Int = 128,
+) {
+    private val memory = SharedLruMemoryCache<String, ByteArray>(maxMemoryEntries)
+    private val mutex = Mutex()
+    private val rootPath: String? = run {
+        val cachesDirectory = NSSearchPathForDirectoriesInDomains(
+            NSCachesDirectory,
+            NSUserDomainMask,
+            true,
+        ).firstOrNull() as? String
+        cachesDirectory?.let { "$it/episteme_opds_stream_pages" }?.also { root ->
+            NSFileManager.defaultManager.createDirectoryAtPath(
+                root,
+                withIntermediateDirectories = true,
+                attributes = null,
+                error = null,
+            )
+        }
+    }
+
+    suspend fun read(key: String): ByteArray? {
+        mutex.withLock { memory[key] }?.let { return it }
+        val path = rootPath?.let { "$it/${sharedSha256Hex(key).take(32)}.page" } ?: return null
+        val bytes = NSData.dataWithContentsOfFile(path)?.toByteArray() ?: return null
+        mutex.withLock { memory[key] = bytes }
+        return bytes
+    }
+
+    suspend fun write(key: String, bytes: ByteArray) {
+        mutex.withLock { memory[key] = bytes }
+        val root = rootPath ?: return
+        val path = "$root/${sharedSha256Hex(key).take(32)}.page"
+        bytes.toNSData().writeToFile(path, atomically = true)
+        trimDisk()
+    }
+
+    private fun trimDisk() {
+        val root = rootPath ?: return
+        val fileManager = NSFileManager.defaultManager
+        val files = fileManager.contentsOfDirectoryAtPath(root, error = null)
+            ?.mapNotNull { it as? String }
+            ?.filter { it.endsWith(".page") }
+            ?.map { name ->
+                val path = "$root/$name"
+                val modified = (fileManager.attributesOfItemAtPath(path, error = null)
+                    ?.get(NSFileModificationDate) as? platform.Foundation.NSDate)
+                    ?.timeIntervalSince1970
+                    ?.roundToLong()
+                    ?: 0L
+                path to modified
+            }
+            ?.sortedByDescending { it.second }
+            .orEmpty()
+        files.drop(maxDiskEntries).forEach { (path, _) ->
+            fileManager.removeItemAtPath(path, error = null)
+        }
+    }
+}
+
+private fun streamPageCacheKey(
+    reference: OpdsStreamReference,
+    pageIndex: Int,
+    maxWidth: Int,
+    catalog: OpdsCatalog?,
+): String {
+    // Include a credential fingerprint so changing an authenticated catalog cannot
+    // reuse bytes fetched for the previous account. The password is hashed before
+    // it becomes part of the cache key and is never used as a file name directly.
+    val catalogFingerprint = sharedSha256Hex(
+        listOf(catalog?.url, catalog?.username, catalog?.password).joinToString("\u0000")
+    )
+    return "${reference.id}|${reference.count}|${reference.urlTemplate}|${reference.catalogId.orEmpty()}|$catalogFingerprint|$pageIndex|$maxWidth"
+}
+
+private fun detectImageMimeType(bytes: ByteArray): String {
+    return when {
+        bytes.size >= 8 && bytes[0] == 0x89.toByte() && bytes[1] == 0x50.toByte() &&
+            bytes[2] == 0x4E.toByte() && bytes[3] == 0x47.toByte() -> "image/png"
+        bytes.size >= 3 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xD8.toByte() && bytes[2] == 0xFF.toByte() -> "image/jpeg"
+        bytes.size >= 6 && bytes.copyOfRange(0, 6).decodeToString().startsWith("GIF") -> "image/gif"
+        bytes.size >= 12 && bytes.copyOfRange(0, 4).decodeToString() == "RIFF" &&
+            bytes.copyOfRange(8, 12).decodeToString() == "WEBP" -> "image/webp"
+        else -> "image/jpeg"
+    }
+}
+
+private fun NSData.toByteArray(): ByteArray {
+    val output = ByteArray(length.toInt())
+    if (output.isNotEmpty()) {
+        output.usePinned { pinned ->
+            memcpy(pinned.addressOf(0), bytes, length)
+        }
+    }
+    return output
+}
+
+private fun ByteArray.toNSData(): NSData {
+    val data = NSMutableData.dataWithLength(size.toULong()) ?: NSMutableData()
+    if (isNotEmpty()) {
+        val pinned = pin()
+        try {
+            memcpy(data.mutableBytes, pinned.addressOf(0), size.toULong())
+        } finally {
+            pinned.unpin()
+        }
+    }
+    return data
 }
 
 internal object IosOpdsCatalogIds {
@@ -213,6 +568,11 @@ internal data class IosDownloadedOpdsBook(
     val path: String
 )
 
+internal data class IosOpdsDownloadResult(
+    val book: IosDownloadedOpdsBook,
+    val folderName: String? = null
+)
+
 private data class IosHttpResponse(
     val statusCode: Int,
     val body: String,
@@ -226,16 +586,28 @@ internal data class IosUrlSessionResponse(
     val error: NSError?
 )
 
-private fun NSStringFromData(data: NSData): String {
-    return platform.Foundation.NSString.create(data = data, encoding = NSUTF8StringEncoding)?.toString().orEmpty()
-}
-
-internal class IosUrlSessionHttpClient {
+internal interface IosOpdsHttpClient {
     suspend fun fetch(
         url: String,
         username: String?,
         password: String?,
         headers: Map<String, String> = emptyMap(),
+        onData: ((NSData, Long, Long?) -> Unit)? = null,
+    ): IosUrlSessionResponse
+}
+
+private fun NSStringFromData(data: NSData): String {
+    return platform.Foundation.NSString.create(data = data, encoding = NSUTF8StringEncoding)?.toString().orEmpty()
+}
+
+internal class IosUrlSessionHttpClient : IosOpdsHttpClient {
+    override
+    suspend fun fetch(
+        url: String,
+        username: String?,
+        password: String?,
+        headers: Map<String, String>,
+        onData: ((NSData, Long, Long?) -> Unit)?,
     ): IosUrlSessionResponse {
         val nsUrl = NSURL.URLWithString(url.trim()) ?: error("Invalid URL: $url")
         val request = NSMutableURLRequest.requestWithURL(
@@ -257,6 +629,7 @@ internal class IosUrlSessionHttpClient {
             val delegate = IosUrlSessionDelegate(
                 username = username,
                 password = password,
+                onData = onData,
                 onComplete = { result ->
                     if (continuation.isActive) {
                         continuation.resumeWith(result)
@@ -285,10 +658,13 @@ internal class IosUrlSessionHttpClient {
 private class IosUrlSessionDelegate(
     private val username: String?,
     private val password: String?,
+    private val onData: ((NSData, Long, Long?) -> Unit)?,
     private val onComplete: (Result<IosUrlSessionResponse>) -> Unit
 ) : NSObject(), NSURLSessionDataDelegateProtocol {
     private var response: NSURLResponse? = null
     private val data = NSMutableData.dataWithLength(0u) ?: NSMutableData()
+    private var receivedBytes = 0L
+    private var expectedBytes: Long? = null
     private var completed = false
 
     override fun URLSession(
@@ -298,6 +674,7 @@ private class IosUrlSessionDelegate(
         completionHandler: (Long) -> Unit
     ) {
         response = didReceiveResponse
+        expectedBytes = didReceiveResponse.expectedContentLength.takeIf { it > 0L }
         completionHandler(NSURLSessionResponseAllow)
     }
 
@@ -306,7 +683,12 @@ private class IosUrlSessionDelegate(
         dataTask: NSURLSessionDataTask,
         didReceiveData: NSData
     ) {
-        data.appendData(didReceiveData)
+        receivedBytes += didReceiveData.length.toLong()
+        if (onData == null) {
+            data.appendData(didReceiveData)
+        } else {
+            onData.invoke(didReceiveData, receivedBytes, expectedBytes)
+        }
     }
 
     override fun URLSession(
@@ -316,7 +698,15 @@ private class IosUrlSessionDelegate(
     ) {
         if (completed) return
         completed = true
-        onComplete(Result.success(IosUrlSessionResponse(data = data, response = response, error = didCompleteWithError)))
+        onComplete(
+            Result.success(
+                IosUrlSessionResponse(
+                    data = if (onData == null) data else null,
+                    response = response,
+                    error = didCompleteWithError,
+                )
+            )
+        )
         session.finishTasksAndInvalidate()
     }
 

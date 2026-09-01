@@ -18,8 +18,13 @@ import kotlinx.serialization.json.longOrNull
 const val LOCAL_FOLDER_SYNC_DATA_DIR = "EpistemeSyncData"
 const val LOCAL_FOLDER_ANNOTATION_SUFFIX = "_annotations"
 const val LOCAL_FOLDER_SIDECAR_HASH_PREFIX = "book_"
+/** Version that makes null-valued metadata fields explicit clears. */
+const val LOCAL_FOLDER_SYNC_METADATA_SCHEMA_VERSION = 2
 
-internal expect fun localFolderSyncSha256ShortHex(value: String): String
+internal expect fun localFolderSyncSha256Hex(value: String): String
+
+internal fun localFolderSyncSha256ShortHex(value: String): String =
+    localFolderSyncSha256Hex(value).take(12)
 
 fun localFolderSyncSidecarStem(bookId: String): String {
     return LOCAL_FOLDER_SIDECAR_HASH_PREFIX + localFolderSyncSha256ShortHex(bookId)
@@ -65,7 +70,10 @@ data class SharedFolderBookMetadata(
     val originalAuthor: String? = null,
     val originalSeriesName: String? = null,
     val originalSeriesIndex: Double? = null,
-    val originalDescription: String? = null
+    val originalDescription: String? = null,
+    /** v1 sidecars omitted several fields; v2 records their presence. */
+    val schemaVersion: Int = LOCAL_FOLDER_SYNC_METADATA_SCHEMA_VERSION,
+    val presentFields: Set<String> = emptySet(),
 ) {
     fun toJsonString(): String {
         return folderSyncJson.encodeToString(
@@ -73,6 +81,9 @@ data class SharedFolderBookMetadata(
             JsonObject(
                 mapOf(
                     "bookId" to JsonPrimitive(bookId),
+                    "schemaVersion" to JsonPrimitive(LOCAL_FOLDER_SYNC_METADATA_SCHEMA_VERSION),
+                    "title" to title.asJson(),
+                    "author" to author.asJson(),
                     "displayName" to JsonPrimitive(displayName),
                     "type" to JsonPrimitive(type),
                     "lastChapterIndex" to JsonPrimitive(lastChapterIndex ?: -1),
@@ -85,7 +96,15 @@ data class SharedFolderBookMetadata(
                     "locatorBlockIndex" to JsonPrimitive(locatorBlockIndex ?: -1),
                     "locatorCharOffset" to JsonPrimitive(locatorCharOffset ?: -1),
                     "customName" to customName.asJson(),
-                    "highlightsJson" to highlightsJson.asJson()
+                    "highlightsJson" to highlightsJson.asJson(),
+                    "seriesName" to seriesName.asJson(),
+                    "seriesIndex" to (seriesIndex?.let { JsonPrimitive(it) } ?: JsonNull),
+                    "description" to description.asJson(),
+                    "originalTitle" to originalTitle.asJson(),
+                    "originalAuthor" to originalAuthor.asJson(),
+                    "originalSeriesName" to originalSeriesName.asJson(),
+                    "originalSeriesIndex" to (originalSeriesIndex?.let { JsonPrimitive(it) } ?: JsonNull),
+                    "originalDescription" to originalDescription.asJson()
                 )
             )
         )
@@ -99,11 +118,22 @@ data class SharedFolderBookMetadata(
         val parsedHighlights = highlightsJson
             ?.let(EpubAnnotationSerializer::parseHighlightsJson)
             ?.takeIf { it.isNotEmpty() }
-        val parsedBookmarks = parseReaderBookmarks(bookId)
-            .takeIf { it.isNotEmpty() }
+        val parsedHighlightsWithClear = if (fieldIsPresent("highlightsJson", highlightsJson)) {
+            highlightsJson?.let(EpubAnnotationSerializer::parseHighlightsJson).orEmpty()
+        } else {
+            parsedHighlights
+        }
+        val parsedBookmarks = if (fieldIsPresent("bookmarksJson", bookmarksJson)) {
+            parseReaderBookmarks(bookId)
+        } else {
+            parseReaderBookmarks(bookId).takeIf { it.isNotEmpty() }
+        }
         val parsedType = runCatching { FileType.valueOf(type) }.getOrNull() ?: file.type
         val metadataTimestamp = lastModifiedTimestamp.takeIf { it > 0L } ?: nowMillis
         val parsedReaderPosition = readerPositionOrNull()
+        val positionFieldsPresent = schemaVersion >= LOCAL_FOLDER_SYNC_METADATA_SCHEMA_VERSION &&
+            setOf("lastChapterIndex", "lastPage", "lastPositionCfi", "locatorBlockIndex", "locatorCharOffset", "progressPercentage")
+                .any(presentFields::contains)
 
         return (existing ?: BookItem(
             id = bookId,
@@ -111,7 +141,8 @@ data class SharedFolderBookMetadata(
             type = parsedType,
             displayName = displayName.ifBlank { file.name },
             timestamp = metadataTimestamp,
-            title = file.name.substringBeforeLast('.', missingDelimiterValue = file.name),
+            title = title ?: file.name.substringBeforeLast('.', missingDelimiterValue = file.name),
+            author = author,
             fileSize = file.size,
             fileContentModifiedTimestamp = file.lastModified,
             sourceFolder = file.sourceFolder,
@@ -123,35 +154,40 @@ data class SharedFolderBookMetadata(
             displayName = displayName.ifBlank { file.name },
             timestamp = if (isRecent || existing == null) metadataTimestamp else existing.timestamp,
             coverImagePath = existing?.coverImagePath,
-            title = existing?.title ?: file.name.substringBeforeLast('.', missingDelimiterValue = file.name),
-            author = existing?.author,
-            description = existing?.description,
-            originalTitle = existing?.originalTitle,
-            originalAuthor = existing?.originalAuthor,
-            originalSeriesName = existing?.originalSeriesName,
-            originalSeriesIndex = existing?.originalSeriesIndex,
-            originalDescription = existing?.originalDescription,
-            progressPercentage = progressPercentage,
+            title = if (fieldIsPresent("title", title)) title else existing?.title ?: file.name.substringBeforeLast('.', missingDelimiterValue = file.name),
+            author = if (fieldIsPresent("author", author)) author else existing?.author,
+            description = if (fieldIsPresent("description", description)) description else existing?.description,
+            originalTitle = if (fieldIsPresent("originalTitle", originalTitle)) originalTitle else existing?.originalTitle,
+            originalAuthor = if (fieldIsPresent("originalAuthor", originalAuthor)) originalAuthor else existing?.originalAuthor,
+            originalSeriesName = if (fieldIsPresent("originalSeriesName", originalSeriesName)) originalSeriesName else existing?.originalSeriesName,
+            originalSeriesIndex = if (fieldIsPresent("originalSeriesIndex", originalSeriesIndex)) originalSeriesIndex else existing?.originalSeriesIndex,
+            originalDescription = if (fieldIsPresent("originalDescription", originalDescription)) originalDescription else existing?.originalDescription,
+            progressPercentage = if (positionFieldsPresent) progressPercentage else existing?.progressPercentage ?: progressPercentage,
             isRecent = isRecent || (existing?.isRecent ?: false),
             fileSize = file.size.takeIf { it > 0L } ?: existing?.fileSize ?: 0L,
             fileContentModifiedTimestamp = file.lastModified.takeIf { it > 0L } ?: existing?.fileContentModifiedTimestamp ?: 0L,
             sourceFolder = file.sourceFolder,
             folderTextMetadataParsed = existing?.folderTextMetadataParsed ?: false,
-            seriesName = existing?.seriesName,
-            seriesIndex = existing?.seriesIndex,
-            lastPageIndex = lastPage,
-            readerPosition = parsedReaderPosition ?: existing?.readerPosition,
+            seriesName = if (fieldIsPresent("seriesName", seriesName)) seriesName else existing?.seriesName,
+            seriesIndex = if (fieldIsPresent("seriesIndex", seriesIndex)) seriesIndex else existing?.seriesIndex,
+            lastPageIndex = if (positionFieldsPresent) lastPage else existing?.lastPageIndex ?: lastPage,
+            readerPosition = if (positionFieldsPresent) parsedReaderPosition else parsedReaderPosition ?: existing?.readerPosition,
             readingPositionModifiedTimestamp = if (
-                parsedReaderPosition != null || lastPage != null || progressPercentage > 0f
+                positionFieldsPresent || parsedReaderPosition != null || lastPage != null || progressPercentage > 0f
             ) {
                 metadataTimestamp
             } else {
                 existing?.readingPositionModifiedTimestamp ?: 0L
             },
             readerBookmarks = parsedBookmarks ?: existing?.readerBookmarks.orEmpty(),
-            readerHighlights = parsedHighlights ?: existing?.readerHighlights.orEmpty()
+            readerHighlights = parsedHighlightsWithClear ?: existing?.readerHighlights.orEmpty(),
+            titleSortKey = if (fieldIsPresent("customName", customName)) customName else existing?.titleSortKey,
+            metadataModifiedTimestamp = metadataTimestamp,
         )
     }
+
+    private fun fieldIsPresent(name: String, value: Any?): Boolean =
+        (schemaVersion >= LOCAL_FOLDER_SYNC_METADATA_SCHEMA_VERSION && name in presentFields) || value != null
 
     private fun readerPositionOrNull(): ReaderLocator? {
         if (lastChapterIndex == null && lastPage == null && lastPositionCfi.isNullOrBlank()) return null
@@ -190,10 +226,14 @@ data class SharedFolderBookMetadata(
             val obj = runCatching { folderSyncJson.parseToJsonElement(rawJson).jsonObject }.getOrNull()
                 ?: return null
             val bookId = obj.string("bookId")?.takeIf { it.isNotBlank() } ?: return null
+            val schemaVersion = obj.int("schemaVersion") ?: 1
+            val hasV2Fields = schemaVersion >= LOCAL_FOLDER_SYNC_METADATA_SCHEMA_VERSION
             return SharedFolderBookMetadata(
                 bookId = bookId,
-                title = null,
-                author = null,
+                schemaVersion = schemaVersion,
+                presentFields = if (hasV2Fields) obj.keys else emptySet(),
+                title = if (hasV2Fields) obj.string("title") else null,
+                author = if (hasV2Fields) obj.string("author") else null,
                 displayName = obj.string("displayName") ?: "Unknown",
                 type = obj.string("type") ?: FileType.PDF.name,
                 lastChapterIndex = obj.sentinelInt("lastChapterIndex"),
@@ -205,16 +245,16 @@ data class SharedFolderBookMetadata(
                 bookmarksJson = obj.string("bookmarksJson"),
                 locatorBlockIndex = obj.sentinelInt("locatorBlockIndex"),
                 locatorCharOffset = obj.sentinelInt("locatorCharOffset"),
-                customName = obj.string("customName"),
+                customName = if (hasV2Fields) obj.string("customName") else null,
                 highlightsJson = obj.string("highlightsJson"),
-                seriesName = null,
-                seriesIndex = null,
-                description = null,
-                originalTitle = null,
-                originalAuthor = null,
-                originalSeriesName = null,
-                originalSeriesIndex = null,
-                originalDescription = null
+                seriesName = if (hasV2Fields) obj.string("seriesName") else null,
+                seriesIndex = if (hasV2Fields) obj.double("seriesIndex") else null,
+                description = if (hasV2Fields) obj.string("description") else null,
+                originalTitle = if (hasV2Fields) obj.string("originalTitle") else null,
+                originalAuthor = if (hasV2Fields) obj.string("originalAuthor") else null,
+                originalSeriesName = if (hasV2Fields) obj.string("originalSeriesName") else null,
+                originalSeriesIndex = if (hasV2Fields) obj.double("originalSeriesIndex") else null,
+                originalDescription = if (hasV2Fields) obj.string("originalDescription") else null
             )
         }
     }
@@ -264,6 +304,24 @@ data class LocalFolderSyncResult(
     val stats: LocalFolderSyncStats
 )
 
+/**
+ * Describes how trustworthy a physical folder enumeration is.
+ *
+ * A provider can return a subset of children before failing (or can simply
+ * return null for a query).  Treating that subset as the complete folder is
+ * unsafe because the reconciliation step would infer deletions.  Callers
+ * must use [COMPLETE] only after the whole tree has been enumerated.
+ */
+enum class LocalFolderScanStatus {
+    COMPLETE,
+    PARTIAL,
+    UNAVAILABLE,
+    NOT_SCANNED;
+
+    val canReconcileMissingBooks: Boolean
+        get() = this == COMPLETE
+}
+
 object LocalFolderSyncEngine {
     fun buildStableBookId(name: String, relativePath: String): String {
         val normalizedRelativePath = relativePath.toSyncRelativePath().ifBlank { name }
@@ -280,7 +338,8 @@ object LocalFolderSyncEngine {
         files: List<SharedFolderScannedFile>,
         remoteMetadata: Map<String, SharedFolderBookMetadata>,
         nowMillis: Long = currentTimestamp(),
-        metadataOnly: Boolean = false
+        metadataOnly: Boolean = false,
+        scanStatus: LocalFolderScanStatus = LocalFolderScanStatus.COMPLETE
     ): LocalFolderSyncResult {
         if (!folder.localSyncEnabled) {
             return LocalFolderSyncResult(
@@ -401,15 +460,22 @@ object LocalFolderSyncEngine {
                     }
                 }
 
-            removedIds = existingFolderBookIds
-                .map { idMigrations[it] ?: it }
-                .filter { it !in foundBookIds }
-                .toSet()
-            removedIds.forEach(booksById::remove)
-            stats = stats.copy(removedBooks = removedIds.size)
+            if (scanStatus.canReconcileMissingBooks) {
+                removedIds = existingFolderBookIds
+                    .map { idMigrations[it] ?: it }
+                    .filter { it !in foundBookIds }
+                    .toSet()
+                removedIds.forEach(booksById::remove)
+                stats = stats.copy(removedBooks = removedIds.size)
+            }
         }
 
-        val syncedFolder = folder.copy(lastScanTime = nowMillis)
+        // A metadata-only pass, a partial enumeration, or an unavailable
+        // provider must not advance the scan watermark.  Keeping the old
+        // value makes the UI and cloud merge accurately reflect the last
+        // complete physical scan.
+        val shouldRecordScan = !metadataOnly && scanStatus == LocalFolderScanStatus.COMPLETE
+        val syncedFolder = if (shouldRecordScan) folder.copy(lastScanTime = nowMillis) else folder
         val syncedFolders = (state.syncedFolders.filterNot { it.uriString == folderRoot } + syncedFolder)
             .sortedBy { it.name.lowercase() }
         val migratedState = state
@@ -419,7 +485,7 @@ object LocalFolderSyncEngine {
             .copy(
                 rawLibraryBooks = booksById.values.toList(),
                 syncedFolders = syncedFolders,
-                lastFolderScanTime = nowMillis
+                lastFolderScanTime = if (shouldRecordScan) nowMillis else state.lastFolderScanTime
             )
 
         return LocalFolderSyncResult(
@@ -462,8 +528,8 @@ fun BookItem.toSharedFolderBookMetadata(): SharedFolderBookMetadata? {
 
     return SharedFolderBookMetadata(
         bookId = id,
-        title = null,
-        author = null,
+        title = title,
+        author = author,
         displayName = displayName,
         type = type.name,
         lastChapterIndex = position?.chapterIndex,
@@ -475,16 +541,16 @@ fun BookItem.toSharedFolderBookMetadata(): SharedFolderBookMetadata? {
         bookmarksJson = bookmarksJson,
         locatorBlockIndex = position?.blockIndex,
         locatorCharOffset = position?.charOffset,
-        customName = null,
+        customName = titleSortKey,
         highlightsJson = highlightsJson,
-        seriesName = null,
-        seriesIndex = null,
-        description = null,
-        originalTitle = null,
-        originalAuthor = null,
-        originalSeriesName = null,
-        originalSeriesIndex = null,
-        originalDescription = null
+        seriesName = seriesName,
+        seriesIndex = seriesIndex,
+        description = description,
+        originalTitle = originalTitle,
+        originalAuthor = originalAuthor,
+        originalSeriesName = originalSeriesName,
+        originalSeriesIndex = originalSeriesIndex,
+        originalDescription = originalDescription
     )
 }
 
@@ -620,6 +686,10 @@ private fun JsonObject.string(name: String): String? {
 
 private fun JsonObject.long(name: String): Long? {
     return runCatching { this[name]?.takeUnless { it is JsonNull }?.jsonPrimitive?.longOrNull }.getOrNull()
+}
+
+private fun JsonObject.int(name: String): Int? {
+    return runCatching { this[name]?.takeUnless { it is JsonNull }?.jsonPrimitive?.intOrNull }.getOrNull()
 }
 
 private fun JsonObject.double(name: String): Double? {

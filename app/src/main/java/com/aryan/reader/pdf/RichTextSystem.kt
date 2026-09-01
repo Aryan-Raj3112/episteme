@@ -20,6 +20,7 @@
 package com.aryan.reader.pdf
 
 import android.content.Context
+import com.aryan.reader.data.AndroidBookArtifactPaths
 import androidx.compose.runtime.Stable
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
@@ -178,8 +179,7 @@ class PdfRichTextRepository(private val context: Context) {
     val document = _document.asStateFlow()
 
     private fun getFile(bookId: String): File {
-        val safeId = bookId.replace("[^a-zA-Z0-9._-]".toRegex(), "_")
-        return File(context.filesDir, "rich_doc_${safeId}.json")
+        return AndroidBookArtifactPaths.richTextFile(context.filesDir, bookId)
     }
 
     fun getFileForSync(bookId: String): File = getFile(bookId)

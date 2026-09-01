@@ -2,27 +2,26 @@ package com.aryan.reader.tts
 
 import android.content.Context
 import androidx.core.content.edit
+import com.aryan.reader.shared.readerTtsOverlayAlignmentBias as sharedReaderTtsOverlayAlignmentBias
+import com.aryan.reader.shared.readerTtsOverlayAlternativeSizes as sharedReaderTtsOverlayAlternativeSizes
+import com.aryan.reader.shared.resolveReaderTtsOverlaySize as sharedResolveReaderTtsOverlaySize
 
-enum class ReaderTtsOverlaySize {
-    LARGE,
-    MEDIUM,
-    SMALL
-}
+/** Compatibility alias for Android call sites; the state contract lives in shared. */
+typealias ReaderTtsOverlaySize = com.aryan.reader.shared.ReaderTtsOverlaySize
 
 private const val READER_PREFS_NAME = "reader_prefs"
 private const val READER_TTS_OVERLAY_SIZE_KEY = "reader_tts_overlay_size"
 
 internal fun readerTtsOverlayAlignmentBias(size: ReaderTtsOverlaySize): Float {
-    return if (size == ReaderTtsOverlaySize.SMALL) 1f else 0f
+    return sharedReaderTtsOverlayAlignmentBias(size)
 }
 
 internal fun readerTtsOverlayAlternativeSizes(size: ReaderTtsOverlaySize): List<ReaderTtsOverlaySize> {
-    return ReaderTtsOverlaySize.entries.filter { it != size }
+    return sharedReaderTtsOverlayAlternativeSizes(size)
 }
 
 internal fun resolveReaderTtsOverlaySize(savedName: String?): ReaderTtsOverlaySize {
-    return ReaderTtsOverlaySize.entries.firstOrNull { it.name == savedName }
-        ?: ReaderTtsOverlaySize.LARGE
+    return sharedResolveReaderTtsOverlaySize(savedName)
 }
 
 internal fun loadReaderTtsOverlaySize(context: Context): ReaderTtsOverlaySize {
