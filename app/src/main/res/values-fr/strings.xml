@@ -1536,4 +1536,15 @@
     <string name="unified_library_list_view">Vue en liste</string>
     <string name="unified_library_sort_filter">Trier et filtrer</string>
     <string name="unified_library_account">Compte</string>
+    <string name="unified_library_continue_reading">Continuer la lecture</string>
+    <string name="unified_library_signed_out">Vous n\'êtes pas connecté</string>
+    <string name="unified_library_manage_account">Compte et synchro</string>
+    <string name="unified_library_open_settings">Ouvrir les paramètres</string>
+    <string name="unified_library_add_folder">Ajouter un dossier</string>
+    <string name="unified_library_back_to_shelves">Ajouter des étagères</string>
+    <string name="unified_library_recent_searches">Recherches récentes</string>
+    <string name="audiobooks_timer_hours">Heures</string>
+    <string name="audiobooks_timer_minutes">Minutes</string>
+    <string name="audiobooks_title">Livres audio</string>
+    <string name="audiobooks_unknown_author">Auteur inconnu</string>
 </resources>
