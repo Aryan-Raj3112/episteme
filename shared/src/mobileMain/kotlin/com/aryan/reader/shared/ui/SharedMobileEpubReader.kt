@@ -115,6 +115,10 @@ import com.aryan.reader.shared.reader.ReaderSpreadLayout
 import com.aryan.reader.shared.reader.ReaderViewportSpec
 import com.aryan.reader.shared.reader.SharedEpubPaginationCache
 import com.aryan.reader.shared.reader.SharedMeasuredEpubPaginator
+import com.aryan.reader.shared.reader.sharedEpubOpenTrace
+import com.aryan.reader.shared.reader.sharedEpubOpenTraceElapsedMs
+import com.aryan.reader.shared.reader.sharedEpubOpenTraceMark
+import com.aryan.reader.shared.reader.sharedEpubOpenTraceMs
 import com.aryan.reader.shared.reader.effectiveReaderTocEntries
 import com.aryan.reader.shared.reader.findPageIndexForLocator
 import com.aryan.reader.shared.reader.layoutSignature
@@ -220,11 +224,15 @@ fun SharedMobileEpubReaderScreen(
     modifier: Modifier = Modifier
 ) {
     val motionPolicy = rememberReaderMotionPolicy()
+    remember(book.id) {
+        sharedEpubOpenTrace { "readerScreen enter bookId=${book.id} type=${book.type} hasPosition=${book.readerPosition != null}" }
+    }
     val loadState = rememberSharedMobileEpubLoadState(book)
     val rawLoadedBook = loadState.book
     val bookReplacementSignature = readerBookReplacementPreferences.signatureForFile(book.id)
     val loadedBook = remember(rawLoadedBook, book.id, bookReplacementSignature) {
-        rawLoadedBook?.copy(
+        val replacementMark = sharedEpubOpenTraceMark()
+        val replaced = rawLoadedBook?.copy(
             chapters = rawLoadedBook.chapters.map { chapter ->
                 chapter.copy(
                     plainText = ReaderBookReplacementEngine.apply(
@@ -240,6 +248,8 @@ fun SharedMobileEpubReaderScreen(
                 )
             }
         )
+        sharedEpubOpenTrace { "readerScreen replacements ms=${sharedEpubOpenTraceMs(sharedEpubOpenTraceElapsedMs(replacementMark))} chapters=${replaced?.chapters?.size ?: 0}" }
+        replaced
     }
     val localTts = rememberSharedMobileEpubLocalTts()
     val streamPageUnavailableLabel = readerString("msg_page_unavailable", "Page Unavailable")
@@ -478,6 +488,7 @@ fun SharedMobileEpubReaderScreen(
         if (pages.isNotEmpty()) delay(180)
         if (measuredPagesApplied) return@LaunchedEffect
         val locator = currentLocator ?: book.readerPosition
+        val sessionMark = sharedEpubOpenTraceMark()
         val readerState = withContext(Dispatchers.Default) {
             ReaderEngine().createSession(
                 book = epub,
@@ -486,6 +497,7 @@ fun SharedMobileEpubReaderScreen(
                 initialLocator = locator
             ).reader
         }
+        sharedEpubOpenTrace { "readerScreen estimateSession ms=${sharedEpubOpenTraceMs(sharedEpubOpenTraceElapsedMs(sessionMark))} pages=${readerState.pages.size}" }
         pages = readerState.pages
         currentPageIndex = readerState.currentPageIndex.coerceIn(0, readerState.pages.lastIndex.coerceAtLeast(0))
     }
@@ -499,9 +511,12 @@ fun SharedMobileEpubReaderScreen(
         val epub = loadedBook ?: return@LaunchedEffect
         if (settings.readingMode != ReaderReadingMode.PAGINATED) return@LaunchedEffect
         if (!readerViewport.isSpecified) return@LaunchedEffect
+        val paginateMark = sharedEpubOpenTraceMark()
+        sharedEpubOpenTrace { "readerScreen measuredPaginate start viewport=${readerViewport.widthPx}x${readerViewport.heightPx}" }
         val measuredPages = withContext(Dispatchers.Default) {
             measuredPaginator.paginate(epub, settings, readerViewport)
         }
+        sharedEpubOpenTrace { "readerScreen measuredPaginate done pages=${measuredPages.size} ms=${sharedEpubOpenTraceMs(sharedEpubOpenTraceElapsedMs(paginateMark))}" }
         measuredPagesApplied = true
         val anchor = currentLocator ?: book.readerPosition
         val targetIndex = anchor
@@ -1622,7 +1637,13 @@ fun SharedMobileEpubReaderScreen(
                         )
                         } else {
                         val chapterChunks = remember(loadedBook.id, currentChapterIndex) {
-                            ReaderHtmlDocumentBuilder.verticalChapterChunks(loadedBook, currentChapterIndex)
+                            val chunksMark = sharedEpubOpenTraceMark()
+                            val chunks = ReaderHtmlDocumentBuilder.verticalChapterChunks(loadedBook, currentChapterIndex)
+                            sharedEpubOpenTrace {
+                                "readerScreen chapterChunks chapterIndex=$currentChapterIndex count=${chunks.size} " +
+                                    "chars=${chunks.sumOf { it.length }} ms=${sharedEpubOpenTraceMs(sharedEpubOpenTraceElapsedMs(chunksMark))}"
+                            }
+                            chunks
                         }
                         val initialVirtualChunkIndex = remember(loadedBook.id, currentChapterIndex) {
                             val textLength = loadedBook.chapters[currentChapterIndex].plainText.length.coerceAtLeast(1)
@@ -1649,7 +1670,8 @@ fun SharedMobileEpubReaderScreen(
                             highlights,
                             currentChapterHasHighlights
                         ) {
-                            ReaderHtmlDocumentBuilder.verticalDocument(
+                            val htmlMark = sharedEpubOpenTraceMark()
+                            val html = ReaderHtmlDocumentBuilder.verticalDocument(
                                 book = loadedBook,
                                 settings = settings,
                                 highlights = highlights,
@@ -1671,6 +1693,11 @@ fun SharedMobileEpubReaderScreen(
                                 virtualizedInitialChunkIndex = initialVirtualChunkIndex,
                                 showChapterTitles = false
                             )
+                            sharedEpubOpenTrace {
+                                "readerScreen verticalDocument chapterIndex=$currentChapterIndex chars=${html.length} " +
+                                    "ms=${sharedEpubOpenTraceMs(sharedEpubOpenTraceElapsedMs(htmlMark))}"
+                            }
+                            html
                         }
                         val appearanceScript = remember(settings, pages, currentChapterIndex, loadedBook.id) {
                             ReaderHtmlDocumentBuilder.appearanceUpdateScript(settings) + "\n" +

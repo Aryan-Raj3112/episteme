@@ -530,9 +530,9 @@ class SharedEpubPackageLoaderTest {
         assertEquals("Chapter One", book.chapters[0].title)
         assertTrue(book.chapters[0].htmlContent.contains("<div class=\"empty\"></div>"))
         assertTrue(book.chapters[0].htmlContent.contains("<p class=\"lead\">Styled text.</p>"))
-        assertTrue(book.chapters[0].htmlContent.contains("data:image/png;base64,"))
+        assertTrue(book.chapters[0].htmlContent.contains(sharedEpubResourceUrl("book-id", "OPS/images/cover.png")))
         assertFalse(book.chapters[0].htmlContent.contains("<script", ignoreCase = true))
-        assertTrue(book.css.values.single().contains("data:image/png;base64,"))
+        assertTrue(book.css.values.single().contains(sharedEpubResourceUrl("book-id", "OPS/images/cover.png")))
         assertEquals(emptyList(), book.tableOfContents)
         assertEquals(listOf(MobileEpubImage("OPS/images/cover.png")), book.images)
         assertEquals("OPS/images/cover.png", book.coverImagePath)
@@ -656,9 +656,9 @@ class SharedEpubPackageLoaderTest {
 
         assertEquals(2, book.chapters.size)
         assertTrue(book.css.values.any { it.contains("color: rebeccapurple") })
-        assertTrue(book.css.values.any { it.contains("data:image/jpeg;base64,") })
+        assertTrue(book.css.values.any { it.contains(sharedEpubResourceUrl("visual", "OPS/images/page.jpg")) })
         assertEquals("[Image]", book.chapters[1].plainText)
-        assertTrue(book.chapters[1].htmlContent.contains("data:image/jpeg;base64,"))
+        assertTrue(book.chapters[1].htmlContent.contains(sharedEpubResourceUrl("visual", "OPS/images/page.jpg")))
     }
 
     @Test
@@ -684,8 +684,8 @@ class SharedEpubPackageLoaderTest {
 
         val book = SharedEpubPackageLoader.load(archive, "unquoted", "unquoted.epub")
 
-        assertTrue(book.chapters.single().htmlContent.contains("src=\"data:image/png;base64,"))
-        assertTrue(book.chapters.single().htmlContent.contains("href=\"data:image/png;base64,"))
+        assertTrue(book.chapters.single().htmlContent.contains("src=\"${sharedEpubResourceUrl("unquoted", "OPS/images/picture.png")}"))
+        assertTrue(book.chapters.single().htmlContent.contains("href=\"${sharedEpubResourceUrl("unquoted", "OPS/images/picture.png")}"))
     }
 
     @OptIn(ExperimentalEncodingApi::class)
@@ -812,5 +812,24 @@ class SharedEpubPackageLoaderTest {
         assertEquals("Should not be spoken", chapters[0].plainText)
         assertEquals("Real Chapter", chapters[1].title)
         assertEquals("Real Chapter\nSpoken text.", chapters[1].plainText)
+    }
+
+    @Test
+    fun `scheme resource urls round trip book ids and entry paths`() {
+        val bookId = "book id/with spaces&symbols?=#"
+        val entryPath = "OEBPS/images/cover (1).png"
+        val url = sharedEpubResourceUrl(bookId, entryPath)
+        assertTrue(isSharedEpubResourceUrl(url))
+        val parsed = parseSharedEpubResourceUrl(url)
+        assertEquals(bookId, parsed?.bookId)
+        assertEquals(entryPath, parsed?.entryPath)
+        val urlWithFragment = sharedEpubResourceUrl(bookId, entryPath) + "#anchor"
+        assertEquals(entryPath, parseSharedEpubResourceUrl(urlWithFragment)?.entryPath)
+        assertFalse(isSharedEpubResourceUrl("data:image/png;base64,AAA"))
+        assertFalse(isSharedEpubResourceUrl("https://example.com/a.png"))
+        assertEquals(null, parseSharedEpubResourceUrl("$SharedEpubResourceScheme://r/only-book-id"))
+        assertTrue(isSharedEpubSchemeServableResource("x/photo.JPEG"))
+        assertFalse(isSharedEpubSchemeServableResource("x/font.woff2"))
+        assertFalse(isSharedEpubSchemeServableResource("x/page.xhtml"))
     }
 }

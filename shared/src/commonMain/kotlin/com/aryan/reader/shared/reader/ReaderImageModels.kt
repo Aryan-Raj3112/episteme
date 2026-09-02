@@ -45,7 +45,6 @@ data class ReaderImageReference(
             .substringAfterLast('/')
             .takeIf { it.isNotBlank() }
     }
-
     fun suggestedDownloadFileName(): String {
         val extension = source.readerImageExtension()
         val sourceName = sourceName()
@@ -59,6 +58,7 @@ data class ReaderImageReference(
 
     @OptIn(ExperimentalEncodingApi::class)
     fun downloadBytes(): ByteArray? {
+        resolveSharedEpubResourceBytes(source)?.let { return it }
         if (!source.startsWith("data:", ignoreCase = true)) return null
         val comma = source.indexOf(',')
         if (comma <= 5) return null
@@ -239,6 +239,14 @@ private fun SemanticImage.sameReaderImageAs(other: SemanticImage): Boolean {
 }
 
 private fun String.readerImageExtension(): String? {
+    parseSharedEpubResourceUrl(this)?.let { reference ->
+        return reference.entryPath
+            .substringBefore('#')
+            .substringBefore('?')
+            .substringAfterLast('.', "")
+            .lowercase()
+            .takeIf { it in setOf("jpg", "jpeg", "png", "gif", "webp", "bmp", "svg", "avif") }
+    }
     val dataMime = Regex("""^data:([^;,]+)""", RegexOption.IGNORE_CASE)
         .find(this)
         ?.groupValues

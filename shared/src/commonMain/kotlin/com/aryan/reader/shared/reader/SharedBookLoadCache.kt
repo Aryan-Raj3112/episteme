@@ -13,7 +13,7 @@ import kotlinx.serialization.protobuf.ProtoBuf
 import kotlinx.serialization.protobuf.ProtoNumber
 
 internal const val SharedBookLoadCacheSchemaVersion = 1
-internal const val SharedBookLoadCacheProcessingVersion = 12
+internal const val SharedBookLoadCacheProcessingVersion = 13
 
 enum class SharedBookLoadSemanticMode {
     FULL,
@@ -26,10 +26,11 @@ data class SharedBookLoadCacheKey(
     val length: Long,
     val lastModified: Long,
     val semanticMode: SharedBookLoadSemanticMode = SharedBookLoadSemanticMode.FULL,
-    val htmlChapterRange: String? = null
+    val htmlChapterRange: String? = null,
+    val sourceId: String? = null
 ) {
     val cacheId: String = sharedSha256Hex(
-        "$SharedBookLoadCacheProcessingVersion|${semanticMode.name}|${htmlChapterRange.orEmpty()}|$canonicalPath|${type.name}|$length|$lastModified"
+        "$SharedBookLoadCacheProcessingVersion|${semanticMode.name}|${htmlChapterRange.orEmpty()}|$canonicalPath|${type.name}|$length|$lastModified|${sourceId.orEmpty()}"
     ).take(32)
 }
 
@@ -101,7 +102,8 @@ internal data class CachedSharedEpubBook(
     @ProtoNumber(19) val seriesIndex: Double? = null,
     @ProtoNumber(20) val description: String? = null,
     @ProtoNumber(21) val images: List<MobileEpubImage> = emptyList(),
-    @ProtoNumber(22) val coverImagePath: String? = null
+    @ProtoNumber(22) val coverImagePath: String? = null,
+    @ProtoNumber(23) val sourceId: String? = null
 ) {
     fun toBook(): SharedEpubBook {
         return SharedEpubBook(
@@ -130,7 +132,8 @@ internal data class CachedSharedEpubBook(
             length == key.length &&
             lastModified == key.lastModified &&
             semanticMode == key.semanticMode.name &&
-            htmlChapterRange == key.htmlChapterRange
+            htmlChapterRange == key.htmlChapterRange &&
+            sourceId == key.sourceId
     }
 
     companion object {
@@ -157,7 +160,8 @@ internal data class CachedSharedEpubBook(
                 seriesIndex = book.seriesIndex,
                 description = book.description,
                 images = book.images,
-                coverImagePath = book.coverImagePath
+                coverImagePath = book.coverImagePath,
+                sourceId = key.sourceId
             )
         }
     }

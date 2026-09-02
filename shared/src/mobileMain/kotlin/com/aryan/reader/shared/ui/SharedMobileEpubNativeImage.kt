@@ -13,6 +13,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.ImageBitmap
 import com.aryan.reader.paginatedreader.SemanticImage
+import com.aryan.reader.shared.reader.parseSharedEpubResourceUrl
+import com.aryan.reader.shared.reader.resolveSharedEpubResourceBytes
+import com.aryan.reader.shared.reader.sharedEpubResourceMimeType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
@@ -120,6 +123,14 @@ private class SharedMobileEpubNativeImageSource(
     companion object {
         @OptIn(ExperimentalEncodingApi::class)
         fun from(path: String): SharedMobileEpubNativeImageSource? {
+            resolveSharedEpubResourceBytes(path)?.let { bytes ->
+                return SharedMobileEpubNativeImageSource(
+                    key = path,
+                    mimeType = parseSharedEpubResourceUrl(path)
+                        ?.let { reference -> sharedEpubResourceMimeType(reference.entryPath) },
+                    payload = bytes
+                )
+            }
             if (!path.startsWith("data:image/", ignoreCase = true)) return null
             val comma = path.indexOf(',')
             if (comma <= 5) return null

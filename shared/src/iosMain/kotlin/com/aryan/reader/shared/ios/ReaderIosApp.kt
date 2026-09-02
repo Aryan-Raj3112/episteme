@@ -269,6 +269,10 @@ import com.aryan.reader.shared.ui.openSharedMobileExternalUrl
 import com.aryan.reader.shared.ui.rememberSharedMobileEpubLocalTts
 import com.aryan.reader.shared.ui.withoutIosFolderFilter
 import com.aryan.reader.shared.reader.ReaderScreenOrientationMode
+import com.aryan.reader.shared.reader.sharedEpubOpenTrace
+import com.aryan.reader.shared.reader.sharedEpubOpenTraceElapsedMs
+import com.aryan.reader.shared.reader.sharedEpubOpenTraceMark
+import com.aryan.reader.shared.reader.sharedEpubOpenTraceMs
 import com.aryan.reader.shared.ui.SharedMobilePdfNativeAction
 import com.aryan.reader.shared.PdfSplitPane
 import com.aryan.reader.shared.PdfSplitWorkspaceAction
@@ -2258,14 +2262,22 @@ private fun SharedReaderScreenState.toIosCloudSnapshot(): SharedLibrarySnapshot 
 }
 
 private fun loadPersistedIosEpubBookState(book: BookItem): BookItem {
-    val encoded = NSUserDefaults.standardUserDefaults.stringForKey(book.iosEpubReaderStateKey()) ?: return book
-    val decoded = SharedLibrarySnapshotJson.decodeOrEmpty(encoded).books.firstOrNull() ?: return book
-    val normalized = decoded.migrateAndroidEpubFormatSettings()
-    val restored = book.withNewerReaderSession(normalized)
-    if (normalized != decoded) {
-        persistIosEpubBookState(normalized)
+    val restoreMark = sharedEpubOpenTraceMark()
+    var encodedChars = 0
+    try {
+        val encoded = NSUserDefaults.standardUserDefaults.stringForKey(book.iosEpubReaderStateKey())
+        encodedChars = encoded?.length ?: 0
+        if (encoded == null) return book
+        val decoded = SharedLibrarySnapshotJson.decodeOrEmpty(encoded).books.firstOrNull() ?: return book
+        val normalized = decoded.migrateAndroidEpubFormatSettings()
+        val restored = book.withNewerReaderSession(normalized)
+        if (normalized != decoded) {
+            persistIosEpubBookState(normalized)
+        }
+        return restored
+    } finally {
+        sharedEpubOpenTrace { "library persistedStateRestore bookId=${book.id} encodedChars=$encodedChars ms=${sharedEpubOpenTraceMs(sharedEpubOpenTraceElapsedMs(restoreMark))}" }
     }
-    return restored
 }
 
 private fun persistIosEpubBookState(book: BookItem) {
@@ -2907,6 +2919,8 @@ private fun ReaderIosApp(
     )
 
     fun openLibraryBook(book: BookItem, temporary: Boolean = false) {
+        val openMark = sharedEpubOpenTraceMark()
+        sharedEpubOpenTrace { "library openBook start bookId=${book.id} type=${book.type} temporary=$temporary" }
         val canDownload = cloudSyncEligible()
         val localFileExists = book.path?.let { path ->
             path.startsWith("opds-pse://") ||
@@ -2994,6 +3008,7 @@ private fun ReaderIosApp(
                 "Opening reader screen id=${book.id} file=${book.displayName} pathPresent=${!book.path.isNullOrBlank()}"
             }
         }
+        sharedEpubOpenTrace { "library openBook done bookId=${book.id} ms=${sharedEpubOpenTraceMs(sharedEpubOpenTraceElapsedMs(openMark))}" }
         activeReaderBook = openedBook
     }
 
