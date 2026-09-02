@@ -1123,11 +1123,11 @@
     <string name="reader_brightness_custom">Brillo personalizado</string>
     <string name="reader_brightness_custom_desc">Se aplica mientras una pantalla de lector está abierta.</string>
     <string name="reader_brightness_percent">%1$d%%</string>
-    <string name="banner_shelf_created">Estante creado &quot;%1$s&quot;.</string>
-    <string name="banner_smart_shelf_created">Estante inteligente creado &quot;%1$s&quot;.</string>
-    <string name="banner_shelf_renamed">Estante renombrado a &quot;%1$s&quot;.</string>
-    <string name="banner_shelf_deleted">Estante eliminado &quot;%1$s&quot;.</string>
-    <string name="banner_book_updated">Actualizado &quot;%1$s&quot;.</string>
+    <string name="banner_shelf_created">Estante creado "%1$s".</string>
+    <string name="banner_smart_shelf_created">Estante inteligente creado "%1$s".</string>
+    <string name="banner_shelf_renamed">Estante renombrado a "%1$s".</string>
+    <string name="banner_shelf_deleted">Estante eliminado "%1$s".</string>
+    <string name="banner_book_updated">Actualizado "%1$s".</string>
     <string name="banner_duplicate_files_already_in_library">Esos archivos ya están en la biblioteca.</string>
     <string name="folder_subtitle_folder_book_counts">%1$s - %2$s</string>
     <string name="action_save_annotation">Ahorrar</string>
@@ -1180,7 +1180,7 @@
     <string name="desktop_custom_fonts_desc">Fuentes importadas para el lector.</string>
     <string name="desktop_delete_font">Eliminar fuente</string>
     <string name="desktop_delete_font_desc">Eliminar %1$s? Los libros que lo utilicen volverán a la fuente predeterminada.</string>
-    <string name="desktop_delete_shelf_desc">¿Eliminar \&quot;%1$s\&quot;? Los libros permanecen en tu biblioteca.</string>
+    <string name="desktop_delete_shelf_desc">¿Eliminar \"%1$s\"? Los libros permanecen en tu biblioteca.</string>
     <string name="desktop_delete_summary">Eliminar resumen</string>
     <string name="desktop_disabled">Desactivado</string>
     <string name="desktop_drop_files_to_import">Soltar archivos para importar</string>
@@ -1214,7 +1214,7 @@
     <string name="desktop_more_menu">Más</string>
     <string name="desktop_no_cached_summaries_book">Aún no hay resúmenes almacenados en caché para este libro.</string>
     <string name="desktop_no_custom_fonts_desc">Importe archivos TTF, OTF o WOFF2 para usarlos en libros.</string>
-    <string name="desktop_no_fonts_matching">No se encontraron fuentes que coincidan con \&quot;%1$s\&quot;</string>
+    <string name="desktop_no_fonts_matching">No se encontraron fuentes que coincidan con \"%1$s\"</string>
     <string name="desktop_no_google_account_connected">No Google La cuenta está conectada.</string>
     <string name="desktop_no_summary_cached_section">No hay ningún resumen almacenado en caché para esta sección.</string>
     <string name="desktop_offline_oss_reader">Lector de escritorio sin conexión</string>
@@ -1460,7 +1460,7 @@
     <string name="desktop_no_tags_yet">Aún no hay etiquetas</string>
     <string name="desktop_no_supported_files_imported">No se importaron archivos compatibles.</string>
     <string name="desktop_opds_catalog">Catalogar</string>
-    <string name="desktop_opds_delete_catalog_desc">¿Eliminar &quot;%1$s&quot;? Los libros transmitidos desde este catálogo pueden dejar de abrirse si las credenciales cambian más adelante.</string>
+    <string name="desktop_opds_delete_catalog_desc">¿Eliminar "%1$s"? Los libros transmitidos desde este catálogo pueden dejar de abrirse si las credenciales cambian más adelante.</string>
     <string name="desktop_opds_no_catalogs">Sin catálogos</string>
     <string name="desktop_opds_no_catalogs_desc">Agregar un OPDS catálogo para buscar libros remotos.</string>
     <string name="desktop_opds_subtitle">Explorar catálogos, transmisiones y descargas</string>
@@ -1513,4 +1513,11 @@
     <string name="tts_replacements_replace_only_spoken">Reemplazar solo lo que se habla</string>
     <string name="tts_replacements_replace_only_spoken_desc">El texto del lector, los aspectos destacados y las ubicaciones permanecen sin cambios.</string>
     <string name="tts_replacements_summary_format">%1$s -&gt; %2$s</string>
+    <string name="unified_library_your_books">Tus libros</string>
+    <string name="unified_library_all">Todo</string>
+    <string name="unified_library_reading">Leyendo</string>
+    <string name="unified_library_finished">Finalizados</string>
+    <string name="unified_library_unread">Sin leer</string>
+    <string name="unified_library_no_books">No hay libros en esta vista</string>
+    <string name="unified_library_drawer_title">Tus libros</string>
 </resources>
