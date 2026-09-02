@@ -91,13 +91,17 @@ android {
     }
 
     packaging {
+        jniLibs {
+            excludes += "**/libbrotlienc.so"
+            excludes += "**/libbrotlidec.so"
+            excludes += "**/libbrotlicommon.so"
+        }
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
-        }
-        jniLibs {
-            excludes += "**/libbrotlicommon.so"
-            excludes += "**/libbrotlidec.so"
-            excludes += "**/libbrotlienc.so"
+            excludes += "META-INF/DEPENDENCIES"
+            excludes += "META-INF/INDEX.LIST"
+            excludes += "META-INF/services/io.grpc.LoadBalancerProvider"
+            excludes += "composeResources/**"
         }
     }
 
@@ -120,6 +124,7 @@ android {
                 signingConfig = signingConfigs.getByName("release")
             }
             isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -131,6 +136,7 @@ android {
             matchingFallbacks += listOf("release")
             buildConfigField("boolean", "IS_OFFLINE", "true")
             buildConfigField("String", "TTS_WORKER_URL", "\"\"")
+            isShrinkResources = true
         }
     }
 
@@ -338,5 +344,16 @@ spotless {
     cpp {
         target("src/main/cpp/mobi_jni_bridge.c", "src/main/cpp/Woff2Converter.cpp")
         licenseHeaderFile(rootProject.file("spotless/copyright.kt"))
+    }
+}
+
+androidComponents {
+    onVariants { variant ->
+        if (variant.buildType != "debug") {
+            variant.externalNativeBuild?.abiFilters?.set(setOf("arm64-v8a", "armeabi-v7a"))
+            variant.packaging.jniLibs.excludes.addAll(
+                setOf("**/x86/**", "**/x86_64/**")
+            )
+        }
     }
 }
