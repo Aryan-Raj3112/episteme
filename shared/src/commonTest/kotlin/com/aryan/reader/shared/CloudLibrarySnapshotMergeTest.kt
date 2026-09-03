@@ -392,4 +392,16 @@ class CloudLibrarySnapshotMergeTest {
         assertEquals("Local", merged.customFonts.single().displayName)
         assertEquals("/local.ttf", merged.customFonts.single().path)
     }
+
+    @Test
+    fun `shelf ref synthesis preserves newest known clock`() {
+        assertEquals(500L, sharedShelfRefAddedAt(existingAddedAt = 500L, shelfClock = 100L, index = 0))
+        assertEquals(150L, sharedShelfRefAddedAt(existingAddedAt = 40L, shelfClock = 100L, index = 50))
+    }
+
+    @Test
+    fun `shelf ref synthesis stamps clock plus index for new pairs`() {
+        assertEquals(103L, sharedShelfRefAddedAt(existingAddedAt = null, shelfClock = 100L, index = 3))
+        assertEquals(7L, sharedShelfRefAddedAt(existingAddedAt = null, shelfClock = 0L, index = 7))
+    }
 }

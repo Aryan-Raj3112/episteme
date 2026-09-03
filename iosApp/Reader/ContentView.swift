@@ -190,6 +190,11 @@ struct ContentView: View {
 #if DEBUG
             bridge.setDebugBuild(enabled: true)
 #endif
+            // Startup orphan sweep (Android MainViewModel.sweepOrphanedCache
+            // parity, temp-only). The pending-external-removal drain already
+            // runs in Kotlin startup state; this covers crash-orphaned temp
+            // staging that has no owner record.
+            sweepStaleTemporaryFiles()
             localStoreKit.attach(to: bridge)
             localAccount.attach(to: bridge)
             localAccount.setLocalCloudDataClearHandler {
@@ -333,12 +338,17 @@ struct ContentView: View {
                 Task { @MainActor in
                     await localStoreKit.handleForegroundResume()
                     localAccount.handleForegroundResume()
+                    // Android parity (CloudFolderHeadListenerCoordinator):
+                    // foreground-only head wake; other-device folder changes
+                    // pull automatically via the debounced listener.
+                    cloudFolderSync.startFolderHeadListener()
                 }
             } else {
                 bridge.updateAppActive(active: false)
                 // Give in-flight cloud sync a grace period to finish, mirroring
                 // WorkManager continuing after the activity stops. Sync work
                 // is idempotent so expiration mid-pass is safe to retry.
+                cloudFolderSync.stopFolderHeadListener()
                 IosBackgroundSync.beginGrace()
                 IosBackgroundSync.scheduleRefresh()
             }
@@ -1059,6 +1069,48 @@ private func uniqueImportedFileName(_ fileName: String) -> String {
         return "\(baseName)-\(suffix)"
     }
     return "\(baseName)-\(suffix).\(fileExtension)"
+}
+
+/// Startup orphan sweep (Android `MainViewModel.sweepOrphanedCache` parity,
+/// temp-only): removes crash-orphaned `tmp/ExternalOpen/<requestId>/`
+/// staging directories and `reader-export-*.pdf` share copies older than
+/// 1 hour (Android's `deleteStaleTemporaryBookDirs(1h)` threshold).
+/// Library storage (`Imports/`, `LocalFolders/`) is never touched: those
+/// files ARE the library, and Android only sweeps cache/tmp patterns too.
+/// The pending-external-removal drain already runs in Kotlin startup state
+/// (`loadPendingIosExternalFileRemoval`), mirroring Android's
+/// `cleanupPendingExternalFileRemovals`.
+private func sweepStaleTemporaryFiles(maxAge: TimeInterval = 3600) {
+    let fileManager = FileManager.default
+    let cutoff = Date().addingTimeInterval(-maxAge)
+    func removeIfStale(_ url: URL) {
+        guard let modified = try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate,
+              modified < cutoff else { return }
+        try? fileManager.removeItem(at: url)
+    }
+    let tempRoot = fileManager.temporaryDirectory
+    // External-open staging from crashed or expired share intents. No request
+    // is in flight at cold start, so any entry older than the cutoff is an
+    // orphan; content-hashed library copies live under Application Support.
+    let externalOpen = tempRoot.appendingPathComponent("ExternalOpen", isDirectory: true)
+    if let entries = try? fileManager.contentsOfDirectory(
+        at: externalOpen,
+        includingPropertiesForKeys: [.contentModificationDateKey],
+        options: [.skipsHiddenFiles]
+    ) {
+        for entry in entries { removeIfStale(entry) }
+    }
+    // One-shot PDF share exports (Kotlin `IosPdfSaveCopy`); the share sheet
+    // consumes them immediately, so survivors are crash leftovers.
+    if let entries = try? fileManager.contentsOfDirectory(
+        at: tempRoot,
+        includingPropertiesForKeys: [.contentModificationDateKey],
+        options: [.skipsHiddenFiles]
+    ) {
+        for entry in entries where entry.lastPathComponent.hasPrefix("reader-export-") {
+            removeIfStale(entry)
+        }
+    }
 }
 
 private struct ReaderComposeHost: UIViewControllerRepresentable {

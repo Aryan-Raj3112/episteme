@@ -44,6 +44,13 @@ final class LocalStoreKitController: ObservableObject {
     private var localTestingCredits = 0
     private var localTestingClaimedTransactions = Set<UInt64>()
     private var status: String?
+    /// Android parity (`BillingClientWrapper.proUpgradeState`): server
+    /// verification in flight, and a Pro purchase owned by another Episteme
+    /// account (server reports "already claimed"). The conflict is transient
+    /// session state: set on already-claimed Pro, cleared on verify success,
+    /// new purchase start, or account switch.
+    private var isPurchasing = false
+    private var hasAccountConflict = false
     /// Durable account grants are independent from the StoreKit product catalog.
     /// Keep this separate so a catalog outage cannot clear a valid account state.
     private var serverEntitlementsLoaded = false
@@ -108,6 +115,15 @@ final class LocalStoreKitController: ObservableObject {
             status = "Pro is already active on this Episteme account."
             publish(); return
         }
+        // Android parity: a new purchase attempt clears a previous conflict
+        // (`BillingClientWrapper` clears on launchPurchaseFlow).
+        hasAccountConflict = false
+        isPurchasing = true
+        publish()
+        defer {
+            isPurchasing = false
+            publish()
+        }
         do {
             let token = try await fetchAppAccountToken()
             switch try await product.purchase(options: [.appAccountToken(token)]) {
@@ -117,7 +133,13 @@ final class LocalStoreKitController: ObservableObject {
                     applyLocalTestingTransaction(transaction)
                     status = "Local StoreKit test purchase completed. No server entitlement was granted."
                 } else {
-                    try await claimWithServer(transaction, expectedAccountToken: token)
+                    do {
+                        try await claimWithServer(transaction, expectedAccountToken: token)
+                    } catch {
+                        noteClaimError(error, productID: productID)
+                        throw error
+                    }
+                    hasAccountConflict = false
                     await refreshServerEntitlements()
                     status = "Purchase completed."
                 }
@@ -137,6 +159,12 @@ final class LocalStoreKitController: ObservableObject {
             status = "Sign in to the Episteme account that owns the purchase before restoring."
             publish(); return
         }
+        isPurchasing = true
+        publish()
+        defer {
+            isPurchasing = false
+            publish()
+        }
         do {
             try await AppStore.sync()
             let token = try await fetchAppAccountToken()
@@ -146,7 +174,20 @@ final class LocalStoreKitController: ObservableObject {
                 if isLocalXcodeTransaction(transaction) {
                     applyLocalTestingTransaction(transaction)
                 } else {
-                    try await claimWithServer(transaction, expectedAccountToken: token)
+                    do {
+                        try await claimWithServer(transaction, expectedAccountToken: token)
+                    } catch {
+                        // An already-claimed Pro stays unfinished (like Android,
+                        // which never consumes it) so the conflict resurfaces
+                        // until the owning account signs in; other failures
+                        // abort the restore.
+                        if transaction.productID == ProductID.pro, isAlreadyClaimed(error) {
+                            hasAccountConflict = true
+                            publish()
+                            continue
+                        }
+                        throw error
+                    }
                 }
                 await transaction.finish()
             }
@@ -174,7 +215,19 @@ final class LocalStoreKitController: ObservableObject {
                 if isLocalXcodeTransaction(transaction) {
                     applyLocalTestingTransaction(transaction)
                 } else {
-                    try await claimWithServer(transaction, expectedAccountToken: token)
+                    do {
+                        try await claimWithServer(transaction, expectedAccountToken: token)
+                    } catch {
+                        // Same already-claimed Pro rule as restore(): keep the
+                        // transaction unfinished so the conflict resurfaces
+                        // until the owning account signs in.
+                        if transaction.productID == ProductID.pro, isAlreadyClaimed(error) {
+                            hasAccountConflict = true
+                            publish()
+                            continue
+                        }
+                        throw error
+                    }
                 }
                 await transaction.finish()
             }
@@ -195,7 +248,12 @@ final class LocalStoreKitController: ObservableObject {
                         self.status = "Local StoreKit test transaction updated."
                     } else {
                         let token = try await self.fetchAppAccountToken()
-                        try await self.claimWithServer(transaction, expectedAccountToken: token)
+                        do {
+                            try await self.claimWithServer(transaction, expectedAccountToken: token)
+                        } catch {
+                            self.noteClaimError(error, productID: transaction.productID)
+                            throw error
+                        }
                         await self.refreshServerEntitlements()
                         self.status = "App Store purchase updated."
                     }
@@ -356,6 +414,7 @@ final class LocalStoreKitController: ObservableObject {
                 self.serverEntitlementsLoaded = false
                 self.isProUnlocked = false
                 self.serverCredits = 0
+                self.hasAccountConflict = false
                 self.stopObservingEntitlements()
                 self.publish()
                 await self.reconcileUnfinishedTransactions()
@@ -429,11 +488,43 @@ final class LocalStoreKitController: ObservableObject {
             proUnlocked: isProUnlocked || localTestingProUnlocked,
             credits: Int32(clamping: serverCredits + localTestingCredits),
             proPrice: products[ProductID.pro]?.displayPrice,
+            proOriginalPrice: proOriginalPrice,
             credits100Price: products[ProductID.credits100]?.displayPrice,
             credits300Price: products[ProductID.credits300]?.displayPrice,
             credits750Price: products[ProductID.credits750]?.displayPrice,
+            credits100Name: products[ProductID.credits100]?.displayName,
+            credits300Name: products[ProductID.credits300]?.displayName,
+            credits750Name: products[ProductID.credits750]?.displayName,
+            credits100Description: products[ProductID.credits100]?.description,
+            credits300Description: products[ProductID.credits300]?.description,
+            credits750Description: products[ProductID.credits750]?.description,
+            isVerifying: isPurchasing,
+            hasAccountConflict: hasAccountConflict,
             status: status
         )
+    }
+
+    /// Android parity (`MainViewModel` checks the verify error for
+    /// "already claimed" and calls `markAccountConflict` for Pro): the same
+    /// worker serves both platforms, so match its message the same way.
+    private func isAlreadyClaimed(_ error: Error) -> Bool {
+        if case BillingError.serverRejected(let message) = error {
+            return message.range(of: "already claimed", options: .caseInsensitive) != nil
+        }
+        return false
+    }
+
+    private func noteClaimError(_ error: Error, productID: String) {
+        if productID == ProductID.pro, isAlreadyClaimed(error) {
+            hasAccountConflict = true
+        }
+    }
+
+    /// Strikethrough anchor matching Android's `priceAmountMicros * 2`
+    /// (`ProTierCard`): twice the App Store price in the same format.
+    private var proOriginalPrice: String? {
+        guard let pro = products[ProductID.pro] else { return nil }
+        return pro.priceFormatStyle.format(pro.price * 2)
     }
 
     private func userFacingPurchaseError(_ error: Error) -> String {

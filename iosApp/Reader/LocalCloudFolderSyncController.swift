@@ -7,6 +7,10 @@ import ReaderShared
 import FirebaseAuth
 #endif
 
+#if canImport(FirebaseFirestore)
+import FirebaseFirestore
+#endif
+
 /// iOS cloud-folder transfer executor (Android `CloudFolderSyncWorker` parity).
 ///
 /// Android is the absolute benchmark and is NOT changed. Stage order mirrors
@@ -198,6 +202,118 @@ final class LocalCloudFolderSyncController {
     func requestSyncRoot(_ rootId: String, direction: Direction, replace: Bool) {
         submit(Request(direction: direction, rootId: rootId, replace: replace))
     }
+
+    // MARK: - folder-head wake (Android CloudFolderHeadListener parity)
+
+#if canImport(FirebaseFirestore)
+    private var folderHeadListener: ListenerRegistration?
+    private var folderHeadListenerUid: String?
+    private let folderHeadLock = NSLock()
+    private var folderHeadPending: [String: Int64] = [:]
+    private var folderHeadWork: [String: DispatchWorkItem] = [:]
+#endif
+
+    /// Foreground-only Firestore wake on `users/{uid}/cloudFolderHeads`,
+    /// mirroring Android's CloudFolderHeadListenerCoordinator: attach on
+    /// foreground, detach on background, per-root 500ms debounce, pull only
+    /// when the remote revision is still ahead afterwards. ContentView owns
+    /// the foreground signal via scenePhase. Executor gates (account/Pro/
+    /// sync) re-check inside the worker, like Android's in-worker re-gate;
+    /// the BG processing task already runs full discover+pull passes, so this
+    /// listener only needs to cover the live foreground case.
+    func startFolderHeadListener() {
+#if canImport(FirebaseFirestore)
+        guard let uid = currentUid(), !uid.isEmpty else { stopFolderHeadListener(); return }
+        guard bridgeProvider?()?.cloudFolderSyncEligible() == true else { stopFolderHeadListener(); return }
+        if folderHeadListener != nil, folderHeadListenerUid == uid { return }
+        stopFolderHeadListener()
+        folderHeadListenerUid = uid
+        folderHeadListener = Firestore.firestore()
+            .collection("users").document(uid).collection("cloudFolderHeads")
+            .addSnapshotListener { [weak self] snapshot, _ in
+                guard let self, let snapshot else { return }
+                // Snapshot errors resolve on the next event; revision gating
+                // below makes retries safe.
+                let changes = snapshot.documentChanges.map { change in
+                    (id: change.document.documentID, data: change.document.data())
+                }
+                for change in changes {
+                    self.handleFolderHeadChange(uid: uid, rootId: change.id, data: change.data)
+                }
+            }
+#endif
+    }
+
+    func stopFolderHeadListener() {
+#if canImport(FirebaseFirestore)
+        folderHeadLock.lock()
+        let work = Array(folderHeadWork.values)
+        folderHeadWork.removeAll()
+        folderHeadPending.removeAll()
+        folderHeadLock.unlock()
+        work.forEach { $0.cancel() }
+        folderHeadListener?.remove()
+        folderHeadListener = nil
+        folderHeadListenerUid = nil
+#endif
+    }
+
+#if canImport(FirebaseFirestore)
+    private func handleFolderHeadChange(uid: String, rootId: String, data: [String: Any]) {
+        guard !rootId.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        let revision = (data["revision"] as? NSNumber)?.int64Value ?? -1
+        guard revision >= 0 else { return }
+        if let schema = data["schemaVersion"] as? NSNumber, schema.int64Value != 1 { return }
+        let state = ((data["state"] as? String) ?? "").trimmingCharacters(in: .whitespaces).uppercased()
+        // A COMMITTING lease record is a normal CAS phase, not a pull signal;
+        // unknown states are invalid. (Android: transient skip + validity gate.)
+        guard state.isEmpty || state == CloudFolderHeadPullPolicyKt.CLOUD_FOLDER_HEAD_COMMITTED_STATE else { return }
+        guard bridgeProvider?()?.cloudFolderSyncEligible() == true else { return }
+        guard let store = store(for: uid) else { return }
+        let known = max(
+            store.getRoots().first(where: { $0.rootId == rootId })?.manifestRevision ?? -1,
+            store.getBinding(rootId: rootId)?.lastAcknowledgedRevision ?? -1
+        )
+        guard CloudFolderHeadPullPolicyKt.shouldScheduleCloudFolderHeadPull(
+            remoteRevision: revision,
+            knownRevision: known,
+            hasBinding: store.getBinding(rootId: rootId) != nil,
+            isIncluded: includes(rootId)
+        ) else { return }
+        folderHeadLock.lock()
+        folderHeadPending[rootId] = max(folderHeadPending[rootId] ?? -1, revision)
+        folderHeadWork[rootId]?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.folderHeadLock.lock()
+            let target = self.folderHeadPending.removeValue(forKey: rootId)
+            self.folderHeadWork.removeValue(forKey: rootId)
+            self.folderHeadLock.unlock()
+            guard let target else { return }
+            // Re-read durable knowledge after the debounce: this device's own
+            // publish echo can arrive before its manifest write lands, so only
+            // a revision still ahead needs work (Android self-echo recheck).
+            // A state-read failure must not lose the wake: the worker
+            // re-checks account/selection/binding itself.
+            guard let store = self.store(for: uid) else {
+                self.requestSyncRoot(rootId, direction: .pull, replace: false)
+                return
+            }
+            let fresh = max(
+                store.getRoots().first(where: { $0.rootId == rootId })?.manifestRevision ?? -1,
+                store.getBinding(rootId: rootId)?.lastAcknowledgedRevision ?? -1
+            )
+            guard target > fresh else { return }
+            self.requestSyncRoot(rootId, direction: .pull, replace: false)
+        }
+        folderHeadWork[rootId] = work
+        folderHeadLock.unlock()
+        DispatchQueue.global().asyncAfter(
+            deadline: .now() + .milliseconds(Int(CloudFolderHeadPullPolicyKt.CLOUD_FOLDER_HEAD_DEBOUNCE_MILLIS)),
+            execute: work
+        )
+    }
+#endif
 
     // MARK: - context
 

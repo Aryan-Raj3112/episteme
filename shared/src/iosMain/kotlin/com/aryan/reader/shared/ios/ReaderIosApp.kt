@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.material3.Scaffold
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -28,8 +29,17 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.OutlinedCard
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
@@ -60,7 +70,13 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.platform.Font
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
@@ -127,6 +143,7 @@ import com.aryan.reader.shared.SharedTtsListenStartPolicy
 import com.aryan.reader.shared.sharedAudiobookResumePosition
 import com.aryan.reader.shared.SyncedFolder
 import com.aryan.reader.shared.UserData
+import com.aryan.reader.shared.shouldShowDeviceLimitOverlay
 import com.aryan.reader.shared.ReaderPlatform
 import com.aryan.reader.shared.ReaderLocator
 import com.aryan.reader.shared.ReaderAutoScrollProfile
@@ -437,6 +454,7 @@ class ReaderIosBridge internal constructor(
     private var cloudUploadHandler: ((String) -> Unit)? = null
     private var deviceManagementRefreshHandler: (() -> Unit)? = null
     private var deviceRevokeHandler: ((String) -> Unit)? = null
+    private var deviceReplaceHandler: ((String) -> Unit)? = null
     private var cloudLocalDataClearHandler: (() -> Unit)? = null
     private var folderFileDeletionHandler: ((String, List<String>) -> Unit)? = null
     private var folderFileReplacementHandler: ((String, String) -> String?)? = null
@@ -1149,9 +1167,18 @@ class ReaderIosBridge internal constructor(
         proUnlocked: Boolean,
         credits: Int,
         proPrice: String?,
+        proOriginalPrice: String? = null,
         credits100Price: String?,
         credits300Price: String?,
         credits750Price: String?,
+        credits100Name: String? = null,
+        credits300Name: String? = null,
+        credits750Name: String? = null,
+        credits100Description: String? = null,
+        credits300Description: String? = null,
+        credits750Description: String? = null,
+        isVerifying: Boolean = false,
+        hasAccountConflict: Boolean = false,
         status: String?,
     ) {
         localStoreKitState = IosLocalStoreKitState(
@@ -1160,11 +1187,24 @@ class ReaderIosBridge internal constructor(
             proUnlocked = proUnlocked,
             credits = credits.coerceAtLeast(0),
             proPrice = proPrice,
+            proOriginalPrice = proOriginalPrice,
             creditPrices = mapOf(
                 IosStoreKitProductIds.CREDITS_100 to credits100Price,
                 IosStoreKitProductIds.CREDITS_300 to credits300Price,
                 IosStoreKitProductIds.CREDITS_750 to credits750Price,
             ).filterValues { it != null }.mapValues { it.value!! },
+            creditNames = mapOf(
+                IosStoreKitProductIds.CREDITS_100 to credits100Name,
+                IosStoreKitProductIds.CREDITS_300 to credits300Name,
+                IosStoreKitProductIds.CREDITS_750 to credits750Name,
+            ).filterValues { it != null }.mapValues { it.value!! },
+            creditDescriptions = mapOf(
+                IosStoreKitProductIds.CREDITS_100 to credits100Description,
+                IosStoreKitProductIds.CREDITS_300 to credits300Description,
+                IosStoreKitProductIds.CREDITS_750 to credits750Description,
+            ).filterValues { it != null }.mapValues { it.value!! },
+            isVerifying = isVerifying,
+            hasAccountConflict = hasAccountConflict,
             status = status,
         )
         status?.let { IosDiagnosticLogStore.record("StoreKit", it) }
@@ -1228,6 +1268,29 @@ class ReaderIosBridge internal constructor(
     ) {
         deviceManagementRefreshHandler = refresh
         deviceRevokeHandler = revoke
+    }
+
+    /**
+     * Android parity: [MainViewModel.replaceDevice] removes the selected old
+     * device and registers this device in its place, showing a replacing
+     * spinner and clearing the limit on success. iOS revoke previously refused
+     * the active device and never cleared a limit; the replace handler routes
+     * the blocking overlay's Remove through revoke-old + keep-current, which
+     * frees the slot the same way because this device is already registered.
+     */
+    fun setDeviceReplaceHandler(handler: (String) -> Unit) {
+        deviceReplaceHandler = handler
+    }
+
+    fun requestDeviceReplace(deviceId: String) {
+        if (deviceId.isBlank()) return
+        isDeviceManagementLoading = true
+        deviceManagementStatus = null
+        (deviceReplaceHandler ?: deviceRevokeHandler)?.invoke(deviceId)
+            ?: run {
+                isDeviceManagementLoading = false
+                deviceManagementStatus = "device_unavailable"
+            }
     }
 
     fun requestDeviceManagement() {
@@ -1532,7 +1595,12 @@ internal data class IosLocalStoreKitState(
     val proUnlocked: Boolean = false,
     val credits: Int = 0,
     val proPrice: String? = null,
+    val proOriginalPrice: String? = null,
     val creditPrices: Map<String, String> = emptyMap(),
+    val creditNames: Map<String, String> = emptyMap(),
+    val creditDescriptions: Map<String, String> = emptyMap(),
+    val isVerifying: Boolean = false,
+    val hasAccountConflict: Boolean = false,
     val status: String? = null,
 )
 
@@ -2801,6 +2869,36 @@ private fun ReaderIosApp(
             bridge.recordNativeEvent(IosDeviceRemovedMessage)
         }
         onDispose { bridge.setCurrentDeviceRevokedHandler(null) }
+    }
+    // Android parity (SettingsScreen.kt:614-620, HomeScreen.kt:681-687): when
+    // the account hits the device limit, Android blocks on a full-screen
+    // DeviceManagementScreen (Remove = replace with this device, with a
+    // replacing spinner). Mirror the trigger into shared state so the same
+    // blocking overlay below can fire; the native controller reports
+    // "device_limit_reached" when registration is refused for limit reasons.
+    // A successful replace clears the limit like MainViewModel.replaceDevice.
+    LaunchedEffect(bridge.deviceManagementStatus, bridge.registeredDevices) {
+        val status = bridge.deviceManagementStatus
+        if (status == "device_limit_reached" && !state.deviceLimitState.isLimitReached) {
+            state = state.copy(
+                deviceLimitState = com.aryan.reader.shared.DeviceLimitReachedState(
+                    isLimitReached = true,
+                    registeredDevices = bridge.registeredDevices,
+                ),
+            )
+        } else if (status == "device_revoked" && state.isReplacingDevice) {
+            state = state.copy(
+                deviceLimitState = com.aryan.reader.shared.DeviceLimitReachedState(isLimitReached = false),
+                isReplacingDevice = false,
+            )
+        } else if (status != null && status != "device_limit_reached" && state.deviceLimitState.isLimitReached &&
+            bridge.registeredDevices.isNotEmpty() &&
+            state.deviceLimitState.registeredDevices != bridge.registeredDevices
+        ) {
+            state = state.copy(
+                deviceLimitState = state.deviceLimitState.copy(registeredDevices = bridge.registeredDevices),
+            )
+        }
     }
     LaunchedEffect(bridge.importedFonts) {
         if (bridge.importedFonts != state.customFonts) {
@@ -4951,6 +5049,7 @@ private fun ReaderIosApp(
                         onBack = { utilityScreen = null },
                         onPurchase = bridge::requestLocalStoreKitPurchase,
                         onRestore = bridge::requestLocalStoreKitRestore,
+                        onSignInClick = { utilityScreen = IosUtilityScreen.ACCOUNT },
                     )
                     IosUtilityScreen.DEVICES -> IosDeviceManagementScreen(
                         devices = bridge.registeredDevices,
@@ -5638,7 +5737,14 @@ private fun ReaderIosApp(
                                         visibleBookIds = visibleBookIds,
                                     )
                                 },
-                                onFilterClick = {},
+                                onFilterClick = {
+                                    // Parity note: the filter sheet opens via the shared
+                                    // screen's internal showFilters state
+                                    // (SharedMobileLibraryScreens.kt:1426, dialog at
+                                    // :1599-1604), matching Android's
+                                    // LibraryScreen.kt:400 onFilterClick opening
+                                    // LibraryFilterSheet. No external action needed.
+                                },
                                 onClearFilters = { state = state.reduce(LibraryAction.FiltersChanged(LibraryFilters())) },
                                 onRemoveFilters = { filters -> state = state.reduce(LibraryAction.FiltersChanged(filters)) },
                                 onSettingsClick = { utilityScreen = IosUtilityScreen.SETTINGS },
@@ -6413,6 +6519,20 @@ private fun ReaderIosApp(
                 bannerMessage = banner,
             )
         }
+        // Android parity (SettingsScreen.kt:614-620, HomeScreen.kt:681-687):
+        // blocking device-limit overlay. Remove = replace with this device
+        // (MainViewModel.replaceDevice parity); the manual DEVICES screen stays
+        // for routine management.
+        if (shouldShowDeviceLimitOverlay(state.deviceLimitState)) {
+            IosDeviceLimitReachedOverlay(
+                devices = state.deviceLimitState.registeredDevices.ifEmpty { bridge.registeredDevices },
+                isReplacing = state.isReplacingDevice || bridge.isDeviceManagementLoading,
+                onRemoveDevice = { deviceId ->
+                    state = state.copy(isReplacingDevice = true)
+                    bridge.requestDeviceReplace(deviceId)
+                },
+            )
+        }
         }
     }
 }
@@ -6565,6 +6685,83 @@ private fun IosExternalFileBehaviorDialog(
             }
         },
     )
+}
+
+@Composable
+private fun IosDeviceLimitReachedOverlay(
+    devices: List<com.aryan.reader.shared.DeviceItem>,
+    isReplacing: Boolean,
+    onRemoveDevice: (String) -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = MaterialTheme.colorScheme.background.copy(alpha = 0.98f),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Text(
+                text = readerString("device_limit_reached", "Device Limit Reached"),
+                style = MaterialTheme.typography.headlineMedium,
+                textAlign = TextAlign.Center,
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = readerString(
+                    "device_limit_reached_desc",
+                    "To use Episteme Pro on this device, please remove one of your existing registered devices.",
+                ),
+                style = MaterialTheme.typography.bodyMedium,
+                textAlign = TextAlign.Center,
+            )
+            Spacer(modifier = Modifier.height(24.dp))
+            if (isReplacing) {
+                CircularProgressIndicator()
+            } else {
+                LazyColumn(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    items(devices, key = { it.deviceId }) { device ->
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = MaterialTheme.shapes.medium,
+                            tonalElevation = 2.dp,
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(device.deviceName, fontWeight = FontWeight.SemiBold)
+                                    device.lastSeenEpochMillis?.let { lastSeen ->
+                                        Text(
+                                            readerString(
+                                                "settings_device_management_last_seen",
+                                                "Last seen %1\$s",
+                                                formatSharedMobileDateTime(lastSeen),
+                                            ),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                }
+                                TextButton(onClick = { onRemoveDevice(device.deviceId) }) {
+                                    Text(readerString("action_remove", "Remove"))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -6891,76 +7088,509 @@ private fun IosLocalStoreKitScreen(
     onBack: () -> Unit,
     onPurchase: (String) -> Unit,
     onRestore: () -> Unit,
+    onSignInClick: () -> Unit,
 ) {
+    var showExistingPurchaseDialog by remember { mutableStateOf(false) }
+    var showSignInRequiredDialog by remember { mutableStateOf(false) }
+    if (showExistingPurchaseDialog) {
+        IosConfirmationDialog(
+            title = readerString("existing_purchase_found", "Existing Purchase Found"),
+            message = readerString(
+                "dialog_existing_purchase_desc",
+                "This device already has a Pro purchase, but it's linked to a different account. Please sign in to the account that was used for the original purchase to restore your Pro features.",
+            ),
+            confirmLabel = readerString("action_ok", "OK"),
+            onConfirm = { showExistingPurchaseDialog = false },
+            onDismiss = { showExistingPurchaseDialog = false },
+        )
+    }
+    if (showSignInRequiredDialog) {
+        IosConfirmationDialog(
+            title = readerString("sign_in_required", "Sign in Required"),
+            message = readerString(
+                "dialog_sign_in_required_desc",
+                "Please sign in to your Episteme account to purchase Pro and credits and unlock all premium features.",
+            ),
+            confirmLabel = readerString("drawer_sign_in", "Sign in"),
+            onConfirm = {
+                showSignInRequiredDialog = false
+                onSignInClick()
+            },
+            onDismiss = { showSignInRequiredDialog = false },
+        )
+    }
     IosUtilityPage(title = readerString("storekit_title", "Pro and Credits"), onBack = onBack) {
         Column(
-            modifier = Modifier.fillMaxSize().padding(24.dp),
+            modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp).verticalScroll(rememberScrollState()),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Text(readerString("storekit_title", "Pro and Credits"))
-            Text(
-                if (store.available) {
-                    readerString(
-                        "storekit_available_desc",
-                        "Purchases are securely linked to your Episteme account and can be restored after reinstalling.",
-                    )
-                } else {
-                    readerString(
-                        "storekit_unavailable",
-                        "App Store products are currently unavailable.",
-                    )
-                },
-                modifier = Modifier.padding(vertical = 12.dp),
+            Spacer(modifier = Modifier.height(16.dp))
+            IosProTierCard(
+                store = store,
+                isSignedIn = account.uid != null,
+                onBuyPro = { onPurchase(IosStoreKitProductIds.PRO_LIFETIME) },
+                onShowExistingPurchaseDialog = { showExistingPurchaseDialog = true },
+                onSignInRequiredClick = { showSignInRequiredDialog = true },
             )
-            Text(
-                if (store.proUnlocked) {
-                    readerString("pro_unlocked", "Pro unlocked")
-                } else {
-                    readerString("storekit_pro_not_unlocked", "Pro not unlocked")
-                },
+            Spacer(modifier = Modifier.height(16.dp))
+            IosCreditTierCard(
+                store = store,
+                isSignedIn = account.uid != null,
+                onBuyCredits = onPurchase,
+                onSignInRequiredClick = { showSignInRequiredDialog = true },
             )
-            Text(
-                readerString("desktop_credits_available_format", "%1\$d credits", store.credits),
-                modifier = Modifier.padding(bottom = 12.dp),
-            )
-            if (account.uid == null) {
-                Text(
-                    readerString(
-                        "storekit_sign_in_before_purchase",
-                        "Sign in with Apple or Google before purchasing or restoring.",
-                    ),
-                    modifier = Modifier.padding(bottom = 12.dp),
-                )
-            }
-            TextButton(
-                enabled = store.available && account.uid != null && !store.proUnlocked,
-                onClick = { onPurchase(IosStoreKitProductIds.PRO_LIFETIME) },
-            ) {
-                Text(
-                    readerString("storekit_buy_pro", "Buy Pro lifetime") +
-                        store.proPrice?.let { " — $it" }.orEmpty(),
-                )
-            }
-            listOf(
-                IosStoreKitProductIds.CREDITS_100 to 100,
-                IosStoreKitProductIds.CREDITS_300 to 300,
-                IosStoreKitProductIds.CREDITS_750 to 750,
-            ).forEach { (productId, amount) ->
-                TextButton(
-                    enabled = store.available && account.uid != null,
-                    onClick = { onPurchase(productId) },
-                ) {
-                    Text(
-                        readerString("storekit_add_credits", "Add %1\$d credits", amount) +
-                            store.creditPrices[productId]?.let { " — $it" }.orEmpty(),
-                    )
-                }
-            }
+            Spacer(modifier = Modifier.height(8.dp))
             TextButton(enabled = store.available && account.uid != null, onClick = onRestore) {
                 Text(readerString("storekit_restore_purchases", "Restore purchases"))
             }
             store.status?.let {
-                Text(readerLiteral(it), modifier = Modifier.padding(top = 12.dp))
+                Text(readerLiteral(it), modifier = Modifier.padding(vertical = 8.dp))
             }
+            Spacer(modifier = Modifier.height(16.dp))
+        }
+    }
+}
+
+/**
+ * Android parity (`ProScreen.ProTierCard`): crown header, strikethrough
+ * anchor price, one-time/lifetime pill, feature list, gated CTA, footer.
+ * The crown drawable has no iOS counterpart; a tinted star carries the same
+ * visual role.
+ */
+@Composable
+private fun IosProTierCard(
+    store: IosLocalStoreKitState,
+    isSignedIn: Boolean,
+    onBuyPro: () -> Unit,
+    onShowExistingPurchaseDialog: () -> Unit,
+    onSignInRequiredClick: () -> Unit,
+) {
+    val showConflict = !store.proUnlocked && store.hasAccountConflict
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp).fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Default.Star,
+                    contentDescription = null,
+                    modifier = Modifier.size(24.dp),
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    readerString("drawer_pro_unlocked", "Episteme Pro"),
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            if (!store.proUnlocked) {
+                val price = store.proPrice
+                if (price != null) {
+                    Text(
+                        text = buildAnnotatedString {
+                            store.proOriginalPrice?.let { original ->
+                                withStyle(style = SpanStyle(textDecoration = TextDecoration.LineThrough)) {
+                                    append(original)
+                                }
+                                append(" ")
+                            }
+                            append(readerString("pro_sale_off", "50% OFF"))
+                        },
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = price,
+                        style = MaterialTheme.typography.displaySmall.copy(fontSize = 48.sp),
+                        fontWeight = FontWeight.Bold,
+                    )
+                } else {
+                    Text(
+                        readerString("loading_price", "Loading price…"),
+                        style = MaterialTheme.typography.displaySmall.copy(fontSize = 32.sp),
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        readerString("one_time_payment", "One-time payment"),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Surface(
+                        shape = MaterialTheme.shapes.extraSmall,
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    ) {
+                        Text(
+                            readerString("lifetime_access", "Lifetime Access"),
+                            style = MaterialTheme.typography.labelSmall,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+            Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.Start) {
+                Text(
+                    readerString("pro_includes", "Features:"),
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(bottom = 8.dp),
+                )
+                IosProFeatureItem(
+                    title = readerString("feature_cloud_sync", "Cloud Sync Across Devices"),
+                    description = readerString(
+                        "feature_cloud_sync_desc",
+                        "Keep your entire library, including book files and reading progress, synced across your devices.",
+                    ),
+                )
+                IosProFeatureItem(
+                    title = readerString("feature_summarize", "Summarization"),
+                    description = readerString(
+                        "feature_summarize_desc",
+                        "Get 10 free summaries of chapters or pages per day",
+                    ),
+                )
+                IosProFeatureItem(
+                    title = readerString("feature_smart_dict", "Smart Dictionary"),
+                    description = readerString(
+                        "feature_smart_dict_desc",
+                        "Search phrases and even paragraphs, not just single words",
+                    ),
+                )
+                IosProFeatureItem(
+                    title = readerString("feature_priority", "Priority Feature Requests"),
+                    description = readerString(
+                        "feature_priority_desc",
+                        "Your suggestions get prioritized",
+                    ),
+                )
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+            if (store.proUnlocked) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.medium,
+                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f),
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Star,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            readerString("pro_unlocked", "Pro Features Unlocked!"),
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
+            } else {
+                when {
+                    !isSignedIn -> {
+                        Button(
+                            onClick = onSignInRequiredClick,
+                            modifier = Modifier.fillMaxWidth().height(48.dp),
+                            shape = MaterialTheme.shapes.medium,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
+                                contentColor = MaterialTheme.colorScheme.onPrimary,
+                            ),
+                        ) {
+                            Text(
+                                readerString("sign_in_required", "Sign in Required"),
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                    }
+                    store.isVerifying -> {
+                        Button(
+                            onClick = {},
+                            enabled = false,
+                            modifier = Modifier.fillMaxWidth().height(48.dp),
+                            shape = MaterialTheme.shapes.medium,
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                            Spacer(modifier = Modifier.size(ButtonDefaults.IconSpacing))
+                            Text(readerString("verifying_purchase", "Verifying purchase…"))
+                        }
+                    }
+                    store.proPrice != null -> {
+                        Button(
+                            onClick = onBuyPro,
+                            modifier = Modifier.fillMaxWidth().height(48.dp),
+                            shape = MaterialTheme.shapes.medium,
+                            enabled = store.available,
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Star,
+                                contentDescription = null,
+                                modifier = Modifier.size(20.dp),
+                            )
+                            Spacer(modifier = Modifier.size(ButtonDefaults.IconSpacing))
+                            Text(
+                                readerString("get_lifetime_access", "Get Lifetime Access"),
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                    }
+                    !store.available -> {
+                        Box(modifier = Modifier.height(48.dp), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator()
+                        }
+                    }
+                    else -> {
+                        Text(
+                            readerString(
+                                "upgrade_unavailable",
+                                "Upgrade currently unavailable. Please check your internet and try again.",
+                            ),
+                            style = MaterialTheme.typography.bodyMedium,
+                            textAlign = TextAlign.Center,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.height(48.dp),
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+                when {
+                    !isSignedIn -> {
+                        Text(
+                            readerString(
+                                "storekit_sign_in_before_purchase",
+                                "Sign in with Apple or Google before purchasing or restoring.",
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            textAlign = TextAlign.Center,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    store.isVerifying -> {
+                        Text(
+                            readerString(
+                                "verifying_purchase_desc",
+                                "This may take a few moments. Your Pro status will be updated automatically.",
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            textAlign = TextAlign.Center,
+                        )
+                    }
+                    showConflict -> {
+                        TextButton(onClick = onShowExistingPurchaseDialog) {
+                            Icon(
+                                imageVector = Icons.Default.Info,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp),
+                            )
+                            Spacer(modifier = Modifier.size(ButtonDefaults.IconSpacing))
+                            Text(readerString("existing_purchase_found", "Existing Purchase Found"))
+                        }
+                    }
+                    else -> {
+                        Text(
+                            readerString(
+                                "storekit_purchase_legal",
+                                "By purchasing, you agree to the Terms of Service and Privacy Policy.",
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            textAlign = TextAlign.Center,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun IosProFeatureItem(title: String, description: String) {
+    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Icon(
+            imageVector = Icons.Default.Check,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(20.dp),
+        )
+        Spacer(modifier = Modifier.width(16.dp))
+        Text(text = title, style = MaterialTheme.typography.bodyLarge)
+    }
+    Text(
+        description,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(start = 36.dp, bottom = 8.dp),
+    )
+}
+
+/**
+ * Android parity (`ProScreen.CreditTierCard` + `CostBreakdownItem`): credit
+ * balance, per-product cards with App Store names/descriptions, estimated
+ * cost breakdown.
+ */
+@Composable
+private fun IosCreditTierCard(
+    store: IosLocalStoreKitState,
+    isSignedIn: Boolean,
+    onBuyCredits: (String) -> Unit,
+    onSignInRequiredClick: () -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp).fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                readerString("credits_title", "AI & Cloud Credits"),
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "${store.credits}",
+                style = MaterialTheme.typography.displaySmall.copy(fontSize = 48.sp),
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+            )
+            Text(
+                readerString("credits_available", "Credits Available"),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(modifier = Modifier.height(24.dp))
+            if (store.isVerifying) {
+                CircularProgressIndicator(modifier = Modifier.padding(16.dp))
+                Text(
+                    readerString("verifying_purchase", "Verifying purchase…"),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            } else if (store.creditPrices.isEmpty()) {
+                Text(
+                    readerString("loading_price", "Loading price…"),
+                    modifier = Modifier.padding(16.dp),
+                )
+            } else {
+                listOf(
+                    IosStoreKitProductIds.CREDITS_100,
+                    IosStoreKitProductIds.CREDITS_300,
+                    IosStoreKitProductIds.CREDITS_750,
+                ).filter { store.creditPrices.containsKey(it) }.forEach { productId ->
+                    OutlinedCard(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)),
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(16.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                                Text(
+                                    store.creditNames[productId] ?: productId,
+                                    fontWeight = FontWeight.Bold,
+                                    style = MaterialTheme.typography.bodyLarge,
+                                )
+                                store.creditDescriptions[productId]?.takeIf { it.isNotBlank() }?.let { desc ->
+                                    Text(
+                                        desc,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                            Button(
+                                onClick = {
+                                    if (isSignedIn) onBuyCredits(productId) else onSignInRequiredClick()
+                                },
+                                modifier = Modifier.wrapContentWidth(),
+                            ) {
+                                Text(store.creditPrices[productId].orEmpty())
+                            }
+                        }
+                    }
+                }
+            }
+            if (!isSignedIn) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    readerString(
+                        "sign_in_to_purchase_credits",
+                        "Please sign in to your Episteme account to purchase credits.",
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Medium,
+                )
+            }
+            Spacer(modifier = Modifier.height(32.dp))
+            HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                readerString("credits_estimated_cost_breakdown", "Estimated Cost Breakdown"),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.align(Alignment.Start),
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            IosCostBreakdownItem(
+                icon = Icons.Default.Cloud,
+                title = readerString("credits_cloud_tts_title", "Cloud TTS"),
+                description = readerString(
+                    "credits_cloud_tts_desc",
+                    "Cost: ~3–4 credits per minute of audio generated.",
+                ),
+            )
+            IosCostBreakdownItem(
+                icon = Icons.Default.Info,
+                title = readerString("credits_ai_summaries_title", "AI Summaries & Recap"),
+                description = readerString(
+                    "credits_ai_summaries_desc",
+                    "Cost: ~1–4 credits per request based on chapter length.\nPro Users get 10 free summaries daily.",
+                ),
+            )
+            Spacer(modifier = Modifier.height(24.dp))
+        }
+    }
+}
+
+@Composable
+private fun IosCostBreakdownItem(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    description: String,
+) {
+    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.Top) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(24.dp).padding(top = 2.dp),
+        )
+        Spacer(modifier = Modifier.width(16.dp))
+        Column {
+            Text(text = title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
