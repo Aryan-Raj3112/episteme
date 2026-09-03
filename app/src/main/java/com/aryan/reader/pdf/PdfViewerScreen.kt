@@ -9390,6 +9390,8 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
 
         val currentDensity = LocalDensity.current
         val textDockHeightPx = with(currentDensity) { PdfTextDockHeight.toPx() }
+        val textDockFloatPad = 16.dp
+        val textDockFloatPadPx = with(currentDensity) { textDockFloatPad.toPx() }
         // Last measured position of the dock box in the overlay. Drags seed
         // from here so picking the bar up never teleports it: sticky positions
         // carry inset/resting offsets (keyboard lift, pen-dock clearance, nav
@@ -9401,7 +9403,9 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
         val textDockLiftPx = pdfTextDockKeyboardLiftPx(
             isImeVisible = isImeVisible,
             isFloating = isTextFloating,
-            dockBottomPx = textDockOffset.y + textDockHeightPx,
+            // Floating adds vertical padding around the bar: clear the whole
+            // visual box, not just the bar, or the keyboard still eats its edge.
+            dockBottomPx = textDockOffset.y + textDockFloatPadPx + textDockHeightPx,
             keyboardTopPx = boxMaxHeightFloat - WindowInsets.ime.getBottom(currentDensity),
         )
 
@@ -9474,17 +9478,14 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
             val paddingModifier = when {
                 isTextStickyBottom -> Modifier.padding(bottom = bottomPadding)
                 popupsBelowBar -> Modifier.padding(top = topPadding)
-                else -> Modifier.padding(vertical = 16.dp)
+                else -> Modifier.padding(vertical = textDockFloatPad)
             }
 
-            Box(
-                modifier = Modifier
-                    .then(alignModifier)
-                    .then(dragModifier)
-                    .onGloballyPositioned {
-                        if (!isTextDockDragging) textDockMeasuredOffset = it.positionInParent()
-                    }
-                    .pointerInput(textDockLocation) {
+            // Drag detection lives on the bar itself (passed down), NOT on this
+            // positioned container: its empty padding zones overlay the pen
+            // dock / page content and must stay touch-transparent, otherwise
+            // taps on controls beneath (e.g. the pen dock's close button) die here.
+            val textDockDragGesture = Modifier.pointerInput(textDockLocation) {
                         val onDragStart: (Offset) -> Unit = {
                             isTextDockDragging = true
 
@@ -9514,7 +9515,14 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                         val onDragEnd: () -> Unit = {
                             isTextDockDragging = false
                             val topSnapThreshold = 150f
-                            val bottomSnapThreshold = boxMaxHeightFloat - 250f
+                            // Bottom snaps only at/below the docked band (resting
+                            // bar position minus a grab margin): dropping the bar
+                            // over the pen dock stays floating instead.
+                            val bottomSnapThreshold = boxMaxHeightFloat -
+                                navBarHeight.toFloat() -
+                                with(currentDensity) { bottomPadding.toPx() } -
+                                textDockHeightPx -
+                                with(currentDensity) { 24.dp.toPx() }
                             textDockLocation = when {
                                 textDockOffset.y < topSnapThreshold -> DockLocation.TOP
                                 textDockOffset.y > bottomSnapThreshold -> DockLocation.BOTTOM
@@ -9554,11 +9562,20 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                             )
                         }
                     }
+
+            Box(
+                modifier = Modifier
+                    .then(alignModifier)
+                    .then(dragModifier)
+                    .onGloballyPositioned {
+                        if (!isTextDockDragging) textDockMeasuredOffset = it.positionInParent()
+                    }
                     .then(widthModifier)
                     .then(insetsModifier)
                     .then(paddingModifier)
             ) {
             TextAnnotationDock(
+                dragGestureModifier = textDockDragGesture,
                 currentStyle = effectiveStyle,
                 textColorPalette = penPalette,
                 onTextColorPaletteChange = { newPalette ->

@@ -140,6 +140,9 @@ fun TextAnnotationDock(
     onInsertTextBox: () -> Unit,
     bottomDockPadding: androidx.compose.ui.unit.Dp = 0.dp,
     popupsBelowBar: Boolean = false,
+    // Drag/long-press detection owned by the caller; applied to the bar only so
+    // surrounding empty padding stays touch-transparent for controls beneath.
+    dragGestureModifier: Modifier = Modifier,
     customFonts: List<CustomFontEntity> = emptyList(),
     onImportFont: (android.net.Uri) -> Unit = {},
     currentFontName: String? = null,
@@ -154,7 +157,7 @@ fun TextAnnotationDock(
 
     val fontSizes = AndroidPdfTextDockFontSizes
 
-    Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.BottomCenter) {
+    Box(modifier = Modifier.fillMaxWidth().then(dragGestureModifier), contentAlignment = Alignment.BottomCenter) {
         SharedPdfTextDockPopupHost(
             state = dockState,
             bottomDockPadding = bottomDockPadding,
