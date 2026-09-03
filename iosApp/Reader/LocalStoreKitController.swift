@@ -50,6 +50,9 @@ final class LocalStoreKitController: ObservableObject {
 #if canImport(FirebaseAuth)
     private var authStateHandle: AuthStateDidChangeListenerHandle?
 #endif
+#if canImport(FirebaseFirestore)
+    private var entitlementListener: ListenerRegistration?
+#endif
 
     func attach(to bridge: ReaderIosBridge) {
         guard self.bridge !== bridge else { return }
@@ -60,6 +63,7 @@ final class LocalStoreKitController: ObservableObject {
         )
         updatesTask?.cancel()
         startupTask?.cancel()
+        stopObservingEntitlements()
         updatesTask = observeTransactionUpdates()
         observeAccount()
         startupTask = Task { [weak self] in
@@ -75,6 +79,9 @@ final class LocalStoreKitController: ObservableObject {
         startupTask?.cancel()
 #if canImport(FirebaseAuth)
         if let authStateHandle { Auth.auth().removeStateDidChangeListener(authStateHandle) }
+#endif
+#if canImport(FirebaseFirestore)
+        entitlementListener?.remove()
 #endif
     }
 
@@ -249,27 +256,71 @@ final class LocalStoreKitController: ObservableObject {
             isProUnlocked = false
             serverCredits = 0
             serverEntitlementsLoaded = true
+            stopObservingEntitlements()
             publish()
             return
         }
         do {
             let snapshot = try await Firestore.firestore().collection("users").document(uid).getDocument()
-            let data = snapshot.data() ?? [:]
-            let sources = data["proEntitlements"] as? [String: Any] ?? [:]
-            isProUnlocked = (data["isPro"] as? Bool ?? false)
-                || (sources["appStoreLifetime"] as? String) == "active"
-                || (sources["googlePlayLifetime"] as? String) == "active"
-            serverCredits = max((data["credits"] as? NSNumber)?.intValue ?? 0, 0)
-            serverEntitlementsLoaded = true
+            applyEntitlementSnapshot(snapshot.data() ?? [:], missingDocument: !snapshot.exists)
         } catch {
             status = "Could not refresh account entitlements."
         }
+        // The one-shot read above seeds the UI fast; the listener below keeps
+        // Pro/credits live while the app stays open, matching Android's
+        // listenToUserProfile snapshot listener (a Pro downgrade is enforced
+        // immediately instead of at the next launch).
+        observeEntitlements(uid: uid)
 #else
         isProUnlocked = false
         serverCredits = 0
         serverEntitlementsLoaded = true
 #endif
         publish()
+    }
+
+    /// Maps a Firestore `users/{uid}` document onto the local entitlement state
+    /// and pushes it through the bridge so shared UI reacts instantly.
+    private func applyEntitlementSnapshot(_ data: [String: Any], missingDocument: Bool = false) {
+        let sources = data["proEntitlements"] as? [String: Any] ?? [:]
+        let pro = (data["isPro"] as? Bool ?? false)
+            || (sources["appStoreLifetime"] as? String) == "active"
+            || (sources["googlePlayLifetime"] as? String) == "active"
+        let credits = max((data["credits"] as? NSNumber)?.intValue ?? 0, 0)
+        if missingDocument {
+            isProUnlocked = false
+            serverCredits = 0
+        } else {
+            isProUnlocked = pro
+            serverCredits = credits
+        }
+        serverEntitlementsLoaded = true
+        bridge?.updateLiveAccountEntitlements(isPro: isProUnlocked, credits: Int32(clamping: serverCredits))
+        publish()
+    }
+
+    /// Live entitlement stream over `users/{uid}`, mirroring Android's
+    /// `FirestoreRepository.listenToUserProfile`. Errors degrade to the last
+    /// known state (Android surfaces onUpdate(false, 0) only on listen errors).
+    private func observeEntitlements(uid: String) {
+#if canImport(FirebaseFirestore) && canImport(FirebaseAuth)
+        stopObservingEntitlements()
+        entitlementListener = Firestore.firestore()
+            .collection("users")
+            .document(uid)
+            .addSnapshotListener { [weak self] snapshot, _ in
+                Task { @MainActor in
+                    guard let self else { return }
+                    let data = snapshot?.data() ?? [:]
+                    self.applyEntitlementSnapshot(data, missingDocument: !(snapshot?.exists ?? true))
+                }
+            }
+#endif
+    }
+
+    private func stopObservingEntitlements() {
+        entitlementListener?.remove()
+        entitlementListener = nil
     }
 
     private func observeAccount() {
@@ -283,10 +334,14 @@ final class LocalStoreKitController: ObservableObject {
             Task { @MainActor in
                 guard let self else { return }
                 // Do not project the previous Firebase account while the new
-                // account's durable grants are being fetched.
+                // account's durable grants are being fetched. This also drops
+                // the previous account's entitlement listener; reattaching is
+                // handled inside refreshServerEntitlements once the new uid
+                // is known.
                 self.serverEntitlementsLoaded = false
                 self.isProUnlocked = false
                 self.serverCredits = 0
+                self.stopObservingEntitlements()
                 self.publish()
                 await self.reconcileUnfinishedTransactions()
                 await self.refreshServerEntitlements()

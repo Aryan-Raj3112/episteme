@@ -67,6 +67,9 @@ final class LocalAccountController: NSObject, ObservableObject {
 #if canImport(FirebaseAuth)
     private var authStateHandle: AuthStateDidChangeListenerHandle?
 #endif
+#if canImport(FirebaseFirestore)
+    private var deviceStatusListener: ListenerRegistration?
+#endif
 
     private enum CloudSyncOperation: String, Codable {
         case pull
@@ -428,12 +431,57 @@ final class LocalAccountController: NSObject, ObservableObject {
             publish(status: "Add GoogleService-Info.plist to enable Apple and Google login.")
             return
         }
-        authStateHandle = Auth.auth().addStateDidChangeListener { [weak self] _, _ in
-            Task { @MainActor in self?.publish(status: nil) }
+        if let authStateHandle { Auth.auth().removeStateDidChangeListener(authStateHandle) }
+        authStateHandle = Auth.auth().addStateDidChangeListener { [weak self] _, user in
+            Task { @MainActor in
+                guard let self else { return }
+                // Android parity (verifyDeviceForProUser + device listener): watch
+                // this installation's device document so a remote revocation
+                // ejects the local session immediately, and stop watching the
+                // previous account's device on sign-out/switch.
+                self.observeDeviceStatus(uid: user?.uid)
+                self.publish(status: nil)
+            }
         }
         restoreGoogleDriveAuthorization()
 #else
         publish(status: "Add the iOS Firebase configuration to enable Apple and Google login.")
+#endif
+    }
+
+    /// Live `users/{uid}/devices/{deviceId}` status watch. A remote revocation
+    /// (issued from any signed-in device's device management screen) signs this
+    /// device out and clears its registration, mirroring Android's
+    /// DeviceStatus.Revoked path in MainViewModel.verifyDeviceForProUser.
+    private func observeDeviceStatus(uid: String?) {
+#if canImport(FirebaseFirestore) && canImport(FirebaseAuth)
+        deviceStatusListener?.remove()
+        deviceStatusListener = nil
+        guard let uid, !uid.isEmpty else { return }
+        let deviceID = cloudSyncDeviceID()
+        deviceStatusListener = Firestore.firestore()
+            .collection("users")
+            .document(uid)
+            .collection("devices")
+            .document(deviceID)
+            .addSnapshotListener { [weak self] snapshot, _ in
+                Task { @MainActor in
+                    guard let self, let snapshot, snapshot.exists else { return }
+                    guard (snapshot.data()?["status"] as? String) == "revoked" else { return }
+                    self.stopObservingDeviceStatus()
+                    // signOut() unregisters this device and clears the outbox;
+                    // the bridge then shows Android's "device removed" banner.
+                    self.signOut()
+                    self.bridge?.notifyCurrentDeviceRevoked()
+                }
+            }
+#endif
+    }
+
+    private func stopObservingDeviceStatus() {
+#if canImport(FirebaseFirestore)
+        deviceStatusListener?.remove()
+        deviceStatusListener = nil
 #endif
     }
 
@@ -2554,6 +2602,7 @@ final class LocalAccountController: NSObject, ObservableObject {
             self.authStateHandle = nil
         }
 #endif
+        stopObservingDeviceStatus()
     }
 
     deinit {
@@ -2561,6 +2610,9 @@ final class LocalAccountController: NSObject, ObservableObject {
         if let authStateHandle {
             Auth.auth().removeStateDidChangeListener(authStateHandle)
         }
+#endif
+#if canImport(FirebaseFirestore)
+        deviceStatusListener?.remove()
 #endif
     }
 

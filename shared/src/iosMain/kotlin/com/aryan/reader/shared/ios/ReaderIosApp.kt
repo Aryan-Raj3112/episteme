@@ -336,6 +336,18 @@ private val IOS_NATIVE_READER_FILE_TYPES = setOf(
 
 private val IosLegalLinks = sharedLegalLinksForProfile(SharedLegalProfile.STANDARD)
 
+/** Mirrors Android's banner_device_removed string. */
+private const val IosDeviceRemovedMessage = "This device was removed from your account."
+
+/**
+ * One-time startup application of the iCloud backup exclusion policy. Cheap on
+ * the happy path (already-marked files return false from setResourceValue), and
+ * re-running after imports is safe.
+ */
+private fun applyIosBackupExclusions() {
+    runCatching { IosBackupExclusionPolicy.apply() }
+}
+
 class ReaderIosBridge internal constructor(
     private val readerSystemEffects: IosReaderSystemEffects,
     private val pdfNativeActionPresenter: IosPdfNativeActionPresenter,
@@ -344,6 +356,10 @@ class ReaderIosBridge internal constructor(
         readerSystemEffects = UIKitReaderSystemEffects,
         pdfNativeActionPresenter = IosPdfNativeActionPresenter(::performIosPdfNativeAction),
     )
+
+    init {
+        applyIosBackupExclusions()
+    }
 
     private var systemUiHandler: ((statusHidden: Boolean, navigationHidden: Boolean, lightContent: Boolean, backgroundArgb: Long) -> Unit)? = null
     private var latestSystemUiState: IosSystemUiState? = null
@@ -391,6 +407,8 @@ class ReaderIosBridge internal constructor(
     private var restorePurchasesHandler: (() -> Unit)? = null
     private var authHandler: ((String) -> Unit)? = null
     private var signOutHandler: (() -> Unit)? = null
+    private var liveEntitlementsHandler: ((Boolean, Int) -> Unit)? = null
+    private var currentDeviceRevokedHandler: (() -> Unit)? = null
     private var cloudSyncHandler: ((String) -> Unit)? = null
     private var cloudUploadHandler: ((String) -> Unit)? = null
     private var deviceManagementRefreshHandler: (() -> Unit)? = null
@@ -1134,6 +1152,37 @@ class ReaderIosBridge internal constructor(
     ) {
         authHandler = authenticate
         signOutHandler = signOut
+    }
+
+    /**
+     * Android parity (`MainViewModel.listenToUserProfile`): the native account
+     * controller installs a live Firestore profile listener and pushes every
+     * snapshot through this handler so a Pro downgrade or credit change is
+     * reflected while the app is open — not only at sign-in/purchase.
+     */
+    fun setLiveEntitlementsHandler(handler: ((isPro: Boolean, credits: Int) -> Unit)?) {
+        liveEntitlementsHandler = handler
+    }
+
+    /**
+     * Android parity (`FirestoreRepository.verifyDeviceForProUser` → Revoked):
+     * called when the live device-status listener notices this installation
+     * was revoked remotely. The shared side disables sync durably (the flag is
+     * also persisted via the isSyncEnabled effect) and surfaces the same
+     * "device removed" banner Android shows.
+     */
+    fun setCurrentDeviceRevokedHandler(handler: (() -> Unit)?) {
+        currentDeviceRevokedHandler = handler
+    }
+
+    /** Pushes a live entitlement snapshot from the Firestore profile listener. */
+    fun updateLiveAccountEntitlements(isPro: Boolean, credits: Int) {
+        liveEntitlementsHandler?.invoke(isPro, credits)
+    }
+
+    /** Notifies the shared app that this installation was revoked remotely. */
+    fun notifyCurrentDeviceRevoked() {
+        currentDeviceRevokedHandler?.invoke()
     }
 
     fun requestAuthentication(provider: String) {
@@ -2505,7 +2554,8 @@ private fun ReaderIosApp(
     var readerAiJob by remember { mutableStateOf<Job?>(null) }
     val readerAiAvailable = readerAiAdapter.isAvailable
     LaunchedEffect(state) {
-        persistIosLibrarySnapshot(state)
+        // Debounced: rapid state churn coalesces into one durable write per window.
+        IosLibrarySnapshotPersister.schedule(this, state)
     }
     var pdfSplitWorkspace by remember { mutableStateOf(restoredPdfSplitWorkspace) }
     var pendingPdfSplitWorkspaceRestore by remember {
@@ -2600,6 +2650,31 @@ private fun ReaderIosApp(
     }
     LaunchedEffect(state.isSyncEnabled) {
         persistIosSyncEnabled(state.isSyncEnabled)
+    }
+    // Android parity: live entitlement updates from the Firestore profile
+    // listener. A Pro downgrade disables cloud sync eligibility immediately
+    // (cloudSyncEligible() reads state.isProUser) instead of surviving until
+    // the next sign-in, and credits stay current while the app is open.
+    DisposableEffect(Unit) {
+        bridge.setLiveEntitlementsHandler { isPro, credits ->
+            state = state.copy(
+                isProUser = isPro,
+                credits = credits.coerceAtLeast(0),
+            )
+        }
+        onDispose { bridge.setLiveEntitlementsHandler(null) }
+    }
+    // Android parity: a remote revocation of THIS device signs the user out
+    // (the native controller performs the sign-out) and shows the same
+    // "device removed" banner the Android app shows.
+    DisposableEffect(Unit) {
+        bridge.setCurrentDeviceRevokedHandler {
+            state = state
+                .copy(isProUser = false, credits = 0, isSyncEnabled = false)
+                .withMessage(IosDeviceRemovedMessage)
+            bridge.recordNativeEvent(IosDeviceRemovedMessage)
+        }
+        onDispose { bridge.setCurrentDeviceRevokedHandler(null) }
     }
     LaunchedEffect(bridge.importedFonts) {
         if (bridge.importedFonts != state.customFonts) {
