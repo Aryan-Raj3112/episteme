@@ -50,6 +50,7 @@
             android:exported="true"
             android:theme="@style/Theme.Reader"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
+            android:windowSoftInputMode="adjustResize"
             android:launchMode="singleTask">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -62,6 +63,7 @@
             android:exported="false"
             android:theme="@style/Theme.Reader"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
+            android:windowSoftInputMode="adjustResize"
             android:excludeFromRecents="true"
             android:launchMode="standard" />
 

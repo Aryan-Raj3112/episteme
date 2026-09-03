@@ -1,11 +1,15 @@
 package com.aryan.reader.shared.pdf
 
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
 import com.aryan.reader.shared.CustomFontItem
+import com.aryan.reader.shared.DockLocation
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertSame
+import kotlin.test.assertTrue
 
 class PdfTextAnnotationDockPolicyTest {
     @Test
@@ -56,6 +60,43 @@ class PdfTextAnnotationDockPolicyTest {
         assertEquals(Color(0x8012AB34), parsePdfTextDockHexColorOrNull("#8012AB34"))
         assertNull(parsePdfTextDockHexColorOrNull("xyz"))
         assertNull(parsePdfTextDockHexColorOrNull("12345"))
+    }
+
+    @Test
+    fun textDockShowsInTextEditModeWithoutRequiringIme() {
+        // Physical / floating / split keyboards report no IME height, and focus
+        // races deliver insets a frame late: the toolbar must not depend on them.
+        assertTrue(shouldShowPdfTextDock(isEditMode = true, isTextToolSelected = true))
+        assertFalse(shouldShowPdfTextDock(isEditMode = false, isTextToolSelected = true))
+        assertFalse(shouldShowPdfTextDock(isEditMode = true, isTextToolSelected = false))
+        assertFalse(shouldShowPdfTextDock(isEditMode = false, isTextToolSelected = false))
+    }
+
+    @Test
+    fun textDockRestingPaddingClearsPenDockOnlyWhenKeyboardClosed() {        // IME open: inset padding positions the dock, extra must be zero or the
+        // bar floats above the keyboard on phones and tablets.
+        assertEquals(0.dp, pdfTextDockRestingBottomPadding(true, DockLocation.BOTTOM, false))
+        assertEquals(0.dp, pdfTextDockRestingBottomPadding(true, DockLocation.FLOATING, false))
+        assertEquals(80.dp, pdfTextDockRestingBottomPadding(false, DockLocation.BOTTOM, false))
+        assertEquals(16.dp, pdfTextDockRestingBottomPadding(false, DockLocation.BOTTOM, true))
+        assertEquals(16.dp, pdfTextDockRestingBottomPadding(false, DockLocation.TOP, false))
+        assertEquals(16.dp, pdfTextDockRestingBottomPadding(false, DockLocation.FLOATING, false))
+    }
+
+    @Test
+    fun textDockPopupsOpenBelowBarOnlyWhenSettledAtTop() {
+        assertTrue(isPdfTextDockTopAnchored(DockLocation.TOP, isDragging = false))
+        assertFalse(isPdfTextDockTopAnchored(DockLocation.TOP, isDragging = true))
+        assertFalse(isPdfTextDockTopAnchored(DockLocation.BOTTOM, isDragging = false))
+        assertFalse(isPdfTextDockTopAnchored(DockLocation.FLOATING, isDragging = false))
+    }
+
+    @Test
+    fun textDockKeyboardLiftOnlyPushesFloatingDockClearOfKeyboard() {
+        assertEquals(0f, pdfTextDockKeyboardLiftPx(false, true, 2200f, 1500f))
+        assertEquals(0f, pdfTextDockKeyboardLiftPx(true, false, 2200f, 1500f))
+        assertEquals(0f, pdfTextDockKeyboardLiftPx(true, true, 1400f, 1500f))
+        assertEquals(700f, pdfTextDockKeyboardLiftPx(true, true, 2200f, 1500f))
     }
 
     @Test

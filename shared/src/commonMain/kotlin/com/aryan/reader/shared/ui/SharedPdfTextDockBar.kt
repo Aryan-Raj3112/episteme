@@ -5,7 +5,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
@@ -28,7 +27,6 @@ data class SharedPdfTextDockBarLabels(
     val underline: String,
     val strikethrough: String,
     val insertTextBox: String,
-    val close: String,
 )
 
 data class SharedPdfTextDockBarPainters(
@@ -63,7 +61,6 @@ fun SharedPdfTextDockBar(
     onUnderlineClick: () -> Unit,
     onStrikethroughClick: () -> Unit,
     onInsertTextBox: () -> Unit,
-    onClose: () -> Unit,
     textColorIndicator: @Composable (Color) -> Unit,
     fontSizePopup: @Composable BoxScope.() -> Unit,
 ) {
@@ -99,11 +96,6 @@ fun SharedPdfTextDockBar(
                 SharedPdfTextDockBarCell { SharedPdfTextDockPainterButton(isUnderline, painters.underline, labels.underline, onUnderlineClick) }
                 SharedPdfTextDockBarCell { SharedPdfTextDockPainterButton(isStrikethrough, painters.strikethrough, labels.strikethrough, onStrikethroughClick) }
                 SharedPdfTextDockBarCell { SharedPdfTextDockPainterButton(false, painters.textBox, labels.insertTextBox, onInsertTextBox) }
-                SharedPdfTextDockBarCell {
-                    SharedPdfTextDockFormattingButton(false, onClose) {
-                        Icon(Icons.Default.Close, labels.close, tint = Color.Black.copy(alpha = .8f), modifier = Modifier.size(20.dp))
-                    }
-                }
             }
         }
         Spacer(Modifier.height(bottomDockPadding))

@@ -2,6 +2,8 @@ package com.aryan.reader.pdf
 
 import android.content.Context
 import androidx.annotation.OptIn
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import androidx.core.content.edit
 import androidx.media3.common.util.UnstableApi
 import com.aryan.reader.pdf.data.PdfAnnotation
@@ -19,6 +21,12 @@ internal sealed interface HistoryAction {
 internal typealias DockLocation = com.aryan.reader.shared.DockLocation
 
 internal typealias DisplayMode = com.aryan.reader.shared.PdfDisplayMode
+
+/** Height of the main pen annotation dock; shared so stacked chrome (e.g. a top-docked text dock) can clear it. */
+internal val PdfMainDockHeight: Dp = 64.dp
+
+/** Height of the text formatting dock bar; used for drag seeding and floating clamps. */
+internal val PdfTextDockHeight: Dp = 48.dp
 
 @OptIn(UnstableApi::class)
 @Suppress("unused")
