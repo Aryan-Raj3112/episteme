@@ -24,6 +24,7 @@ struct ContentView: View {
 
     private let bridge = ReaderIosBridge()
     private let audiobookPlayer = AudiobookPlayerController()
+    private let cloudFolderSync = LocalCloudFolderSyncController()
     @StateObject private var localStoreKit = LocalStoreKitController()
     @StateObject private var localAccount = LocalAccountController()
     @Environment(\.scenePhase) private var scenePhase
@@ -262,6 +263,51 @@ struct ContentView: View {
                 }
             }
             bridge.setUnifiedDiagnosticsProvider { captureUnifiedLogEntries() }
+            // Folder-transfer executor (P0 #4): Swift owns the Drive/Firestore
+            // orchestration; Kotlin owns selection/prefs/Compose state. The
+            // controller publishes executor state back through the bridge
+            // after every pass.
+            cloudFolderSync.localAccount = localAccount
+            cloudFolderSync.bridgeProvider = { [bridge] in bridge }
+            bridge.setCloudFolderSyncRequestHandler { [cloudFolderSync] direction, rootId, replace in
+                switch direction {
+                case "pull":
+                    if let rootId {
+                        cloudFolderSync.requestSyncRoot(rootId, direction: .pull, replace: replace.boolValue)
+                    } else {
+                        cloudFolderSync.requestSyncAllPull(replace: replace.boolValue)
+                    }
+                case "push":
+                    if let rootId {
+                        cloudFolderSync.requestSyncRoot(rootId, direction: .push, replace: replace.boolValue)
+                    }
+                default:
+                    if let rootId {
+                        cloudFolderSync.requestSyncRoot(rootId, direction: .sync, replace: replace.boolValue)
+                    } else {
+                        cloudFolderSync.requestSyncAll(replace: replace.boolValue)
+                    }
+                }
+            }
+            bridge.setCloudFolderBindHandler { [cloudFolderSync, localAccount] rootId, folderName in
+                cloudFolderSync.ensureLocalFolderBinding(
+                    folderName: folderName,
+                    rootId: rootId,
+                    deviceId: localAccount.folderSyncDeviceID()
+                )
+            }
+            bridge.setCloudFolderConflictResolveHandler { [cloudFolderSync, localAccount] rootId, conflictId, resolution in
+                guard let uid = localAccount.folderSyncAccountID() else { return }
+                cloudFolderSync.resolveConflict(uid: uid, rootId: rootId, conflictId: conflictId, resolutionRaw: resolution)
+            }
+            bridge.setCloudFolderDeleteHandler { [cloudFolderSync, localAccount] rootId, deleteEverywhere in
+                guard let uid = localAccount.folderSyncAccountID() else { return }
+                if deleteEverywhere.boolValue {
+                    Task { await cloudFolderSync.deleteRootEverywhere(uid: uid, rootId: rootId) }
+                } else {
+                    cloudFolderSync.removeBindingOnly(uid: uid, rootId: rootId)
+                }
+            }
             // P0 #1: BG task bodies run the same foreground-only reconciliation
             // Android does (outbox retry + StoreKit re-query, no background
             // purchase queue). The shared retry math lives in
@@ -270,8 +316,10 @@ struct ContentView: View {
                 await localAccount.handleBackgroundRefresh()
                 await localStoreKit.handleBackgroundRefresh()
             }
-            IosBackgroundSync.processingHandler = { [localAccount] in
+            IosBackgroundSync.processingHandler = { [localAccount, cloudFolderSync] in
                 await localAccount.handleBackgroundRefresh()
+                cloudFolderSync.requestSyncAll(replace: false)
+                await cloudFolderSync.awaitIdle()
             }
         }
         .onChange(of: scenePhase) { _, phase in

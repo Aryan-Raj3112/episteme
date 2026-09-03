@@ -285,6 +285,12 @@ import com.aryan.reader.shared.CloudFolderSyncFolderOption
 import com.aryan.reader.shared.CloudFolderSyncProgress
 import com.aryan.reader.shared.CloudFolderSyncSelection
 import com.aryan.reader.shared.CloudFolderSyncSettingsUiState
+import com.aryan.reader.shared.cloudFolderRootId
+import com.aryan.reader.shared.cloudFolderConflictUiItem
+import com.aryan.reader.shared.decodeCloudFolderBindingsOrNull
+import com.aryan.reader.shared.decodeCloudFolderConflictRecordOrNull
+import com.aryan.reader.shared.decodeCloudFolderProgressMapOrNull
+import com.aryan.reader.shared.decodeCloudFolderRootsOrNull
 import com.aryan.reader.shared.initialAcknowledgedRevisionAfterIncomingChoice
 import com.aryan.reader.shared.nextSelectionAfterIncomingChoice
 import com.aryan.reader.shared.projectCloudFolderSyncOptions
@@ -320,6 +326,7 @@ import platform.Foundation.NSUserDefaults
 import platform.Foundation.dataWithContentsOfFile
 import platform.Foundation.NSUserDomainMask
 import platform.Foundation.NSURL
+import platform.Foundation.NSUUID
 import platform.Foundation.NSFileSize
 import platform.Foundation.NSNumber
 import platform.UIKit.UIViewController
@@ -1371,6 +1378,107 @@ class ReaderIosBridge internal constructor(
 
     internal fun consumeCloudSnapshot() {
         pendingCloudSync = null
+    }
+
+    // ---- Cloud-folder transfer executor (P0 #4) ----
+    // Android runs this in `CloudFolderSyncWorker` + Room; iOS runs it in the
+    // Swift `LocalCloudFolderSyncController` with a file-backed store. The
+    // shared models are identical, so this bridge only carries JSON snapshots
+    // of executor state into Compose and fire-and-forget requests back out.
+    // Selection + incoming-prompt durability stays in `IosCloudFolderSyncPrefs`.
+    internal var cloudFolderRootsState by mutableStateOf<List<CloudFolderRoot>>(emptyList())
+        private set
+    internal var cloudFolderBindingsState by mutableStateOf<Map<String, CloudFolderDeviceBinding>>(emptyMap())
+        private set
+    internal var cloudFolderProgressState by mutableStateOf<Map<String, CloudFolderSyncProgress>>(emptyMap())
+        private set
+    internal var cloudFolderConflictsState by mutableStateOf<List<CloudFolderConflictUiItem>>(emptyList())
+        private set
+    internal var folderSyncExecutionArmed: Boolean = false
+        private set
+    private var cloudFolderSyncRequestHandler: ((String, String?, Boolean) -> Unit)? = null
+    private var cloudFolderBindHandler: ((String, String) -> Unit)? = null
+    private var cloudFolderConflictResolveHandler: ((String, String, String) -> Unit)? = null
+    private var cloudFolderDeleteHandler: ((String, Boolean) -> Unit)? = null
+
+    fun armFolderSyncExecution(eligible: Boolean) {
+        folderSyncExecutionArmed = eligible
+    }
+
+    /** Second line of defence read by the Swift executor before every run. */
+    fun cloudFolderSyncEligible(): Boolean = folderSyncExecutionArmed
+
+    fun setCloudFolderSyncRequestHandler(handler: (String, String?, Boolean) -> Unit) {
+        cloudFolderSyncRequestHandler = handler
+    }
+
+    /** direction in {sync,pull,push}; rootId null = account-wide. */
+    fun requestCloudFolderSync(direction: String, rootId: String?, replace: Boolean) {
+        cloudFolderSyncRequestHandler?.invoke(direction, rootId, replace)
+    }
+
+    fun setCloudFolderBindHandler(handler: (String, String) -> Unit) {
+        cloudFolderBindHandler = handler
+    }
+
+    /** Ensure a LOCAL_MIRROR binding for a local folder (registration, not selection). */
+    fun requestCloudFolderBind(rootId: String, folderName: String) {
+        cloudFolderBindHandler?.invoke(rootId, folderName)
+    }
+
+    fun setCloudFolderConflictResolveHandler(handler: (String, String, String) -> Unit) {
+        cloudFolderConflictResolveHandler = handler
+    }
+
+    fun requestCloudFolderConflictResolve(rootId: String, conflictId: String, resolutionRaw: String) {
+        cloudFolderConflictResolveHandler?.invoke(rootId, conflictId, resolutionRaw)
+    }
+
+    fun setCloudFolderDeleteHandler(handler: (String, Boolean) -> Unit) {
+        cloudFolderDeleteHandler = handler
+    }
+
+    /** deleteEverywhere=true removes the Drive copy account-wide; false detaches this device only. */
+    fun requestCloudFolderDelete(rootId: String, deleteEverywhere: Boolean) {
+        cloudFolderDeleteHandler?.invoke(rootId, deleteEverywhere)
+    }
+
+    /**
+     * Executor state published by Swift after every pass. Roots/bindings/
+     * progress arrive as shared-model JSON; conflict records are re-encoded
+     * shared JSON strings mapped to UI items with live folder names.
+     */
+    fun publishCloudFolderSyncState(
+        rootsJson: String,
+        bindingsJson: String,
+        progressJson: String,
+        conflictRecordJsons: List<String>,
+    ) {
+        decodeCloudFolderRootsOrNull(rootsJson)?.let { roots ->
+            cloudFolderRootsState = roots.filterNot { it.isDeleted }
+        }
+        decodeCloudFolderBindingsOrNull(bindingsJson)?.let { bindings ->
+            cloudFolderBindingsState = bindings
+        }
+        decodeCloudFolderProgressMapOrNull(progressJson)?.let { progress ->
+            cloudFolderProgressState = progress
+        }
+        val folderNames = cloudFolderRootsState.associate { it.rootId to it.name }
+        cloudFolderConflictsState = conflictRecordJsons.mapNotNull {
+            decodeCloudFolderConflictRecordOrNull(it)
+        }.map { record ->
+            cloudFolderConflictUiItem(record, folderNames[record.rootId] ?: record.rootId)
+        }.sortedWith(
+            compareBy<CloudFolderConflictUiItem> { it.normalizedFolderName.lowercase() }
+                .thenBy { it.normalizedPath.lowercase() }
+                .thenBy { it.conflictId },
+        )
+    }
+
+    /** Discovery hit from Swift: durable pending prompt, like Android's markIncomingPromptPending. */
+    fun noteDiscoveredCloudFolderRoot(rootId: String, revision: Long) {
+        val accountId = accountState.uid?.trim()?.takeIf { it.isNotBlank() } ?: return
+        IosCloudFolderSyncPrefs.markIncomingPromptPending(accountId, rootId, revision)
     }
 
     fun updateAccountState(
@@ -2755,23 +2863,17 @@ private fun ReaderIosApp(
     var pendingCloudSyncSetup by remember { mutableStateOf(false) }
     var languageReturnScreen by remember { mutableStateOf<IosUtilityScreen?>(null) }
     var settingsQuery by remember { mutableStateOf("") }
-    // Cloud-folder sync surface (P0 #4). Android owns this in MainViewModel +
-    // CloudFolderSyncPrefs; iOS mirrors the same per-account selection +
-    // pending/discovered prompt durability via IosCloudFolderSyncPrefs. The
-    // Drive manifest executor itself still runs through the shared cloud-sync
-    // channel (LocalAccountController); this state only owns the selection,
-    // conflict, and incoming-prompt surface so the settings entry is no
-    // longer a no-op.
+    // Cloud-folder sync (P0 #4). Executor state (roots/bindings/progress/
+    // conflicts) is owned by the Swift `LocalCloudFolderSyncController` and
+    // published through the bridge; selection + incoming-prompt durability
+    // stays in `IosCloudFolderSyncPrefs` (Android `CloudFolderSyncPrefs`
+    // parity). The incoming prompt is UI-ephemeral, recomputed from bridge
+    // roots + durable pending revisions.
     val iosAccountId = bridge.accountState.uid?.trim()?.takeIf { it.isNotBlank() }
     var cloudFolderSelection by remember(iosAccountId) {
         mutableStateOf(IosCloudFolderSyncPrefs.loadSelection(iosAccountId))
     }
-    var cloudFolderRoots by remember { mutableStateOf<List<CloudFolderRoot>>(emptyList()) }
-    var cloudFolderBindings by remember { mutableStateOf<Map<String, CloudFolderDeviceBinding>>(emptyMap()) }
-    var cloudFolderProgress by remember { mutableStateOf<Map<String, CloudFolderSyncProgress>>(emptyMap()) }
-    var cloudFolderConflicts by remember { mutableStateOf<List<CloudFolderConflictUiItem>>(emptyList()) }
     var cloudFolderIncomingPrompt by remember { mutableStateOf<CloudFolderIncomingFolderPrompt?>(null) }
-    var isCloudFolderLoading by remember { mutableStateOf(false) }
     var pendingFolderBindPrompt by remember { mutableStateOf<CloudFolderIncomingFolderPrompt?>(null) }
 
     fun navigateIosSettingsUp() {
@@ -3247,6 +3349,11 @@ private fun ReaderIosApp(
                     uriString = "ios-local-folder://${name.normalizedId()}",
                     name = name,
                     lastScanTime = currentTimestamp(),
+                    // Stable logical identity for cloud-folder registration,
+                    // mirroring Android's `cloudFolderRootId("android-root:UUID")`
+                    // at folder creation. Retained across renames by the
+                    // registration effect; never derived from a local path.
+                    cloudRootId = newIosCloudRootId(),
                 )
             }
         state = result.state
@@ -3443,25 +3550,18 @@ private fun ReaderIosApp(
         val accountId = bridge.accountState.uid?.trim()?.takeIf { it.isNotBlank() }
         cloudFolderSelection = IosCloudFolderSyncPrefs.loadSelection(accountId)
         if (accountId == null) {
-            cloudFolderRoots = emptyList()
-            cloudFolderBindings = emptyMap()
-            cloudFolderProgress = emptyMap()
-            cloudFolderConflicts = emptyList()
             cloudFolderIncomingPrompt = null
             return
         }
-        isCloudFolderLoading = true
         val pendingIds = IosCloudFolderSyncPrefs.pendingIncomingRootIds(accountId)
-        cloudFolderIncomingPrompt = selectCloudFolderIncomingPrompt(cloudFolderRoots, pendingIds)
-        isCloudFolderLoading = false
+        cloudFolderIncomingPrompt = selectCloudFolderIncomingPrompt(bridge.cloudFolderRootsState, pendingIds)
     }
 
     /**
      * Android parity (MainViewModel.setCloudFolderSyncSelection): persist the
-     * normalized selection, then queue a cloud pass when sync is enabled so
-     * the persisted policy is observed even if the process dies after the
-     * dialog closes. The local-folder re-registration step is a no-op on iOS
-     * until the Drive executor lands; selection itself is durable now.
+     * normalized selection, then queue a durable folder pass when sync is
+     * enabled so the persisted policy is observed even if the process dies
+     * after the dialog closes.
      */
     fun setIosCloudFolderSelection(selection: CloudFolderSyncSelection) {
         val accountId = bridge.accountState.uid?.trim()?.takeIf { it.isNotBlank() } ?: return
@@ -3470,7 +3570,7 @@ private fun ReaderIosApp(
         IosCloudFolderSyncPrefs.saveSelection(accountId, normalized)
         cloudFolderSelection = normalized
         if (state.isSyncEnabled) {
-            requestCloudSyncIfEligible()
+            bridge.requestCloudFolderSync("sync", null, true)
         }
     }
 
@@ -3500,7 +3600,7 @@ private fun ReaderIosApp(
         IosCloudFolderSyncPrefs.dismissIncomingPrompt(accountId, prompt.rootId, prompt.root.manifestRevision)
         cloudFolderIncomingPrompt = null
         if (shouldPullAfterIncomingChoice(choice, state.isSyncEnabled)) {
-            requestCloudSyncIfEligible()
+            bridge.requestCloudFolderSync("pull", prompt.rootId, true)
         }
         refreshIosCloudFolderSyncState()
     }
@@ -3517,8 +3617,9 @@ private fun ReaderIosApp(
         ).also { IosCloudFolderSyncPrefs.saveSelection(accountId, it) }
         IosCloudFolderSyncPrefs.dismissIncomingPrompt(accountId, prompt.rootId, prompt.root.manifestRevision)
         cloudFolderIncomingPrompt = null
+        bridge.requestCloudFolderBind(prompt.rootId, folderName)
         if (state.isSyncEnabled) {
-            requestCloudSyncIfEligible()
+            bridge.requestCloudFolderSync("pull", prompt.rootId, true)
         }
         refreshIosCloudFolderSyncState()
     }
@@ -3539,16 +3640,37 @@ private fun ReaderIosApp(
         conflict: CloudFolderConflictUiItem,
         resolution: CloudFolderConflictResolution,
     ) {
-        // The Drive executor revalidates the snapshot before applying, so a
-        // newer revision surfaces a fresh conflict instead of applying a stale
-        // choice. Until the executor lands, record the decision locally and
-        // refresh; the durable record format already matches Android.
-        cloudFolderConflicts = cloudFolderConflicts.map {
-            if (it.conflictId == conflict.conflictId) it.copy(resolution = resolution) else it
-        }
-        if (state.isSyncEnabled) {
-            requestCloudSyncIfEligible()
-        }
+        // The executor revalidates the snapshot before applying, so a newer
+        // revision surfaces a fresh conflict instead of applying a stale
+        // choice (Android resolveCloudFolderConflict parity).
+        bridge.requestCloudFolderConflictResolve(conflict.rootId, conflict.conflictId, resolution.name)
+    }
+
+    /**
+     * Detach a synced folder from this device only, mirroring Android's
+     * `removeCloudFolderFromDevice`: the cloud copy is untouched, so the
+     * folder can be re-discovered through the incoming prompt later.
+     */
+    fun removeIosCloudFolderFromDevice(rootId: String) {
+        val accountId = bridge.accountState.uid?.trim()?.takeIf { it.isNotBlank() } ?: return
+        val normalized = rootId.trim().takeIf { it.isNotBlank() } ?: return
+        bridge.requestCloudFolderDelete(normalized, false)
+        IosCloudFolderSyncPrefs.forgetIncomingPrompt(accountId, normalized)
+        val knownIds = bridge.cloudFolderRootsState.map { it.rootId }
+        cloudFolderSelection = cloudFolderSelection.withoutRoot(normalized, knownIds)
+            .also { IosCloudFolderSyncPrefs.saveSelection(accountId, it) }
+        refreshIosCloudFolderSyncState()
+    }
+
+    /**
+     * Delete a synced folder from Drive account-wide, mirroring Android's
+     * `deleteCloudFolderFromDrive`: the executor publishes a tombstone so
+     * other devices observe the deletion.
+     */
+    fun deleteIosCloudFolderFromDrive(rootId: String) {
+        val normalized = rootId.trim().takeIf { it.isNotBlank() } ?: return
+        bridge.requestCloudFolderDelete(normalized, true)
+        refreshIosCloudFolderSyncState()
     }
 
     fun openIosFolderSync() {
@@ -3557,15 +3679,16 @@ private fun ReaderIosApp(
     }
 
     // P0 #1 foreground resume (Android WorkManager parity): Android re-gates
-    // workers on foreground via the head listener + auth collectors; iOS has
-    // no durable worker, so every foreground transition re-resolves pending
-    // cloud work through the same eligibility gates instead of dying with the
-    // backgrounded process. Purchase reconciliation stays foreground-only on
-    // both platforms (StoreKit/Billing re-query on foreground + auth change).
+    // workers on foreground via the head listener + auth collectors; the iOS
+    // executor re-runs discovery + pull on every foreground transition
+    // instead of dying with the backgrounded process. Purchase reconciliation
+    // stays foreground-only on both platforms (StoreKit/Billing re-query on
+    // foreground + auth change).
     LaunchedEffect(bridge.appLifecycleState.eventId) {
         if (!bridge.appLifecycleState.isActive) return@LaunchedEffect
         refreshIosCloudFolderSyncState()
         requestCloudSyncIfEligible()
+        bridge.requestCloudFolderSync("pull", null, false)
     }
 
     // Account switches reload the per-account folder selection, mirroring
@@ -3573,6 +3696,27 @@ private fun ReaderIosApp(
     LaunchedEffect(iosAccountId) {
         cloudFolderSelection = IosCloudFolderSyncPrefs.loadSelection(iosAccountId)
         refreshIosCloudFolderSyncState()
+    }
+
+    // Arm the executor's second-line eligibility gate (account + Pro + sync),
+    // mirroring Android's in-worker re-gate before every run.
+    LaunchedEffect(iosAccountId, state.isProUser, state.isSyncEnabled) {
+        bridge.armFolderSyncExecution(
+            iosAccountId != null && state.isProUser && state.isSyncEnabled,
+        )
+    }
+
+    // Register every local folder as a logical root + LOCAL_MIRROR binding
+    // (Android `registerLocalCloudFolders` parity). Registration is not
+    // selection: unselected roots stay inert until the user opts in.
+    LaunchedEffect(state.syncedFolders, iosAccountId, state.isProUser) {
+        if (iosAccountId == null || !state.isProUser) return@LaunchedEffect
+        state.syncedFolders
+            .filterNot { it.isCloudPlaceholder }
+            .mapNotNull { folder ->
+                folder.cloudRootId?.trim()?.takeIf { it.isNotBlank() }?.let { it to folder.name }
+            }
+            .forEach { (rootId, name) -> bridge.requestCloudFolderBind(rootId, name) }
     }
 
     @Composable
@@ -4029,6 +4173,7 @@ private fun ReaderIosApp(
                     uriString = "ios-local-folder://${scan.folderName.normalizedId()}",
                     name = scan.folderName,
                     lastScanTime = 0L,
+                    cloudRootId = newIosCloudRootId(),
                 )
             val syncResult = LocalFolderSyncEngine.syncFolder(
                 state = state,
@@ -5258,20 +5403,20 @@ private fun ReaderIosApp(
                     IosUtilityScreen.FOLDER_SYNC -> {
                         val folderOptions = projectCloudFolderSyncOptions(
                             localFolders = state.syncedFolders.map { it.toLocalBindingView() },
-                            repositoryRoots = cloudFolderRoots,
-                            deviceBindings = cloudFolderBindings,
-                            syncProgress = cloudFolderProgress,
+                            repositoryRoots = bridge.cloudFolderRootsState,
+                            deviceBindings = bridge.cloudFolderBindingsState,
+                            syncProgress = bridge.cloudFolderProgressState,
                         )
                         val folderUiState = CloudFolderSyncSettingsUiState(
                             selection = cloudFolderSelection,
                             folders = folderOptions,
-                            conflicts = cloudFolderConflicts,
+                            conflicts = bridge.cloudFolderConflictsState,
                         ).normalized()
                         IosCloudFolderSyncScreen(
                             uiState = folderUiState,
                             isSyncEnabled = state.isSyncEnabled,
                             isProUser = state.isProUser,
-                            isLoading = isCloudFolderLoading,
+                            isLoading = false,
                             onBack = { utilityScreen = null },
                             onSelectionChange = ::setIosCloudFolderSelection,
                             onConflictResolution = ::resolveIosCloudFolderConflict,
@@ -5282,6 +5427,8 @@ private fun ReaderIosApp(
                             incomingPrompt = cloudFolderIncomingPrompt,
                             onIncomingChoice = ::recordIosIncomingCloudFolderChoice,
                             onDismissIncoming = ::dismissIosIncomingCloudFolderPrompt,
+                            onRemoveFromDevice = ::removeIosCloudFolderFromDevice,
+                            onDeleteFromDrive = ::deleteIosCloudFolderFromDrive,
                         )
                     }
                 }
@@ -7274,6 +7421,15 @@ private fun String.normalizedId(): String {
         .trim('_')
         .ifBlank { "file" }
 }
+
+/**
+ * Stable logical cloud-root identity for a newly added local folder.
+ * Mirrors Android's `cloudFolderRootId("android-root:UUID")` at folder
+ * creation: generated once, never derived from a local path (the same folder
+ * on another device has a different provider URI).
+ */
+private fun newIosCloudRootId(): String =
+    cloudFolderRootId("ios-root:${NSUUID.UUID().UUIDString}")
 
 private fun BookItem.cardTitle(): String {
     return title ?: displayName

@@ -1168,6 +1168,18 @@ final class LocalAccountController: NSObject, ObservableObject {
 
     /// The stable installation identifier is also needed by the settings
     /// bridge when Firebase modules are unavailable in a target.
+    /// Shared with the folder-sync executor (device binding identity).
+    func folderSyncDeviceID() -> String { cloudSyncDeviceID() }
+
+    /// Current Firebase UID for the folder-sync executor/store scope.
+    func folderSyncAccountID() -> String? {
+#if canImport(FirebaseAuth)
+        return Auth.auth().currentUser?.uid
+#else
+        return nil
+#endif
+    }
+
     private func cloudSyncDeviceID() -> String {
         if let existing = UserDefaults.standard.string(forKey: Self.syncDeviceIDKey) {
             return existing
@@ -1831,6 +1843,9 @@ final class LocalAccountController: NSObject, ObservableObject {
             return candidate.isEmpty ? "font-\(id).\(fileExtension)" : candidate
         }
     }
+
+    /// Shared with the folder-sync executor (Drive transport auth).
+    func folderSyncAccessToken() async throws -> String { try await googleDriveAccessToken() }
 
     private func googleDriveAccessToken() async throws -> String {
         guard googleDriveAuthorized, let user = GIDSignIn.sharedInstance.currentUser else {

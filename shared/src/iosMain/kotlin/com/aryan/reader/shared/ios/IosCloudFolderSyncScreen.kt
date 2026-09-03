@@ -18,6 +18,10 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -26,6 +30,7 @@ import com.aryan.reader.shared.CloudFolderConflictResolution
 import com.aryan.reader.shared.CloudFolderConflictUiItem
 import com.aryan.reader.shared.CloudFolderIncomingChoice
 import com.aryan.reader.shared.CloudFolderIncomingFolderPrompt
+import com.aryan.reader.shared.CloudFolderSyncFolderOption
 import com.aryan.reader.shared.CloudFolderSyncSelection
 import com.aryan.reader.shared.CloudFolderSyncSettingsUiState
 import com.aryan.reader.shared.ui.readerString
@@ -61,7 +66,10 @@ internal fun IosCloudFolderSyncScreen(
     incomingPrompt: CloudFolderIncomingFolderPrompt?,
     onIncomingChoice: (CloudFolderIncomingFolderPrompt, CloudFolderIncomingChoice) -> Unit,
     onDismissIncoming: () -> Unit,
+    onRemoveFromDevice: (String) -> Unit = {},
+    onDeleteFromDrive: (String) -> Unit = {},
 ) {
+    var pendingFolderAction by remember { mutableStateOf<CloudFolderSyncFolderOption?>(null) }
     IosUtilityPage(
         title = readerString("settings_folder_sync_title", "Folder sync"),
         onBack = onBack,
@@ -171,6 +179,11 @@ internal fun IosCloudFolderSyncScreen(
                                         onSelectionChange(next.selection.normalized())
                                     },
                                 )
+                                if (option.isBoundLocally) {
+                                    TextButton(onClick = { pendingFolderAction = option }) {
+                                        Text(readerString("settings_folder_sync_manage", "Manage"))
+                                    }
+                                }
                             }
                         }
                     }
@@ -237,6 +250,46 @@ internal fun IosCloudFolderSyncScreen(
                 }
             },
             onDismiss = onDismissIncoming,
+        )
+    }
+
+    pendingFolderAction?.let { option ->
+        AlertDialog(
+            onDismissRequest = { pendingFolderAction = null },
+            title = { Text(option.normalizedDisplayName) },
+            text = {
+                Text(
+                    readerString(
+                        "settings_folder_sync_manage_desc",
+                        "Remove this folder from this device, or delete it from Drive for all devices.",
+                    )
+                )
+            },
+            confirmButton = {
+                Column {
+                    TextButton(
+                        onClick = {
+                            pendingFolderAction = null
+                            onRemoveFromDevice(option.normalizedRootId)
+                        },
+                    ) {
+                        Text(readerString("settings_folder_sync_remove_device", "Remove from this device"))
+                    }
+                    TextButton(
+                        onClick = {
+                            pendingFolderAction = null
+                            onDeleteFromDrive(option.normalizedRootId)
+                        },
+                    ) {
+                        Text(readerString("settings_folder_sync_delete_drive", "Delete from Drive"))
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingFolderAction = null }) {
+                    Text(readerString("action_cancel", "Cancel"))
+                }
+            },
         )
     }
 }
