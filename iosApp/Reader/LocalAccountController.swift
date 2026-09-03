@@ -1475,10 +1475,10 @@ final class LocalAccountController: NSObject, ObservableObject {
                 [
                     "bookId": bookID,
                     "shelfId": shelfID,
-                    // Kotlin Long bridges as Int64; the nullable input goes
-                    // through NSNumber?.
+                    // Kotlin Long? bridges as KotlinLong? (not NSNumber?);
+                    // wrap the locally known Int64 clock like ContentView.swift does.
                     "addedAt": CloudLibrarySnapshotMergeKt.sharedShelfRefAddedAt(
-                        existingAddedAt: localAddedAtByBookID[bookID] as NSNumber?,
+                        existingAddedAt: localAddedAtByBookID[bookID].map { KotlinLong(longLong: $0) },
                         shelfClock: clock,
                         index: Int32(index)
                     ),

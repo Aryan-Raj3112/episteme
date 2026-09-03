@@ -5247,18 +5247,19 @@ private fun ReaderIosApp(
                                     SharedSettingsAction.PDF_FILENAME_DISPLAY_NAME,
                                     SharedSettingsAction.HIDE_READER_AI -> Unit
                                     SharedSettingsAction.FOLDER_SYNC -> openIosFolderSync()
+                                    // Intentional platform differences (IosSettingsParity.kt): hidden by the
+                                    // shared settings model (includeScreenCaptureProtection=false,
+                                    // bookCacheMaintenanceAvailable=false), so unreachable — no error toast.
                                     SharedSettingsAction.SCREEN_CAPTURE_PROTECTION,
-                                    SharedSettingsAction.CLEAR_BOOK_CACHE -> {
-                                        showMessage("${action.name.lowercase().replace('_', ' ')} is not available on iOS")
-                                    }
+                                    SharedSettingsAction.CLEAR_BOOK_CACHE -> Unit
                                     SharedSettingsAction.CLEAR_CLOUD_LOCAL_DATA -> {
                                         showClearCloudLocalDataConfirmation = true
                                     }
+                                    // DEBUG_ONLY per IosSettingsParity.kt: hidden unless debug Android,
+                                    // so unreachable on iOS — no error toast.
                                     SharedSettingsAction.TEST_PANEL_DETECTION,
                                     SharedSettingsAction.TEST_SPEECH_BUBBLE_DETECTION,
-                                    SharedSettingsAction.DEBUG_ACTIONS -> {
-                                        showMessage("${action.name.lowercase().replace('_', ' ')} is not available on iOS")
-                                    }
+                                    SharedSettingsAction.DEBUG_ACTIONS -> Unit
                                     SharedSettingsAction.EXPORT_LOGS -> {
                                         if (!bridge.exportDiagnosticLogs()) {
                                             showMessage("Unable to export diagnostic logs")

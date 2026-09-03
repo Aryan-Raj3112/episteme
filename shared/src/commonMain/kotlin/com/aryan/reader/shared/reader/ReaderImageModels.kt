@@ -276,3 +276,18 @@ private fun String.sanitizedReaderImageFileBase(): String {
         .trim('.')
         .take(80)
 }
+
+/**
+ * Shared-first SVG source check for EPUB image thumbnails (Android benchmark parity).
+ * Mirrors the decode path in SharedMobileEpubNativeImage: data-URI mime or .svg extension.
+ */
+internal fun String.isSharedEpubSvgSource(): Boolean {
+    if (startsWith("data:", ignoreCase = true)) {
+        val comma = indexOf(',')
+        if (comma <= 5) return false
+        return substring(5, comma).substringBefore(';')
+            .equals("image/svg+xml", ignoreCase = true)
+    }
+    return substringBefore('?').substringBefore('#')
+        .endsWith(".svg", ignoreCase = true)
+}

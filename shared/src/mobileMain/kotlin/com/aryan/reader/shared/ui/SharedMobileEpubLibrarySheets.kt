@@ -46,7 +46,10 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -55,10 +58,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import com.aryan.reader.shared.ReaderExternalLookupAction
 import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.HighlightColor
@@ -69,6 +76,7 @@ import com.aryan.reader.shared.deduplicatedReaderBookmarks
 import com.aryan.reader.shared.readerHighlightListActions
 import com.aryan.reader.shared.reader.ReaderBookmark
 import com.aryan.reader.shared.reader.ReaderImageReference
+import com.aryan.reader.shared.reader.isSharedEpubSvgSource
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.ReaderSpreadLayout
 import com.aryan.reader.shared.reader.SharedEpubBook
@@ -668,6 +676,12 @@ internal fun SharedMobileEpubImages(
             NavigationDrawerItem(
                 label = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
+                        // Android benchmark: EpubReaderDrawer.kt:689-693 leading 72x56 thumbnail.
+                        SharedMobileEpubImageThumbnail(
+                            image = image,
+                            modifier = Modifier.size(width = 72.dp, height = 56.dp)
+                        )
+                        Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {
                         Text(image.displayTitle, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text(
@@ -699,3 +713,47 @@ internal fun SharedMobileEpubImages(
         }
     }
 }
+
+/**
+ * Android benchmark parity: EpubReaderDrawer.EpubReaderImageThumbnail (72x56, rounded 6dp,
+ * surfaceVariant fill, Fit + index fallback). Shared-first so Android + iOS share the same
+ * leading-content behavior; decoding reuses the shared [decodeSharedMobileEpubImage] actuals.
+ */
+@Composable
+private fun SharedMobileEpubImageThumbnail(
+    image: ReaderImageReference,
+    modifier: Modifier = Modifier
+) {
+    var bitmap by remember(image.source) { mutableStateOf<ImageBitmap?>(null) }
+    LaunchedEffect(image.source) {
+        bitmap = withContext(Dispatchers.Default) {
+            val bytes = image.downloadBytes() ?: return@withContext null
+            decodeSharedMobileEpubImage(bytes, image.source.isSharedEpubSvgSource())
+        }
+    }
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(6.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)
+    ) {
+        val current = bitmap
+        if (current != null) {
+            Image(
+                bitmap = current,
+                contentDescription = null,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxSize()
+            )
+        } else {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(
+                    text = (image.index + 1).toString(),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+
