@@ -274,6 +274,23 @@ import com.aryan.reader.shared.reader.sharedEpubOpenTraceElapsedMs
 import com.aryan.reader.shared.reader.sharedEpubOpenTraceMark
 import com.aryan.reader.shared.reader.sharedEpubOpenTraceMs
 import com.aryan.reader.shared.ui.SharedMobilePdfNativeAction
+import com.aryan.reader.shared.CloudFolderConflictResolution
+import com.aryan.reader.shared.CloudFolderConflictUiItem
+import com.aryan.reader.shared.CloudFolderDeviceBinding
+import com.aryan.reader.shared.CloudFolderIncomingChoice
+import com.aryan.reader.shared.CloudFolderIncomingFolderPrompt
+import com.aryan.reader.shared.CloudFolderMaterializationMode
+import com.aryan.reader.shared.CloudFolderRoot
+import com.aryan.reader.shared.CloudFolderSyncFolderOption
+import com.aryan.reader.shared.CloudFolderSyncProgress
+import com.aryan.reader.shared.CloudFolderSyncSelection
+import com.aryan.reader.shared.CloudFolderSyncSettingsUiState
+import com.aryan.reader.shared.initialAcknowledgedRevisionAfterIncomingChoice
+import com.aryan.reader.shared.nextSelectionAfterIncomingChoice
+import com.aryan.reader.shared.projectCloudFolderSyncOptions
+import com.aryan.reader.shared.selectCloudFolderIncomingPrompt
+import com.aryan.reader.shared.shouldPullAfterIncomingChoice
+import com.aryan.reader.shared.toLocalBindingView
 import com.aryan.reader.shared.PdfSplitPane
 import com.aryan.reader.shared.PdfSplitWorkspaceAction
 import com.aryan.reader.shared.PdfSplitWorkspaceState
@@ -1449,6 +1466,7 @@ private enum class IosUtilityScreen {
     FEEDBACK,
     SUPPORT,
     ABOUT,
+    FOLDER_SYNC,
 }
 
 data class IosImportedFile(
@@ -2737,6 +2755,24 @@ private fun ReaderIosApp(
     var pendingCloudSyncSetup by remember { mutableStateOf(false) }
     var languageReturnScreen by remember { mutableStateOf<IosUtilityScreen?>(null) }
     var settingsQuery by remember { mutableStateOf("") }
+    // Cloud-folder sync surface (P0 #4). Android owns this in MainViewModel +
+    // CloudFolderSyncPrefs; iOS mirrors the same per-account selection +
+    // pending/discovered prompt durability via IosCloudFolderSyncPrefs. The
+    // Drive manifest executor itself still runs through the shared cloud-sync
+    // channel (LocalAccountController); this state only owns the selection,
+    // conflict, and incoming-prompt surface so the settings entry is no
+    // longer a no-op.
+    val iosAccountId = bridge.accountState.uid?.trim()?.takeIf { it.isNotBlank() }
+    var cloudFolderSelection by remember(iosAccountId) {
+        mutableStateOf(IosCloudFolderSyncPrefs.loadSelection(iosAccountId))
+    }
+    var cloudFolderRoots by remember { mutableStateOf<List<CloudFolderRoot>>(emptyList()) }
+    var cloudFolderBindings by remember { mutableStateOf<Map<String, CloudFolderDeviceBinding>>(emptyMap()) }
+    var cloudFolderProgress by remember { mutableStateOf<Map<String, CloudFolderSyncProgress>>(emptyMap()) }
+    var cloudFolderConflicts by remember { mutableStateOf<List<CloudFolderConflictUiItem>>(emptyList()) }
+    var cloudFolderIncomingPrompt by remember { mutableStateOf<CloudFolderIncomingFolderPrompt?>(null) }
+    var isCloudFolderLoading by remember { mutableStateOf(false) }
+    var pendingFolderBindPrompt by remember { mutableStateOf<CloudFolderIncomingFolderPrompt?>(null) }
 
     fun navigateIosSettingsUp() {
         if (settingsQuery.isNotBlank()) {
@@ -3396,6 +3432,149 @@ private fun ReaderIosApp(
         }
     }
 
+    /**
+     * Android parity (MainViewModel.refreshCloudFolderSyncState): rebuild the
+     * settings projection from local bindings + repository state. iOS has no
+     * Drive manifest repository yet, so roots/bindings stay empty until the
+     * cloud executor lands; the projection still exercises the same shared
+     * sorting/selection/conflict math so the surface cannot drift.
+     */
+    fun refreshIosCloudFolderSyncState() {
+        val accountId = bridge.accountState.uid?.trim()?.takeIf { it.isNotBlank() }
+        cloudFolderSelection = IosCloudFolderSyncPrefs.loadSelection(accountId)
+        if (accountId == null) {
+            cloudFolderRoots = emptyList()
+            cloudFolderBindings = emptyMap()
+            cloudFolderProgress = emptyMap()
+            cloudFolderConflicts = emptyList()
+            cloudFolderIncomingPrompt = null
+            return
+        }
+        isCloudFolderLoading = true
+        val pendingIds = IosCloudFolderSyncPrefs.pendingIncomingRootIds(accountId)
+        cloudFolderIncomingPrompt = selectCloudFolderIncomingPrompt(cloudFolderRoots, pendingIds)
+        isCloudFolderLoading = false
+    }
+
+    /**
+     * Android parity (MainViewModel.setCloudFolderSyncSelection): persist the
+     * normalized selection, then queue a cloud pass when sync is enabled so
+     * the persisted policy is observed even if the process dies after the
+     * dialog closes. The local-folder re-registration step is a no-op on iOS
+     * until the Drive executor lands; selection itself is durable now.
+     */
+    fun setIosCloudFolderSelection(selection: CloudFolderSyncSelection) {
+        val accountId = bridge.accountState.uid?.trim()?.takeIf { it.isNotBlank() } ?: return
+        if (!state.isProUser) return
+        val normalized = selection.normalized()
+        IosCloudFolderSyncPrefs.saveSelection(accountId, normalized)
+        cloudFolderSelection = normalized
+        if (state.isSyncEnabled) {
+            requestCloudSyncIfEligible()
+        }
+    }
+
+    /**
+     * Android parity (MainViewModel.recordIncomingCloudFolderChoice): persist
+     * the materialization decision without ever uploading a local URI, opt
+     * into sync selection for materializing choices, dismiss the prompt, and
+     * pull when eligible. BIND_LOCAL_FOLDER completes after the folder picker
+     * returns; call [completeIosFolderBindChoice] then.
+     */
+    fun recordIosIncomingCloudFolderChoice(
+        prompt: CloudFolderIncomingFolderPrompt,
+        choice: CloudFolderIncomingChoice,
+    ) {
+        val accountId = bridge.accountState.uid?.trim()?.takeIf { it.isNotBlank() } ?: return
+        if (!state.isProUser) return
+        if (choice == CloudFolderIncomingChoice.BIND_LOCAL_FOLDER) {
+            pendingFolderBindPrompt = prompt
+            onImportFolder()
+            return
+        }
+        cloudFolderSelection = nextSelectionAfterIncomingChoice(
+            current = cloudFolderSelection,
+            promptRootId = prompt.rootId,
+            choice = choice,
+        ).also { IosCloudFolderSyncPrefs.saveSelection(accountId, it) }
+        IosCloudFolderSyncPrefs.dismissIncomingPrompt(accountId, prompt.rootId, prompt.root.manifestRevision)
+        cloudFolderIncomingPrompt = null
+        if (shouldPullAfterIncomingChoice(choice, state.isSyncEnabled)) {
+            requestCloudSyncIfEligible()
+        }
+        refreshIosCloudFolderSyncState()
+    }
+
+    /** Completes a deferred BIND_LOCAL_FOLDER choice after the picker returns. */
+    fun completeIosFolderBindChoice(folderName: String) {
+        val prompt = pendingFolderBindPrompt ?: return
+        pendingFolderBindPrompt = null
+        val accountId = bridge.accountState.uid?.trim()?.takeIf { it.isNotBlank() } ?: return
+        cloudFolderSelection = nextSelectionAfterIncomingChoice(
+            current = cloudFolderSelection,
+            promptRootId = prompt.rootId,
+            choice = CloudFolderIncomingChoice.BIND_LOCAL_FOLDER,
+        ).also { IosCloudFolderSyncPrefs.saveSelection(accountId, it) }
+        IosCloudFolderSyncPrefs.dismissIncomingPrompt(accountId, prompt.rootId, prompt.root.manifestRevision)
+        cloudFolderIncomingPrompt = null
+        if (state.isSyncEnabled) {
+            requestCloudSyncIfEligible()
+        }
+        refreshIosCloudFolderSyncState()
+    }
+
+    fun dismissIosIncomingCloudFolderPrompt() {
+        val prompt = cloudFolderIncomingPrompt ?: return
+        val accountId = bridge.accountState.uid?.trim()?.takeIf { it.isNotBlank() } ?: run {
+            cloudFolderIncomingPrompt = null
+            return
+        }
+        // "Not now" keeps a Folders placeholder: mirror Android's snooze,
+        // which survives the next discovery pass instead of re-offering.
+        IosCloudFolderSyncPrefs.snoozeIncomingPrompt(accountId, prompt.rootId, prompt.root.manifestRevision)
+        cloudFolderIncomingPrompt = null
+    }
+
+    fun resolveIosCloudFolderConflict(
+        conflict: CloudFolderConflictUiItem,
+        resolution: CloudFolderConflictResolution,
+    ) {
+        // The Drive executor revalidates the snapshot before applying, so a
+        // newer revision surfaces a fresh conflict instead of applying a stale
+        // choice. Until the executor lands, record the decision locally and
+        // refresh; the durable record format already matches Android.
+        cloudFolderConflicts = cloudFolderConflicts.map {
+            if (it.conflictId == conflict.conflictId) it.copy(resolution = resolution) else it
+        }
+        if (state.isSyncEnabled) {
+            requestCloudSyncIfEligible()
+        }
+    }
+
+    fun openIosFolderSync() {
+        refreshIosCloudFolderSyncState()
+        utilityScreen = IosUtilityScreen.FOLDER_SYNC
+    }
+
+    // P0 #1 foreground resume (Android WorkManager parity): Android re-gates
+    // workers on foreground via the head listener + auth collectors; iOS has
+    // no durable worker, so every foreground transition re-resolves pending
+    // cloud work through the same eligibility gates instead of dying with the
+    // backgrounded process. Purchase reconciliation stays foreground-only on
+    // both platforms (StoreKit/Billing re-query on foreground + auth change).
+    LaunchedEffect(bridge.appLifecycleState.eventId) {
+        if (!bridge.appLifecycleState.isActive) return@LaunchedEffect
+        refreshIosCloudFolderSyncState()
+        requestCloudSyncIfEligible()
+    }
+
+    // Account switches reload the per-account folder selection, mirroring
+    // Android's CloudFolderSyncPrefs.load(accountId) per auth emission.
+    LaunchedEffect(iosAccountId) {
+        cloudFolderSelection = IosCloudFolderSyncPrefs.loadSelection(iosAccountId)
+        refreshIosCloudFolderSyncState()
+    }
+
     @Composable
     fun IosAppDrawerContent(
         capabilities: MobileAppDrawerCapabilities,
@@ -3864,6 +4043,13 @@ private fun ReaderIosApp(
                     state.syncedFolders.filterNot { it.name == scan.folderName } + syncedFolder
                 ).sortedBy { it.name.lowercase() },
             )
+            // Completes a deferred BIND_LOCAL_FOLDER incoming choice once the
+            // picker folder has been indexed locally. Mirrors Android, where
+            // the SAF grant returns to AppNavigation and then persists the
+            // LOCAL_MIRROR binding + selection + pull.
+            if (pendingFolderBindPrompt != null) {
+                completeIosFolderBindChoice(scan.folderName)
+            }
             if (syncResult.stats.newBooks > 0) {
                 selectMainPage(SharedMobileMainDestination.LIBRARY)
                 selectLibraryTab(SharedMobileLibraryTab.BOOKS)
@@ -4710,16 +4896,25 @@ private fun ReaderIosApp(
                             onDestinationChange = { settingsDestination = it },
                             onBack = { navigateIosSettingsUp() },
                             onAction = { action ->
-                                val portableMutation = planMobileSettingsMutation(
-                                    action = action,
-                                    state = MobileSettingsMutationState(
-                                        tabsEnabled = state.isTabsEnabled,
-                                        strictFileFilterEnabled = state.useStrictFileFilter,
-                                        pdfFileNameAsDisplayName = state.usePdfFileNameAsDisplayName,
-                                        folderSyncEnabled = state.isFolderSyncEnabled,
-                                        hideReaderAi = state.hideReaderAi,
-                                    ),
-                                )
+                                // Android parity (SettingsScreen.kt:385-398): FOLDER_SYNC
+                                // opens the cloud-folder selection surface and
+                                // nulls the legacy toggle mutation. Toggling
+                                // the local-indexing switch merely by opening
+                                // the dialog would diverge from Android.
+                                val portableMutation = if (action == SharedSettingsAction.FOLDER_SYNC) {
+                                    null
+                                } else {
+                                    planMobileSettingsMutation(
+                                        action = action,
+                                        state = MobileSettingsMutationState(
+                                            tabsEnabled = state.isTabsEnabled,
+                                            strictFileFilterEnabled = state.useStrictFileFilter,
+                                            pdfFileNameAsDisplayName = state.usePdfFileNameAsDisplayName,
+                                            folderSyncEnabled = state.isFolderSyncEnabled,
+                                            hideReaderAi = state.hideReaderAi,
+                                        ),
+                                    )
+                                }
                                 when (portableMutation) {
                                     is MobileSettingsMutation.SetTabsEnabled -> {
                                         state = state.reduce(AppAction.TabsEnabledChanged(portableMutation.enabled))
@@ -4806,8 +5001,8 @@ private fun ReaderIosApp(
                                     SharedSettingsAction.TABS_TOGGLE,
                                     SharedSettingsAction.STRICT_FILE_FILTER,
                                     SharedSettingsAction.PDF_FILENAME_DISPLAY_NAME,
-                                    SharedSettingsAction.HIDE_READER_AI,
-                                    SharedSettingsAction.FOLDER_SYNC -> Unit
+                                    SharedSettingsAction.HIDE_READER_AI -> Unit
+                                    SharedSettingsAction.FOLDER_SYNC -> openIosFolderSync()
                                     SharedSettingsAction.SCREEN_CAPTURE_PROTECTION,
                                     SharedSettingsAction.CLEAR_BOOK_CACHE -> {
                                         showMessage("${action.name.lowercase().replace('_', ' ')} is not available on iOS")
@@ -5060,6 +5255,35 @@ private fun ReaderIosApp(
                             modifier = Modifier.fillMaxSize(),
                         )
                     }
+                    IosUtilityScreen.FOLDER_SYNC -> {
+                        val folderOptions = projectCloudFolderSyncOptions(
+                            localFolders = state.syncedFolders.map { it.toLocalBindingView() },
+                            repositoryRoots = cloudFolderRoots,
+                            deviceBindings = cloudFolderBindings,
+                            syncProgress = cloudFolderProgress,
+                        )
+                        val folderUiState = CloudFolderSyncSettingsUiState(
+                            selection = cloudFolderSelection,
+                            folders = folderOptions,
+                            conflicts = cloudFolderConflicts,
+                        ).normalized()
+                        IosCloudFolderSyncScreen(
+                            uiState = folderUiState,
+                            isSyncEnabled = state.isSyncEnabled,
+                            isProUser = state.isProUser,
+                            isLoading = isCloudFolderLoading,
+                            onBack = { utilityScreen = null },
+                            onSelectionChange = ::setIosCloudFolderSelection,
+                            onConflictResolution = ::resolveIosCloudFolderConflict,
+                            onBindLocalFolder = { prompt ->
+                                pendingFolderBindPrompt = prompt
+                                onImportFolder()
+                            },
+                            incomingPrompt = cloudFolderIncomingPrompt,
+                            onIncomingChoice = ::recordIosIncomingCloudFolderChoice,
+                            onDismissIncoming = ::dismissIosIncomingCloudFolderPrompt,
+                        )
+                    }
                 }
                 return@Surface
             }
@@ -5099,7 +5323,7 @@ private fun ReaderIosApp(
                                         state = state.withMobileLibrarySearchActive(true)
                                     }
                                     override fun navigateToFolderSync() {
-                                        onImportFolder()
+                                        openIosFolderSync()
                                     }
                                     override fun refresh() {
                                         refreshFolders()
@@ -6605,7 +6829,7 @@ private fun NSData.toByteArray(): ByteArray {
 }
 
 @Composable
-private fun IosUtilityPage(
+internal fun IosUtilityPage(
     title: String,
     onBack: () -> Unit,
     content: @Composable () -> Unit,

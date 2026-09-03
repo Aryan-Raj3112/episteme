@@ -262,13 +262,37 @@ struct ContentView: View {
                 }
             }
             bridge.setUnifiedDiagnosticsProvider { captureUnifiedLogEntries() }
+            // P0 #1: BG task bodies run the same foreground-only reconciliation
+            // Android does (outbox retry + StoreKit re-query, no background
+            // purchase queue). The shared retry math lives in
+            // SharedBackgroundSyncPolicy; Swift only owns scheduling.
+            IosBackgroundSync.refreshHandler = { [localAccount, localStoreKit] in
+                await localAccount.handleBackgroundRefresh()
+                await localStoreKit.handleBackgroundRefresh()
+            }
+            IosBackgroundSync.processingHandler = { [localAccount] in
+                await localAccount.handleBackgroundRefresh()
+            }
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
+                IosBackgroundSync.endGrace()
                 bridge.updateAppActive(active: true)
                 refreshImportedFolders(bridge: bridge)
+                // Android parity: Billing re-queries on every foreground/auth
+                // emission (no Worker). Reconcile StoreKit + re-arm the cloud
+                // outbox on every foreground transition.
+                Task { @MainActor in
+                    await localStoreKit.handleForegroundResume()
+                    localAccount.handleForegroundResume()
+                }
             } else {
                 bridge.updateAppActive(active: false)
+                // Give in-flight cloud sync a grace period to finish, mirroring
+                // WorkManager continuing after the activity stops. Sync work
+                // is idempotent so expiration mid-pass is safe to retry.
+                IosBackgroundSync.beginGrace()
+                IosBackgroundSync.scheduleRefresh()
             }
         }
     }

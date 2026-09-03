@@ -250,6 +250,21 @@ final class LocalStoreKitController: ObservableObject {
         return try JSONDecoder().decode(T.self, from: data)
     }
 
+    /// Foreground + BGTask entry point. Android reconciles purchases only in
+    /// the foreground (BillingClient init + every auth emission, no Worker);
+    /// iOS does the same: re-query unfinished transactions + server
+    /// entitlements on foreground/auth change instead of a background queue.
+    func handleForegroundResume() async {
+        await reconcileUnfinishedTransactions()
+        await refreshServerEntitlements()
+    }
+
+    /// BGTaskScheduler handler body. Kept read-only/idempotent; the live
+    /// users/{uid} listener still owns mid-session downgrades.
+    func handleBackgroundRefresh() async {
+        await refreshServerEntitlements()
+    }
+
     private func refreshServerEntitlements() async {
 #if canImport(FirebaseFirestore) && canImport(FirebaseAuth)
         guard let uid = Auth.auth().currentUser?.uid else {

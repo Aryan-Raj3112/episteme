@@ -534,6 +534,23 @@ final class LocalAccountController: NSObject, ObservableObject {
 #endif
     }
 
+    /// Foreground + BGTask entry point. Re-arms the durable outbox retry when
+    /// the app returns from background (Android: WorkManager re-gates on
+    /// foreground via head listener + auth collectors). No logic change: just
+    /// re-invokes the existing retry scheduler when no sync is in flight.
+    func handleForegroundResume() {
+        if !cloudSyncInFlight {
+            scheduleCloudSyncRetryIfNeeded()
+        }
+    }
+
+    /// BGTaskScheduler handler body. Runs inside a BGAppRefreshTask; the
+    /// caller owns setTaskCompleted. Kept idempotent like Android's
+    /// resetRunningOutbox-per-run so expiration mid-pass is safe to retry.
+    func handleBackgroundRefresh() async {
+        handleForegroundResume()
+    }
+
     private func scheduleCloudSyncRetryIfNeeded() {
         cloudSyncRetryTask?.cancel()
         guard loadCloudSyncOutbox() != nil else { return }
