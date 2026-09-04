@@ -9,6 +9,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -30,6 +31,10 @@ import androidx.compose.ui.text.ParagraphStyle
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.foundation.text.InlineTextContent
+import androidx.compose.foundation.text.appendInlineContent
+import androidx.compose.ui.text.Placeholder
+import androidx.compose.ui.text.PlaceholderVerticalAlign
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
@@ -44,6 +49,7 @@ import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.sp
 import com.aryan.reader.paginatedreader.CssStyle
+import com.aryan.reader.paginatedreader.MATH_PLACEHOLDER_CHAR
 import com.aryan.reader.paginatedreader.BlockStyle
 import com.aryan.reader.paginatedreader.BorderStyle
 import com.aryan.reader.paginatedreader.CssParser
@@ -61,6 +67,7 @@ internal fun SharedSemanticTextView(
     block: SemanticTextBlock,
     page: ReaderPage,
     modifier: Modifier,
+    imageContent: (@Composable (com.aryan.reader.paginatedreader.SemanticImage, Modifier) -> Unit)?,
     background: Color,
     foreground: Color,
     searchQuery: String,
@@ -89,6 +96,10 @@ internal fun SharedSemanticTextView(
         foreground = foreground
     )
     val textColor = textStyle.color.takeIf { it.isSpecified } ?: foreground
+    val inlineMathContent = block.sharedNativeInlineMathContents(
+        blockFontSizeSp = textStyle.fontSize.value,
+        imageContent = imageContent
+    )
     SharedNativeInteractiveText(
         text = block.toAnnotatedString(
             query = searchQuery,
@@ -133,6 +144,7 @@ internal fun SharedSemanticTextView(
         onLinkClicked = onLinkClicked,
         selectionLayouts = selectionLayouts,
         onTextLaidOut = onTextLaidOut,
+        inlineContent = inlineMathContent,
         fitLabel = SharedNativeTextFitLabel(
             page = page,
             blockIndex = block.blockIndex,
@@ -214,9 +226,28 @@ internal fun SemanticTextBlock.toAnnotatedString(
     isDarkTheme: Boolean
 ): AnnotatedString {
     val normalized = query.trim()
+    val mathSpans = spans.filter { it.isInlineMath }
     return buildAnnotatedString {
         withStyle(sharedNativeParagraphStyle(fallbackTextAlign)) {
-            append(text)
+            // The parser embeds one MATH_PLACEHOLDER_CHAR per inline equation in
+            // `text`; re-register each position via appendInlineContent so the
+            // layout reserves placeholder space and the composable map matches.
+            if (mathSpans.isEmpty()) {
+                append(text)
+            } else {
+                var cursor = 0
+                mathSpans.forEachIndexed { index, span ->
+                    val start = span.start.coerceIn(0, text.length)
+                    val end = span.end.coerceIn(start, text.length)
+                    if (start > cursor) append(text, cursor, start)
+                    appendInlineContent(
+                        id = sharedNativeInlineMathId(index),
+                        alternateText = MATH_PLACEHOLDER_CHAR
+                    )
+                    cursor = end.coerceAtLeast(cursor)
+                }
+                if (cursor < text.length) append(text, cursor, text.length)
+            }
         }
         spans.forEach { span ->
             val start = span.start.coerceIn(0, text.length)
@@ -701,5 +732,138 @@ internal fun sharedNativeBaselineShift(tag: String?, verticalAlign: String?): Ba
         "sub", "subscript" -> BaselineShift.Subscript
         "sup", "super", "superscript" -> BaselineShift.Superscript
         else -> null
+    }
+}
+
+private const val SHARED_NATIVE_INLINE_MATH_ID_PREFIX = "shared-native-math:"
+
+internal fun sharedNativeInlineMathId(index: Int): String = "$SHARED_NATIVE_INLINE_MATH_ID_PREFIX$index"
+
+/** One registered inline-math position: id, placeholder geometry and svg source. */
+internal data class SharedNativeInlineMathPlacement(
+    val id: String,
+    val placeholder: Placeholder,
+    val svg: String
+)
+
+/**
+ * Placeholder geometry for every inline-math span. MathJax SVGs carry ex-based
+ * width/height/vertical-align; 1ex ~= 0.5em against the current font size.
+ */
+internal fun SemanticTextBlock.sharedNativeInlineMathPlacements(
+    blockFontSizeSp: Float
+): List<SharedNativeInlineMathPlacement> {
+    val placements = mutableListOf<SharedNativeInlineMathPlacement>()
+    spans.forEachIndexed { index, span ->
+        val svg = span.mathSvg?.takeIf(String::isNotBlank) ?: return@forEachIndexed
+        val metrics = svg.sharedNativeInlineMathMetrics(blockFontSizeSp)
+        placements += SharedNativeInlineMathPlacement(
+            id = sharedNativeInlineMathId(index),
+            placeholder = Placeholder(
+                width = metrics.widthSp.sp,
+                height = metrics.heightSp.sp,
+                placeholderVerticalAlign = PlaceholderVerticalAlign.TextCenter
+            ),
+            svg = svg
+        )
+    }
+    return placements
+}
+
+internal data class SharedNativeInlineMathMetrics(
+    val widthSp: Float,
+    val heightSp: Float
+)
+
+internal val inlineMathWidthRegex = Regex("""\bwidth="([0-9.]+)(ex|px|pt|em)"""")
+internal val inlineMathHeightRegex = Regex("""\bheight="([0-9.]+)(ex|px|pt|em)"""")
+
+internal fun String.sharedNativeInlineMathMetrics(fontSizeSp: Float): SharedNativeInlineMathMetrics {
+    fun toEm(valueText: String, unit: String): Float {
+        val value = valueText.toFloatOrNull() ?: return Float.NaN
+        return when (unit) {
+            "em" -> value
+            "ex" -> value * 0.5f
+            "px" -> value / 16f
+            "pt" -> value / 12f
+            else -> Float.NaN
+        }
+    }
+    val width = inlineMathWidthRegex.find(this)?.groupValues
+    val height = inlineMathHeightRegex.find(this)?.groupValues
+    val widthEm = width?.let { toEm(it[1], it[2]) }?.takeUnless(Float::isNaN) ?: 2f
+    val heightEm = height?.let { toEm(it[1], it[2]) }?.takeUnless(Float::isNaN) ?: 1f
+    return SharedNativeInlineMathMetrics(
+        widthSp = (widthEm * fontSizeSp).coerceAtLeast(4f),
+        heightSp = (heightEm * fontSizeSp).coerceAtLeast(6f)
+    )
+}
+
+
+/**
+ * Draws one inline math SVG inside the text line. Uses the platform
+ * `imageContent` renderer (Coil on Android) exactly like block-level math.
+ */
+@OptIn(kotlin.io.encoding.ExperimentalEncodingApi::class)
+@Composable
+internal fun SharedNativeInlineMathImage(
+    svg: String,
+    fontSizeSp: Float,
+    imageContent: (@Composable (com.aryan.reader.paginatedreader.SemanticImage, Modifier) -> Unit)?,
+    modifier: Modifier = Modifier
+) {
+    val metrics = svg.sharedNativeInlineMathMetrics(fontSizeSp)
+    if (imageContent == null) {
+        androidx.compose.foundation.layout.Box(modifier = modifier)
+        return
+    }
+    val image = remember(svg) {
+        val encoded = with(kotlin.io.encoding.Base64.Default) {
+            encode(svg.encodeToByteArray())
+        }
+        com.aryan.reader.paginatedreader.SemanticImage(
+            path = "data:image/svg+xml;base64,$encoded",
+            altText = null,
+            intrinsicWidth = metrics.widthSp,
+            intrinsicHeight = metrics.heightSp,
+            style = com.aryan.reader.paginatedreader.CssStyle(),
+            elementId = null,
+            cfi = null,
+            blockIndex = 0
+        )
+    }
+    imageContent(image, modifier)
+}
+
+/**
+ * `id -> InlineTextContent` map for this block's inline math spans. The ids
+ * match [sharedNativeInlineMathId] used while building the annotated string.
+ */
+@Composable
+internal fun SemanticTextBlock.sharedNativeInlineMathContents(
+    blockFontSizeSp: Float,
+    imageContent: (@Composable (com.aryan.reader.paginatedreader.SemanticImage, Modifier) -> Unit)?
+): Map<String, InlineTextContent> {
+    return remember(spans, blockFontSizeSp, imageContent) {
+        val map = mutableMapOf<String, InlineTextContent>()
+        spans.forEachIndexed { index, span ->
+            val svg = span.mathSvg?.takeIf(String::isNotBlank) ?: return@forEachIndexed
+            val metrics = svg.sharedNativeInlineMathMetrics(blockFontSizeSp)
+            map[sharedNativeInlineMathId(index)] = InlineTextContent(
+                placeholder = Placeholder(
+                    width = metrics.widthSp.sp,
+                    height = metrics.heightSp.sp,
+                    placeholderVerticalAlign = PlaceholderVerticalAlign.TextCenter
+                )
+            ) { _ ->
+                SharedNativeInlineMathImage(
+                    svg = svg,
+                    fontSizeSp = blockFontSizeSp,
+                    imageContent = imageContent,
+                    modifier = Modifier
+                )
+            }
+        }
+        map
     }
 }

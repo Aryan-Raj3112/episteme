@@ -44,8 +44,19 @@ data class SemanticSpan(
     @ProtoNumber(3) val style: CssStyle,
     @ProtoNumber(4) val linkHref: String? = null,
     @ProtoNumber(5) val tag: String,
-    @ProtoNumber(6) val elementId: String? = null // Add this
-)
+    @ProtoNumber(6) val elementId: String? = null, // Add this
+    /**
+     * Inline math payload. When non-null the span covers exactly one
+     * [MATH_PLACEHOLDER_CHAR] inside the parent block's text and [mathSvg]
+     * holds the rendered `<svg>` markup to draw inline at that position.
+     */
+    @ProtoNumber(7) val mathSvg: String? = null
+) {
+    val isInlineMath: Boolean get() = mathSvg != null
+}
+
+/** Object replacement character used as the inline placeholder for math. */
+const val MATH_PLACEHOLDER_CHAR = "￼"
 
 fun SemanticBlock.withElementId(id: String): SemanticBlock {
     if (this.elementId != null) return this

@@ -75,6 +75,8 @@ private val semanticBlockDescendantTags = setOf(
     "main"
 )
 private val forcedStandaloneSemanticTags = setOf("img", "svg", "math-placeholder", "hr", "table")
+/** Inline math spans emitted by the Markdown pipeline (md4c `$...$`). */
+private val inlineMathSpanTags = setOf("span.math-inline", "span.math-display")
 private val nonRenderableHtmlTags = setOf("script", "style", "noscript", "template")
 
 interface HtmlResourceResolver {
@@ -336,7 +338,7 @@ private class SemanticHtmlParser(
     private fun Element.hasSemanticBlockDescendant(): Boolean {
         semanticBlockDescendantCache[this]?.let { return it }
 
-        if (anyChildElement { child -> child.tagName().lowercase() in semanticBlockDescendantTags }) {
+        if (anyChildElement { child -> child.tagName().lowercase() in semanticBlockDescendantTags && !child.isInlineMathSpan() }) {
             semanticBlockDescendantCache[this] = true
             return true
         }
@@ -363,7 +365,7 @@ private class SemanticHtmlParser(
 
             stack.removeLast()
             val hasSemanticDescendant = current.anyChildElement { child ->
-                child.tagName().lowercase() in semanticBlockDescendantTags ||
+                (child.tagName().lowercase() in semanticBlockDescendantTags && !child.isInlineMathSpan()) ||
                         semanticBlockDescendantCache[child] == true
             }
             semanticBlockDescendantCache[current] = hasSemanticDescendant
@@ -373,11 +375,17 @@ private class SemanticHtmlParser(
     }
 
     private fun Element.isEffectivelySemanticBlock(): Boolean {
+        if (isInlineMathSpan()) return false
         val tagName = tagName().lowercase()
         if (tagName in nonRenderableHtmlTags) return false
         return isBlock ||
                 tagName in forcedStandaloneSemanticTags ||
                 (!isBlock && hasSemanticBlockDescendant())
+    }
+
+    /** Inline math spans (`span.math-inline` from md4c `$...$`) ride inside paragraph text. */
+    private fun Element.isInlineMathSpan(): Boolean {
+        return tagName().lowercase() == "span" && "math-inline" in classNames()
     }
 
     private fun parseNodeToSemanticBlocks(
@@ -976,7 +984,8 @@ private class SemanticHtmlParser(
             style: CssStyle,
             linkHref: String?,
             tag: String,
-            elementId: String?
+            elementId: String?,
+            mathSvg: String? = null
         ) {
             if (start < end || elementId != null) {
                 spans.add(
@@ -986,7 +995,8 @@ private class SemanticHtmlParser(
                         style = style,
                         linkHref = linkHref,
                         tag = tag,
-                        elementId = elementId
+                        elementId = elementId,
+                        mathSvg = mathSvg
                     )
                 )
             }
@@ -1120,6 +1130,26 @@ private class SemanticHtmlParser(
             addSpan(start, end, generatedStyle, null, "::$pseudoElement", element.id().ifBlank { null })
         }
 
+        fun appendInlineMathSpan(element: Element, inheritedStyle: CssStyle) {
+            val svgContent = element.selectFirst("svg")?.outerHtml() ?: return
+            if (textBuilder.length >= MAX_SEMANTIC_TEXT_BLOCK_CHARS) {
+                flushChunk(trimTrailing = false)
+            }
+            val style = inheritedStyle
+            val start = textBuilder.length
+            appendText(MATH_PLACEHOLDER_CHAR)
+            val end = textBuilder.length
+            addSpan(
+                start = start,
+                end = end,
+                style = style,
+                linkHref = null,
+                tag = "span.math",
+                elementId = element.id().ifBlank { null },
+                mathSvg = svgContent
+            )
+        }
+
         fun processNode(node: Node, inheritedStyle: CssStyle) {
             if (node in excludedNodes) return
             when (node) {
@@ -1131,6 +1161,9 @@ private class SemanticHtmlParser(
                         appendText("\n"); return
                     }
                     if (node.tagName().lowercase() in nonRenderableHtmlTags) return
+                    if (node.isInlineMathSpan()) {
+                        appendInlineMathSpan(node, inheritedStyle); return
+                    }
                     val currentElementStyle = getElementStyle(node, inheritedStyle.customProperties)
                     val newStyle = inheritedStyle.merge(currentElementStyle)
                         .resolveFontSizeAgainst(inheritedStyle)

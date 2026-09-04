@@ -60,9 +60,10 @@ class SingleFileImporter(private val context: Context) {
         private const val MAX_SINGLE_FILE_METADATA_BYTES = 2L * 1024L * 1024L
         private const val TRACE_SAMPLE_LINE_CHARS = 512
         private const val BOOK_METADATA_FILE = "book_metadata.json"
-        // Version the Markdown cache: v3 moves to the md4c parser (native math
-        // spans, `<hr>` kept in flow instead of acting as page separators).
-        private const val MARKDOWN_METADATA_FILE = "book_metadata_markdown_v3.json"
+        // Version the Markdown cache: v4 keeps inline `$...$` equations inside
+        // the paragraph flow (svg nested in the classed span) instead of
+        // splitting them onto their own lines.
+        private const val MARKDOWN_METADATA_FILE = "book_metadata_markdown_v4.json"
         private const val TXT_PREFORMATTED_METADATA_FILE = "book_metadata_txt_preformatted_v3.json"
         private const val PAGE_BREAK_MARKER = "<page-break></page-break>"
         private const val HTML_IMPORT_DEBUG_TAG = "HtmlImportDebug"
@@ -529,7 +530,14 @@ class SingleFileImporter(private val context: Context) {
             val svg = svgByKey["${span.tex}\u0000${span.display}"]
             if (!svg.isNullOrBlank()) {
                 val svgElement = Jsoup.parseBodyFragment(svg).body().child(0)
-                span.element.replaceWith(svgElement)
+                if (span.display) {
+                    // Display math stays a standalone block-level svg.
+                    span.element.replaceWith(svgElement)
+                } else {
+                    // Inline math keeps the classed span wrapper with the SVG
+                    // nested inside, so the shared parser can ride it inline.
+                    span.element.html(svg)
+                }
                 replacedCount++
             } else {
                 fallbackCount++
