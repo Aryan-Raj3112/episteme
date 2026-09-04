@@ -95,7 +95,8 @@ object SharedJvmBookLoader {
             length = file.length(),
             lastModified = file.lastModified(),
             semanticMode = semanticMode,
-            htmlChapterRange = preparedHtmlChapterRangeKey
+            htmlChapterRange = preparedHtmlChapterRangeKey,
+            sourceId = file.absolutePath
         )
         logJvmBookOpenTrace {
             "event=shared_load_start type=${type.name} file=\"${file.name.jvmBookOpenTracePreview(120)}\" " +

@@ -27,7 +27,6 @@ fun SharedMobilePdfTextDock(
     style: SharedPdfTextStyleConfig,
     onStyleChange: (SharedPdfTextStyleConfig) -> Unit,
     onInsertTextBox: () -> Unit,
-    onClose: () -> Unit,
     modifier: Modifier = Modifier,
     customFonts: List<CustomFontItem> = emptyList(),
     customFontFamilies: Map<String, FontFamily> = emptyMap(),
@@ -117,7 +116,7 @@ fun SharedMobilePdfTextDock(
                 readerString("content_desc_select_font_family", "Select font family"), readerString("content_desc_select_font_size", "Select font size"),
                 readerString("content_desc_font_background", "Font background"), readerString("content_desc_bold", "Bold"),
                 readerString("content_desc_italic", "Italic"), readerString("content_desc_underline", "Underline"),
-                readerString("content_desc_strikethrough", "Strikethrough"), readerString("content_desc_insert_text_box", "Insert text box"), readerString("action_close", "Close"),
+                readerString("content_desc_strikethrough", "Strikethrough"), readerString("content_desc_insert_text_box", "Insert text box"),
             ),
             painters = SharedPdfTextDockBarPainters(
                 painterResource(Res.drawable.fonts), painterResource(Res.drawable.font_background), painterResource(Res.drawable.format_bold),
@@ -129,7 +128,7 @@ fun SharedMobilePdfTextDock(
             onItalicClick = { update(spanStyle.copy(fontStyle = if (style.isItalic) FontStyle.Normal else FontStyle.Italic)) },
             onUnderlineClick = { update(spanStyle.copy(textDecoration = sharedPdfDockDecoration(!style.isUnderline, style.isStrikeThrough))) },
             onStrikethroughClick = { update(spanStyle.copy(textDecoration = sharedPdfDockDecoration(style.isUnderline, !style.isStrikeThrough))) },
-            onInsertTextBox = onInsertTextBox, onClose = onClose,
+            onInsertTextBox = onInsertTextBox,
             textColorIndicator = { color -> Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy((-3).dp)) {
                 Text("A", color = Color.Black, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                 Box(Modifier.width(16.dp).height(2.dp).background(color))

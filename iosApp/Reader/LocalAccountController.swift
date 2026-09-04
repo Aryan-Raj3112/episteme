@@ -63,9 +63,18 @@ final class LocalAccountController: NSObject, ObservableObject {
     private var appleNonce: String?
     private var googleDriveAuthorized = false
     private var lastRegisteredDeviceRows: [[String: Any]] = []
+    /// Proactive Firebase ID-token refresh. Android fetches a fresh token per
+    /// API call (`Auth.getIdToken`); iOS consumes the published token
+    /// synchronously, so this re-publishes ahead of the ~1h expiry on the
+    /// shared `AuthTokenRefreshPolicy` schedule.
+    private var authTokenRefreshTask: Task<Void, Never>?
+    private var authTokenFetchedAtMs: Int64 = 0
 
 #if canImport(FirebaseAuth)
     private var authStateHandle: AuthStateDidChangeListenerHandle?
+#endif
+#if canImport(FirebaseFirestore)
+    private var deviceStatusListener: ListenerRegistration?
 #endif
 
     private enum CloudSyncOperation: String, Codable {
@@ -194,6 +203,50 @@ final class LocalAccountController: NSObject, ObservableObject {
                 }
             }
         )
+        // Android parity (MainViewModel.replaceDevice): the blocking
+        // device-limit overlay's Remove replaces the selected old device with
+        // this device. This device is already registered, so revoking the old
+        // entry frees the slot; the refreshed list plus "device_revoked"
+        // lets Kotlin clear the limit like Android's replace success path.
+        bridge.setDeviceReplaceHandler { [weak self, weak bridge] deviceID in
+            Task { @MainActor in
+                guard let self, let bridge else { return }
+                if deviceID == currentDeviceID {
+                    let devices = self.lastRegisteredDeviceRows
+                    bridge.updateRegisteredDevices(
+                        deviceIds: devices.compactMap { $0["deviceId"] as? String },
+                        deviceNames: devices.map { $0["deviceName"] as? String ?? "" },
+                        lastSeenEpochMillis: devices.map {
+                            String(Int64(($0["lastSeenEpochMillis"] as? NSNumber)?.doubleValue ?? 0))
+                        },
+                        status: "device_active"
+                    )
+                    return
+                }
+                let revoked = await self.revokeDevice(deviceID: deviceID)
+                if revoked {
+                    let devices = await self.registeredDevices()
+                    self.lastRegisteredDeviceRows = devices
+                    bridge.updateRegisteredDevices(
+                        deviceIds: devices.compactMap { $0["deviceId"] as? String },
+                        deviceNames: devices.map { $0["deviceName"] as? String ?? "" },
+                        lastSeenEpochMillis: devices.map {
+                            String(Int64(($0["lastSeenEpochMillis"] as? NSNumber)?.doubleValue ?? 0))
+                        },
+                        status: "device_revoked"
+                    )
+                } else {
+                    bridge.updateRegisteredDevices(
+                        deviceIds: self.lastRegisteredDeviceRows.compactMap { $0["deviceId"] as? String },
+                        deviceNames: self.lastRegisteredDeviceRows.map { $0["deviceName"] as? String ?? "" },
+                        lastSeenEpochMillis: self.lastRegisteredDeviceRows.map {
+                            String(Int64(($0["lastSeenEpochMillis"] as? NSNumber)?.doubleValue ?? 0))
+                        },
+                        status: "device_revoke_failed"
+                    )
+                }
+            }
+        }
         bridge.setCloudLocalDataClearHandler { [weak self, weak bridge] in
             Task { @MainActor in
                 guard let self, let bridge else { return }
@@ -428,12 +481,57 @@ final class LocalAccountController: NSObject, ObservableObject {
             publish(status: "Add GoogleService-Info.plist to enable Apple and Google login.")
             return
         }
-        authStateHandle = Auth.auth().addStateDidChangeListener { [weak self] _, _ in
-            Task { @MainActor in self?.publish(status: nil) }
+        if let authStateHandle { Auth.auth().removeStateDidChangeListener(authStateHandle) }
+        authStateHandle = Auth.auth().addStateDidChangeListener { [weak self] _, user in
+            Task { @MainActor in
+                guard let self else { return }
+                // Android parity (verifyDeviceForProUser + device listener): watch
+                // this installation's device document so a remote revocation
+                // ejects the local session immediately, and stop watching the
+                // previous account's device on sign-out/switch.
+                self.observeDeviceStatus(uid: user?.uid)
+                self.publish(status: nil)
+            }
         }
         restoreGoogleDriveAuthorization()
 #else
         publish(status: "Add the iOS Firebase configuration to enable Apple and Google login.")
+#endif
+    }
+
+    /// Live `users/{uid}/devices/{deviceId}` status watch. A remote revocation
+    /// (issued from any signed-in device's device management screen) signs this
+    /// device out and clears its registration, mirroring Android's
+    /// DeviceStatus.Revoked path in MainViewModel.verifyDeviceForProUser.
+    private func observeDeviceStatus(uid: String?) {
+#if canImport(FirebaseFirestore) && canImport(FirebaseAuth)
+        deviceStatusListener?.remove()
+        deviceStatusListener = nil
+        guard let uid, !uid.isEmpty else { return }
+        let deviceID = cloudSyncDeviceID()
+        deviceStatusListener = Firestore.firestore()
+            .collection("users")
+            .document(uid)
+            .collection("devices")
+            .document(deviceID)
+            .addSnapshotListener { [weak self] snapshot, _ in
+                Task { @MainActor in
+                    guard let self, let snapshot, snapshot.exists else { return }
+                    guard (snapshot.data()?["status"] as? String) == "revoked" else { return }
+                    self.stopObservingDeviceStatus()
+                    // signOut() unregisters this device and clears the outbox;
+                    // the bridge then shows Android's "device removed" banner.
+                    self.signOut()
+                    self.bridge?.notifyCurrentDeviceRevoked()
+                }
+            }
+#endif
+    }
+
+    private func stopObservingDeviceStatus() {
+#if canImport(FirebaseFirestore)
+        deviceStatusListener?.remove()
+        deviceStatusListener = nil
 #endif
     }
 
@@ -484,6 +582,33 @@ final class LocalAccountController: NSObject, ObservableObject {
         googleDriveAuthorized = false
         publish(status: "Signed out.")
 #endif
+    }
+
+    /// Foreground + BGTask entry point. Re-arms the durable outbox retry when
+    /// the app returns from background (Android: WorkManager re-gates on
+    /// foreground via head listener + auth collectors). No logic change: just
+    /// re-invokes the existing retry scheduler when no sync is in flight.
+    func handleForegroundResume() {
+        if !cloudSyncInFlight {
+            scheduleCloudSyncRetryIfNeeded()
+        }
+#if canImport(FirebaseAuth) && canImport(FirebaseCore)
+        // Safety net: a failed refresh schedules no follow-up, and a long
+        // suspension can outlast the TTL. Re-arm while signed in; the shared
+        // delay fires immediately when the token is already past its refresh
+        // point, otherwise it waits out the remainder.
+        if FirebaseApp.app() != nil, let uid = Auth.auth().currentUser?.uid,
+           authTokenRefreshTask == nil {
+            scheduleAuthTokenRefresh(uid: uid)
+        }
+#endif
+    }
+
+    /// BGTaskScheduler handler body. Runs inside a BGAppRefreshTask; the
+    /// caller owns setTaskCompleted. Kept idempotent like Android's
+    /// resetRunningOutbox-per-run so expiration mid-pass is safe to retry.
+    func handleBackgroundRefresh() async {
+        handleForegroundResume()
     }
 
     private func scheduleCloudSyncRetryIfNeeded() {
@@ -1103,6 +1228,18 @@ final class LocalAccountController: NSObject, ObservableObject {
 
     /// The stable installation identifier is also needed by the settings
     /// bridge when Firebase modules are unavailable in a target.
+    /// Shared with the folder-sync executor (device binding identity).
+    func folderSyncDeviceID() -> String { cloudSyncDeviceID() }
+
+    /// Current Firebase UID for the folder-sync executor/store scope.
+    func folderSyncAccountID() -> String? {
+#if canImport(FirebaseAuth)
+        return Auth.auth().currentUser?.uid
+#else
+        return nil
+#endif
+    }
+
     private func cloudSyncDeviceID() -> String {
         if let existing = UserDefaults.standard.string(forKey: Self.syncDeviceIDKey) {
             return existing
@@ -1161,7 +1298,16 @@ final class LocalAccountController: NSObject, ObservableObject {
                 .map { numericInt64($0["deletedAt"]) }
                 .max() ?? 0
             guard localTimestamp > localDeleteTimestamp else { continue }
-            if remoteDocuments[bookID] == nil || localTimestamp > remoteTimestamp {
+            // Shared LWW truth (Android consumes the same CloudSyncDecisions
+            // in SyncWorker/full-sync): upload when no remote doc exists or
+            // the local clock wins. The local clock already folds the PDF
+            // sidecar timestamp in via firestoreFields, so no separate
+            // sidecar term is passed.
+            if remoteDocuments[bookID] == nil || CloudSyncDecisionsKt.shouldUploadLocalCloudBookUpdate(
+                localModifiedTimestamp: localTimestamp,
+                remoteModifiedTimestamp: remoteTimestamp,
+                localSidecarModifiedTimestamp: 0
+            ) {
                 try await collection.document(bookID).setData(localFields)
                 effectiveDocuments[bookID] = localFields
             }
@@ -1171,7 +1317,13 @@ final class LocalAccountController: NSObject, ObservableObject {
             guard let bookID = tombstone["bookId"] as? String else { continue }
             let deletedAt = numericInt64(tombstone["deletedAt"])
             let remoteTimestamp = numericInt64(effectiveDocuments[bookID]?["lastModifiedTimestamp"])
-            guard effectiveDocuments[bookID] == nil || deletedAt > remoteTimestamp else { continue }
+            // Tombstone publish is the same shared LWW decision with the
+            // deletion clock as the local side (Android: mergedCloudBookTombstones).
+            guard effectiveDocuments[bookID] == nil || CloudSyncDecisionsKt.shouldUploadLocalCloudBookUpdate(
+                localModifiedTimestamp: deletedAt,
+                remoteModifiedTimestamp: remoteTimestamp,
+                localSidecarModifiedTimestamp: 0
+            ) else { continue }
             let fields: [String: Any] = [
                 "bookId": bookID,
                 "type": tombstone["type"] as? String ?? "",
@@ -1273,8 +1425,13 @@ final class LocalAccountController: NSObject, ObservableObject {
             let localClock = numericInt64(local["modifiedAt"])
             let remoteClock = numericInt64(effective[shelfID]?["lastModifiedTimestamp"])
             let isDeleted = local["isDeleted"] as? Bool ?? false
+            // Shared LWW truth (same CloudSyncDecisions comparator as books).
             let shouldUpload = effective[shelfID] == nil ||
-                (localClock > 0 && localClock > remoteClock)
+                (localClock > 0 && CloudSyncDecisionsKt.shouldUploadLocalCloudBookUpdate(
+                    localModifiedTimestamp: localClock,
+                    remoteModifiedTimestamp: remoteClock,
+                    localSidecarModifiedTimestamp: 0
+                ))
             guard shouldUpload else { continue }
             let clock = localClock > 0 ? localClock : max(now, remoteClock + 1)
             let fields: [String: Any] = [
@@ -1304,11 +1461,27 @@ final class LocalAccountController: NSObject, ObservableObject {
             guard !isDeleted else { continue }
             let bookIDs = fields["bookIds"] as? [String] ?? []
             let clock = numericInt64(fields["lastModifiedTimestamp"])
+            // Shared append-only rule (mergeCloudShelfRefs keeps the newest
+            // addedAt per pair): preserve this device's known clocks for
+            // surviving pairs instead of re-stamping clock+index every pass.
+            let localAddedAtByBookID = Dictionary(
+                (localRefsByShelf[shelfID] ?? []).compactMap { ref -> (String, Int64)? in
+                    guard let bookID = ref["bookId"] as? String else { return nil }
+                    return (bookID, numericInt64(ref["addedAt"]))
+                },
+                uniquingKeysWith: { max($0, $1) }
+            )
             refs.append(contentsOf: bookIDs.enumerated().map { index, bookID in
                 [
                     "bookId": bookID,
                     "shelfId": shelfID,
-                    "addedAt": clock > 0 ? clock + Int64(index) : Int64(index),
+                    // Kotlin Long? bridges as KotlinLong? (not NSNumber?);
+                    // wrap the locally known Int64 clock like ContentView.swift does.
+                    "addedAt": CloudLibrarySnapshotMergeKt.sharedShelfRefAddedAt(
+                        existingAddedAt: localAddedAtByBookID[bookID].map { KotlinLong(longLong: $0) },
+                        shelfClock: clock,
+                        index: Int32(index)
+                    ),
                 ]
             })
         }
@@ -1340,10 +1513,15 @@ final class LocalAccountController: NSObject, ObservableObject {
             guard let fontID = local["id"] as? String, !fontID.isEmpty else { continue }
             let localTimestamp = numericInt64(local["timestamp"])
             let remoteTimestamp = numericInt64(effective[fontID]?["timestamp"])
-            // Font metadata uses the same last-writer-wins clock as Android.
-            // This also allows a newer local font to supersede an older remote
-            // tombstone instead of getting stuck behind `isDeleted`.
-            let shouldUpload = effective[fontID] == nil || localTimestamp > remoteTimestamp
+            // Font metadata uses the same shared last-writer-wins clock as
+            // books (CloudSyncDecisions). This also allows a newer local font
+            // to supersede an older remote tombstone instead of getting stuck
+            // behind `isDeleted`.
+            let shouldUpload = effective[fontID] == nil || CloudSyncDecisionsKt.shouldUploadLocalCloudBookUpdate(
+                localModifiedTimestamp: localTimestamp,
+                remoteModifiedTimestamp: remoteTimestamp,
+                localSidecarModifiedTimestamp: 0
+            )
             guard shouldUpload else { continue }
             let clock = localTimestamp > 0
                 ? localTimestamp
@@ -1766,6 +1944,9 @@ final class LocalAccountController: NSObject, ObservableObject {
             return candidate.isEmpty ? "font-\(id).\(fileExtension)" : candidate
         }
     }
+
+    /// Shared with the folder-sync executor (Drive transport auth).
+    func folderSyncAccessToken() async throws -> String { try await googleDriveAccessToken() }
 
     private func googleDriveAccessToken() async throws -> String {
         guard googleDriveAuthorized, let user = GIDSignIn.sharedInstance.currentUser else {
@@ -2524,8 +2705,16 @@ final class LocalAccountController: NSObject, ObservableObject {
         let publishedUID = user?.uid
         user?.getIDTokenForcingRefresh(false) { [weak self] token, _ in
             Task { @MainActor in
-                guard let bridge = self?.bridge else { return }
+                guard let self, let bridge = self.bridge else { return }
                 bridge.updateAccountAuthToken(authToken: token, expectedUid: publishedUID)
+                // Sessions outlive the ~1h token TTL (Android re-fetches per
+                // call). Keep the synchronously-consumed token live by
+                // force-refreshing ahead of expiry; the uid guard in
+                // updateAccountAuthToken drops late callbacks after rotation.
+                if let uid = publishedUID, token != nil {
+                    self.authTokenFetchedAtMs = Int64(Date().timeIntervalSince1970 * 1_000)
+                    self.scheduleAuthTokenRefresh(uid: uid)
+                }
             }
         }
 #else
@@ -2533,7 +2722,38 @@ final class LocalAccountController: NSObject, ObservableObject {
 #endif
     }
 
+    private func scheduleAuthTokenRefresh(uid: String) {
+        authTokenRefreshTask?.cancel()
+        authTokenRefreshTask = nil
+#if canImport(FirebaseAuth) && canImport(FirebaseCore)
+        let nowMs = Int64(Date().timeIntervalSince1970 * 1_000)
+        let delayMs = AuthTokenRefreshPolicyKt.sharedAuthTokenRefreshDelayMs(nowMs: nowMs, fetchedAtMs: authTokenFetchedAtMs)
+        authTokenRefreshTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(max(delayMs, 0)) * 1_000_000)
+            guard !Task.isCancelled else { return }
+            guard let self, FirebaseApp.app() != nil else { return }
+            guard let user = Auth.auth().currentUser, user.uid == uid else { return }
+            user.getIDTokenForcingRefresh(true) { [weak self] token, _ in
+                Task { @MainActor in
+                    guard let self, let bridge = self.bridge else { return }
+                    bridge.updateAccountAuthToken(authToken: token, expectedUid: uid)
+                    if token != nil {
+                        self.authTokenFetchedAtMs = Int64(Date().timeIntervalSince1970 * 1_000)
+                        self.scheduleAuthTokenRefresh(uid: uid)
+                    }
+                }
+            }
+        }
+#endif
+    }
+
+    private func cancelAuthTokenRefresh() {
+        authTokenRefreshTask?.cancel()
+        authTokenRefreshTask = nil
+    }
+
     private func publishSignedOut(status: String?) {
+        cancelAuthTokenRefresh()
         bridge?.updateAccountState(
             uid: nil,
             displayName: nil,
@@ -2554,13 +2774,19 @@ final class LocalAccountController: NSObject, ObservableObject {
             self.authStateHandle = nil
         }
 #endif
+        cancelAuthTokenRefresh()
+        stopObservingDeviceStatus()
     }
 
     deinit {
+        authTokenRefreshTask?.cancel()
 #if canImport(FirebaseAuth)
         if let authStateHandle {
             Auth.auth().removeStateDidChangeListener(authStateHandle)
         }
+#endif
+#if canImport(FirebaseFirestore)
+        deviceStatusListener?.remove()
 #endif
     }
 

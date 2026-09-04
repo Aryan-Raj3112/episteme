@@ -44,11 +44,21 @@ final class LocalStoreKitController: ObservableObject {
     private var localTestingCredits = 0
     private var localTestingClaimedTransactions = Set<UInt64>()
     private var status: String?
+    /// Android parity (`BillingClientWrapper.proUpgradeState`): server
+    /// verification in flight, and a Pro purchase owned by another Episteme
+    /// account (server reports "already claimed"). The conflict is transient
+    /// session state: set on already-claimed Pro, cleared on verify success,
+    /// new purchase start, or account switch.
+    private var isPurchasing = false
+    private var hasAccountConflict = false
     /// Durable account grants are independent from the StoreKit product catalog.
     /// Keep this separate so a catalog outage cannot clear a valid account state.
     private var serverEntitlementsLoaded = false
 #if canImport(FirebaseAuth)
     private var authStateHandle: AuthStateDidChangeListenerHandle?
+#endif
+#if canImport(FirebaseFirestore)
+    private var entitlementListener: ListenerRegistration?
 #endif
 
     func attach(to bridge: ReaderIosBridge) {
@@ -60,6 +70,7 @@ final class LocalStoreKitController: ObservableObject {
         )
         updatesTask?.cancel()
         startupTask?.cancel()
+        stopObservingEntitlements()
         updatesTask = observeTransactionUpdates()
         observeAccount()
         startupTask = Task { [weak self] in
@@ -75,6 +86,9 @@ final class LocalStoreKitController: ObservableObject {
         startupTask?.cancel()
 #if canImport(FirebaseAuth)
         if let authStateHandle { Auth.auth().removeStateDidChangeListener(authStateHandle) }
+#endif
+#if canImport(FirebaseFirestore)
+        entitlementListener?.remove()
 #endif
     }
 
@@ -101,6 +115,15 @@ final class LocalStoreKitController: ObservableObject {
             status = "Pro is already active on this Episteme account."
             publish(); return
         }
+        // Android parity: a new purchase attempt clears a previous conflict
+        // (`BillingClientWrapper` clears on launchPurchaseFlow).
+        hasAccountConflict = false
+        isPurchasing = true
+        publish()
+        defer {
+            isPurchasing = false
+            publish()
+        }
         do {
             let token = try await fetchAppAccountToken()
             switch try await product.purchase(options: [.appAccountToken(token)]) {
@@ -110,7 +133,13 @@ final class LocalStoreKitController: ObservableObject {
                     applyLocalTestingTransaction(transaction)
                     status = "Local StoreKit test purchase completed. No server entitlement was granted."
                 } else {
-                    try await claimWithServer(transaction, expectedAccountToken: token)
+                    do {
+                        try await claimWithServer(transaction, expectedAccountToken: token)
+                    } catch {
+                        noteClaimError(error, productID: productID)
+                        throw error
+                    }
+                    hasAccountConflict = false
                     await refreshServerEntitlements()
                     status = "Purchase completed."
                 }
@@ -130,6 +159,12 @@ final class LocalStoreKitController: ObservableObject {
             status = "Sign in to the Episteme account that owns the purchase before restoring."
             publish(); return
         }
+        isPurchasing = true
+        publish()
+        defer {
+            isPurchasing = false
+            publish()
+        }
         do {
             try await AppStore.sync()
             let token = try await fetchAppAccountToken()
@@ -139,7 +174,20 @@ final class LocalStoreKitController: ObservableObject {
                 if isLocalXcodeTransaction(transaction) {
                     applyLocalTestingTransaction(transaction)
                 } else {
-                    try await claimWithServer(transaction, expectedAccountToken: token)
+                    do {
+                        try await claimWithServer(transaction, expectedAccountToken: token)
+                    } catch {
+                        // An already-claimed Pro stays unfinished (like Android,
+                        // which never consumes it) so the conflict resurfaces
+                        // until the owning account signs in; other failures
+                        // abort the restore.
+                        if transaction.productID == ProductID.pro, isAlreadyClaimed(error) {
+                            hasAccountConflict = true
+                            publish()
+                            continue
+                        }
+                        throw error
+                    }
                 }
                 await transaction.finish()
             }
@@ -167,7 +215,19 @@ final class LocalStoreKitController: ObservableObject {
                 if isLocalXcodeTransaction(transaction) {
                     applyLocalTestingTransaction(transaction)
                 } else {
-                    try await claimWithServer(transaction, expectedAccountToken: token)
+                    do {
+                        try await claimWithServer(transaction, expectedAccountToken: token)
+                    } catch {
+                        // Same already-claimed Pro rule as restore(): keep the
+                        // transaction unfinished so the conflict resurfaces
+                        // until the owning account signs in.
+                        if transaction.productID == ProductID.pro, isAlreadyClaimed(error) {
+                            hasAccountConflict = true
+                            publish()
+                            continue
+                        }
+                        throw error
+                    }
                 }
                 await transaction.finish()
             }
@@ -188,7 +248,12 @@ final class LocalStoreKitController: ObservableObject {
                         self.status = "Local StoreKit test transaction updated."
                     } else {
                         let token = try await self.fetchAppAccountToken()
-                        try await self.claimWithServer(transaction, expectedAccountToken: token)
+                        do {
+                            try await self.claimWithServer(transaction, expectedAccountToken: token)
+                        } catch {
+                            self.noteClaimError(error, productID: transaction.productID)
+                            throw error
+                        }
                         await self.refreshServerEntitlements()
                         self.status = "App Store purchase updated."
                     }
@@ -243,33 +308,92 @@ final class LocalStoreKitController: ObservableObject {
         return try JSONDecoder().decode(T.self, from: data)
     }
 
+    /// Foreground + BGTask entry point. Android reconciles purchases only in
+    /// the foreground (BillingClient init + every auth emission, no Worker);
+    /// iOS does the same: re-query unfinished transactions + server
+    /// entitlements on foreground/auth change instead of a background queue.
+    func handleForegroundResume() async {
+        await reconcileUnfinishedTransactions()
+        await refreshServerEntitlements()
+    }
+
+    /// BGTaskScheduler handler body. Kept read-only/idempotent; the live
+    /// users/{uid} listener still owns mid-session downgrades.
+    func handleBackgroundRefresh() async {
+        await refreshServerEntitlements()
+    }
+
     private func refreshServerEntitlements() async {
 #if canImport(FirebaseFirestore) && canImport(FirebaseAuth)
         guard let uid = Auth.auth().currentUser?.uid else {
             isProUnlocked = false
             serverCredits = 0
             serverEntitlementsLoaded = true
+            stopObservingEntitlements()
             publish()
             return
         }
         do {
             let snapshot = try await Firestore.firestore().collection("users").document(uid).getDocument()
-            let data = snapshot.data() ?? [:]
-            let sources = data["proEntitlements"] as? [String: Any] ?? [:]
-            isProUnlocked = (data["isPro"] as? Bool ?? false)
-                || (sources["appStoreLifetime"] as? String) == "active"
-                || (sources["googlePlayLifetime"] as? String) == "active"
-            serverCredits = max((data["credits"] as? NSNumber)?.intValue ?? 0, 0)
-            serverEntitlementsLoaded = true
+            applyEntitlementSnapshot(snapshot.data() ?? [:], missingDocument: !snapshot.exists)
         } catch {
             status = "Could not refresh account entitlements."
         }
+        // The one-shot read above seeds the UI fast; the listener below keeps
+        // Pro/credits live while the app stays open, matching Android's
+        // listenToUserProfile snapshot listener (a Pro downgrade is enforced
+        // immediately instead of at the next launch).
+        observeEntitlements(uid: uid)
 #else
         isProUnlocked = false
         serverCredits = 0
         serverEntitlementsLoaded = true
 #endif
         publish()
+    }
+
+    /// Maps a Firestore `users/{uid}` document onto the local entitlement state
+    /// and pushes it through the bridge so shared UI reacts instantly.
+    private func applyEntitlementSnapshot(_ data: [String: Any], missingDocument: Bool = false) {
+        let sources = data["proEntitlements"] as? [String: Any] ?? [:]
+        let pro = (data["isPro"] as? Bool ?? false)
+            || (sources["appStoreLifetime"] as? String) == "active"
+            || (sources["googlePlayLifetime"] as? String) == "active"
+        let credits = max((data["credits"] as? NSNumber)?.intValue ?? 0, 0)
+        if missingDocument {
+            isProUnlocked = false
+            serverCredits = 0
+        } else {
+            isProUnlocked = pro
+            serverCredits = credits
+        }
+        serverEntitlementsLoaded = true
+        bridge?.updateLiveAccountEntitlements(isPro: isProUnlocked, credits: Int32(clamping: serverCredits))
+        publish()
+    }
+
+    /// Live entitlement stream over `users/{uid}`, mirroring Android's
+    /// `FirestoreRepository.listenToUserProfile`. Errors degrade to the last
+    /// known state (Android surfaces onUpdate(false, 0) only on listen errors).
+    private func observeEntitlements(uid: String) {
+#if canImport(FirebaseFirestore) && canImport(FirebaseAuth)
+        stopObservingEntitlements()
+        entitlementListener = Firestore.firestore()
+            .collection("users")
+            .document(uid)
+            .addSnapshotListener { [weak self] snapshot, _ in
+                Task { @MainActor in
+                    guard let self else { return }
+                    let data = snapshot?.data() ?? [:]
+                    self.applyEntitlementSnapshot(data, missingDocument: !(snapshot?.exists ?? true))
+                }
+            }
+#endif
+    }
+
+    private func stopObservingEntitlements() {
+        entitlementListener?.remove()
+        entitlementListener = nil
     }
 
     private func observeAccount() {
@@ -283,10 +407,15 @@ final class LocalStoreKitController: ObservableObject {
             Task { @MainActor in
                 guard let self else { return }
                 // Do not project the previous Firebase account while the new
-                // account's durable grants are being fetched.
+                // account's durable grants are being fetched. This also drops
+                // the previous account's entitlement listener; reattaching is
+                // handled inside refreshServerEntitlements once the new uid
+                // is known.
                 self.serverEntitlementsLoaded = false
                 self.isProUnlocked = false
                 self.serverCredits = 0
+                self.hasAccountConflict = false
+                self.stopObservingEntitlements()
                 self.publish()
                 await self.reconcileUnfinishedTransactions()
                 await self.refreshServerEntitlements()
@@ -359,11 +488,43 @@ final class LocalStoreKitController: ObservableObject {
             proUnlocked: isProUnlocked || localTestingProUnlocked,
             credits: Int32(clamping: serverCredits + localTestingCredits),
             proPrice: products[ProductID.pro]?.displayPrice,
+            proOriginalPrice: proOriginalPrice,
             credits100Price: products[ProductID.credits100]?.displayPrice,
             credits300Price: products[ProductID.credits300]?.displayPrice,
             credits750Price: products[ProductID.credits750]?.displayPrice,
+            credits100Name: products[ProductID.credits100]?.displayName,
+            credits300Name: products[ProductID.credits300]?.displayName,
+            credits750Name: products[ProductID.credits750]?.displayName,
+            credits100Description: products[ProductID.credits100]?.description,
+            credits300Description: products[ProductID.credits300]?.description,
+            credits750Description: products[ProductID.credits750]?.description,
+            isVerifying: isPurchasing,
+            hasAccountConflict: hasAccountConflict,
             status: status
         )
+    }
+
+    /// Android parity (`MainViewModel` checks the verify error for
+    /// "already claimed" and calls `markAccountConflict` for Pro): the same
+    /// worker serves both platforms, so match its message the same way.
+    private func isAlreadyClaimed(_ error: Error) -> Bool {
+        if case BillingError.serverRejected(let message) = error {
+            return message.range(of: "already claimed", options: .caseInsensitive) != nil
+        }
+        return false
+    }
+
+    private func noteClaimError(_ error: Error, productID: String) {
+        if productID == ProductID.pro, isAlreadyClaimed(error) {
+            hasAccountConflict = true
+        }
+    }
+
+    /// Strikethrough anchor matching Android's `priceAmountMicros * 2`
+    /// (`ProTierCard`): twice the App Store price in the same format.
+    private var proOriginalPrice: String? {
+        guard let pro = products[ProductID.pro] else { return nil }
+        return pro.priceFormatStyle.format(pro.price * 2)
     }
 
     private func userFacingPurchaseError(_ error: Error) -> String {

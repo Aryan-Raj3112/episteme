@@ -40,6 +40,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -54,7 +55,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -88,7 +88,6 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.PlatformTextStyle
@@ -137,11 +136,13 @@ fun TextAnnotationDock(
     onBackgroundColorPaletteChange: (List<Color>) -> Unit,
     onUpdateStyle: (SpanStyle) -> Unit,
     onApplyToSelection: () -> Unit,
-    onClose: () -> Unit,
     onPopupStateChange: (Boolean) -> Unit,
     onInsertTextBox: () -> Unit,
-    onClearTextBoxSelection: () -> Unit = {},
     bottomDockPadding: androidx.compose.ui.unit.Dp = 0.dp,
+    popupsBelowBar: Boolean = false,
+    // Drag/long-press detection owned by the caller; applied to the bar only so
+    // surrounding empty padding stays touch-transparent for controls beneath.
+    dragGestureModifier: Modifier = Modifier,
     customFonts: List<CustomFontEntity> = emptyList(),
     onImportFont: (android.net.Uri) -> Unit = {},
     currentFontName: String? = null,
@@ -155,12 +156,13 @@ fun TextAnnotationDock(
     )
 
     val fontSizes = AndroidPdfTextDockFontSizes
-    val focusManager = LocalFocusManager.current
 
-    Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.BottomCenter) {
+    Box(modifier = Modifier.fillMaxWidth().then(dragGestureModifier), contentAlignment = Alignment.BottomCenter) {
         SharedPdfTextDockPopupHost(
             state = dockState,
             bottomDockPadding = bottomDockPadding,
+            popupAlignment = if (popupsBelowBar) Alignment.TopCenter else Alignment.BottomCenter,
+            popupOffsetY = if (popupsBelowBar) 48.dp + 8.dp else null,
             currentStyle = currentStyle,
             textColorPalette = textColorPalette,
             onTextColorPaletteChange = onTextColorPaletteChange,
@@ -232,7 +234,6 @@ fun TextAnnotationDock(
                 underline = stringResource(R.string.content_desc_underline),
                 strikethrough = stringResource(R.string.content_desc_strikethrough),
                 insertTextBox = stringResource(R.string.content_desc_insert_text_box),
-                close = stringResource(R.string.action_close),
             ),
             painters = SharedPdfTextDockBarPainters(
                 fonts = painterResource(R.drawable.fonts),
@@ -266,7 +267,6 @@ fun TextAnnotationDock(
                 onUpdateStyle(currentStyle.copy(textDecoration = next, fontFamily = currentStyle.fontFamily)); onApplyToSelection()
             },
             onInsertTextBox = { Timber.tag("PdfTextBoxDebug").d("Dock: Insert Text Box icon clicked"); onInsertTextBox() },
-            onClose = { focusManager.clearFocus(); onClearTextBoxSelection(); onClose() },
             textColorIndicator = { color ->
                 Column(horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy((-3).dp, Alignment.CenterVertically)) {
@@ -277,8 +277,10 @@ fun TextAnnotationDock(
             },
             fontSizePopup = {
                 if (dockState.popup == ActivePopup.FONT_SIZE) {
-                    DockBubblePopup(onDismissRequest = dockState::dismiss, offsetY = (-55).dp,
-                        alignment = Alignment.TopCenter, focusable = false) {
+                    DockBubblePopup(onDismissRequest = dockState::dismiss,
+                        offsetY = if (popupsBelowBar) 55.dp else (-55).dp,
+                        alignment = if (popupsBelowBar) Alignment.BottomCenter else Alignment.TopCenter,
+                        focusable = false) {
                         LazyColumn(Modifier.heightIn(max = 200.dp).width(80.dp).background(Color(0xFF1E1E1E), RoundedCornerShape(16.dp))) {
                             items(fontSizes) { size ->
                                 val selected = currentStyle.fontSize == size
@@ -295,6 +297,18 @@ fun TextAnnotationDock(
                     }
                 }
             },
+        )
+        // Drag-handle affordance: straddles the bar's outer edge (top when
+        // bottom-docked/floating, bottom when top-docked) so the bar reads as
+        // draggable. Touch-transparent; the dock container owns drag gestures.
+        Box(
+            modifier = Modifier
+                .align(if (popupsBelowBar) Alignment.BottomCenter else Alignment.TopCenter)
+                .offset(y = if (popupsBelowBar) 2.dp else (-2).dp)
+                .width(32.dp)
+                .height(4.dp)
+                .clip(RoundedCornerShape(50))
+                .background(Color.Black.copy(alpha = 0.25f))
         )
     }
 }

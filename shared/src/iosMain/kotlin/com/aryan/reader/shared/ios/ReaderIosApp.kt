@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.material3.Scaffold
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -28,8 +29,17 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.OutlinedCard
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
@@ -60,7 +70,13 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.platform.Font
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
@@ -127,6 +143,7 @@ import com.aryan.reader.shared.SharedTtsListenStartPolicy
 import com.aryan.reader.shared.sharedAudiobookResumePosition
 import com.aryan.reader.shared.SyncedFolder
 import com.aryan.reader.shared.UserData
+import com.aryan.reader.shared.shouldShowDeviceLimitOverlay
 import com.aryan.reader.shared.ReaderPlatform
 import com.aryan.reader.shared.ReaderLocator
 import com.aryan.reader.shared.ReaderAutoScrollProfile
@@ -269,7 +286,34 @@ import com.aryan.reader.shared.ui.openSharedMobileExternalUrl
 import com.aryan.reader.shared.ui.rememberSharedMobileEpubLocalTts
 import com.aryan.reader.shared.ui.withoutIosFolderFilter
 import com.aryan.reader.shared.reader.ReaderScreenOrientationMode
+import com.aryan.reader.shared.reader.sharedEpubOpenTrace
+import com.aryan.reader.shared.reader.sharedEpubOpenTraceElapsedMs
+import com.aryan.reader.shared.reader.sharedEpubOpenTraceMark
+import com.aryan.reader.shared.reader.sharedEpubOpenTraceMs
 import com.aryan.reader.shared.ui.SharedMobilePdfNativeAction
+import com.aryan.reader.shared.CloudFolderConflictResolution
+import com.aryan.reader.shared.CloudFolderConflictUiItem
+import com.aryan.reader.shared.CloudFolderDeviceBinding
+import com.aryan.reader.shared.CloudFolderIncomingChoice
+import com.aryan.reader.shared.CloudFolderIncomingFolderPrompt
+import com.aryan.reader.shared.CloudFolderMaterializationMode
+import com.aryan.reader.shared.CloudFolderRoot
+import com.aryan.reader.shared.CloudFolderSyncFolderOption
+import com.aryan.reader.shared.CloudFolderSyncProgress
+import com.aryan.reader.shared.CloudFolderSyncSelection
+import com.aryan.reader.shared.CloudFolderSyncSettingsUiState
+import com.aryan.reader.shared.cloudFolderRootId
+import com.aryan.reader.shared.cloudFolderConflictUiItem
+import com.aryan.reader.shared.decodeCloudFolderBindingsOrNull
+import com.aryan.reader.shared.decodeCloudFolderConflictRecordOrNull
+import com.aryan.reader.shared.decodeCloudFolderProgressMapOrNull
+import com.aryan.reader.shared.decodeCloudFolderRootsOrNull
+import com.aryan.reader.shared.initialAcknowledgedRevisionAfterIncomingChoice
+import com.aryan.reader.shared.nextSelectionAfterIncomingChoice
+import com.aryan.reader.shared.projectCloudFolderSyncOptions
+import com.aryan.reader.shared.selectCloudFolderIncomingPrompt
+import com.aryan.reader.shared.shouldPullAfterIncomingChoice
+import com.aryan.reader.shared.toLocalBindingView
 import com.aryan.reader.shared.PdfSplitPane
 import com.aryan.reader.shared.PdfSplitWorkspaceAction
 import com.aryan.reader.shared.PdfSplitWorkspaceState
@@ -299,6 +343,7 @@ import platform.Foundation.NSUserDefaults
 import platform.Foundation.dataWithContentsOfFile
 import platform.Foundation.NSUserDomainMask
 import platform.Foundation.NSURL
+import platform.Foundation.NSUUID
 import platform.Foundation.NSFileSize
 import platform.Foundation.NSNumber
 import platform.UIKit.UIViewController
@@ -332,6 +377,18 @@ private val IOS_NATIVE_READER_FILE_TYPES = setOf(
 
 private val IosLegalLinks = sharedLegalLinksForProfile(SharedLegalProfile.STANDARD)
 
+/** Mirrors Android's banner_device_removed string. */
+private const val IosDeviceRemovedMessage = "This device was removed from your account."
+
+/**
+ * One-time startup application of the iCloud backup exclusion policy. Cheap on
+ * the happy path (already-marked files return false from setResourceValue), and
+ * re-running after imports is safe.
+ */
+private fun applyIosBackupExclusions() {
+    runCatching { IosBackupExclusionPolicy.apply() }
+}
+
 class ReaderIosBridge internal constructor(
     private val readerSystemEffects: IosReaderSystemEffects,
     private val pdfNativeActionPresenter: IosPdfNativeActionPresenter,
@@ -340,6 +397,10 @@ class ReaderIosBridge internal constructor(
         readerSystemEffects = UIKitReaderSystemEffects,
         pdfNativeActionPresenter = IosPdfNativeActionPresenter(::performIosPdfNativeAction),
     )
+
+    init {
+        applyIosBackupExclusions()
+    }
 
     private var systemUiHandler: ((statusHidden: Boolean, navigationHidden: Boolean, lightContent: Boolean, backgroundArgb: Long) -> Unit)? = null
     private var latestSystemUiState: IosSystemUiState? = null
@@ -387,10 +448,13 @@ class ReaderIosBridge internal constructor(
     private var restorePurchasesHandler: (() -> Unit)? = null
     private var authHandler: ((String) -> Unit)? = null
     private var signOutHandler: (() -> Unit)? = null
+    private var liveEntitlementsHandler: ((Boolean, Int) -> Unit)? = null
+    private var currentDeviceRevokedHandler: (() -> Unit)? = null
     private var cloudSyncHandler: ((String) -> Unit)? = null
     private var cloudUploadHandler: ((String) -> Unit)? = null
     private var deviceManagementRefreshHandler: (() -> Unit)? = null
     private var deviceRevokeHandler: ((String) -> Unit)? = null
+    private var deviceReplaceHandler: ((String) -> Unit)? = null
     private var cloudLocalDataClearHandler: (() -> Unit)? = null
     private var folderFileDeletionHandler: ((String, List<String>) -> Unit)? = null
     private var folderFileReplacementHandler: ((String, String) -> String?)? = null
@@ -1103,9 +1167,18 @@ class ReaderIosBridge internal constructor(
         proUnlocked: Boolean,
         credits: Int,
         proPrice: String?,
+        proOriginalPrice: String? = null,
         credits100Price: String?,
         credits300Price: String?,
         credits750Price: String?,
+        credits100Name: String? = null,
+        credits300Name: String? = null,
+        credits750Name: String? = null,
+        credits100Description: String? = null,
+        credits300Description: String? = null,
+        credits750Description: String? = null,
+        isVerifying: Boolean = false,
+        hasAccountConflict: Boolean = false,
         status: String?,
     ) {
         localStoreKitState = IosLocalStoreKitState(
@@ -1114,11 +1187,24 @@ class ReaderIosBridge internal constructor(
             proUnlocked = proUnlocked,
             credits = credits.coerceAtLeast(0),
             proPrice = proPrice,
+            proOriginalPrice = proOriginalPrice,
             creditPrices = mapOf(
                 IosStoreKitProductIds.CREDITS_100 to credits100Price,
                 IosStoreKitProductIds.CREDITS_300 to credits300Price,
                 IosStoreKitProductIds.CREDITS_750 to credits750Price,
             ).filterValues { it != null }.mapValues { it.value!! },
+            creditNames = mapOf(
+                IosStoreKitProductIds.CREDITS_100 to credits100Name,
+                IosStoreKitProductIds.CREDITS_300 to credits300Name,
+                IosStoreKitProductIds.CREDITS_750 to credits750Name,
+            ).filterValues { it != null }.mapValues { it.value!! },
+            creditDescriptions = mapOf(
+                IosStoreKitProductIds.CREDITS_100 to credits100Description,
+                IosStoreKitProductIds.CREDITS_300 to credits300Description,
+                IosStoreKitProductIds.CREDITS_750 to credits750Description,
+            ).filterValues { it != null }.mapValues { it.value!! },
+            isVerifying = isVerifying,
+            hasAccountConflict = hasAccountConflict,
             status = status,
         )
         status?.let { IosDiagnosticLogStore.record("StoreKit", it) }
@@ -1130,6 +1216,37 @@ class ReaderIosBridge internal constructor(
     ) {
         authHandler = authenticate
         signOutHandler = signOut
+    }
+
+    /**
+     * Android parity (`MainViewModel.listenToUserProfile`): the native account
+     * controller installs a live Firestore profile listener and pushes every
+     * snapshot through this handler so a Pro downgrade or credit change is
+     * reflected while the app is open — not only at sign-in/purchase.
+     */
+    fun setLiveEntitlementsHandler(handler: ((isPro: Boolean, credits: Int) -> Unit)?) {
+        liveEntitlementsHandler = handler
+    }
+
+    /**
+     * Android parity (`FirestoreRepository.verifyDeviceForProUser` → Revoked):
+     * called when the live device-status listener notices this installation
+     * was revoked remotely. The shared side disables sync durably (the flag is
+     * also persisted via the isSyncEnabled effect) and surfaces the same
+     * "device removed" banner Android shows.
+     */
+    fun setCurrentDeviceRevokedHandler(handler: (() -> Unit)?) {
+        currentDeviceRevokedHandler = handler
+    }
+
+    /** Pushes a live entitlement snapshot from the Firestore profile listener. */
+    fun updateLiveAccountEntitlements(isPro: Boolean, credits: Int) {
+        liveEntitlementsHandler?.invoke(isPro, credits)
+    }
+
+    /** Notifies the shared app that this installation was revoked remotely. */
+    fun notifyCurrentDeviceRevoked() {
+        currentDeviceRevokedHandler?.invoke()
     }
 
     fun requestAuthentication(provider: String) {
@@ -1151,6 +1268,29 @@ class ReaderIosBridge internal constructor(
     ) {
         deviceManagementRefreshHandler = refresh
         deviceRevokeHandler = revoke
+    }
+
+    /**
+     * Android parity: [MainViewModel.replaceDevice] removes the selected old
+     * device and registers this device in its place, showing a replacing
+     * spinner and clearing the limit on success. iOS revoke previously refused
+     * the active device and never cleared a limit; the replace handler routes
+     * the blocking overlay's Remove through revoke-old + keep-current, which
+     * frees the slot the same way because this device is already registered.
+     */
+    fun setDeviceReplaceHandler(handler: (String) -> Unit) {
+        deviceReplaceHandler = handler
+    }
+
+    fun requestDeviceReplace(deviceId: String) {
+        if (deviceId.isBlank()) return
+        isDeviceManagementLoading = true
+        deviceManagementStatus = null
+        (deviceReplaceHandler ?: deviceRevokeHandler)?.invoke(deviceId)
+            ?: run {
+                isDeviceManagementLoading = false
+                deviceManagementStatus = "device_unavailable"
+            }
     }
 
     fun requestDeviceManagement() {
@@ -1303,6 +1443,107 @@ class ReaderIosBridge internal constructor(
         pendingCloudSync = null
     }
 
+    // ---- Cloud-folder transfer executor (P0 #4) ----
+    // Android runs this in `CloudFolderSyncWorker` + Room; iOS runs it in the
+    // Swift `LocalCloudFolderSyncController` with a file-backed store. The
+    // shared models are identical, so this bridge only carries JSON snapshots
+    // of executor state into Compose and fire-and-forget requests back out.
+    // Selection + incoming-prompt durability stays in `IosCloudFolderSyncPrefs`.
+    internal var cloudFolderRootsState by mutableStateOf<List<CloudFolderRoot>>(emptyList())
+        private set
+    internal var cloudFolderBindingsState by mutableStateOf<Map<String, CloudFolderDeviceBinding>>(emptyMap())
+        private set
+    internal var cloudFolderProgressState by mutableStateOf<Map<String, CloudFolderSyncProgress>>(emptyMap())
+        private set
+    internal var cloudFolderConflictsState by mutableStateOf<List<CloudFolderConflictUiItem>>(emptyList())
+        private set
+    internal var folderSyncExecutionArmed: Boolean = false
+        private set
+    private var cloudFolderSyncRequestHandler: ((String, String?, Boolean) -> Unit)? = null
+    private var cloudFolderBindHandler: ((String, String) -> Unit)? = null
+    private var cloudFolderConflictResolveHandler: ((String, String, String) -> Unit)? = null
+    private var cloudFolderDeleteHandler: ((String, Boolean) -> Unit)? = null
+
+    fun armFolderSyncExecution(eligible: Boolean) {
+        folderSyncExecutionArmed = eligible
+    }
+
+    /** Second line of defence read by the Swift executor before every run. */
+    fun cloudFolderSyncEligible(): Boolean = folderSyncExecutionArmed
+
+    fun setCloudFolderSyncRequestHandler(handler: (String, String?, Boolean) -> Unit) {
+        cloudFolderSyncRequestHandler = handler
+    }
+
+    /** direction in {sync,pull,push}; rootId null = account-wide. */
+    fun requestCloudFolderSync(direction: String, rootId: String?, replace: Boolean) {
+        cloudFolderSyncRequestHandler?.invoke(direction, rootId, replace)
+    }
+
+    fun setCloudFolderBindHandler(handler: (String, String) -> Unit) {
+        cloudFolderBindHandler = handler
+    }
+
+    /** Ensure a LOCAL_MIRROR binding for a local folder (registration, not selection). */
+    fun requestCloudFolderBind(rootId: String, folderName: String) {
+        cloudFolderBindHandler?.invoke(rootId, folderName)
+    }
+
+    fun setCloudFolderConflictResolveHandler(handler: (String, String, String) -> Unit) {
+        cloudFolderConflictResolveHandler = handler
+    }
+
+    fun requestCloudFolderConflictResolve(rootId: String, conflictId: String, resolutionRaw: String) {
+        cloudFolderConflictResolveHandler?.invoke(rootId, conflictId, resolutionRaw)
+    }
+
+    fun setCloudFolderDeleteHandler(handler: (String, Boolean) -> Unit) {
+        cloudFolderDeleteHandler = handler
+    }
+
+    /** deleteEverywhere=true removes the Drive copy account-wide; false detaches this device only. */
+    fun requestCloudFolderDelete(rootId: String, deleteEverywhere: Boolean) {
+        cloudFolderDeleteHandler?.invoke(rootId, deleteEverywhere)
+    }
+
+    /**
+     * Executor state published by Swift after every pass. Roots/bindings/
+     * progress arrive as shared-model JSON; conflict records are re-encoded
+     * shared JSON strings mapped to UI items with live folder names.
+     */
+    fun publishCloudFolderSyncState(
+        rootsJson: String,
+        bindingsJson: String,
+        progressJson: String,
+        conflictRecordJsons: List<String>,
+    ) {
+        decodeCloudFolderRootsOrNull(rootsJson)?.let { roots ->
+            cloudFolderRootsState = roots.filterNot { it.isDeleted }
+        }
+        decodeCloudFolderBindingsOrNull(bindingsJson)?.let { bindings ->
+            cloudFolderBindingsState = bindings
+        }
+        decodeCloudFolderProgressMapOrNull(progressJson)?.let { progress ->
+            cloudFolderProgressState = progress
+        }
+        val folderNames = cloudFolderRootsState.associate { it.rootId to it.name }
+        cloudFolderConflictsState = conflictRecordJsons.mapNotNull {
+            decodeCloudFolderConflictRecordOrNull(it)
+        }.map { record ->
+            cloudFolderConflictUiItem(record, folderNames[record.rootId] ?: record.rootId)
+        }.sortedWith(
+            compareBy<CloudFolderConflictUiItem> { it.normalizedFolderName.lowercase() }
+                .thenBy { it.normalizedPath.lowercase() }
+                .thenBy { it.conflictId },
+        )
+    }
+
+    /** Discovery hit from Swift: durable pending prompt, like Android's markIncomingPromptPending. */
+    fun noteDiscoveredCloudFolderRoot(rootId: String, revision: Long) {
+        val accountId = accountState.uid?.trim()?.takeIf { it.isNotBlank() } ?: return
+        IosCloudFolderSyncPrefs.markIncomingPromptPending(accountId, rootId, revision)
+    }
+
     fun updateAccountState(
         uid: String?,
         displayName: String?,
@@ -1354,7 +1595,12 @@ internal data class IosLocalStoreKitState(
     val proUnlocked: Boolean = false,
     val credits: Int = 0,
     val proPrice: String? = null,
+    val proOriginalPrice: String? = null,
     val creditPrices: Map<String, String> = emptyMap(),
+    val creditNames: Map<String, String> = emptyMap(),
+    val creditDescriptions: Map<String, String> = emptyMap(),
+    val isVerifying: Boolean = false,
+    val hasAccountConflict: Boolean = false,
     val status: String? = null,
 )
 
@@ -1396,6 +1642,7 @@ private enum class IosUtilityScreen {
     FEEDBACK,
     SUPPORT,
     ABOUT,
+    FOLDER_SYNC,
 }
 
 data class IosImportedFile(
@@ -2258,14 +2505,22 @@ private fun SharedReaderScreenState.toIosCloudSnapshot(): SharedLibrarySnapshot 
 }
 
 private fun loadPersistedIosEpubBookState(book: BookItem): BookItem {
-    val encoded = NSUserDefaults.standardUserDefaults.stringForKey(book.iosEpubReaderStateKey()) ?: return book
-    val decoded = SharedLibrarySnapshotJson.decodeOrEmpty(encoded).books.firstOrNull() ?: return book
-    val normalized = decoded.migrateAndroidEpubFormatSettings()
-    val restored = book.withNewerReaderSession(normalized)
-    if (normalized != decoded) {
-        persistIosEpubBookState(normalized)
+    val restoreMark = sharedEpubOpenTraceMark()
+    var encodedChars = 0
+    try {
+        val encoded = NSUserDefaults.standardUserDefaults.stringForKey(book.iosEpubReaderStateKey())
+        encodedChars = encoded?.length ?: 0
+        if (encoded == null) return book
+        val decoded = SharedLibrarySnapshotJson.decodeOrEmpty(encoded).books.firstOrNull() ?: return book
+        val normalized = decoded.migrateAndroidEpubFormatSettings()
+        val restored = book.withNewerReaderSession(normalized)
+        if (normalized != decoded) {
+            persistIosEpubBookState(normalized)
+        }
+        return restored
+    } finally {
+        sharedEpubOpenTrace { "library persistedStateRestore bookId=${book.id} encodedChars=$encodedChars ms=${sharedEpubOpenTraceMs(sharedEpubOpenTraceElapsedMs(restoreMark))}" }
     }
-    return restored
 }
 
 private fun persistIosEpubBookState(book: BookItem) {
@@ -2493,7 +2748,8 @@ private fun ReaderIosApp(
     var readerAiJob by remember { mutableStateOf<Job?>(null) }
     val readerAiAvailable = readerAiAdapter.isAvailable
     LaunchedEffect(state) {
-        persistIosLibrarySnapshot(state)
+        // Debounced: rapid state churn coalesces into one durable write per window.
+        IosLibrarySnapshotPersister.schedule(this, state)
     }
     var pdfSplitWorkspace by remember { mutableStateOf(restoredPdfSplitWorkspace) }
     var pendingPdfSplitWorkspaceRestore by remember {
@@ -2589,6 +2845,61 @@ private fun ReaderIosApp(
     LaunchedEffect(state.isSyncEnabled) {
         persistIosSyncEnabled(state.isSyncEnabled)
     }
+    // Android parity: live entitlement updates from the Firestore profile
+    // listener. A Pro downgrade disables cloud sync eligibility immediately
+    // (cloudSyncEligible() reads state.isProUser) instead of surviving until
+    // the next sign-in, and credits stay current while the app is open.
+    DisposableEffect(Unit) {
+        bridge.setLiveEntitlementsHandler { isPro, credits ->
+            state = state.copy(
+                isProUser = isPro,
+                credits = credits.coerceAtLeast(0),
+            )
+        }
+        onDispose { bridge.setLiveEntitlementsHandler(null) }
+    }
+    // Android parity: a remote revocation of THIS device signs the user out
+    // (the native controller performs the sign-out) and shows the same
+    // "device removed" banner the Android app shows.
+    DisposableEffect(Unit) {
+        bridge.setCurrentDeviceRevokedHandler {
+            state = state
+                .copy(isProUser = false, credits = 0, isSyncEnabled = false)
+                .withMessage(IosDeviceRemovedMessage)
+            bridge.recordNativeEvent(IosDeviceRemovedMessage)
+        }
+        onDispose { bridge.setCurrentDeviceRevokedHandler(null) }
+    }
+    // Android parity (SettingsScreen.kt:614-620, HomeScreen.kt:681-687): when
+    // the account hits the device limit, Android blocks on a full-screen
+    // DeviceManagementScreen (Remove = replace with this device, with a
+    // replacing spinner). Mirror the trigger into shared state so the same
+    // blocking overlay below can fire; the native controller reports
+    // "device_limit_reached" when registration is refused for limit reasons.
+    // A successful replace clears the limit like MainViewModel.replaceDevice.
+    LaunchedEffect(bridge.deviceManagementStatus, bridge.registeredDevices) {
+        val status = bridge.deviceManagementStatus
+        if (status == "device_limit_reached" && !state.deviceLimitState.isLimitReached) {
+            state = state.copy(
+                deviceLimitState = com.aryan.reader.shared.DeviceLimitReachedState(
+                    isLimitReached = true,
+                    registeredDevices = bridge.registeredDevices,
+                ),
+            )
+        } else if (status == "device_revoked" && state.isReplacingDevice) {
+            state = state.copy(
+                deviceLimitState = com.aryan.reader.shared.DeviceLimitReachedState(isLimitReached = false),
+                isReplacingDevice = false,
+            )
+        } else if (status != null && status != "device_limit_reached" && state.deviceLimitState.isLimitReached &&
+            bridge.registeredDevices.isNotEmpty() &&
+            state.deviceLimitState.registeredDevices != bridge.registeredDevices
+        ) {
+            state = state.copy(
+                deviceLimitState = state.deviceLimitState.copy(registeredDevices = bridge.registeredDevices),
+            )
+        }
+    }
     LaunchedEffect(bridge.importedFonts) {
         if (bridge.importedFonts != state.customFonts) {
             state = state.reduce(AppAction.CustomFontsChanged(bridge.importedFonts))
@@ -2650,6 +2961,18 @@ private fun ReaderIosApp(
     var pendingCloudSyncSetup by remember { mutableStateOf(false) }
     var languageReturnScreen by remember { mutableStateOf<IosUtilityScreen?>(null) }
     var settingsQuery by remember { mutableStateOf("") }
+    // Cloud-folder sync (P0 #4). Executor state (roots/bindings/progress/
+    // conflicts) is owned by the Swift `LocalCloudFolderSyncController` and
+    // published through the bridge; selection + incoming-prompt durability
+    // stays in `IosCloudFolderSyncPrefs` (Android `CloudFolderSyncPrefs`
+    // parity). The incoming prompt is UI-ephemeral, recomputed from bridge
+    // roots + durable pending revisions.
+    val iosAccountId = bridge.accountState.uid?.trim()?.takeIf { it.isNotBlank() }
+    var cloudFolderSelection by remember(iosAccountId) {
+        mutableStateOf(IosCloudFolderSyncPrefs.loadSelection(iosAccountId))
+    }
+    var cloudFolderIncomingPrompt by remember { mutableStateOf<CloudFolderIncomingFolderPrompt?>(null) }
+    var pendingFolderBindPrompt by remember { mutableStateOf<CloudFolderIncomingFolderPrompt?>(null) }
 
     fun navigateIosSettingsUp() {
         if (settingsQuery.isNotBlank()) {
@@ -2907,6 +3230,8 @@ private fun ReaderIosApp(
     )
 
     fun openLibraryBook(book: BookItem, temporary: Boolean = false) {
+        val openMark = sharedEpubOpenTraceMark()
+        sharedEpubOpenTrace { "library openBook start bookId=${book.id} type=${book.type} temporary=$temporary" }
         val canDownload = cloudSyncEligible()
         val localFileExists = book.path?.let { path ->
             path.startsWith("opds-pse://") ||
@@ -2994,6 +3319,7 @@ private fun ReaderIosApp(
                 "Opening reader screen id=${book.id} file=${book.displayName} pathPresent=${!book.path.isNullOrBlank()}"
             }
         }
+        sharedEpubOpenTrace { "library openBook done bookId=${book.id} ms=${sharedEpubOpenTraceMs(sharedEpubOpenTraceElapsedMs(openMark))}" }
         activeReaderBook = openedBook
     }
 
@@ -3121,6 +3447,11 @@ private fun ReaderIosApp(
                     uriString = "ios-local-folder://${name.normalizedId()}",
                     name = name,
                     lastScanTime = currentTimestamp(),
+                    // Stable logical identity for cloud-folder registration,
+                    // mirroring Android's `cloudFolderRootId("android-root:UUID")`
+                    // at folder creation. Retained across renames by the
+                    // registration effect; never derived from a local path.
+                    cloudRootId = newIosCloudRootId(),
                 )
             }
         state = result.state
@@ -3304,6 +3635,186 @@ private fun ReaderIosApp(
         if (shouldRequestCloudSyncAfterFolderSyncChange(enabled, state.isSyncEnabled)) {
             requestCloudSyncIfEligible()
         }
+    }
+
+    /**
+     * Android parity (MainViewModel.refreshCloudFolderSyncState): rebuild the
+     * settings projection from local bindings + repository state. iOS has no
+     * Drive manifest repository yet, so roots/bindings stay empty until the
+     * cloud executor lands; the projection still exercises the same shared
+     * sorting/selection/conflict math so the surface cannot drift.
+     */
+    fun refreshIosCloudFolderSyncState() {
+        val accountId = bridge.accountState.uid?.trim()?.takeIf { it.isNotBlank() }
+        cloudFolderSelection = IosCloudFolderSyncPrefs.loadSelection(accountId)
+        if (accountId == null) {
+            cloudFolderIncomingPrompt = null
+            return
+        }
+        val pendingIds = IosCloudFolderSyncPrefs.pendingIncomingRootIds(accountId)
+        cloudFolderIncomingPrompt = selectCloudFolderIncomingPrompt(bridge.cloudFolderRootsState, pendingIds)
+    }
+
+    /**
+     * Android parity (MainViewModel.setCloudFolderSyncSelection): persist the
+     * normalized selection, then queue a durable folder pass when sync is
+     * enabled so the persisted policy is observed even if the process dies
+     * after the dialog closes.
+     */
+    fun setIosCloudFolderSelection(selection: CloudFolderSyncSelection) {
+        val accountId = bridge.accountState.uid?.trim()?.takeIf { it.isNotBlank() } ?: return
+        if (!state.isProUser) return
+        val normalized = selection.normalized()
+        IosCloudFolderSyncPrefs.saveSelection(accountId, normalized)
+        cloudFolderSelection = normalized
+        if (state.isSyncEnabled) {
+            bridge.requestCloudFolderSync("sync", null, true)
+        }
+    }
+
+    /**
+     * Android parity (MainViewModel.recordIncomingCloudFolderChoice): persist
+     * the materialization decision without ever uploading a local URI, opt
+     * into sync selection for materializing choices, dismiss the prompt, and
+     * pull when eligible. BIND_LOCAL_FOLDER completes after the folder picker
+     * returns; call [completeIosFolderBindChoice] then.
+     */
+    fun recordIosIncomingCloudFolderChoice(
+        prompt: CloudFolderIncomingFolderPrompt,
+        choice: CloudFolderIncomingChoice,
+    ) {
+        val accountId = bridge.accountState.uid?.trim()?.takeIf { it.isNotBlank() } ?: return
+        if (!state.isProUser) return
+        if (choice == CloudFolderIncomingChoice.BIND_LOCAL_FOLDER) {
+            pendingFolderBindPrompt = prompt
+            onImportFolder()
+            return
+        }
+        cloudFolderSelection = nextSelectionAfterIncomingChoice(
+            current = cloudFolderSelection,
+            promptRootId = prompt.rootId,
+            choice = choice,
+        ).also { IosCloudFolderSyncPrefs.saveSelection(accountId, it) }
+        IosCloudFolderSyncPrefs.dismissIncomingPrompt(accountId, prompt.rootId, prompt.root.manifestRevision)
+        cloudFolderIncomingPrompt = null
+        if (shouldPullAfterIncomingChoice(choice, state.isSyncEnabled)) {
+            bridge.requestCloudFolderSync("pull", prompt.rootId, true)
+        }
+        refreshIosCloudFolderSyncState()
+    }
+
+    /** Completes a deferred BIND_LOCAL_FOLDER choice after the picker returns. */
+    fun completeIosFolderBindChoice(folderName: String) {
+        val prompt = pendingFolderBindPrompt ?: return
+        pendingFolderBindPrompt = null
+        val accountId = bridge.accountState.uid?.trim()?.takeIf { it.isNotBlank() } ?: return
+        cloudFolderSelection = nextSelectionAfterIncomingChoice(
+            current = cloudFolderSelection,
+            promptRootId = prompt.rootId,
+            choice = CloudFolderIncomingChoice.BIND_LOCAL_FOLDER,
+        ).also { IosCloudFolderSyncPrefs.saveSelection(accountId, it) }
+        IosCloudFolderSyncPrefs.dismissIncomingPrompt(accountId, prompt.rootId, prompt.root.manifestRevision)
+        cloudFolderIncomingPrompt = null
+        bridge.requestCloudFolderBind(prompt.rootId, folderName)
+        if (state.isSyncEnabled) {
+            bridge.requestCloudFolderSync("pull", prompt.rootId, true)
+        }
+        refreshIosCloudFolderSyncState()
+    }
+
+    fun dismissIosIncomingCloudFolderPrompt() {
+        val prompt = cloudFolderIncomingPrompt ?: return
+        val accountId = bridge.accountState.uid?.trim()?.takeIf { it.isNotBlank() } ?: run {
+            cloudFolderIncomingPrompt = null
+            return
+        }
+        // "Not now" keeps a Folders placeholder: mirror Android's snooze,
+        // which survives the next discovery pass instead of re-offering.
+        IosCloudFolderSyncPrefs.snoozeIncomingPrompt(accountId, prompt.rootId, prompt.root.manifestRevision)
+        cloudFolderIncomingPrompt = null
+    }
+
+    fun resolveIosCloudFolderConflict(
+        conflict: CloudFolderConflictUiItem,
+        resolution: CloudFolderConflictResolution,
+    ) {
+        // The executor revalidates the snapshot before applying, so a newer
+        // revision surfaces a fresh conflict instead of applying a stale
+        // choice (Android resolveCloudFolderConflict parity).
+        bridge.requestCloudFolderConflictResolve(conflict.rootId, conflict.conflictId, resolution.name)
+    }
+
+    /**
+     * Detach a synced folder from this device only, mirroring Android's
+     * `removeCloudFolderFromDevice`: the cloud copy is untouched, so the
+     * folder can be re-discovered through the incoming prompt later.
+     */
+    fun removeIosCloudFolderFromDevice(rootId: String) {
+        val accountId = bridge.accountState.uid?.trim()?.takeIf { it.isNotBlank() } ?: return
+        val normalized = rootId.trim().takeIf { it.isNotBlank() } ?: return
+        bridge.requestCloudFolderDelete(normalized, false)
+        IosCloudFolderSyncPrefs.forgetIncomingPrompt(accountId, normalized)
+        val knownIds = bridge.cloudFolderRootsState.map { it.rootId }
+        cloudFolderSelection = cloudFolderSelection.withoutRoot(normalized, knownIds)
+            .also { IosCloudFolderSyncPrefs.saveSelection(accountId, it) }
+        refreshIosCloudFolderSyncState()
+    }
+
+    /**
+     * Delete a synced folder from Drive account-wide, mirroring Android's
+     * `deleteCloudFolderFromDrive`: the executor publishes a tombstone so
+     * other devices observe the deletion.
+     */
+    fun deleteIosCloudFolderFromDrive(rootId: String) {
+        val normalized = rootId.trim().takeIf { it.isNotBlank() } ?: return
+        bridge.requestCloudFolderDelete(normalized, true)
+        refreshIosCloudFolderSyncState()
+    }
+
+    fun openIosFolderSync() {
+        refreshIosCloudFolderSyncState()
+        utilityScreen = IosUtilityScreen.FOLDER_SYNC
+    }
+
+    // P0 #1 foreground resume (Android WorkManager parity): Android re-gates
+    // workers on foreground via the head listener + auth collectors; the iOS
+    // executor re-runs discovery + pull on every foreground transition
+    // instead of dying with the backgrounded process. Purchase reconciliation
+    // stays foreground-only on both platforms (StoreKit/Billing re-query on
+    // foreground + auth change).
+    LaunchedEffect(bridge.appLifecycleState.eventId) {
+        if (!bridge.appLifecycleState.isActive) return@LaunchedEffect
+        refreshIosCloudFolderSyncState()
+        requestCloudSyncIfEligible()
+        bridge.requestCloudFolderSync("pull", null, false)
+    }
+
+    // Account switches reload the per-account folder selection, mirroring
+    // Android's CloudFolderSyncPrefs.load(accountId) per auth emission.
+    LaunchedEffect(iosAccountId) {
+        cloudFolderSelection = IosCloudFolderSyncPrefs.loadSelection(iosAccountId)
+        refreshIosCloudFolderSyncState()
+    }
+
+    // Arm the executor's second-line eligibility gate (account + Pro + sync),
+    // mirroring Android's in-worker re-gate before every run.
+    LaunchedEffect(iosAccountId, state.isProUser, state.isSyncEnabled) {
+        bridge.armFolderSyncExecution(
+            iosAccountId != null && state.isProUser && state.isSyncEnabled,
+        )
+    }
+
+    // Register every local folder as a logical root + LOCAL_MIRROR binding
+    // (Android `registerLocalCloudFolders` parity). Registration is not
+    // selection: unselected roots stay inert until the user opts in.
+    LaunchedEffect(state.syncedFolders, iosAccountId, state.isProUser) {
+        if (iosAccountId == null || !state.isProUser) return@LaunchedEffect
+        state.syncedFolders
+            .filterNot { it.isCloudPlaceholder }
+            .mapNotNull { folder ->
+                folder.cloudRootId?.trim()?.takeIf { it.isNotBlank() }?.let { it to folder.name }
+            }
+            .forEach { (rootId, name) -> bridge.requestCloudFolderBind(rootId, name) }
     }
 
     @Composable
@@ -3760,6 +4271,7 @@ private fun ReaderIosApp(
                     uriString = "ios-local-folder://${scan.folderName.normalizedId()}",
                     name = scan.folderName,
                     lastScanTime = 0L,
+                    cloudRootId = newIosCloudRootId(),
                 )
             val syncResult = LocalFolderSyncEngine.syncFolder(
                 state = state,
@@ -3774,6 +4286,13 @@ private fun ReaderIosApp(
                     state.syncedFolders.filterNot { it.name == scan.folderName } + syncedFolder
                 ).sortedBy { it.name.lowercase() },
             )
+            // Completes a deferred BIND_LOCAL_FOLDER incoming choice once the
+            // picker folder has been indexed locally. Mirrors Android, where
+            // the SAF grant returns to AppNavigation and then persists the
+            // LOCAL_MIRROR binding + selection + pull.
+            if (pendingFolderBindPrompt != null) {
+                completeIosFolderBindChoice(scan.folderName)
+            }
             if (syncResult.stats.newBooks > 0) {
                 selectMainPage(SharedMobileMainDestination.LIBRARY)
                 selectLibraryTab(SharedMobileLibraryTab.BOOKS)
@@ -4530,6 +5049,7 @@ private fun ReaderIosApp(
                         onBack = { utilityScreen = null },
                         onPurchase = bridge::requestLocalStoreKitPurchase,
                         onRestore = bridge::requestLocalStoreKitRestore,
+                        onSignInClick = { utilityScreen = IosUtilityScreen.ACCOUNT },
                     )
                     IosUtilityScreen.DEVICES -> IosDeviceManagementScreen(
                         devices = bridge.registeredDevices,
@@ -4620,16 +5140,25 @@ private fun ReaderIosApp(
                             onDestinationChange = { settingsDestination = it },
                             onBack = { navigateIosSettingsUp() },
                             onAction = { action ->
-                                val portableMutation = planMobileSettingsMutation(
-                                    action = action,
-                                    state = MobileSettingsMutationState(
-                                        tabsEnabled = state.isTabsEnabled,
-                                        strictFileFilterEnabled = state.useStrictFileFilter,
-                                        pdfFileNameAsDisplayName = state.usePdfFileNameAsDisplayName,
-                                        folderSyncEnabled = state.isFolderSyncEnabled,
-                                        hideReaderAi = state.hideReaderAi,
-                                    ),
-                                )
+                                // Android parity (SettingsScreen.kt:385-398): FOLDER_SYNC
+                                // opens the cloud-folder selection surface and
+                                // nulls the legacy toggle mutation. Toggling
+                                // the local-indexing switch merely by opening
+                                // the dialog would diverge from Android.
+                                val portableMutation = if (action == SharedSettingsAction.FOLDER_SYNC) {
+                                    null
+                                } else {
+                                    planMobileSettingsMutation(
+                                        action = action,
+                                        state = MobileSettingsMutationState(
+                                            tabsEnabled = state.isTabsEnabled,
+                                            strictFileFilterEnabled = state.useStrictFileFilter,
+                                            pdfFileNameAsDisplayName = state.usePdfFileNameAsDisplayName,
+                                            folderSyncEnabled = state.isFolderSyncEnabled,
+                                            hideReaderAi = state.hideReaderAi,
+                                        ),
+                                    )
+                                }
                                 when (portableMutation) {
                                     is MobileSettingsMutation.SetTabsEnabled -> {
                                         state = state.reduce(AppAction.TabsEnabledChanged(portableMutation.enabled))
@@ -4716,20 +5245,21 @@ private fun ReaderIosApp(
                                     SharedSettingsAction.TABS_TOGGLE,
                                     SharedSettingsAction.STRICT_FILE_FILTER,
                                     SharedSettingsAction.PDF_FILENAME_DISPLAY_NAME,
-                                    SharedSettingsAction.HIDE_READER_AI,
-                                    SharedSettingsAction.FOLDER_SYNC -> Unit
+                                    SharedSettingsAction.HIDE_READER_AI -> Unit
+                                    SharedSettingsAction.FOLDER_SYNC -> openIosFolderSync()
+                                    // Intentional platform differences (IosSettingsParity.kt): hidden by the
+                                    // shared settings model (includeScreenCaptureProtection=false,
+                                    // bookCacheMaintenanceAvailable=false), so unreachable — no error toast.
                                     SharedSettingsAction.SCREEN_CAPTURE_PROTECTION,
-                                    SharedSettingsAction.CLEAR_BOOK_CACHE -> {
-                                        showMessage("${action.name.lowercase().replace('_', ' ')} is not available on iOS")
-                                    }
+                                    SharedSettingsAction.CLEAR_BOOK_CACHE -> Unit
                                     SharedSettingsAction.CLEAR_CLOUD_LOCAL_DATA -> {
                                         showClearCloudLocalDataConfirmation = true
                                     }
+                                    // DEBUG_ONLY per IosSettingsParity.kt: hidden unless debug Android,
+                                    // so unreachable on iOS — no error toast.
                                     SharedSettingsAction.TEST_PANEL_DETECTION,
                                     SharedSettingsAction.TEST_SPEECH_BUBBLE_DETECTION,
-                                    SharedSettingsAction.DEBUG_ACTIONS -> {
-                                        showMessage("${action.name.lowercase().replace('_', ' ')} is not available on iOS")
-                                    }
+                                    SharedSettingsAction.DEBUG_ACTIONS -> Unit
                                     SharedSettingsAction.EXPORT_LOGS -> {
                                         if (!bridge.exportDiagnosticLogs()) {
                                             showMessage("Unable to export diagnostic logs")
@@ -4970,6 +5500,37 @@ private fun ReaderIosApp(
                             modifier = Modifier.fillMaxSize(),
                         )
                     }
+                    IosUtilityScreen.FOLDER_SYNC -> {
+                        val folderOptions = projectCloudFolderSyncOptions(
+                            localFolders = state.syncedFolders.map { it.toLocalBindingView() },
+                            repositoryRoots = bridge.cloudFolderRootsState,
+                            deviceBindings = bridge.cloudFolderBindingsState,
+                            syncProgress = bridge.cloudFolderProgressState,
+                        )
+                        val folderUiState = CloudFolderSyncSettingsUiState(
+                            selection = cloudFolderSelection,
+                            folders = folderOptions,
+                            conflicts = bridge.cloudFolderConflictsState,
+                        ).normalized()
+                        IosCloudFolderSyncScreen(
+                            uiState = folderUiState,
+                            isSyncEnabled = state.isSyncEnabled,
+                            isProUser = state.isProUser,
+                            isLoading = false,
+                            onBack = { utilityScreen = null },
+                            onSelectionChange = ::setIosCloudFolderSelection,
+                            onConflictResolution = ::resolveIosCloudFolderConflict,
+                            onBindLocalFolder = { prompt ->
+                                pendingFolderBindPrompt = prompt
+                                onImportFolder()
+                            },
+                            incomingPrompt = cloudFolderIncomingPrompt,
+                            onIncomingChoice = ::recordIosIncomingCloudFolderChoice,
+                            onDismissIncoming = ::dismissIosIncomingCloudFolderPrompt,
+                            onRemoveFromDevice = ::removeIosCloudFolderFromDevice,
+                            onDeleteFromDrive = ::deleteIosCloudFolderFromDrive,
+                        )
+                    }
                 }
                 return@Surface
             }
@@ -5009,7 +5570,7 @@ private fun ReaderIosApp(
                                         state = state.withMobileLibrarySearchActive(true)
                                     }
                                     override fun navigateToFolderSync() {
-                                        onImportFolder()
+                                        openIosFolderSync()
                                     }
                                     override fun refresh() {
                                         refreshFolders()
@@ -5177,7 +5738,14 @@ private fun ReaderIosApp(
                                         visibleBookIds = visibleBookIds,
                                     )
                                 },
-                                onFilterClick = {},
+                                onFilterClick = {
+                                    // Parity note: the filter sheet opens via the shared
+                                    // screen's internal showFilters state
+                                    // (SharedMobileLibraryScreens.kt:1426, dialog at
+                                    // :1599-1604), matching Android's
+                                    // LibraryScreen.kt:400 onFilterClick opening
+                                    // LibraryFilterSheet. No external action needed.
+                                },
                                 onClearFilters = { state = state.reduce(LibraryAction.FiltersChanged(LibraryFilters())) },
                                 onRemoveFilters = { filters -> state = state.reduce(LibraryAction.FiltersChanged(filters)) },
                                 onSettingsClick = { utilityScreen = IosUtilityScreen.SETTINGS },
@@ -5952,6 +6520,20 @@ private fun ReaderIosApp(
                 bannerMessage = banner,
             )
         }
+        // Android parity (SettingsScreen.kt:614-620, HomeScreen.kt:681-687):
+        // blocking device-limit overlay. Remove = replace with this device
+        // (MainViewModel.replaceDevice parity); the manual DEVICES screen stays
+        // for routine management.
+        if (shouldShowDeviceLimitOverlay(state.deviceLimitState)) {
+            IosDeviceLimitReachedOverlay(
+                devices = state.deviceLimitState.registeredDevices.ifEmpty { bridge.registeredDevices },
+                isReplacing = state.isReplacingDevice || bridge.isDeviceManagementLoading,
+                onRemoveDevice = { deviceId ->
+                    state = state.copy(isReplacingDevice = true)
+                    bridge.requestDeviceReplace(deviceId)
+                },
+            )
+        }
         }
     }
 }
@@ -6104,6 +6686,83 @@ private fun IosExternalFileBehaviorDialog(
             }
         },
     )
+}
+
+@Composable
+private fun IosDeviceLimitReachedOverlay(
+    devices: List<com.aryan.reader.shared.DeviceItem>,
+    isReplacing: Boolean,
+    onRemoveDevice: (String) -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = MaterialTheme.colorScheme.background.copy(alpha = 0.98f),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Text(
+                text = readerString("device_limit_reached", "Device Limit Reached"),
+                style = MaterialTheme.typography.headlineMedium,
+                textAlign = TextAlign.Center,
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = readerString(
+                    "device_limit_reached_desc",
+                    "To use Episteme Pro on this device, please remove one of your existing registered devices.",
+                ),
+                style = MaterialTheme.typography.bodyMedium,
+                textAlign = TextAlign.Center,
+            )
+            Spacer(modifier = Modifier.height(24.dp))
+            if (isReplacing) {
+                CircularProgressIndicator()
+            } else {
+                LazyColumn(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    items(devices, key = { it.deviceId }) { device ->
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = MaterialTheme.shapes.medium,
+                            tonalElevation = 2.dp,
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(device.deviceName, fontWeight = FontWeight.SemiBold)
+                                    device.lastSeenEpochMillis?.let { lastSeen ->
+                                        Text(
+                                            readerString(
+                                                "settings_device_management_last_seen",
+                                                "Last seen %1\$s",
+                                                formatSharedMobileDateTime(lastSeen),
+                                            ),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                }
+                                TextButton(onClick = { onRemoveDevice(device.deviceId) }) {
+                                    Text(readerString("action_remove", "Remove"))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -6430,76 +7089,509 @@ private fun IosLocalStoreKitScreen(
     onBack: () -> Unit,
     onPurchase: (String) -> Unit,
     onRestore: () -> Unit,
+    onSignInClick: () -> Unit,
 ) {
+    var showExistingPurchaseDialog by remember { mutableStateOf(false) }
+    var showSignInRequiredDialog by remember { mutableStateOf(false) }
+    if (showExistingPurchaseDialog) {
+        IosConfirmationDialog(
+            title = readerString("existing_purchase_found", "Existing Purchase Found"),
+            message = readerString(
+                "dialog_existing_purchase_desc",
+                "This device already has a Pro purchase, but it's linked to a different account. Please sign in to the account that was used for the original purchase to restore your Pro features.",
+            ),
+            confirmLabel = readerString("action_ok", "OK"),
+            onConfirm = { showExistingPurchaseDialog = false },
+            onDismiss = { showExistingPurchaseDialog = false },
+        )
+    }
+    if (showSignInRequiredDialog) {
+        IosConfirmationDialog(
+            title = readerString("sign_in_required", "Sign in Required"),
+            message = readerString(
+                "dialog_sign_in_required_desc",
+                "Please sign in to your Episteme account to purchase Pro and credits and unlock all premium features.",
+            ),
+            confirmLabel = readerString("drawer_sign_in", "Sign in"),
+            onConfirm = {
+                showSignInRequiredDialog = false
+                onSignInClick()
+            },
+            onDismiss = { showSignInRequiredDialog = false },
+        )
+    }
     IosUtilityPage(title = readerString("storekit_title", "Pro and Credits"), onBack = onBack) {
         Column(
-            modifier = Modifier.fillMaxSize().padding(24.dp),
+            modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp).verticalScroll(rememberScrollState()),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Text(readerString("storekit_title", "Pro and Credits"))
-            Text(
-                if (store.available) {
-                    readerString(
-                        "storekit_available_desc",
-                        "Purchases are securely linked to your Episteme account and can be restored after reinstalling.",
-                    )
-                } else {
-                    readerString(
-                        "storekit_unavailable",
-                        "App Store products are currently unavailable.",
-                    )
-                },
-                modifier = Modifier.padding(vertical = 12.dp),
+            Spacer(modifier = Modifier.height(16.dp))
+            IosProTierCard(
+                store = store,
+                isSignedIn = account.uid != null,
+                onBuyPro = { onPurchase(IosStoreKitProductIds.PRO_LIFETIME) },
+                onShowExistingPurchaseDialog = { showExistingPurchaseDialog = true },
+                onSignInRequiredClick = { showSignInRequiredDialog = true },
             )
-            Text(
-                if (store.proUnlocked) {
-                    readerString("pro_unlocked", "Pro unlocked")
-                } else {
-                    readerString("storekit_pro_not_unlocked", "Pro not unlocked")
-                },
+            Spacer(modifier = Modifier.height(16.dp))
+            IosCreditTierCard(
+                store = store,
+                isSignedIn = account.uid != null,
+                onBuyCredits = onPurchase,
+                onSignInRequiredClick = { showSignInRequiredDialog = true },
             )
-            Text(
-                readerString("desktop_credits_available_format", "%1\$d credits", store.credits),
-                modifier = Modifier.padding(bottom = 12.dp),
-            )
-            if (account.uid == null) {
-                Text(
-                    readerString(
-                        "storekit_sign_in_before_purchase",
-                        "Sign in with Apple or Google before purchasing or restoring.",
-                    ),
-                    modifier = Modifier.padding(bottom = 12.dp),
-                )
-            }
-            TextButton(
-                enabled = store.available && account.uid != null && !store.proUnlocked,
-                onClick = { onPurchase(IosStoreKitProductIds.PRO_LIFETIME) },
-            ) {
-                Text(
-                    readerString("storekit_buy_pro", "Buy Pro lifetime") +
-                        store.proPrice?.let { " — $it" }.orEmpty(),
-                )
-            }
-            listOf(
-                IosStoreKitProductIds.CREDITS_100 to 100,
-                IosStoreKitProductIds.CREDITS_300 to 300,
-                IosStoreKitProductIds.CREDITS_750 to 750,
-            ).forEach { (productId, amount) ->
-                TextButton(
-                    enabled = store.available && account.uid != null,
-                    onClick = { onPurchase(productId) },
-                ) {
-                    Text(
-                        readerString("storekit_add_credits", "Add %1\$d credits", amount) +
-                            store.creditPrices[productId]?.let { " — $it" }.orEmpty(),
-                    )
-                }
-            }
+            Spacer(modifier = Modifier.height(8.dp))
             TextButton(enabled = store.available && account.uid != null, onClick = onRestore) {
                 Text(readerString("storekit_restore_purchases", "Restore purchases"))
             }
             store.status?.let {
-                Text(readerLiteral(it), modifier = Modifier.padding(top = 12.dp))
+                Text(readerLiteral(it), modifier = Modifier.padding(vertical = 8.dp))
             }
+            Spacer(modifier = Modifier.height(16.dp))
+        }
+    }
+}
+
+/**
+ * Android parity (`ProScreen.ProTierCard`): crown header, strikethrough
+ * anchor price, one-time/lifetime pill, feature list, gated CTA, footer.
+ * The crown drawable has no iOS counterpart; a tinted star carries the same
+ * visual role.
+ */
+@Composable
+private fun IosProTierCard(
+    store: IosLocalStoreKitState,
+    isSignedIn: Boolean,
+    onBuyPro: () -> Unit,
+    onShowExistingPurchaseDialog: () -> Unit,
+    onSignInRequiredClick: () -> Unit,
+) {
+    val showConflict = !store.proUnlocked && store.hasAccountConflict
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp).fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Default.Star,
+                    contentDescription = null,
+                    modifier = Modifier.size(24.dp),
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    readerString("drawer_pro_unlocked", "Episteme Pro"),
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            if (!store.proUnlocked) {
+                val price = store.proPrice
+                if (price != null) {
+                    Text(
+                        text = buildAnnotatedString {
+                            store.proOriginalPrice?.let { original ->
+                                withStyle(style = SpanStyle(textDecoration = TextDecoration.LineThrough)) {
+                                    append(original)
+                                }
+                                append(" ")
+                            }
+                            append(readerString("pro_sale_off", "50% OFF"))
+                        },
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = price,
+                        style = MaterialTheme.typography.displaySmall.copy(fontSize = 48.sp),
+                        fontWeight = FontWeight.Bold,
+                    )
+                } else {
+                    Text(
+                        readerString("loading_price", "Loading price…"),
+                        style = MaterialTheme.typography.displaySmall.copy(fontSize = 32.sp),
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        readerString("one_time_payment", "One-time payment"),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Surface(
+                        shape = MaterialTheme.shapes.extraSmall,
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    ) {
+                        Text(
+                            readerString("lifetime_access", "Lifetime Access"),
+                            style = MaterialTheme.typography.labelSmall,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+            Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.Start) {
+                Text(
+                    readerString("pro_includes", "Features:"),
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(bottom = 8.dp),
+                )
+                IosProFeatureItem(
+                    title = readerString("feature_cloud_sync", "Cloud Sync Across Devices"),
+                    description = readerString(
+                        "feature_cloud_sync_desc",
+                        "Keep your entire library, including book files and reading progress, synced across your devices.",
+                    ),
+                )
+                IosProFeatureItem(
+                    title = readerString("feature_summarize", "Summarization"),
+                    description = readerString(
+                        "feature_summarize_desc",
+                        "Get 10 free summaries of chapters or pages per day",
+                    ),
+                )
+                IosProFeatureItem(
+                    title = readerString("feature_smart_dict", "Smart Dictionary"),
+                    description = readerString(
+                        "feature_smart_dict_desc",
+                        "Search phrases and even paragraphs, not just single words",
+                    ),
+                )
+                IosProFeatureItem(
+                    title = readerString("feature_priority", "Priority Feature Requests"),
+                    description = readerString(
+                        "feature_priority_desc",
+                        "Your suggestions get prioritized",
+                    ),
+                )
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+            if (store.proUnlocked) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.medium,
+                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f),
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Star,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            readerString("pro_unlocked", "Pro Features Unlocked!"),
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
+            } else {
+                when {
+                    !isSignedIn -> {
+                        Button(
+                            onClick = onSignInRequiredClick,
+                            modifier = Modifier.fillMaxWidth().height(48.dp),
+                            shape = MaterialTheme.shapes.medium,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
+                                contentColor = MaterialTheme.colorScheme.onPrimary,
+                            ),
+                        ) {
+                            Text(
+                                readerString("sign_in_required", "Sign in Required"),
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                    }
+                    store.isVerifying -> {
+                        Button(
+                            onClick = {},
+                            enabled = false,
+                            modifier = Modifier.fillMaxWidth().height(48.dp),
+                            shape = MaterialTheme.shapes.medium,
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                            Spacer(modifier = Modifier.size(ButtonDefaults.IconSpacing))
+                            Text(readerString("verifying_purchase", "Verifying purchase…"))
+                        }
+                    }
+                    store.proPrice != null -> {
+                        Button(
+                            onClick = onBuyPro,
+                            modifier = Modifier.fillMaxWidth().height(48.dp),
+                            shape = MaterialTheme.shapes.medium,
+                            enabled = store.available,
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Star,
+                                contentDescription = null,
+                                modifier = Modifier.size(20.dp),
+                            )
+                            Spacer(modifier = Modifier.size(ButtonDefaults.IconSpacing))
+                            Text(
+                                readerString("get_lifetime_access", "Get Lifetime Access"),
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                    }
+                    !store.available -> {
+                        Box(modifier = Modifier.height(48.dp), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator()
+                        }
+                    }
+                    else -> {
+                        Text(
+                            readerString(
+                                "upgrade_unavailable",
+                                "Upgrade currently unavailable. Please check your internet and try again.",
+                            ),
+                            style = MaterialTheme.typography.bodyMedium,
+                            textAlign = TextAlign.Center,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.height(48.dp),
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+                when {
+                    !isSignedIn -> {
+                        Text(
+                            readerString(
+                                "storekit_sign_in_before_purchase",
+                                "Sign in with Apple or Google before purchasing or restoring.",
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            textAlign = TextAlign.Center,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    store.isVerifying -> {
+                        Text(
+                            readerString(
+                                "verifying_purchase_desc",
+                                "This may take a few moments. Your Pro status will be updated automatically.",
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            textAlign = TextAlign.Center,
+                        )
+                    }
+                    showConflict -> {
+                        TextButton(onClick = onShowExistingPurchaseDialog) {
+                            Icon(
+                                imageVector = Icons.Default.Info,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp),
+                            )
+                            Spacer(modifier = Modifier.size(ButtonDefaults.IconSpacing))
+                            Text(readerString("existing_purchase_found", "Existing Purchase Found"))
+                        }
+                    }
+                    else -> {
+                        Text(
+                            readerString(
+                                "storekit_purchase_legal",
+                                "By purchasing, you agree to the Terms of Service and Privacy Policy.",
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            textAlign = TextAlign.Center,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun IosProFeatureItem(title: String, description: String) {
+    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Icon(
+            imageVector = Icons.Default.Check,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(20.dp),
+        )
+        Spacer(modifier = Modifier.width(16.dp))
+        Text(text = title, style = MaterialTheme.typography.bodyLarge)
+    }
+    Text(
+        description,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(start = 36.dp, bottom = 8.dp),
+    )
+}
+
+/**
+ * Android parity (`ProScreen.CreditTierCard` + `CostBreakdownItem`): credit
+ * balance, per-product cards with App Store names/descriptions, estimated
+ * cost breakdown.
+ */
+@Composable
+private fun IosCreditTierCard(
+    store: IosLocalStoreKitState,
+    isSignedIn: Boolean,
+    onBuyCredits: (String) -> Unit,
+    onSignInRequiredClick: () -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp).fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                readerString("credits_title", "AI & Cloud Credits"),
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "${store.credits}",
+                style = MaterialTheme.typography.displaySmall.copy(fontSize = 48.sp),
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+            )
+            Text(
+                readerString("credits_available", "Credits Available"),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(modifier = Modifier.height(24.dp))
+            if (store.isVerifying) {
+                CircularProgressIndicator(modifier = Modifier.padding(16.dp))
+                Text(
+                    readerString("verifying_purchase", "Verifying purchase…"),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            } else if (store.creditPrices.isEmpty()) {
+                Text(
+                    readerString("loading_price", "Loading price…"),
+                    modifier = Modifier.padding(16.dp),
+                )
+            } else {
+                listOf(
+                    IosStoreKitProductIds.CREDITS_100,
+                    IosStoreKitProductIds.CREDITS_300,
+                    IosStoreKitProductIds.CREDITS_750,
+                ).filter { store.creditPrices.containsKey(it) }.forEach { productId ->
+                    OutlinedCard(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)),
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(16.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                                Text(
+                                    store.creditNames[productId] ?: productId,
+                                    fontWeight = FontWeight.Bold,
+                                    style = MaterialTheme.typography.bodyLarge,
+                                )
+                                store.creditDescriptions[productId]?.takeIf { it.isNotBlank() }?.let { desc ->
+                                    Text(
+                                        desc,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                            Button(
+                                onClick = {
+                                    if (isSignedIn) onBuyCredits(productId) else onSignInRequiredClick()
+                                },
+                                modifier = Modifier.wrapContentWidth(),
+                            ) {
+                                Text(store.creditPrices[productId].orEmpty())
+                            }
+                        }
+                    }
+                }
+            }
+            if (!isSignedIn) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    readerString(
+                        "sign_in_to_purchase_credits",
+                        "Please sign in to your Episteme account to purchase credits.",
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Medium,
+                )
+            }
+            Spacer(modifier = Modifier.height(32.dp))
+            HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                readerString("credits_estimated_cost_breakdown", "Estimated Cost Breakdown"),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.align(Alignment.Start),
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            IosCostBreakdownItem(
+                icon = Icons.Default.Cloud,
+                title = readerString("credits_cloud_tts_title", "Cloud TTS"),
+                description = readerString(
+                    "credits_cloud_tts_desc",
+                    "Cost: ~3–4 credits per minute of audio generated.",
+                ),
+            )
+            IosCostBreakdownItem(
+                icon = Icons.Default.Info,
+                title = readerString("credits_ai_summaries_title", "AI Summaries & Recap"),
+                description = readerString(
+                    "credits_ai_summaries_desc",
+                    "Cost: ~1–4 credits per request based on chapter length.\nPro Users get 10 free summaries daily.",
+                ),
+            )
+            Spacer(modifier = Modifier.height(24.dp))
+        }
+    }
+}
+
+@Composable
+private fun IosCostBreakdownItem(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    description: String,
+) {
+    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.Top) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(24.dp).padding(top = 2.dp),
+        )
+        Spacer(modifier = Modifier.width(16.dp))
+        Column {
+            Text(text = title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
@@ -6515,7 +7607,7 @@ private fun NSData.toByteArray(): ByteArray {
 }
 
 @Composable
-private fun IosUtilityPage(
+internal fun IosUtilityPage(
     title: String,
     onBack: () -> Unit,
     content: @Composable () -> Unit,
@@ -6960,6 +8052,15 @@ private fun String.normalizedId(): String {
         .trim('_')
         .ifBlank { "file" }
 }
+
+/**
+ * Stable logical cloud-root identity for a newly added local folder.
+ * Mirrors Android's `cloudFolderRootId("android-root:UUID")` at folder
+ * creation: generated once, never derived from a local path (the same folder
+ * on another device has a different provider URI).
+ */
+private fun newIosCloudRootId(): String =
+    cloudFolderRootId("ios-root:${NSUUID.UUID().UUIDString}")
 
 private fun BookItem.cardTitle(): String {
     return title ?: displayName

@@ -11,6 +11,7 @@
 import AVFoundation
 import Foundation
 import MediaPlayer
+import UIKit
 
 class AudiobookPlayerController {
     private var player: AVPlayer?
@@ -27,6 +28,7 @@ class AudiobookPlayerController {
     private var currentSpeed: Float = 1
     private var nowPlayingTitle: String = ""
     private var nowPlayingSubtitle: String?
+    private var nowPlayingArtwork: MPMediaItemArtwork?
     private var wasPlayingBeforeInterruption = false
 
     /// Invoked from the main thread on every playback state change (tick,
@@ -62,6 +64,7 @@ class AudiobookPlayerController {
         currentSpeed = Float(speed) > 0 ? Float(speed) : 1
         nowPlayingTitle = url.lastPathComponent
         nowPlayingSubtitle = nil
+        nowPlayingArtwork = nil
         installRemoteCommands()
         installObservers(for: item)
         installAudioSessionObservers()
@@ -73,6 +76,11 @@ class AudiobookPlayerController {
             self?.nowPlayingSubtitle = author ?? album
             self?.refreshNowPlayingInfo()
         }
+        // Android parity (AudiobookPlayback.kt:329-334 sets cover artwork on the
+        // media notification): publish embedded artwork to Now Playing so the
+        // lock screen shows cover art instead of a blank tile. In-app cover
+        // rendering already uses SharedMobileAudiobookCover via coverPath.
+        extractNowPlayingArtwork(filePath: filePath)
         if positionMs > 0 {
             newPlayer.seek(to: CMTime(seconds: positionMs / 1000.0, preferredTimescale: 1000))
         }
@@ -247,9 +255,12 @@ class AudiobookPlayerController {
             self?.seek(to: positionEvent.positionTime * 1000)
             return .success
         }
+        // Android parity: in-player rewind/forward are 30s
+        // (SharedMobileAudiobooksUi.kt:1171-1189). Lock-screen skip must match
+        // instead of the previous 15s default.
         for (command, interval) in [
-            (commands.skipForwardCommand, 15.0),
-            (commands.skipBackwardCommand, -15.0),
+            (commands.skipForwardCommand, 30.0),
+            (commands.skipBackwardCommand, -30.0),
         ] {
             command.preferredIntervals = [NSNumber(value: abs(interval))]
             command.addTarget(handler:) { [weak self] _ in
@@ -297,6 +308,9 @@ class AudiobookPlayerController {
         if elapsedSeconds.isFinite && elapsedSeconds >= 0 {
             info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = elapsedSeconds
         }
+        if let artwork = nowPlayingArtwork {
+            info[MPMediaItemPropertyArtwork] = artwork
+        }
         center.nowPlayingInfo = info
     }
 
@@ -308,9 +322,13 @@ class AudiobookPlayerController {
             queue: .main
         ) { [weak self] _ in
             guard let self = self else { return }
+            // Android parity (AudiobookPlayback.kt:228-230 persistPosition
+            // completed=true forces position=duration). Push the completed
+            // boundary so Kotlin persists 100% progress; fall back to the
+            // current tick when duration is unknown instead of persisting 0.
             let duration = self.itemDurationMs
             self.isLoading = false
-            self.pushUpdate(isPlaying: false, isLoading: false, positionMs: duration)
+            self.pushUpdate(isPlaying: false, isLoading: false, positionMs: duration > 0 ? duration : nil)
         }
         failureObserver = center.addObserver(
             forName: .AVPlayerItemFailedToPlayToEndTime,
@@ -448,6 +466,25 @@ class AudiobookPlayerController {
             let resolvedTitle = (title?.isEmpty == false) ? title! : fallbackTitle
             DispatchQueue.main.async {
                 completion(resolvedTitle, artist, album, durationMs)
+            }
+        }
+    }
+
+    private func extractNowPlayingArtwork(filePath: String) {
+        let asset = AVURLAsset(url: URL(fileURLWithPath: filePath))
+        asset.loadValuesAsynchronously(forKeys: ["commonMetadata"]) { [weak self] in
+            var image: UIImage?
+            for item in asset.commonMetadata {
+                guard item.commonKey == .commonKeyArtwork else { continue }
+                if let data = item.dataValue, let decoded = UIImage(data: data) {
+                    image = decoded
+                    break
+                }
+            }
+            guard let cover = image else { return }
+            DispatchQueue.main.async {
+                self?.nowPlayingArtwork = MPMediaItemArtwork(boundsSize: cover.size) { _ in cover }
+                self?.refreshNowPlayingInfo()
             }
         }
     }

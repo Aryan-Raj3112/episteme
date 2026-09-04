@@ -298,6 +298,16 @@ data class DeviceLimitReachedState(
     val registeredDevices: List<DeviceItem> = emptyList()
 )
 
+/**
+ * Single source of truth for the blocking device-limit overlay, shared first
+ * per AGENTS.md. Android shows `DeviceManagementScreen` when
+ * `deviceLimitState.isLimitReached` (SettingsScreen.kt:614-620,
+ * HomeScreen.kt:681-687); iOS consumes this predicate for its overlay so both
+ * platforms block on the same condition.
+ */
+fun shouldShowDeviceLimitOverlay(deviceLimitState: DeviceLimitReachedState): Boolean =
+    deviceLimitState.isLimitReached
+
 data class SharedReaderScreenState(
     val selectedBookId: String? = null,
     val selectedUriString: String? = null,

@@ -31,14 +31,22 @@ fun SharedPdfTextDockPopupHost(
     onApplyToSelection: () -> Unit,
     labels: SharedPdfTextDockPopupLabels,
     fontFamilyContent: @Composable () -> Unit,
+    // Bottom-docked bars anchor popups above the bar; a top-docked bar passes
+    // TopCenter with a positive offset so popups open below it instead.
+    popupAlignment: Alignment = Alignment.BottomCenter,
+    popupOffsetY: Dp? = null,
 ) {
     if (state.popup == PdfTextDockPopup.NONE || state.popup == PdfTextDockPopup.FONT_SIZE) return
-    val focusable = state.colorMenuMode == PdfTextDockColorMenuMode.SPECTRUM || state.popup == PdfTextDockPopup.FONT_FAMILY
+    // Keep popups non-focusable on mobile: a focusable popup window steals
+    // focus from the hidden rich-text / text-box field, dismissing the IME and
+    // dropping the dock on phones and tablets. Inner controls (palette taps,
+    // spectrum sliders, font rows) still receive touch; the hex field can still
+    // gain focus on demand without a focusable window.
     SharedPdfTextDockPopupDp(
         onDismissRequest = state::dismiss,
-        alignment = Alignment.BottomCenter,
-        offsetY = -(bottomDockPadding + 48.dp + 8.dp),
-        focusable = focusable,
+        alignment = popupAlignment,
+        offsetY = popupOffsetY ?: -(bottomDockPadding + 48.dp + 8.dp),
+        focusable = false,
     ) {
         when (state.popup) {
             PdfTextDockPopup.FONT_FAMILY -> fontFamilyContent()

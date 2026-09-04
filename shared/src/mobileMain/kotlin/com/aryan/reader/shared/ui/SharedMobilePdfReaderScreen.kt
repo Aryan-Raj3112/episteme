@@ -2036,7 +2036,6 @@ fun SharedMobilePdfReaderHost(
                             }
                         },
                         onInsertTextBox = ::insertTextBox,
-                        onClose = { setTool(PdfInkTool.NONE) },
                         customFonts = customFonts,
                         customFontFamilies = customPdfFontFamilies,
                         onImportFont = onImportFont,

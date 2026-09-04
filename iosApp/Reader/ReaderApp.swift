@@ -14,6 +14,10 @@ import FirebaseCore
 @main
 struct ReaderApp: App {
     init() {
+        // P0 #1 background execution parity (Android WorkManager -> iOS
+        // BGTaskScheduler, one-shot only, never periodic). Handlers are set
+        // by ContentView once the account/StoreKit controllers exist.
+        IosBackgroundSync.register()
 #if DEBUG
         // UI tests launch a fresh logical library without deleting user files.
         // Keep this debug-only so production launches never clear persisted

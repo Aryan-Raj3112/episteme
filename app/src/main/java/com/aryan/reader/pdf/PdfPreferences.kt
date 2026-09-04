@@ -24,6 +24,9 @@ internal const val OCR_LANGUAGE_SELECTED_KEY = "ocr_language_selected_key"
 internal const val DOCK_LOCATION_KEY = "dock_location"
 internal const val DOCK_OFFSET_X_KEY = "dock_offset_x"
 internal const val DOCK_OFFSET_Y_KEY = "dock_offset_y"
+internal const val TEXT_DOCK_LOCATION_KEY = "text_dock_location"
+internal const val TEXT_DOCK_OFFSET_X_KEY = "text_dock_offset_x"
+internal const val TEXT_DOCK_OFFSET_Y_KEY = "text_dock_offset_y"
 internal const val PDF_AUTO_SCROLL_SPEED_KEY = "pdf_auto_scroll_speed"
 internal const val PDF_AUTO_SCROLL_USE_SLIDER_KEY = "pdf_auto_scroll_use_slider"
 internal const val PDF_AUTO_SCROLL_MIN_SPEED_KEY = "pdf_auto_scroll_min_speed"
@@ -575,6 +578,30 @@ internal fun loadDockState(context: Context): Pair<DockLocation, Offset> {
 
     val x = prefs.getFloat(DOCK_OFFSET_X_KEY, 0f)
     val y = prefs.getFloat(DOCK_OFFSET_Y_KEY, 0f)
+
+    return location to Offset(x, y)
+}
+
+internal fun saveTextDockState(context: Context, location: DockLocation, offset: Offset) {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit {
+        putString(TEXT_DOCK_LOCATION_KEY, location.name)
+        putFloat(TEXT_DOCK_OFFSET_X_KEY, offset.x)
+        putFloat(TEXT_DOCK_OFFSET_Y_KEY, offset.y)
+    }
+}
+
+internal fun loadTextDockState(context: Context): Pair<DockLocation, Offset> {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    val locName = prefs.getString(TEXT_DOCK_LOCATION_KEY, DockLocation.BOTTOM.name)
+    val location = try {
+        DockLocation.valueOf(locName ?: DockLocation.BOTTOM.name)
+    } catch (_: Exception) {
+        DockLocation.BOTTOM
+    }
+
+    val x = prefs.getFloat(TEXT_DOCK_OFFSET_X_KEY, 0f)
+    val y = prefs.getFloat(TEXT_DOCK_OFFSET_Y_KEY, 0f)
 
     return location to Offset(x, y)
 }
