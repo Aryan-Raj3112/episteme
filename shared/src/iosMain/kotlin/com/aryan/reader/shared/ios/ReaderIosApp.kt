@@ -254,6 +254,7 @@ import com.aryan.reader.shared.ui.SharedMobileEpubReaderScreen
 import com.aryan.reader.shared.ui.SharedMobileReaderTtsSettingsSheet
 import com.aryan.reader.shared.ui.SharedMobilePdfReaderHost
 import com.aryan.reader.shared.ui.SharedMobilePdfReflowUiState
+import com.aryan.reader.shared.ui.SharedPdfTtsOverlaySize
 import com.aryan.reader.shared.ui.SharedMobileDictionarySettingsSheet
 import com.aryan.reader.shared.ui.SharedAiSettingsScreen
 import com.aryan.reader.shared.ui.SharedAiSettingsStrings
@@ -2079,6 +2080,23 @@ private fun loadIosReaderTtsOverlaySize(): ReaderTtsOverlaySize =
 
 private fun persistIosReaderTtsOverlaySize(size: ReaderTtsOverlaySize) {
     NSUserDefaults.standardUserDefaults.setObject(size.name, forKey = IosReaderTtsOverlaySizeDefaultsKey)
+}
+
+// Android parity (saveReaderTtsOverlaySize): the PDF player size persists
+// across sessions under its own key (EPUB uses the shared-reader key above;
+// the two players size independently on both platforms).
+private const val IosPdfTtsOverlaySizeDefaultsKey = "reader_ios_pdf_tts_overlay_size_v1"
+
+private fun loadIosPdfTtsOverlaySize(): SharedPdfTtsOverlaySize =
+    runCatching {
+        SharedPdfTtsOverlaySize.valueOf(
+            NSUserDefaults.standardUserDefaults.stringForKey(IosPdfTtsOverlaySizeDefaultsKey)
+                ?: return SharedPdfTtsOverlaySize.LARGE
+        )
+    }.getOrDefault(SharedPdfTtsOverlaySize.LARGE)
+
+private fun persistIosPdfTtsOverlaySize(size: SharedPdfTtsOverlaySize) {
+    NSUserDefaults.standardUserDefaults.setObject(size.name, forKey = IosPdfTtsOverlaySizeDefaultsKey)
 }
 
 private fun loadIosPdfPageSliderVisible(bookId: String): Boolean {
@@ -4584,6 +4602,10 @@ private fun ReaderIosApp(
                 if (!acceptsCurrentHostCallback()) return@SharedMobilePdfReaderHost
                 state = state.reduce(AppAction.BannerShown(BannerMessage(message, isError = true)))
             },
+            onPasswordProtectedPrint = { message ->
+                if (!acceptsCurrentHostCallback()) return@SharedMobilePdfReaderHost
+                state = state.reduce(AppAction.BannerShown(BannerMessage(message, isError = true)))
+            },
             initialReaderState = initialPdfReaderState,
             readerDefaultSettings = state.pdfReaderDefaultSettings,
             onReaderDefaultSettingsChange = { defaults ->
@@ -4617,6 +4639,8 @@ private fun ReaderIosApp(
             onPageSliderVisibilityPreferenceChange = { visible ->
                 persistIosPdfPageSliderVisible(paneBook.id, visible)
             },
+            initialTtsOverlaySize = loadIosPdfTtsOverlaySize(),
+            onTtsOverlaySizePreferenceChange = ::persistIosPdfTtsOverlaySize,
             onReaderStateChange = {},
             onReaderSessionStateChange = { sessionKey, pdfState ->
                 if (!effectiveHostConfig.acceptsCallback(sessionKey)) {

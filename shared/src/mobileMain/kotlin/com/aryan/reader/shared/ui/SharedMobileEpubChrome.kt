@@ -1,6 +1,11 @@
 package com.aryan.reader.shared.ui
 
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -686,68 +691,75 @@ internal fun SharedMobileEpubTtsControls(
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
         tonalElevation = 6.dp
     ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(2.dp)
-        ) {
-            if (overlaySize != ReaderTtsOverlaySize.SMALL) {
-                Column(
-                    Modifier
-                        .weight(1f)
-                        .clickable(enabled = progress.currentChunk != null, onClick = onLocate)
-                        .padding(horizontal = 8.dp),
-                ) {
-                    Text(
-                        progress.currentChunk?.chapterTitle?.ifBlank { "Read aloud" } ?: "Preparing read aloud…",
-                        style = MaterialTheme.typography.labelLarge,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        progress.currentPositionLabel ?: "Device voice",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1
-                    )
-                }
-            }
-            if (overlaySize != ReaderTtsOverlaySize.SMALL) {
-                IconButton(onClick = tts::skipPrevious, enabled = progress.currentChunkIndex > 0) {
-                    Icon(Icons.Default.SkipPrevious, contentDescription = "Previous reading part")
-                }
-            }
-            IconButton(
-                onClick = {
-                    if (tts.state == SharedMobileEpubLocalTtsState.SPEAKING) tts.pause() else tts.resume()
-                }
+        // Android parity (TtsOverlayControls): size changes crossfade, not snap.
+        AnimatedContent(
+            targetState = overlaySize,
+            transitionSpec = { fadeIn(animationSpec = tween(200)) togetherWith fadeOut(animationSpec = tween(200)) },
+            label = "EpubTtsOverlaySize"
+        ) { size ->
+            Row(
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(2.dp)
             ) {
-                Icon(
-                    if (tts.state == SharedMobileEpubLocalTtsState.SPEAKING) Icons.Default.Pause else Icons.Default.PlayArrow,
-                    contentDescription = if (tts.state == SharedMobileEpubLocalTtsState.SPEAKING) "Pause reading" else "Resume reading"
-                )
-            }
-            if (overlaySize != ReaderTtsOverlaySize.SMALL) {
+                if (size != ReaderTtsOverlaySize.SMALL) {
+                    Column(
+                        Modifier
+                            .weight(1f)
+                            .clickable(enabled = progress.currentChunk != null, onClick = onLocate)
+                            .padding(horizontal = 8.dp),
+                    ) {
+                        Text(
+                            progress.currentChunk?.chapterTitle?.ifBlank { "Read aloud" } ?: "Preparing read aloud…",
+                            style = MaterialTheme.typography.labelLarge,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            progress.currentPositionLabel ?: "Device voice",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1
+                        )
+                    }
+                }
+                if (size != ReaderTtsOverlaySize.SMALL) {
+                    IconButton(onClick = tts::skipPrevious, enabled = progress.currentChunkIndex > 0) {
+                        Icon(Icons.Default.SkipPrevious, contentDescription = "Previous reading part")
+                    }
+                }
                 IconButton(
-                    onClick = tts::skipNext,
-                    enabled = progress.currentChunkIndex in 0 until progress.chunks.lastIndex
+                    onClick = {
+                        if (tts.state == SharedMobileEpubLocalTtsState.SPEAKING) tts.pause() else tts.resume()
+                    }
                 ) {
-                    Icon(Icons.Default.SkipNext, contentDescription = "Next reading part")
+                    Icon(
+                        if (tts.state == SharedMobileEpubLocalTtsState.SPEAKING) Icons.Default.Pause else Icons.Default.PlayArrow,
+                        contentDescription = if (tts.state == SharedMobileEpubLocalTtsState.SPEAKING) "Pause reading" else "Resume reading"
+                    )
                 }
-            }
-            if (overlaySize == ReaderTtsOverlaySize.LARGE) {
-                IconButton(onClick = onLocate, enabled = progress.currentChunk != null) {
-                    Icon(SharedReaderIcons.PinDrop, contentDescription = "Locate current reading part")
+                if (size != ReaderTtsOverlaySize.SMALL) {
+                    IconButton(
+                        onClick = tts::skipNext,
+                        enabled = progress.currentChunkIndex in 0 until progress.chunks.lastIndex
+                    ) {
+                        Icon(Icons.Default.SkipNext, contentDescription = "Next reading part")
+                    }
                 }
-            }
-            if (overlaySize == ReaderTtsOverlaySize.LARGE) {
-                IconButton(onClick = onOpenSettings) {
-                    Icon(Icons.Default.Settings, contentDescription = "TTS voice settings")
+                if (size == ReaderTtsOverlaySize.LARGE) {
+                    IconButton(onClick = onLocate, enabled = progress.currentChunk != null) {
+                        Icon(SharedReaderIcons.PinDrop, contentDescription = "Locate current reading part")
+                    }
                 }
-            }
-            SharedMobileEpubTtsOverlaySizeControls(overlaySize, onOverlaySizeChange)
-            IconButton(onClick = tts::stop) {
-                Icon(Icons.Default.Close, contentDescription = "Stop reading", tint = MaterialTheme.colorScheme.error)
+                if (size == ReaderTtsOverlaySize.LARGE) {
+                    IconButton(onClick = onOpenSettings) {
+                        Icon(Icons.Default.Settings, contentDescription = "TTS voice settings")
+                    }
+                }
+                SharedMobileEpubTtsOverlaySizeControls(size, onOverlaySizeChange)
+                IconButton(onClick = tts::stop) {
+                    Icon(Icons.Default.Close, contentDescription = "Stop reading", tint = MaterialTheme.colorScheme.error)
+                }
             }
         }
     }
@@ -772,60 +784,67 @@ internal fun SharedMobileEpubCloudTtsControls(
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
         tonalElevation = 6.dp,
     ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(2.dp),
-        ) {
-            if (overlaySize != ReaderTtsOverlaySize.SMALL) {
-                Column(
-                    Modifier
-                        .weight(1f)
-                        .clickable(enabled = progress.currentChunk != null, onClick = onLocate)
-                        .padding(horizontal = 8.dp),
-                ) {
-                    Text(
-                        progress.currentChunk?.chapterTitle?.ifBlank { "Cloud read aloud" } ?: "Preparing cloud audio…",
-                        style = MaterialTheme.typography.labelLarge,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        cloudState.errorMessage ?: progress.currentPositionLabel ?: "Cloud AI · ${cloudState.cacheSummary.currentVoiceLabel}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (cloudState.errorMessage != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
-            if (overlaySize != ReaderTtsOverlaySize.SMALL) {
-                IconButton(onClick = tts::skipPrevious, enabled = progress.currentChunkIndex > 0 && !cloudState.isLoading) {
-                    Icon(Icons.Default.SkipPrevious, contentDescription = "Previous cloud reading part")
-                }
-            }
-            IconButton(
-                onClick = { if (cloudState.isPlaying) tts.pause() else tts.resume() },
-                enabled = cloudState.isLoading || cloudState.isPlaying || cloudState.isPaused,
+        // Android parity (TtsOverlayControls): size changes crossfade, not snap.
+        AnimatedContent(
+            targetState = overlaySize,
+            transitionSpec = { fadeIn(animationSpec = tween(200)) togetherWith fadeOut(animationSpec = tween(200)) },
+            label = "EpubCloudTtsOverlaySize"
+        ) { size ->
+            Row(
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
             ) {
-                Icon(
-                    if (cloudState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                    contentDescription = if (cloudState.isPlaying) "Pause cloud reading" else "Resume cloud reading",
-                )
-            }
-            if (overlaySize != ReaderTtsOverlaySize.SMALL) {
-                IconButton(onClick = tts::skipNext, enabled = progress.currentChunkIndex in 0 until progress.chunks.lastIndex && !cloudState.isLoading) {
-                    Icon(Icons.Default.SkipNext, contentDescription = "Next cloud reading part")
+                if (size != ReaderTtsOverlaySize.SMALL) {
+                    Column(
+                        Modifier
+                            .weight(1f)
+                            .clickable(enabled = progress.currentChunk != null, onClick = onLocate)
+                            .padding(horizontal = 8.dp),
+                    ) {
+                        Text(
+                            progress.currentChunk?.chapterTitle?.ifBlank { "Cloud read aloud" } ?: "Preparing cloud audio…",
+                            style = MaterialTheme.typography.labelLarge,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            cloudState.errorMessage ?: progress.currentPositionLabel ?: "Cloud AI · ${cloudState.cacheSummary.currentVoiceLabel}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (cloudState.errorMessage != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                 }
-            }
-            if (overlaySize == ReaderTtsOverlaySize.LARGE) {
-                IconButton(onClick = onLocate, enabled = progress.currentChunk != null) {
-                    Icon(SharedReaderIcons.PinDrop, contentDescription = "Locate cloud reading part")
+                if (size != ReaderTtsOverlaySize.SMALL) {
+                    IconButton(onClick = tts::skipPrevious, enabled = progress.currentChunkIndex > 0 && !cloudState.isLoading) {
+                        Icon(Icons.Default.SkipPrevious, contentDescription = "Previous cloud reading part")
+                    }
                 }
-            }
-            SharedMobileEpubTtsOverlaySizeControls(overlaySize, onOverlaySizeChange)
-            IconButton(onClick = tts::stop) {
-                Icon(Icons.Default.Close, contentDescription = "Stop cloud reading", tint = MaterialTheme.colorScheme.error)
+                IconButton(
+                    onClick = { if (cloudState.isPlaying) tts.pause() else tts.resume() },
+                    enabled = cloudState.isLoading || cloudState.isPlaying || cloudState.isPaused,
+                ) {
+                    Icon(
+                        if (cloudState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                        contentDescription = if (cloudState.isPlaying) "Pause cloud reading" else "Resume cloud reading",
+                    )
+                }
+                if (size != ReaderTtsOverlaySize.SMALL) {
+                    IconButton(onClick = tts::skipNext, enabled = progress.currentChunkIndex in 0 until progress.chunks.lastIndex && !cloudState.isLoading) {
+                        Icon(Icons.Default.SkipNext, contentDescription = "Next cloud reading part")
+                    }
+                }
+                if (size == ReaderTtsOverlaySize.LARGE) {
+                    IconButton(onClick = onLocate, enabled = progress.currentChunk != null) {
+                        Icon(SharedReaderIcons.PinDrop, contentDescription = "Locate cloud reading part")
+                    }
+                }
+                SharedMobileEpubTtsOverlaySizeControls(size, onOverlaySizeChange)
+                IconButton(onClick = tts::stop) {
+                    Icon(Icons.Default.Close, contentDescription = "Stop cloud reading", tint = MaterialTheme.colorScheme.error)
+                }
             }
         }
     }

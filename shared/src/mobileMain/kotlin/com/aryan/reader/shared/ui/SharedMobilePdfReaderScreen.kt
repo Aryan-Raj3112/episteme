@@ -60,6 +60,8 @@ import androidx.compose.material.icons.automirrored.filled.NavigateBefore
 import androidx.compose.material.icons.automirrored.filled.NavigateNext
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Ai
+import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
@@ -94,6 +96,8 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -332,6 +336,7 @@ fun SharedMobilePdfReaderScreen(
     onOpenAiHub: () -> Unit = {},
     onTtsError: ((String) -> Unit)? = null,
     onClipboardError: ((String) -> Unit)? = null,
+    onPasswordProtectedPrint: (String) -> Unit = {},
     initialReaderState: SharedPdfReaderState? = null,
     readerDefaultSettings: ReaderSettings = DefaultPdfReaderSettings,
     onReaderDefaultSettingsChange: (ReaderSettings) -> Unit = {},
@@ -349,6 +354,8 @@ fun SharedMobilePdfReaderScreen(
     onStylusOnlyModePreferenceChange: (Boolean) -> Unit = {},
     initialPageSliderVisible: Boolean = false,
     onPageSliderVisibilityPreferenceChange: (Boolean) -> Unit = {},
+    initialTtsOverlaySize: SharedPdfTtsOverlaySize = SharedPdfTtsOverlaySize.LARGE,
+    onTtsOverlaySizePreferenceChange: (SharedPdfTtsOverlaySize) -> Unit = {},
     onReaderStateChange: (SharedPdfReaderState) -> Unit = {},
     pdfAutoScrollGlobalProfile: PdfAutoScrollProfile = PdfAutoScrollProfile(),
     onPdfAutoScrollGlobalProfileChange: (PdfAutoScrollProfile) -> Unit = {},
@@ -407,6 +414,7 @@ fun SharedMobilePdfReaderScreen(
         aiCredits = aiCredits,
         onTtsError = onTtsError,
         onClipboardError = onClipboardError,
+        onPasswordProtectedPrint = onPasswordProtectedPrint,
         initialReaderState = initialReaderState,
         readerDefaultSettings = readerDefaultSettings,
         onReaderDefaultSettingsChange = onReaderDefaultSettingsChange,
@@ -424,6 +432,8 @@ fun SharedMobilePdfReaderScreen(
         onStylusOnlyModePreferenceChange = onStylusOnlyModePreferenceChange,
         initialPageSliderVisible = initialPageSliderVisible,
         onPageSliderVisibilityPreferenceChange = onPageSliderVisibilityPreferenceChange,
+        initialTtsOverlaySize = initialTtsOverlaySize,
+        onTtsOverlaySizePreferenceChange = onTtsOverlaySizePreferenceChange,
         onReaderStateChange = onReaderStateChange,
         pdfAutoScrollGlobalProfile = pdfAutoScrollGlobalProfile,
         onPdfAutoScrollGlobalProfileChange = onPdfAutoScrollGlobalProfileChange,
@@ -489,6 +499,7 @@ fun SharedMobilePdfReaderHost(
     onOpenAiHub: () -> Unit = {},
     onTtsError: ((String) -> Unit)? = null,
     onClipboardError: ((String) -> Unit)? = null,
+    onPasswordProtectedPrint: (String) -> Unit = {},
     initialReaderState: SharedPdfReaderState? = null,
     readerDefaultSettings: ReaderSettings = DefaultPdfReaderSettings,
     onReaderDefaultSettingsChange: (ReaderSettings) -> Unit = {},
@@ -506,6 +517,8 @@ fun SharedMobilePdfReaderHost(
     onStylusOnlyModePreferenceChange: (Boolean) -> Unit = {},
     initialPageSliderVisible: Boolean = false,
     onPageSliderVisibilityPreferenceChange: (Boolean) -> Unit = {},
+    initialTtsOverlaySize: SharedPdfTtsOverlaySize = SharedPdfTtsOverlaySize.LARGE,
+    onTtsOverlaySizePreferenceChange: (SharedPdfTtsOverlaySize) -> Unit = {},
     onReaderStateChange: (SharedPdfReaderState) -> Unit = {},
     onReaderSessionStateChange: (SharedPdfReaderSessionKey, SharedPdfReaderState) -> Unit = { _, _ -> },
     pdfAutoScrollGlobalProfile: PdfAutoScrollProfile = PdfAutoScrollProfile(),
@@ -554,6 +567,11 @@ fun SharedMobilePdfReaderHost(
     var showReaderOptions by remember(readerSessionKey) { mutableStateOf(false) }
     var showThemePanel by remember(readerSessionKey) { mutableStateOf(false) }
     var showPageSlider by remember(readerSessionKey) { mutableStateOf(initialPageSliderVisible) }
+    // Android parity (load/saveReaderTtsOverlaySize): the player size persists
+    // across sessions instead of resetting to LARGE every open.
+    var ttsOverlaySize by remember(readerSessionKey, initialTtsOverlaySize) {
+        mutableStateOf(initialTtsOverlaySize)
+    }
     var showFileInformation by remember(readerSessionKey) { mutableStateOf(false) }
     var showBrightnessSheet by remember(readerSessionKey) { mutableStateOf(false) }
     var showScreenOrientationSheet by remember(readerSessionKey) { mutableStateOf(false) }
@@ -568,7 +586,6 @@ fun SharedMobilePdfReaderHost(
     var pendingExternalLink by remember(readerSessionKey) { mutableStateOf<String?>(null) }
     var pdfPassword by remember(readerSessionKey) { mutableStateOf<String?>(null) }
     var pdfPasswordDraft by remember(readerSessionKey) { mutableStateOf("") }
-    var showPasswordProtectedPrintWarning by remember(readerSessionKey) { mutableStateOf(false) }
     var showShareFormatChoice by remember(readerSessionKey) { mutableStateOf(false) }
     var showVerticalPageGap by remember(readerSessionKey) {
         mutableStateOf(readerDefaultSettings.pdfVerticalPageGapVisible)
@@ -776,7 +793,6 @@ fun SharedMobilePdfReaderHost(
             showTtsSettingsSheet = false
             showTtsReplacementsSheet = false
             showNewPdfTabSheet = false
-            showPasswordProtectedPrintWarning = false
             showShareFormatChoice = false
             pendingExternalLink = null
             noteAnnotationId = null
@@ -892,6 +908,10 @@ fun SharedMobilePdfReaderHost(
     val copiedTextLabel = readerString("clip_label_copied_text", "Copied Text")
     val copiedLinkLabel = readerString("clip_label_copied_link", "Copied Link")
     val clipboardErrorMessage = readerString("error_copy_to_clipboard", "Could not copy to clipboard")
+    val passwordPrintBlockedMessage = readerString(
+        "error_print_password_protected",
+        "Password protected PDF files cannot be printed"
+    )
 
     fun copyToClipboard(text: String, label: String = copiedTextLabel): SharedClipboardResult {
         val result = writeSharedClipboard(label = label, text = text)
@@ -1702,7 +1722,11 @@ fun SharedMobilePdfReaderHost(
                                 setTool(if (readerState.selectedTool == PdfInkTool.NONE) PdfInkTool.PEN else PdfInkTool.NONE)
                             },
                             onShowSlider = {
-                                showPageSlider = !showPageSlider
+                                // Android parity: opening the slider reveals the
+                                // chrome (it renders in the bottom-chrome zone).
+                                val opening = !showPageSlider
+                                showPageSlider = opening
+                                if (opening) showChrome = true
                                 onPageSliderVisibilityPreferenceChange(showPageSlider)
                             },
                             onToggleTts = {
@@ -1719,7 +1743,10 @@ fun SharedMobilePdfReaderHost(
                             onNativeAction = { action ->
                                 if (ownsNativeAction) {
                                     if (action == SharedMobilePdfNativeAction.PRINT && pdfPassword != null) {
-                                        showPasswordProtectedPrintWarning = true
+                                        // Android parity (print-blocked banner):
+                                        // a transient host banner, not a modal
+                                        // dialog, using the benchmark copy.
+                                        onPasswordProtectedPrint(passwordPrintBlockedMessage)
                                     } else if (action == SharedMobilePdfNativeAction.SHARE && shouldShowPdfAnnotationExportChoice(
                                             sidecarsReady = true,
                                             inkAnnotationCounts = readerState.annotations
@@ -1788,7 +1815,11 @@ fun SharedMobilePdfReaderHost(
                     SharedMobilePdfReaderBottomBar(
                         state = readerState,
                         tools = pdfBottomTools,
-                        onShowSlider = { showPageSlider = !showPageSlider },
+                        onShowSlider = {
+                            val opening = !showPageSlider
+                            showPageSlider = opening
+                            if (opening) showChrome = true
+                        },
                         onOpenDrawer = { scope.launch { drawerState.open() } },
                         onSearch = { dispatch(SharedPdfReaderAction.SearchOpened) },
                         onToolSelected = ::setTool,
@@ -2000,7 +2031,10 @@ fun SharedMobilePdfReaderHost(
                     )
                 }
                 AnimatedVisibility(
-                    visible = showChrome && showPageSlider,
+                    // Android parity (shouldRenderReaderSlider): the slider
+                    // belongs to visible bottom chrome and never shows during
+                    // search.
+                    visible = showChrome && showPageSlider && !readerState.isSearchActive,
                     enter = slideInVertically { it } + fadeIn(),
                     exit = slideOutVertically { it } + fadeOut(),
                     modifier = Modifier.align(Alignment.BottomCenter)
@@ -2083,8 +2117,7 @@ fun SharedMobilePdfReaderHost(
                         pageIndex = ttsPageIndex,
                         pageCount = pageCount,
                         chunkIndex = pdfTts.progress.currentChunkIndex,
-                        chunkCount = pdfTts.progress.chunks.size,
-                        onPauseResume = {
+                        chunkCount = pdfTts.progress.chunks.size,                        onPauseResume = {
                             if (ownsTts) {
                                 if (pdfTts.state == SharedMobileEpubLocalTtsState.SPEAKING) pdfTts.pause() else pdfTts.resume()
                             }
@@ -2121,6 +2154,11 @@ fun SharedMobilePdfReaderHost(
                             pendingTtsStartAtLastChunk = false
                             ttsHighlightBounds = emptyList()
                         },
+                        overlaySize = ttsOverlaySize,
+                        onOverlaySizeChange = {
+                            ttsOverlaySize = it
+                            onTtsOverlaySizePreferenceChange(it)
+                        },
                         modifier = Modifier.padding(bottom = ttsBottomPadding)
                     )
                 }
@@ -2143,6 +2181,41 @@ fun SharedMobilePdfReaderHost(
                                 }
                             },
                             modifier = Modifier.padding(bottom = ttsBottomPadding),
+                        )
+                    }
+                }
+                // Android parity (PdfViewerScreen scroll-to-TTs FAB): in vertical
+                // mode while TTS is active on an off-screen page, a transient
+                // button jumps back to the reading page. The in-overlay locate
+                // action stays for the on-screen case.
+                val isPdfTtsPageBelow = ttsPageIndex > currentPdfIndex
+                AnimatedVisibility(
+                    visible = readerState.displayMode == PdfDisplayMode.VERTICAL_SCROLL &&
+                        (pdfTts.isSessionActive || pendingTtsStart != null || cloudTtsState.isLoading || cloudTtsState.isPlaying || cloudTtsState.isPaused) &&
+                        ttsPageIndex != currentPdfIndex,
+                    enter = fadeIn(animationSpec = tween(PdfChromeMotionDurationMillis)),
+                    exit = fadeOut(animationSpec = tween(PdfChromeMotionDurationMillis)),
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = ttsBottomPadding)
+                        .padding(horizontal = 16.dp)
+                ) {
+                    FloatingActionButton(
+                        onClick = {
+                            navigateToPage(
+                                sharedPdfDisplayIndexFor(virtualLayout, ttsPageIndex),
+                                recordHistory = false,
+                                reason = PdfNavigationReason.TTS
+                            )
+                        },
+                        shape = CircleShape,
+                        containerColor = Color.Black.copy(alpha = 0.7f),
+                        contentColor = Color.White,
+                        elevation = FloatingActionButtonDefaults.elevation(0.dp, 0.dp, 0.dp, 0.dp)
+                    ) {
+                        Icon(
+                            imageVector = if (isPdfTtsPageBelow) Icons.Default.ArrowDownward else Icons.Default.ArrowUpward,
+                            contentDescription = readerString("content_desc_scroll_to_reading_page", "Scroll to reading page")
                         )
                     }
                 }
@@ -2185,6 +2258,9 @@ fun SharedMobilePdfReaderHost(
                             autoScrollModeActive = false
                             autoScrollPlaying = false
                             autoScrollTemporarilyPaused = false
+                            // Android parity (PdfViewerScreen auto-scroll
+                            // onClose): closing restores the chrome.
+                            showChrome = true
                         },
                         modifier = Modifier.padding(
                             start = 12.dp,
@@ -2194,7 +2270,9 @@ fun SharedMobilePdfReaderHost(
                     )
                 }
                 AnimatedVisibility(
-                    visible = readerState.isSearchActive && readerState.showSearchResultsPanel && readerState.searchQuery.isNotBlank()
+                    // Android parity: the panel shows for blank queries too
+                    // (it renders its own "Enter a search term" prompt).
+                    visible = readerState.isSearchActive && readerState.showSearchResultsPanel
                 ) {
                     SharedMobilePdfSearchResultsPanel(
                         query = readerState.searchQuery,
@@ -2668,7 +2746,15 @@ fun SharedMobilePdfReaderHost(
                         }
                     }
                 }
-                if (pdfReflowUiState.isGenerating) {
+                // Android parity (ReflowProgressOverlay): a non-blocking top
+                // strip instead of a fullscreen scrim, so reading continues
+                // during generation. Gated on chrome like showStandardBars.
+                AnimatedVisibility(
+                    visible = showChrome && !readerState.isSearchActive && pdfReflowUiState.isGenerating,
+                    enter = slideInVertically(animationSpec = tween(PdfChromeMotionDurationMillis)) { -it } + fadeIn(animationSpec = tween(PdfChromeMotionDurationMillis)),
+                    exit = slideOutVertically(animationSpec = tween(PdfChromeMotionDurationMillis)) { -it } + fadeOut(animationSpec = tween(PdfChromeMotionDurationMillis)),
+                    modifier = Modifier.align(Alignment.TopCenter)
+                ) {
                     SharedMobilePdfReflowProgressOverlay(progress = pdfReflowUiState.progress)
                 }
             }
@@ -2939,18 +3025,6 @@ fun SharedMobilePdfReaderHost(
                 TextButton(onClick = closeReader) { Text("Cancel") }
             },
             properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false),
-        )
-    }
-    if (showPasswordProtectedPrintWarning) {
-        AlertDialog(
-            onDismissRequest = { showPasswordProtectedPrintWarning = false },
-            title = { Text("Printing unavailable") },
-            text = { Text("Password-protected PDFs cannot be printed.") },
-            confirmButton = {
-                TextButton(onClick = { showPasswordProtectedPrintWarning = false }) {
-                    Text("OK")
-                }
-            },
         )
     }
     if (showShareFormatChoice) {
@@ -3765,37 +3839,35 @@ private fun SharedMobilePdfToolbarCustomizationSheet(
 
 @Composable
 private fun SharedMobilePdfReflowProgressOverlay(progress: Float) {
+    // Android parity (PdfToolbars.ReflowProgressOverlay): a top strip card
+    // with title, percent and linear progress — non-blocking.
     Surface(
-        modifier = Modifier
-            .fillMaxSize()
-            .clickable(enabled = true, onClick = {}),
-        color = Color.Black.copy(alpha = 0.35f),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(bottomStart = 8.dp, bottomEnd = 8.dp),
+        shadowElevation = 4.dp
     ) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Column(
-                modifier = Modifier
-                    .width(240.dp)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(16.dp))
-                    .padding(24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                 Text(
-                    text = "Generating Text View…",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
+                    text = readerString("generating_text_view", "Generating Text View…"),
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f)
                 )
                 Text(
                     text = "${(progress.coerceIn(0f, 1f) * 100).toInt()}%",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                LinearProgressIndicator(
-                    progress = { progress.coerceIn(0f, 1f) },
-                    modifier = Modifier.fillMaxWidth(),
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
                 )
             }
+            Spacer(Modifier.height(8.dp))
+            LinearProgressIndicator(
+                progress = { progress.coerceIn(0f, 1f) },
+                modifier = Modifier.fillMaxWidth().height(6.dp),
+                trackColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+            )
         }
     }
 }

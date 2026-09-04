@@ -1774,7 +1774,7 @@ internal fun SharedMobilePdfAutoScrollControls(
     }
 }
 
-private enum class SharedPdfTtsOverlaySize { LARGE, MEDIUM, SMALL }
+enum class SharedPdfTtsOverlaySize { LARGE, MEDIUM, SMALL }
 
 @Composable
 internal fun SharedMobilePdfTtsControls(
@@ -1788,9 +1788,10 @@ internal fun SharedMobilePdfTtsControls(
     onNextPage: () -> Unit,
     onLocate: () -> Unit,
     onStop: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    overlaySize: SharedPdfTtsOverlaySize = SharedPdfTtsOverlaySize.LARGE,
+    onOverlaySizeChange: (SharedPdfTtsOverlaySize) -> Unit = {},
 ) {
-    var overlaySize by remember { mutableStateOf(SharedPdfTtsOverlaySize.LARGE) }
     var rate by remember(tts.speechRate) { mutableStateOf(tts.speechRate) }
     var pitch by remember(tts.speechPitch) { mutableStateOf(tts.speechPitch) }
     val isSpeaking = tts.state == SharedMobileEpubLocalTtsState.SPEAKING
@@ -1820,10 +1821,10 @@ internal fun SharedMobilePdfTtsControls(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    IconButton(onClick = { overlaySize = SharedPdfTtsOverlaySize.LARGE }, modifier = Modifier.size(36.dp)) {
+                    IconButton(onClick = { onOverlaySizeChange(SharedPdfTtsOverlaySize.LARGE) }, modifier = Modifier.size(36.dp)) {
                         Icon(Icons.Default.KeyboardArrowUp, "Expand TTS player", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    IconButton(onClick = { overlaySize = SharedPdfTtsOverlaySize.MEDIUM }, modifier = Modifier.size(36.dp)) {
+                    IconButton(onClick = { onOverlaySizeChange(SharedPdfTtsOverlaySize.MEDIUM) }, modifier = Modifier.size(36.dp)) {
                         Icon(Icons.Default.KeyboardArrowLeft, "Expand TTS player", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     PdfTtsPlayButton(isSpeaking, isPreparing, onPauseResume, 36.dp, 20.dp)
@@ -1847,10 +1848,10 @@ internal fun SharedMobilePdfTtsControls(
                     IconButton(onClick = onNextPage, enabled = canNext, modifier = Modifier.size(40.dp)) {
                         Icon(Icons.Default.SkipNext, "Next reading part")
                     }
-                    IconButton(onClick = { overlaySize = SharedPdfTtsOverlaySize.LARGE }, modifier = Modifier.size(34.dp)) {
+                    IconButton(onClick = { onOverlaySizeChange(SharedPdfTtsOverlaySize.LARGE) }, modifier = Modifier.size(34.dp)) {
                         Icon(Icons.Default.KeyboardArrowUp, "Expand TTS player", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    IconButton(onClick = { overlaySize = SharedPdfTtsOverlaySize.SMALL }, modifier = Modifier.size(34.dp)) {
+                    IconButton(onClick = { onOverlaySizeChange(SharedPdfTtsOverlaySize.SMALL) }, modifier = Modifier.size(34.dp)) {
                         Icon(Icons.Default.KeyboardArrowRight, "Collapse TTS player", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
@@ -1865,10 +1866,10 @@ internal fun SharedMobilePdfTtsControls(
                         IconButton(onClick = onLocate, modifier = Modifier.size(32.dp)) {
                             Icon(Icons.Default.PushPin, "Locate current part", modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
-                        IconButton(onClick = { overlaySize = SharedPdfTtsOverlaySize.MEDIUM }, modifier = Modifier.size(32.dp)) {
+                        IconButton(onClick = { onOverlaySizeChange(SharedPdfTtsOverlaySize.MEDIUM) }, modifier = Modifier.size(32.dp)) {
                             Icon(Icons.Default.KeyboardArrowDown, "Collapse TTS player", modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
-                        IconButton(onClick = { overlaySize = SharedPdfTtsOverlaySize.SMALL }, modifier = Modifier.size(32.dp)) {
+                        IconButton(onClick = { onOverlaySizeChange(SharedPdfTtsOverlaySize.SMALL) }, modifier = Modifier.size(32.dp)) {
                             Icon(Icons.Default.KeyboardArrowRight, "Collapse TTS player", modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         IconButton(onClick = onStop, modifier = Modifier.size(32.dp)) {

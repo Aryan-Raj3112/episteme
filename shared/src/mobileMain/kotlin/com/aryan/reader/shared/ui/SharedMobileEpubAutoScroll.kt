@@ -1,5 +1,11 @@
 package com.aryan.reader.shared.ui
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -164,12 +170,19 @@ internal fun SharedMobileEpubAutoScrollControls(
     Surface(
         modifier = modifier
             .then(if (isCollapsed) Modifier else Modifier.fillMaxWidth())
-            .widthIn(max = 400.dp),
+            .widthIn(max = 400.dp)
+            .animateContentSize(),
         shape = RoundedCornerShape(28.dp),
         tonalElevation = 8.dp,
         shadowElevation = 8.dp
     ) {
-        if (isCollapsed) {
+        // Android parity (AutoScrollControls): collapse crossfades, not snaps.
+        AnimatedContent(
+            targetState = isCollapsed,
+            transitionSpec = { fadeIn(animationSpec = tween(200)) togetherWith fadeOut(animationSpec = tween(200)) },
+            label = "EpubAutoScrollCollapse"
+        ) { collapsed ->
+            if (collapsed) {
             Row(
                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -253,6 +266,7 @@ internal fun SharedMobileEpubAutoScrollControls(
                         Icon(Icons.Default.Add, contentDescription = "Faster")
                     }
                 }
+            }
             }
         }
     }

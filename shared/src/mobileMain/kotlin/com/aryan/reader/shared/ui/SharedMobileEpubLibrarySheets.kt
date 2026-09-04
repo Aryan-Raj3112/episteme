@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -23,6 +24,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.filled.NavigateBefore
+import androidx.compose.material.icons.automirrored.filled.NavigateNext
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.MoreVert
@@ -95,7 +98,8 @@ internal fun SharedMobileEpubSlider(
     pageCount: Int,
     settings: ReaderSettings,
     onPageSelected: (Int) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onScrubPositionChange: (Int?) -> Unit = {},
 ) {
     val sliderStepCount = ReaderSpreadLayout.sliderStepCount(pageCount, settings)
     val lastSliderPosition = (sliderStepCount - 1).coerceAtLeast(0)
@@ -106,28 +110,52 @@ internal fun SharedMobileEpubSlider(
                 .toFloat()
         )
     }
+    fun scrubPageLabel(position: Int): String = ReaderSpreadLayout.pageRangeLabel(
+        ReaderSpreadLayout.pageNumberForSliderPosition(
+            position.coerceIn(0, lastSliderPosition) + 1,
+            pageCount,
+            settings
+        ) - 1,
+        pageCount,
+        settings
+    )
     Surface(modifier, shape = RoundedCornerShape(18.dp), tonalElevation = 8.dp) {
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 12.dp),
+            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            // Android parity (EpubReaderPageSlider steppers): previous/next
+            // page buttons flanking the slider.
+            IconButton(
+                onClick = { onPageSelected((pageIndex - 1).coerceAtLeast(0)) },
+                enabled = pageIndex > 0,
+                modifier = Modifier.size(40.dp)
+            ) {
+                Icon(
+                    Icons.AutoMirrored.Filled.NavigateBefore,
+                    contentDescription = readerString("desktop_previous_page", "Previous page"),
+                    tint = MaterialTheme.colorScheme.onSurface.copy(alpha = if (pageIndex > 0) 0.9f else 0.32f)
+                )
+            }
             Text(
-                ReaderSpreadLayout.pageRangeLabel(
-                    ReaderSpreadLayout.pageNumberForSliderPosition(
-                        sliderValue.roundToInt().coerceIn(0, lastSliderPosition) + 1,
-                        pageCount,
-                        settings
-                    ) - 1,
-                    pageCount,
-                    settings
-                ),
+                scrubPageLabel(sliderValue.roundToInt()),
                 fontWeight = FontWeight.SemiBold
             )
             Spacer(Modifier.width(12.dp))
             Slider(
                 value = sliderValue,
-                onValueChange = { sliderValue = it },
+                onValueChange = {
+                    sliderValue = it
+                    onScrubPositionChange(
+                        ReaderSpreadLayout.pageNumberForSliderPosition(
+                            it.roundToInt().coerceIn(0, lastSliderPosition) + 1,
+                            pageCount,
+                            settings
+                        ) - 1
+                    )
+                },
                 onValueChangeFinished = {
+                    onScrubPositionChange(null)
                     onPageSelected(
                         ReaderSpreadLayout.pageNumberForSliderPosition(
                             sliderValue.roundToInt().coerceIn(0, lastSliderPosition) + 1,
@@ -142,7 +170,49 @@ internal fun SharedMobileEpubSlider(
             )
             Spacer(Modifier.width(12.dp))
             Text("$sliderStepCount")
+            IconButton(
+                onClick = { onPageSelected((pageIndex + 1).coerceAtMost((pageCount - 1).coerceAtLeast(0))) },
+                enabled = pageIndex < pageCount - 1,
+                modifier = Modifier.size(40.dp)
+            ) {
+                Icon(
+                    Icons.AutoMirrored.Filled.NavigateNext,
+                    contentDescription = readerString("desktop_next_page", "Next page"),
+                    tint = MaterialTheme.colorScheme.onSurface.copy(alpha = if (pageIndex < pageCount - 1) 0.9f else 0.32f)
+                )
+            }
         }
+    }
+}
+
+// Android parity (PageScrubbingAnimation): centered "Page X of Y" readout
+// while fast-scrubbing the page slider.
+@Composable
+internal fun SharedMobileEpubScrubBubble(
+    label: String,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = modifier
+            .background(
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
+                shape = RoundedCornerShape(16.dp)
+            )
+            .padding(horizontal = 24.dp, vertical = 16.dp)
+    ) {
+        Icon(
+            SharedReaderIcons.Slider,
+            contentDescription = null,
+            modifier = Modifier.size(48.dp),
+            tint = MaterialTheme.colorScheme.primary
+        )
+        Spacer(Modifier.height(12.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.headlineSmall,
+            color = MaterialTheme.colorScheme.onSurface
+        )
     }
 }
 
