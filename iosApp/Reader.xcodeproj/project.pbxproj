@@ -13,6 +13,16 @@
 		F10000012FFE500000000001 /* ReaderUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10000032FFE500000000001 /* ReaderUITests.swift */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		F100000A2FFE500000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 9284F5952FFE342F0088D5CA /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 9284F59C2FFE342F0088D5CA;
+			remoteInfo = Reader;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
 		9284F59D2FFE342F0088D5CA /* Reader.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Reader.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		F10000022FFE500000000001 /* ReaderUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ReaderUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -23,14 +33,6 @@
 		9284F59F2FFE342F0088D5CA /* Reader */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = Reader;
-			sourceTree = "<group>";
-		};
-		F10000042FFE500000000001 /* ReaderUITests */ = {
-			isa = PBXGroup;
-			children = (
-				F10000032FFE500000000001 /* ReaderUITests.swift */,
-			);
-			path = ReaderUITests;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -72,6 +74,14 @@
 				F10000022FFE500000000001 /* ReaderUITests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		F10000042FFE500000000001 /* ReaderUITests */ = {
+			isa = PBXGroup;
+			children = (
+				F10000032FFE500000000001 /* ReaderUITests.swift */,
+			);
+			path = ReaderUITests;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -174,24 +184,6 @@
 		};
 /* End PBXProject section */
 
-/* Begin PBXContainerItemProxy section */
-		F100000A2FFE500000000001 /* PBXContainerItemProxy */ = {
-			isa = PBXContainerItemProxy;
-			containerPortal = 9284F5952FFE342F0088D5CA /* Project object */;
-			proxyType = 1;
-			remoteGlobalIDString = 9284F59C2FFE342F0088D5CA;
-			remoteInfo = Reader;
-		};
-/* End PBXContainerItemProxy section */
-
-/* Begin PBXTargetDependency section */
-		F10000092FFE500000000001 /* PBXTargetDependency */ = {
-			isa = PBXTargetDependency;
-			target = 9284F59C2FFE342F0088D5CA /* Reader */;
-			targetProxy = F100000A2FFE500000000001 /* PBXContainerItemProxy */;
-		};
-/* End PBXTargetDependency section */
-
 /* Begin PBXResourcesBuildPhase section */
 		9284F59B2FFE342F0088D5CA /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
@@ -286,6 +278,14 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		F10000092FFE500000000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 9284F59C2FFE342F0088D5CA /* Reader */;
+			targetProxy = F100000A2FFE500000000001 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		9284F5A62FFE34300088D5CA /* Debug */ = {
@@ -414,7 +414,6 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Reader/Reader.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CODE_SIGN_ENTITLEMENTS = Reader/Reader.entitlements;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 9RA349538L;
 				ENABLE_PREVIEWS = YES;
@@ -464,7 +463,6 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Reader/Reader.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CODE_SIGN_ENTITLEMENTS = Reader/Reader.entitlements;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 9RA349538L;
 				ENABLE_PREVIEWS = YES;

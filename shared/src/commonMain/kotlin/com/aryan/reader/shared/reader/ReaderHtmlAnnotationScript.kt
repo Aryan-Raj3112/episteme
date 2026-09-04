@@ -304,6 +304,38 @@ internal fun readerHtmlAnnotationScript(): String = """
               function applyHighlightObject(highlight) {
                 if (!highlight) return;
                 var locator = highlight.locator || {};
+                if (highlight.id) {
+                  // Android parity: never re-derive a highlight that is already painted
+                  // correctly — re-wrapping from stored offsets can drift the span.
+                  var selector = 'span[data-reader-highlight-id]';
+                  var allPainted = document.querySelectorAll(selector);
+                  var paintedMarkers = [];
+                  for (var paintIndex = 0; paintIndex < allPainted.length; paintIndex++) {
+                    if (allPainted[paintIndex].getAttribute('data-reader-highlight-id') === highlight.id) {
+                      paintedMarkers.push(allPainted[paintIndex]);
+                    }
+                  }
+                  if (paintedMarkers.length > 0) {
+                    var allMatch = true;
+                    for (var matchIndex = 0; matchIndex < paintedMarkers.length; matchIndex++) {
+                      if (!markerMatchesHighlight(paintedMarkers[matchIndex], highlight)) {
+                        allMatch = false;
+                        break;
+                      }
+                    }
+                    if (allMatch) {
+                      readerDesktopHighlightMapLog('web_apply_skip_painted id=' + highlight.id);
+                      return;
+                    }
+                    paintedMarkers.forEach(function (marker) {
+                      var parent = marker.parentNode;
+                      if (!parent) return;
+                      while (marker.firstChild) parent.insertBefore(marker.firstChild, marker);
+                      parent.removeChild(marker);
+                      parent.normalize();
+                    });
+                  }
+                }
                 var chapterIndex = locator.chapterIndex;
                 if (chapterIndex === undefined || chapterIndex === null) chapterIndex = highlight.chapterIndex;
                 var startOffset = locator.startOffset;
@@ -438,7 +470,7 @@ internal fun readerHtmlAnnotationScript(): String = """
                     return;
                   }
                   wrapRangeTextSegments(range, function () {
-                    var marker = createReaderHighlightMarker(highlight.id, highlight.colorId || 'yellow', segmentStart, segmentEnd, highlight.colorArgb);
+                    var marker = createReaderHighlightMarker(highlight.id, highlight.colorId || 'yellow', segmentStart, segmentEnd, highlight.colorArgb, highlight.style || 'background');
                     marker.setAttribute('data-cfi', sourceCfi || highlight.cfi || ('desktop:' + chapterIndex + ':' + startOffset + ':' + endOffset));
                     return marker;
                   });
@@ -498,7 +530,7 @@ internal fun readerHtmlAnnotationScript(): String = """
                   return false;
                 }
                 wrapRangeTextSegments(range, function () {
-                  var marker = createReaderHighlightMarker(highlight.id, highlight.colorId || 'yellow', null, null, highlight.colorArgb);
+                  var marker = createReaderHighlightMarker(highlight.id, highlight.colorId || 'yellow', null, null, highlight.colorArgb, highlight.style || 'background');
                   marker.setAttribute('data-cfi', locator.cfi || highlight.cfi || '');
                   return marker;
                 });
@@ -509,11 +541,56 @@ internal fun readerHtmlAnnotationScript(): String = """
                 range.detach && range.detach();
                 return true;
               }
+              function readerHighlightColorIdFromMarker(marker) {
+                var match = String(marker.className || '').match(/user-highlight-([a-z]+)/);
+                return match ? match[1] : '';
+              }
+              function markerMatchesHighlight(marker, highlight) {
+                var locator = highlight.locator || {};
+                if ((marker.getAttribute('data-reader-highlight-style') || 'background') !== (highlight.style || 'background')) return false;
+                if (readerHighlightColorIdFromMarker(marker) !== (highlight.colorId || 'yellow')) return false;
+                var start = locator.startOffset;
+                var end = locator.endOffset;
+                if (start === undefined || start === null || end === undefined || end === null) return true;
+                return String(marker.getAttribute('data-reader-start-offset') || '') === String(start) &&
+                  String(marker.getAttribute('data-reader-end-offset') || '') === String(end);
+              }
               window.readerApplyHighlights = function (highlights) {
                 var previousX = window.scrollX;
                 var previousY = window.scrollY;
                 readerCurrentHighlights = Array.isArray(highlights) ? highlights.slice() : [];
-                unwrapReaderHighlights();
+                window.readerCurrentHighlightsSnapshot = function () {
+                  return readerCurrentHighlights.slice();
+                };
+                var incomingIds = {};
+                readerCurrentHighlights.forEach(function (highlight) {
+                  if (highlight && highlight.id) incomingIds[highlight.id] = highlight;
+                });
+                // Selective reconcile (Android parity: Android's WebView mutates the live
+                // DOM on highlight changes and never repaints from stored offsets). Keep
+                // markers that already match, so a just-painted selection is never
+                // re-derived and shifted; unwrap everything else.
+                var marks = Array.prototype.slice.call(document.querySelectorAll('span[data-reader-highlight-id], span[data-cfi].reader-user-highlight, span[data-cfi][class*="user-highlight-"]'));
+                marks.forEach(function (marker) {
+                  var id = marker.getAttribute('data-reader-highlight-id');
+                  var highlight = id ? incomingIds[id] : null;
+                  if (!highlight) {
+                    highlight = readerCurrentHighlights.find(function (candidate) {
+                      return candidate && candidate.cfi &&
+                        String(candidate.cfi) === String(marker.getAttribute('data-cfi') || '') &&
+                        markerMatchesHighlight(marker, candidate);
+                    }) || null;
+                  }
+                  if (highlight) {
+                    if (highlight.id && !id) marker.setAttribute('data-reader-highlight-id', highlight.id);
+                    return;
+                  }
+                  var parent = marker.parentNode;
+                  if (!parent) return;
+                  while (marker.firstChild) parent.insertBefore(marker.firstChild, marker);
+                  parent.removeChild(marker);
+                  parent.normalize();
+                });
                 if (readerCurrentHighlights.length > 0) {
                   readerCurrentHighlights
                     .slice()
@@ -651,12 +728,14 @@ internal fun readerHtmlAnnotationScript(): String = """
                 if (!restoreRange()) return;
                 var selection = window.getSelection();
                 if (!selection || selection.rangeCount === 0) return;
-                var range = selection.getRangeAt(0);
-                var text = selection.toString().trim();
+                var range = trimRangeWhitespace(selection.getRangeAt(0)) || selection.getRangeAt(0);
+                var text = range.toString().trim();
                 if (!text) return;
+                var styleId = readerSelectedHighlightStyle();
                 readerHighlightFlowLog(
                   'selection_begin mode=' + selectionDebugMode() +
                   ' color=' + (colorId || 'yellow') +
+                  ' style=' + styleId +
                   ' textChars=' + text.length +
                   ' range=' + selectionDebugRange(range)
                 );
@@ -708,6 +787,7 @@ internal fun readerHtmlAnnotationScript(): String = """
                     cfi: cfi,
                     text: text,
                     colorId: colorId || 'yellow',
+                    styleId: styleId,
                     chapterIndex: chapterIndex,
                     locator: {
                       chapterIndex: chapterIndex,
@@ -738,6 +818,7 @@ internal fun readerHtmlAnnotationScript(): String = """
                       cfi: cfi,
                       text: segment.text,
                       colorId: colorId || 'yellow',
+                      styleId: styleId,
                       chapterIndex: segment.chapterIndex,
                       locator: {
                         chapterIndex: segment.chapterIndex,
@@ -774,7 +855,7 @@ internal fun readerHtmlAnnotationScript(): String = """
                     var wrappedSingle = false;
                     try {
                       wrappedSingle = wrapRangeTextSegments(localRange, function () {
-                        var marker = createReaderHighlightMarker(null, colorId || 'yellow', payload.locator.startOffset, payload.locator.endOffset, null);
+                        var marker = createReaderHighlightMarker(null, colorId || 'yellow', payload.locator.startOffset, payload.locator.endOffset, null, styleId);
                         marker.setAttribute('data-cfi', payload.cfi);
                         return marker;
                       });
@@ -789,7 +870,7 @@ internal fun readerHtmlAnnotationScript(): String = """
                     segments.forEach(function (segment, index) {
                       var payload = payloads[index];
                       var wrappedSegment = wrapRangeTextSegments(segment.range, function () {
-                        var marker = createReaderHighlightMarker(null, colorId || 'yellow', segment.startOffset, segment.endOffset, null);
+                        var marker = createReaderHighlightMarker(null, colorId || 'yellow', segment.startOffset, segment.endOffset, null, styleId);
                         marker.setAttribute('data-cfi', payload.cfi);
                         return marker;
                       });
@@ -844,6 +925,11 @@ internal fun readerHtmlAnnotationScript(): String = """
               menu.addEventListener('click', function (event) {
                 var target = event.target && event.target.closest ? event.target.closest('button[data-action]') : event.target;
                 var action = target && target.getAttribute('data-action');
+                if (action === 'select-style') {
+                  readerSelectedHighlightStyleId = target.getAttribute('data-style-id') || 'background';
+                  syncReaderStyleSelection();
+                  return;
+                }
                 var text = selectionText();
                 if (!text && restoreRange()) text = selectionText();
                 if (!text) {

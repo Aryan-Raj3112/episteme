@@ -394,6 +394,9 @@ fun SharedMobileEpubReaderScreen(
         )
     }
     var drawerTab by remember(book.id) { mutableStateOf(0) }
+    // Hoisted so the drawer's last tab survives open/close cycles (M3 disposes the
+    // sheet content while closed, which would otherwise reset the pager to tab 0).
+    val drawerPagerState = rememberPagerState(pageCount = { 4 })
     var selectedTocIndex by remember(book.id) { mutableIntStateOf(-1) }
     var explicitNavigationLocator by remember(book.id) { mutableStateOf<ReaderLocator?>(null) }
     var explicitNavigationFragment by remember(book.id) { mutableStateOf<String?>(null) }
@@ -483,6 +486,16 @@ fun SharedMobileEpubReaderScreen(
         scope.launch {
             if (motionPolicy.animationsEnabled) drawerState.open() else drawerState.snapTo(DrawerValue.Open)
             focusManager.clearFocus(force = true)
+        }
+    }
+
+    // Android parity (EpubReaderDrawer): reopening the drawer lands on the tab that was
+    // last viewed in this session; an explicit tool tap (TOC button) still wins.
+    LaunchedEffect(drawerState.isOpen) {
+        if (drawerState.isOpen) {
+            drawerPagerState.scrollToPage(drawerTab.coerceIn(0, 3))
+        } else {
+            drawerTab = drawerPagerState.currentPage
         }
     }
 
@@ -1050,8 +1063,16 @@ fun SharedMobileEpubReaderScreen(
         gesturesEnabled = drawerState.isOpen,
         drawerContent = {
             ModalDrawerSheet(Modifier.fillMaxWidth(0.86f)) {
-                val drawerPagerState = rememberPagerState(pageCount = { 4 })
                 val drawerScope = rememberCoroutineScope()
+                // iOS (CMP): composing the drawer sheet can hand first-responder focus to
+                // the TOC search field, raising the keyboard before the user touches
+                // anything. Drop whatever focus the sheet gains while it settles.
+                LaunchedEffect(Unit) {
+                    repeat(2) {
+                        withFrameNanos { }
+                        focusManager.clearFocus(force = true)
+                    }
+                }
                 LaunchedEffect(drawerTab) {
                     if (drawerTab in 0..3) {
                         if (motionPolicy.animationsEnabled) {
@@ -1071,6 +1092,7 @@ fun SharedMobileEpubReaderScreen(
                         Tab(
                             selected = drawerPagerState.currentPage == index,
                             onClick = {
+                                drawerTab = index
                                 drawerScope.launch {
                                     if (motionPolicy.animationsEnabled) {
                                         drawerPagerState.animateScrollToPage(index)
@@ -1540,6 +1562,7 @@ fun SharedMobileEpubReaderScreen(
                                             }
                                         }
                                     },
+                                    onOpenHighlightPaletteManager = { showHighlightPaletteManager = true },
                                     modifier = Modifier.fillMaxSize(),
                                     positionController = nativePaginatedPositionController,
                                     pageTurn = if (pageDragActive) dragCurrentSpec else incomingTurnSpec,
@@ -1648,6 +1671,7 @@ fun SharedMobileEpubReaderScreen(
                                 }
                             },
                             verticalScrollController = nativeVerticalScrollController,
+                            onOpenHighlightPaletteManager = { showHighlightPaletteManager = true },
                             modifier = Modifier.fillMaxSize()
                         )
                         } else {
@@ -1671,25 +1695,23 @@ fun SharedMobileEpubReaderScreen(
                         }
                         val navigationChunkIndex = explicitNavigationChunkIndex ?: initialVirtualChunkIndex
                         val navigationChunkHtml = explicitNavigationChunkHtml ?: chapterChunks.getOrNull(navigationChunkIndex)
-                        // A persisted WebView highlight needs the complete chapter DOM so its
-                        // offsets remain stable after reopening the reader. Keep virtualization
-                        // for ordinary chapters, where it protects large EPUBs from WebView
-                        // memory spikes.
-                        val currentChapterHasHighlights = highlights.any { highlight ->
-                            (highlight.locator.chapterIndex ?: highlight.chapterIndex) == currentChapterIndex
-                        }
+                        // Android parity (ChapterWebView): highlights never invalidate the
+                        // document or the virtualization plan. Rendering them into initialHtml
+                        // (or flipping virtualization when the chapter's first highlight
+                        // appears) reloads the WebView on creation — the page visibly jumps
+                        // and the just-painted selection is re-derived from offsets. The
+                        // document stays stable; highlights are applied through
+                        // readerApplyHighlights, including into chunks provided later.
                         val initialHtml = remember(
                             loadedBook.id,
                             currentChapterIndex,
-                            chapterChunks,
-                            highlights,
-                            currentChapterHasHighlights
+                            chapterChunks
                         ) {
                             val htmlMark = sharedEpubOpenTraceMark()
                             val html = ReaderHtmlDocumentBuilder.verticalDocument(
                                 book = loadedBook,
                                 settings = settings,
-                                highlights = highlights,
+                                highlights = emptyList(),
                                 highlightPalette = readerHighlightPalette,
                                 navigationLocator = currentLocator,
                                 pages = pages,
@@ -1700,11 +1722,7 @@ fun SharedMobileEpubReaderScreen(
                                 cloudTtsEnabled = true,
                                 externalLookupEnabled = true,
                                 renderedChapterRange = currentChapterIndex..currentChapterIndex,
-                                virtualizedChapterChunks = if (currentChapterHasHighlights) {
-                                    emptyMap()
-                                } else {
-                                    mapOf(currentChapterIndex to chapterChunks)
-                                },
+                                virtualizedChapterChunks = mapOf(currentChapterIndex to chapterChunks),
                                 virtualizedInitialChunkIndex = initialVirtualChunkIndex,
                                 showChapterTitles = false
                             )
@@ -1721,6 +1739,12 @@ fun SharedMobileEpubReaderScreen(
                                 "window.readerIosPullEnabled=${settings.pullToTurnEnabled};" +
                                 "window.readerIosSeamlessChapter=${settings.seamlessChapterTransitionEnabled};" +
                                 "window.readerIosPullMultiplier=${settings.chapterTurnDragMultiplier.coerceIn(0.5f, 2f)};"
+                        }
+                        // Android parity: the authoritative highlight list is pushed into the
+                        // live document (never baked into the HTML), so creating a highlight
+                        // keeps the painted selection and the scroll position untouched.
+                        val highlightsApplyScript = remember(highlights) {
+                            sharedMobileEpubHighlightsApplyScript(highlights)
                         }
                         val navigationScript = buildList {
                             commandScript?.let(::add)
@@ -1742,6 +1766,7 @@ fun SharedMobileEpubReaderScreen(
                             appearanceScript = appearanceScript,
                             navigationScript = navigationScript,
                             navigationRequestId = navigationRequestId,
+                            highlightsApplyScript = highlightsApplyScript,
                             positionController = webViewPositionController,
                             streamPageLoader = streamPageLoader,
                             streamPageUnavailableLabel = streamPageUnavailableLabel,
@@ -1812,6 +1837,9 @@ fun SharedMobileEpubReaderScreen(
                                     "readerSelectionAction" -> payload.sharedMobileEpubSelectionActionOrNull()?.let { selection ->
                                         val lookupAction = readerExternalLookupActionForSelectionId(selection.action)
                                         when {
+                                            // Android benchmark (ChapterWebView spectrum button): opens the
+                                            // shared palette manager without touching the selection.
+                                            selection.action == "palette" -> showHighlightPaletteManager = true
                                             selection.action == "define" && readerAiAvailable -> onAiAction(ReaderAiFeature.DEFINE, selection.text)
                                             lookupAction != null -> openSharedMobileEpubLookup(lookupAction, selection.text)
                                             selection.action == "speak" -> {

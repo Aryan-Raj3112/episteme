@@ -129,7 +129,7 @@ object ReaderHtmlDocumentBuilder {
             }
             window.readerVirtualization = {
               totalChunks: $totalChunks,
-              provideChunk: function (index, html) {
+            provideChunk: function (index, html) {
                 var host = chunk(index);
                 if (!host) return;
                 var oldHeight = host.getBoundingClientRect().height;
@@ -138,9 +138,16 @@ object ReaderHtmlDocumentBuilder {
                 requested[index] = false;
                 var newHeight = host.getBoundingClientRect().height;
                 if (host.getBoundingClientRect().bottom < 0 && Math.abs(newHeight - oldHeight) > 0.5) {
-                  window.scrollBy(0, newHeight - oldHeight);
+                    window.scrollBy(0, newHeight - oldHeight);
                 }
-              }
+                // Android parity (restoreHighlights on chunk load): freshly provided
+                // chunks have no markers yet, so re-apply the current highlight list.
+                // The selective reconcile keeps every already-painted marker untouched.
+                if (window.readerApplyHighlights) {
+                    var snapshot = window.readerCurrentHighlightsSnapshot && window.readerCurrentHighlightsSnapshot();
+                    if (snapshot && snapshot.length) window.readerApplyHighlights(snapshot);
+                }
+            }
             };
             function install() {
               if (observer) observer.disconnect();
@@ -376,8 +383,8 @@ object ReaderHtmlDocumentBuilder {
         return """
             (function () {
               var container = document.querySelector('#reader-selection-menu .reader-selection-colors');
-              if (!container) return;
-              container.innerHTML = ${highlightButtons.toJsStringLiteral()};
+              if (container) container.innerHTML = ${highlightButtons.toJsStringLiteral()};
+              if (window.readerSyncSelectionStyles) window.readerSyncSelectionStyles();
             })();
         """.trimIndent()
     }

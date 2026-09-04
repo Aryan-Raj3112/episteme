@@ -84,6 +84,53 @@ internal fun readerHtmlSelectionScript(): String = """
                 var selection = window.getSelection();
                 return selection ? selection.toString().trim() : '';
               }
+              var readerSelectedHighlightStyleId = 'background';
+              function readerStyleSelectionButtons() {
+                var container = document.querySelector('#reader-selection-menu .reader-selection-styles');
+                return container ? Array.prototype.slice.call(container.querySelectorAll('button[data-style-id]')) : [];
+              }
+              function syncReaderStyleSelection() {
+                readerStyleSelectionButtons().forEach(function (button) {
+                  var selected = button.getAttribute('data-style-id') === readerSelectedHighlightStyleId;
+                  button.classList.toggle('selected', selected);
+                  button.setAttribute('aria-pressed', selected ? 'true' : 'false');
+                });
+              }
+              function readerSelectedHighlightStyle() {
+                return readerSelectedHighlightStyleId || 'background';
+              }
+              // Android parity (sharedNativeTrimSelectedRanges): native long-press
+              // selections can begin or end on whitespace/punctuation; trim the range
+              // boundaries so the painted highlight matches the persisted offsets.
+              function trimRangeWhitespace(range) {
+                if (!range || range.collapsed) return range;
+                var startContainer = range.startContainer;
+                var endContainer = range.endContainer;
+                var startOffset = range.startOffset;
+                var endOffset = range.endOffset;
+                try {
+                  if (startContainer.nodeType === Node.TEXT_NODE) {
+                    var startValue = startContainer.nodeValue || '';
+                    while (startOffset < startValue.length && /^\s$/.test(startValue.charAt(startOffset))) startOffset++;
+                  }
+                  if (endContainer.nodeType === Node.TEXT_NODE) {
+                    var endValue = endContainer.nodeValue || '';
+                    while (endOffset > 0 && /^\s$/.test(endValue.charAt(endOffset - 1))) endOffset--;
+                  }
+                  var trimmed = range.cloneRange();
+                  var startLimit = startContainer.nodeType === Node.TEXT_NODE
+                    ? (startContainer.nodeValue || '').length
+                    : (startContainer.childNodes ? startContainer.childNodes.length : startOffset);
+                  var endLimit = endContainer.nodeType === Node.TEXT_NODE
+                    ? (endContainer.nodeValue || '').length
+                    : (endContainer.childNodes ? endContainer.childNodes.length : endOffset);
+                  trimmed.setStart(startContainer, Math.min(startOffset, startLimit));
+                  trimmed.setEnd(endContainer, Math.min(endOffset, endLimit));
+                  return trimmed.collapsed ? null : trimmed;
+                } catch (error) {
+                  return range;
+                }
+              }
               function hideSelectionHandles() {
                 [startHandle, endHandle].forEach(function (handle) {
                   if (!handle) return;
@@ -599,6 +646,7 @@ internal fun readerHtmlSelectionScript(): String = """
                   if (actionSelection && actionSelection.rangeCount > 0) actionRange = actionSelection.getRangeAt(0);
                 }
                 var actionSegments = selectionSegmentsForRange(actionRange);
+                if (action === 'palette') payload.styleId = readerSelectedHighlightStyleId;
                 if (actionSegments.length) {
                   var firstSegment = actionSegments[0];
                   var lastSegment = actionSegments[actionSegments.length - 1];
@@ -1053,12 +1101,14 @@ internal fun readerHtmlSelectionScript(): String = """
                 var rgb = (value >>> 0) & 0xFFFFFF;
                 return '#' + rgb.toString(16).padStart(6, '0').toUpperCase();
               }
-              function createReaderHighlightMarker(highlightId, colorId, startOffset, endOffset, colorArgb) {
+              function createReaderHighlightMarker(highlightId, colorId, startOffset, endOffset, colorArgb, styleId) {
                 var marker = document.createElement('span');
                 marker.className = 'reader-user-highlight user-highlight-' + (colorId || 'yellow');
                 var cssColor = readerHighlightCssColor(colorArgb);
-                if (cssColor) marker.style.setProperty('background-color', cssColor, 'important');
+                var styleDeclarations = readerHighlightStyleDeclarations(styleId || 'background', cssColor);
+                if (styleDeclarations) marker.style.cssText = styleDeclarations;
                 if (highlightId) marker.setAttribute('data-reader-highlight-id', highlightId);
+                marker.setAttribute('data-reader-highlight-style', styleId || 'background');
                 if (startOffset !== undefined && startOffset !== null) {
                   marker.setAttribute('data-reader-start-offset', String(startOffset));
                 }
@@ -1066,6 +1116,22 @@ internal fun readerHtmlSelectionScript(): String = """
                   marker.setAttribute('data-reader-end-offset', String(endOffset));
                 }
                 return marker;
+              }
+              function readerHighlightStyleDeclarations(styleId, colorCss) {
+                var style = String(styleId || 'background');
+                if (style === 'underline' || style === 'wavy_underline') {
+                  var colorRule = colorCss ? ' text-decoration-color:' + colorCss + ' !important;' : '';
+                  return 'background-color: transparent !important;' +
+                    ' text-decoration-line: underline !important;' +
+                    ' text-decoration-style: ' + (style === 'wavy_underline' ? 'wavy' : 'solid') + ' !important;' + colorRule;
+                }
+                if (style === 'strikethrough') {
+                  var strikeColorRule = colorCss ? ' text-decoration-color:' + colorCss + ' !important;' : '';
+                  return 'background-color: transparent !important;' +
+                    ' text-decoration-line: line-through !important;' +
+                    ' text-decoration-style: solid !important;' + strikeColorRule;
+                }
+                return colorCss ? 'background-color:' + colorCss + ' !important;' : '';
               }
               function rangeIntersectsTextNode(range, node) {
                 var nodeRange = document.createRange();

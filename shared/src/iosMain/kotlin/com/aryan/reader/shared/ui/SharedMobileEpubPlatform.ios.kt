@@ -63,6 +63,7 @@ import kotlinx.cinterop.useContents
 import platform.CoreGraphics.CGRectMake
 import platform.Foundation.NSData
 import platform.Foundation.NSError
+import platform.Foundation.NSNumber
 import platform.Foundation.NSMutableData
 import platform.Foundation.NSURL
 import platform.Foundation.NSURLResponse
@@ -142,6 +143,7 @@ internal actual fun SharedMobileEpubWebView(
     appearanceScript: String,
     navigationScript: String?,
     navigationRequestId: Long,
+    highlightsApplyScript: String,
     onBridgeMessage: (method: String, payload: String) -> Unit,
     positionController: SharedMobileEpubWebViewController?,
     streamPageLoader: SharedMobileEpubStreamPageLoader?,
@@ -173,7 +175,8 @@ internal actual fun SharedMobileEpubWebView(
                 contentChunks = contentChunks,
                 appearanceScript = appearanceScript,
                 navigationScript = navigationScript,
-                navigationRequestId = navigationRequestId
+                navigationRequestId = navigationRequestId,
+                highlightsApplyScript = highlightsApplyScript
             )
         },
         onRelease = coordinator::release,
@@ -710,10 +713,13 @@ private class IosEpubWebViewCoordinator(
     private var loadedHtmlHash: Int? = null
     private var loadedHtmlLength: Int = -1
     private var appliedAppearanceHash: Int? = null
+    private var appliedHighlightsHash: Int? = null
     private var appliedNavigationRequestId: Long = Long.MIN_VALUE
     private var latestAppearanceScript: String = ""
     private var latestNavigationScript: String? = null
     private var latestNavigationRequestId: Long = Long.MIN_VALUE
+    private var latestHighlightsApplyScript: String = ""
+    private var pendingScrollRestore: Pair<Double, Double>? = null
     private var htmlLoadStartMark: TimeSource.Monotonic.ValueTimeMark? = null
     private var reportedFirstPosition: Boolean = false
 
@@ -759,18 +765,32 @@ private class IosEpubWebViewCoordinator(
         contentChunks: List<String>,
         appearanceScript: String,
         navigationScript: String?,
-        navigationRequestId: Long
+        navigationRequestId: Long,
+        highlightsApplyScript: String
     ) {
         activeWebView = webView
         this.contentChunks = contentChunks
         latestAppearanceScript = appearanceScript
         latestNavigationScript = navigationScript
         latestNavigationRequestId = navigationRequestId
+        latestHighlightsApplyScript = highlightsApplyScript
         val htmlHash = html.hashCode()
         if (loadedHtmlHash != htmlHash || loadedHtmlLength != html.length) {
+            // Android parity (ChapterWebView): highlight changes never reach here — the
+            // document renders without highlights and they are applied in place through
+            // the highlights payload, so a reload only happens for real document changes.
+            // Restore the exact scroll position only when the reload was not triggered
+            // by an explicit navigation (chapter/link/TOC); those re-run the navigation
+            // script which owns the landing position.
+            pendingScrollRestore = if (appliedNavigationRequestId == navigationRequestId) {
+                captureScrollForReload(webView)
+            } else {
+                null
+            }
             loadedHtmlHash = htmlHash
             loadedHtmlLength = html.length
             appliedAppearanceHash = null
+            appliedHighlightsHash = null
             appliedNavigationRequestId = Long.MIN_VALUE
             htmlLoadStartMark = sharedEpubOpenTraceMark()
             reportedFirstPosition = false
@@ -784,12 +804,35 @@ private class IosEpubWebViewCoordinator(
             appliedAppearanceHash = appearanceHash
             webView.evaluateJavaScript(appearanceScript, completionHandler = null)
         }
+        val highlightsHash = highlightsApplyScript.hashCode()
+        if (highlightsApplyScript.isNotBlank() && appliedHighlightsHash != highlightsHash) {
+            appliedHighlightsHash = highlightsHash
+            webView.evaluateJavaScript(highlightsApplyScript, completionHandler = null)
+        }
         if (
             navigationScript != null &&
             appliedNavigationRequestId != navigationRequestId
         ) {
             appliedNavigationRequestId = navigationRequestId
             webView.evaluateJavaScript(navigationScript, completionHandler = null)
+        }
+    }
+
+    private fun captureScrollForReload(webView: WKWebView): Pair<Double, Double>? {
+        if (loadedHtmlHash == null) return null
+        return pendingScrollRestore ?: run {
+            webView.evaluateJavaScript(
+                "window.scrollY === undefined ? null : [window.scrollX, window.scrollY]",
+                completionHandler = { result, _ ->
+                    val pair = (result as? List<*>)?.let { list ->
+                        val x = (list.getOrNull(0) as? NSNumber)?.doubleValue
+                        val y = (list.getOrNull(1) as? NSNumber)?.doubleValue
+                        if (x != null && y != null) x to y else null
+                    }
+                    if (pair != null) pendingScrollRestore = pair
+                }
+            )
+            null
         }
     }
 
@@ -800,9 +843,17 @@ private class IosEpubWebViewCoordinator(
             webView.evaluateJavaScript(latestAppearanceScript, completionHandler = null)
             appliedAppearanceHash = latestAppearanceScript.hashCode()
         }
+        if (latestHighlightsApplyScript.isNotBlank()) {
+            webView.evaluateJavaScript(latestHighlightsApplyScript, completionHandler = null)
+            appliedHighlightsHash = latestHighlightsApplyScript.hashCode()
+        }
         latestNavigationScript?.let { script ->
             webView.evaluateJavaScript(script, completionHandler = null)
             appliedNavigationRequestId = latestNavigationRequestId
+        }
+        pendingScrollRestore?.let { (x, y) ->
+            pendingScrollRestore = null
+            webView.evaluateJavaScript("window.scrollTo($x, $y);", completionHandler = null)
         }
     }
 
@@ -861,6 +912,9 @@ private class IosEpubWebViewCoordinator(
         contentChunks = emptyList()
         loadedHtmlHash = null
         loadedHtmlLength = -1
+        appliedHighlightsHash = null
+        latestHighlightsApplyScript = ""
+        pendingScrollRestore = null
         htmlLoadStartMark = null
         reportedFirstPosition = false
     }

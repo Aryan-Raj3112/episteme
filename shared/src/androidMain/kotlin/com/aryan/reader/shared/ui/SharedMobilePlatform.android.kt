@@ -125,6 +125,7 @@ internal actual fun SharedMobileEpubWebView(
     appearanceScript: String,
     navigationScript: String?,
     navigationRequestId: Long,
+    highlightsApplyScript: String,
     onBridgeMessage: (method: String, payload: String) -> Unit,
     positionController: SharedMobileEpubWebViewController?,
     streamPageLoader: SharedMobileEpubStreamPageLoader?,
@@ -143,6 +144,7 @@ internal actual fun SharedMobileEpubWebView(
         factory = coordinator::createWebView,
         update = { webView -> coordinator.update(
             webView, html, contentChunks, appearanceScript, navigationScript, navigationRequestId,
+            highlightsApplyScript,
         ) },
         onRelease = coordinator::release,
     )
@@ -164,10 +166,12 @@ private class AndroidEpubWebViewCoordinator(
     private var loadedHtmlHash: Int? = null
     private var loadedHtmlLength = -1
     private var appliedAppearanceHash: Int? = null
+    private var appliedHighlightsHash: Int? = null
     private var appliedNavigationRequestId = Long.MIN_VALUE
     private var latestAppearanceScript = ""
     private var latestNavigationScript: String? = null
     private var latestNavigationRequestId = Long.MIN_VALUE
+    private var latestHighlightsApplyScript = ""
 
     fun createWebView(context: Context): WebView = WebView(context).apply {
         activeWebView = this
@@ -182,6 +186,10 @@ private class AndroidEpubWebViewCoordinator(
                 latestAppearanceScript.takeIf { it.isNotBlank() }?.let {
                     view.evaluateJavascript(it, null)
                     appliedAppearanceHash = it.hashCode()
+                }
+                if (latestHighlightsApplyScript.isNotBlank()) {
+                    view.evaluateJavascript(latestHighlightsApplyScript, null)
+                    appliedHighlightsHash = latestHighlightsApplyScript.hashCode()
                 }
                 latestNavigationScript?.let {
                     view.evaluateJavascript(it, null)
@@ -208,17 +216,20 @@ private class AndroidEpubWebViewCoordinator(
         appearanceScript: String,
         navigationScript: String?,
         navigationRequestId: Long,
+        highlightsApplyScript: String,
     ) {
         activeWebView = webView
         this.contentChunks = contentChunks
         latestAppearanceScript = appearanceScript
         latestNavigationScript = navigationScript
         latestNavigationRequestId = navigationRequestId
+        latestHighlightsApplyScript = highlightsApplyScript
         val htmlHash = html.hashCode()
         if (loadedHtmlHash != htmlHash || loadedHtmlLength != html.length) {
             loadedHtmlHash = htmlHash
             loadedHtmlLength = html.length
             appliedAppearanceHash = null
+            appliedHighlightsHash = null
             appliedNavigationRequestId = Long.MIN_VALUE
             webView.loadDataWithBaseURL(null, html, "text/html", "UTF-8", null)
             return
@@ -227,6 +238,11 @@ private class AndroidEpubWebViewCoordinator(
         if (appliedAppearanceHash != appearanceHash) {
             appliedAppearanceHash = appearanceHash
             webView.evaluateJavascript(appearanceScript, null)
+        }
+        val highlightsHash = highlightsApplyScript.hashCode()
+        if (highlightsApplyScript.isNotBlank() && appliedHighlightsHash != highlightsHash) {
+            appliedHighlightsHash = highlightsHash
+            webView.evaluateJavascript(highlightsApplyScript, null)
         }
         if (navigationScript != null && appliedNavigationRequestId != navigationRequestId) {
             appliedNavigationRequestId = navigationRequestId

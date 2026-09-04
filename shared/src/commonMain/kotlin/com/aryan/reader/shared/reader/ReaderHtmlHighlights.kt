@@ -614,6 +614,19 @@ internal fun ReaderHighlightPalette.toSelectionColorButtons(): String {
     }
 }
 
+/** Android benchmark: HighlightStyleRow (EpubReaderAnnotations.kt) shows all styles before the palette. */
+internal fun readerSelectionStyleButtons(): String {
+    return HighlightStyle.entries.joinToString("\n") { style ->
+        val label = when (style) {
+            HighlightStyle.BACKGROUND -> "B"
+            HighlightStyle.UNDERLINE -> "U"
+            HighlightStyle.WAVY_UNDERLINE -> "~"
+            HighlightStyle.STRIKETHROUGH -> "S"
+        }
+        """<button type="button" class="reader-selection-style${if (style == HighlightStyle.BACKGROUND) " selected" else ""}" data-action="select-style" data-style-id="${style.id}" title="Highlight style: $label" aria-pressed="${if (style == HighlightStyle.BACKGROUND) "true" else "false"}">$label</button>"""
+    }
+}
+
 internal fun ReaderHighlightPalette.toSelectionPaletteButtons(): String {
     return listOf(
         toSelectionColorButtons(),

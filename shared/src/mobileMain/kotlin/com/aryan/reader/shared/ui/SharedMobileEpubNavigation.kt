@@ -53,6 +53,7 @@ import androidx.compose.ui.unit.dp
 import com.aryan.reader.shared.ReaderLocator
 import com.aryan.reader.shared.ReaderSearchFocusDelayMillis
 import com.aryan.reader.shared.HighlightColor
+import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.UserHighlight
 import com.aryan.reader.shared.readerWordStartMatchOffsets
 import com.aryan.reader.shared.reader.ReaderHtmlDocumentBuilder
@@ -275,6 +276,7 @@ internal fun String.sharedMobileEpubHighlightOrNull(): UserHighlight? {
     val color = HighlightColor.entries.firstOrNull {
         it.id == objectValue["colorId"]?.jsonPrimitive?.contentOrNull
     } ?: HighlightColor.YELLOW
+    val style = HighlightStyle.fromId(objectValue["styleId"]?.jsonPrimitive?.contentOrNull)
     val normalizedLocator = locator.withFallbacks(
         chapterIndex = chapterIndex,
         cfi = cfi,
@@ -287,6 +289,7 @@ internal fun String.sharedMobileEpubHighlightOrNull(): UserHighlight? {
         text = text,
         color = color,
         chapterIndex = chapterIndex,
+        style = style,
         locator = normalizedLocator
     )
 }
@@ -309,6 +312,49 @@ internal fun String.sharedMobileEpubHighlightIdOrNull(): String? {
         ?.jsonPrimitive
         ?.contentOrNull
         ?.takeIf(String::isNotBlank)
+}
+
+/**
+ * Android parity (ChapterWebView restoreHighlights): the authoritative highlight list
+ * is pushed into the WebView via window.readerApplyHighlights instead of reloading the
+ * document. The JSON shape matches what the shared selection script's
+ * applyHighlightObject consumes (id/cfi/text/colorId/style/locator).
+ */
+internal fun sharedMobileEpubHighlightsApplyScript(highlights: List<UserHighlight>): String {
+    if (highlights.isEmpty()) {
+        return "if (window.readerApplyHighlights) window.readerApplyHighlights([]);"
+    }
+    val json = buildString {
+        append('[')
+        highlights.forEachIndexed { index, highlight ->
+            if (index > 0) append(',')
+            append('{')
+            append("\"id\":").append(JsonPrimitive(highlight.id))
+            append(",\"cfi\":").append(JsonPrimitive(highlight.cfi))
+            append(",\"text\":").append(JsonPrimitive(highlight.text))
+            append(",\"colorId\":").append(JsonPrimitive(highlight.color.id))
+            append(",\"style\":").append(JsonPrimitive(highlight.style.id))
+            highlight.colorArgb?.let { append(",\"colorArgb\":").append(it.toLong()) }
+            append(",\"chapterIndex\":").append(highlight.chapterIndex)
+            append(",\"locator\":{")
+            val locator = highlight.locator
+            val locatorFields = buildList {
+                locator.chapterIndex?.let { add("\"chapterIndex\":$it") }
+                locator.pageIndex?.let { add("\"pageIndex\":$it") }
+                locator.startOffset?.let { add("\"startOffset\":$it") }
+                locator.endOffset?.let { add("\"endOffset\":$it") }
+                locator.blockIndex?.let { add("\"blockIndex\":$it") }
+                locator.charOffset?.let { add("\"charOffset\":$it") }
+                locator.textQuote?.let { add("\"textQuote\":${JsonPrimitive(it)}") }
+                locator.cfi?.let { add("\"cfi\":${JsonPrimitive(it)}") }
+            }
+            append(locatorFields.joinToString(","))
+            append('}')
+            append('}')
+        }
+        append(']')
+    }
+    return "if (window.readerApplyHighlights) window.readerApplyHighlights($json);"
 }
 
 internal fun String.sharedMobileEpubPullOrNull(): Pair<String, Float>? {

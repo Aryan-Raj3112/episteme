@@ -18,6 +18,10 @@ struct ReaderApp: App {
         // BGTaskScheduler, one-shot only, never periodic). Handlers are set
         // by ContentView once the account/StoreKit controllers exist.
         IosBackgroundSync.register()
+        // Android selection-menu parity: the EPUB reader draws its own
+        // selection menu inside the page, so WebKit's native edit menu is
+        // suppressed app-wide (see IosEpubEditMenuSuppression).
+        IosEpubEditMenuSuppression.install()
 #if DEBUG
         // UI tests launch a fresh logical library without deleting user files.
         // Keep this debug-only so production launches never clear persisted

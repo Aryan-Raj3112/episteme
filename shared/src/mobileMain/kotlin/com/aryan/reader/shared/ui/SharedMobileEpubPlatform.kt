@@ -80,6 +80,7 @@ internal expect fun SharedMobileEpubWebView(
     appearanceScript: String,
     navigationScript: String?,
     navigationRequestId: Long,
+    highlightsApplyScript: String,
     onBridgeMessage: (method: String, payload: String) -> Unit,
     positionController: SharedMobileEpubWebViewController? = null,
     streamPageLoader: SharedMobileEpubStreamPageLoader? = null,

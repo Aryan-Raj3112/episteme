@@ -23,6 +23,7 @@ internal fun document(
     val customFontCss = settings.readerCustomFontFaceCss()
     val family = settings.readerFontFamilyCss()
     val highlightButtons = if (highlightActionsEnabled) highlightPalette.toSelectionPaletteButtons() else ""
+    val highlightStyleButtons = if (highlightActionsEnabled) readerSelectionStyleButtons() else ""
     val noteButton = if (highlightActionsEnabled) {
         readerSelectionActionButton("note", "Note", ReaderSelectionIconNotePath)
     } else {
@@ -70,6 +71,9 @@ internal fun document(
         <body class="${if (settings.readingMode == ReaderReadingMode.PAGINATED) "reader-paginated" else "reader-vertical"}" data-search="${searchQuery.escapeHtml()}"$navigationAttributes>
           $body
           <div id="reader-selection-menu" role="toolbar" aria-label="Selection actions">
+            <div class="reader-selection-styles" aria-label="Highlight styles">
+              $highlightStyleButtons
+            </div>
             <div class="reader-selection-colors" aria-label="Highlight colors">
               $highlightButtons
             </div>
