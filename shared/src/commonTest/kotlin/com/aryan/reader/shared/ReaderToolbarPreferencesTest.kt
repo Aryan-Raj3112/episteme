@@ -20,6 +20,21 @@ class ReaderToolbarPreferencesTest {
     }
 
     @Test
+    fun `default overflow order follows android benchmark`() {
+        val overflow = ReaderToolbarPreferences().toolOrder
+            .filter { it.category == "Overflow Menu" }
+
+        // Benchmark: File Information stays last; Book Word Replacements
+        // precedes the TTS section.
+        assertEquals(ReaderTool.FILE_INFO, overflow.last())
+        val bookReplacements = overflow.indexOf(ReaderTool.BOOK_REPLACEMENTS)
+        val ttsSettings = overflow.indexOf(ReaderTool.TTS_SETTINGS)
+        val ttsReplacements = overflow.indexOf(ReaderTool.TTS_REPLACEMENTS)
+        assertTrue(bookReplacements in 0 until ttsSettings)
+        assertTrue(ttsSettings in 0 until ttsReplacements)
+    }
+
+    @Test
     fun `auto scroll follows overflow visibility customization`() {
         val hidden = ReaderToolbarPreferences().withVisibility(ReaderTool.AUTO_SCROLL, hidden = true)
 

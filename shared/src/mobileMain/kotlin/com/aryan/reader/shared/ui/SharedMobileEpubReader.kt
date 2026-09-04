@@ -65,6 +65,7 @@ import com.aryan.reader.shared.CustomFontItem
 import com.aryan.reader.shared.ReaderLocator
 import com.aryan.reader.shared.ReaderAiFeature
 import com.aryan.reader.shared.ReaderAiResultState
+import com.aryan.reader.shared.SharedSummaryCache
 import com.aryan.reader.shared.ReaderExtrasState
 import com.aryan.reader.shared.ReaderTheme
 import com.aryan.reader.shared.ReaderTtsPlanner
@@ -201,6 +202,8 @@ fun SharedMobileEpubReaderScreen(
     onAiAction: (ReaderAiFeature, String) -> Unit = { _, _ -> },
     onAiResultDismiss: () -> Unit = {},
     onOpenAiHub: () -> Unit = {},
+    summaryCache: SharedSummaryCache? = null,
+    aiCredits: Int? = null,
     readerBrightness: Float? = null,
     readerCustomBrightness: Float = com.aryan.reader.shared.DefaultReaderCustomBrightness,
     readerBrightnessSupported: Boolean = false,
@@ -330,6 +333,8 @@ fun SharedMobileEpubReaderScreen(
     var showSlider by remember(book.id) { mutableStateOf(initialPageSliderVisible) }
     var showMore by remember(book.id) { mutableStateOf(false) }
     var showAiHub by remember(book.id) { mutableStateOf(false) }
+    var aiCacheRevision by remember(book.id) { mutableIntStateOf(0) }
+    var pendingSummarySave by remember(book.id) { mutableStateOf<Triple<String, Int, String>?>(null) }
     var showFileInfo by remember(book.id) { mutableStateOf(false) }
     var showCustomizeToolsSheet by remember(book.id) { mutableStateOf(false) }
     var showScreenOrientationSheet by remember(book.id) { mutableStateOf(false) }
@@ -2307,38 +2312,64 @@ fun SharedMobileEpubReaderScreen(
     if (readerExtrasState.aiResult.hasContent) {
         SharedReaderAiResultSheet(
             result = readerExtrasState.aiResult,
-            onDismiss = onAiResultDismiss,
+            onDismiss = { pendingSummarySave = null; onAiResultDismiss() },
         )
     }
     if (showAiHub) {
-        ModalBottomSheet(onDismissRequest = { showAiHub = false }) {
-            Column(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Text("AI features", style = MaterialTheme.typography.titleLarge)
-                TextButton(
-                    onClick = {
-                        showAiHub = false
-                        loadedBook?.chapters?.getOrNull(currentChapterIndex)?.plainText
-                            ?.takeIf { it.isNotBlank() }
-                            ?.let { onAiAction(ReaderAiFeature.SUMMARIZE, it.take(24_000)) }
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                ) { Text("Summarize current chapter") }
-                TextButton(
-                    onClick = {
-                        showAiHub = false
-                        loadedBook?.let { epub ->
-                            val recapText = epub.chapters.take(currentChapterIndex + 1)
-                                .joinToString("\n\n") { chapter -> chapter.plainText }
-                                .take(24_000)
-                            onAiAction(ReaderAiFeature.RECAP, recapText)
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                ) { Text("Recap up to here") }
-            }
+        val hubBook = loadedBook
+        val hubChapterIndex = currentChapterIndex
+        val hubChapterTitle = hubBook?.chapters?.getOrNull(hubChapterIndex)?.title?.takeIf { it.isNotBlank() }
+            ?: "Chapter ${hubChapterIndex + 1}"
+        val hubBookTitle = hubBook?.title?.takeIf { it.isNotBlank() } ?: book.displayName
+        val hubCacheEntries = remember(book.id, aiCacheRevision) {
+            summaryCache?.getAllSummaries(hubBookTitle).orEmpty()
+        }
+        SharedMobileAiHubSheet(
+            sectionTitle = hubChapterTitle,
+            cachedSummary = hubCacheEntries.firstOrNull { it.sectionIndex == hubChapterIndex },
+            cacheEntries = hubCacheEntries,
+            showCacheTab = summaryCache != null,
+            credits = aiCredits,
+            onGenerateSummary = {
+                showAiHub = false
+                hubBook?.chapters?.getOrNull(hubChapterIndex)?.plainText
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let {
+                        pendingSummarySave = Triple(hubBookTitle, hubChapterIndex, hubChapterTitle)
+                        onAiAction(ReaderAiFeature.SUMMARIZE, it.take(24_000))
+                    }
+            },
+            onGenerateRecap = {
+                showAiHub = false
+                hubBook?.let { epub ->
+                    val recapText = epub.chapters.take(hubChapterIndex + 1)
+                        .joinToString("\n\n") { chapter -> chapter.plainText }
+                        .take(24_000)
+                    if (recapText.isNotBlank()) onAiAction(ReaderAiFeature.RECAP, recapText)
+                }
+            },
+            onDeleteCached = { entry ->
+                summaryCache?.deleteSummary(entry.bookTitle, entry.sectionIndex)
+                aiCacheRevision++
+            },
+            onClearCache = {
+                summaryCache?.clearBookCache(hubBookTitle)
+                aiCacheRevision++
+            },
+            onDismiss = { showAiHub = false },
+        )
+    }
+    LaunchedEffect(readerExtrasState.aiResult) {
+        val pending = pendingSummarySave ?: return@LaunchedEffect
+        val result = readerExtrasState.aiResult
+        if (result.isLoading) return@LaunchedEffect
+        pendingSummarySave = null
+        if (result.errorMessage == null &&
+            result.text.isNotBlank() &&
+            result.title == ReaderAiFeature.SUMMARIZE.displayName
+        ) {
+            summaryCache?.saveSummary(pending.first, pending.second, pending.third, result.text)
+            aiCacheRevision++
         }
     }
     if (showTtsSettingsSheet) {

@@ -690,7 +690,7 @@ fun SharedHelpFeedbackScreen(
         SharedUtilityHeader(
             icon = { Icon(Icons.Default.Feedback, contentDescription = null, modifier = Modifier.size(52.dp)) },
             title = readerString("get_in_touch", "Get in touch"),
-            body = readerString("desktop_get_in_touch_desc", "Report bugs, request features, or contact support directly.")
+            body = readerString("desktop_get_in_touch_desc", "Found a bug, have a feature request, or just want to say hi? Let us know on GitHub or email us.")
         )
         SharedUtilityOptionCard(
             title = readerString("github_issues", "GitHub Issues"),
@@ -700,7 +700,7 @@ fun SharedHelpFeedbackScreen(
         )
         SharedUtilityOptionCard(
             title = readerString("email_support", "Email support"),
-            body = readerString("desktop_email_support_desc", "Contact us directly by email for anything else."),
+            body = readerString("desktop_email_support_desc", "Contact us directly via email for any other inquiries."),
             icon = { Icon(Icons.Default.Email, contentDescription = null, modifier = Modifier.size(28.dp)) },
             onClick = onEmailSupport
         )

@@ -12,7 +12,7 @@ final class ReaderUITests: XCTestCase {
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 20))
 
-        let menu = try require("Menu", in: app)
+        let menu = try require("Open Drawer", in: app)
         let settings = try require("Settings", in: app)
         let home = try require("Home", in: app)
         let library = try require("Library", in: app)
@@ -25,7 +25,7 @@ final class ReaderUITests: XCTestCase {
 
     func testDrawerSettingsAccountProAndAiGates() throws {
         let app = launchReader()
-        try require("Menu", in: app).tap()
+        try require("Open Drawer", in: app).tap()
 
         let drawerSettings = try requireAny(["MobileDrawerSettings", "Settings"], in: app)
         let drawerPro = try requireAny(["MobileDrawerPro", "Upgrade to Pro", "Standard version"], in: app)
@@ -41,7 +41,7 @@ final class ReaderUITests: XCTestCase {
             account.tap()
             XCTAssertTrue(try require("Episteme Account", in: app).exists)
             try require("Back", in: app).tap()
-            try require("Menu", in: app).tap()
+            try require("Open Drawer", in: app).tap()
         } else {
             XCTAssertNotNil(waitForAny(["Profile", "Aryan Raj", "Signed in"], in: app, timeout: 5))
         }
@@ -50,7 +50,7 @@ final class ReaderUITests: XCTestCase {
         XCTAssertTrue(try require("Pro and Credits", in: app).exists)
         try require("Back", in: app).tap()
 
-        try require("Menu", in: app).tap()
+        try require("Open Drawer", in: app).tap()
         drawerAi.tap()
         XCTAssertTrue(try requireAny(["AI and cloud TTS", "AI keys and models", "AI settings"], in: app).exists)
         capture("drawer-account-pro-ai", app: app)
@@ -119,7 +119,7 @@ final class ReaderUITests: XCTestCase {
         try require("Home", in: app, timeout: 6).tap()
 
         // Drawer + settings last: returning from settings can leave the drawer open.
-        try require("Menu", in: app).tap()
+        try require("Open Drawer", in: app).tap()
         capture("ios-drawer", app: app)
         try requireAny(["MobileDrawerSettings", "Settings"], in: app).tap()
         capture("ios-settings-root", app: app)
@@ -225,7 +225,19 @@ final class ReaderUITests: XCTestCase {
             throw XCTSkip("Requires two distinct PDFs copied into RuntimeFixtures")
         }
 
-        guard let openSplit = waitForAny(["Open in split reader"], in: app, timeout: 25) else {
+        // Split view is hidden by default (Android benchmark parity); reach it
+        // through More Options > Hidden tools when it is not pinned.
+        if waitForAny(["Open in split reader"], in: app, timeout: 8) == nil {
+            guard let more = waitForAny(["More Options"], in: app, timeout: 10) else {
+                throw XCTSkip("PDF split affordance was not exposed by this reader state")
+            }
+            more.tap()
+            guard let hidden = waitForAny(["Hidden tools"], in: app, timeout: 10) else {
+                throw XCTSkip("PDF split affordance was not exposed by this reader state")
+            }
+            hidden.tap()
+        }
+        guard let openSplit = waitForAny(["Open in split reader"], in: app, timeout: 10) else {
             throw XCTSkip("PDF split affordance was not exposed by this reader state")
         }
         openSplit.tap()

@@ -59,6 +59,9 @@ data class PdfToolbarPreferences(
         PdfReaderTool.SCREEN_ORIENTATION.id,
         PdfReaderTool.HIGHLIGHT_ALL.id,
         PdfReaderTool.BRIGHTNESS.id,
+        // Split view stays available via Hidden tools / Customize Toolbar but
+        // is not pinned, matching the Android reader benchmark chrome.
+        PdfReaderTool.SPLIT_VIEW.id,
     ),
     val toolOrder: List<PdfReaderTool> = PdfReaderTool.entries.toList(),
     val bottomToolIds: Set<String> = PdfReaderTool.entries

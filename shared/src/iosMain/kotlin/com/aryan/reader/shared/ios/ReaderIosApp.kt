@@ -117,6 +117,7 @@ import com.aryan.reader.shared.MobilePdfLifecycleAction
 import com.aryan.reader.shared.mobilePdfLifecycleAction
 import com.aryan.reader.shared.SharedLibrarySnapshot
 import com.aryan.reader.shared.SharedLibrarySnapshotJson
+import com.aryan.reader.shared.SharedSummaryCache
 import com.aryan.reader.shared.SharedLegalProfile
 import com.aryan.reader.shared.SharedLibraryEditor
 import com.aryan.reader.shared.SharedImportPlanner
@@ -4440,6 +4441,8 @@ private fun ReaderIosApp(
                 dismissReaderAiResult()
             },
             onOpenAiHub = { utilityScreen = IosUtilityScreen.AI_SETTINGS },
+            summaryCache = remember { SharedSummaryCache() },
+            aiCredits = state.credits,
             pdfReflowUiState = SharedMobilePdfReflowUiState(
                 isGenerating = pdfReflowProgress != null,
                 progress = pdfReflowProgress ?: 0f,
@@ -4947,6 +4950,8 @@ private fun ReaderIosApp(
                                 dismissReaderAiResult()
                             },
                             onOpenAiHub = {},
+                            summaryCache = remember { SharedSummaryCache() },
+                            aiCredits = state.credits,
                             readerBrightness = readerBrightness,
                             readerCustomBrightness = readerCustomBrightness,
                             readerBrightnessSupported = true,

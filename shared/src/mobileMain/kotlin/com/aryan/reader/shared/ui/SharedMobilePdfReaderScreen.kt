@@ -119,6 +119,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -156,6 +157,7 @@ import androidx.compose.ui.platform.LocalDensity
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.CustomFontItem
 import com.aryan.reader.shared.ReaderAiFeature
+import com.aryan.reader.shared.SharedSummaryCache
 import com.aryan.reader.shared.ReaderAiResultState
 import com.aryan.reader.shared.ReaderExtrasState
 import com.aryan.reader.shared.BuiltInPdfReaderThemes
@@ -165,6 +167,9 @@ import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.PdfDisplayMode
 import com.aryan.reader.shared.PdfReaderTool
 import com.aryan.reader.shared.pdf.SharedPdfOcrLanguage
+import com.aryan.reader.shared.pdf.buildPdfAiHubRecapText
+import com.aryan.reader.shared.pdf.PDF_AI_HUB_MAX_CHARS
+import com.aryan.reader.shared.pdf.PDF_AI_HUB_RECAP_PAGE_WINDOW
 import com.aryan.reader.shared.PdfToolbarPreferences
 import com.aryan.reader.shared.isPdfReaderToolEnabledDuringTts
 import com.aryan.reader.shared.PdfTocEntry
@@ -333,6 +338,8 @@ fun SharedMobilePdfReaderScreen(
     onSystemUiAppearanceChange: (hidden: Boolean, lightContent: Boolean, backgroundArgb: Long, edgeToEdge: Boolean) -> Unit = { _, _, _, _ -> },
     onSystemUiRelease: () -> Unit = {},
     modifier: Modifier = Modifier,
+    summaryCache: SharedSummaryCache? = null,
+    aiCredits: Int? = null,
 ) {
     SharedMobilePdfReaderHost(
         book = book,
@@ -373,6 +380,8 @@ fun SharedMobilePdfReaderScreen(
         onAiAction = onAiAction,
         onAiResultDismiss = onAiResultDismiss,
         onOpenAiHub = onOpenAiHub,
+        summaryCache = summaryCache,
+        aiCredits = aiCredits,
         onTtsError = onTtsError,
         onClipboardError = onClipboardError,
         initialReaderState = initialReaderState,
@@ -490,6 +499,8 @@ fun SharedMobilePdfReaderHost(
     hostConfig: SharedPdfReaderHostConfig = SharedPdfReaderHostConfig.fullScreen(book.id),
     /** True when this reader is mounted inside a split-workspace pane. */
     isSplitPane: Boolean = false,
+    summaryCache: SharedSummaryCache? = null,
+    aiCredits: Int? = null,
 ) {
     val readerSessionKey = hostConfig.sessionKey
     val ownsSystemUi = hostConfig.owns(SharedPdfReaderGlobalResource.SYSTEM_UI)
@@ -528,6 +539,9 @@ fun SharedMobilePdfReaderHost(
     var showTtsSettingsSheet by remember(readerSessionKey) { mutableStateOf(false) }
     var showTtsReplacementsSheet by remember(readerSessionKey) { mutableStateOf(false) }
     var showNewPdfTabSheet by remember(readerSessionKey) { mutableStateOf(false) }
+    var showAiHub by remember(readerSessionKey) { mutableStateOf(false) }
+    var aiCacheRevision by remember(readerSessionKey) { mutableIntStateOf(0) }
+    var pendingSummarySave by remember(readerSessionKey) { mutableStateOf<Triple<String, Int, String>?>(null) }
     var pendingExternalLink by remember(readerSessionKey) { mutableStateOf<String?>(null) }
     var pdfPassword by remember(readerSessionKey) { mutableStateOf<String?>(null) }
     var pdfPasswordDraft by remember(readerSessionKey) { mutableStateOf("") }
@@ -1527,7 +1541,7 @@ fun SharedMobilePdfReaderHost(
                                 }
                             },
                             onAiAction = { feature, text -> onAiAction(feature, text) },
-                            onOpenAiHub = onOpenAiHub,
+                            onOpenAiHub = { showAiHub = true; onOpenAiHub() },
                             aiAvailable = readerAiAvailable,
                             ocrLanguage = ocrLanguage,
                             onOcrLanguage = { if (ownsGlobalModal) showOcrLanguageDialog = true },
@@ -1619,7 +1633,7 @@ fun SharedMobilePdfReaderHost(
                         },
                         onScreenOrientation = { if (ownsGlobalModal) showScreenOrientationSheet = true },
                         onDictionary = { dispatchNativePdfAction(SharedMobilePdfNativeAction.DICTIONARY_SETTINGS, SharedPdfExportSnapshot(readerState)) },
-                        onOpenAiHub = onOpenAiHub,
+                        onOpenAiHub = { showAiHub = true; onOpenAiHub() },
                         aiAvailable = readerAiAvailable,
                         showAllTextHighlights = showAllTextHighlights,
                         isAllTextHighlightLoading = isAllTextHighlightLoading,
@@ -2169,7 +2183,7 @@ fun SharedMobilePdfReaderHost(
         if (readerExtrasState.aiResult.hasContent) {
             SharedReaderAiResultSheet(
                 result = readerExtrasState.aiResult,
-                onDismiss = onAiResultDismiss,
+                onDismiss = { pendingSummarySave = null; onAiResultDismiss() },
             )
         }
     }
@@ -2221,6 +2235,66 @@ fun SharedMobilePdfReaderHost(
             },
             onRestore = {},
         )
+    }
+    if (showAiHub) {
+        // Fixed-size window of text sessions, newest-first, opened only while
+        // the hub is presented; disposal closes them on dismiss.
+        val hubBasePage = readerState.pageIndex
+        val hubPageTitle = readerString("pdf_page_label", "Page %1\$d", hubBasePage + 1)
+        val hubBookTitle = book.title?.takeIf { it.isNotBlank() } ?: book.displayName
+        val hubPageSessions = (0 until PDF_AI_HUB_RECAP_PAGE_WINDOW).map { back ->
+            rememberPdfTextPageSession(book, (hubBasePage - back).coerceAtLeast(0), pdfPassword)
+        }
+        val hubCacheEntries = remember(readerSessionKey, aiCacheRevision) {
+            summaryCache?.getAllSummaries(hubBookTitle).orEmpty()
+        }
+        SharedMobileAiHubSheet(
+            sectionTitle = hubPageTitle,
+            cachedSummary = hubCacheEntries.firstOrNull { it.sectionIndex == hubBasePage },
+            cacheEntries = hubCacheEntries,
+            showCacheTab = summaryCache != null,
+            credits = aiCredits,
+            onGenerateSummary = {
+                showAiHub = false
+                hubPageSessions.firstOrNull()?.let { session ->
+                    session.textForRange(0, session.pageCharCount)
+                        ?.takeIf(String::isNotBlank)
+                        ?.let {
+                            pendingSummarySave = Triple(hubBookTitle, hubBasePage, hubPageTitle)
+                            onAiAction(ReaderAiFeature.SUMMARIZE, it.take(PDF_AI_HUB_MAX_CHARS))
+                        }
+                }
+            },
+            onGenerateRecap = {
+                showAiHub = false
+                val pages = hubPageSessions.map { session ->
+                    session?.let { it.textForRange(0, it.pageCharCount) }
+                }
+                buildPdfAiHubRecapText(pages)?.let { onAiAction(ReaderAiFeature.RECAP, it) }
+            },
+            onDeleteCached = { entry ->
+                summaryCache?.deleteSummary(entry.bookTitle, entry.sectionIndex)
+                aiCacheRevision++
+            },
+            onClearCache = {
+                summaryCache?.clearBookCache(hubBookTitle)
+                aiCacheRevision++
+            },
+            onDismiss = { showAiHub = false },
+        )
+    }
+    LaunchedEffect(readerExtrasState.aiResult) {
+        val pending = pendingSummarySave ?: return@LaunchedEffect
+        val result = readerExtrasState.aiResult
+        if (result.isLoading) return@LaunchedEffect
+        pendingSummarySave = null
+        if (result.errorMessage == null &&
+            result.text.isNotBlank() &&
+            result.title == ReaderAiFeature.SUMMARIZE.displayName
+        ) {
+            summaryCache?.saveSummary(pending.first, pending.second, pending.third, result.text)
+            aiCacheRevision++
+        }
     }
     if (documentRender.openError == SharedMobilePdfOpenError.PASSWORD_REQUIRED) {
         AlertDialog(
@@ -2579,14 +2653,6 @@ private fun SharedMobilePdfReaderTopBar(
             IconButton(onClick = onBack) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = readerString("tooltip_back", "Back"))
             }
-            if (onOpenSplit != null) {
-                SharedMobilePdfTopToolButton(
-                    label = readerString("pdf_split_reader_open", "Open in split reader"),
-                    onClick = onOpenSplit,
-                ) {
-                    Icon(Icons.Default.OpenInNew, contentDescription = readerString("pdf_split_reader_open", "Open in split reader"))
-                }
-            }
             if (isSearchActive) {
                 OutlinedTextField(
                     value = searchQuery,
@@ -2629,6 +2695,7 @@ private fun SharedMobilePdfReaderTopBar(
                         topTools.forEach { tool ->
                             when (tool) {
                                 PdfReaderTool.DICTIONARY -> SharedMobilePdfTopToolButton(sharedPdfReaderToolLabel(tool), { onNativeAction(SharedMobilePdfNativeAction.DICTIONARY_SETTINGS) }) { Icon(SharedReaderIcons.Dictionary, contentDescription = null) }
+                                PdfReaderTool.SPLIT_VIEW -> if (onOpenSplit != null) SharedMobilePdfTopToolButton(sharedPdfReaderToolLabel(tool), onOpenSplit) { Icon(Icons.Default.OpenInNew, contentDescription = null) }
                                 PdfReaderTool.THEME -> SharedMobilePdfTopToolButton(sharedPdfReaderToolLabel(tool), onTheme) { Icon(Icons.Default.Palette, contentDescription = null) }
                                 PdfReaderTool.BRIGHTNESS -> SharedMobilePdfTopToolButton(sharedPdfReaderToolLabel(tool), onBrightness) { Icon(SharedReaderIcons.Contrast, contentDescription = null) }
                                 PdfReaderTool.LOCK_PANNING -> SharedMobilePdfTopToolButton(sharedPdfReaderToolLabel(tool, isScrollLocked = isScrollLocked), onToggleScrollLock) { Icon(if (isScrollLocked) Icons.Default.Lock else Icons.Default.LockOpen, contentDescription = null) }
@@ -2691,6 +2758,7 @@ private fun SharedMobilePdfReaderTopBar(
                         }
                         when (tool) {
                             PdfReaderTool.DICTIONARY -> SharedMobilePdfOverflowItem(sharedPdfReaderToolLabel(tool), leadingIcon = { Icon(SharedReaderIcons.Dictionary, contentDescription = null) }, onClick = { closeMenuAndRun { onNativeAction(SharedMobilePdfNativeAction.DICTIONARY_SETTINGS) } })
+                            PdfReaderTool.SPLIT_VIEW -> if (onOpenSplit != null) SharedMobilePdfOverflowItem(sharedPdfReaderToolLabel(tool), leadingIcon = { Icon(Icons.Default.OpenInNew, contentDescription = null) }, onClick = { closeMenuAndRun(onOpenSplit) })
                             PdfReaderTool.THEME -> SharedMobilePdfOverflowItem(sharedPdfReaderToolLabel(tool), onClick = { closeMenuAndRun(onTheme) })
                             PdfReaderTool.BRIGHTNESS -> SharedMobilePdfOverflowItem(sharedPdfReaderToolLabel(tool), leadingIcon = { Icon(SharedReaderIcons.Contrast, contentDescription = null) }, onClick = { closeMenuAndRun(onBrightness) })
                             PdfReaderTool.LOCK_PANNING -> SharedMobilePdfOverflowItem(sharedPdfReaderToolLabel(tool, isScrollLocked = isScrollLocked), onClick = { closeMenuAndRun(onToggleScrollLock) })
@@ -2720,6 +2788,14 @@ private fun SharedMobilePdfReaderTopBar(
                         }
                     }
                 }
+                if (toolbarPreferences.isVisible(PdfReaderTool.FILE_INFO)) SharedMobilePdfOverflowItem(
+                    sharedPdfReaderToolTitle(PdfReaderTool.FILE_INFO),
+                    leadingIcon = { Icon(Icons.Default.Info, contentDescription = null) },
+                    onClick = {
+                        showMoreMenu = false
+                        onFileInformation()
+                    }
+                )
                 if (toolbarPreferences.isVisible(PdfReaderTool.OCR_LANGUAGE)) SharedMobilePdfOverflowItem(
                     "${readerString("menu_ocr_language", "OCR Language")}: ${ocrLanguage.displayName}",
                     onClick = { showMoreMenu = false; onOcrLanguage() }
@@ -2794,14 +2870,14 @@ private fun SharedMobilePdfReaderTopBar(
                 val showWordReplacements = PdfReaderTool.TTS_REPLACEMENTS in SharedMobilePdfAvailableTools &&
                     toolbarPreferences.isVisible(PdfReaderTool.TTS_REPLACEMENTS)
                 if (showVoiceSettings || showWordReplacements) SharedMobilePdfOverflowItem(
-                    readerString("menu_tts_voice_settings", "TTS Voice Settings"),
+                    readerString("menu_tts_settings", "TTS Settings"),
                     leadingIcon = { Icon(Icons.Default.GraphicEq, contentDescription = null) },
                     trailingIcon = { Icon(Icons.Default.KeyboardArrowDown, contentDescription = null) },
                     onClick = { showTtsSettingsExpanded = !showTtsSettingsExpanded }
                 )
                 if (showTtsSettingsExpanded) {
                     if (showVoiceSettings) SharedMobilePdfOverflowItem(
-                        readerString("tts_voice_selection", "Voice Selection"),
+                        readerString("menu_tts_voice_settings", "TTS Voice Settings"),
                         leadingIcon = { Icon(Icons.Default.GraphicEq, contentDescription = null) },
                         onClick = {
                             showMoreMenu = false
@@ -2872,14 +2948,6 @@ private fun SharedMobilePdfReaderTopBar(
                     if (toolbarPreferences.isVisible(PdfReaderTool.SAVE_COPY)) SharedMobilePdfOverflowItem(sharedPdfReaderToolTitle(PdfReaderTool.SAVE_COPY), leadingIcon = { Icon(Icons.Default.Description, contentDescription = null) }, onClick = { showMoreMenu = false; onNativeAction(SharedMobilePdfNativeAction.SAVE_COPY) })
                     if (toolbarPreferences.isVisible(PdfReaderTool.PRINT)) SharedMobilePdfOverflowItem(sharedPdfReaderToolTitle(PdfReaderTool.PRINT), leadingIcon = { Icon(Icons.Default.Description, contentDescription = null) }, onClick = { showMoreMenu = false; onNativeAction(SharedMobilePdfNativeAction.PRINT) })
                 }
-                if (toolbarPreferences.isVisible(PdfReaderTool.FILE_INFO)) SharedMobilePdfOverflowItem(
-                    sharedPdfReaderToolTitle(PdfReaderTool.FILE_INFO),
-                    leadingIcon = { Icon(Icons.Default.Info, contentDescription = null) },
-                    onClick = {
-                        showMoreMenu = false
-                        onFileInformation()
-                    }
-                )
                 }
             }
         }
@@ -2888,7 +2956,7 @@ private fun SharedMobilePdfReaderTopBar(
 
 @Composable
 private fun sharedPdfReaderToolTitle(tool: PdfReaderTool): String = when (tool) {
-    PdfReaderTool.DICTIONARY -> readerString("tool_external_apps", "External Apps")
+    PdfReaderTool.DICTIONARY -> readerString("content_desc_dictionary_settings", "Dictionary Settings")
     PdfReaderTool.SPLIT_VIEW -> readerString("tool_split_view", "Split View")
     PdfReaderTool.THEME -> readerString("tooltip_theme", "Theme")
     PdfReaderTool.BRIGHTNESS -> readerString("tool_brightness", "Brightness")
@@ -2925,6 +2993,7 @@ private fun sharedPdfReaderToolLabel(
     isScrollLocked: Boolean = false,
     isTtsPlayingOrLoading: Boolean = false,
 ): String = when (tool) {
+    PdfReaderTool.SPLIT_VIEW -> readerString("pdf_split_reader_open", "Open in split reader")
     PdfReaderTool.LOCK_PANNING -> readerString(
         if (isScrollLocked) "tooltip_unlock_pan" else "tooltip_lock_pan",
         if (isScrollLocked) "Unlock Panning" else "Lock Panning",
@@ -2966,6 +3035,7 @@ private fun SharedMobilePdfTopToolButton(
 
 private val SharedMobilePdfAvailableTools = setOf(
     PdfReaderTool.DICTIONARY,
+    PdfReaderTool.SPLIT_VIEW,
     PdfReaderTool.THEME,
     PdfReaderTool.BRIGHTNESS,
     PdfReaderTool.LOCK_PANNING,
