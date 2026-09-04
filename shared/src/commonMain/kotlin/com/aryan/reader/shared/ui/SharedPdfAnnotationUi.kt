@@ -120,7 +120,7 @@ val SharedPdfAnnotationDefaultTools: List<PdfInkTool> = listOf(
     PdfInkTool.ERASER
 )
 
-private enum class SharedPdfAnnotationSettingsPanel {
+internal enum class SharedPdfAnnotationSettingsPanel {
     PEN,
     HIGHLIGHTER,
     ERASER
@@ -698,7 +698,7 @@ fun SharedPdfAnnotationToolDock(
 }
 
 @Composable
-private fun SharedPdfAnnotationToolSettingsPanel(
+internal fun SharedPdfAnnotationToolSettingsPanel(
     panel: SharedPdfAnnotationSettingsPanel,
     tools: List<PdfInkTool>,
     selectedTool: PdfInkTool,
