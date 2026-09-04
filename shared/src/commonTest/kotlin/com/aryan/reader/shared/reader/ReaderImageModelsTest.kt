@@ -8,8 +8,20 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertContentEquals
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
+import kotlin.test.assertFalse
 
 class ReaderImageModelsTest {
+
+    @Test
+    fun `svg source detection matches thumbnail decoder expectations`() {
+        // Android benchmark parity: thumbnail path must flag SVG for the shared decoder.
+        assertTrue("OPS/images/chart.svg".isSharedEpubSvgSource())
+        assertTrue("OPS/images/chart.svg?x=1#frag".isSharedEpubSvgSource())
+        assertTrue("data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=".isSharedEpubSvgSource())
+        assertFalse("OPS/images/photo.png".isSharedEpubSvgSource())
+        assertFalse("data:image/png;base64,SGk=".isSharedEpubSvgSource())
+    }
 
     @Test
     fun `embedded reader image exposes downloadable bytes`() {

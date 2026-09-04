@@ -98,7 +98,11 @@ object SharedEpubPackageLoader {
         fileName: String,
         shouldUseToc: Boolean = true
     ): SharedEpubBook {
+        val loadMark = sharedEpubOpenTraceMark()
+        sharedEpubOpenTrace { "packageLoad start sourceId=$sourceId fileName=$fileName entries=${archive.entryPaths.size}" }
+        val parseStart = sharedEpubOpenTraceMark()
         val parsedPackage = parseMobileEpubPackage(archive)
+        sharedEpubOpenTrace { "packageLoad containerParsedAndOpfParsed ms=${sharedEpubOpenTraceMs(sharedEpubOpenTraceElapsedMs(parseStart))} spineItems=${parsedPackage.spineIds.size} manifestItems=${parsedPackage.manifest.size}" }
         val normalizedEntries = parsedPackage.entryPaths
         val normalizedEntrySet = normalizedEntries.toSet()
         fun text(path: String): String? = parsedPackage.text(path)
@@ -130,13 +134,17 @@ object SharedEpubPackageLoader {
             .firstOrNull { it.attribute("name") == "cover" }
             ?.attribute("content")
         val images = mobileEpubImages(manifest.values.toList(), normalizedEntries)
+        val coverMark = sharedEpubOpenTraceMark()
         val coverImagePath = mobileEpubCoverCandidates(
             metadataCoverId = metadataCoverId,
             manifest = manifest.values.toList(),
             archivePaths = normalizedEntrySet
         ).firstOrNull { path -> bytes(path)?.isNotEmpty() == true }
+        sharedEpubOpenTrace { "packageLoad cover ms=${sharedEpubOpenTraceMs(sharedEpubOpenTraceElapsedMs(coverMark))} path=$coverImagePath" }
 
+        val fontMark = sharedEpubOpenTraceMark()
         val fontObfuscation = parseFontObfuscation(text("META-INF/encryption.xml"), uniqueIdentifier)
+        sharedEpubOpenTrace { "packageLoad fontObfuscationScan ms=${sharedEpubOpenTraceMs(sharedEpubOpenTraceElapsedMs(fontMark))} rules=${fontObfuscation.size}" }
         fun resourceBytes(path: String): ByteArray? {
             val safe = safeEpubPathOrNull(path) ?: return null
             val raw = bytes(safe) ?: return null
@@ -169,26 +177,43 @@ object SharedEpubPackageLoader {
                 if (media.isBlank() || media.equals("all", ignoreCase = true)) imported else "@media $media {\n$imported\n}"
             }
             output = output.rewriteEpubCssUrls(safe) { resourcePath ->
-                val content = if (resourcePath.endsWith(".css", ignoreCase = true)) {
-                    css(resourcePath)?.encodeToByteArray()
+                if (isSharedEpubSchemeServableResource(resourcePath)) {
+                    sharedEpubResourceUrl(sourceId, resourcePath)
                 } else {
-                    resourceBytes(resourcePath)
+                    val content = if (resourcePath.endsWith(".css", ignoreCase = true)) {
+                        css(resourcePath)?.encodeToByteArray()
+                    } else {
+                        resourceBytes(resourcePath)
+                    }
+                    content?.toEpubDataUri(resourceMimeType(resourcePath))
                 }
-                content?.toEpubDataUri(resourceMimeType(resourcePath))
             }
             processingCss.remove(safe)
             processedCss[safe] = output
             return output
         }
 
-        mobileEpubCssPaths(manifest.values.toList(), normalizedEntries)
-            .forEach(::css)
+        val cssPaths = mobileEpubCssPaths(manifest.values.toList(), normalizedEntries)
+        val cssMark = sharedEpubOpenTraceMark()
+        var cssBytesInlined = 0L
+        cssPaths.forEach { path ->
+            val mark = sharedEpubOpenTraceMark()
+            val processed = css(path)
+            if (processed != null) cssBytesInlined += processed.length
+            sharedEpubOpenTrace {
+                "packageLoad css ms=${sharedEpubOpenTraceMs(sharedEpubOpenTraceElapsedMs(mark))} path=$path chars=${processed?.length ?: 0}"
+            }
+        }
+        sharedEpubOpenTrace { "packageLoad cssPass ms=${sharedEpubOpenTraceMs(sharedEpubOpenTraceElapsedMs(cssMark))} stylesheets=${cssPaths.size} processedTotalChars=$cssBytesInlined" }
 
         val spineIds = parsedPackage.spineIds
         val chapterItems = spineIds.mapNotNull(manifest::get)
 
         fun dataUri(path: String): String? {
             val safe = safeEpubPathOrNull(path) ?: return null
+            if (isSharedEpubSchemeServableResource(safe)) {
+                return sharedEpubResourceUrl(sourceId, safe)
+            }
             val content = if (safe.endsWith(".css", ignoreCase = true)) {
                 css(safe)?.encodeToByteArray()
             } else {
@@ -197,6 +222,7 @@ object SharedEpubPackageLoader {
             return content.toEpubDataUri(resourceMimeType(safe))
         }
 
+        val navigationMark = sharedEpubOpenTraceMark()
         val navigation = if (shouldUseToc) {
             parseEpubNavigation(
                 archiveText = ::text,
@@ -206,18 +232,45 @@ object SharedEpubPackageLoader {
         } else {
             ParsedEpubNavigation()
         }
+        sharedEpubOpenTrace {
+            "packageLoad navigation ms=${sharedEpubOpenTraceMs(sharedEpubOpenTraceElapsedMs(navigationMark))} " +
+                "tocEntries=${navigation.tableOfContents.size} pageList=${navigation.pageList.size}"
+        }
         val parsedToc = navigation.tableOfContents
         val tocByPath = parsedToc
             .filter { !it.fragmentId.isNullOrBlank() }
             .groupBy(SharedEpubTocEntry::href)
         val navigationMetadata = navigation.chapterMetadata
 
+        val chaptersMark = sharedEpubOpenTraceMark()
+        var spineHtmlCount = 0
+        var styleBlockTotalMs = 0.0
+        var sanitizeTotalMs = 0.0
+        var bodyExtractTotalMs = 0.0
+        var resourceRewriteTotalMs = 0.0
+        var plainTextTotalMs = 0.0
+        var semanticBlocksTotalMs = 0.0
+        var tocSectionsTotalMs = 0.0
+        var slowestChapterMs = 0.0
+        var slowestChapterHref: String? = null
         val parsedChapters = chapterItems.flatMapIndexed { index, item ->
+            val chapterMark = sharedEpubOpenTraceMark()
+            fun finishChapter(chapters: List<SharedEpubChapter>): List<SharedEpubChapter> {
+                val chapterMs = sharedEpubOpenTraceElapsedMs(chapterMark)
+                if (chapterMs > slowestChapterMs) {
+                    slowestChapterMs = chapterMs
+                    slowestChapterHref = item.absPath
+                }
+                return chapters
+            }
             if (!item.isHtml) {
-                if (!item.isImage) return@flatMapIndexed emptyList()
-                val uri = dataUri(item.absPath) ?: return@flatMapIndexed emptyList()
+                if (!item.isImage) return@flatMapIndexed finishChapter(emptyList())
+                val uriMark = sharedEpubOpenTraceMark()
+                val uri = dataUri(item.absPath) ?: return@flatMapIndexed finishChapter(emptyList())
+                val uriMs = sharedEpubOpenTraceElapsedMs(uriMark)
                 val navigation = resolveMobileEpubChapterNavigation(item.absPath, "Image", navigationMetadata)
-                return@flatMapIndexed listOf(SharedEpubChapter(
+                sharedEpubOpenTrace { "chapter index=$index path=${item.absPath} kind=image inlinedChars=${uri.length} ms=${sharedEpubOpenTraceMs(uriMs)}" }
+                return@flatMapIndexed finishChapter(listOf(SharedEpubChapter(
                     id = item.id.ifBlank { "chapter_$index" },
                     title = navigation.title ?: "Image",
                     plainText = "[Image]",
@@ -225,27 +278,59 @@ object SharedEpubPackageLoader {
                     baseHref = item.absPath,
                     depth = navigation.depth,
                     isInToc = navigation.isInToc
-                ))
+                )))
             }
-            val raw = text(item.absPath) ?: return@flatMapIndexed emptyList()
+            spineHtmlCount++
+            val raw = text(item.absPath) ?: return@flatMapIndexed finishChapter(emptyList())
+            val styleMark = sharedEpubOpenTraceMark()
             raw.extractEpubStyleBlocks().takeIf(String::isNotBlank)?.let { embeddedCss ->
                 processedCss["${item.absPath}#embedded-style"] = embeddedCss.sanitizeEpubCss().rewriteEpubCssUrls(item.absPath) { resourcePath ->
-                    resourceBytes(resourcePath)?.toEpubDataUri(resourceMimeType(resourcePath))
+                    if (isSharedEpubSchemeServableResource(resourcePath)) {
+                        sharedEpubResourceUrl(sourceId, resourcePath)
+                    } else {
+                        resourceBytes(resourcePath)?.toEpubDataUri(resourceMimeType(resourcePath))
+                    }
                 }
             }
-            val body = raw
-                .sanitizeEpubReaderHtml()
-                .extractEpubBodyOrSelf()
-                .rewriteEpubHtmlResources(item.absPath, ::dataUri)
+            val styleMs = sharedEpubOpenTraceElapsedMs(styleMark)
+            styleBlockTotalMs += styleMs
+            val sanitizeMark = sharedEpubOpenTraceMark()
+            val sanitizedBody = raw.sanitizeEpubReaderHtml()
+            val sanitizeMs = sharedEpubOpenTraceElapsedMs(sanitizeMark)
+            sanitizeTotalMs += sanitizeMs
+            val bodyMark = sharedEpubOpenTraceMark()
+            val bodyOnly = sanitizedBody.extractEpubBodyOrSelf()
+            val bodyMs = sharedEpubOpenTraceElapsedMs(bodyMark)
+            bodyExtractTotalMs += bodyMs
+            val rewriteMark = sharedEpubOpenTraceMark()
+            val body = bodyOnly.rewriteEpubHtmlResources(item.absPath, ::dataUri)
+            val rewriteMs = sharedEpubOpenTraceElapsedMs(rewriteMark)
+            resourceRewriteTotalMs += rewriteMs
+            val plainTextMark = sharedEpubOpenTraceMark()
             val plainText = raw.epubHtmlToText()
+            val plainTextMs = sharedEpubOpenTraceElapsedMs(plainTextMark)
+            plainTextTotalMs += plainTextMs
+            val semanticMark = sharedEpubOpenTraceMark()
             val semanticBlocks = sharedEpubHtmlToSemanticBlocks(body)
+            val semanticMs = sharedEpubOpenTraceElapsedMs(semanticMark)
+            semanticBlocksTotalMs += semanticMs
             val fallbackTitle = resolveMobileEpubSpineChapterTitle(raw.firstEpubHeading(), index)
             val navigation = resolveMobileEpubChapterNavigation(item.absPath, fallbackTitle, navigationMetadata)
+            val sectionsMark = sharedEpubOpenTraceMark()
             val sections = materializeEpubTocSections(
                 body = body,
                 entries = tocByPath[item.absPath].orEmpty()
             )
-            if (sections.isEmpty()) {
+            val sectionsMs = sharedEpubOpenTraceElapsedMs(sectionsMark)
+            tocSectionsTotalMs += sectionsMs
+            sharedEpubOpenTrace {
+                "chapter index=$index path=${item.absPath} kind=html rawChars=${raw.length} bodyChars=${body.length} sections=${sections.size} " +
+                    "ms=${sharedEpubOpenTraceMs(sharedEpubOpenTraceElapsedMs(chapterMark))} " +
+                    "(style=${sharedEpubOpenTraceMs(styleMs)} sanitize=${sharedEpubOpenTraceMs(sanitizeMs)} body=${sharedEpubOpenTraceMs(bodyMs)} " +
+                    "rewrite=${sharedEpubOpenTraceMs(rewriteMs)} text=${sharedEpubOpenTraceMs(plainTextMs)} " +
+                    "semantic=${sharedEpubOpenTraceMs(semanticMs)} tocSplit=${sharedEpubOpenTraceMs(sectionsMs)})"
+            }
+            finishChapter(if (sections.isEmpty()) {
                 listOf(
                     SharedEpubChapter(
                         id = item.id.ifBlank { "chapter_$index" },
@@ -260,11 +345,17 @@ object SharedEpubPackageLoader {
                 )
             } else {
                 sections.mapIndexed { sectionIndex, section ->
+                    val sectionMark = sharedEpubOpenTraceMark()
+                    val sectionText = section.html.epubHtmlToText().ifBlank { fallbackTitle }
+                    plainTextTotalMs += sharedEpubOpenTraceElapsedMs(sectionMark)
+                    val sectionSemanticMark = sharedEpubOpenTraceMark()
+                    val sectionSemantic = sharedEpubHtmlToSemanticBlocks(section.html)
+                    semanticBlocksTotalMs += sharedEpubOpenTraceElapsedMs(sectionSemanticMark)
                     SharedEpubChapter(
                         id = "${item.id.ifBlank { "chapter_$index" }}#${section.fragmentId}",
                         title = section.entry.label.ifBlank { fallbackTitle },
-                        plainText = section.html.epubHtmlToText().ifBlank { fallbackTitle },
-                        semanticBlocks = sharedEpubHtmlToSemanticBlocks(section.html),
+                        plainText = sectionText,
+                        semanticBlocks = sectionSemantic,
                         htmlContent = section.html,
                         baseHref = item.absPath,
                         fragmentId = section.fragmentId,
@@ -272,8 +363,16 @@ object SharedEpubPackageLoader {
                         isInToc = true
                     )
                 }
-            }
+            })
         }
+        sharedEpubOpenTrace {
+            "chapterLoop ms=${sharedEpubOpenTraceMs(sharedEpubOpenTraceElapsedMs(chaptersMark))} spineItems=${chapterItems.size} htmlChapters=$spineHtmlCount " +
+                "styleBlocks=${sharedEpubOpenTraceMs(styleBlockTotalMs)} sanitize=${sharedEpubOpenTraceMs(sanitizeTotalMs)} " +
+                "bodyExtract=${sharedEpubOpenTraceMs(bodyExtractTotalMs)} resourceRewrite=${sharedEpubOpenTraceMs(resourceRewriteTotalMs)} " +
+                "plainText=${sharedEpubOpenTraceMs(plainTextTotalMs)} semanticBlocks=${sharedEpubOpenTraceMs(semanticBlocksTotalMs)} " +
+                "tocSections=${sharedEpubOpenTraceMs(tocSectionsTotalMs)} slowest=$slowestChapterHref (${sharedEpubOpenTraceMs(slowestChapterMs)}ms)"
+        }
+        val titleResolveMark = sharedEpubOpenTraceMark()
         val resolvedToc = parsedToc
         val chapters = parsedChapters.map { chapter ->
             val tocTitle = resolvedToc.firstOrNull {
@@ -283,6 +382,7 @@ object SharedEpubPackageLoader {
             }?.label
             if (tocTitle == null) chapter else chapter.copy(title = tocTitle)
         }
+        sharedEpubOpenTrace { "packageLoad tocTitleResolve ms=${sharedEpubOpenTraceMs(sharedEpubOpenTraceElapsedMs(titleResolveMark))} chapters=${chapters.size} tocEntries=${resolvedToc.size}" }
 
         return SharedEpubBook(
             id = sourceId,
@@ -299,7 +399,12 @@ object SharedEpubPackageLoader {
             seriesName = resolvedMetadata.seriesName,
             seriesIndex = resolvedMetadata.seriesIndex,
             description = resolvedMetadata.description
-        )
+        ).also { book ->
+            sharedEpubOpenTrace {
+                "packageLoad done ms=${sharedEpubOpenTraceMs(sharedEpubOpenTraceElapsedMs(loadMark))} chapters=${book.chapters.size} " +
+                    "htmlChars=${book.chapters.sumOf { it.htmlContent.length }} cssMaps=${book.css.size} cssChars=${book.css.values.sumOf { it.length }}"
+            }
+        }
     }
 }
 

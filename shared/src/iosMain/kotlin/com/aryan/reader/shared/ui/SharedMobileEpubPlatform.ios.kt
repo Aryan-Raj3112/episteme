@@ -28,9 +28,17 @@ import com.aryan.reader.shared.LocalTtsInterruptionEvent
 import com.aryan.reader.shared.LocalTtsInterruptionState
 import com.aryan.reader.shared.externalLookupUrl
 import com.aryan.reader.shared.ios.loadIosEpubBook
+import com.aryan.reader.shared.ios.IosEpubResourceStore
 import com.aryan.reader.shared.ios.IosTtsAudioInterruption
 import com.aryan.reader.shared.ios.IosTtsAudioInterruptionMonitor
 import com.aryan.reader.shared.opds.SharedOpdsStreamRequest
+import com.aryan.reader.shared.reader.SharedEpubResourceScheme
+import com.aryan.reader.shared.reader.parseSharedEpubResourceUrl
+import com.aryan.reader.shared.reader.sharedEpubResourceMimeType
+import com.aryan.reader.shared.reader.sharedEpubOpenTrace
+import com.aryan.reader.shared.reader.sharedEpubOpenTraceElapsedMs
+import com.aryan.reader.shared.reader.sharedEpubOpenTraceMark
+import com.aryan.reader.shared.reader.sharedEpubOpenTraceMs
 import com.aryan.reader.shared.reduce
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CoroutineScope
@@ -40,6 +48,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.time.TimeSource
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.contentOrNull
@@ -53,6 +62,7 @@ import kotlinx.cinterop.usePinned
 import kotlinx.cinterop.useContents
 import platform.CoreGraphics.CGRectMake
 import platform.Foundation.NSData
+import platform.Foundation.NSError
 import platform.Foundation.NSMutableData
 import platform.Foundation.NSURL
 import platform.Foundation.NSURLResponse
@@ -103,12 +113,18 @@ import platform.posix.memcpy
 internal actual fun rememberSharedMobileEpubLoadState(book: BookItem): SharedMobileEpubLoadState {
     var state by remember(book.id, book.path) { mutableStateOf(SharedMobileEpubLoadState()) }
     LaunchedEffect(book.id, book.path) {
+        val traceMark = sharedEpubOpenTraceMark()
+        sharedEpubOpenTrace { "loadState start id=${book.id} type=${book.type}" }
         state = SharedMobileEpubLoadState(isLoading = true)
         state = runCatching {
             withContext(Dispatchers.Default) { loadIosEpubBook(book) }
         }.fold(
-            onSuccess = { SharedMobileEpubLoadState(isLoading = false, book = it) },
+            onSuccess = {
+                sharedEpubOpenTrace { "loadState success id=${book.id} chapters=${it.chapters.size} ms=${sharedEpubOpenTraceMs(sharedEpubOpenTraceElapsedMs(traceMark))}" }
+                SharedMobileEpubLoadState(isLoading = false, book = it)
+            },
             onFailure = { error ->
+                sharedEpubOpenTrace { "loadState failed id=${book.id} error=${error.message} ms=${sharedEpubOpenTraceMs(sharedEpubOpenTraceElapsedMs(traceMark))}" }
                 SharedMobileEpubLoadState(
                     isLoading = false,
                     errorMessage = error.message ?: "Could not open this EPUB"
@@ -688,6 +704,7 @@ private class IosEpubWebViewCoordinator(
         loader = { streamPageLoader },
         unavailablePageLabel = { streamPageUnavailableLabel },
     )
+    private val epubResourceSchemeHandler = IosEpubResourceSchemeHandler()
     private var activeWebView: WKWebView? = null
     private var contentChunks: List<String> = emptyList()
     private var loadedHtmlHash: Int? = null
@@ -697,8 +714,11 @@ private class IosEpubWebViewCoordinator(
     private var latestAppearanceScript: String = ""
     private var latestNavigationScript: String? = null
     private var latestNavigationRequestId: Long = Long.MIN_VALUE
+    private var htmlLoadStartMark: TimeSource.Monotonic.ValueTimeMark? = null
+    private var reportedFirstPosition: Boolean = false
 
     fun createWebView(): WKWebView {
+        sharedEpubOpenTrace { "webview create" }
         val contentController = WKUserContentController()
         contentController.addUserScript(
             WKUserScript(
@@ -714,6 +734,10 @@ private class IosEpubWebViewCoordinator(
             setURLSchemeHandler(
                 streamPageSchemeHandler,
                 forURLScheme = SharedOpdsStreamRequest.ResourceScheme,
+            )
+            setURLSchemeHandler(
+                epubResourceSchemeHandler,
+                forURLScheme = SharedEpubResourceScheme,
             )
         }
         return WKWebView(frame = CGRectMake(0.0, 0.0, 0.0, 0.0), configuration = configuration).apply {
@@ -748,6 +772,9 @@ private class IosEpubWebViewCoordinator(
             loadedHtmlLength = html.length
             appliedAppearanceHash = null
             appliedNavigationRequestId = Long.MIN_VALUE
+            htmlLoadStartMark = sharedEpubOpenTraceMark()
+            reportedFirstPosition = false
+            sharedEpubOpenTrace { "webview loadHTML start chars=${html.length} chunks=${contentChunks.size}" }
             webView.loadHTMLString(html, baseURL = null)
             return
         }
@@ -767,6 +794,8 @@ private class IosEpubWebViewCoordinator(
     }
 
     private fun documentDidFinishLoading(webView: WKWebView) {
+        val loadMs = htmlLoadStartMark?.let { sharedEpubOpenTraceElapsedMs(it) }
+        sharedEpubOpenTrace { "webview didFinishNavigation ms=${loadMs?.let { sharedEpubOpenTraceMs(it) } ?: "?"}" }
         if (latestAppearanceScript.isNotBlank()) {
             webView.evaluateJavaScript(latestAppearanceScript, completionHandler = null)
             appliedAppearanceHash = latestAppearanceScript.hashCode()
@@ -778,6 +807,11 @@ private class IosEpubWebViewCoordinator(
     }
 
     private fun handleBridgeMessage(method: String, payload: String) {
+        if (!reportedFirstPosition && method == "readerPositionChanged") {
+            reportedFirstPosition = true
+            val loadMs = htmlLoadStartMark?.let { sharedEpubOpenTraceElapsedMs(it) }
+            sharedEpubOpenTrace { "webview firstPositionReport ms=${loadMs?.let { sharedEpubOpenTraceMs(it) } ?: "?"} sinceLoadHTML" }
+        }
         if (method == "readerCopyText") {
             val text = runCatching {
                 Json.parseToJsonElement(payload).jsonObject["text"]?.jsonPrimitive?.contentOrNull
@@ -790,10 +824,13 @@ private class IosEpubWebViewCoordinator(
         if (method == "readerChunkRequested") {
             val index = IosEpubChunkIndexRegex.find(payload)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: return
             val chunk = contentChunks.getOrNull(index) ?: return
+            val provideMark = sharedEpubOpenTraceMark()
+            sharedEpubOpenTrace { "webview chunkProvide start index=$index chunkChars=${chunk.length}" }
             activeWebView?.evaluateJavaScript(
                 "window.readerVirtualization && window.readerVirtualization.provideChunk($index, ${JsonPrimitive(chunk)});",
                 completionHandler = null
             )
+            sharedEpubOpenTrace { "webview chunkProvide dispatched index=$index dispatchMs=${sharedEpubOpenTraceMs(sharedEpubOpenTraceElapsedMs(provideMark))}" }
             return
         }
         onBridgeMessage(method, payload)
@@ -814,7 +851,9 @@ private class IosEpubWebViewCoordinator(
     }
 
     fun release(webView: WKWebView) {
+        sharedEpubOpenTrace { "webview release" }
         streamPageSchemeHandler.release()
+        epubResourceSchemeHandler.release()
         webView.stopLoading()
         webView.navigationDelegate = null
         webView.configuration.userContentController.removeScriptMessageHandlerForName(IosEpubBridgeName)
@@ -822,6 +861,63 @@ private class IosEpubWebViewCoordinator(
         contentChunks = emptyList()
         loadedHtmlHash = null
         loadedHtmlLength = -1
+        htmlLoadStartMark = null
+        reportedFirstPosition = false
+    }
+}
+
+private class IosEpubResourceSchemeHandler : NSObject(), WKURLSchemeHandlerProtocol {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private val taskJobs = mutableMapOf<WKURLSchemeTaskProtocol, Job>()
+
+    @ObjCSignatureOverride
+    override fun webView(webView: WKWebView, startURLSchemeTask: WKURLSchemeTaskProtocol) {
+        val task = startURLSchemeTask
+        val url = task.request.URL?.absoluteString.orEmpty()
+        val reference = parseSharedEpubResourceUrl(url)
+        if (reference == null) {
+            task.didFailWithError(NSError(domain = "ReaderEpubResources", code = 1L, userInfo = null))
+            return
+        }
+        val job = scope.launch {
+            val traceMark = sharedEpubOpenTraceMark()
+            val bytes = withContext(Dispatchers.Default) {
+                runCatching { IosEpubResourceStore.bytesFor(reference.bookId, reference.entryPath) }.getOrNull()
+            }
+            ensureActive()
+            sharedEpubOpenTrace {
+                "webview resource entry=${reference.entryPath} bytes=${bytes?.size ?: -1} " +
+                    "ms=${sharedEpubOpenTraceMs(sharedEpubOpenTraceElapsedMs(traceMark))}"
+            }
+            if (bytes == null) {
+                task.didFailWithError(NSError(domain = "ReaderEpubResources", code = 2L, userInfo = null))
+                return@launch
+            }
+            val responseUrl = task.request.URL ?: return@launch
+            task.didReceiveResponse(
+                NSURLResponse(
+                    uRL = responseUrl,
+                    MIMEType = sharedEpubResourceMimeType(reference.entryPath),
+                    expectedContentLength = bytes.size.toLong(),
+                    textEncodingName = null,
+                )
+            )
+            task.didReceiveData(bytes.toNSData())
+            task.didFinish()
+        }
+        taskJobs[task] = job
+        job.invokeOnCompletion { taskJobs.remove(task) }
+    }
+
+    @ObjCSignatureOverride
+    override fun webView(webView: WKWebView, stopURLSchemeTask: WKURLSchemeTaskProtocol) {
+        taskJobs.remove(stopURLSchemeTask)?.cancel()
+    }
+
+    fun release() {
+        taskJobs.values.toList().forEach(Job::cancel)
+        taskJobs.clear()
+        scope.cancel()
     }
 }
 

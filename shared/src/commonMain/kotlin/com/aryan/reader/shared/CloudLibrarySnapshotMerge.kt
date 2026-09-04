@@ -212,6 +212,26 @@ private fun mergeCloudShelfRecords(
         .filterNot { it.isDeleted }
 }
 
+/**
+ * Synthesizes a shelf-membership clock for one (book, shelf) pair, shared
+ * first per AGENTS.md.
+ *
+ * `mergeCloudShelfRefs` keeps the newest `addedAt` per pair, so a sync that
+ * rebuilds refs from a member list must not re-stamp surviving pairs with a
+ * fresh `shelfClock + index` value: that would flap ordering every round-trip
+ * across devices. Preserve the newest known clock and synthesize only for
+ * pairs without one. The iOS Firestore sync consumes this; Android's
+ * equivalent path is covered by the merge itself.
+ */
+fun sharedShelfRefAddedAt(
+    existingAddedAt: Long?,
+    shelfClock: Long,
+    index: Int,
+): Long {
+    val synthesized = if (shelfClock > 0L) shelfClock + index else index.toLong()
+    return maxOf(existingAddedAt ?: synthesized, synthesized)
+}
+
 private fun mergeCloudShelfRefs(
     local: List<BookShelfRef>,
     remote: List<BookShelfRef>,

@@ -124,6 +124,14 @@
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>
+		<string>fetch</string>
+		<string>processing</string>
+		<string>remote-notification</string>
+	</array>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>com.aryan.reader.sync.refresh</string>
+		<string>com.aryan.reader.sync.processing</string>
 	</array>
 	<key>UILaunchScreen</key>
 	<dict/>

@@ -239,6 +239,9 @@ fun SharedMobileUnifiedLibraryScreen(
     selectionCapabilities: SharedMobileUnifiedLibrarySelectionCapabilities =
         SharedMobileUnifiedLibrarySelectionCapabilities(),
     selectionActions: SharedMobileUnifiedLibraryActions? = null,
+    // Android benchmark: readable file types differ per platform (FileCapabilities.kt).
+    // Defaults to IOS to preserve current iOS callers; Android must pass ANDROID on adoption.
+    platform: ReaderPlatform = ReaderPlatform.IOS,
     modifier: Modifier = Modifier,
 ) {
     var filter by remember { mutableStateOf(MobileUnifiedLibraryFilter.ALL) }
@@ -672,6 +675,7 @@ fun SharedMobileUnifiedLibraryScreen(
             state = state,
             onDismiss = { showFilters = false },
             onFiltersChange = ::applyUnifiedLibraryFilters,
+            platform = platform,
         )
     }
 
@@ -1268,6 +1272,9 @@ fun SharedMobileLibraryScreen(
     onClearOpdsError: () -> Unit = {},
     onOpdsDownloadLocationChange: (SharedOpdsDownloadLocation) -> Unit = {},
     opdsCoverContent: (@Composable (OpdsEntry, Modifier) -> Unit)? = null,
+    // Android benchmark: readable file types differ per platform (FileCapabilities.kt).
+    // Defaults to IOS to preserve current iOS callers; Android must pass ANDROID on adoption.
+    platform: ReaderPlatform = ReaderPlatform.IOS,
     modifier: Modifier = Modifier
 ) {
     val selectedIds = state.selectedBookIds
@@ -1600,7 +1607,8 @@ fun SharedMobileLibraryScreen(
         SharedMobileLibraryFilterDialog(
             state = state,
             onDismiss = { showFilters = false },
-            onFiltersChange = onRemoveFilters
+            onFiltersChange = onRemoveFilters,
+            platform = platform,
         )
     }
     if (showCreateShelf) {
@@ -2400,12 +2408,13 @@ private fun SharedMobileTagSelectionSheet(
 private fun SharedMobileLibraryFilterDialog(
     state: SharedReaderScreenState,
     onDismiss: () -> Unit,
-    onFiltersChange: (LibraryFilters) -> Unit
+    onFiltersChange: (LibraryFilters) -> Unit,
+    platform: ReaderPlatform = ReaderPlatform.IOS,
 ) {
     var currentFilters by remember(state.libraryFilters, state.syncedFolders) {
         mutableStateOf(state.libraryFilters.withIosFolderFilterIdentities(state.syncedFolders))
     }
-    val readableTypes = remember { SharedFileCapabilities.readableTypesFor(ReaderPlatform.IOS) }
+    val readableTypes = remember(platform) { SharedFileCapabilities.readableTypesFor(platform) }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,

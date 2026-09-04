@@ -24,6 +24,7 @@ struct ContentView: View {
 
     private let bridge = ReaderIosBridge()
     private let audiobookPlayer = AudiobookPlayerController()
+    private let cloudFolderSync = LocalCloudFolderSyncController()
     @StateObject private var localStoreKit = LocalStoreKitController()
     @StateObject private var localAccount = LocalAccountController()
     @Environment(\.scenePhase) private var scenePhase
@@ -189,6 +190,11 @@ struct ContentView: View {
 #if DEBUG
             bridge.setDebugBuild(enabled: true)
 #endif
+            // Startup orphan sweep (Android MainViewModel.sweepOrphanedCache
+            // parity, temp-only). The pending-external-removal drain already
+            // runs in Kotlin startup state; this covers crash-orphaned temp
+            // staging that has no owner record.
+            sweepStaleTemporaryFiles()
             localStoreKit.attach(to: bridge)
             localAccount.attach(to: bridge)
             localAccount.setLocalCloudDataClearHandler {
@@ -262,13 +268,89 @@ struct ContentView: View {
                 }
             }
             bridge.setUnifiedDiagnosticsProvider { captureUnifiedLogEntries() }
+            // Folder-transfer executor (P0 #4): Swift owns the Drive/Firestore
+            // orchestration; Kotlin owns selection/prefs/Compose state. The
+            // controller publishes executor state back through the bridge
+            // after every pass.
+            cloudFolderSync.localAccount = localAccount
+            cloudFolderSync.bridgeProvider = { [bridge] in bridge }
+            bridge.setCloudFolderSyncRequestHandler { [cloudFolderSync] direction, rootId, replace in
+                switch direction {
+                case "pull":
+                    if let rootId {
+                        cloudFolderSync.requestSyncRoot(rootId, direction: .pull, replace: replace.boolValue)
+                    } else {
+                        cloudFolderSync.requestSyncAllPull(replace: replace.boolValue)
+                    }
+                case "push":
+                    if let rootId {
+                        cloudFolderSync.requestSyncRoot(rootId, direction: .push, replace: replace.boolValue)
+                    }
+                default:
+                    if let rootId {
+                        cloudFolderSync.requestSyncRoot(rootId, direction: .sync, replace: replace.boolValue)
+                    } else {
+                        cloudFolderSync.requestSyncAll(replace: replace.boolValue)
+                    }
+                }
+            }
+            bridge.setCloudFolderBindHandler { [cloudFolderSync, localAccount] rootId, folderName in
+                cloudFolderSync.ensureLocalFolderBinding(
+                    folderName: folderName,
+                    rootId: rootId,
+                    deviceId: localAccount.folderSyncDeviceID()
+                )
+            }
+            bridge.setCloudFolderConflictResolveHandler { [cloudFolderSync, localAccount] rootId, conflictId, resolution in
+                guard let uid = localAccount.folderSyncAccountID() else { return }
+                cloudFolderSync.resolveConflict(uid: uid, rootId: rootId, conflictId: conflictId, resolutionRaw: resolution)
+            }
+            bridge.setCloudFolderDeleteHandler { [cloudFolderSync, localAccount] rootId, deleteEverywhere in
+                guard let uid = localAccount.folderSyncAccountID() else { return }
+                if deleteEverywhere.boolValue {
+                    Task { await cloudFolderSync.deleteRootEverywhere(uid: uid, rootId: rootId) }
+                } else {
+                    cloudFolderSync.removeBindingOnly(uid: uid, rootId: rootId)
+                }
+            }
+            // P0 #1: BG task bodies run the same foreground-only reconciliation
+            // Android does (outbox retry + StoreKit re-query, no background
+            // purchase queue). The shared retry math lives in
+            // SharedBackgroundSyncPolicy; Swift only owns scheduling.
+            IosBackgroundSync.refreshHandler = { [localAccount, localStoreKit] in
+                await localAccount.handleBackgroundRefresh()
+                await localStoreKit.handleBackgroundRefresh()
+            }
+            IosBackgroundSync.processingHandler = { [localAccount, cloudFolderSync] in
+                await localAccount.handleBackgroundRefresh()
+                cloudFolderSync.requestSyncAll(replace: false)
+                await cloudFolderSync.awaitIdle()
+            }
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
+                IosBackgroundSync.endGrace()
                 bridge.updateAppActive(active: true)
                 refreshImportedFolders(bridge: bridge)
+                // Android parity: Billing re-queries on every foreground/auth
+                // emission (no Worker). Reconcile StoreKit + re-arm the cloud
+                // outbox on every foreground transition.
+                Task { @MainActor in
+                    await localStoreKit.handleForegroundResume()
+                    localAccount.handleForegroundResume()
+                    // Android parity (CloudFolderHeadListenerCoordinator):
+                    // foreground-only head wake; other-device folder changes
+                    // pull automatically via the debounced listener.
+                    cloudFolderSync.startFolderHeadListener()
+                }
             } else {
                 bridge.updateAppActive(active: false)
+                // Give in-flight cloud sync a grace period to finish, mirroring
+                // WorkManager continuing after the activity stops. Sync work
+                // is idempotent so expiration mid-pass is safe to retry.
+                cloudFolderSync.stopFolderHeadListener()
+                IosBackgroundSync.beginGrace()
+                IosBackgroundSync.scheduleRefresh()
             }
         }
     }
@@ -987,6 +1069,48 @@ private func uniqueImportedFileName(_ fileName: String) -> String {
         return "\(baseName)-\(suffix)"
     }
     return "\(baseName)-\(suffix).\(fileExtension)"
+}
+
+/// Startup orphan sweep (Android `MainViewModel.sweepOrphanedCache` parity,
+/// temp-only): removes crash-orphaned `tmp/ExternalOpen/<requestId>/`
+/// staging directories and `reader-export-*.pdf` share copies older than
+/// 1 hour (Android's `deleteStaleTemporaryBookDirs(1h)` threshold).
+/// Library storage (`Imports/`, `LocalFolders/`) is never touched: those
+/// files ARE the library, and Android only sweeps cache/tmp patterns too.
+/// The pending-external-removal drain already runs in Kotlin startup state
+/// (`loadPendingIosExternalFileRemoval`), mirroring Android's
+/// `cleanupPendingExternalFileRemovals`.
+private func sweepStaleTemporaryFiles(maxAge: TimeInterval = 3600) {
+    let fileManager = FileManager.default
+    let cutoff = Date().addingTimeInterval(-maxAge)
+    func removeIfStale(_ url: URL) {
+        guard let modified = try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate,
+              modified < cutoff else { return }
+        try? fileManager.removeItem(at: url)
+    }
+    let tempRoot = fileManager.temporaryDirectory
+    // External-open staging from crashed or expired share intents. No request
+    // is in flight at cold start, so any entry older than the cutoff is an
+    // orphan; content-hashed library copies live under Application Support.
+    let externalOpen = tempRoot.appendingPathComponent("ExternalOpen", isDirectory: true)
+    if let entries = try? fileManager.contentsOfDirectory(
+        at: externalOpen,
+        includingPropertiesForKeys: [.contentModificationDateKey],
+        options: [.skipsHiddenFiles]
+    ) {
+        for entry in entries { removeIfStale(entry) }
+    }
+    // One-shot PDF share exports (Kotlin `IosPdfSaveCopy`); the share sheet
+    // consumes them immediately, so survivors are crash leftovers.
+    if let entries = try? fileManager.contentsOfDirectory(
+        at: tempRoot,
+        includingPropertiesForKeys: [.contentModificationDateKey],
+        options: [.skipsHiddenFiles]
+    ) {
+        for entry in entries where entry.lastPathComponent.hasPrefix("reader-export-") {
+            removeIfStale(entry)
+        }
+    }
 }
 
 private struct ReaderComposeHost: UIViewControllerRepresentable {

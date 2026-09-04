@@ -65,6 +65,10 @@ import com.aryan.reader.shared.reader.SharedEpubChapter
 import com.aryan.reader.shared.reader.SharedEpubPackageLoader
 import com.aryan.reader.shared.reader.SharedEpubTocEntry
 import com.aryan.reader.shared.reader.SharedLruMemoryCache
+import com.aryan.reader.shared.reader.sharedEpubOpenTrace
+import com.aryan.reader.shared.reader.sharedEpubOpenTraceElapsedMs
+import com.aryan.reader.shared.reader.sharedEpubOpenTraceMark
+import com.aryan.reader.shared.reader.sharedEpubOpenTraceMs
 import com.aryan.reader.shared.reader.SharedMobiTocPoint
 import com.aryan.reader.shared.reader.SharedTextDecoding
 import com.aryan.reader.shared.reader.rewriteMobiResourceReferences
@@ -108,6 +112,7 @@ import platform.zlib.MAX_WBITS
 import platform.zlib.Z_FINISH
 import platform.zlib.Z_OK
 import platform.zlib.Z_STREAM_END
+import platform.zlib.crc32
 import platform.zlib.inflate
 import platform.zlib.inflateEnd
 import platform.zlib.inflateInit2
@@ -378,22 +383,34 @@ private fun String.normalizeIosZipPathSegments(): String {
 
 internal fun loadIosEpubBook(book: BookItem): SharedEpubBook {
     val startedAt = currentTimestamp()
+    val traceMark = sharedEpubOpenTraceMark()
     iosEpubLoadLog { "Load started id=${book.id} type=${book.type} name=${book.displayName} path=${book.path ?: "<null>"}" }
+    sharedEpubOpenTrace { "iosLoad start id=${book.id} type=${book.type}" }
     // PPTX chapters embed slide images as HTML data URIs. Keeping those chapters in the
     // cross-book memory/disk cache duplicates the already-large base64 payload and can retain
     // an entire image-heavy deck after the reader closes it. Reparse PPTX on demand; the
     // streaming loader keeps only one slide's decoded bytes alive while doing so.
     val cacheKey = book.iosBookLoadCacheKey().takeUnless { book.type == FileType.PPTX }
+    if (book.type == FileType.EPUB) {
+        book.path.resolveIosEpubSourcePath()?.let { path ->
+            IosEpubResourceStore.register(book.id, path)
+        }
+    }
     if (cacheKey != null) {
+        val memoryMark = sharedEpubOpenTraceMark()
         iosBookLoadMemoryGet(cacheKey.cacheId)?.let { cached ->
+            sharedEpubOpenTrace { "iosLoad memoryCacheHit cacheId=${cacheKey.cacheId} ms=${sharedEpubOpenTraceMs(sharedEpubOpenTraceElapsedMs(memoryMark))} totalMs=${sharedEpubOpenTraceMs(sharedEpubOpenTraceElapsedMs(traceMark))}" }
             iosEpubLoadLog { "Load memory cache hit cacheId=${cacheKey.cacheId} elapsed=${currentTimestamp() - startedAt}ms" }
             return cached
         }
+        val diskMark = sharedEpubOpenTraceMark()
         iosBookLoadDiskCache.load(cacheKey)?.let { cached ->
+            sharedEpubOpenTrace { "iosLoad diskCacheHit cacheId=${cacheKey.cacheId} diskReadDecodeMs=${sharedEpubOpenTraceMs(sharedEpubOpenTraceElapsedMs(diskMark))} totalMs=${sharedEpubOpenTraceMs(sharedEpubOpenTraceElapsedMs(traceMark))}" }
             iosBookLoadMemoryPut(cacheKey.cacheId, cached)
             iosEpubLoadLog { "Load disk cache hit cacheId=${cacheKey.cacheId} elapsed=${currentTimestamp() - startedAt}ms" }
             return cached
         }
+        sharedEpubOpenTrace { "iosLoad cacheMiss memoryMs=${sharedEpubOpenTraceMs(sharedEpubOpenTraceElapsedMs(memoryMark))} diskMs=${sharedEpubOpenTraceMs(sharedEpubOpenTraceElapsedMs(diskMark))}" }
     }
     if (book.type == FileType.CBZ) {
         return loadIosCbzBook(book).also { book.iosBookLoadCacheSave(cacheKey, it) }
@@ -417,14 +434,20 @@ internal fun loadIosEpubBook(book: BookItem): SharedEpubBook {
     val path = book.path.resolveIosEpubSourcePath()
         ?: error("EPUB path is unavailable")
     val archive = IosZipEpubArchive(path)
+    IosEpubResourceStore.register(book.id, path, archive)
     iosEpubLoadLog { "Archive opened path=$path entries=${archive.entryPaths.size} elapsed=${currentTimestamp() - startedAt}ms" }
+    val loadMark = sharedEpubOpenTraceMark()
     val loaded = SharedEpubPackageLoader.load(
         archive = archive,
         sourceId = book.id,
         fileName = book.displayName.ifBlank { path.substringAfterLast('/') }
     )
+    val parseMs = sharedEpubOpenTraceElapsedMs(loadMark)
+    sharedEpubOpenTrace { "iosLoad packageLoaderDone ms=${sharedEpubOpenTraceMs(parseMs)} totalMs=${sharedEpubOpenTraceMs(sharedEpubOpenTraceElapsedMs(traceMark))}" }
     iosEpubLoadLog { "Load finished chapters=${loaded.chapters.size} elapsed=${currentTimestamp() - startedAt}ms" }
+    val saveMark = sharedEpubOpenTraceMark()
     book.iosBookLoadCacheSave(cacheKey, loaded)
+    sharedEpubOpenTrace { "iosLoad cacheSave ms=${sharedEpubOpenTraceMs(sharedEpubOpenTraceElapsedMs(saveMark))} totalMs=${sharedEpubOpenTraceMs(sharedEpubOpenTraceElapsedMs(traceMark))}" }
     return loaded
 }
 
@@ -443,7 +466,8 @@ private fun BookItem.iosBookLoadCacheKey(): SharedBookLoadCacheKey? {
         canonicalPath = path,
         type = type,
         length = length,
-        lastModified = lastModified
+        lastModified = lastModified,
+        sourceId = id
     )
 }
 
@@ -1134,12 +1158,30 @@ private fun String.escapeIosReaderHtml(): String {
 }
 
 internal class IosZipEpubArchive(path: String) : SharedEpubArchive {
-    private val archiveBytes = path.readIosFileBytes()
-    private val entries: Map<String, IosZipEntry> = parseZipEntries(archiveBytes)
+    private val openMark = sharedEpubOpenTraceMark()
+    private val archiveBytes: ByteArray
+    private val entries: Map<String, IosZipEntry>
+
+    init {
+        val readMark = sharedEpubOpenTraceMark()
+        archiveBytes = path.readIosFileBytes()
+        val readMs = sharedEpubOpenTraceElapsedMs(readMark)
+        val parseMark = sharedEpubOpenTraceMark()
+        entries = parseZipEntries(archiveBytes)
+        val parseMs = sharedEpubOpenTraceElapsedMs(parseMark)
+        sharedEpubOpenTrace {
+            "zip open path=$path sizeBytes=${archiveBytes.size} entryCount=${entries.size} " +
+                "fileReadMs=${sharedEpubOpenTraceMs(readMs)} centralDirParseMs=${sharedEpubOpenTraceMs(parseMs)} " +
+                "totalMs=${sharedEpubOpenTraceMs(sharedEpubOpenTraceElapsedMs(openMark))}"
+        }
+    }
 
     override val entryPaths: Set<String> = entries.values.mapTo(linkedSetOf()) { it.path }
 
-    override fun readBytes(path: String): ByteArray? {
+    override fun readBytes(path: String): ByteArray? = readBytesTraced(path)
+
+    private fun readBytesTraced(path: String): ByteArray? {
+        val mark = sharedEpubOpenTraceMark()
         val normalized = normalizeIosZipPath(path) ?: return null
         val entry = entries[normalized.lowercase()] ?: return null
         val localOffset = entry.localHeaderOffset.checkedInt("local header offset")
@@ -1165,8 +1207,15 @@ internal class IosZipEpubArchive(path: String) : SharedEpubArchive {
         require(output.size.toLong() == entry.uncompressedSize) {
             "EPUB ZIP entry size mismatch: ${entry.path}"
         }
-        require(output.crc32() == entry.crc32) {
+        val crcMark = sharedEpubOpenTraceMark()
+        val crc = output.crc32()
+        val crcMs = sharedEpubOpenTraceElapsedMs(crcMark)
+        require(crc == entry.crc32) {
             "EPUB ZIP entry checksum mismatch: ${entry.path}"
+        }
+        sharedEpubOpenTrace {
+            "zip entry path=${entry.path} compressedBytes=${compressed.size} uncompressedBytes=${output.size} " +
+                "crcMs=${sharedEpubOpenTraceMs(crcMs)} totalMs=${sharedEpubOpenTraceMs(sharedEpubOpenTraceElapsedMs(mark))}"
         }
         return output
     }
@@ -1615,6 +1664,88 @@ internal fun String.readIosFileBytes(): ByteArray {
 
 internal fun ByteArray.decodeEpubText(): String = SharedTextDecoding.decode(this)
 
+internal object IosEpubResourceStore {
+    private const val MaxBooks = 6
+    private const val MaxArchives = 3
+
+    private val lock = NSLock()
+    private val paths = LinkedHashMap<String, String>()
+    private val archives = LinkedHashMap<String, IosZipEpubArchive>()
+
+    fun register(bookId: String, path: String, archive: IosZipEpubArchive? = null) {
+        lock.lock()
+        try {
+            if (paths[bookId] != path) {
+                paths[bookId] = path
+                archives.remove(bookId)
+            }
+            if (archive != null) {
+                archives[bookId] = archive
+            }
+            while (paths.size > MaxBooks) {
+                val eldestKey = paths.keys.firstOrNull() ?: break
+                paths.remove(eldestKey)
+                archives.remove(eldestKey)
+            }
+            while (archives.size > MaxArchives) {
+                val eldestKey = archives.keys.firstOrNull() ?: break
+                archives.remove(eldestKey)
+            }
+        } finally {
+            lock.unlock()
+        }
+    }
+
+    fun bytesFor(bookId: String, entryPath: String): ByteArray? {
+        val path = archivePathFor(bookId) ?: return null
+        return runCatching { path.readBytes(entryPath) }.getOrNull()
+    }
+
+    private fun archivePathFor(bookId: String): IosZipEpubArchive? {
+        lock.lock()
+        val cached = try {
+            archives[bookId]
+        } finally {
+            lock.unlock()
+        }
+        if (cached != null) return cached
+        val path = lock.lockWithResult { paths[bookId] } ?: return null
+        val archive = runCatching { IosZipEpubArchive(path) }.getOrNull() ?: return null
+        lock.lock()
+        try {
+            if (paths[bookId] == path) {
+                archives[bookId] = archive
+                while (archives.size > MaxArchives) {
+                    val eldestKey = archives.keys.firstOrNull() ?: break
+                    archives.remove(eldestKey)
+                }
+            }
+        } finally {
+            lock.unlock()
+        }
+        return archive
+    }
+
+    fun clear() {
+        lock.lock()
+        try {
+            paths.clear()
+            archives.clear()
+        } finally {
+            lock.unlock()
+        }
+    }
+}
+
+private inline fun <T> NSLock.lockWithResult(block: () -> T): T {
+    lock()
+    try {
+        return block()
+    } finally {
+        unlock()
+    }
+}
+
 private fun ByteArray.decodeZipEntryName(flags: Int): String {
     val decoded = decodeToString()
     if ('\uFFFD' !in decoded || flags and ZipUtf8Flag != 0) return decoded
@@ -1676,12 +1807,10 @@ private fun Long.checkedInt(label: String): Int {
 }
 
 private fun ByteArray.crc32(): UInt {
-    var crc = 0xFFFF_FFFFu
-    forEach { byte ->
-        crc = crc xor (byte.toUInt() and 0xFFu)
-        repeat(8) { crc = if (crc and 1u != 0u) (crc shr 1) xor 0xEDB8_8320u else crc shr 1 }
+    if (isEmpty()) return 0u
+    return usePinned { pinned ->
+        crc32(0uL, pinned.addressOf(0).reinterpret(), size.convert()).toUInt()
     }
-    return crc xor 0xFFFF_FFFFu
 }
 
 private const val ZipLocalHeaderSignature = 0x04034B50L

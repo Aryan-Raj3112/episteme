@@ -18,7 +18,7 @@ import kotlin.math.roundToLong
 import kotlin.time.TimeSource
 
 private const val SharedEpubPaginationCacheSchemaVersion = 1
-private const val SharedEpubPaginationProcessingVersion = 13
+private const val SharedEpubPaginationProcessingVersion = 14
 private const val SharedEpubPaginationPageCacheVersion = 3
 
 data class SharedEpubPaginationCacheKey(

@@ -159,6 +159,19 @@ class PdfReaderPreferencesTest {
     }
 
     @Test
+    fun `text dock state defaults to bottom and round trips independently`() {
+        val context = contextWithPrefs(InMemorySharedPreferences())
+
+        assertEquals(DockLocation.BOTTOM to Offset(0f, 0f), loadTextDockState(context))
+
+        saveTextDockState(context, DockLocation.TOP, Offset(5f, 6f))
+        saveDockState(context, DockLocation.FLOATING, Offset(3f, 4f))
+
+        assertEquals(DockLocation.TOP to Offset(5f, 6f), loadTextDockState(context))
+        assertEquals(DockLocation.FLOATING to Offset(3f, 4f), loadDockState(context))
+    }
+
+    @Test
     fun `theme dictionary and simple boolean preferences round trip`() {
         val prefs = InMemorySharedPreferences()
         val context = contextWithPrefs(prefs)
