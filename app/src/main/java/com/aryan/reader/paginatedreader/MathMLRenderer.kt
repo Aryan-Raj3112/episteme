@@ -42,6 +42,9 @@ sealed class RenderResult {
 
 class MathMLRenderer(private val context: Context) {
 
+    /** Shared with SingleFileImporter so all diagnostics filter under one tag. */
+    private val diagTag = "MdMathDiag"
+
     private var webView: WebView? = null
     private val handler = Handler(Looper.getMainLooper())
     @Volatile
@@ -52,23 +55,48 @@ class MathMLRenderer(private val context: Context) {
     private val readySignal = CompletableDeferred<Boolean>()
 
     sealed class Job {
-        data class Render(
+        abstract val continuation: (RenderResult) -> Unit
+        abstract val altSource: String
+
+        /** Renders a MathML payload via [android.webkit]. */
+        data class MathMl(
             val mathML: String,
-            val continuation: (RenderResult) -> Unit
-        ) : Job()
+            override val continuation: (RenderResult) -> Unit
+        ) : Job() {
+            override val altSource: String get() = mathML
+        }
+
+        /** Renders a raw LaTeX/TeX string via MathJax's TeX input. */
+        data class Tex(
+            val tex: String,
+            val display: Boolean,
+            override val continuation: (RenderResult) -> Unit
+        ) : Job() {
+            override val altSource: String get() = tex
+        }
     }
 
-    private val jobQueue = mutableListOf<Job.Render>()
+    private val jobQueue = mutableListOf<Job>()
     private var isProcessing = false
+    private var pendingBatch: kotlin.coroutines.Continuation<Map<String, String>>? = null
+    private val batchLock = Any()
+
+    companion object {
+        /** Upper bound for one batch render so import can never hang forever. */
+        private const val BATCH_TIMEOUT_MS = 120_000L
+    }
 
     suspend fun awaitReady(): Boolean {
-        if (isDestroyed) return false
+        if (isDestroyed) {
+            Timber.tag(diagTag).w("READY: awaitReady called but renderer already destroyed")
+            return false
+        }
         ensureWebViewStarted()
-        Timber.d("awaitReady: Waiting for WebView and MathJax initialization...")
+        Timber.tag(diagTag).i("READY: waiting for WebView + MathJax initialization...")
         return withTimeoutOrNull(10_000) {
             readySignal.await()
         } ?: run {
-            Timber.e("awaitReady: Timed out waiting for renderer to become ready.")
+            Timber.tag(diagTag).e("READY: TIMED OUT after 10s (webViewCreated=${webView != null})")
             destroy()
             false
         }
@@ -108,14 +136,21 @@ class MathMLRenderer(private val context: Context) {
                         Timber.d("${consoleMessage.message()} -- From line " +
                                     "${consoleMessage.lineNumber()} of ${consoleMessage.sourceId()}"
                         )
+                        // Surface WebView console errors (e.g. JS syntax errors in
+                        // injected scripts) under the diagnostic tag.
+                        Timber.tag(diagTag).d(
+                            "WEBVIEW-CONSOLE [${consoleMessage.messageLevel()}]: " +
+                                "${consoleMessage.message().take(300)}"
+                        )
                         return true
                     }
                 }
 
                 loadUrl("file:///android_asset/MathML-template.html")
+                Timber.tag(diagTag).i("WEBVIEW: template page load started")
             }
         } catch (e: Exception) {
-            Timber.e(e, "Failed to initialize WebView")
+            Timber.tag(diagTag).e(e, "WEBVIEW: failed to initialize")
             webView = null
             readySignal.complete(false)
         }
@@ -130,18 +165,12 @@ class MathMLRenderer(private val context: Context) {
             return RenderResult.Failure(originalAltText)
         }
         return suspendCancellableCoroutine { continuation ->
-            val job = Job.Render(mathML) { result ->
+            val job = Job.MathMl(mathML) { result ->
                 if (continuation.isActive) {
                     continuation.resume(result)
                 }
             }
-            // Add job to the queue and start processing if not already
-            synchronized(jobQueue) {
-                jobQueue.add(job)
-                if (!isProcessing) {
-                    processNextJob()
-                }
-            }
+            enqueue(job)
             continuation.invokeOnCancellation {
                 synchronized(jobQueue) {
                     jobQueue.remove(job)
@@ -150,6 +179,169 @@ class MathMLRenderer(private val context: Context) {
         }
     }
 
+    /**
+     * Renders raw LaTeX/TeX (e.g. extracted from Markdown `$...$`/`$$...$$`
+     * spans) through MathJax's TeX input instead of the MathML input.
+     */
+    suspend fun renderTeX(tex: String, display: Boolean, originalAltText: String): RenderResult {
+        if (isDestroyed) {
+            return RenderResult.Failure(originalAltText)
+        }
+        if (!awaitReady()) {
+            Timber.e("WebView is not available or failed to initialize. Failing render.")
+            return RenderResult.Failure(originalAltText)
+        }
+        return suspendCancellableCoroutine { continuation ->
+            val job = Job.Tex(tex, display) { result ->
+                if (continuation.isActive) {
+                    continuation.resume(result)
+                }
+            }
+            enqueue(job)
+            continuation.invokeOnCancellation {
+                synchronized(jobQueue) {
+                    jobQueue.remove(job)
+                }
+            }
+        }
+    }
+
+    private fun enqueue(job: Job) {
+        synchronized(jobQueue) {
+            jobQueue.add(job)
+            if (!isProcessing) {
+                processNextJob()
+            }
+        }
+    }
+
+    /**
+     * Renders many TeX equations in a single JS round trip. Used by Markdown
+     * import where a document can contain hundreds of equations; per-equation
+     * queueing would pay one WebView round trip each.
+     *
+     * @return SVG per input id; failed equations map to an empty string.
+     */
+    suspend fun renderTeXBatch(equations: List<Triple<String, String, Boolean>>): Map<String, String> {
+        Timber.tag(diagTag).i("BATCH: enter | equations=${equations.size} | destroyed=$isDestroyed | nativeLibReady=true")
+        if (equations.isEmpty()) return emptyMap()
+        if (isDestroyed) {
+            Timber.tag(diagTag).e("BATCH: renderer destroyed before dispatch")
+            return equations.associate { it.first to "" }
+        }
+        if (!awaitReady()) {
+            Timber.tag(diagTag).e("BATCH: aborting; MathJax/WebView not ready")
+            return equations.associate { it.first to "" }
+        }
+        Timber.tag(diagTag).i("BATCH: ready confirmed | dispatching ${equations.size} equations")
+        return withTimeoutOrNull(BATCH_TIMEOUT_MS) {
+            suspendCancellableCoroutine { continuation ->
+                val alreadyDispatching = synchronized(batchLock) {
+                    if (pendingBatch != null) {
+                        true
+                    } else {
+                        pendingBatch = continuation
+                        false
+                    }
+                }
+                if (alreadyDispatching) {
+                    // Only one batch may be in flight; fail this one fast.
+                    continuation.resume(equations.associate { it.first to "" })
+                    return@suspendCancellableCoroutine
+                }
+                handler.post { executeBatchRender(equations) }
+                continuation.invokeOnCancellation {
+                    synchronized(batchLock) { pendingBatch = null }
+                }
+            }
+        } ?: run {
+            Timber.tag(diagTag).e("BATCH: TIMED OUT after ${BATCH_TIMEOUT_MS}ms; failing batch so import can proceed")
+            equations.associate { it.first to "" }
+        }
+    }
+
+    private fun executeBatchRender(equations: List<Triple<String, String, Boolean>>) {
+        if (isDestroyed) {
+            Timber.tag(diagTag).w("BATCH: execute aborted; renderer destroyed")
+            completeBatch(emptyMap())
+            return
+        }
+        if (!isMathJaxReady) {
+            Timber.tag(diagTag).d("BATCH: MathJax not ready yet; retrying in 100ms")
+            handler.postDelayed({ executeBatchRender(equations) }, 100)
+            return
+        }
+        Timber.tag(diagTag).i("BATCH: executing JS | equations=${equations.size} | webViewCreated=${webView != null}")
+        // The TeX payload is passed as base64 + JSON.parse instead of being
+        // inlined into a JS string literal: TeX contains backslash commands
+        // (\u... is an invalid JS unicode escape) and multi-line $$ blocks
+        // (raw newlines break "..." literals), both of which caused silent
+        // SyntaxErrors that left the batch promise never resolving.
+        val payloadJson = org.json.JSONArray().apply {
+            equations.forEach { (id, tex, display) ->
+                put(
+                    org.json.JSONObject().apply {
+                        put("id", id)
+                        put("tex", tex)
+                        put("display", display)
+                    }
+                )
+            }
+        }.toString()
+        val payloadBase64 = android.util.Base64.encodeToString(
+            payloadJson.toByteArray(Charsets.UTF_8),
+            android.util.Base64.NO_WRAP,
+        )
+        val script = """
+        (function() {
+            var equations = JSON.parse(decodeURIComponent(escape(window.atob("$payloadBase64"))));
+            Promise.all(equations.map(function(e) {
+                return MathJax.tex2svgPromise(e.tex, { display: e.display }).then(function(node) {
+                    var svgElement = node.querySelector('svg');
+                    if (svgElement) {
+                        svgElement.style.fill = 'currentColor';
+                        return { id: e.id, svg: svgElement.outerHTML };
+                    }
+                    return { id: e.id, svg: '' };
+                }).catch(function(err) {
+                    console.error("MATH_DIAGNOSTIC: Batch TeX conversion error for " + e.id, err);
+                    return { id: e.id, svg: '' };
+                });
+            })).then(function(results) {
+                var map = {};
+                results.forEach(function(r) { map[r.id] = r.svg; });
+                AndroidBridge.onBatchReady(JSON.stringify(map));
+            }).catch(function(err) {
+                console.error("MATH_DIAGNOSTIC: Batch promise error", err);
+                AndroidBridge.onBatchReady('{}');
+            });
+        })();
+    """.trimIndent()
+        val batchStart = System.currentTimeMillis()
+        if (webView == null) {
+            Timber.tag(diagTag).e("BATCH: webView is null; cannot evaluate script (would hang) -> failing fast")
+            completeBatch(emptyMap())
+            return
+        }
+        webView?.evaluateJavascript(script) { result ->
+            // Fires when the JS finishes evaluating; a null result means the
+            // script itself failed to run (e.g. a syntax error).
+            Timber.tag(diagTag).i(
+                "BATCH: JS evaluation finished | scriptResultNull=${result == null} | " +
+                    "elapsed=${System.currentTimeMillis() - batchStart}ms"
+            )
+        }
+    }
+
+    private fun completeBatch(svgByEquationId: Map<String, String>) {
+        val continuation = synchronized(batchLock) {
+            val pending = pendingBatch
+            pendingBatch = null
+            pending
+        }
+        Timber.tag(diagTag).i("BATCH: completeBatch | entries=${svgByEquationId.size} | continuationPending=${continuation != null}")
+        continuation?.resume(svgByEquationId)
+    }
     private fun processNextJob() {
         if (isDestroyed) {
             isProcessing = false
@@ -184,9 +376,16 @@ class MathMLRenderer(private val context: Context) {
             return
         }
 
+        when (job) {
+            is Job.MathMl -> webView?.evaluateJavascript(buildMathMlScript(job.mathML), null)
+            is Job.Tex -> webView?.evaluateJavascript(buildTexScript(job.tex, job.display), null)
+        }
+    }
+
+    private fun buildMathMlScript(mathML: String): String {
         // Escape backticks in the MathML string to prevent breaking the JS template literal
-        val mathMLForJs = job.mathML.replace("`", "\\`")
-        val script = """
+        val mathMLForJs = mathML.replace("`", "\\`")
+        return """
         (function() {
             var mathDiagnosticsEnabled = ${BuildConfig.DEBUG};
             function mathLog() {
@@ -220,8 +419,44 @@ class MathMLRenderer(private val context: Context) {
             });
         })();
     """.trimIndent()
+    }
 
-        webView?.evaluateJavascript(script, null)
+    private fun buildTexScript(tex: String, display: Boolean): String {
+        // Escape backticks and backslashes so the TeX survives the JS template literal
+        val texForJs = tex.replace("\\", "\\\\").replace("`", "\\`").replace("${'$'}", "\\${'$'}")
+        return """
+        (function() {
+            var mathDiagnosticsEnabled = ${BuildConfig.DEBUG};
+            function mathLog() {
+                if (mathDiagnosticsEnabled) console.log.apply(console, arguments);
+            }
+            function mathError() {
+                if (mathDiagnosticsEnabled) console.error.apply(console, arguments);
+            }
+            mathLog("MATH_DIAGNOSTIC: Starting TeX to SVG conversion.");
+            const texContent = `${texForJs}`;
+            mathLog("MATH_DIAGNOSTIC: Input TeX: " + texContent);
+            MathJax.tex2svgPromise(texContent, { display: $display }).then(function (node) {
+                mathLog("MATH_DIAGNOSTIC: tex2svgPromise successful.");
+                var svgElement = node.querySelector('svg');
+                if (svgElement) {
+                    svgElement.style.fill = 'currentColor';
+                    var svgOutput = svgElement.outerHTML;
+                    var width = svgElement.getAttribute('width');
+                    var height = svgElement.getAttribute('height');
+                    var viewBox = svgElement.getAttribute('viewBox');
+                    mathLog('MATH_SIZE_DIAGNOSTIC: Generated SVG details -> width: ' + width + ', height: ' + height + ', viewBox: ' + viewBox + ', length: ' + svgOutput.length);
+                    AndroidBridge.onSvgReady(svgOutput);
+                } else {
+                    mathError("MATH_DIAGNOSTIC: SVG element not found in MathJax output.");
+                    AndroidBridge.onSvgReady('');
+                }
+            }).catch((err) => {
+                mathError("MATH_DIAGNOSTIC: MathJax TeX conversion error:", err);
+                AndroidBridge.onSvgReady('');
+            });
+        })();
+    """.trimIndent()
     }
 
 
@@ -238,6 +473,7 @@ class MathMLRenderer(private val context: Context) {
         if (!readySignal.isCompleted) {
             readySignal.complete(false)
         }
+        completeBatch(emptyMap())
         val pendingJobs = synchronized(jobQueue) {
             val copy = jobQueue.toList()
             jobQueue.clear()
@@ -245,7 +481,7 @@ class MathMLRenderer(private val context: Context) {
             copy
         }
         pendingJobs.forEach { job ->
-            job.continuation(RenderResult.Failure(extractAltText(job.mathML)))
+            job.continuation(RenderResult.Failure(fallbackAltText(job)))
         }
         handler.removeCallbacksAndMessages(null)
         handler.post {
@@ -258,6 +494,12 @@ class MathMLRenderer(private val context: Context) {
     private fun extractAltText(mathML: String): String =
         mathML.substringAfter("alttext=\"", "").substringBefore("\"")
             .ifBlank { "MathML rendering failed" }
+
+    /** Best-effort alt text per job kind, used when a render fails or is dropped. */
+    private fun fallbackAltText(job: Job): String = when (job) {
+        is Job.MathMl -> extractAltText(job.mathML)
+        is Job.Tex -> job.tex.ifBlank { "Equation" }
+    }
 
     private fun WebView.releaseMathRendererResources() {
         try {
@@ -284,16 +526,35 @@ class MathMLRenderer(private val context: Context) {
             } else {
                 Timber.e("onSvgReady FAILURE. Received empty SVG.")
                 val job = synchronized(jobQueue) { jobQueue.firstOrNull() }
-                val altText = job?.mathML?.let(::extractAltText) ?: "MathML rendering failed"
+                val altText = job?.let(::fallbackAltText) ?: "Math rendering failed"
                 completeCurrentJob(RenderResult.Failure(altText))
             }
         }
 
         @Suppress("unused")
         @JavascriptInterface
+        fun onBatchReady(json: String) {
+            Timber.tag(diagTag).i("BATCH: onBatchReady received from JS | jsonChars=${json.length}")
+            val svgByEquationId = parseBatchJson(json)
+            Timber.tag(diagTag).i("BATCH: parsed | entries=${svgByEquationId.size} | blank=${svgByEquationId.values.count { it.isBlank() }}")
+            handler.post { completeBatch(svgByEquationId) }
+        }
+
+        private fun parseBatchJson(json: String): Map<String, String> = try {
+            val parsed = org.json.JSONObject(json.ifBlank { "{}" })
+            val map = mutableMapOf<String, String>()
+            parsed.keys().forEach { key -> map[key] = parsed.optString(key, "") }
+            map
+        } catch (error: Exception) {
+            Timber.tag(diagTag).e(error, "BATCH: failed to parse batch SVG JSON")
+            emptyMap()
+        }
+
+        @Suppress("unused")
+        @JavascriptInterface
         fun onMathJaxReady() {
             isMathJaxReady = true
-            Timber.d("onMathJaxReady: MathJax is ready.")
+            Timber.tag(diagTag).i("READY: onMathJaxReady fired")
             if (!readySignal.isCompleted) {
                 readySignal.complete(true)
             }

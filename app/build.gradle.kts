@@ -305,13 +305,6 @@ dependencies {
     implementation("androidx.paging:paging-compose:3.3.6")
     implementation("androidx.room:room-paging:2.7.1")
 
-    // Flexmark for Markdown parsing (MD -> HTML)
-    implementation("com.vladsch.flexmark:flexmark:0.64.8")
-    implementation("com.vladsch.flexmark:flexmark-ext-tables:0.64.8")
-    implementation("com.vladsch.flexmark:flexmark-ext-gfm-strikethrough:0.64.8")
-    implementation("com.vladsch.flexmark:flexmark-ext-gfm-tasklist:0.64.8")
-    implementation("com.vladsch.flexmark:flexmark-ext-autolink:0.64.8")
-
     implementation("androidx.documentfile:documentfile:1.0.1")
     implementation("androidx.browser:browser:1.8.0")
 

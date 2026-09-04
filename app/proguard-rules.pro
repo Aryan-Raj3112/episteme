@@ -91,11 +91,6 @@
 # are not available on Android. The app does not use Kerberos authentication.
 -dontwarn org.ietf.jgss.**
 
-# Flexmark Markdown parser rules
--keep class com.vladsch.flexmark.** { *; }
--keepnames class com.vladsch.flexmark.** { *; }
--keepclassmembers class com.vladsch.flexmark.** { *; }
-
 -dontwarn java.awt.**
 -dontwarn javax.swing.**
 -dontwarn javax.imageio.**
@@ -110,3 +105,8 @@
 -keep class ai.onnxruntime.** { *; }
 -keepnames class ai.onnxruntime.** { *; }
 -keepclassmembers class ai.onnxruntime.** { *; }
+
+# md4c JNI bridge: native method names must match the JNI symbols in native-lib.
+-keepclasseswithmembers class com.aryan.reader.shared.docparse.Md4cJni {
+    native <methods>;
+}

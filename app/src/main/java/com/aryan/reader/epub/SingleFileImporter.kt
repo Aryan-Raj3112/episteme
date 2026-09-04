@@ -21,15 +21,11 @@ package com.aryan.reader.epub
 
 import android.content.Context
 import com.aryan.reader.FileType
+import com.aryan.reader.paginatedreader.MathMLRenderer
+import com.aryan.reader.shared.docparse.SharedMarkdownFlags
+import com.aryan.reader.shared.docparse.SharedMarkdownParser
 import com.aryan.reader.shared.reader.SharedTextDecoding
 import com.aryan.reader.shared.reader.openLenientDecodedReader
-import com.vladsch.flexmark.ext.autolink.AutolinkExtension
-import com.vladsch.flexmark.ext.gfm.strikethrough.StrikethroughExtension
-import com.vladsch.flexmark.ext.gfm.tasklist.TaskListExtension
-import com.vladsch.flexmark.ext.tables.TablesExtension
-import com.vladsch.flexmark.html.HtmlRenderer
-import com.vladsch.flexmark.parser.Parser
-import com.vladsch.flexmark.util.data.MutableDataSet
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -38,6 +34,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
+import org.jsoup.nodes.Element
 import org.jsoup.safety.Safelist
 import org.zwobble.mammoth.DocumentConverter
 import timber.log.Timber
@@ -63,10 +60,15 @@ class SingleFileImporter(private val context: Context) {
         private const val MAX_SINGLE_FILE_METADATA_BYTES = 2L * 1024L * 1024L
         private const val TRACE_SAMPLE_LINE_CHARS = 512
         private const val BOOK_METADATA_FILE = "book_metadata.json"
-        private const val MARKDOWN_METADATA_FILE = "book_metadata_markdown_v2.json"
+        // Version the Markdown cache: v3 moves to the md4c parser (native math
+        // spans, `<hr>` kept in flow instead of acting as page separators).
+        private const val MARKDOWN_METADATA_FILE = "book_metadata_markdown_v3.json"
         private const val TXT_PREFORMATTED_METADATA_FILE = "book_metadata_txt_preformatted_v3.json"
         private const val PAGE_BREAK_MARKER = "<page-break></page-break>"
         private const val HTML_IMPORT_DEBUG_TAG = "HtmlImportDebug"
+
+        /** Common tag for every Markdown import + math rendering diagnostic. */
+        private const val DIAG_TAG = "MdMathDiag"
         private const val TXT_FORMAT_TRACE_TAG = "TxtFormatTrace"
         private const val TXT_PREFORMATTED_CLASS = "reader-txt-preformatted"
         private const val TXT_PREFORMATTED_INLINE_STYLE =
@@ -348,29 +350,15 @@ class SingleFileImporter(private val context: Context) {
         ImportedFileCache.resetActiveBookDir(context, bookId)
 
         val parseStart = System.currentTimeMillis()
-        Timber.tag("FileOpenPerf").d("[MD] parseMarkdown START | file=$originalBookNameHint")
-        Timber.d("Parsing Markdown with Page-Level Chaptering: $originalBookNameHint")
+        Timber.tag(DIAG_TAG).i("IMPORT: parseMarkdown START | file=$originalBookNameHint | nativeParser=${SharedMarkdownParser.isNative()}")
+        Timber.d("Parsing Markdown with md4c: $originalBookNameHint")
         val title = originalBookNameHint.substringBeforeLast(".")
 
         // Read the full Markdown content
         val markdownContent = SharedTextDecoding.decode(inputStream.readBytes())
             .replace("\r\n", "\n")
 
-        Timber.tag("FileOpenPerf").d("[MD] parseMarkdown: Read ${markdownContent.length} chars | elapsed=${System.currentTimeMillis() - parseStart}ms")
-
-        // Flexmark Setup
-        val options = MutableDataSet().apply {
-            set(Parser.EXTENSIONS, listOf(
-                TablesExtension.create(),
-                StrikethroughExtension.create(),
-                TaskListExtension.create(),
-                AutolinkExtension.create()
-            ))
-            set(HtmlRenderer.GENERATE_HEADER_ID, true)
-            set(HtmlRenderer.RENDER_HEADER_ID, true)
-        }
-        val parser = Parser.builder(options).build()
-        val renderer = HtmlRenderer.builder(options).build()
+        Timber.tag(DIAG_TAG).i("IMPORT: content read | chars=${markdownContent.length}")
 
         // Shared CSS
         val style = """
@@ -383,23 +371,35 @@ class SingleFileImporter(private val context: Context) {
             hr { border: 0; border-top: 1px solid #ccc; margin: 2em 0; }
         """.trimIndent()
 
-        val rawChapters = if (markdownContent.contains("\n\n---\n\n")) {
-            markdownContent.split("\n\n---\n\n")
-        } else {
-            listOf(markdownContent)
+        // md4c (via SharedMarkdownParser) materializes headings as h1..h6 HTML,
+        // which markdownSections splits into chapters. Horizontal rules stay
+        // in the flow as <hr> instead of acting as pre-split page markers.
+        val md4cStart = System.currentTimeMillis()
+        val renderedHtml: String = SharedMarkdownParser.toHtml(markdownContent, SharedMarkdownFlags.DEFAULT)
+            ?: throw IllegalStateException("md4c markdown rendering failed for $originalBookNameHint")
+        Timber.tag(DIAG_TAG).i("IMPORT: md4c render done | chars=${renderedHtml.length} | elapsed=${System.currentTimeMillis() - md4cStart}ms | native=${SharedMarkdownParser.isNative()}")
+
+        // Render every `$...$`/`$$...$$` equation to inline SVG with the
+        // bundled MathJax before chapters hit disk. Doing it at import time
+        // means every reader surface (native semantic reader, paginated
+        // worker, WebView) consumes rendered equations instead of raw TeX.
+        // Sanitization must happen first: the safelist strips <svg>, so the
+        // SVGs are inlined only after the HTML has been cleaned.
+        val mathMLRenderer = MathMLRenderer(context)
+        Timber.tag(DIAG_TAG).i("MATH: renderer created; awaiting MathJax readiness")
+        val chapterSections = try {
+            val sanitizeStart = System.currentTimeMillis()
+            val sanitized = sanitizeHtmlFragment(renderedHtml)
+            Timber.tag(DIAG_TAG).i("IMPORT: sanitize done | chars=${sanitized.length} | elapsed=${System.currentTimeMillis() - sanitizeStart}ms")
+            val sections = markdownSections(html = sanitized)
+            Timber.tag(DIAG_TAG).i("IMPORT: sections split | count=${sections.size}")
+            inlineMarkdownMathSvg(sections, mathMLRenderer)
+        } finally {
+            mathMLRenderer.destroy()
+            Timber.tag(DIAG_TAG).i("MATH: renderer destroyed")
         }
 
-        Timber.tag("FileOpenPerf").d("[MD] parseMarkdown: Split into ${rawChapters.size} raw chapters | elapsed=${System.currentTimeMillis() - parseStart}ms")
-
-        val chapterSections = rawChapters.flatMap { rawText ->
-            if (rawText.isBlank()) {
-                emptyList()
-            } else {
-                markdownSections(
-                    html = sanitizeHtmlFragment(renderer.render(parser.parse(rawText)))
-                )
-            }
-        }
+        Timber.tag(DIAG_TAG).i("IMPORT: writing ${chapterSections.size} chapter files")
 
         val chapters = chapterSections.mapIndexed { index, section ->
             async(Dispatchers.Default) {
@@ -431,6 +431,7 @@ class SingleFileImporter(private val context: Context) {
 
         Timber.d("Markdown import complete. Created ${chapters.size} chapters (one per page).")
         Timber.tag("FileOpenPerf").d("[MD] parseMarkdown COMPLETE | chapters=${chapters.size} | totalElapsed=${System.currentTimeMillis() - parseStart}ms")
+        Timber.tag(DIAG_TAG).i("IMPORT: COMPLETE | chapters=${chapters.size} | totalElapsed=${System.currentTimeMillis() - parseStart}ms")
 
         val book = EpubBook(
             fileName = originalBookNameHint,
@@ -456,6 +457,94 @@ class SingleFileImporter(private val context: Context) {
      * generated HTML therefore keeps the chapter bar in sync with the actual
      * document structure (and avoids mistaking fenced-code hashes for titles).
      */
+    /**
+     * Replaces md4c's `<span class="math-inline|math-display">tex</span>`
+     * markers with rendered MathJax SVG. All equations across all sections
+     * are rendered in one WebView round trip. Equations whose render fails
+     * keep their raw TeX text so the book stays readable.
+     */
+    private suspend fun inlineMarkdownMathSvg(
+        sections: List<MarkdownChapterSection>,
+        mathMLRenderer: MathMLRenderer,
+    ): List<MarkdownChapterSection> {
+        Timber.tag(DIAG_TAG).i("MATH: inlineMarkdownMathSvg enter | sections=${sections.size}")
+        if (sections.none { it.html.contains("math-inline") || it.html.contains("math-display") }) {
+            Timber.tag(DIAG_TAG).w("MATH: no math spans found in any section; skipping rendering")
+            return sections
+        }
+
+        val bodies = sections.map { section ->
+            Jsoup.parseBodyFragment(section.html)
+                .apply { outputSettings().prettyPrint(false) }
+                .body()
+        }
+        data class MathSpan(
+            val sectionIndex: Int,
+            val element: Element,
+            val tex: String,
+            val display: Boolean,
+        )
+        val spans = mutableListOf<MathSpan>()
+        val spanElements = bodies.map { body ->
+            body.select("span.math-inline, span.math-display").toList()
+        }
+        spanElements.forEachIndexed { sectionIndex, elements ->
+            elements.forEach { element ->
+                val tex = element.text().trim()
+                if (tex.isNotBlank()) {
+                    spans += MathSpan(
+                        sectionIndex = sectionIndex,
+                        element = element,
+                        tex = tex,
+                        display = element.hasClass("math-display"),
+                    )
+                }
+            }
+        }
+        Timber.tag(DIAG_TAG).i("MATH: spans collected | total=${spans.size} | display=${spans.count { it.display }}")
+        if (spans.isEmpty()) {
+            Timber.tag(DIAG_TAG).w("MATH: spans empty after text extraction; returning sections unchanged")
+            return sections
+        }
+
+        Timber.tag(DIAG_TAG).i("MATH: submitting batch render | uniqueEquations=${spans.map { "${it.tex}\u0000${it.display}" }.distinct().size} | totalOccurrences=${spans.size}")
+        val renderStart = System.currentTimeMillis()
+        // Identical TeX renders once per mode (inline/display) and is reused
+        // for every occurrence. Keys are tex + NUL + display: NUL cannot
+        // appear in TeX source.
+        val uniqueRequests = spans.map { "${it.tex}\u0000${it.display}" to it }
+            .distinctBy { it.first }
+        val batchResult = mathMLRenderer.renderTeXBatch(
+            uniqueRequests.map { (key, span) -> Triple(key, span.tex, span.display) }
+        )
+        Timber.tag(DIAG_TAG).i(
+            "MATH: batch returned | requested=${uniqueRequests.size} | received=${batchResult.size} | " +
+                "blank=${batchResult.values.count { it.isBlank() }} | elapsed=${System.currentTimeMillis() - renderStart}ms"
+        )
+        val svgByKey = batchResult.filterValues { it.isNotBlank() }
+
+        var replacedCount = 0
+        var fallbackCount = 0
+        spans.forEach { span ->
+            val svg = svgByKey["${span.tex}\u0000${span.display}"]
+            if (!svg.isNullOrBlank()) {
+                val svgElement = Jsoup.parseBodyFragment(svg).body().child(0)
+                span.element.replaceWith(svgElement)
+                replacedCount++
+            } else {
+                fallbackCount++
+                if (fallbackCount <= 3) {
+                    Timber.tag(DIAG_TAG).w("MATH: no SVG for span (keeping raw TeX): tex=${span.tex.take(80)}")
+                }
+            }
+        }
+        Timber.tag(DIAG_TAG).i("MATH: spans replaced | svg=$replacedCount | rawTexFallback=$fallbackCount")
+
+        return sections.mapIndexed { index, section ->
+            section.copy(html = bodies[index].html())
+        }
+    }
+
     private fun markdownSections(html: String): List<MarkdownChapterSection> {
         val elements = Jsoup.parseBodyFragment(html).body().children()
         if (elements.isEmpty()) return emptyList()

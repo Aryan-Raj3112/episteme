@@ -1,14 +1,19 @@
 package com.aryan.reader.shared.docparse
 
 /**
- * Portable Markdown-to-HTML converter covering the syntax set Android's
- * Flexmark pipeline enables: CommonMark core plus tables, strikethrough, task
- * lists, and autolinks. Headings materialize as chapters exactly like
- * Android's `markdownSections`: every rendered `h1..h6` starts a new section.
+ * Portable Markdown-to-HTML converter mirroring the feature set Android binds
+ * to the vendored md4c C parser via [SharedMarkdownParser]: CommonMark core
+ * plus tables, strikethrough, task lists, and autolinks. Headings materialize
+ * as chapters exactly like Android's `markdownSections`: every rendered
+ * `h1..h6` starts a new section.
  *
- * Documented deviations from Flexmark: raw inline HTML is escaped instead of
- * passed through, reference-style links/images are treated as plain text, and
- * generated heading ids are simple slugs without duplicate suffixes.
+ * Role: fallback backend for platforms without md4c bindings yet (desktop,
+ * iOS) and behavioral reference for the native pipeline. It does not extract
+ * `$...$` math spans — math support requires the md4c backend.
+ *
+ * Documented deviations from md4c/Flexmark: raw inline HTML is escaped instead
+ * of passed through, reference-style links/images are treated as plain text,
+ * and generated heading ids are simple slugs without duplicate suffixes.
  */
 internal object SharedMarkdownConverter {
 
