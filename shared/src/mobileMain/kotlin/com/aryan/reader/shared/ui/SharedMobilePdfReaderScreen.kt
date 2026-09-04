@@ -32,9 +32,12 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.only
@@ -153,7 +156,10 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.positionInParent
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -209,9 +215,14 @@ import com.aryan.reader.shared.pdf.PdfZoomPoint
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationDefaults
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationHighlighterTools
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationPenTools
+import com.aryan.reader.shared.pdf.isPdfTextDockTopAnchored
 import com.aryan.reader.shared.pdf.isSharedPdfAnnotationDockInBottomHalf
 import com.aryan.reader.shared.pdf.isSharedPdfAnnotationDockSticky
+import com.aryan.reader.shared.pdf.pdfTextDockKeyboardLiftPx
+import com.aryan.reader.shared.pdf.pdfTextDockRestingBottomPadding
 import com.aryan.reader.shared.pdf.sharedPdfAnnotationDockTopYPx
+import com.aryan.reader.shared.pdf.shouldShowPdfTextDock
+import com.aryan.reader.shared.pdf.toSharedPdfRichSpanStyle
 import com.aryan.reader.shared.reader.ReaderScreenOrientationMode
 import com.aryan.reader.shared.pdf.SharedPdfAnnotation
 import com.aryan.reader.shared.pdf.SharedPdfBookmark
@@ -591,6 +602,13 @@ fun SharedMobilePdfReaderHost(
     var annotationSnapPreview by remember(readerSessionKey) { mutableStateOf<DockLocation?>(null) }
     var isAnnotationDockMinimized by remember(readerSessionKey) { mutableStateOf(false) }
     var showAnnotationToolSettings by remember(readerSessionKey) { mutableStateOf(false) }
+    // Android-parity text dock placement (benchmark: PdfViewerScreen text dock
+    // chrome): draggable TOP / BOTTOM / FLOATING like the pen dock, kept
+    // in-memory like the pen dock above (Android persists both to prefs).
+    var textDockLocation by remember(readerSessionKey) { mutableStateOf(DockLocation.BOTTOM) }
+    var textDockOffset by remember(readerSessionKey) { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+    var isTextDockDragging by remember(readerSessionKey) { mutableStateOf(false) }
+    var textDockMeasuredOffset by remember(readerSessionKey) { mutableStateOf<androidx.compose.ui.geometry.Offset?>(null) }
     var autoScrollModeActive by remember(readerSessionKey) { mutableStateOf(false) }
     var autoScrollPlaying by remember(readerSessionKey) { mutableStateOf(false) }
     var autoScrollTemporarilyPaused by remember(readerSessionKey) { mutableStateOf(false) }
@@ -773,13 +791,28 @@ fun SharedMobilePdfReaderHost(
         runCatching { pdfReaderFocusRequester.requestFocus() }
     }
     var richTextDocumentJson by remember(readerSessionKey) { mutableStateOf(initialReaderState?.richTextDocumentJson.orEmpty()) }
+    // Android parity (RichTextSystem): the shared controller applies imported
+    // font families to rich text and explicitly shows the software keyboard
+    // when editing focus is requested; without the latter the iOS keyboard
+    // never opens (focus alone is not enough there).
+    val pdfKeyboardController = LocalSoftwareKeyboardController.current
+    // Ref (not a remember key): recreating the controller on font import
+    // would drop unsaved in-progress edits, so the font lookup always reads
+    // the latest map through this holder instead.
+    val latestCustomPdfFontFamilies = rememberUpdatedState(customPdfFontFamilies)
+    val latestPdfKeyboardController = rememberUpdatedState(pdfKeyboardController)
     val richTextController = remember(readerSessionKey, initialReaderState) {
         SharedPdfRichTextController(
             scope = scope,
             initialDocument = SharedPdfRichTextSerializer.decode(initialReaderState?.richTextDocumentJson.orEmpty()),
             onDocumentChange = { document ->
                 richTextDocumentJson = SharedPdfRichTextSerializer.encode(document)
-            }
+            },
+            styleForFontPath = { style, fontPath ->
+                val families = latestCustomPdfFontFamilies.value
+                style.copy(fontFamily = families[fontPath] ?: sharedPdfFontFamily(fontPath, families))
+            },
+            onEditingFocusRequested = { latestPdfKeyboardController.value?.show() },
         )
     }
     fun publishReaderState(state: SharedPdfReaderState) {
@@ -882,6 +915,12 @@ fun SharedMobilePdfReaderHost(
     // (benchmark: showStandardBars = showBars && !isEditMode). The floating
     // annotation dock overlay owns edit-mode chrome instead.
     val isPdfEditMode = readerState.selectedTool != PdfInkTool.NONE
+    // Android parity: the text dock observes the IME (resting above the
+    // keyboard, floating-bar lift) exactly like the benchmark.
+    // WindowInsets.isImeVisible is Android-only in this CMP version, so
+    // visibility is derived from a non-zero IME inset instead — equivalent
+    // for open/closed and gracefully false where IME insets are unsupported.
+    val isPdfImeVisible = WindowInsets.ime.getBottom(density) > 0
     val isJumpHistoryVisible = showChrome && !readerState.isSearchActive && !isPdfEditMode && jumpHistory.hasJumpTargets
     val isPdfTtsPlayingOrLoading =
         pdfTts.state == SharedMobileEpubLocalTtsState.SPEAKING || pendingTtsStart != null ||
@@ -2191,32 +2230,19 @@ fun SharedMobilePdfReaderHost(
                             .padding(bottom = 24.dp)
                     )
                 }
-                AnimatedVisibility(
-                    visible = readerState.selectedTool == PdfInkTool.TEXT && !readerState.isSearchActive,
-                    enter = slideInVertically(tween(PdfChromeMotionDurationMillis)) { it } + fadeIn(tween(PdfChromeMotionDurationMillis)),
-                    exit = slideOutVertically(tween(PdfChromeMotionDurationMillis)) { it } + fadeOut(tween(PdfChromeMotionDurationMillis)),
-                    modifier = Modifier.align(Alignment.BottomCenter)
-                ) {
-                    val activeTextStyle = textDraft?.style ?: textStyle
-                    SharedMobilePdfTextDock(
-                        style = activeTextStyle,
-                        onStyleChange = { newStyle ->
-                            textStyle = newStyle
-                            textDraft?.let { draft ->
-                                updateTextDraft(draft.withStyle(newStyle, canvasSize))
-                            }
-                        },
-                        onInsertTextBox = ::insertTextBox,
-                        customFonts = customFonts,
-                        customFontFamilies = customPdfFontFamilies,
-                        onImportFont = onImportFont,
-                        modifier = Modifier.padding(
-                            start = 12.dp,
-                            end = 12.dp,
-                            bottom = if (showChrome) 96.dp + effectiveBottomSystemInset else 16.dp + effectiveBottomSystemInset
-                        )
-                    )
-                }
+                // Android parity (PdfViewerScreen hiddenRichTextInputEnabled =
+                // edit mode + TEXT tool + no legacy box selected): the 1dp
+                // invisible field that owns the IME for flowing text. Without
+                // it the controller's focus requests hit an unattached node
+                // (the FocusRequester warning) and the keyboard never opens.
+                SharedPdfRichTextHiddenInput(
+                    controller = richTextController,
+                    enabled = isPdfEditMode && readerState.selectedTool == PdfInkTool.TEXT && textDraft == null,
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars))
+                        .padding(start = 16.dp, bottom = 120.dp)
+                )
                 // Android-parity floating annotation dock (benchmark:
                 // PdfViewerScreen.kt edit-mode chrome + AnnotationDock.kt).
                 // Replaces the old bottom-bar-embedded interaction dock: close,
@@ -2438,6 +2464,206 @@ fun SharedMobilePdfReaderHost(
                                         onToggleMinimize = { isAnnotationDockMinimized = !isAnnotationDockMinimized },
                                     )
                                 }
+                            }
+                        }
+                    }
+                }
+                // Android-parity draggable text formatting dock (benchmark:
+                // PdfViewerScreen.kt text dock chrome + TextAnnotationDock.kt).
+                // Composed AFTER the pen dock so it draws above it (the reported
+                // "text toolbar under main toolbar" bug was the old order).
+                // Bottom-docked it clears the pen dock via resting padding,
+                // top-docked it stacks below the pen dock, floating it rides
+                // above the keyboard. Drag/long-press lives on the bar only —
+                // the container stays touch-transparent for controls beneath.
+                if (shouldShowPdfTextDock(isPdfEditMode, readerState.selectedTool == PdfInkTool.TEXT) && !readerState.isSearchActive) {
+                    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                        val textBoxMaxWidthPx = with(density) { maxWidth.toPx() }
+                        val textBoxMaxHeightPx = with(density) { maxHeight.toPx() }
+                        val textDockBarHeight = 48.dp
+                        val textDockHeightPx = with(density) { textDockBarHeight.toPx() }
+                        val textDockFloatPad = 16.dp
+                        val textDockFloatPadPx = with(density) { textDockFloatPad.toPx() }
+                        // Resting clearance keys off the PEN dock (benchmark:
+                        // bottomPadding clears the pen dock when closed, 0 when
+                        // the keyboard is open since insets position it).
+                        val textBottomPadding = pdfTextDockRestingBottomPadding(
+                            isImeVisible = isPdfImeVisible,
+                            dockLocation = annotationDockLocation,
+                            isDockMinimized = isAnnotationDockMinimized,
+                        )
+                        val textPopupsBelowBar = isPdfTextDockTopAnchored(textDockLocation, isTextDockDragging)
+                        val isTextStickyBottom = textDockLocation == DockLocation.BOTTOM && !isTextDockDragging
+                        val isTextFloating = isTextDockDragging || textDockLocation == DockLocation.FLOATING
+                        // A floating (or in-drag) bar parked where the keyboard
+                        // opens rides up to sit just above it, like bottom-dock.
+                        val textDockLiftPx = pdfTextDockKeyboardLiftPx(
+                            isImeVisible = isPdfImeVisible,
+                            isFloating = isTextFloating,
+                            dockBottomPx = textDockOffset.y + textDockFloatPadPx + textDockHeightPx,
+                            keyboardTopPx = textBoxMaxHeightPx - WindowInsets.ime.getBottom(density),
+                        )
+                        Box(modifier = Modifier.fillMaxSize()) {
+                            val textDragModifier =
+                                if (isTextFloating) {
+                                    Modifier.offset {
+                                        IntOffset(
+                                            textDockOffset.x.roundToInt(),
+                                            (textDockOffset.y - textDockLiftPx).roundToInt()
+                                        )
+                                    }
+                                } else {
+                                    Modifier
+                                }
+                            val textAlignModifier = when {
+                                isTextFloating -> Modifier
+                                textPopupsBelowBar -> Modifier.align(Alignment.TopCenter)
+                                else -> Modifier.align(Alignment.BottomCenter)
+                            }
+                            val textWidthModifier =
+                                if ((textDockLocation == DockLocation.TOP || textDockLocation == DockLocation.BOTTOM) && !isTextDockDragging) {
+                                    Modifier.fillMaxWidth()
+                                } else {
+                                    Modifier.padding(horizontal = 16.dp)
+                                }
+                            val textInsetsModifier =
+                                if (isTextStickyBottom) {
+                                    Modifier.windowInsetsPadding(
+                                        if (isPdfImeVisible) WindowInsets.ime.union(WindowInsets.navigationBars)
+                                        else WindowInsets.navigationBars
+                                    )
+                                } else {
+                                    Modifier
+                                }
+                            // A top-docked text bar stacks below a top-docked
+                            // pen dock (shared 56.dp dock height), mirroring
+                            // how the bottom bar clears it via resting padding.
+                            val textStatusTopDp = with(density) {
+                                WindowInsets.safeDrawing.getTop(density).toDp()
+                            }
+                            val textPaddingModifier = when {
+                                isTextStickyBottom -> Modifier.padding(bottom = textBottomPadding)
+                                textPopupsBelowBar -> Modifier.padding(
+                                    top = (if (annotationDockLocation == DockLocation.TOP && !isAnnotationDockDragging) 56.dp else 0.dp) + textStatusTopDp
+                                )
+                                else -> Modifier.padding(vertical = textDockFloatPad)
+                            }
+                            val textDockDragGesture = Modifier.pointerInput(textDockLocation) {
+                                val onDragStart: (Offset) -> Unit = {
+                                    isTextDockDragging = true
+                                    // Seed from the last measured position so
+                                    // picking the bar up never teleports it:
+                                    // sticky positions carry inset/resting
+                                    // offsets a formula can't reproduce.
+                                    val measured = textDockMeasuredOffset
+                                    if (measured != null) {
+                                        textDockOffset = measured
+                                    } else {
+                                        val startX = (textBoxMaxWidthPx / 2) - (size.width / 2)
+                                        if (textDockLocation == DockLocation.BOTTOM) {
+                                            textDockOffset = Offset(
+                                                startX, textBoxMaxHeightPx - textDockHeightPx - 50f
+                                            )
+                                        } else if (textDockLocation == DockLocation.TOP) {
+                                            textDockOffset = Offset(startX, 50f)
+                                        }
+                                    }
+                                }
+                                val onDrag: (
+                                    androidx.compose.ui.input.pointer.PointerInputChange,
+                                    Offset
+                                ) -> Unit = { change, dragAmount ->
+                                    change.consume()
+                                    textDockOffset += dragAmount
+                                }
+                                val onDragEnd: () -> Unit = {
+                                    isTextDockDragging = false
+                                    val topSnapThreshold = 150f
+                                    // Bottom snaps only at/below the docked band
+                                    // (resting bar position minus a grab margin):
+                                    // dropping the bar over the pen dock stays
+                                    // floating instead, exactly like the benchmark.
+                                    val bottomSnapThreshold = textBoxMaxHeightPx -
+                                        with(density) { effectiveBottomSystemInset.toPx() } -
+                                        with(density) { textBottomPadding.toPx() } -
+                                        textDockHeightPx -
+                                        with(density) { 24.dp.toPx() }
+                                    textDockLocation = when {
+                                        textDockOffset.y < topSnapThreshold -> DockLocation.TOP
+                                        textDockOffset.y > bottomSnapThreshold -> DockLocation.BOTTOM
+                                        else -> DockLocation.FLOATING
+                                    }
+                                    if (textDockLocation == DockLocation.FLOATING) {
+                                        val safeX = textDockOffset.x.coerceIn(
+                                            0f, textBoxMaxWidthPx - 100f
+                                        )
+                                        val safeY = textDockOffset.y.coerceIn(
+                                            0f, textBoxMaxHeightPx - textDockHeightPx
+                                        )
+                                        textDockOffset = Offset(safeX, safeY)
+                                    }
+                                }
+                                val onDragCancel: () -> Unit = {
+                                    isTextDockDragging = false
+                                }
+                                if (textDockLocation == DockLocation.FLOATING) {
+                                    detectDragGestures(
+                                        onDragStart = onDragStart,
+                                        onDrag = onDrag,
+                                        onDragEnd = onDragEnd,
+                                        onDragCancel = onDragCancel
+                                    )
+                                } else {
+                                    detectDragGesturesAfterLongPress(
+                                        onDragStart = onDragStart,
+                                        onDrag = onDrag,
+                                        onDragEnd = onDragEnd,
+                                        onDragCancel = onDragCancel
+                                    )
+                                }
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .then(textAlignModifier)
+                                    .then(textDragModifier)
+                                    .onGloballyPositioned {
+                                        if (!isTextDockDragging) textDockMeasuredOffset = it.positionInParent()
+                                    }
+                                    .then(textWidthModifier)
+                                    .then(textInsetsModifier)
+                                    .then(textPaddingModifier)
+                            ) {
+                                val activeTextStyle = textDraft?.style ?: textStyle
+                                SharedMobilePdfTextDock(
+                                    style = activeTextStyle,
+                                    onStyleChange = { newStyle ->
+                                        // Android parity (TextAnnotationDock
+                                        // onUpdateStyle): the tool default is
+                                        // always persisted; live edits go to
+                                        // the open draft, otherwise to the
+                                        // flowing rich-text selection/cursor
+                                        // (which also re-requests the keyboard,
+                                        // keeping it up while formatting).
+                                        textStyle = newStyle
+                                        val draft = textDraft
+                                        if (draft != null) {
+                                            updateTextDraft(draft.withStyle(newStyle, canvasSize))
+                                        } else {
+                                            richTextController.updateCurrentStyle(
+                                                newStyle.toSharedPdfRichSpanStyle(),
+                                                newStyle.fontPath,
+                                                newStyle.fontName
+                                            )
+                                        }
+                                    },
+                                    onInsertTextBox = ::insertTextBox,
+                                    customFonts = customFonts,
+                                    customFontFamilies = customPdfFontFamilies,
+                                    onImportFont = onImportFont,
+                                    dragGestureModifier = textDockDragGesture,
+                                    popupsBelowBar = textPopupsBelowBar,
+                                    onPopupStateChange = { richTextController.showCursorOverride = !it },
+                                )
                             }
                         }
                     }
