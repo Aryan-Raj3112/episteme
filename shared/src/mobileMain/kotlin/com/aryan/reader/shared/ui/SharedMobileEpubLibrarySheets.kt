@@ -50,7 +50,14 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -229,6 +236,11 @@ internal fun SharedMobileEpubToc(
         return
     }
     var query by remember(epub?.id) { mutableStateOf("") }
+    // iOS (CMP): composing the drawer sheet can hand first-responder focus to this
+    // field, raising the keyboard before the user touches anything. Keep it
+    // unfocusable until an explicit tap enables (and focuses) it.
+    var searchFieldFocusable by remember(epub?.id) { mutableStateOf(false) }
+    val searchFocusRequester = remember { FocusRequester() }
     var expandedEntryIndices by remember(epub?.id, entries) {
         mutableStateOf(readerTocParentIndices(entries) { it.depth })
     }
@@ -251,7 +263,24 @@ internal fun SharedMobileEpubToc(
             placeholder = { Text("Search chapters") },
             leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
             singleLine = true,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp)
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 10.dp)
+                .focusProperties { canFocus = searchFieldFocusable }
+                .focusRequester(searchFocusRequester)
+                .pointerInput(Unit) {
+                    awaitEachGesture {
+                        awaitFirstDown(requireUnconsumed = false)
+                        if (!searchFieldFocusable) {
+                            searchFieldFocusable = true
+                            // Let the recomposition make the field focusable, then focus it.
+                            scope.launch {
+                                withFrameNanos { }
+                                runCatching { searchFocusRequester.requestFocus() }
+                            }
+                        }
+                    }
+                }
         )
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 8.dp),

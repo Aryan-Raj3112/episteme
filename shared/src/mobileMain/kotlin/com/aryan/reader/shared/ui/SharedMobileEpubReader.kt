@@ -393,9 +393,9 @@ fun SharedMobileEpubReaderScreen(
             else readerAutoScrollProfile.sanitized()
         )
     }
-    var drawerTab by remember(book.id) { mutableStateOf(0) }
-    // Hoisted so the drawer's last tab survives open/close cycles (M3 disposes the
-    // sheet content while closed, which would otherwise reset the pager to tab 0).
+    // Android parity (EpubReaderDrawer): the drawer's pager state is hoisted so the
+    // last-viewed tab survives open/close cycles for this reading session; nothing
+    // forces a tab when the drawer opens (the TOC tool just opens it).
     val drawerPagerState = rememberPagerState(pageCount = { 4 })
     var selectedTocIndex by remember(book.id) { mutableIntStateOf(-1) }
     var explicitNavigationLocator by remember(book.id) { mutableStateOf<ReaderLocator?>(null) }
@@ -481,21 +481,10 @@ fun SharedMobileEpubReaderScreen(
         onDispose { onApplyReaderScreenOrientation(ReaderScreenOrientationMode.FOLLOW_SYSTEM) }
     }
 
-    fun openReaderDrawer(tab: Int? = null) {
-        tab?.let { drawerTab = it }
+    fun openReaderDrawer() {
         scope.launch {
             if (motionPolicy.animationsEnabled) drawerState.open() else drawerState.snapTo(DrawerValue.Open)
             focusManager.clearFocus(force = true)
-        }
-    }
-
-    // Android parity (EpubReaderDrawer): reopening the drawer lands on the tab that was
-    // last viewed in this session; an explicit tool tap (TOC button) still wins.
-    LaunchedEffect(drawerState.isOpen) {
-        if (drawerState.isOpen) {
-            drawerPagerState.scrollToPage(drawerTab.coerceIn(0, 3))
-        } else {
-            drawerTab = drawerPagerState.currentPage
         }
     }
 
@@ -1064,24 +1053,6 @@ fun SharedMobileEpubReaderScreen(
         drawerContent = {
             ModalDrawerSheet(Modifier.fillMaxWidth(0.86f)) {
                 val drawerScope = rememberCoroutineScope()
-                // iOS (CMP): composing the drawer sheet can hand first-responder focus to
-                // the TOC search field, raising the keyboard before the user touches
-                // anything. Drop whatever focus the sheet gains while it settles.
-                LaunchedEffect(Unit) {
-                    repeat(2) {
-                        withFrameNanos { }
-                        focusManager.clearFocus(force = true)
-                    }
-                }
-                LaunchedEffect(drawerTab) {
-                    if (drawerTab in 0..3) {
-                        if (motionPolicy.animationsEnabled) {
-                            drawerPagerState.animateScrollToPage(drawerTab)
-                        } else {
-                            drawerPagerState.scrollToPage(drawerTab)
-                        }
-                    }
-                }
                 Text(
                     loadedBook?.title ?: book.displayName,
                     style = MaterialTheme.typography.titleLarge,
@@ -1092,7 +1063,6 @@ fun SharedMobileEpubReaderScreen(
                         Tab(
                             selected = drawerPagerState.currentPage == index,
                             onClick = {
-                                drawerTab = index
                                 drawerScope.launch {
                                     if (motionPolicy.animationsEnabled) {
                                         drawerPagerState.animateScrollToPage(index)
@@ -1936,7 +1906,7 @@ fun SharedMobileEpubReaderScreen(
                         onBookmark = ::toggleBookmark,
                         onVisualOptions = { showVisualOptionsSheet = true },
                         onBrightness = { showBrightnessSheet = true },
-                        onOpenToc = { openReaderDrawer(0) },
+                        onOpenToc = { openReaderDrawer() },
                         onOpenSlider = { showSlider = !showSlider },
                         onFileInfo = { showFileInfo = true },
                         onCustomizeTools = { showCustomizeToolsSheet = true },
@@ -2029,7 +1999,7 @@ fun SharedMobileEpubReaderScreen(
                         SharedMobileEpubBottomBar(
                             tools = bottomToolbarTools,
                             isBookmarked = isBookmarked,
-                            onToc = { openReaderDrawer(0) },
+                            onToc = { openReaderDrawer() },
                             onFormat = { showFormatSheet = true },
                             onSearch = { showSearchResultsPanel = true; showSearch = true },
                             onTheme = { showThemeSheet = true },
