@@ -559,7 +559,7 @@ class ReaderHtmlDocumentBuilderTest {
 
         assertTrue(html.contains("--reader-scrollbar-track: color-mix(in srgb, var(--reader-bg)"))
         assertTrue(html.contains("--reader-scrollbar-thumb: color-mix(in srgb, var(--reader-fg)"))
-        assertTrue(html.contains("""<html class="reader-vertical-root">"""))
+        assertTrue(html.contains("""<html lang="en" class="reader-vertical-root">"""))
         assertTrue(
             Regex(
                 "html\\.reader-vertical-root \\{\\s*" +

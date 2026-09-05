@@ -20,8 +20,19 @@ class ReaderToolbarPreferencesTest {
     }
 
     @Test
-    fun `default overflow order follows android benchmark`() {
-        val overflow = ReaderToolbarPreferences().toolOrder
+    fun `default bottom matches android six tool benchmark`() {
+        val bottom = ReaderToolbarPreferences.defaultBottomToolIds
+
+        assertTrue(ReaderTool.SLIDER.id in bottom)
+        assertTrue(ReaderTool.TOC.id in bottom)
+        assertTrue(ReaderTool.FORMAT.id in bottom)
+        assertTrue(ReaderTool.SEARCH.id in bottom)
+        assertTrue(ReaderTool.AI_FEATURES.id in bottom)
+        assertTrue(ReaderTool.TTS_CONTROLS.id in bottom)
+    }
+
+    @Test
+    fun `default overflow order follows android benchmark`() {        val overflow = ReaderToolbarPreferences().toolOrder
             .filter { it.category == "Overflow Menu" }
 
         // Benchmark: File Information stays last; Book Word Replacements

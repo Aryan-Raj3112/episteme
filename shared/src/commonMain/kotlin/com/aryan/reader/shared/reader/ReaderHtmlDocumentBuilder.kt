@@ -97,7 +97,8 @@ object ReaderHtmlDocumentBuilder {
             readerAiFeaturesEnabled = readerAiFeaturesEnabled,
             cloudTtsEnabled = cloudTtsEnabled,
             externalLookupEnabled = externalLookupEnabled,
-            textureDataUri = textureDataUri
+            textureDataUri = textureDataUri,
+            documentLanguage = book.language
         )
     }
 
@@ -308,7 +309,8 @@ object ReaderHtmlDocumentBuilder {
             readerAiFeaturesEnabled = readerAiFeaturesEnabled,
             cloudTtsEnabled = cloudTtsEnabled,
             externalLookupEnabled = externalLookupEnabled,
-            textureDataUri = textureDataUri
+            textureDataUri = textureDataUri,
+            documentLanguage = book.language
         )
     }
 

@@ -5,7 +5,9 @@ private val DefaultReaderBottomToolIds: Set<String>
         ReaderTool.SLIDER.id,
         ReaderTool.TOC.id,
         ReaderTool.FORMAT.id,
-        ReaderTool.SEARCH.id
+        ReaderTool.SEARCH.id,
+        ReaderTool.AI_FEATURES.id,
+        ReaderTool.TTS_CONTROLS.id
     )
 
 private val DefaultReaderHiddenToolIds: Set<String>

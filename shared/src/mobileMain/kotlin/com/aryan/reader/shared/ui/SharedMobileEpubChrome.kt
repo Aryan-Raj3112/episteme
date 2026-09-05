@@ -41,8 +41,8 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Add
@@ -58,6 +58,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.TextFields
+import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -82,7 +83,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -99,6 +102,17 @@ import com.aryan.reader.shared.ReaderWordReplacementRule
 import com.aryan.reader.shared.currentTimestamp
 import com.aryan.reader.shared.reader.ReaderReadingMode
 import kotlin.math.roundToInt
+
+/** Stable identifiers for the EPUB reader chrome (automation + accessibility). */
+internal object SharedMobileEpubAxTags {
+    const val TOP_BAR = "EpubTopBar"
+    const val BOTTOM_BAR = "EpubBottomBar"
+    const val BACK = "EpubBack"
+    const val TITLE = "EpubTitle"
+    const val MORE = "EpubMore"
+    const val CONTENT = "EpubReaderContent"
+    const val PAGE_INFO = "EpubPageInfo"
+}
 
 @Composable
 internal fun SharedMobileEpubLoading(label: String) {
@@ -177,6 +191,7 @@ internal fun SharedMobileEpubTopBar(
 ) {
     var showReadingModeExpanded by remember { mutableStateOf(false) }
     var showHiddenToolsExpanded by remember { mutableStateOf(false) }
+    var showTtsSettingsExpanded by remember { mutableStateOf(false) }
     val formatContentDescription = readerString("tooltip_format", "Text formatting")
     val ttsBusy = localTtsState != SharedMobileEpubLocalTtsState.IDLE ||
         cloudTtsState.isLoading || cloudTtsState.isPlaying || cloudTtsState.isPaused
@@ -184,7 +199,7 @@ internal fun SharedMobileEpubTopBar(
     val onReadAloudStop = if (cloudTtsAvailable) onCloudTtsStop else onLocalTtsStop
     val readAloudIcon = if (cloudTtsAvailable) cloudTtsState.icon() else localTtsState.icon()
     val readAloudLabel = if (cloudTtsAvailable) cloudTtsState.menuLabel() else localTtsState.menuLabel()
-    Surface(modifier = modifier, tonalElevation = 4.dp) {
+    Surface(modifier = modifier.testTag(SharedMobileEpubAxTags.TOP_BAR), tonalElevation = 4.dp) {
         Row(
             Modifier
                 .fillMaxWidth()
@@ -193,51 +208,91 @@ internal fun SharedMobileEpubTopBar(
                 .padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
-            Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+            IconButton(
+                onClick = onBack,
+                modifier = Modifier.testTag(SharedMobileEpubAxTags.BACK).semantics { contentDescription = "Back" }
+            ) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null) }
+            Text(
+                title,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.weight(1f).testTag(SharedMobileEpubAxTags.TITLE)
+                    .semantics(mergeDescendants = true) { heading(); contentDescription = title }
+            )
             topTools.forEach { tool ->
                 when (tool) {
-                    ReaderTool.THEME -> IconButton(onClick = onTheme) {
-                        Icon(Icons.Default.Palette, contentDescription = "Theme")
+                    ReaderTool.THEME -> IconButton(
+                        onClick = onTheme,
+                        modifier = Modifier.testTag("EpubTopTheme").semantics { contentDescription = "Theme" }
+                    ) {
+                        Icon(Icons.Default.Palette, contentDescription = null)
                     }
-                    ReaderTool.TOC -> IconButton(onClick = onOpenToc) {
-                        Icon(Icons.Default.Menu, contentDescription = "Contents")
+                    ReaderTool.TOC -> IconButton(
+                        onClick = onOpenToc,
+                        modifier = Modifier.testTag("EpubTopToc").semantics { contentDescription = "Contents" }
+                    ) {
+                        Icon(Icons.Default.Menu, contentDescription = null)
                     }
-                    ReaderTool.FORMAT -> IconButton(onClick = onFormat) {
+                    ReaderTool.FORMAT -> IconButton(
+                        onClick = onFormat,
+                        modifier = Modifier.testTag("EpubTopFormat").semantics { contentDescription = formatContentDescription }
+                    ) {
                         Text(
                             "Tᵀ",
                             style = MaterialTheme.typography.titleLarge,
-                            modifier = Modifier.semantics {
-                                contentDescription = formatContentDescription
-                            },
                         )
                     }
-                    ReaderTool.SEARCH -> IconButton(onClick = onSearch) {
-                        Icon(Icons.Default.Search, contentDescription = "Search")
+                    ReaderTool.SEARCH -> IconButton(
+                        onClick = onSearch,
+                        modifier = Modifier.testTag("EpubTopSearch").semantics { contentDescription = "Search" }
+                    ) {
+                        Icon(Icons.Default.Search, contentDescription = null)
                     }
-                    ReaderTool.SLIDER -> IconButton(onClick = onOpenSlider) {
-                        Icon(SharedReaderIcons.Slider, contentDescription = "Navigation slider")
+                    ReaderTool.SLIDER -> IconButton(
+                        onClick = onOpenSlider,
+                        modifier = Modifier.testTag("EpubTopSlider").semantics { contentDescription = "Navigation slider" }
+                    ) {
+                        Icon(SharedReaderIcons.Slider, contentDescription = null)
                     }
-                    ReaderTool.TTS_CONTROLS -> IconButton(onClick = onReadAloudToggle) {
-                        Icon(readAloudIcon, contentDescription = readAloudLabel)
+                    ReaderTool.TTS_CONTROLS -> IconButton(
+                        onClick = onReadAloudToggle,
+                        modifier = Modifier.testTag("EpubTopTts").semantics { contentDescription = readAloudLabel }
+                    ) {
+                        Icon(readAloudIcon, contentDescription = null)
                     }
-                    ReaderTool.BRIGHTNESS -> IconButton(onClick = onBrightness) {
-                        Icon(SharedReaderIcons.Contrast, contentDescription = "Brightness")
+                    ReaderTool.BRIGHTNESS -> IconButton(
+                        onClick = onBrightness,
+                        modifier = Modifier.testTag("EpubTopBrightness").semantics { contentDescription = "Brightness" }
+                    ) {
+                        Icon(SharedReaderIcons.Contrast, contentDescription = null)
                     }
-                    ReaderTool.SCREEN_ORIENTATION -> IconButton(onClick = onScreenOrientation) {
-                        Icon(SharedReaderIcons.ScreenRotation, contentDescription = "Screen orientation")
+                    ReaderTool.SCREEN_ORIENTATION -> IconButton(
+                        onClick = onScreenOrientation,
+                        modifier = Modifier.testTag("EpubTopOrientation").semantics { contentDescription = "Screen orientation" }
+                    ) {
+                        Icon(SharedReaderIcons.ScreenRotation, contentDescription = null)
                     }
-                    ReaderTool.DICTIONARY -> IconButton(onClick = onOpenDictionarySettings) {
-                        Icon(SharedReaderIcons.Dictionary, contentDescription = "Dictionary")
+                    ReaderTool.DICTIONARY -> IconButton(
+                        onClick = onOpenDictionarySettings,
+                        modifier = Modifier.testTag("EpubTopDictionary").semantics { contentDescription = "Dictionary" }
+                    ) {
+                        Icon(SharedReaderIcons.Dictionary, contentDescription = null)
                     }
-                    ReaderTool.AI_FEATURES -> if (aiAvailable) IconButton(onClick = onOpenAiHub) {
-                        Icon(Icons.Default.Ai, contentDescription = "AI features")
+                    ReaderTool.AI_FEATURES -> if (aiAvailable) IconButton(
+                        onClick = onOpenAiHub,
+                        modifier = Modifier.testTag("EpubTopAi").semantics { contentDescription = "AI features" }
+                    ) {
+                        Icon(Icons.Default.Ai, contentDescription = null)
                     }
                     else -> Unit
                 }
             }
             Box {
-                IconButton(onClick = { onShowMoreChange(true) }) { Icon(Icons.Default.MoreVert, contentDescription = "More options") }
+                IconButton(
+                    onClick = { onShowMoreChange(true) },
+                    modifier = Modifier.testTag(SharedMobileEpubAxTags.MORE).semantics { contentDescription = "More options" }
+                ) { Icon(Icons.Default.MoreVert, contentDescription = null) }
                 DropdownMenu(expanded = showMore, onDismissRequest = { onShowMoreChange(false) }) {
                     DropdownMenuItem(
                         text = { Text("Customize Toolbar") },
@@ -245,7 +300,8 @@ internal fun SharedMobileEpubTopBar(
                         leadingIcon = { Icon(Icons.Default.Settings, contentDescription = null) }
                     )
                     val hiddenToolbarTools = toolbarPreferences.sanitized().toolOrder.filter { tool ->
-                        tool in SharedMobileEpubToolbarTools && !toolbarPreferences.isVisible(tool)
+                        tool in SharedMobileEpubToolbarTools && !toolbarPreferences.isVisible(tool) &&
+                            (tool != ReaderTool.AI_FEATURES || aiAvailable)
                     }
                     if (hiddenToolbarTools.isNotEmpty()) {
                         HorizontalDivider()
@@ -358,7 +414,7 @@ internal fun SharedMobileEpubTopBar(
                             )
                             ReaderTool.VISUAL_OPTIONS -> DropdownMenuItem(
                                 text = { Text("Visual Options") }, onClick = { onVisualOptions(); onShowMoreChange(false) },
-                                leadingIcon = { Icon(Icons.Default.Settings, contentDescription = null) }
+                                leadingIcon = { Icon(Icons.Default.Visibility, contentDescription = null) }
                             )
                             ReaderTool.TOC -> DropdownMenuItem(
                                 text = { Text("Contents") }, onClick = { onOpenToc(); onShowMoreChange(false) },
@@ -378,16 +434,46 @@ internal fun SharedMobileEpubTopBar(
                             ReaderTool.TTS_CONTROLS -> DropdownMenuItem(
                                 text = { Text(readAloudLabel) }, onClick = { onReadAloudToggle(); onShowMoreChange(false) }
                             )
-                            ReaderTool.TTS_REPLACEMENTS -> DropdownMenuItem(
-                                text = { Text("TTS Word Replacements") },
-                                onClick = { onShowMoreChange(false); onTtsReplacements() },
-                                leadingIcon = { Icon(Icons.Default.GraphicEq, contentDescription = null) }
-                            )
-                            ReaderTool.TTS_SETTINGS -> DropdownMenuItem(
-                                text = { Text("TTS Voice Settings") },
-                                onClick = { onShowMoreChange(false); onTtsSettings() },
-                                leadingIcon = { Icon(Icons.Default.GraphicEq, contentDescription = null) }
-                            )
+                            ReaderTool.TTS_REPLACEMENTS -> {
+                                // Covered by the TTS_SETTINGS expander when both are present.
+                                if (ReaderTool.TTS_SETTINGS !in overflowTools) {
+                                    DropdownMenuItem(
+                                        text = { Text("TTS Word Replacements") },
+                                        onClick = { onShowMoreChange(false); onTtsReplacements() },
+                                        leadingIcon = { Icon(Icons.Default.GraphicEq, contentDescription = null) }
+                                    )
+                                } else Unit
+                            }
+                            ReaderTool.TTS_SETTINGS -> {
+                                if (ReaderTool.TTS_REPLACEMENTS in overflowTools) {
+                                    DropdownMenuItem(
+                                        text = { Text("TTS Settings") },
+                                        onClick = { showTtsSettingsExpanded = !showTtsSettingsExpanded },
+                                        leadingIcon = { Icon(Icons.Default.GraphicEq, contentDescription = null) },
+                                        trailingIcon = { Icon(Icons.Default.ArrowDropDown, contentDescription = null) }
+                                    )
+                                    if (showTtsSettingsExpanded) {
+                                        DropdownMenuItem(
+                                            text = { Text("TTS Voice Settings") },
+                                            enabled = !ttsBusy,
+                                            onClick = { onShowMoreChange(false); onTtsSettings() },
+                                            leadingIcon = { Icon(Icons.Default.GraphicEq, contentDescription = null) }
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text("TTS Word Replacements") },
+                                            onClick = { onShowMoreChange(false); onTtsReplacements() },
+                                            leadingIcon = { Icon(Icons.Default.GraphicEq, contentDescription = null) }
+                                        )
+                                    }
+                                } else {
+                                    DropdownMenuItem(
+                                        text = { Text("TTS Voice Settings") },
+                                        enabled = !ttsBusy,
+                                        onClick = { onShowMoreChange(false); onTtsSettings() },
+                                        leadingIcon = { Icon(Icons.Default.GraphicEq, contentDescription = null) }
+                                    )
+                                }
+                            }
                             ReaderTool.BOOK_REPLACEMENTS -> DropdownMenuItem(
                                 text = { Text("Book Word Replacements") },
                                 onClick = { onShowMoreChange(false); onBookReplacements() },
@@ -601,7 +687,7 @@ internal fun SharedMobileEpubBottomBar(
     val onReadAloudToggle = if (cloudTtsAvailable) onCloudTtsToggle else onLocalTtsToggle
     val readAloudIcon = if (cloudTtsAvailable) cloudTtsState.icon() else localTtsState.icon()
     val readAloudLabel = if (cloudTtsAvailable) cloudTtsState.menuLabel() else localTtsState.menuLabel()
-    Surface(modifier = modifier, tonalElevation = 4.dp) {
+    Surface(modifier = modifier.testTag(SharedMobileEpubAxTags.BOTTOM_BAR), tonalElevation = 4.dp) {
         Column(Modifier.fillMaxWidth()) {
             Row(
                 Modifier
@@ -614,30 +700,60 @@ internal fun SharedMobileEpubBottomBar(
             ) {
                 tools.forEach { tool ->
                     when (tool) {
-                        ReaderTool.TOC -> IconButton(onClick = onToc) { Icon(Icons.Default.Menu, contentDescription = "Contents") }
-                        ReaderTool.FORMAT -> IconButton(onClick = onFormat) {
+                        ReaderTool.TOC -> IconButton(
+                            onClick = onToc,
+                            modifier = Modifier.testTag("EpubBottomToc").semantics { contentDescription = "Contents" }
+                        ) { Icon(Icons.Default.Menu, contentDescription = null) }
+                        ReaderTool.FORMAT -> IconButton(
+                            onClick = onFormat,
+                            modifier = Modifier.testTag("EpubBottomFormat").semantics { contentDescription = formatContentDescription }
+                        ) {
                             Text(
                                 "Tᵀ",
                                 style = MaterialTheme.typography.titleLarge,
-                                modifier = Modifier.semantics {
-                                    contentDescription = formatContentDescription
-                                },
                             )
                         }
-                        ReaderTool.SEARCH -> IconButton(onClick = onSearch) { Icon(Icons.Default.Search, contentDescription = "Search") }
-                        ReaderTool.THEME -> IconButton(onClick = onTheme) { Icon(Icons.Default.Palette, contentDescription = "Theme") }
-                        ReaderTool.BOOKMARK -> IconButton(onClick = onBookmark) {
-                            Icon(
-                                if (isBookmarked) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
-                                contentDescription = if (isBookmarked) "Remove bookmark" else "Bookmark this page"
-                            )
+                        ReaderTool.SEARCH -> IconButton(
+                            onClick = onSearch,
+                            modifier = Modifier.testTag("EpubBottomSearch").semantics { contentDescription = "Search" }
+                        ) { Icon(Icons.Default.Search, contentDescription = null) }
+                        ReaderTool.THEME -> IconButton(
+                            onClick = onTheme,
+                            modifier = Modifier.testTag("EpubBottomTheme").semantics { contentDescription = "Theme" }
+                        ) { Icon(Icons.Default.Palette, contentDescription = null) }
+                        ReaderTool.BOOKMARK -> {
+                            val bookmarkLabel = if (isBookmarked) "Remove bookmark" else "Bookmark this page"
+                            IconButton(
+                                onClick = onBookmark,
+                                modifier = Modifier.testTag("EpubBottomBookmark").semantics { contentDescription = bookmarkLabel }
+                            ) {
+                                Icon(
+                                    if (isBookmarked) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
+                                    contentDescription = null
+                                )
+                            }
                         }
-                        ReaderTool.VISUAL_OPTIONS -> IconButton(onClick = onVisualOptions) { Icon(Icons.Default.Settings, contentDescription = "Visual options") }
-                        ReaderTool.SLIDER -> IconButton(onClick = onOpenSlider) { Icon(SharedReaderIcons.Slider, contentDescription = "Navigation slider") }
-                        ReaderTool.DICTIONARY -> IconButton(onClick = onDictionary) { Icon(SharedReaderIcons.Dictionary, contentDescription = "Dictionary") }
-                        ReaderTool.AI_FEATURES -> if (aiAvailable) IconButton(onClick = onOpenAiHub) { Icon(Icons.Default.Ai, contentDescription = "AI features") }
-                        ReaderTool.TTS_CONTROLS -> IconButton(onClick = onReadAloudToggle) {
-                            Icon(readAloudIcon, contentDescription = readAloudLabel)
+                        ReaderTool.VISUAL_OPTIONS -> IconButton(
+                            onClick = onVisualOptions,
+                            modifier = Modifier.testTag("EpubBottomVisual").semantics { contentDescription = "Visual options" }
+                        ) { Icon(Icons.Default.Visibility, contentDescription = null) }
+                        ReaderTool.SLIDER -> IconButton(
+                            onClick = onOpenSlider,
+                            modifier = Modifier.testTag("EpubBottomSlider").semantics { contentDescription = "Navigation slider" }
+                        ) { Icon(SharedReaderIcons.Slider, contentDescription = null) }
+                        ReaderTool.DICTIONARY -> IconButton(
+                            onClick = onDictionary,
+                            modifier = Modifier.testTag("EpubBottomDictionary").semantics { contentDescription = "Dictionary" }
+                        ) { Icon(SharedReaderIcons.Dictionary, contentDescription = null) }
+                        ReaderTool.AI_FEATURES -> if (aiAvailable) IconButton(
+                            onClick = onOpenAiHub,
+                            modifier = Modifier.testTag("EpubBottomAi").semantics { contentDescription = "AI features" }
+                        ) { Icon(Icons.Default.Ai, contentDescription = null) }
+                        ReaderTool.TTS_CONTROLS -> IconButton(
+                            onClick = onReadAloudToggle,
+                            modifier = Modifier.testTag("EpubBottomTts").semantics { contentDescription = readAloudLabel }
+                        ) {
+                            Icon(readAloudIcon, contentDescription = null)
                         }
                         else -> Unit
                     }

@@ -64,6 +64,7 @@ import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
@@ -90,6 +91,7 @@ import com.aryan.reader.shared.UserHighlight
 import com.aryan.reader.shared.PageInfoPosition
 import com.aryan.reader.shared.ReaderTool
 import com.aryan.reader.shared.ReaderToolbarPreferences
+import com.aryan.reader.shared.SharedReaderTtsMiniBarState
 import com.aryan.reader.shared.ReaderTtsReplacementPreferences
 import com.aryan.reader.shared.ReaderTtsOverlaySize
 import com.aryan.reader.shared.readerTtsOverlayAlignmentBias
@@ -231,7 +233,16 @@ fun SharedMobileEpubReaderScreen(
     onReaderScreenOrientationModeChange: (ReaderScreenOrientationMode) -> Unit = {},
     onApplyReaderScreenOrientation: (ReaderScreenOrientationMode) -> Unit = {},
     streamPageLoader: SharedMobileEpubStreamPageLoader? = null,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    /**
+     * App-level read-aloud engine. When provided (iOS host), the screen drives
+     * this shared instance instead of a per-screen one so speech continues
+     * across navigation and the global mini bar can observe it. Defaults to a
+     * per-screen engine (desktop/legacy behavior).
+     */
+    externalLocalTts: SharedMobileEpubLocalTts? = null,
+    /** Reports mini-bar state to an app-level host (global TTS bar). */
+    onReaderTtsSessionChange: (SharedReaderTtsMiniBarState?) -> Unit = {}
 ) {
     val motionPolicy = rememberReaderMotionPolicy()
     remember(book.id) {
@@ -261,7 +272,7 @@ fun SharedMobileEpubReaderScreen(
         sharedEpubOpenTrace { "readerScreen replacements ms=${sharedEpubOpenTraceMs(sharedEpubOpenTraceElapsedMs(replacementMark))} chapters=${replaced?.chapters?.size ?: 0}" }
         replaced
     }
-    val localTts = rememberSharedMobileEpubLocalTts()
+    val localTts = externalLocalTts ?: rememberSharedMobileEpubLocalTts()
     val streamPageUnavailableLabel = readerString("msg_page_unavailable", "Page Unavailable")
     val cloudTtsState = cloudTts?.state ?: readerExtrasState.cloudTts
     val cloudTtsAvailable = cloudTts != null && cloudTtsState.isAvailable && !localTts.isSessionActive
@@ -269,6 +280,39 @@ fun SharedMobileEpubReaderScreen(
         localTts.errorMessage?.let { message -> onTtsError?.invoke(message) }
     }
     val activeTtsChunk = localTts.progress.currentChunk
+    // Report app-level mini-bar state (iOS global bar; Android uses its own
+    // host). While composed, mirror the live session; on dispose the host
+    // keeps the last snapshot so the bar survives navigation.
+    LaunchedEffect(
+        localTts.isSessionActive,
+        localTts.state,
+        localTts.progress.currentChunkIndex,
+        localTts.progress.chunks.size,
+        loadedBook?.id,
+        book.id
+    ) {
+        if (localTts.isSessionActive) {
+            val progress = localTts.progress
+            val chunk = progress.currentChunk
+            onReaderTtsSessionChange(
+                SharedReaderTtsMiniBarState(
+                    bookId = book.id,
+                    bookTitle = loadedBook?.title ?: book.displayName ?: book.id,
+                    chapterTitle = chunk?.chapterTitle,
+                    chunkIndex = progress.currentChunkIndex,
+                    totalChunks = progress.chunks.size,
+                    currentText = chunk?.text,
+                    isLoading = false,
+                    isPlaying = localTts.state == SharedMobileEpubLocalTtsState.SPEAKING,
+                    sessionEndedByStop = false,
+                    sessionFinished = false,
+                    playbackSource = "READER"
+                )
+            )
+        } else {
+            onReaderTtsSessionChange(null)
+        }
+    }
     var detachedTtsChunkIndex by remember(book.id) { mutableStateOf<Int?>(null) }
     val migratedReaderDefaults = readerDefaultSettings.migrateAndroidEpubFormatSettings()
     val storedBookSettings = (book.readerSettings ?: migratedReaderDefaults).migrateAndroidEpubFormatSettings()
@@ -441,10 +485,25 @@ fun SharedMobileEpubReaderScreen(
     val visibleToolbarTools = sanitizedToolbarPreferences.orderedVisibleTools().filter {
         it in SharedMobileEpubCustomizableTools && (it != ReaderTool.AI_FEATURES || readerAiAvailable)
     }
-    val mobileBottomToolIds = if (readerToolbarPreferences.bottomToolIds == ReaderToolbarPreferences.defaultBottomToolIds) {
-        readerToolbarPreferences.bottomToolIds + ReaderTool.TTS_CONTROLS.id
-    } else {
-        readerToolbarPreferences.bottomToolIds
+    val mobileBottomToolIds = run {
+        val current = readerToolbarPreferences.bottomToolIds
+        val newDefault = ReaderToolbarPreferences.defaultBottomToolIds
+        // Migrate legacy defaults (pre-AI bottom): users who never customized
+        // stored the 4-tool set, or the 4-tool set + TTS shim. Upgrade those
+        // to the Android-benchmark 6-tool bottom (SLIDER/TOC/FORMAT/SEARCH/AI/TTS).
+        // Custom layouts are left untouched.
+        val legacyWithoutTts = setOf(
+            ReaderTool.SLIDER.id,
+            ReaderTool.TOC.id,
+            ReaderTool.FORMAT.id,
+            ReaderTool.SEARCH.id
+        )
+        val legacyWithTts = legacyWithoutTts + ReaderTool.TTS_CONTROLS.id
+        when (current) {
+            newDefault -> current
+            legacyWithoutTts, legacyWithTts -> newDefault
+            else -> current
+        }
     }
     val bottomToolbarTools = visibleToolbarTools.filter { tool ->
         tool in SharedMobileEpubToolbarTools && tool.id in mobileBottomToolIds
@@ -1533,7 +1592,7 @@ fun SharedMobileEpubReaderScreen(
                                         }
                                     },
                                     onOpenHighlightPaletteManager = { showHighlightPaletteManager = true },
-                                    modifier = Modifier.fillMaxSize(),
+                                    modifier = Modifier.fillMaxSize().testTag(SharedMobileEpubAxTags.CONTENT),
                                     positionController = nativePaginatedPositionController,
                                     pageTurn = if (pageDragActive) dragCurrentSpec else incomingTurnSpec,
                                     pageDragController = pageDragController
@@ -1642,7 +1701,7 @@ fun SharedMobileEpubReaderScreen(
                             },
                             verticalScrollController = nativeVerticalScrollController,
                             onOpenHighlightPaletteManager = { showHighlightPaletteManager = true },
-                            modifier = Modifier.fillMaxSize()
+                            modifier = Modifier.fillMaxSize().testTag(SharedMobileEpubAxTags.CONTENT)
                         )
                         } else {
                         val chapterChunks = remember(loadedBook.id, currentChapterIndex) {
@@ -1824,7 +1883,7 @@ fun SharedMobileEpubReaderScreen(
                                     }
                                 }
                             },
-                            modifier = Modifier.fillMaxSize()
+                            modifier = Modifier.fillMaxSize().testTag(SharedMobileEpubAxTags.CONTENT)
                         )
                         }
                     }

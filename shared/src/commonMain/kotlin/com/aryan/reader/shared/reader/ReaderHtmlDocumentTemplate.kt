@@ -16,7 +16,8 @@ internal fun document(
     readerAiFeaturesEnabled: Boolean,
     cloudTtsEnabled: Boolean,
     externalLookupEnabled: Boolean,
-    textureDataUri: String?
+    textureDataUri: String?,
+    documentLanguage: String = "en"
 ): String {
     val appearance = settings.toDocumentAppearanceCss(textureDataUri)
     val align = settings.readerTextAlignCss()
@@ -61,7 +62,7 @@ internal fun document(
     val script = readerDocumentScript(pageAnchorJson).replace("\n", "\n          ")
     return """
         <!doctype html>
-        <html class="${if (settings.readingMode == ReaderReadingMode.PAGINATED) "reader-paginated-root" else "reader-vertical-root"}">
+        <html lang="${documentLanguage.escapeHtml()}" class="${if (settings.readingMode == ReaderReadingMode.PAGINATED) "reader-paginated-root" else "reader-vertical-root"}">
         <head>
           <meta charset="utf-8">
           <meta name="viewport" content="width=device-width, initial-scale=1">

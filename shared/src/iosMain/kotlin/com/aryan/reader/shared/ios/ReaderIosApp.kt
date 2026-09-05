@@ -255,6 +255,10 @@ import com.aryan.reader.shared.ui.SharedMobileReaderTtsSettingsSheet
 import com.aryan.reader.shared.ui.SharedMobilePdfReaderHost
 import com.aryan.reader.shared.ui.SharedMobilePdfReflowUiState
 import com.aryan.reader.shared.ui.SharedPdfTtsOverlaySize
+import com.aryan.reader.shared.ui.SharedReaderTtsMiniBar
+import com.aryan.reader.shared.SharedReaderTtsMiniBarState
+import com.aryan.reader.shared.shouldShowSharedReaderTtsMiniBar
+import com.aryan.reader.shared.sharedReaderTtsMiniBarBottomPaddingDp
 import com.aryan.reader.shared.ui.SharedMobileDictionarySettingsSheet
 import com.aryan.reader.shared.ui.SharedAiSettingsScreen
 import com.aryan.reader.shared.ui.SharedAiSettingsStrings
@@ -286,6 +290,7 @@ import com.aryan.reader.shared.ui.readerLiteral
 import com.aryan.reader.shared.ui.readerString
 import com.aryan.reader.shared.ui.openSharedMobileExternalUrl
 import com.aryan.reader.shared.ui.rememberSharedMobileEpubLocalTts
+import com.aryan.reader.shared.ui.SharedMobileEpubLocalTtsState
 import com.aryan.reader.shared.ui.withoutIosFolderFilter
 import com.aryan.reader.shared.reader.ReaderScreenOrientationMode
 import com.aryan.reader.shared.reader.sharedEpubOpenTrace
@@ -3030,6 +3035,11 @@ private fun ReaderIosApp(
     var lookupSearchService by remember { mutableStateOf(initialLookupServices.third) }
     var pdfReflowProgress by remember { mutableStateOf<Float?>(null) }
     var activeReaderBook by remember { mutableStateOf(initialReaderBook) }
+    // App-level read-aloud engine + mini-bar state (Android `MainViewModel.ttsController`
+    // + `ReaderTtsMiniBar` parity). Hoisted above the reader branch so speech
+    // continues when the user leaves the reader; the global bar reopens the book.
+    val readerTtsEngine = rememberSharedMobileEpubLocalTts()
+    var readerTtsMiniBarState by remember { mutableStateOf<SharedReaderTtsMiniBarState?>(null) }
     var pdfSplitPickerTarget by remember { mutableStateOf<IosPdfSplitPickerTarget?>(null) }
     LaunchedEffect(state.rawLibraryBooks, pendingPdfSplitWorkspaceRestore) {
         val pending = pendingPdfSplitWorkspaceRestore ?: return@LaunchedEffect
@@ -4976,6 +4986,8 @@ private fun ReaderIosApp(
                             onOpenAiHub = {},
                             summaryCache = remember { SharedSummaryCache() },
                             aiCredits = state.credits,
+                            externalLocalTts = readerTtsEngine,
+                            onReaderTtsSessionChange = { readerTtsMiniBarState = it },
                             readerBrightness = readerBrightness,
                             readerCustomBrightness = readerCustomBrightness,
                             readerBrightnessSupported = true,
@@ -6404,6 +6416,40 @@ private fun ReaderIosApp(
                 ) {
                     MainScaffoldContent()
                 }
+            }
+        }
+        // Global read-aloud mini bar (Android `AppNavigation` overlay parity).
+        // Shown when the user leaves the reader with an active local-TTS
+        // session; tap returns to the book. Hidden on reader routes.
+        val showReaderTtsMiniBar = shouldShowSharedReaderTtsMiniBar(
+            readerTtsMiniBarState,
+            isOnReaderRoute = activeReaderBook != null
+        )
+        if (showReaderTtsMiniBar && readerTtsMiniBarState != null) {
+            val miniBarState = readerTtsMiniBarState!!
+            val isOnMainRoute = activeReaderBook == null &&
+                (selectedPage == SharedMobileMainDestination.HOME ||
+                    selectedPage == SharedMobileMainDestination.LIBRARY ||
+                    selectedPage == SharedMobileMainDestination.UNIFIED_LIBRARY)
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.BottomCenter
+            ) {
+                SharedReaderTtsMiniBar(
+                    state = miniBarState,
+                    onOpenReader = {
+                        state.rawLibraryBooks.firstOrNull { it.id == miniBarState.bookId }?.let { openLibraryBook(it) }
+                    },
+                    onTogglePlayPause = {
+                        if (readerTtsEngine.state == SharedMobileEpubLocalTtsState.SPEAKING) readerTtsEngine.pause()
+                        else readerTtsEngine.resume()
+                    },
+                    onPreviousChunk = { readerTtsEngine.skipPrevious() },
+                    onNextChunk = { readerTtsEngine.skipNext() },
+                    modifier = Modifier.fillMaxWidth()
+                        .padding(horizontal = 16.dp)
+                        .padding(bottom = sharedReaderTtsMiniBarBottomPaddingDp(isOnMainRoute).dp)
+                )
             }
         }
     }

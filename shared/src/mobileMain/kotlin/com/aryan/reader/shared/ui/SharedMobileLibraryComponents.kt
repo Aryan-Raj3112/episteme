@@ -1218,18 +1218,20 @@ internal fun SharedMobileLibraryListItem(
                     )
                 }
                 Spacer(Modifier.weight(1f))
-                book.progressPercentage?.takeIf { it > 0f }?.coerceIn(0f, 100f)?.let { progress ->
-                    LinearProgressIndicator(
-                        progress = { progress / 100f },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    Spacer(Modifier.height(3.dp))
-                    Text(
-                        "${progress.toInt()}%",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+                // Android parity (LibraryScreen ReadingProgressSection): classic list
+                // always shows the progress bar + pill, even at 0%. Home grid
+                // keeps the >0f hide rule via the cover badge.
+                val listProgress = (book.progressPercentage ?: 0f).coerceIn(0f, 100f)
+                LinearProgressIndicator(
+                    progress = { listProgress / 100f },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    "${listProgress.toInt()}%",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
             }
             if (downloading) {
