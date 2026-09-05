@@ -73,6 +73,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.isSpecified
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalContext
@@ -94,6 +95,7 @@ import com.aryan.reader.cardTitle
 import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.pdf.data.VirtualPage
 import com.aryan.reader.shared.filterReaderTocEntries
+import com.aryan.reader.shared.ReaderTheme
 import com.aryan.reader.shared.pdf.LegacyPdfPageBookmark
 import com.aryan.reader.shared.pdf.LegacyPdfPageBookmarkCodec
 import com.aryan.reader.shared.pdf.PdfReverseColorMode
@@ -106,6 +108,70 @@ import org.json.JSONObject
 internal typealias PdfBookmark = LegacyPdfPageBookmark
 
 internal data class TocEntry(val title: String, val pageIndex: Int, val nestLevel: Int)
+
+/**
+ * Pages-tab tiles render page paper, not app chrome: the background and filter
+ * must follow the selected PDF theme exactly like [PdfPageComposable], never the
+ * phone's dark mode. The reverse mode is only meaningful for the reverse theme.
+ */
+internal fun pdfPagesEffectiveReverseMode(
+    themeId: String,
+    reverseColorMode: PdfReverseColorMode,
+): PdfReverseColorMode {
+    return if (themeId == "reverse") reverseColorMode else PdfReverseColorMode.RGB
+}
+
+internal fun pdfPagesTileBackground(theme: ReaderTheme): Color {
+    return when (theme.id) {
+        "no_theme", "system" -> Color.White
+        "reverse" -> Color.Black
+        else -> if (theme.backgroundColor.isSpecified) theme.backgroundColor else Color.White
+    }
+}
+
+internal fun pdfPagesTileColorFilter(
+    theme: ReaderTheme,
+    effectiveReverseColorMode: PdfReverseColorMode,
+): ColorFilter? {
+    return when (theme.id) {
+        "no_theme", "system" -> null
+        "reverse" if (effectiveReverseColorMode == PdfReverseColorMode.RGB) -> {
+            ColorFilter.colorMatrix(
+                ColorMatrix(
+                    floatArrayOf(
+                        -1f, 0f, 0f, 0f, 255f,
+                        0f, -1f, 0f, 0f, 255f,
+                        0f, 0f, -1f, 0f, 255f,
+                        0f, 0f, 0f, 1f, 0f,
+                    )
+                )
+            )
+        }
+        "reverse" -> null
+        else -> {
+            if (!theme.backgroundColor.isSpecified || !theme.textColor.isSpecified) return null
+            val bgR = theme.backgroundColor.red * 255f
+            val bgG = theme.backgroundColor.green * 255f
+            val bgB = theme.backgroundColor.blue * 255f
+            val fgR = theme.textColor.red * 255f
+            val fgG = theme.textColor.green * 255f
+            val fgB = theme.textColor.blue * 255f
+            val dr = (bgR - fgR) / 255f
+            val dg = (bgG - fgG) / 255f
+            val db = (bgB - fgB) / 255f
+            ColorFilter.colorMatrix(
+                ColorMatrix(
+                    floatArrayOf(
+                        dr * 0.2126f, dr * 0.7152f, dr * 0.0722f, 0f, fgR,
+                        dg * 0.2126f, dg * 0.7152f, dg * 0.0722f, 0f, fgG,
+                        db * 0.2126f, db * 0.7152f, db * 0.0722f, 0f, fgB,
+                        0f, 0f, 0f, 1f, 0f,
+                    )
+                )
+            )
+        }
+    }
+}
 
 private val PdfDrawerSection.titleResId: Int
     get() = when (this) {
@@ -460,6 +526,8 @@ internal fun PdfNavigationDrawerContent(
     isTopTabStripVisible: Boolean = true,
     reverseColorMode: PdfReverseColorMode = PdfReverseColorMode.RGB,
     excludeImages: Boolean = false,
+    activeTheme: ReaderTheme = ReaderTheme("no_theme", "No Theme", Color.Unspecified, Color.Unspecified, false),
+    activeTextureAlpha: Float = 0f,
     customHighlightColors: Map<PdfHighlightColor, Color>,
     onPageSelected: (Int) -> Unit,
     onDisplayPageSelected: ((Int) -> Unit)? = null,
@@ -842,6 +910,26 @@ internal fun PdfNavigationDrawerContent(
                     val pageRows = remember(totalPages) { (0 until totalPages).chunked(3) }
 
                     val currentRowIndex = currentPage / 3
+                    // Mirror PdfPageComposable: reverse mode is only meaningful for
+                    // the reverse theme; any other theme must render original pages.
+                    val effectiveReverseMode = pdfPagesEffectiveReverseMode(activeTheme.id, reverseColorMode)
+                    val pagesTileBackground = remember(activeTheme) {
+                        pdfPagesTileBackground(activeTheme)
+                    }
+                    val pagesTileColorFilter = remember(activeTheme, effectiveReverseMode) {
+                        pdfPagesTileColorFilter(activeTheme, effectiveReverseMode)
+                    }
+                    val context = LocalContext.current
+                    val pagesTextureBitmap = remember(activeTheme.textureId) {
+                        com.aryan.reader.loadReaderTextureBitmap(context, activeTheme.textureId)
+                    }
+                    val pagesTextureBlendMode = remember(activeTheme.isDark, activeTheme.id) {
+                        if (activeTheme.isDark || activeTheme.id == "reverse") {
+                            androidx.compose.ui.graphics.BlendMode.Screen
+                        } else {
+                            androidx.compose.ui.graphics.BlendMode.Multiply
+                        }
+                    }
 
                     Column(modifier = Modifier.fillMaxSize()) {
                         Row(
@@ -883,7 +971,7 @@ internal fun PdfNavigationDrawerContent(
                                                     .weight(1f)
                                                     .aspectRatio(0.707f)
                                                     .background(
-                                                        MaterialTheme.colorScheme.surfaceVariant,
+                                                        pagesTileBackground,
                                                         RoundedCornerShape(4.dp)
                                                     )
                                                     .border(
@@ -891,6 +979,7 @@ internal fun PdfNavigationDrawerContent(
                                                         color = if (currentPage == pageIdx) MaterialTheme.colorScheme.primary else Color.Black.copy(alpha = 0.1f),
                                                         shape = RoundedCornerShape(4.dp)
                                                     )
+                                                    .clip(RoundedCornerShape(4.dp))
                                                     .clickable {
                                                         onCloseDrawer()
                                                         (onDisplayPageSelected ?: onPageSelected)(pageIdx)
@@ -940,25 +1029,12 @@ internal fun PdfNavigationDrawerContent(
                                                     }
                                                 }
 
-                                                val rgbColorFilter = remember(reverseColorMode) {
-                                                    if (reverseColorMode == PdfReverseColorMode.RGB) {
-                                                        ColorFilter.colorMatrix(
-                                                            ColorMatrix(
-                                                                floatArrayOf(
-                                                                    -1f, 0f, 0f, 0f, 255f,
-                                                                    0f, -1f, 0f, 0f, 255f,
-                                                                    0f, 0f, -1f, 0f, 255f,
-                                                                    0f, 0f, 0f, 1f, 0f,
-                                                                )
-                                                            )
-                                                        )
-                                                    } else null
-                                                }
+                                                val rgbColorFilter = pagesTileColorFilter
                                                 val forceThumbnailBitmapTransform =
-                                                    reverseColorMode == PdfReverseColorMode.RGB && excludeImages && imageRects.isNotEmpty()
+                                                    effectiveReverseMode == PdfReverseColorMode.RGB && excludeImages && imageRects.isNotEmpty()
                                                 val renderedThumb = rememberPdfReverseBitmap(
                                                     bitmap = thumb,
-                                                    mode = reverseColorMode,
+                                                    mode = effectiveReverseMode,
                                                     protectedRects = if (excludeImages) imageRects else emptyList(),
                                                     targetWidth = thumb?.width ?: 0,
                                                     targetHeight = thumb?.height ?: 0,
@@ -969,8 +1045,26 @@ internal fun PdfNavigationDrawerContent(
                                                         bitmap = renderedThumb.asImageBitmap(),
                                                         contentDescription = stringResource(R.string.pdf_page_short, pageIdx + 1),
                                                         modifier = Modifier.fillMaxSize(),
+                                                        contentScale = androidx.compose.ui.layout.ContentScale.Fit,
                                                         colorFilter = if (forceThumbnailBitmapTransform) null else rgbColorFilter,
                                                     )
+                                                    if (pagesTextureBitmap != null && activeTextureAlpha > 0f) {
+                                                        androidx.compose.foundation.Canvas(
+                                                            modifier = Modifier.fillMaxSize()
+                                                        ) {
+                                                            drawRect(
+                                                                brush = androidx.compose.ui.graphics.ShaderBrush(
+                                                                    androidx.compose.ui.graphics.ImageShader(
+                                                                        pagesTextureBitmap,
+                                                                        androidx.compose.ui.graphics.TileMode.Repeated,
+                                                                        androidx.compose.ui.graphics.TileMode.Repeated
+                                                                    )
+                                                                ),
+                                                                alpha = activeTextureAlpha.coerceIn(0f, 1f),
+                                                                blendMode = pagesTextureBlendMode
+                                                            )
+                                                        }
+                                                    }
                                                 }
 
                                                 Text(

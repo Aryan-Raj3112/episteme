@@ -4462,6 +4462,8 @@ private fun PdfViewerScreenOverlays(surfaceState: PdfViewerSurfaceState) {
                     isTopTabStripVisible = showTopTabStrip,
                     reverseColorMode = if (activeTheme.id == "reverse") reverseColorMode else PdfReverseColorMode.RGB,
                     excludeImages = excludeImages,
+                    activeTheme = activeTheme,
+                    activeTextureAlpha = 1f - globalTextureTransparency,
                     customHighlightColors = customHighlightColors,
                     onPageSelected = { targetPage ->
                         val targetDisplayPage = virtualPages.indexOfFirst {

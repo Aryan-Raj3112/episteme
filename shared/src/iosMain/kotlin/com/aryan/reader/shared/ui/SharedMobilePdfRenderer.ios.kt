@@ -562,7 +562,7 @@ private object IosPdfiumRenderer {
                             protectedRects = imageRects,
                             targetWidth = bitmapWidth,
                             targetHeight = bitmapHeight,
-                            forceRgbTransform = true,
+                            forceRgbTransform = false,
                         )
                         val image = Image.makeRaster(
                             ImageInfo(
@@ -574,7 +574,17 @@ private object IosPdfiumRenderer {
                             bytes,
                             stride
                         ).toComposeImageBitmap()
-                        val rendered = SharedMobilePdfPageThumbnail(bitmap = image, aspectRatio = aspectRatio)
+                        // Match full-page renders: RGB is applied via Compose color
+                        // filter unless image colors are preserved (protected rects
+                        // bake the negative). Nonlinear modes are always baked.
+                        val rasterizedMode = reverseColorMode.takeIf {
+                            it != PdfReverseColorMode.RGB || imageRects.isNotEmpty()
+                        }
+                        val rendered = SharedMobilePdfPageThumbnail(
+                            bitmap = image,
+                            aspectRatio = aspectRatio,
+                            rasterizedReverseColorMode = rasterizedMode,
+                        )
                         IosPdfPerformanceMetrics.recordRender(
                             widthPx = bitmapWidth,
                             heightPx = bitmapHeight,

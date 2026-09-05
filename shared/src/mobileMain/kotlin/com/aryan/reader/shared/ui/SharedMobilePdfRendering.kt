@@ -222,6 +222,21 @@ import org.jetbrains.compose.resources.imageResource
 import kotlin.math.roundToInt
 import kotlin.time.TimeSource
 
+internal fun sharedMobilePdfThumbnailColorFilter(
+    theme: ReaderTheme,
+    reverseColorMode: PdfReverseColorMode = PdfReverseColorMode.RGB,
+    rasterizedReverseColorMode: PdfReverseColorMode? = null,
+): ColorFilter? {
+    // Mirrors full-page rendering: a baked Okular transform (non-RGB reverse, or
+    // RGB with preserved image rects) must not get a second Compose filter.
+    if (rasterizedReverseColorMode != null) return null
+    return sharedMobilePdfColorFilter(theme, reverseColorMode)
+}
+
+internal fun sharedMobilePdfThumbnailBlendMode(theme: ReaderTheme): BlendMode {
+    return if (theme.isDark || theme.id == "reverse") BlendMode.Screen else BlendMode.Multiply
+}
+
 @Composable
 internal fun sharedMobilePdfViewerBackground(theme: ReaderTheme, displayMode: PdfDisplayMode): Color {
     return when (theme.id) {

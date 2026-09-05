@@ -147,7 +147,11 @@ import androidx.compose.foundation.focusable
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageShader
+import androidx.compose.ui.graphics.ShaderBrush
+import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.key.KeyEventType
@@ -160,6 +164,7 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInParent
@@ -1603,6 +1608,8 @@ fun SharedMobilePdfReaderHost(
             SharedMobilePdfReaderDrawer(
                 book = book,
                 state = readerState,
+                activeTheme = activeTheme,
+                textureAlpha = 1f - globalTextureTransparency,
                 tableOfContents = tableOfContents,
                 onGoToPage = { page ->
                     navigateToPage(sharedPdfDisplayIndexFor(virtualLayout, page), reason = PdfNavigationReason.TABLE_OF_CONTENTS)
@@ -4212,6 +4219,8 @@ private fun SharedMobilePdfBottomToolButton(
 private fun SharedMobilePdfReaderDrawer(
     book: BookItem,
     state: SharedPdfReaderState,
+    activeTheme: ReaderTheme,
+    textureAlpha: Float = 0f,
     tableOfContents: List<PdfTocEntry>,
     onGoToPage: (Int) -> Unit,
     onEditNote: (SharedPdfAnnotation) -> Unit,
@@ -4266,6 +4275,8 @@ private fun SharedMobilePdfReaderDrawer(
                     PdfDrawerSection.PAGES -> SharedMobilePdfPagesDrawerPage(
                         book = book,
                         state = state,
+                        activeTheme = activeTheme,
+                        textureAlpha = textureAlpha,
                         pdfPassword = pdfPassword,
                         onGoToPage = onGoToDisplayPage,
                         modifier = Modifier.fillMaxSize()
@@ -4372,6 +4383,8 @@ private fun SharedMobilePdfTabsDrawerPage(
 private fun SharedMobilePdfPagesDrawerPage(
     book: BookItem,
     state: SharedPdfReaderState,
+    activeTheme: ReaderTheme,
+    textureAlpha: Float = 0f,
     pdfPassword: String?,
     onGoToPage: (Int) -> Unit,
     modifier: Modifier = Modifier
@@ -4381,6 +4394,14 @@ private fun SharedMobilePdfPagesDrawerPage(
     val currentRowIndex = sharedPdfThumbnailRowFor(state.pageIndex)
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
+    val pageBackground = sharedMobilePdfPageBackground(activeTheme)
+    val effectiveReverseColorMode = if (state.themeId == "reverse") {
+        state.reverseColorMode
+    } else {
+        PdfReverseColorMode.RGB
+    }
+    val textureBitmap = sharedMobilePdfTextureBitmap(activeTheme)
+    val textureBlendMode = sharedMobilePdfThumbnailBlendMode(activeTheme)
     Column(modifier.fillMaxSize()) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
@@ -4422,7 +4443,7 @@ private fun SharedMobilePdfPagesDrawerPage(
                                     .weight(1f)
                                     .aspectRatio(0.707f)
                                     .background(
-                                        MaterialTheme.colorScheme.surfaceVariant,
+                                        pageBackground,
                                         RoundedCornerShape(4.dp)
                                     )
                                     .border(
@@ -4430,6 +4451,7 @@ private fun SharedMobilePdfPagesDrawerPage(
                                         color = if (isCurrent) MaterialTheme.colorScheme.primary else Color.Black.copy(alpha = 0.1f),
                                         shape = RoundedCornerShape(4.dp)
                                     )
+                                    .clip(RoundedCornerShape(4.dp))
                                     .clickable { onGoToPage(pageIdx) },
                                 contentAlignment = Alignment.Center
                             ) {
@@ -4438,19 +4460,36 @@ private fun SharedMobilePdfPagesDrawerPage(
                                         book = book,
                                         pageIndex = pdfPage,
                                         password = pdfPassword,
-                                        reverseColorMode = if (state.themeId == "reverse") {
-                                            state.reverseColorMode
-                                        } else {
-                                            PdfReverseColorMode.RGB
-                                        },
+                                        reverseColorMode = effectiveReverseColorMode,
                                         preserveImageColors = state.themeId == "reverse" && state.preserveImageColors,
                                     )
                                     thumbnail.bitmap?.let { bitmap ->
                                         Image(
                                             bitmap = bitmap,
                                             contentDescription = readerString("desktop_pdf_page_content_desc", "PDF page %1\$d", pageIdx + 1),
+                                            contentScale = ContentScale.Fit,
+                                            colorFilter = sharedMobilePdfThumbnailColorFilter(
+                                                activeTheme,
+                                                effectiveReverseColorMode,
+                                                thumbnail.rasterizedReverseColorMode
+                                            ),
                                             modifier = Modifier.fillMaxSize()
                                         )
+                                        if (textureBitmap != null && textureAlpha > 0f) {
+                                            Canvas(modifier = Modifier.fillMaxSize()) {
+                                                drawRect(
+                                                    brush = ShaderBrush(
+                                                        ImageShader(
+                                                            textureBitmap,
+                                                            TileMode.Repeated,
+                                                            TileMode.Repeated
+                                                        )
+                                                    ),
+                                                    alpha = textureAlpha.coerceIn(0f, 1f),
+                                                    blendMode = textureBlendMode
+                                                )
+                                            }
+                                        }
                                     }
                                 }
                                 Text(

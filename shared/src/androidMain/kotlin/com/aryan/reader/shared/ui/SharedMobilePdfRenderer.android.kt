@@ -324,12 +324,16 @@ private object AndroidSharedPdfiumRenderer {
                         val bitmap = Bitmap.createBitmap(targetWidth, targetHeight, Bitmap.Config.ARGB_8888)
                         bitmap.eraseColor(android.graphics.Color.WHITE)
                         page.renderPageBitmap(bitmap, 0, 0, targetWidth, targetHeight, true)
-                        bitmap.applyPdfReverseColorMode(
+                        // Match full-page renders: RGB is applied via Compose color
+                        // filter, only nonlinear Okular modes are baked. Forcing
+                        // the RGB negative here made no_theme thumbnails appear
+                        // reversed.
+                        val rasterizedMode = bitmap.applyPdfReverseColorMode(
                             mode = reverseColorMode,
                             preserveImageColors = preserveImageColors,
-                            forceRgbTransform = true,
+                            forceRgbTransform = false,
                         )
-                        SharedMobilePdfPageThumbnail(bitmap.asImageBitmap(), aspect)
+                        SharedMobilePdfPageThumbnail(bitmap.asImageBitmap(), aspect, rasterizedMode)
                     }
                 }
             }
