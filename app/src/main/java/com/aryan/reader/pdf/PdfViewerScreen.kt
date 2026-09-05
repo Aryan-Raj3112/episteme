@@ -317,6 +317,7 @@ import com.aryan.reader.shared.reader.MobilePdfReaderBackAction
 import com.aryan.reader.shared.reader.MobilePdfReaderBackState
 import com.aryan.reader.shared.reader.selectMobilePdfReaderBackAction
 import com.aryan.reader.shared.reader.mobilePdfSystemBarsVisibility
+import com.aryan.reader.shared.reader.shouldPadPdfVerticalContentBelowStatusBar
 import com.aryan.reader.shared.reader.MobileReaderSystemBarsVisibility
 import com.aryan.reader.shared.reader.MobilePdfDocumentPresentation
 import com.aryan.reader.shared.reader.selectMobilePdfDocumentPresentation
@@ -7226,6 +7227,18 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                     DisplayMode.VERTICAL_SCROLL -> {
                         val headerHeight = verticalHeaderHeight
                         val footerHeight = verticalFooterHeight
+                        // When the status bar is visible (Always Show), vertical content
+                        // starts below it so the first page never draws underneath the
+                        // status bar. Mirrors shared shouldPadPdfVerticalContentBelowStatusBar.
+                        val verticalShowBars by surfaceState.showBars
+                        val verticalSystemUiMode by surfaceState.systemUiMode
+                        val verticalStatusBarHeightDp = surfaceState.statusBarHeightDp.value
+                        val padVerticalBelowStatusBar = shouldPadPdfVerticalContentBelowStatusBar(
+                            mode = verticalSystemUiMode,
+                            standardReaderChromeVisible = verticalShowBars && !isEditMode,
+                            isVerticalMode = true,
+                            isSplitPane = surfaceState.isSplitPane,
+                        )
 
                         val currentSelectedTool by rememberUpdatedState(selectedTool)
                         val currentStrokeColorState by rememberUpdatedState(
@@ -7330,6 +7343,13 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
 
                         Box(modifier = Modifier
                             .fillMaxSize()
+                            .then(
+                                if (padVerticalBelowStatusBar) {
+                                    Modifier.padding(top = verticalStatusBarHeightDp)
+                                } else {
+                                    Modifier
+                                }
+                            )
                             .clip(RectangleShape)) {
                             val docHolder = remember(activeDocumentRenderKey, pdfDocument) {
                                 StableHolder(pdfDocument!!)

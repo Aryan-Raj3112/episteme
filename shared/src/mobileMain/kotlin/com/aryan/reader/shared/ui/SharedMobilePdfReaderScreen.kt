@@ -265,6 +265,7 @@ import com.aryan.reader.shared.pdf.loadSharedPdfCustomFontFamilies
 import com.aryan.reader.shared.reader.ReaderPageSpreadMode
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.mobilePdfSystemBarsVisibility
+import com.aryan.reader.shared.reader.shouldPadPdfVerticalContentBelowStatusBar
 import com.aryan.reader.shared.reader.captureCurrentPdfHistoryPage
 import com.aryan.reader.shared.reader.capturePdfJumpHistoryOrigin
 import com.aryan.reader.shared.SystemUiMode
@@ -951,6 +952,18 @@ fun SharedMobilePdfReaderHost(
         pdfTts.state == SharedMobileEpubLocalTtsState.SPEAKING || pendingTtsStart != null ||
             cloudTtsState.isLoading || cloudTtsState.isPlaying || cloudTtsState.isPaused
     val pdfSliderBottomPadding = pdfBottomChromePadding + if (isJumpHistoryVisible) 40.dp else 0.dp
+    // When the status bar is visible, vertical content is anchored below it so
+    // the first page never draws underneath the status bar. This mirrors the
+    // EPUB reader's safeDrawing top inset and the Android benchmark's overlay
+    // chrome (top bar pads the status bar while content stays edge-to-edge).
+    // Split panes already sit below the workspace toolbar, so they never pad.
+    // Pagination centers pages and is unchanged.
+    val pdfVerticalContentBelowStatusBar = shouldPadPdfVerticalContentBelowStatusBar(
+        mode = systemUiMode.toReaderSystemUiMode(),
+        standardReaderChromeVisible = showChrome,
+        isVerticalMode = readerState.displayMode == PdfDisplayMode.VERTICAL_SCROLL,
+        isSplitPane = isSplitPane,
+    )
     val latestSystemUiAppearanceChange = rememberUpdatedState(onSystemUiAppearanceChange)
     val latestSystemUiRelease = rememberUpdatedState(onSystemUiRelease)
     LaunchedEffect(readerSessionKey, hideSystemUi, systemBarColor, edgeToEdgeSystemUi, ownsSystemUi) {
@@ -1973,7 +1986,13 @@ fun SharedMobilePdfReaderHost(
                         onToggleChrome = {
                             if (!(autoScrollMusicianMode && autoScrollModeActive)) showChrome = !showChrome
                         },
-                        modifier = Modifier.fillMaxSize()
+                        modifier = Modifier.fillMaxSize().then(
+                            if (pdfVerticalContentBelowStatusBar) {
+                                Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top))
+                            } else {
+                                Modifier
+                            }
+                        )
                     )
                 } else {
                     SharedMobilePdfPaginatedPages(

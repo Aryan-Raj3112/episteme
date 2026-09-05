@@ -34,4 +34,23 @@ class MobileReaderSystemUiPolicyTest {
         assertEquals(MobilePdfDocumentPresentation.EMPTY, selectMobilePdfDocumentPresentation(false, false, true, 0))
         assertEquals(MobilePdfDocumentPresentation.EMPTY, selectMobilePdfDocumentPresentation(false, false, false, 2))
     }
+
+    @Test
+    fun pdfVerticalAlwaysShowPadsBelowStatusBar() {
+        assertEquals(true, shouldPadPdfVerticalContentBelowStatusBar(SystemUiMode.DEFAULT, false, true, false))
+        assertEquals(true, shouldPadPdfVerticalContentBelowStatusBar(SystemUiMode.DEFAULT, true, true, false))
+    }
+
+    @Test
+    fun pdfVerticalSyncPadsOnlyWhenChromeVisible() {
+        assertEquals(false, shouldPadPdfVerticalContentBelowStatusBar(SystemUiMode.SYNC, false, true, false))
+        assertEquals(true, shouldPadPdfVerticalContentBelowStatusBar(SystemUiMode.SYNC, true, true, false))
+    }
+
+    @Test
+    fun pdfVerticalNeverPadsWhenHiddenPaginationOrSplit() {
+        assertEquals(false, shouldPadPdfVerticalContentBelowStatusBar(SystemUiMode.HIDDEN, true, true, false))
+        assertEquals(false, shouldPadPdfVerticalContentBelowStatusBar(SystemUiMode.DEFAULT, true, false, false))
+        assertEquals(false, shouldPadPdfVerticalContentBelowStatusBar(SystemUiMode.DEFAULT, true, true, true))
+    }
 }

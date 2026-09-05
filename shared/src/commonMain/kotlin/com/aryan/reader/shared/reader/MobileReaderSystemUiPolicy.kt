@@ -31,6 +31,24 @@ fun mobilePdfSystemBarsVisibility(
 }
 
 /**
+ * Whether vertical PDF content must start below the status bar.
+ *
+ * In vertical mode the first page is anchored to the viewport top, so when the
+ * status bar is visible the page would otherwise draw underneath it. Split
+ * panes already sit below the workspace toolbar (which pads the status bar),
+ * so they must not pad again. Pagination centers pages and is unchanged.
+ */
+fun shouldPadPdfVerticalContentBelowStatusBar(
+    mode: SystemUiMode,
+    standardReaderChromeVisible: Boolean,
+    isVerticalMode: Boolean,
+    isSplitPane: Boolean,
+): Boolean {
+    if (!isVerticalMode || isSplitPane) return false
+    return mobilePdfSystemBarsVisibility(mode, standardReaderChromeVisible).statusBarsVisible
+}
+
+/**
  * Per-bar chrome visibility. The reader used to hide its top and bottom bars
  * together; these flags let each bar be hidden independently (Visual Options
  * "Show top toolbar" / "Show bottom toolbar") while tap-to-toggle still
