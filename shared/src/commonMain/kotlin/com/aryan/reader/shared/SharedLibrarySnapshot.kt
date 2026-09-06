@@ -81,10 +81,13 @@ object SharedLibrarySnapshotJson {
         ignoreUnknownKeys = true
     }
 
-    fun decodeOrEmpty(rawJson: String): SharedLibrarySnapshot {
+    fun decodeOrEmpty(
+        rawJson: String,
+        pdfDefaults: ReaderSettings = DefaultPdfReaderSettings,
+    ): SharedLibrarySnapshot {
         val root = runCatching {
             json.parseToJsonElement(rawJson).jsonObject
-        }.getOrNull() ?: return SharedLibrarySnapshot()
+        }.getOrNull() ?: return SharedLibrarySnapshot(pdfReaderDefaultSettings = pdfDefaults)
 
         val schemaVersion = root.int("schemaVersion", 1)
         val openTabIds = root.stringArray("openTabIds")
@@ -154,8 +157,8 @@ object SharedLibrarySnapshotJson {
             readerDefaultSettings = readerDefaultSettings.migrateLegacyDefaultReadingMode(schemaVersion),
             pdfReaderDefaultSettings = root["pdfReaderDefaultSettings"]
                 ?.takeUnless { it is JsonNull }
-                ?.asReaderSettingsOrNull(DefaultPdfReaderSettings)
-                ?: DefaultPdfReaderSettings,
+                ?.asReaderSettingsOrNull(pdfDefaults)
+                ?: pdfDefaults,
             desktopReaderDefaultsVersion = root.int("desktopReaderDefaultsVersion", 0),
             readerToolbarPreferences = root["readerToolbarPreferences"]
                 ?.takeUnless { it is JsonNull }

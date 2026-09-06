@@ -722,6 +722,9 @@ internal fun SharedMobilePdfVerticalPages(
     var viewportSize by remember(book.id) { mutableStateOf(IntSize.Zero) }
     var musicianLeftHoldProgress by remember(book.id) { mutableStateOf(0f) }
     var musicianRightHoldProgress by remember(book.id) { mutableStateOf(0f) }
+    // Android parity (PdfPageComposable activeDraggingHandle): zoom, pan and
+    // list scroll are disabled while a text-selection handle drag is active.
+    var selectionDragActive by remember(book.id) { mutableStateOf(false) }
     LaunchedEffect(isListDragged) {
         if (isListDragged && autoScrollPlaying) onAutoScrollInteraction(300L)
     }
@@ -778,7 +781,7 @@ internal fun SharedMobilePdfVerticalPages(
         SharedMobilePdfZoomViewport(
             camera = zoomCamera,
             onCameraChanged = onZoomCameraChanged,
-            zoomEnabled = userScrollEnabled && state.selectedTool == PdfInkTool.NONE,
+            zoomEnabled = userScrollEnabled && state.selectedTool == PdfInkTool.NONE && !selectionDragActive,
             tapGesturesEnabled = state.selectedTool == PdfInkTool.NONE || state.selectedTool == PdfInkTool.TEXT || isStylusOnlyMode,
             maxScale = PDF_MAX_ZOOM_SCALE,
             verticalDocumentMode = true,
@@ -788,7 +791,7 @@ internal fun SharedMobilePdfVerticalPages(
             val zoomScale = zoomCamera.scale
             LazyColumn(
                 state = listState,
-                userScrollEnabled = userScrollEnabled && state.selectedTool == PdfInkTool.NONE,
+                userScrollEnabled = userScrollEnabled && state.selectedTool == PdfInkTool.NONE && !selectionDragActive,
                 modifier = Modifier.fillMaxSize().onSizeChanged { viewportSize = it },
                 contentPadding = PaddingValues(0.dp),
                 verticalArrangement = Arrangement.spacedBy(if (showPageGap) 8.dp else 0.dp)
@@ -863,6 +866,7 @@ internal fun SharedMobilePdfVerticalPages(
                         onFinishInkStroke = onFinishInkStroke,
                             showAllTextHighlights = showAllTextHighlights,
                             onAllTextHighlightsLoadingChange = onAllTextHighlightsLoadingChange,
+                            onSelectionDragActiveChange = { selectionDragActive = it },
                             eraserStrokeWidth = eraserStrokeWidth,
                             onInkStrokeStart = onInkStrokeStart,
                             onEraseAnnotations = onEraseAnnotations,
@@ -1043,6 +1047,8 @@ internal fun SharedMobilePdfPaginatedPages(
     var pagerWindowRect by remember(book.id) { mutableStateOf<Rect?>(null) }
     val pageSurfaceWindowRects = remember(book.id) { mutableStateMapOf<Int, Rect>() }
     var textDrag by remember(book.id) { mutableStateOf<SharedPdfTextDragState?>(null) }
+    // Android parity: zoom is disabled while a text-selection handle drag runs.
+    var paginatedSelectionDragActive by remember(book.id) { mutableStateOf(false) }
     val spreadStarts = remember(pageCount, useTwoPageSpread, firstPageStandaloneInSpread) {
         sharedMobilePdfSpreadStarts(pageCount, useTwoPageSpread, firstPageStandaloneInSpread)
     }
@@ -1245,7 +1251,7 @@ internal fun SharedMobilePdfPaginatedPages(
         SharedMobilePdfZoomViewport(
             camera = zoomCamera,
             onCameraChanged = onZoomCameraChanged,
-            zoomEnabled = userScrollEnabled && state.selectedTool == PdfInkTool.NONE,
+            zoomEnabled = userScrollEnabled && state.selectedTool == PdfInkTool.NONE && !paginatedSelectionDragActive,
             tapGesturesEnabled = state.selectedTool == PdfInkTool.NONE || state.selectedTool == PdfInkTool.TEXT || isStylusOnlyMode,
             maxScale = PDF_MAX_ZOOM_SCALE,
             onSingleTap = { offset ->
@@ -1384,6 +1390,7 @@ internal fun SharedMobilePdfPaginatedPages(
                                     onFinishInkStroke = onFinishInkStroke,
                                     showAllTextHighlights = showAllTextHighlights,
                                     onAllTextHighlightsLoadingChange = onAllTextHighlightsLoadingChange,
+                                    onSelectionDragActiveChange = { paginatedSelectionDragActive = it },
                                     eraserStrokeWidth = eraserStrokeWidth,
                                     onInkStrokeStart = onInkStrokeStart,
                                     onEraseAnnotations = onEraseAnnotations,
@@ -2134,6 +2141,7 @@ internal fun SharedMobilePdfPageSurface(
     onFinishInkStroke: (Int, Boolean) -> Unit,
     showAllTextHighlights: Boolean = false,
     onAllTextHighlightsLoadingChange: (Boolean) -> Unit = {},
+    onSelectionDragActiveChange: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier,
     eraserStrokeWidth: Float = SharedPdfAnnotationDefaults.configFor(PdfInkTool.ERASER).strokeWidth,
     onInkStrokeStart: (Int) -> Boolean = { false },
@@ -2583,6 +2591,7 @@ internal fun SharedMobilePdfPageSurface(
                 onReadAloud = { charIndex -> onReadAloud(pageIndex, charIndex) },
                 onAiDefine = onAiDefine,
                 onClipboardError = onClipboardError,
+                onSelectionDragActiveChange = onSelectionDragActiveChange,
                 modifier = Modifier.fillMaxSize()
             )
             if (showPageNumberOverlay) {

@@ -952,12 +952,11 @@ fun SharedMobilePdfReaderHost(
         pdfTts.state == SharedMobileEpubLocalTtsState.SPEAKING || pendingTtsStart != null ||
             cloudTtsState.isLoading || cloudTtsState.isPlaying || cloudTtsState.isPaused
     val pdfSliderBottomPadding = pdfBottomChromePadding + if (isJumpHistoryVisible) 40.dp else 0.dp
-    // When the status bar is visible, vertical content is anchored below it so
-    // the first page never draws underneath the status bar. This mirrors the
-    // EPUB reader's safeDrawing top inset and the Android benchmark's overlay
-    // chrome (top bar pads the status bar while content stays edge-to-edge).
-    // Split panes already sit below the workspace toolbar, so they never pad.
-    // Pagination centers pages and is unchanged.
+    // In Always Show mode vertical content is anchored below the status bar
+    // so the first page never draws underneath it. In Sync with Menus the
+    // content stays edge-to-edge under the status bar so showing the menu
+    // does not push the page down. Split panes already sit below the
+    // workspace toolbar, so they never pad. Pagination is unchanged.
     val pdfVerticalContentBelowStatusBar = shouldPadPdfVerticalContentBelowStatusBar(
         mode = systemUiMode.toReaderSystemUiMode(),
         standardReaderChromeVisible = showChrome,

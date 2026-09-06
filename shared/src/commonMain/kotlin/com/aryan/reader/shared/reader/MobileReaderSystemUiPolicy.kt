@@ -33,10 +33,12 @@ fun mobilePdfSystemBarsVisibility(
 /**
  * Whether vertical PDF content must start below the status bar.
  *
- * In vertical mode the first page is anchored to the viewport top, so when the
- * status bar is visible the page would otherwise draw underneath it. Split
- * panes already sit below the workspace toolbar (which pads the status bar),
- * so they must not pad again. Pagination centers pages and is unchanged.
+ * Only Always Show reserves space: its status bar never hides, so the first
+ * page is anchored below it. In Sync with Menus the content stays edge-to-edge
+ * under the status bar, so showing the menu with the status bar does not push
+ * the page down. Split panes already sit below the workspace toolbar (which
+ * pads the status bar), so they must not pad again. Pagination centers pages
+ * and is unchanged.
  */
 fun shouldPadPdfVerticalContentBelowStatusBar(
     mode: SystemUiMode,
@@ -45,7 +47,7 @@ fun shouldPadPdfVerticalContentBelowStatusBar(
     isSplitPane: Boolean,
 ): Boolean {
     if (!isVerticalMode || isSplitPane) return false
-    return mobilePdfSystemBarsVisibility(mode, standardReaderChromeVisible).statusBarsVisible
+    return mode == SystemUiMode.DEFAULT
 }
 
 /**

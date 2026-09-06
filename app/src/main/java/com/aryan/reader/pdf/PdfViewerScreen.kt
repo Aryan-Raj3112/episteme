@@ -7227,9 +7227,10 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                     DisplayMode.VERTICAL_SCROLL -> {
                         val headerHeight = verticalHeaderHeight
                         val footerHeight = verticalFooterHeight
-                        // When the status bar is visible (Always Show), vertical content
-                        // starts below it so the first page never draws underneath the
-                        // status bar. Mirrors shared shouldPadPdfVerticalContentBelowStatusBar.
+                        // In Always Show mode vertical content starts below the
+                        // status bar; in Sync with Menus it stays edge-to-edge
+                        // under it so the menu never pushes the page down.
+                        // Mirrors shared shouldPadPdfVerticalContentBelowStatusBar.
                         val verticalShowBars by surfaceState.showBars
                         val verticalSystemUiMode by surfaceState.systemUiMode
                         val verticalStatusBarHeightDp = surfaceState.statusBarHeightDp.value

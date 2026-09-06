@@ -6,6 +6,8 @@ import com.aryan.reader.shared.reader.ReaderBookmark
 import com.aryan.reader.shared.reader.ReaderPageSpreadMode
 import com.aryan.reader.shared.reader.ReaderReadingMode
 import com.aryan.reader.shared.reader.ReaderSettings
+import com.aryan.reader.shared.reader.DefaultIosPdfReaderSettings
+import com.aryan.reader.shared.reader.DefaultPdfReaderSettings
 import com.aryan.reader.shared.reader.SharedReaderTextAlign
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -422,5 +424,36 @@ class SharedLibrarySnapshotJsonTest {
         )
 
         assertFalse("\"UNKNOWN\"" in encoded)
+    }
+
+    @Test
+    fun `missing pdf defaults fall back to platform default`() {
+        val android = SharedLibrarySnapshotJson.decodeOrEmpty("""{"schemaVersion":31}""")
+
+        assertEquals(SystemUiMode.SYNC, android.pdfReaderDefaultSettings.systemUiMode)
+
+        val ios = SharedLibrarySnapshotJson.decodeOrEmpty(
+            """{"schemaVersion":31}""",
+            pdfDefaults = DefaultIosPdfReaderSettings,
+        )
+
+        assertEquals(SystemUiMode.DEFAULT, ios.pdfReaderDefaultSettings.systemUiMode)
+    }
+
+    @Test
+    fun `explicit pdf system ui choice survives platform default`() {
+        val raw = """{"schemaVersion":31,"pdfReaderDefaultSettings":{"themeId":"no_theme","systemUiMode":"SYNC"}}"""
+
+        assertEquals(
+            SystemUiMode.SYNC,
+            SharedLibrarySnapshotJson.decodeOrEmpty(
+                raw,
+                pdfDefaults = DefaultIosPdfReaderSettings,
+            ).pdfReaderDefaultSettings.systemUiMode,
+        )
+        assertEquals(
+            DefaultPdfReaderSettings,
+            SharedLibrarySnapshotJson.decodeOrEmpty(raw).pdfReaderDefaultSettings,
+        )
     }
 }

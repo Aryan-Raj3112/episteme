@@ -42,9 +42,9 @@ class MobileReaderSystemUiPolicyTest {
     }
 
     @Test
-    fun pdfVerticalSyncPadsOnlyWhenChromeVisible() {
+    fun pdfVerticalSyncNeverPadsBelowStatusBar() {
         assertEquals(false, shouldPadPdfVerticalContentBelowStatusBar(SystemUiMode.SYNC, false, true, false))
-        assertEquals(true, shouldPadPdfVerticalContentBelowStatusBar(SystemUiMode.SYNC, true, true, false))
+        assertEquals(false, shouldPadPdfVerticalContentBelowStatusBar(SystemUiMode.SYNC, true, true, false))
     }
 
     @Test
