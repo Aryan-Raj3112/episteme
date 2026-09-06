@@ -1803,6 +1803,8 @@ private const val IosPdfToolbarHiddenDefaultsKey = "reader_ios_pdf_toolbar_hidde
 private const val IosPdfToolbarOrderDefaultsKey = "reader_ios_pdf_toolbar_order_v1"
 private const val IosPdfToolbarBottomDefaultsKey = "reader_ios_pdf_toolbar_bottom_v1"
 private const val IosPdfTopTabStripVisibleDefaultsKey = "reader_ios_pdf_top_tab_strip_visible_v1"
+private const val IosPdfTopToolbarVisibleDefaultsKey = "reader_ios_pdf_top_toolbar_visible_v1"
+private const val IosPdfBottomToolbarVisibleDefaultsKey = "reader_ios_pdf_bottom_toolbar_visible_v1"
 private const val IosReaderAutoScrollSpeedDefaultsKey = "reader_ios_auto_scroll_speed_v1"
 private const val IosReaderAutoScrollMinDefaultsKey = "reader_ios_auto_scroll_min_v1"
 private const val IosReaderAutoScrollMaxDefaultsKey = "reader_ios_auto_scroll_max_v1"
@@ -2177,6 +2179,21 @@ private fun loadIosPdfTopTabStripVisible(): Boolean {
 
 private fun persistIosPdfTopTabStripVisible(visible: Boolean) {
     NSUserDefaults.standardUserDefaults.setBool(visible, forKey = IosPdfTopTabStripVisibleDefaultsKey)
+}
+
+// Android benchmark (PdfViewerScreen.kt:439-440, PdfPreferences
+// PDF_TOP/BOTTOM_TOOLBAR_VISIBLE_KEY, default true).
+private fun loadIosPdfToolbarVisible(key: String): Boolean {
+    val defaults = NSUserDefaults.standardUserDefaults
+    return if (defaults.objectForKey(key) == null) {
+        true
+    } else {
+        defaults.boolForKey(key)
+    }
+}
+
+private fun persistIosPdfToolbarVisible(key: String, visible: Boolean) {
+    NSUserDefaults.standardUserDefaults.setBool(visible, forKey = key)
 }
 
 private fun loadPersistedImportedFiles(): List<IosImportedFile> {
@@ -3084,6 +3101,13 @@ private fun ReaderIosApp(
     var pdfToolbarPreferences by remember { mutableStateOf(loadIosPdfToolbarPreferences()) }
     var pdfOcrLanguage by remember { mutableStateOf(loadIosPdfOcrLanguage()) }
     var pdfTopTabStripVisible by remember { mutableStateOf(loadIosPdfTopTabStripVisible()) }
+    var pdfTopToolbarVisible by remember {
+        mutableStateOf(loadIosPdfToolbarVisible(IosPdfTopToolbarVisibleDefaultsKey))
+    }
+    var pdfBottomToolbarVisible by remember {
+        mutableStateOf(loadIosPdfToolbarVisible(IosPdfBottomToolbarVisibleDefaultsKey))
+    }
+    var pdfExportBusy by remember { mutableStateOf(false) }
     var readerAutoScrollProfile by remember { mutableStateOf(loadIosReaderAutoScrollProfile()) }
     var readerAutoScrollUseSlider by remember { mutableStateOf(loadIosReaderAutoScrollUseSlider()) }
     var readerAutoScrollMusicianMode by remember { mutableStateOf(loadIosReaderAutoScrollMusicianMode()) }
@@ -4501,6 +4525,19 @@ private fun ReaderIosApp(
                     persistIosPdfTopTabStripVisible(visible)
                 }
             },
+            initialShowTopToolbar = pdfTopToolbarVisible,
+            onShowTopToolbarChange = { visible ->
+                if (!acceptsCurrentHostCallback()) return@SharedMobilePdfReaderHost
+                pdfTopToolbarVisible = visible
+                persistIosPdfToolbarVisible(IosPdfTopToolbarVisibleDefaultsKey, visible)
+            },
+            initialShowBottomToolbar = pdfBottomToolbarVisible,
+            onShowBottomToolbarChange = { visible ->
+                if (!acceptsCurrentHostCallback()) return@SharedMobilePdfReaderHost
+                pdfBottomToolbarVisible = visible
+                persistIosPdfToolbarVisible(IosPdfBottomToolbarVisibleDefaultsKey, visible)
+            },
+            isPdfExportBusy = pdfExportBusy,
             onOpenPdfTab = { tab ->
                 if (pdfTabsEnabled && acceptsCurrentHostCallback() && tab.id != paneBook.id) {
                     openLibraryBook(tab)
@@ -4533,23 +4570,33 @@ private fun ReaderIosApp(
                         startIosPdfReflow(pdfBook, password)
                     }
                     SharedMobilePdfNativeAction.SAVE_COPY -> scope.launch {
-                        when (val export = prepareIosPdfSaveCopy(pdfBook, password, pdfExport)) {
-                            is IosPdfSaveCopyPreparation.Ready -> {
-                                if (!bridge.performPdfNativeAction(export.book, action)) {
-                                    showMessage("Unable to export ${pdfBook.displayName}.")
+                        pdfExportBusy = true
+                        try {
+                            when (val export = prepareIosPdfSaveCopy(pdfBook, password, pdfExport)) {
+                                is IosPdfSaveCopyPreparation.Ready -> {
+                                    if (!bridge.performPdfNativeAction(export.book, action)) {
+                                        showMessage("Unable to export ${pdfBook.displayName}.")
+                                    }
                                 }
+                                is IosPdfSaveCopyPreparation.Unavailable -> showMessage(export.message)
                             }
-                            is IosPdfSaveCopyPreparation.Unavailable -> showMessage(export.message)
+                        } finally {
+                            pdfExportBusy = false
                         }
                     }
                     SharedMobilePdfNativeAction.SHARE_ANNOTATED -> scope.launch {
-                        when (val export = prepareIosPdfSaveCopy(pdfBook, password, pdfExport)) {
-                            is IosPdfSaveCopyPreparation.Ready -> {
-                                if (!bridge.performPdfNativeAction(export.book, SharedMobilePdfNativeAction.SHARE)) {
-                                    showMessage("Unable to share ${pdfBook.displayName}.")
+                        pdfExportBusy = true
+                        try {
+                            when (val export = prepareIosPdfSaveCopy(pdfBook, password, pdfExport)) {
+                                is IosPdfSaveCopyPreparation.Ready -> {
+                                    if (!bridge.performPdfNativeAction(export.book, SharedMobilePdfNativeAction.SHARE)) {
+                                        showMessage("Unable to share ${pdfBook.displayName}.")
+                                    }
                                 }
+                                is IosPdfSaveCopyPreparation.Unavailable -> showMessage(export.message)
                             }
-                            is IosPdfSaveCopyPreparation.Unavailable -> showMessage(export.message)
+                        } finally {
+                            pdfExportBusy = false
                         }
                     }
                     SharedMobilePdfNativeAction.SHARE_ORIGINAL -> {

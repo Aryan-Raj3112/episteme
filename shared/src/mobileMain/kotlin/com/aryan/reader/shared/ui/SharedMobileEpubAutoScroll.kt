@@ -162,6 +162,7 @@ internal fun SharedMobileEpubAutoScrollControls(
     onScrollToTop: () -> Unit,
     onLocalModeChange: (Boolean) -> Unit,
     onClose: () -> Unit,
+    isTempPaused: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     var showModeMenu by remember { mutableStateOf(false) }
@@ -191,17 +192,38 @@ internal fun SharedMobileEpubAutoScrollControls(
                 IconButton(onClick = { onCollapseChange(false) }, modifier = Modifier.size(36.dp)) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Expand Auto Scroll")
                 }
-                IconButton(onClick = onPlayPause, modifier = Modifier.size(36.dp)) {
-                    Icon(
-                        if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                        contentDescription = if (isPlaying) "Pause auto scroll" else "Resume auto scroll",
-                    )
+                Box(contentAlignment = Alignment.Center) {
+                    IconButton(onClick = onPlayPause, modifier = Modifier.size(36.dp)) {
+                        Icon(
+                            if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                            contentDescription = if (isPlaying) "Pause auto scroll" else "Resume auto scroll",
+                        )
+                    }
+                    // Android benchmark (EpubReaderControls.kt:1283-1289): spinner
+                    // over play while temporarily paused (e.g. finger on screen).
+                    if (isTempPaused && isPlaying) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(36.dp),
+                            color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.5f),
+                            strokeWidth = 2.dp
+                        )
+                    }
                 }
             }
         } else Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = onPlayPause) {
-                    Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, contentDescription = if (isPlaying) "Pause auto scroll" else "Resume auto scroll")
+                Box(contentAlignment = Alignment.Center) {
+                    IconButton(onClick = onPlayPause) {
+                        Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, contentDescription = if (isPlaying) "Pause auto scroll" else "Resume auto scroll")
+                    }
+                    // Android benchmark (EpubReaderControls.kt:1447-1453).
+                    if (isTempPaused && isPlaying) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(48.dp),
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                            strokeWidth = 3.dp
+                        )
+                    }
                 }
                 Box {
                     TextButton(onClick = { showModeMenu = true }) {

@@ -451,6 +451,50 @@ data class ReaderTtsCacheSummary(
         }
 }
 
+/**
+ * One cached-audio chapter for one cloud voice (Android `TtsCacheTab`
+ * parity). [entryKey] is the opaque platform storage key the matching
+ * delete call consumes; [chapterTitle]/[bookTitle] are display labels.
+ */
+data class ReaderTtsCacheChapter(
+    val bookTitle: String = "",
+    val chapterTitle: String,
+    val voiceId: String,
+    val chunkCount: Int = 0,
+    val sizeBytes: Long = 0L,
+    val entryKey: String = "",
+)
+
+/** Voice-sample preview state (Android `SpeakerSamplePlayer` parity). */
+data class ReaderVoiceSampleState(
+    val loadingVoiceId: String? = null,
+    val playingVoiceId: String? = null,
+    val cachedVoiceIds: Set<String> = emptySet(),
+)
+
+/**
+ * Android `TtsCacheManager` file-name parity:
+ * `cached_chunk_<speaker>_<digest>.wav`. Returns the speaker id or null.
+ */
+fun readerTtsCacheSpeakerId(fileName: String): String? {
+    if (!fileName.startsWith("cached_chunk_") || !fileName.endsWith(".wav")) return null
+    return fileName.removePrefix("cached_chunk_").removeSuffix(".wav")
+        .substringBeforeLast('_').takeIf { it.isNotBlank() }
+}
+
+/**
+ * Display label for a sanitized cache segment dir (`<clean>_<digest>`):
+ * drops the digest and restores spaces.
+ */
+fun readerTtsCacheDisplayLabel(segment: String): String {
+    val withoutDigest = if (segment.length > 17 && segment[segment.length - 17] == '_') {
+        segment.dropLast(17)
+    } else {
+        segment
+    }
+    return withoutDigest.replace('_', ' ').trim().ifBlank { segment }
+}
+
 object ReaderTtsPlanner {
     fun chunksForCurrentPage(session: ReaderSessionState): List<ReaderTtsChunk> {
         val page = session.reader.currentPage ?: return emptyList()

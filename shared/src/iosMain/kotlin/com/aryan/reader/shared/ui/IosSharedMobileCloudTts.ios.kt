@@ -13,9 +13,13 @@ import com.aryan.reader.shared.GEMINI_CLOUD_TTS_MODEL
 import com.aryan.reader.shared.GEMINI_CLOUD_TTS_MODEL_ID
 import com.aryan.reader.shared.ReaderAiByokSettings
 import com.aryan.reader.shared.ReaderCloudTtsState
+import com.aryan.reader.shared.ReaderTtsCacheChapter
 import com.aryan.reader.shared.ReaderTtsCacheSummary
 import com.aryan.reader.shared.ReaderTtsChunk
 import com.aryan.reader.shared.ReaderTtsProgress
+import com.aryan.reader.shared.ReaderVoiceSampleState
+import com.aryan.reader.shared.readerTtsCacheDisplayLabel
+import com.aryan.reader.shared.readerTtsCacheSpeakerId
 import com.aryan.reader.shared.LocalTtsInterruptionAction
 import com.aryan.reader.shared.LocalTtsInterruptionEvent
 import com.aryan.reader.shared.LocalTtsInterruptionState
@@ -79,6 +83,7 @@ import platform.Foundation.NSUserDomainMask
 import platform.Foundation.NSUTF8StringEncoding
 import platform.Foundation.create
 import platform.Foundation.dataWithContentsOfFile
+import platform.Foundation.dataWithContentsOfURL
 import platform.Foundation.dataWithLength
 import platform.Foundation.timeIntervalSince1970
 import platform.Foundation.writeToFile
@@ -138,6 +143,7 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
             error = null,
         )
         refreshCacheSummary()
+        seedCachedVoiceSamples()
     }
 
     override fun configure(
@@ -263,17 +269,219 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
         stop()
         scope.launch(Dispatchers.Default) {
             generationMutex.withLock {
-                if (fileManager.fileExistsAtPath(cacheRoot)) {
-                    fileManager.removeItemAtPath(cacheRoot, error = null)
-                }
-                fileManager.createDirectoryAtPath(
-                    cacheRoot,
-                    withIntermediateDirectories = true,
-                    attributes = null,
-                    error = null,
-                )
+                // Android parity: chunk clearing never touches voice samples
+                // (SpeakerSamplePlayer.clearSamples is a separate action).
+                fileManager.contentsOfDirectoryAtPath(cacheRoot, error = null).orEmpty()
+                    .mapNotNull { it as? String }
+                    .filter { !(it.startsWith("voice_sample_") && it.endsWith(".wav")) }
+                    .forEach { fileManager.removeItemAtPath("$cacheRoot/$it", error = null) }
             }
             refreshCacheSummary()
+        }
+    }
+
+    // Android `TtsCacheTab` parity: per-chapter inventory over the same
+    // book/chapter/speaker file layout.
+    override fun cachedChapterVoices(): List<String> {
+        return scanCacheEntries().map { it.speakerId }.distinct().sorted()
+    }
+
+    override fun cachedChapters(voiceId: String): List<ReaderTtsCacheChapter> {
+        return scanCacheEntries()
+            .filter { it.speakerId == safeSpeakerId(voiceId) }
+            .groupBy { it.bookDir to it.chapterDir }
+            .map { (dirs, files) ->
+                ReaderTtsCacheChapter(
+                    bookTitle = readerTtsCacheDisplayLabel(dirs.first),
+                    chapterTitle = readerTtsCacheDisplayLabel(dirs.second),
+                    voiceId = voiceId,
+                    chunkCount = files.size,
+                    sizeBytes = files.sumOf { it.sizeBytes },
+                    entryKey = "${dirs.first}/${dirs.second}",
+                )
+            }
+            .sortedBy { it.chapterTitle.lowercase() }
+    }
+
+    override fun deleteCachedChapter(chapter: ReaderTtsCacheChapter) {
+        if (chapter.entryKey.isBlank()) return
+        stop()
+        scope.launch(Dispatchers.Default) {
+            generationMutex.withLock {
+                fileManager.removeItemAtPath("$cacheRoot/${chapter.entryKey}", error = null)
+            }
+            refreshCacheSummary()
+        }
+    }
+
+    override fun deleteCachedVoice(voiceId: String) {
+        stop()
+        val safeSpeaker = safeSpeakerId(voiceId)
+        scope.launch(Dispatchers.Default) {
+            generationMutex.withLock {
+                scanCacheEntries()
+                    .filter { it.speakerId == safeSpeaker }
+                    .forEach { entry ->
+                        fileManager.removeItemAtPath("$cacheRoot/${entry.bookDir}/${entry.chapterDir}/${entry.fileName}", error = null)
+                    }
+            }
+            refreshCacheSummary()
+        }
+    }
+
+    private data class IosCacheEntry(
+        val bookDir: String,
+        val chapterDir: String,
+        val fileName: String,
+        val speakerId: String,
+        val sizeBytes: Long,
+    )
+
+    private fun scanCacheEntries(): List<IosCacheEntry> {
+        val found = mutableListOf<IosCacheEntry>()
+        val books = fileManager.contentsOfDirectoryAtPath(cacheRoot, error = null).orEmpty()
+        books.mapNotNull { it as? String }.forEach { bookDir ->
+            val bookPath = "$cacheRoot/$bookDir"
+            fileManager.contentsOfDirectoryAtPath(bookPath, error = null).orEmpty()
+                .mapNotNull { it as? String }.forEach { chapterDir ->
+                    val chapterPath = "$bookPath/$chapterDir"
+                    fileManager.contentsOfDirectoryAtPath(chapterPath, error = null).orEmpty()
+                        .mapNotNull { it as? String }
+                        .filter { it.endsWith(".wav") && !it.startsWith("voice_sample_") }
+                        .forEach { fileName ->
+                            val speaker = readerTtsCacheSpeakerId(fileName) ?: return@forEach
+                            val attrs = fileManager.attributesOfItemAtPath("$chapterPath/$fileName", error = null).orEmpty()
+                            found += IosCacheEntry(
+                                bookDir = bookDir,
+                                chapterDir = chapterDir,
+                                fileName = fileName,
+                                speakerId = speaker,
+                                sizeBytes = (attrs["NSFileSize"] as? Number)?.toLong().orZero(),
+                            )
+                        }
+                }
+        }
+        return found
+    }
+
+    private fun safeSpeakerId(voiceId: String): String =
+        voiceId.replace(Regex("[^A-Za-z0-9._-]+"), "_")
+
+    // Android `SpeakerSamplePlayer` parity: static per-voice sample wavs from
+    // the same Firebase bucket, downloaded once and cached beside the chunks.
+    override var voiceSampleState by mutableStateOf(ReaderVoiceSampleState())
+        private set
+
+    private var samplePlayer: AVAudioPlayer? = null
+    private var sampleJob: Job? = null
+    private val sampleDelegate = IosCloudAudioDelegate(
+        onFinished = { callbackPlayer, _ -> onSampleFinished(callbackPlayer) },
+        onDecodeError = { callbackPlayer -> onSampleFinished(callbackPlayer) },
+    )
+
+    private fun sampleFile(voiceId: String): String =
+        "$cacheRoot/voice_sample_${safeSpeakerId(voiceId)}.wav"
+
+    override fun playOrStopVoiceSample(voiceId: String) {
+        if (voiceSampleState.playingVoiceId == voiceId) {
+            samplePlayer?.stop()
+            samplePlayer = null
+            voiceSampleState = voiceSampleState.copy(playingVoiceId = null)
+            return
+        }
+        if (voiceSampleState.loadingVoiceId == voiceId) {
+            sampleJob?.cancel()
+            sampleJob = null
+            voiceSampleState = voiceSampleState.copy(loadingVoiceId = null)
+            return
+        }
+        sampleJob?.cancel()
+        samplePlayer?.stop()
+        samplePlayer = null
+        voiceSampleState = voiceSampleState.copy(loadingVoiceId = voiceId, playingVoiceId = null)
+        sampleJob = scope.launch(Dispatchers.Default) {
+            val file = sampleFile(voiceId)
+            if (!fileManager.fileExistsAtPath(file)) {
+                val url = NSURL(string = "https://firebasestorage.googleapis.com/v0/b/reader-9fc469d7.firebasestorage.app/o/samples%2Fsample_${voiceId}.wav?alt=media")
+                val downloaded = downloadUrlToFile(url, file)
+                if (!downloaded) {
+                    withContext(Dispatchers.Main.immediate) {
+                        if (voiceSampleState.loadingVoiceId == voiceId) {
+                            voiceSampleState = voiceSampleState.copy(loadingVoiceId = null)
+                        }
+                    }
+                    return@launch
+                }
+            }
+            val audio = readFile(file)
+            withContext(Dispatchers.Main.immediate) {
+                if (voiceSampleState.loadingVoiceId != voiceId || audio == null) {
+                    if (voiceSampleState.loadingVoiceId == voiceId) {
+                        voiceSampleState = voiceSampleState.copy(loadingVoiceId = null)
+                    }
+                    return@withContext
+                }
+                ensureAudioSession()
+                val created = AVAudioPlayer(data = audio.toNSData(), error = null)
+                if (!created.prepareToPlay()) {
+                    voiceSampleState = voiceSampleState.copy(loadingVoiceId = null)
+                    return@withContext
+                }
+                samplePlayer = created
+                created.delegate = sampleDelegate
+                created.play()
+                voiceSampleState = voiceSampleState.copy(
+                    loadingVoiceId = null,
+                    playingVoiceId = voiceId,
+                    cachedVoiceIds = voiceSampleState.cachedVoiceIds + voiceId,
+                )
+            }
+        }
+    }
+
+    override fun clearVoiceSamples() {
+        samplePlayer?.stop()
+        samplePlayer = null
+        sampleJob?.cancel()
+        sampleJob = null
+        voiceSampleState = ReaderVoiceSampleState()
+        scope.launch(Dispatchers.Default) {
+            fileManager.contentsOfDirectoryAtPath(cacheRoot, error = null).orEmpty()
+                .mapNotNull { it as? String }
+                .filter { it.startsWith("voice_sample_") && it.endsWith(".wav") }
+                .forEach { fileManager.removeItemAtPath("$cacheRoot/$it", error = null) }
+        }
+    }
+
+    private fun onSampleFinished(callbackPlayer: AVAudioPlayer) {
+        if (samplePlayer !== callbackPlayer) return
+        samplePlayer = null
+        voiceSampleState = voiceSampleState.copy(playingVoiceId = null)
+    }
+
+    private suspend fun downloadUrlToFile(url: NSURL, destination: String): Boolean {
+        return try {
+            // Blocking fetch on the caller's Default dispatcher, matching
+            // IosGoogleFonts/IosAccountAvatar practice.
+            val data = NSData.dataWithContentsOfURL(url) ?: return false
+            data.writeToFile(destination, atomically = true)
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun seedCachedVoiceSamples() {
+        scope.launch(Dispatchers.Default) {
+            val cached = fileManager.contentsOfDirectoryAtPath(cacheRoot, error = null).orEmpty()
+                .mapNotNull { it as? String }
+                .filter { it.startsWith("voice_sample_") && it.endsWith(".wav") }
+                .map { it.removePrefix("voice_sample_").removeSuffix(".wav") }
+                .toSet()
+            if (cached.isNotEmpty()) {
+                withContext(Dispatchers.Main.immediate) {
+                    voiceSampleState = voiceSampleState.copy(cachedVoiceIds = cached)
+                }
+            }
         }
     }
 
@@ -306,6 +514,10 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
 
     override fun release() {
         stop()
+        samplePlayer?.stop()
+        samplePlayer = null
+        sampleJob?.cancel()
+        sampleJob = null
         interruptionMonitor.close()
         scope.cancel()
         websocketSession?.invalidateAndCancel()

@@ -379,6 +379,11 @@ fun SharedMobilePdfReaderScreen(
     modifier: Modifier = Modifier,
     summaryCache: SharedSummaryCache? = null,
     aiCredits: Int? = null,
+    initialShowTopToolbar: Boolean = true,
+    onShowTopToolbarChange: (Boolean) -> Unit = {},
+    initialShowBottomToolbar: Boolean = true,
+    onShowBottomToolbarChange: (Boolean) -> Unit = {},
+    isPdfExportBusy: Boolean = false,
 ) {
     SharedMobilePdfReaderHost(
         book = book,
@@ -398,6 +403,11 @@ fun SharedMobilePdfReaderScreen(
         knownTags = knownTags,
         pdfToolbarPreferences = pdfToolbarPreferences,
         onPdfToolbarPreferencesChange = onPdfToolbarPreferencesChange,
+        initialShowTopToolbar = initialShowTopToolbar,
+        onShowTopToolbarChange = onShowTopToolbarChange,
+        initialShowBottomToolbar = initialShowBottomToolbar,
+        onShowBottomToolbarChange = onShowBottomToolbarChange,
+        isPdfExportBusy = isPdfExportBusy,
         ocrLanguage = ocrLanguage,
         onOcrLanguageChange = onOcrLanguageChange,
         readerBrightness = readerBrightness,
@@ -542,6 +552,11 @@ fun SharedMobilePdfReaderHost(
     onSystemUiRelease: () -> Unit = {},
     modifier: Modifier = Modifier,
     hostConfig: SharedPdfReaderHostConfig = SharedPdfReaderHostConfig.fullScreen(book.id),
+    initialShowTopToolbar: Boolean = true,
+    onShowTopToolbarChange: (Boolean) -> Unit = {},
+    initialShowBottomToolbar: Boolean = true,
+    onShowBottomToolbarChange: (Boolean) -> Unit = {},
+    isPdfExportBusy: Boolean = false,
     /** True when this reader is mounted inside a split-workspace pane. */
     isSplitPane: Boolean = false,
     summaryCache: SharedSummaryCache? = null,
@@ -573,6 +588,14 @@ fun SharedMobilePdfReaderHost(
     }
     // Android intentionally starts every PDF session distraction-free.
     var showChrome by remember(readerSessionKey) { mutableStateOf(false) }
+    // Android benchmark (PdfViewerScreen.kt:439-440, PdfPreferences
+    // PDF_TOP/BOTTOM_TOOLBAR_VISIBLE_KEY, default true): per-bar visibility.
+    var showTopToolbar by remember(readerSessionKey, initialShowTopToolbar) {
+        mutableStateOf(initialShowTopToolbar)
+    }
+    var showBottomToolbar by remember(readerSessionKey, initialShowBottomToolbar) {
+        mutableStateOf(initialShowBottomToolbar)
+    }
     var showReaderOptions by remember(readerSessionKey) { mutableStateOf(false) }
     var showThemePanel by remember(readerSessionKey) { mutableStateOf(false) }
     var showPageSlider by remember(readerSessionKey) { mutableStateOf(initialPageSliderVisible) }
@@ -596,6 +619,7 @@ fun SharedMobilePdfReaderHost(
     var pdfPassword by remember(readerSessionKey) { mutableStateOf<String?>(null) }
     var pdfPasswordDraft by remember(readerSessionKey) { mutableStateOf("") }
     var showShareFormatChoice by remember(readerSessionKey) { mutableStateOf(false) }
+    var showSaveFormatChoice by remember(readerSessionKey) { mutableStateOf(false) }
     var showVerticalPageGap by remember(readerSessionKey) {
         mutableStateOf(readerDefaultSettings.pdfVerticalPageGapVisible)
     }
@@ -1664,7 +1688,7 @@ fun SharedMobilePdfReaderHost(
         Scaffold(
             topBar = {
                 AnimatedVisibility(
-                    visible = showChrome && !isPdfEditMode,
+                    visible = showChrome && !isPdfEditMode && showTopToolbar,
                     enter = slideInVertically(tween(PdfChromeMotionDurationMillis)) { -it } + fadeIn(tween(PdfChromeMotionDurationMillis)),
                     exit = slideOutVertically(tween(PdfChromeMotionDurationMillis)) { -it } + fadeOut(tween(PdfChromeMotionDurationMillis))
                 ) {
@@ -1786,6 +1810,8 @@ fun SharedMobilePdfReaderHost(
                                         )
                                     ) {
                                         showShareFormatChoice = true
+                                    } else if (action == SharedMobilePdfNativeAction.SAVE_COPY) {
+                                        showSaveFormatChoice = true
                                     } else {
                                         dispatchNativePdfAction(action, SharedPdfExportSnapshot(readerState.copy(richTextDocumentJson = richTextDocumentJson), richTextController.pageLayouts))
                                     }
@@ -1835,7 +1861,7 @@ fun SharedMobilePdfReaderHost(
             },
             bottomBar = {
                 AnimatedVisibility(
-                    visible = showChrome && !readerState.isSearchActive && !isPdfEditMode,
+                    visible = showChrome && !readerState.isSearchActive && !isPdfEditMode && showBottomToolbar,
                     enter = slideInVertically(tween(PdfChromeMotionDurationMillis)) { it } + fadeIn(tween(PdfChromeMotionDurationMillis)),
                     exit = slideOutVertically(tween(PdfChromeMotionDurationMillis)) { it } + fadeOut(tween(PdfChromeMotionDurationMillis))
                 ) {
@@ -2860,25 +2886,28 @@ fun SharedMobilePdfReaderHost(
             )
         }
         if (showReaderOptions) {
-            SharedMobilePdfVisualOptionsSheet(
+            // Android benchmark (PdfSettingsSheets.kt:150-214 PdfVisualOptionsSheet):
+            // the shared sheet owns toolbar toggles + localized copy; the
+            // right-to-left row is mobile-only (shown via the optional callback).
+            SharedPdfVisualOptionsSheet(
                 displayMode = readerState.displayMode,
-                systemUiMode = systemUiMode,
-                useTwoPageSpread = useTwoPageSpread,
+                systemUiMode = systemUiMode.toReaderSystemUiMode(),
+                pageSpreadMode = if (useTwoPageSpread) {
+                    ReaderPageSpreadMode.TWO_PAGE
+                } else {
+                    ReaderPageSpreadMode.SINGLE
+                },
                 firstPageStandaloneInSpread = firstPageStandaloneInSpread,
-                rightToLeftPagination = rightToLeftPagination,
                 showVerticalPageGap = showVerticalPageGap,
                 showPageNumberOverlay = showPageNumberOverlay,
-                onSystemUiModeChange = { mode ->
-                    systemUiMode = mode
-                    onReaderDefaultSettingsChange(
-                        readerDefaultSettings.copy(systemUiMode = mode.toReaderSystemUiMode())
-                    )
-                },
-                onTwoPageSpreadChange = {
-                    useTwoPageSpread = it
+                showTopToolbar = showTopToolbar,
+                showBottomToolbar = showBottomToolbar,
+                onPageSpreadModeChange = {
+                    val twoPage = it == ReaderPageSpreadMode.TWO_PAGE
+                    useTwoPageSpread = twoPage
                     onReaderDefaultSettingsChange(
                         readerDefaultSettings.copy(
-                            pageSpreadMode = if (it) {
+                            pageSpreadMode = if (twoPage) {
                                 ReaderPageSpreadMode.TWO_PAGE
                             } else {
                                 ReaderPageSpreadMode.SINGLE
@@ -2886,15 +2915,17 @@ fun SharedMobilePdfReaderHost(
                         )
                     )
                 },
-                onFirstPageStandaloneChange = {
+                onFirstPageStandaloneInSpreadChange = {
                     firstPageStandaloneInSpread = it
                     onReaderDefaultSettingsChange(
                         readerDefaultSettings.copy(pdfFirstPageStandaloneInSpread = it)
                     )
                 },
-                onRightToLeftPaginationChange = {
-                    rightToLeftPagination = it
-                    onReaderDefaultSettingsChange(readerDefaultSettings.copy(rightToLeftPagination = it))
+                onSystemUiModeChange = { mode ->
+                    systemUiMode = mode.toSharedMobilePdfSystemUiMode()
+                    onReaderDefaultSettingsChange(
+                        readerDefaultSettings.copy(systemUiMode = mode)
+                    )
                 },
                 onShowVerticalPageGapChange = {
                     showVerticalPageGap = it
@@ -2904,6 +2935,89 @@ fun SharedMobilePdfReaderHost(
                     showPageNumberOverlay = it
                     onReaderDefaultSettingsChange(readerDefaultSettings.copy(pdfPageNumberOverlayVisible = it))
                 },
+                onShowTopToolbarChange = { visible ->
+                    showTopToolbar = visible
+                    onShowTopToolbarChange(visible)
+                },
+                onShowBottomToolbarChange = { visible ->
+                    showBottomToolbar = visible
+                    onShowBottomToolbarChange(visible)
+                },
+                rightToLeftPagination = rightToLeftPagination,
+                onRightToLeftPaginationChange = {
+                    rightToLeftPagination = it
+                    onReaderDefaultSettingsChange(readerDefaultSettings.copy(rightToLeftPagination = it))
+                },
+                maxSheetHeight = 680.dp,
+                labels = SharedPdfVisualOptionsLabels(
+                    title = readerString("menu_visual_options", "Visual Options"),
+                    close = readerString("action_close", "Close"),
+                    systemUi = readerString("visual_options_system_ui", "System UI (Status & Navigation Bars)"),
+                    systemUiDescription = readerString(
+                        "visual_options_system_ui_desc",
+                        "Control the visibility of the device's system bars."
+                    ),
+                    systemUiOptions = mapOf(
+                        SystemUiMode.DEFAULT to readerString("label_always_show", "Always Show"),
+                        SystemUiMode.SYNC to readerString("label_sync_with_menus", "Sync with Menus"),
+                        SystemUiMode.HIDDEN to readerString("label_always_hide", "Always Hide"),
+                    ),
+                    toolbars = readerString("visual_options_toolbars", "Toolbars"),
+                    topToolbar = readerString("visual_options_top_toolbar", "Show top toolbar"),
+                    topToolbarDescription = readerString(
+                        "visual_options_top_toolbar_desc",
+                        "Hide it to read with only the bottom tools"
+                    ),
+                    bottomToolbar = readerString("visual_options_bottom_toolbar", "Show bottom toolbar"),
+                    bottomToolbarDescription = readerString(
+                        "visual_options_bottom_toolbar_desc",
+                        "Hide it to read with only the top tools"
+                    ),
+                    pageLayout = readerString("visual_options_page_layout", "Page layout"),
+                    pageSpread = readerString("visual_options_pdf_page_spread", "PDF page spread"),
+                    spreadOptions = mapOf(
+                        ReaderPageSpreadMode.SINGLE to readerString(
+                            "visual_options_pdf_spread_single",
+                            "Single page"
+                        ),
+                        ReaderPageSpreadMode.TWO_PAGE to readerString(
+                            "visual_options_pdf_spread_two",
+                            "Two pages"
+                        ),
+                    ),
+                    firstPageAlone = readerString(
+                        "visual_options_pdf_first_page_alone",
+                        "First page alone"
+                    ),
+                    firstPageAloneDescription = readerString(
+                        "visual_options_pdf_first_page_alone_desc",
+                        "Starts facing-page spreads after the cover page."
+                    ),
+                    removePageGap = readerString(
+                        "visual_options_remove_page_gap",
+                        "Remove gap between pages"
+                    ),
+                    removePageGapDescription = readerString(
+                        "visual_options_remove_page_gap_desc",
+                        "Applies to vertical reading and two-page spreads."
+                    ),
+                    hidePageNumberOverlay = readerString(
+                        "visual_options_hide_page_number_overlay",
+                        "Hide page number overlay"
+                    ),
+                    hidePageNumberOverlayDescription = readerString(
+                        "visual_options_hide_page_number_overlay_desc",
+                        "Removes the small page count label from each page."
+                    ),
+                    rightToLeft = readerString(
+                        "menu_right_to_left_pagination",
+                        "Paginated (right-to-left)"
+                    ),
+                    rightToLeftDescription = readerString(
+                        "visual_options_pdf_right_to_left",
+                        "Use right-to-left page order and edge navigation."
+                    ),
+                ),
                 onDismiss = { showReaderOptions = false }
             )
         }
@@ -3050,11 +3164,11 @@ fun SharedMobilePdfReaderHost(
     }
     if (showShareFormatChoice) {
         SharedMobileDocumentFormatDialog(
-            title = "Share",
-            description = "Choose a format for sharing",
-            annotatedLabel = "With annotations",
-            originalLabel = "Original",
-            cancelLabel = "Cancel",
+            title = readerString("share_chooser_title", "Share PDF"),
+            description = readerString("desc_choose_format_share", "Choose format to share:"),
+            annotatedLabel = readerString("action_with_annotations", "With Annotations"),
+            originalLabel = readerString("action_original", "Original"),
+            cancelLabel = readerString("action_cancel", "Cancel"),
             onAnnotated = {
                 showShareFormatChoice = false
                 dispatchNativePdfAction(SharedMobilePdfNativeAction.SHARE_ANNOTATED, SharedPdfExportSnapshot(readerState.copy(richTextDocumentJson = richTextDocumentJson), richTextController.pageLayouts))
@@ -3065,6 +3179,72 @@ fun SharedMobilePdfReaderHost(
             },
             onDismiss = { showShareFormatChoice = false },
         )
+    }
+    // Android benchmark (PdfViewerScreen.kt:5130-5150): Save Copy offers the
+    // same annotated/original choice instead of exporting blindly. "Original"
+    // strips reader-owned content so the host exports the source bytes
+    // (SharedPdfExportMode.ORIGINAL), exactly like an unannotated document.
+    if (showSaveFormatChoice) {
+        SharedMobileDocumentFormatDialog(
+            title = readerString("title_save_to_device", "Save to Device"),
+            description = readerString("desc_choose_format_save", "Choose format to save:"),
+            annotatedLabel = readerString("action_with_annotations", "With Annotations"),
+            originalLabel = readerString("action_original", "Original"),
+            cancelLabel = readerString("action_cancel", "Cancel"),
+            onAnnotated = {
+                showSaveFormatChoice = false
+                dispatchNativePdfAction(
+                    SharedMobilePdfNativeAction.SAVE_COPY,
+                    SharedPdfExportSnapshot(readerState.copy(richTextDocumentJson = richTextDocumentJson), richTextController.pageLayouts)
+                )
+            },
+            onOriginal = {
+                showSaveFormatChoice = false
+                dispatchNativePdfAction(
+                    SharedMobilePdfNativeAction.SAVE_COPY,
+                    SharedPdfExportSnapshot(
+                        readerState.copy(
+                            annotations = emptyList(),
+                            blankPageInsertions = emptyList(),
+                            richTextDocumentJson = ""
+                        )
+                    )
+                )
+            },
+            onDismiss = { showSaveFormatChoice = false },
+        )
+    }
+    // Android benchmark (PdfViewerScreen.kt:5171-5199): blocking scrim while
+    // the host prepares the export file.
+    if (isPdfExportBusy) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.5f))
+                .clickable(enabled = false) {},
+            contentAlignment = Alignment.Center
+        ) {
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 6.dp
+            ) {
+                Column(
+                    modifier = Modifier.padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(32.dp), strokeWidth = 3.dp
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = readerString("msg_preparing_pdf", "Preparing PDF…"),
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                }
+            }
+        }
     }
     if (showBrightnessSheet) {
         SharedMobileReaderBrightnessSheet(
@@ -3990,159 +4170,6 @@ private fun SharedMobilePdfSystemUiMode.toReaderSystemUiMode(): SystemUiMode = w
     SharedMobilePdfSystemUiMode.ALWAYS_SHOW -> SystemUiMode.DEFAULT
     SharedMobilePdfSystemUiMode.SYNC_WITH_MENUS -> SystemUiMode.SYNC
     SharedMobilePdfSystemUiMode.ALWAYS_HIDE -> SystemUiMode.HIDDEN
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun SharedMobilePdfVisualOptionsSheet(
-    displayMode: PdfDisplayMode,
-    systemUiMode: SharedMobilePdfSystemUiMode,
-    useTwoPageSpread: Boolean,
-    firstPageStandaloneInSpread: Boolean,
-    rightToLeftPagination: Boolean,
-    showVerticalPageGap: Boolean,
-    showPageNumberOverlay: Boolean,
-    onSystemUiModeChange: (SharedMobilePdfSystemUiMode) -> Unit,
-    onTwoPageSpreadChange: (Boolean) -> Unit,
-    onFirstPageStandaloneChange: (Boolean) -> Unit,
-    onRightToLeftPaginationChange: (Boolean) -> Unit,
-    onShowVerticalPageGapChange: (Boolean) -> Unit,
-    onShowPageNumberOverlayChange: (Boolean) -> Unit,
-    onDismiss: () -> Unit
-) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        containerColor = MaterialTheme.colorScheme.surface
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(max = 680.dp)
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 24.dp, vertical = 8.dp)
-                .padding(bottom = 32.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("Visual Options", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                IconButton(onClick = onDismiss) {
-                    Icon(Icons.Default.Close, contentDescription = readerString("action_close", "Close"))
-                }
-            }
-            Spacer(Modifier.height(16.dp))
-            Text("System UI", style = MaterialTheme.typography.titleMedium)
-            Text(
-                "Choose when the reader toolbars and system controls are visible.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.height(12.dp))
-            SharedMobilePdfSegmentedControl(
-                options = SharedMobilePdfSystemUiMode.entries,
-                selectedOption = systemUiMode,
-                onOptionSelected = onSystemUiModeChange,
-                label = { it.label }
-            )
-            Spacer(Modifier.height(20.dp))
-            HorizontalDivider()
-            Spacer(Modifier.height(12.dp))
-            Text("Page Layout", style = MaterialTheme.typography.titleMedium)
-            if (displayMode == PdfDisplayMode.PAGINATION) {
-                Spacer(Modifier.height(4.dp))
-                Text("PDF Page Spread", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Spacer(Modifier.height(8.dp))
-                SharedMobilePdfSegmentedControl(
-                    options = listOf(false, true),
-                    selectedOption = useTwoPageSpread,
-                    onOptionSelected = onTwoPageSpreadChange,
-                    label = { if (it) "Two Page" else "Single" }
-                )
-                if (useTwoPageSpread) {
-                    SharedMobilePdfVisualOptionSwitchRow(
-                        title = "First Page Alone",
-                        description = "Show the cover by itself before paired pages.",
-                        checked = firstPageStandaloneInSpread,
-                        onCheckedChange = onFirstPageStandaloneChange
-                    )
-                }
-                SharedMobilePdfVisualOptionSwitchRow(
-                    title = "Paginated (right-to-left)",
-                    description = "Use right-to-left page order and edge navigation.",
-                    checked = rightToLeftPagination,
-                    onCheckedChange = onRightToLeftPaginationChange,
-                )
-                Spacer(Modifier.height(12.dp))
-            }
-            SharedMobilePdfVisualOptionSwitchRow(
-                title = "Remove Page Gap",
-                description = "Display adjacent pages without spacing.",
-                checked = !showVerticalPageGap,
-                onCheckedChange = { onShowVerticalPageGapChange(!it) }
-            )
-            SharedMobilePdfVisualOptionSwitchRow(
-                title = "Hide Page Number Overlay",
-                description = "Hide the number shown on each PDF page.",
-                checked = !showPageNumberOverlay,
-                onCheckedChange = { onShowPageNumberOverlayChange(!it) }
-            )
-            }
-        }
-    }
-@Composable
-private fun <T> SharedMobilePdfSegmentedControl(
-    options: List<T>,
-    selectedOption: T,
-    onOptionSelected: (T) -> Unit,
-    label: (T) -> String
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
-            .padding(4.dp),
-        horizontalArrangement = Arrangement.spacedBy(4.dp)
-    ) {
-        options.forEach { option ->
-            val selected = option == selectedOption
-            Box(
-                modifier = Modifier.weight(1f).clip(RoundedCornerShape(8.dp))
-                    .background(if (selected) MaterialTheme.colorScheme.primary else Color.Transparent)
-                    .clickable { onOptionSelected(option) }
-                    .padding(vertical = 10.dp, horizontal = 4.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = label(option),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun SharedMobilePdfVisualOptionSwitchRow(
-    title: String,
-    description: String,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.bodyLarge)
-            Text(description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        Switch(checked = checked, onCheckedChange = onCheckedChange)
-    }
 }
 
 @Composable

@@ -410,7 +410,9 @@ data class SharedPdfVisualOptionsLabels(
     val removePageGap: String,
     val removePageGapDescription: String,
     val hidePageNumberOverlay: String,
-    val hidePageNumberOverlayDescription: String
+    val hidePageNumberOverlayDescription: String,
+    val rightToLeft: String = "",
+    val rightToLeftDescription: String = ""
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -431,6 +433,8 @@ fun SharedPdfVisualOptionsSheet(
     onShowPageNumberOverlayChange: (Boolean) -> Unit,
     onShowTopToolbarChange: (Boolean) -> Unit,
     onShowBottomToolbarChange: (Boolean) -> Unit,
+    rightToLeftPagination: Boolean = false,
+    onRightToLeftPaginationChange: ((Boolean) -> Unit)? = null,
     maxSheetHeight: Dp,
     labels: SharedPdfVisualOptionsLabels,
     onDismiss: () -> Unit
@@ -488,6 +492,15 @@ fun SharedPdfVisualOptionsSheet(
                         labels.firstPageAloneDescription,
                         firstPageStandaloneInSpread,
                         onFirstPageStandaloneInSpreadChange
+                    )
+                }
+                if (onRightToLeftPaginationChange != null) {
+                    Spacer(Modifier.height(8.dp))
+                    SharedPdfVisualOptionSwitchRow(
+                        labels.rightToLeft,
+                        labels.rightToLeftDescription,
+                        rightToLeftPagination,
+                        onRightToLeftPaginationChange
                     )
                 }
                 Spacer(Modifier.height(12.dp))

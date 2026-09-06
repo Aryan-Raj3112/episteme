@@ -7,6 +7,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -41,6 +42,8 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.PlayCircle
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SkipNext
@@ -67,6 +70,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.ListItem
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -80,6 +84,7 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -98,6 +103,7 @@ import com.aryan.reader.shared.DEFAULT_CLOUD_TTS_SPEAKER_ID
 import com.aryan.reader.shared.ReaderBookReplacementPreferences
 import com.aryan.reader.shared.ReaderCloudTtsVoices
 import com.aryan.reader.shared.ReaderTtsOverlaySize
+import com.aryan.reader.shared.formatReaderTtsBytes
 import com.aryan.reader.shared.ReaderWordReplacementEngine
 import com.aryan.reader.shared.ReaderWordReplacementRule
 import com.aryan.reader.shared.currentTimestamp
@@ -1086,6 +1092,18 @@ internal fun SharedMobileReaderTtsSettingsSheet(
     var showVoices by remember { mutableStateOf(false) }
     var showCloudVoices by remember { mutableStateOf(false) }
     val selectedVoice = tts.availableVoices.firstOrNull { it.identifier == tts.selectedVoiceIdentifier }
+    // Android benchmark (AndroidTtsSettings.kt:298-307/359-392): language
+    // filter over the device voice list.
+    val allLanguagesLabel = readerString("filter_all", "All")
+    var selectedLanguage by remember { mutableStateOf(allLanguagesLabel) }
+    val voiceLanguages = remember(tts.availableVoices) {
+        listOf(allLanguagesLabel) +
+            tts.availableVoices.map { it.language }.filter { it.isNotBlank() }.distinct().sorted()
+    }
+    val filteredVoices = remember(tts.availableVoices, selectedLanguage) {
+        if (selectedLanguage == allLanguagesLabel) tts.availableVoices
+        else tts.availableVoices.filter { it.language == selectedLanguage }
+    }
     // Android benchmark (AndroidTtsSettings.kt:153/239/317/372/409/415): voice
     // selection and previews freeze while a session is active.
     val ttsVoiceLocked = tts.isSessionActive ||
@@ -1149,6 +1167,7 @@ internal fun SharedMobileReaderTtsSettingsSheet(
                             modifier = Modifier.heightIn(max = 360.dp),
                         ) {
                             ReaderCloudTtsVoices.forEach { voice ->
+                                val sampleState = cloud.voiceSampleState
                                 DropdownMenuItem(
                                     text = {
                                         Column {
@@ -1162,24 +1181,191 @@ internal fun SharedMobileReaderTtsSettingsSheet(
                                         onCloudTtsVoiceChange(voice.id)
                                         showCloudVoices = false
                                     },
-                                    trailingIcon = if (voice.id == cloudTtsVoiceId) {
-                                        { Icon(Icons.Default.Check, contentDescription = null) }
-                                    } else null,
+                                    trailingIcon = {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            if (voice.id == cloudTtsVoiceId) {
+                                                Icon(Icons.Default.Check, contentDescription = null)
+                                            }
+                                            // Android benchmark (AiVoicesTab): per-voice
+                                            // sample preview with loading/playing states.
+                                            IconButton(
+                                                onClick = { cloud.playOrStopVoiceSample(voice.id) },
+                                                enabled = !ttsVoiceLocked,
+                                            ) {
+                                                when {
+                                                    sampleState.loadingVoiceId == voice.id ->
+                                                        CircularProgressIndicator(
+                                                            modifier = Modifier.size(20.dp),
+                                                            strokeWidth = 2.dp
+                                                        )
+                                                    sampleState.playingVoiceId == voice.id ->
+                                                        Icon(
+                                                            Icons.Default.Stop,
+                                                            contentDescription = "Stop preview",
+                                                            tint = MaterialTheme.colorScheme.primary
+                                                        )
+                                                    voice.id in sampleState.cachedVoiceIds ->
+                                                        Icon(
+                                                            Icons.Default.PlayCircle,
+                                                            contentDescription = "Preview ${voice.name}",
+                                                            tint = MaterialTheme.colorScheme.primary
+                                                        )
+                                                    else ->
+                                                        Icon(
+                                                            Icons.Default.PlayArrow,
+                                                            contentDescription = "Preview ${voice.name}",
+                                                            tint = MaterialTheme.colorScheme.primary
+                                                        )
+                                                }
+                                            }
+                                        }
+                                    },
                                 )
                             }
                         }
                     }
-                    val cache = cloud.state.cacheSummary
-                    Text(
-                        if (cache.hasCachedAudio) {
-                            "Cached cloud audio: ${cache.cachedChunkCount} chunks · ${cache.currentVoiceLabel}"
-                        } else {
-                            "No cached cloud audio"
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    if (cache.hasCachedAudio) {
+                    // Android benchmark (TtsCacheTab): speaker filter with a
+                    // per-chapter list (counts + delete) and voice-scoped clear.
+                    val cacheVoices = remember(cloud.state.cacheSummary) { cloud.cachedChapterVoices() }
+                    var selectedCacheVoice by remember(cloudTtsVoiceId, cacheVoices) {
+                        mutableStateOf(
+                            cloudTtsVoiceId.takeIf { it in cacheVoices }
+                                ?: cacheVoices.firstOrNull().orEmpty()
+                        )
+                    }
+                    var cacheRevision by remember { mutableIntStateOf(0) }
+                    val cacheChapters = remember(cloud.state.cacheSummary, selectedCacheVoice, cacheRevision) {
+                        if (selectedCacheVoice.isBlank()) emptyList()
+                        else cloud.cachedChapters(selectedCacheVoice)
+                    }
+                    val cacheTotalBytes = cacheChapters.sumOf { it.sizeBytes }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            readerString("tts_tab_cloud_cache", "Cloud audio cache"),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        if (cacheTotalBytes > 0) {
+                            Surface(
+                                color = MaterialTheme.colorScheme.secondaryContainer,
+                                shape = RoundedCornerShape(8.dp),
+                            ) {
+                                Text(
+                                    formatReaderTtsBytes(cacheTotalBytes),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                )
+                            }
+                        }
+                    }
+                    if (cacheVoices.size > 1) {
+                        var showCacheVoices by remember { mutableStateOf(false) }
+                        Box {
+                            Surface(
+                                modifier = Modifier.fillMaxWidth().clickable { showCacheVoices = true },
+                                shape = RoundedCornerShape(12.dp),
+                                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            ) {
+                                Row(
+                                    Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text(
+                                        selectedCacheVoice.ifBlank { cloudTtsVoiceId },
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    Icon(Icons.Default.ArrowDropDown, contentDescription = "Filter cached voice")
+                                }
+                            }
+                            DropdownMenu(
+                                expanded = showCacheVoices,
+                                onDismissRequest = { showCacheVoices = false },
+                                modifier = Modifier.heightIn(max = 360.dp),
+                            ) {
+                                cacheVoices.forEach { voiceId ->
+                                    DropdownMenuItem(
+                                        text = { Text(voiceId) },
+                                        trailingIcon = if (voiceId == selectedCacheVoice) {
+                                            { Icon(Icons.Default.Check, contentDescription = null) }
+                                        } else null,
+                                        onClick = {
+                                            selectedCacheVoice = voiceId
+                                            showCacheVoices = false
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    if (cacheChapters.isEmpty()) {
+                        Text(
+                            readerString("tts_no_audio_cached_for_voice", "No cached audio for this voice"),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    } else {
+                        Column(
+                            modifier = Modifier.fillMaxWidth()
+                                .heightIn(max = 240.dp)
+                                .border(
+                                    1.dp,
+                                    MaterialTheme.colorScheme.outlineVariant,
+                                    RoundedCornerShape(12.dp)
+                                ),
+                        ) {
+                            cacheChapters.forEach { chapter ->
+                                ListItem(
+                                    headlineContent = {
+                                        Text(
+                                            "${chapter.chapterTitle} (${chapter.chunkCount})",
+                                            fontWeight = FontWeight.Medium,
+                                        )
+                                    },
+                                    supportingContent = {
+                                        Text(formatReaderTtsBytes(chapter.sizeBytes))
+                                    },
+                                    trailingContent = {
+                                        IconButton(onClick = {
+                                            cloud.deleteCachedChapter(chapter)
+                                            cacheRevision++
+                                        }) {
+                                            Icon(
+                                                Icons.Default.Delete,
+                                                contentDescription = readerString("action_delete", "Delete"),
+                                                tint = MaterialTheme.colorScheme.error,
+                                            )
+                                        }
+                                    },
+                                )
+                                HorizontalDivider(
+                                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        TextButton(
+                            onClick = {
+                                cloud.deleteCachedVoice(selectedCacheVoice)
+                                cacheRevision++
+                            }
+                        ) {
+                            Text(
+                                readerString(
+                                    "tts_clear_cache_for_voice",
+                                    "Clear cache for %1\$s",
+                                    selectedCacheVoice,
+                                ),
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        }
+                    }
+                    if (cloud.state.cacheSummary.hasCachedAudio) {
                         TextButton(onClick = onClearCloudTtsCache) { Text("Clear cached cloud audio") }
                     }
                 }
@@ -1212,6 +1398,34 @@ internal fun SharedMobileReaderTtsSettingsSheet(
                     onDismissRequest = { showVoices = false },
                     modifier = Modifier.heightIn(max = 360.dp)
                 ) {
+                    if (voiceLanguages.size > 2) {
+                        var showLanguages by remember { mutableStateOf(false) }
+                        Box {
+                            DropdownMenuItem(
+                                text = { Text(selectedLanguage) },
+                                trailingIcon = { Icon(Icons.Default.ArrowDropDown, contentDescription = null) },
+                                onClick = { showLanguages = true },
+                            )
+                            DropdownMenu(
+                                expanded = showLanguages,
+                                onDismissRequest = { showLanguages = false },
+                            ) {
+                                voiceLanguages.forEach { language ->
+                                    DropdownMenuItem(
+                                        text = { Text(language) },
+                                        trailingIcon = if (language == selectedLanguage) {
+                                            { Icon(Icons.Default.Check, contentDescription = null) }
+                                        } else null,
+                                        onClick = {
+                                            selectedLanguage = language
+                                            showLanguages = false
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                        HorizontalDivider()
+                    }
                     DropdownMenuItem(
                         text = { Column { Text("System default"); Text("Uses iOS settings", style = MaterialTheme.typography.bodySmall) } },
                         enabled = !ttsVoiceLocked,
@@ -1222,7 +1436,7 @@ internal fun SharedMobileReaderTtsSettingsSheet(
                             }
                         }
                     )
-                    tts.availableVoices.forEach { voice ->
+                    filteredVoices.forEach { voice ->
                         DropdownMenuItem(
                             text = { Column { Text(voice.name); Text(voice.language, style = MaterialTheme.typography.bodySmall) } },
                             enabled = !ttsVoiceLocked,

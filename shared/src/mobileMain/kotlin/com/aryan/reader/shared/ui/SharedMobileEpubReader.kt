@@ -2176,6 +2176,7 @@ fun SharedMobileEpubReaderScreen(
                 ) {
                     SharedMobileEpubAutoScrollControls(
                         isPlaying = autoScroll,
+                        isTempPaused = autoScrollTemporarilyPaused,
                         profile = autoScrollProfile,
                         isLocalMode = autoScrollIsLocal,
                         useSlider = autoScrollUseSlider,

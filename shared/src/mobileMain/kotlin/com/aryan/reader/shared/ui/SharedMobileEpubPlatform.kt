@@ -5,8 +5,10 @@ import androidx.compose.ui.Modifier
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.ReaderAiByokSettings
 import com.aryan.reader.shared.ReaderCloudTtsState
+import com.aryan.reader.shared.ReaderTtsCacheChapter
 import com.aryan.reader.shared.ReaderTtsChunk
 import com.aryan.reader.shared.ReaderTtsProgress
+import com.aryan.reader.shared.ReaderVoiceSampleState
 import com.aryan.reader.shared.ReaderExternalLookupAction
 import com.aryan.reader.shared.reader.SharedEpubBook
 import com.aryan.reader.shared.ReaderLocator
@@ -174,4 +176,27 @@ interface SharedMobileEpubCloudTts {
     fun clearCache()
     fun stop()
     fun release()
+
+    // Android `TtsCacheTab` parity (per-chapter browser). Default no-ops keep
+    // platforms without a file inventory compiling; iOS implements them.
+    /** Distinct voice ids present in the chunk cache. */
+    fun cachedChapterVoices(): List<String> = emptyList()
+
+    /** Cached chapters for one voice, newest storage order. */
+    fun cachedChapters(voiceId: String): List<ReaderTtsCacheChapter> = emptyList()
+
+    /** Deletes one browser entry (consumes its [ReaderTtsCacheChapter.entryKey]). */
+    fun deleteCachedChapter(chapter: ReaderTtsCacheChapter) = Unit
+
+    /** Deletes every cached chunk for one voice. */
+    fun deleteCachedVoice(voiceId: String) = Unit
+
+    // Android `SpeakerSamplePlayer` parity (static per-voice sample wavs).
+    val voiceSampleState: ReaderVoiceSampleState get() = ReaderVoiceSampleState()
+
+    /** Toggles sample playback for one cloud voice (downloads once, then caches). */
+    fun playOrStopVoiceSample(voiceId: String) = Unit
+
+    /** Deletes all cached voice samples. */
+    fun clearVoiceSamples() = Unit
 }
