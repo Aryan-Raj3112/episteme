@@ -16,6 +16,38 @@ private val DefaultReaderHiddenToolIds: Set<String>
         ReaderTool.SCREEN_ORIENTATION.id,
     )
 
+private val LegacyReaderBottomToolIdsWithoutTts: Set<String>
+    get() = setOf(
+        ReaderTool.SLIDER.id,
+        ReaderTool.TOC.id,
+        ReaderTool.FORMAT.id,
+        ReaderTool.SEARCH.id
+    )
+
+private val LegacyReaderBottomToolIdsWithTts: Set<String>
+    get() = LegacyReaderBottomToolIdsWithoutTts + ReaderTool.TTS_CONTROLS.id
+
+private val LegacyReaderBottomToolIdsWithAi: Set<String>
+    get() = LegacyReaderBottomToolIdsWithoutTts + ReaderTool.AI_FEATURES.id
+
+/** Android benchmark (`EpubReaderPreferences.kt`): hidden-defaults version. v1 added screen orientation, v2 added brightness. */
+const val ReaderHiddenToolsDefaultsVersion: Int = 2
+
+/** Android benchmark (`readerHiddenToolsIntroducedAfter`): hidden tools introduced after [defaultsVersion]. */
+fun readerHiddenToolsIntroducedAfter(defaultsVersion: Int): Set<String> = buildSet {
+    if (defaultsVersion < 1) add(ReaderTool.SCREEN_ORIENTATION.id)
+    if (defaultsVersion < 2) add(ReaderTool.BRIGHTNESS.id)
+}
+
+/** Android benchmark: upgrade uncustomized legacy bottom sets to the 6-tool default; custom layouts pass through untouched. */
+fun migrateReaderBottomToolIds(current: Set<String>): Set<String> = when (current) {
+    DefaultReaderBottomToolIds -> current
+    LegacyReaderBottomToolIdsWithoutTts,
+    LegacyReaderBottomToolIdsWithTts,
+    LegacyReaderBottomToolIdsWithAi -> DefaultReaderBottomToolIds
+    else -> current
+}
+
 enum class ReaderTool(
     val id: String,
     val title: String,
@@ -59,17 +91,23 @@ enum class ReaderTool(
 data class ReaderToolbarPreferences(
     val hiddenToolIds: Set<String> = DefaultReaderHiddenToolIds,
     val toolOrder: List<ReaderTool> = ReaderTool.entries.toList(),
-    val bottomToolIds: Set<String> = DefaultReaderBottomToolIds
+    val bottomToolIds: Set<String> = DefaultReaderBottomToolIds,
+    val hiddenToolsDefaultsVersion: Int = ReaderHiddenToolsDefaultsVersion
 ) {
     fun sanitized(): ReaderToolbarPreferences {
         val orderedTools = (toolOrder + ReaderTool.entries.toList())
             .distinct()
             .filter { it in ReaderTool.entries }
         val knownToolIds = ReaderTool.entries.mapTo(mutableSetOf()) { it.id }
+        val migratedHidden = (hiddenToolIds + readerHiddenToolsIntroducedAfter(hiddenToolsDefaultsVersion))
+            .filterTo(mutableSetOf()) { it in knownToolIds }
         return copy(
-            hiddenToolIds = hiddenToolIds.filterTo(mutableSetOf()) { it in knownToolIds },
+            hiddenToolIds = migratedHidden,
             toolOrder = orderedTools,
-            bottomToolIds = bottomToolIds.filterTo(mutableSetOf()) { it in knownToolIds }
+            bottomToolIds = migrateReaderBottomToolIds(
+                bottomToolIds.filterTo(mutableSetOf()) { it in knownToolIds }
+            ),
+            hiddenToolsDefaultsVersion = ReaderHiddenToolsDefaultsVersion
         )
     }
 

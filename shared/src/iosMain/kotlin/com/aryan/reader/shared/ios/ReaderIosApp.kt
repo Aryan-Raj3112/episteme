@@ -196,6 +196,7 @@ import com.aryan.reader.shared.withAudiobookImported
 import com.aryan.reader.shared.withAudiobookImportedToLibrary
 import com.aryan.reader.shared.withAudiobookPosition
 import com.aryan.reader.shared.withLoadedMetadata
+import com.aryan.reader.shared.cardTitle
 import com.aryan.reader.shared.withUserEditedMetadata
 import com.aryan.reader.shared.DefaultReaderCustomBrightness
 import com.aryan.reader.shared.normalizeReaderBrightness
@@ -1003,7 +1004,11 @@ class ReaderIosBridge internal constructor(
     fun exportAnnotations(book: BookItem, format: AnnotationExportFormat): Boolean {
         val document = when (book.type) {
             FileType.PDF -> AnnotationExportFormatter.fromPdfAnnotations(
-                bookTitle = book.cardTitle(),
+                // Shared benchmark (SharedFormatters.cardTitle): honor the PDF
+                // filename toggle and blank-title fallback like Android.
+                bookTitle = book.cardTitle(
+                    usePdfFileNameAsDisplayName = loadIosLibrarySnapshot().usePdfFileNameAsDisplayName
+                ),
                 annotations = loadPersistedIosPdfReaderState(book)?.annotations.orEmpty(),
             )
             else -> AnnotationExportFormatter.fromEpubBook(book)
@@ -2848,6 +2853,14 @@ private fun ReaderIosApp(
     }
     val ttsListenController = remember { IosBookTtsListeningController() }
     DisposableEffect(ttsListenController) { onDispose(ttsListenController::release) }
+    // Android parity (sharedListeningHandoff): cloud read-aloud wins the audio
+    // output — stop competing playback when it starts producing audio.
+    LaunchedEffect(readerCloudTts.state.isPlaying) {
+        if (readerCloudTts.state.isPlaying) {
+            audiobookPlayer.stop()
+            ttsListenController.stop()
+        }
+    }
     val audiobookPlaybackSnapshot = bridge.audiobookPlaybackSnapshot
     var lastAudiobookPersistAt by remember { mutableStateOf(0L) }
     LaunchedEffect(audiobookPlaybackSnapshot) {
@@ -4046,16 +4059,17 @@ private fun ReaderIosApp(
                         showMessage("Could not write the edited EPUB back to $folderName")
                         refreshFolders()
                     } else {
-                        state = state.withUpdatedIosBook(
-                            persisted.copy(
-                                fileSize = replacement.fileSize,
-                                fileContentModifiedTimestamp = replacement.lastModifiedTimestamp,
-                            )
+                        val synced = persisted.copy(
+                            fileSize = replacement.fileSize,
+                            fileContentModifiedTimestamp = replacement.lastModifiedTimestamp,
                         )
+                        state = state.withUpdatedIosBook(synced)
+                        if (activeReaderBook?.id == synced.id) activeReaderBook = synced
                         showMessage("EPUB metadata updated")
                     }
                 } else {
                     state = state.withUpdatedIosBook(persisted)
+                    if (activeReaderBook?.id == persisted.id) activeReaderBook = persisted
                     showMessage("EPUB metadata updated")
                 }
             }.onFailure {
@@ -4926,6 +4940,10 @@ private fun ReaderIosApp(
                                     state = state.withUpdatedIosBook(updatedBook)
                                 }
                             },
+                            onBookInfoChange = { updated ->
+                                updateIosBookMetadata(updated)
+                            },
+                            knownTags = state.allTags,
                             onKeepScreenOnChange = bridge::setKeepScreenOn,
                             appIsActive = bridge.appLifecycleState.isActive,
                             appLifecycleEventId = bridge.appLifecycleState.eventId,
@@ -4987,7 +5005,16 @@ private fun ReaderIosApp(
                             summaryCache = remember { SharedSummaryCache() },
                             aiCredits = state.credits,
                             externalLocalTts = readerTtsEngine,
-                            onReaderTtsSessionChange = { readerTtsMiniBarState = it },
+                            onReaderTtsSessionChange = {
+                                readerTtsMiniBarState = it
+                                // Android parity (sharedListeningHandoff): reader
+                                // read-aloud wins the audio output — stop any
+                                // competing playback when its session activates.
+                                if (it != null) {
+                                    audiobookPlayer.stop()
+                                    ttsListenController.stop()
+                                }
+                            },
                             readerBrightness = readerBrightness,
                             readerCustomBrightness = readerCustomBrightness,
                             readerBrightnessSupported = true,
@@ -5024,6 +5051,7 @@ private fun ReaderIosApp(
                             onClipboardError = { message ->
                                 state = state.reduce(AppAction.BannerShown(BannerMessage(message, isError = true)))
                             },
+                            onShowBanner = ::showMessage,
                             readerScreenOrientationMode = readerOrientation,
                             onReaderScreenOrientationModeChange = { mode ->
                                 readerOrientation = mode
@@ -6331,6 +6359,8 @@ private fun ReaderIosApp(
                                 audiobookPlayback = audiobookPlaybackSnapshot,
                                 onPlayAudiobook = { audiobook ->
                                     ttsListenController.stop()
+                                    readerTtsEngine.stop()
+                                    readerCloudTts.stop()
                                     audiobookPlayer.connect(
                                         SharedAudiobookPlaybackRequest(
                                             bookId = audiobook.bookId,
@@ -6346,7 +6376,12 @@ private fun ReaderIosApp(
                                         )
                                     )
                                 },
-                                onToggleAudiobookPlayback = audiobookPlayer::togglePlayPause,
+                                onToggleAudiobookPlayback = {
+                                    readerTtsEngine.stop()
+                                    readerCloudTts.stop()
+                                    ttsListenController.stop()
+                                    audiobookPlayer.togglePlayPause()
+                                },
                                 onSeekAudiobook = audiobookPlayer::seekTo,
                                 onAudiobookSpeedChange = audiobookPlayer::setSpeed,
                                 onAudiobookSleepTimer = { minutes -> if (minutes == null) audiobookPlayer.cancelSleepTimer() else audiobookPlayer.setSleepTimer(minutes) },
@@ -6368,6 +6403,8 @@ private fun ReaderIosApp(
                                             "path=${book.path ?: "<null>"}"
                                     )
                                     audiobookPlayer.stop()
+                                    readerTtsEngine.stop()
+                                    readerCloudTts.stop()
                                     ttsListenController.start(
                                         book,
                                         policy,
@@ -8136,7 +8173,3 @@ private fun String.normalizedId(): String {
  */
 private fun newIosCloudRootId(): String =
     cloudFolderRootId("ios-root:${NSUUID.UUID().UUIDString}")
-
-private fun BookItem.cardTitle(): String {
-    return title ?: displayName
-}

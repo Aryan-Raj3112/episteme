@@ -43,8 +43,9 @@ fun shouldShowSharedReaderTtsMiniBar(
 fun sharedReaderTtsMiniBarBottomPaddingDp(isOnMainRoute: Boolean): Int =
     if (isOnMainRoute) 96 else 16
 
+/** Android `formatReaderTtsChunkLabel` parity (`ReaderTtsOverlaySize.kt:37-41`): `Chunk X/Y`, empty when out of range. */
 fun SharedReaderTtsMiniBarState.chunkLabel(): String =
-    if (chunkIndex >= 0 && totalChunks > 0) "Chunk ${chunkIndex + 1} of $totalChunks" else ""
+    if (totalChunks > 0 && chunkIndex in 0 until totalChunks) "Chunk ${chunkIndex + 1}/$totalChunks" else ""
 
 fun SharedReaderTtsMiniBarState.subtitle(): String =
     listOf(chunkLabel(), chapterTitle.orEmpty()).filter { it.isNotBlank() }.joinToString(" - ")

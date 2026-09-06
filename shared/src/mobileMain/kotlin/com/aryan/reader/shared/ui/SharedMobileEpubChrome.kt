@@ -67,6 +67,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
@@ -197,8 +198,29 @@ internal fun SharedMobileEpubTopBar(
         cloudTtsState.isLoading || cloudTtsState.isPlaying || cloudTtsState.isPaused
     val onReadAloudToggle = if (cloudTtsAvailable) onCloudTtsToggle else onLocalTtsToggle
     val onReadAloudStop = if (cloudTtsAvailable) onCloudTtsStop else onLocalTtsStop
-    val readAloudIcon = if (cloudTtsAvailable) cloudTtsState.icon() else localTtsState.icon()
-    val readAloudLabel = if (cloudTtsAvailable) cloudTtsState.menuLabel() else localTtsState.menuLabel()
+    // Android benchmark (EpubReaderControls.kt:359-369): chrome TTS tap stops
+    // the active session and shows a stop-X; pause/resume lives in the overlay.
+    val readAloudActive = if (cloudTtsAvailable) {
+        cloudTtsState.isLoading || cloudTtsState.isPlaying || cloudTtsState.isPaused
+    } else {
+        localTtsState != SharedMobileEpubLocalTtsState.IDLE
+    }
+    val readAloudIcon = if (readAloudActive) {
+        Icons.Default.Close
+    } else if (cloudTtsAvailable) {
+        cloudTtsState.icon()
+    } else {
+        localTtsState.icon()
+    }
+    val readAloudLabel = if (readAloudActive) {
+        readerString("tooltip_tts_stop", "Stop reading")
+    } else if (cloudTtsAvailable) {
+        cloudTtsState.menuLabel()
+    } else {
+        localTtsState.menuLabel()
+    }
+    // Android benchmark (EpubReaderScreen.kt:279): cap the chrome title at 40 chars.
+    val chromeTitle = if (title.length > 40) title.take(40) + "..." else title
     Surface(modifier = modifier.testTag(SharedMobileEpubAxTags.TOP_BAR), tonalElevation = 4.dp) {
         Row(
             Modifier
@@ -213,7 +235,7 @@ internal fun SharedMobileEpubTopBar(
                 modifier = Modifier.testTag(SharedMobileEpubAxTags.BACK).semantics { contentDescription = "Back" }
             ) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null) }
             Text(
-                title,
+                chromeTitle,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 style = MaterialTheme.typography.titleMedium,
@@ -238,10 +260,7 @@ internal fun SharedMobileEpubTopBar(
                         onClick = onFormat,
                         modifier = Modifier.testTag("EpubTopFormat").semantics { contentDescription = formatContentDescription }
                     ) {
-                        Text(
-                            "Tᵀ",
-                            style = MaterialTheme.typography.titleLarge,
-                        )
+                        Icon(SharedReaderIcons.FormatSize, contentDescription = null)
                     }
                     ReaderTool.SEARCH -> IconButton(
                         onClick = onSearch,
@@ -256,10 +275,14 @@ internal fun SharedMobileEpubTopBar(
                         Icon(SharedReaderIcons.Slider, contentDescription = null)
                     }
                     ReaderTool.TTS_CONTROLS -> IconButton(
-                        onClick = onReadAloudToggle,
+                        onClick = { if (readAloudActive) onReadAloudStop() else onReadAloudToggle() },
                         modifier = Modifier.testTag("EpubTopTts").semantics { contentDescription = readAloudLabel }
                     ) {
-                        Icon(readAloudIcon, contentDescription = null)
+                        Icon(
+                            readAloudIcon,
+                            contentDescription = null,
+                            tint = if (readAloudActive) MaterialTheme.colorScheme.primary else LocalContentColor.current
+                        )
                     }
                     ReaderTool.BRIGHTNESS -> IconButton(
                         onClick = onBrightness,
@@ -321,7 +344,7 @@ internal fun SharedMobileEpubTopBar(
                                             ReaderTool.FORMAT -> onFormat()
                                             ReaderTool.SEARCH -> onSearch()
                                             ReaderTool.SLIDER -> onOpenSlider()
-                                            ReaderTool.TTS_CONTROLS -> onLocalTtsToggle()
+                                            ReaderTool.TTS_CONTROLS -> if (readAloudActive) onReadAloudStop() else onLocalTtsToggle()
                                             ReaderTool.BRIGHTNESS -> onBrightness()
                                             ReaderTool.SCREEN_ORIENTATION -> onScreenOrientation()
                                             ReaderTool.DICTIONARY -> onOpenDictionarySettings()
@@ -678,15 +701,37 @@ internal fun SharedMobileEpubBottomBar(
     aiAvailable: Boolean = false,
     localTtsState: SharedMobileEpubLocalTtsState,
     onLocalTtsToggle: () -> Unit,
+    onLocalTtsStop: () -> Unit = {},
     cloudTtsState: ReaderCloudTtsState = ReaderCloudTtsState(),
     cloudTtsAvailable: Boolean = false,
     onCloudTtsToggle: () -> Unit = {},
+    onCloudTtsStop: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val formatContentDescription = readerString("tooltip_format", "Text formatting")
     val onReadAloudToggle = if (cloudTtsAvailable) onCloudTtsToggle else onLocalTtsToggle
-    val readAloudIcon = if (cloudTtsAvailable) cloudTtsState.icon() else localTtsState.icon()
-    val readAloudLabel = if (cloudTtsAvailable) cloudTtsState.menuLabel() else localTtsState.menuLabel()
+    val onReadAloudStop = if (cloudTtsAvailable) onCloudTtsStop else onLocalTtsStop
+    // Android benchmark (EpubReaderControls.kt:359-369): chrome TTS tap stops
+    // the active session and shows a stop-X; pause/resume lives in the overlay.
+    val readAloudActive = if (cloudTtsAvailable) {
+        cloudTtsState.isLoading || cloudTtsState.isPlaying || cloudTtsState.isPaused
+    } else {
+        localTtsState != SharedMobileEpubLocalTtsState.IDLE
+    }
+    val readAloudIcon = if (readAloudActive) {
+        Icons.Default.Close
+    } else if (cloudTtsAvailable) {
+        cloudTtsState.icon()
+    } else {
+        localTtsState.icon()
+    }
+    val readAloudLabel = if (readAloudActive) {
+        readerString("tooltip_tts_stop", "Stop reading")
+    } else if (cloudTtsAvailable) {
+        cloudTtsState.menuLabel()
+    } else {
+        localTtsState.menuLabel()
+    }
     Surface(modifier = modifier.testTag(SharedMobileEpubAxTags.BOTTOM_BAR), tonalElevation = 4.dp) {
         Column(Modifier.fillMaxWidth()) {
             Row(
@@ -708,10 +753,7 @@ internal fun SharedMobileEpubBottomBar(
                             onClick = onFormat,
                             modifier = Modifier.testTag("EpubBottomFormat").semantics { contentDescription = formatContentDescription }
                         ) {
-                            Text(
-                                "Tᵀ",
-                                style = MaterialTheme.typography.titleLarge,
-                            )
+                            Icon(SharedReaderIcons.FormatSize, contentDescription = null)
                         }
                         ReaderTool.SEARCH -> IconButton(
                             onClick = onSearch,
@@ -750,10 +792,14 @@ internal fun SharedMobileEpubBottomBar(
                             modifier = Modifier.testTag("EpubBottomAi").semantics { contentDescription = "AI features" }
                         ) { Icon(Icons.Default.Ai, contentDescription = null) }
                         ReaderTool.TTS_CONTROLS -> IconButton(
-                            onClick = onReadAloudToggle,
+                            onClick = { if (readAloudActive) onReadAloudStop() else onReadAloudToggle() },
                             modifier = Modifier.testTag("EpubBottomTts").semantics { contentDescription = readAloudLabel }
                         ) {
-                            Icon(readAloudIcon, contentDescription = null)
+                            Icon(
+                                readAloudIcon,
+                                contentDescription = null,
+                                tint = if (readAloudActive) MaterialTheme.colorScheme.primary else LocalContentColor.current
+                            )
                         }
                         else -> Unit
                     }
@@ -1040,6 +1086,11 @@ internal fun SharedMobileReaderTtsSettingsSheet(
     var showVoices by remember { mutableStateOf(false) }
     var showCloudVoices by remember { mutableStateOf(false) }
     val selectedVoice = tts.availableVoices.firstOrNull { it.identifier == tts.selectedVoiceIdentifier }
+    // Android benchmark (AndroidTtsSettings.kt:153/239/317/372/409/415): voice
+    // selection and previews freeze while a session is active.
+    val ttsVoiceLocked = tts.isSessionActive ||
+        cloudTts?.state?.isLoading == true ||
+        cloudTts?.state?.isPlaying == true
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 32.dp),
@@ -1105,6 +1156,7 @@ internal fun SharedMobileReaderTtsSettingsSheet(
                                             Text(voice.description, style = MaterialTheme.typography.bodySmall)
                                         }
                                     },
+                                    enabled = !ttsVoiceLocked,
                                     onClick = {
                                         cloud.setVoice(voice.id)
                                         onCloudTtsVoiceChange(voice.id)
@@ -1135,7 +1187,7 @@ internal fun SharedMobileReaderTtsSettingsSheet(
             }
             Box {
                 Surface(
-                    modifier = Modifier.fillMaxWidth().clickable { showVoices = true },
+                    modifier = Modifier.fillMaxWidth().clickable(enabled = !ttsVoiceLocked) { showVoices = true },
                     shape = RoundedCornerShape(12.dp),
                     color = MaterialTheme.colorScheme.surfaceContainerHigh
                 ) {
@@ -1162,9 +1214,10 @@ internal fun SharedMobileReaderTtsSettingsSheet(
                 ) {
                     DropdownMenuItem(
                         text = { Column { Text("System default"); Text("Uses iOS settings", style = MaterialTheme.typography.bodySmall) } },
+                        enabled = !ttsVoiceLocked,
                         onClick = { tts.setVoice(null); showVoices = false },
                         trailingIcon = {
-                            IconButton(onClick = { tts.previewVoice(null) }) {
+                            IconButton(onClick = { tts.previewVoice(null) }, enabled = !ttsVoiceLocked) {
                                 Icon(Icons.Default.PlayArrow, contentDescription = "Preview system voice")
                             }
                         }
@@ -1172,9 +1225,10 @@ internal fun SharedMobileReaderTtsSettingsSheet(
                     tts.availableVoices.forEach { voice ->
                         DropdownMenuItem(
                             text = { Column { Text(voice.name); Text(voice.language, style = MaterialTheme.typography.bodySmall) } },
+                            enabled = !ttsVoiceLocked,
                             onClick = { tts.setVoice(voice.identifier); showVoices = false },
                             trailingIcon = {
-                                IconButton(onClick = { tts.previewVoice(voice.identifier) }) {
+                                IconButton(onClick = { tts.previewVoice(voice.identifier) }, enabled = !ttsVoiceLocked) {
                                     Icon(Icons.Default.PlayArrow, contentDescription = "Preview ${voice.name}")
                                 }
                             }

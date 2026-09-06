@@ -531,7 +531,7 @@ fun SharedMobileUnifiedLibraryScreen(
                                 val progress = (book.progressPercentage ?: 0f).coerceIn(0f, 100f)
                                 SharedAndroidUnifiedContinueCard(
                                     sectionLabel = readerString("unified_library_continue_reading", "Continue reading"),
-                                    title = book.cardTitle(),
+                                    title = book.cardTitle(LocalUsePdfFileNameAsDisplayName.current),
                                     author = book.cardAuthor(),
                                     progressPercent = progress,
                                     progressLabel = readerString("progress_complete", "%1\$d%% complete", progress.roundToInt()),

@@ -159,6 +159,9 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextOverflow
@@ -1692,6 +1695,11 @@ fun SharedMobilePdfReaderHost(
                                 dispatch(SharedPdfReaderAction.BookmarkToggled(currentPdfIndex, createdAt = currentTimestamp()))
                             },
                             onToggleDisplayMode = ::toggleDisplayMode,
+                            rightToLeftPagination = rightToLeftPagination,
+                            onRightToLeftPaginationChange = {
+                                rightToLeftPagination = it
+                                onReaderDefaultSettingsChange(readerDefaultSettings.copy(rightToLeftPagination = it))
+                            },
                             onTheme = { if (ownsGlobalModal) showThemePanel = true },
                             onVisualOptions = { if (ownsGlobalModal) showReaderOptions = !showReaderOptions },
                             tapToTurnPages = tapToTurnPages,
@@ -3016,40 +3024,28 @@ fun SharedMobilePdfReaderHost(
         }
     }
     if (documentRender.openError == SharedMobilePdfOpenError.PASSWORD_REQUIRED) {
-        AlertDialog(
-            onDismissRequest = closeReader,
-            title = { Text("Password protected") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("This PDF is password protected. Enter the password to open it.")
-                    OutlinedTextField(
-                        value = pdfPasswordDraft,
-                        onValueChange = { pdfPasswordDraft = it },
-                        label = { Text("Password") },
-                        singleLine = true,
-                        visualTransformation = PasswordVisualTransformation(),
-                        isError = pdfPassword != null,
-                        supportingText = if (pdfPassword != null) {
-                            { Text("Incorrect password") }
-                        } else {
-                            null
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
+        SharedMobilePdfPasswordDialog(
+            labels = SharedMobilePdfPasswordLabels(
+                title = readerString("title_password_protected", "Password Protected"),
+                description = readerString(
+                    "desc_password_protected",
+                    "This document is encrypted. Please enter the password to view it."
+                ),
+                password = readerString("password", "Password"),
+                incorrectPassword = readerString("error_incorrect_password", "Incorrect password"),
+                showPassword = readerString("content_desc_show_password", "Show password"),
+                hidePassword = readerString("content_desc_hide_password", "Hide password"),
+                open = readerString("action_open", "Open"),
+                cancel = readerString("action_cancel", "Cancel"),
+            ),
+            // Android benchmark (PdfViewerScreen.kt:4705): explicit error state —
+            // a password was tried and rejected, not merely "a draft exists".
+            isError = pdfPassword != null,
+            onDismiss = closeReader,
+            onConfirm = { password ->
+                pdfPasswordDraft = password
+                pdfPassword = password
             },
-            confirmButton = {
-                Button(
-                    onClick = { pdfPassword = pdfPasswordDraft },
-                    enabled = pdfPasswordDraft.isNotBlank(),
-                ) {
-                    Text("Open")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = closeReader) { Text("Cancel") }
-            },
-            properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false),
         )
     }
     if (showShareFormatChoice) {
@@ -3320,12 +3316,15 @@ private fun SharedMobilePdfReaderTopBar(
     onBrightness: () -> Unit,
     onScreenOrientation: () -> Unit,
     isTtsPlayingOrLoading: Boolean,
+    rightToLeftPagination: Boolean = false,
+    onRightToLeftPaginationChange: (Boolean) -> Unit = {},
     topTools: List<PdfReaderTool>,
     toolbarPreferences: PdfToolbarPreferences,
     onCustomizeToolbar: () -> Unit,
     applySystemBarInsets: Boolean
 ) {
     val searchFocusRequester = remember { FocusRequester() }
+    val searchKeyboardController = LocalSoftwareKeyboardController.current
     LaunchedEffect(isSearchActive) {
         if (isSearchActive) {
             delay(100)
@@ -3368,10 +3367,29 @@ private fun SharedMobilePdfReaderTopBar(
                     placeholder = { Text(readerString("desktop_type_to_search_pdf", "Search PDF")) },
                     leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
                     trailingIcon = {
-                        IconButton(onClick = onCloseSearch) {
-                            Icon(Icons.Default.Close, contentDescription = readerString("content_desc_close_search", "Close search"))
+                        // Android benchmark (AndroidSearchUi.kt:271-282): a clear
+                        // affordance empties the query; closing is separate.
+                        IconButton(
+                            onClick = {
+                                if (searchQuery.isNotBlank()) onSearchQueryChange("") else onCloseSearch()
+                            }
+                        ) {
+                            Icon(
+                                Icons.Default.Close,
+                                contentDescription = if (searchQuery.isNotBlank()) {
+                                    readerString("action_clear_search", "Clear search")
+                                } else {
+                                    readerString("content_desc_close_search", "Close search")
+                                }
+                            )
                         }
                     },
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(
+                        // Android benchmark (:247-268): IME Search confirms the
+                        // query — search is live, so dismiss the keyboard.
+                        onSearch = { searchKeyboardController?.hide() }
+                    ),
                     modifier = Modifier
                         .weight(1f)
                         .focusRequester(searchFocusRequester)
@@ -3523,6 +3541,7 @@ private fun SharedMobilePdfReaderTopBar(
                 if (showReadingModeExpanded && toolbarPreferences.isVisible(PdfReaderTool.READING_MODE)) {
                     SharedMobilePdfOverflowItem(
                         readerString("menu_reading_mode_vertical", "Vertical"),
+                        enabled = !isTtsPlayingOrLoading,
                         trailingIcon = { if (displayMode == PdfDisplayMode.VERTICAL_SCROLL) Icon(Icons.Default.Check, contentDescription = readerString("content_desc_selected", "Selected")) },
                         onClick = {
                             if (displayMode != PdfDisplayMode.VERTICAL_SCROLL) onToggleDisplayMode()
@@ -3531,9 +3550,25 @@ private fun SharedMobilePdfReaderTopBar(
                     )
                     SharedMobilePdfOverflowItem(
                         readerString("menu_reading_mode_paginated", "Paginated (left-to-right)"),
-                        trailingIcon = { if (displayMode == PdfDisplayMode.PAGINATION) Icon(Icons.Default.Check, contentDescription = readerString("content_desc_selected", "Selected")) },
+                        enabled = !isTtsPlayingOrLoading,
+                        trailingIcon = { if (displayMode == PdfDisplayMode.PAGINATION && !rightToLeftPagination) Icon(Icons.Default.Check, contentDescription = readerString("content_desc_selected", "Selected")) },
                         onClick = {
-                            if (displayMode != PdfDisplayMode.PAGINATION) onToggleDisplayMode()
+                            if (displayMode != PdfDisplayMode.PAGINATION || rightToLeftPagination) {
+                                onRightToLeftPaginationChange(false)
+                                if (displayMode != PdfDisplayMode.PAGINATION) onToggleDisplayMode()
+                            }
+                            showMoreMenu = false
+                        }
+                    )
+                    SharedMobilePdfOverflowItem(
+                        readerString("menu_right_to_left_pagination", "Paginated (right-to-left)"),
+                        enabled = !isTtsPlayingOrLoading,
+                        trailingIcon = { if (displayMode == PdfDisplayMode.PAGINATION && rightToLeftPagination) Icon(Icons.Default.Check, contentDescription = readerString("content_desc_selected", "Selected")) },
+                        onClick = {
+                            if (displayMode != PdfDisplayMode.PAGINATION || !rightToLeftPagination) {
+                                onRightToLeftPaginationChange(true)
+                                if (displayMode != PdfDisplayMode.PAGINATION) onToggleDisplayMode()
+                            }
                             showMoreMenu = false
                         }
                     )
@@ -3566,7 +3601,7 @@ private fun SharedMobilePdfReaderTopBar(
                 )
                 if (toolbarPreferences.isVisible(PdfReaderTool.AUTO_SCROLL)) SharedMobilePdfOverflowItem(
                     readerString("menu_auto_scroll", "Auto Scroll"),
-                    enabled = displayMode == PdfDisplayMode.VERTICAL_SCROLL,
+                    enabled = !isTtsPlayingOrLoading && displayMode == PdfDisplayMode.VERTICAL_SCROLL,
                     onClick = {
                         showMoreMenu = false
                         onToggleAutoScroll()
@@ -3585,6 +3620,7 @@ private fun SharedMobilePdfReaderTopBar(
                 if (showTtsSettingsExpanded) {
                     if (showVoiceSettings) SharedMobilePdfOverflowItem(
                         readerString("menu_tts_voice_settings", "TTS Voice Settings"),
+                        enabled = !isTtsPlayingOrLoading,
                         leadingIcon = { Icon(Icons.Default.GraphicEq, contentDescription = null) },
                         onClick = {
                             showMoreMenu = false

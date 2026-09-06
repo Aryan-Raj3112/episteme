@@ -790,7 +790,8 @@ private fun JsonElement.asReaderToolbarPreferencesOrNull(): ReaderToolbarPrefere
     return ReaderToolbarPreferences(
         hiddenToolIds = obj.stringArray("hiddenToolIds").toSet(),
         toolOrder = order.ifEmpty { ReaderTool.entries.toList() },
-        bottomToolIds = bottomToolIds
+        bottomToolIds = bottomToolIds,
+        hiddenToolsDefaultsVersion = obj.int("hiddenToolsDefaultsVersion") ?: 0
     ).sanitized()
 }
 
@@ -941,7 +942,8 @@ private fun ReaderToolbarPreferences.toJsonObject(): JsonObject {
         mapOf(
             "hiddenToolIds" to sanitized.hiddenToolIds.toList().sorted().asJsonArray(),
             "toolOrder" to sanitized.toolOrder.map { it.id }.asJsonArray(),
-            "bottomToolIds" to sanitized.bottomToolIds.toList().sorted().asJsonArray()
+            "bottomToolIds" to sanitized.bottomToolIds.toList().sorted().asJsonArray(),
+            "hiddenToolsDefaultsVersion" to JsonPrimitive(sanitized.hiddenToolsDefaultsVersion)
         )
     )
 }

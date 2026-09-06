@@ -617,7 +617,9 @@ private const val TtsRemainingLabel = "Generated as you listen"
 
 @Composable
 private fun SharedMobileTtsBookCover(book: BookItem, modifier: Modifier = Modifier) {
-    val colors = listOf(Color(0xFF6D4C41), Color(0xFFD7A86E))
+    // Android benchmark (AudiobooksUi.kt): TTS items use the slate/purple
+    // gradient; the brown/gold pair is reserved for regular audiobooks.
+    val colors = listOf(Color(0xFF34495E), Color(0xFF6C5CE7))
     Box(
         modifier = modifier.clip(RoundedCornerShape(14.dp)).background(Brush.verticalGradient(colors)),
         contentAlignment = Alignment.Center,
@@ -1302,7 +1304,7 @@ fun SharedMobileAudiobookSleepTimerDialog(
     customDurations: List<Int> = emptyList(),
     onCustomDurationsChange: (List<Int>) -> Unit = {},
 ) {
-    val durations = listOf(15, 30, 45, 60)
+    val durations = listOf(1, 15, 30, 45, 60)
     val savedDurations = sanitizeCustomSleepTimerMinutes(customDurations)
     var addingCustom by remember { mutableStateOf(false) }
     var hoursText by remember { mutableStateOf("") }
@@ -1326,6 +1328,7 @@ fun SharedMobileAudiobookSleepTimerDialog(
             )
             hours == 1 -> readerString("audiobooks_one_hour", "1 hour")
             hours > 1 -> readerString("audiobooks_hours", "%1\$d hours", hours)
+            minutes == 1 -> readerString("audiobooks_one_minute", "1 minute")
             else -> readerString("audiobooks_minutes", "%1\$d minutes", minutes)
         }
     }

@@ -1132,6 +1132,51 @@ internal fun SharedMobileBookCard(
     }
 }
 
+/**
+ * Android parity (`BookTagChipsRow` in `SharedComposables.kt`): compact
+ * horizontally scrolling tag chips. Tag tint follows the established shared
+ * convention (`Color(tag.color ?: 0xFF64B5F6)`).
+ */
+@Composable
+internal fun SharedMobileBookTagChipsRow(
+    tags: List<Tag>,
+    modifier: Modifier = Modifier,
+) {
+    if (tags.isEmpty()) return
+    Row(
+        modifier = modifier.horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        tags.forEach { tag ->
+            val tagColor = Color(tag.color ?: 0xFF64B5F6.toInt())
+            Surface(
+                shape = RoundedCornerShape(50),
+                color = tagColor.copy(alpha = 0.14f),
+                contentColor = tagColor,
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(6.dp)
+                            .background(tagColor, CircleShape)
+                    )
+                    Text(
+                        text = tag.name,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                    )
+                }
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun SharedMobileLibraryListItem(
@@ -1204,6 +1249,67 @@ internal fun SharedMobileLibraryListItem(
                     minLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
+                // Android parity (LibraryScreen.kt:1326-1376): tag chips plus a
+                // downloading / not-available pill between metadata and progress.
+                if (downloading || !book.isAvailable || book.tags.isNotEmpty()) {
+                    Spacer(Modifier.height(6.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        if (downloading || !book.isAvailable) {
+                            val pillContainer = if (downloading) {
+                                MaterialTheme.colorScheme.primaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.errorContainer
+                            }
+                            val pillContent = if (downloading) {
+                                MaterialTheme.colorScheme.onPrimaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.onErrorContainer
+                            }
+                            Surface(
+                                shape = RoundedCornerShape(50),
+                                color = pillContainer,
+                                contentColor = pillContent,
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                ) {
+                                    if (downloading) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(14.dp),
+                                            strokeWidth = 2.dp,
+                                        )
+                                        Text(
+                                            text = readerString("status_downloading", "Downloading…"),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Medium,
+                                        )
+                                    } else {
+                                        Icon(
+                                            Icons.Default.Info,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(14.dp),
+                                        )
+                                        Text(
+                                            text = readerString("not_available_locally", "Not available locally"),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Medium,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        SharedMobileBookTagChipsRow(
+                            tags = book.tags,
+                            modifier = Modifier.weight(1f, fill = false),
+                        )
+                    }
+                }
                 Spacer(Modifier.height(10.dp))
                 Surface(
                     shape = RoundedCornerShape(50),

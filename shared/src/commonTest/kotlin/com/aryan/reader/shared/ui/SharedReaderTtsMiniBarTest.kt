@@ -1,6 +1,7 @@
 package com.aryan.reader.shared.ui
 
 import com.aryan.reader.shared.SharedReaderTtsMiniBarState
+import com.aryan.reader.shared.chunkLabel
 import com.aryan.reader.shared.sharedReaderTtsMiniBarBottomPaddingDp
 import com.aryan.reader.shared.shouldShowSharedReaderTtsMiniBar
 import kotlin.test.Test
@@ -79,5 +80,13 @@ class SharedReaderTtsMiniBarTest {
     fun `mini bar bottom padding follows main route`() {
         assertEquals(96, sharedReaderTtsMiniBarBottomPaddingDp(isOnMainRoute = true))
         assertEquals(16, sharedReaderTtsMiniBarBottomPaddingDp(isOnMainRoute = false))
+    }
+
+    @Test
+    fun `chunk label follows android chunk slash total format`() {
+        assertEquals("Chunk 1/10", activeState().chunkLabel())
+        assertEquals("", activeState().copy(chunkIndex = 10).chunkLabel())
+        assertEquals("", activeState().copy(chunkIndex = -1).chunkLabel())
+        assertEquals("", activeState().copy(totalChunks = 0).chunkLabel())
     }
 }
