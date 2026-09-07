@@ -31,6 +31,26 @@ class BookPaginatorThreadingTest {
         )
     }
 
+    @Test
+    fun `trace preview truncates before escaping to stay allocation bounded`() {
+        // getBlocksForChapter logs a preview of the full chapter HTML. Escaping first copies
+        // multi-MB inputs several times for a 220-char preview and OOMs (see
+        // docs/crashlytics-triage.md#15); every copy must take(maxLength) before replacing.
+        listOf(
+            "com/aryan/reader/paginatedreader/BookPaginator.kt",
+            "com/aryan/reader/epubreader/ChapterWebView.kt",
+            "com/aryan/reader/epubreader/EpubReaderContent.kt"
+        ).forEach { path ->
+            val body = sourceFile(path).readText()
+                .substringAfter("fun String.txtFormatTracePreview")
+                .substringBefore("\n}")
+            assertTrue(
+                "$path must take(maxLength) before the first escaping replace",
+                body.indexOf("take(maxLength)") in 0 until body.indexOf(".replace(")
+            )
+        }
+    }
+
     private fun sourceFile(relativePath: String): File {
         val candidates = listOf(
             File("src/main/java/$relativePath"),

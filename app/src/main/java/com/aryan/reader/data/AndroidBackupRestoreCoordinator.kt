@@ -21,19 +21,85 @@ internal object AndroidBookArtifactPaths {
     private const val DERIVED_DIR = "derived"
     private const val REFLOW_DIR = "reflow"
 
+    /**
+     * ext4/f2fs allow 255 bytes per name; the atomic writer appends `.new`
+     * / `.bak`, so cap well below that, measured in UTF-8 bytes (titles
+     * routinely contain multibyte characters).
+     */
+    internal const val MAX_SIDECAR_NAME_BYTES = 200
+
     private val unsafeFileCharacters = Regex("[^a-zA-Z0-9._-]")
 
     fun richTextFile(filesDir: File, bookId: String): File = File(
         File(File(filesDir, ANNOTATIONS_DIR), RICH_TEXT_DIR),
-        "rich_doc_${safeBookId(bookId)}.json",
+        sidecarName(prefix = "rich_doc_", sanitizedId = safeBookId(bookId), stableKey = bookId),
     )
 
     fun reflowFile(filesDir: File, bookId: String): File = File(
         File(File(filesDir, DERIVED_DIR), REFLOW_DIR),
-        "${safeBookId(bookId)}_reflow.html",
+        sidecarName(
+            prefix = "",
+            sanitizedId = safeBookId(bookId),
+            stableKey = bookId,
+            suffix = "_reflow",
+            extension = ".html",
+        ),
     )
 
+    /**
+     * Builds a filesystem-safe sidecar name for [stableKey] (usually the
+     * book ID). Names that fit keep their exact legacy spelling, so existing
+     * sidecars stay addressable; over-long names fall back to a truncated
+     * human-readable head plus a SHA-256 digest, which stays deterministic
+     * across read/write/delete/sync. [sanitizedId] must already have
+     * separators removed; only the length is enforced here.
+     */
+    fun sidecarName(
+        prefix: String,
+        sanitizedId: String,
+        stableKey: String,
+        suffix: String = "",
+        extension: String = ".json",
+    ): String {
+        val legacy = "$prefix$sanitizedId$suffix$extension"
+        if (legacy.toByteArray(Charsets.UTF_8).size <= MAX_SIDECAR_NAME_BYTES) return legacy
+        val digest = sha256Hex(stableKey).take(16)
+        val fixedBytes = (prefix + "_" + digest + suffix + extension)
+            .toByteArray(Charsets.UTF_8).size
+        val head = sanitizedId.truncateToUtf8Bytes((MAX_SIDECAR_NAME_BYTES - fixedBytes).coerceAtLeast(0))
+        val headPart = head.takeIf { it.isNotEmpty() }?.let { "${it}_" }.orEmpty()
+        return "$prefix$headPart$digest$suffix$extension"
+    }
+
     fun safeBookId(bookId: String): String = bookId.replace(unsafeFileCharacters, "_")
+
+    private fun sha256Hex(value: String): String {
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+            .digest(value.toByteArray(Charsets.UTF_8))
+        return buildString(digest.size * 2) {
+            for (byte in digest) append("%02x".format(byte))
+        }
+    }
+
+    /** Truncates to at most [maxBytes] UTF-8 bytes without splitting a code point. */
+    private fun String.truncateToUtf8Bytes(maxBytes: Int): String {
+        if (maxBytes <= 0) return ""
+        var used = 0
+        var end = 0
+        while (end < length) {
+            val codePoint = codePointAt(end)
+            val width = when {
+                codePoint < 0x80 -> 1
+                codePoint < 0x800 -> 2
+                codePoint < 0x10000 -> 3
+                else -> 4
+            }
+            if (used + width > maxBytes) break
+            used += width
+            end += Character.charCount(codePoint)
+        }
+        return substring(0, end)
+    }
 }
 
 internal object AndroidBackupRestoreCoordinator {

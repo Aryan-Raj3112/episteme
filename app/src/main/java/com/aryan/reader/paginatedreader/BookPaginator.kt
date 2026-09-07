@@ -148,11 +148,16 @@ private const val NATIVE_VERTICAL_LOAD_LOG_TAG = "NativeVerticalLoad"
 private val DurablePaginationCacheWriteScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
 private fun String.txtFormatTracePreview(maxLength: Int = 220): String {
-    return replace("\\", "\\\\")
+    // Truncate first: previews must stay allocation-bounded even when the
+    // caller passes a chapter-sized string.
+    val truncated = take(maxLength)
+    val suffix = if (length > maxLength) "..." else ""
+    return truncated
+        .replace("\\", "\\\\")
         .replace("\r", "\\r")
         .replace("\n", "\\n")
         .replace("\t", "\\t")
-        .let { if (it.length <= maxLength) it else it.take(maxLength) + "..." }
+        .plus(suffix)
         .replace("\"", "\\\"")
 }
 

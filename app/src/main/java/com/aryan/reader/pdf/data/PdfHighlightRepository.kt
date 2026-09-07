@@ -2,6 +2,7 @@
 package com.aryan.reader.pdf.data
 
 import android.content.Context
+import com.aryan.reader.data.AndroidBookArtifactPaths
 import com.aryan.reader.logCloudAnnotationSyncTrace
 import com.aryan.reader.data.writeJsonAtomically
 import com.aryan.reader.pdf.PdfUserHighlight
@@ -13,10 +14,15 @@ import java.io.File
 class PdfHighlightRepository(private val context: Context) {
 
     fun getFileForSync(bookId: String): File {
-        val safeBookId = bookId.replace("/", "_")
         val dir = File(context.filesDir, "pdf_highlights")
         if (!dir.exists()) dir.mkdirs()
-        return File(dir, "highlights_$safeBookId.json")
+        // Length-bounded: raw titles can exceed the 255-byte filename limit.
+        val name = AndroidBookArtifactPaths.sidecarName(
+            prefix = "highlights_",
+            sanitizedId = bookId.replace("/", "_"),
+            stableKey = bookId,
+        )
+        return File(dir, name)
     }
 
     suspend fun saveHighlights(bookId: String, highlights: List<PdfUserHighlight>) {

@@ -20,6 +20,7 @@
 package com.aryan.reader.pdf.data
 
 import android.content.Context
+import com.aryan.reader.data.AndroidBookArtifactPaths
 import com.aryan.reader.logCloudAnnotationSyncTrace
 import com.aryan.reader.data.hasSameUtf8Content
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationSidecarCodec
@@ -32,17 +33,27 @@ import java.io.File
 class PdfAnnotationRepository(private val context: Context) {
 
     private fun getFile(bookId: String): File {
-        val safeBookId = bookId.replace("/", "_")
         val dir = File(context.filesDir, "annotations")
         if (!dir.exists()) dir.mkdirs()
-        return File(dir, "annotation_$safeBookId.json")
+        // Length-bounded: raw titles can exceed the 255-byte filename limit.
+        val name = AndroidBookArtifactPaths.sidecarName(
+            prefix = "annotation_",
+            sanitizedId = bookId.replace("/", "_"),
+            stableKey = bookId,
+        )
+        return File(dir, name)
     }
 
     private fun getDeletedFile(bookId: String): File {
-        val safeBookId = bookId.replace("/", "_")
         val dir = File(context.filesDir, "annotations")
         if (!dir.exists()) dir.mkdirs()
-        return File(dir, "deleted_annotation_$safeBookId.json")
+        // Length-bounded: raw titles can exceed the 255-byte filename limit.
+        val name = AndroidBookArtifactPaths.sidecarName(
+            prefix = "deleted_annotation_",
+            sanitizedId = bookId.replace("/", "_"),
+            stableKey = bookId,
+        )
+        return File(dir, name)
     }
 
     suspend fun saveAnnotations(bookId: String, annotations: Map<Int, List<PdfAnnotation>>) {

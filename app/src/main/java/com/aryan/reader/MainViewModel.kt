@@ -7231,7 +7231,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         bookCacheDao.deleteEntireBookCache(bookId)
     }
 
-    private fun clearImportedFileCache(bookId: String) {
+    private suspend fun clearImportedFileCache(bookId: String) {
         try {
             ImportedFileCache.clearBookCache(appContext, bookId)
             Timber.tag("FileCleanup").d("Deleted imported cache for $bookId")
