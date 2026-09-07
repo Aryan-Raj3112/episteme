@@ -20,12 +20,15 @@
 // SharedComposables.kt
 package com.aryan.reader
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.text.TextUtils
 import android.text.method.LinkMovementMethod
 import android.widget.TextView
+import android.widget.Toast
 import androidx.documentfile.provider.DocumentFile
 import androidx.activity.compose.ManagedActivityResultLauncher
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -203,10 +206,31 @@ class CustomTabUriHandler(private val context: Context) : UriHandler {
             customTabsIntent.launchUrl(context, uri.toUri())
         } catch (e: Exception) {
             Timber.e(e, "Failed to launch Custom Tab, falling back to browser.")
-            val browserIntent = Intent(Intent.ACTION_VIEW, uri.toUri()).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
+            openInBrowserFallback(uri)
+        }
+    }
+
+    private fun openInBrowserFallback(uri: String) {
+        val browserIntent = Intent(Intent.ACTION_VIEW, uri.toUri()).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        try {
             context.startActivity(browserIntent)
+        } catch (e: Exception) {
+            // Devices with no browser (or handlers disabled) throw here —
+            // never crash a tap; copy the link so the user can open it elsewhere.
+            Timber.e(e, "No app found to open link, copying to clipboard.")
+            copyLinkToClipboard(uri)
+        }
+    }
+
+    private fun copyLinkToClipboard(uri: String) {
+        runCatching {
+            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            clipboard.setPrimaryClip(ClipData.newPlainText("link", uri))
+            Toast.makeText(context, R.string.error_no_browser, Toast.LENGTH_LONG).show()
+        }.onFailure { error ->
+            Timber.e(error, "Failed to copy link to clipboard.")
         }
     }
 }

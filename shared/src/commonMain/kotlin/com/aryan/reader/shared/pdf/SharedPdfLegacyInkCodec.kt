@@ -40,7 +40,13 @@ object SharedPdfLegacyInkCodec {
     private val json = Json { ignoreUnknownKeys = true }
 
     fun encode(annotations: List<SharedPdfLegacyInkAnnotation>): String {
-        val array = JsonArray(annotations.map { annotation ->
+        // Encode enforces the same caps decode does: decode drops annotations
+        // past MAX_ANNOTATIONS_PER_LOAD and points past
+        // MAX_POINTS_PER_ANNOTATION on every load, so persisting them only
+        // builds a throwaway JSON DOM for data that can never be read back —
+        // and OOMs the saver on huge ink collections. Capped-out data is
+        // therefore unobservable to every reader on every platform.
+        val array = JsonArray(annotations.take(MAX_ANNOTATIONS_PER_LOAD).map { annotation ->
             JsonObject(buildMap {
                 put("id", JsonPrimitive(annotation.id))
                 put("pageIndex", JsonPrimitive(annotation.pageIndex))
@@ -49,7 +55,7 @@ object SharedPdfLegacyInkCodec {
                 put("color", JsonPrimitive(annotation.colorArgb))
                 put("strokeWidth", JsonPrimitive(annotation.strokeWidth.toDouble()))
                 annotation.note?.takeIf { it.isNotBlank() }?.let { put("note", JsonPrimitive(it)) }
-                put("points", JsonArray(annotation.points.map { point ->
+                put("points", JsonArray(annotation.points.take(MAX_POINTS_PER_ANNOTATION).map { point ->
                     JsonObject(linkedMapOf(
                         "x" to JsonPrimitive(point.x.roundedLegacyCoordinate()),
                         "y" to JsonPrimitive(point.y.roundedLegacyCoordinate()),

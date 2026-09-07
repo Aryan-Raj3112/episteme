@@ -44,6 +44,11 @@ import java.util.IdentityHashMap
 import java.util.PriorityQueue
 
 private val cssUrlRegex = Regex("""url\((['"]?)(.*?)\1\)""", RegexOption.IGNORE_CASE)
+// Precompiled: normalizeTextForWhiteSpace runs once per text node, and
+// compiling these per call burned main-adjacent worker CPU on node-heavy
+// chapters (ANR-adjacent). Same patterns as before, compiled once.
+private val whiteSpaceCollapseRegex = Regex("\\s+")
+private val preLineWhiteSpaceCollapseRegex = Regex("[\\t\\x0B\\f\\r ]+")
 private const val MAX_SEMANTIC_TEXT_BLOCK_CHARS = 32_000
 private const val TEXT_APPEND_SLICE_CHARS = 2_048
 private const val NULL_PSEUDO_ELEMENT_CACHE_KEY = ""
@@ -1092,8 +1097,8 @@ private class SemanticHtmlParser(
         fun normalizeTextForWhiteSpace(rawText: String, whiteSpace: String?): String {
             return when (whiteSpace) {
                 "pre", "pre-wrap", "break-spaces" -> rawText
-                "pre-line" -> rawText.replace(Regex("[\\t\\x0B\\f\\r ]+"), " ")
-                else -> rawText.replace(Regex("\\s+"), " ")
+                "pre-line" -> rawText.replace(preLineWhiteSpaceCollapseRegex, " ")
+                else -> rawText.replace(whiteSpaceCollapseRegex, " ")
             }
         }
 
