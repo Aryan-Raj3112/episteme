@@ -793,20 +793,15 @@ class OpdsStreamDocumentWrapper(
 ) : ReaderDocument {
     private val cacheDir = File(context.cacheDir, "opds_stream_${bookId.hashCode()}").apply { mkdirs() }
 
-    private val catalog = catalogId?.let {
-        com.aryan.reader.opds.OpdsRepository(context).getCatalogs().find { c -> c.id == it }
-    }
+    private val repository = com.aryan.reader.opds.OpdsRepository(context)
 
-    private val client = com.aryan.reader.opds.OpdsRepository.sharedHttpClient.newBuilder()
-        .apply {
-            val streamCatalog = catalog
-            val username = streamCatalog?.username
-            val password = streamCatalog?.password
-            if (!username.isNullOrBlank() && !password.isNullOrBlank()) {
-                authenticator(com.aryan.reader.opds.OpdsRepository.OpdsAuthenticator(username, password))
-            }
-        }
-        .build()
+    /**
+     * Credentials are resolved per request (not cached at construction) so
+     * catalog edits and re-added catalogs keep working for open streams.
+     */
+    private fun currentCatalog() = catalogId?.let { id ->
+        repository.getCatalogs().find { c -> c.id == id }
+    }
 
     private fun createErrorPageBytes(): ByteArray {
         val bitmap = createBitmap(800, 1200)
@@ -837,6 +832,9 @@ class OpdsStreamDocumentWrapper(
             }
         }
 
+        val streamCatalog = currentCatalog()
+        val username = streamCatalog?.username
+        val password = streamCatalog?.password
         val url = SharedOpdsStreamRequest.buildPageUrl(
             reference = OpdsStreamReference(
                 id = bookId,
@@ -845,10 +843,19 @@ class OpdsStreamDocumentWrapper(
                 catalogId = catalogId,
             ),
             pageIndex = pageIndex,
-            catalogUrl = catalog?.url,
+            catalogUrl = streamCatalog?.url,
         )
 
-        val request = Request.Builder().url(url).build()
+        // Stream pages must carry credentials on the first request: unlike
+        // feeds/downloads, a missing preemptive Authorization shows up as a
+        // server-side auth failure with no successful retry. The reactive
+        // authenticator below stays as a fallback (e.g. Digest).
+        val client = repository.getAuthenticatedClient(username, password)
+        val request = Request.Builder().url(url).apply {
+            com.aryan.reader.opds.OpdsRepository.preemptiveBasicAuthHeader(username, password)?.let {
+                header("Authorization", it)
+            }
+        }.build()
         try {
             val response = client.newCall(request).execute()
             if (response.isSuccessful) {

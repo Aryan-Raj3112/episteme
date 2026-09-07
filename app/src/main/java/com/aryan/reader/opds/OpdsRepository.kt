@@ -34,6 +34,17 @@ class OpdsRepository(context: Context) : SharedOpdsRepository {
                 }
                 .build()
         }
+
+        /**
+         * Preemptive Basic credential for endpoints that must receive
+         * Authorization on the first request (e.g. OPDS stream pages).
+         * Only the username is required; some servers use token-style
+         * setups with an empty password.
+         */
+        fun preemptiveBasicAuthHeader(username: String?, password: String?): String? {
+            val user = username?.takeIf { it.isNotBlank() } ?: return null
+            return okhttp3.Credentials.basic(user, password.orEmpty())
+        }
     }
 
     private val httpClient = sharedHttpClient
