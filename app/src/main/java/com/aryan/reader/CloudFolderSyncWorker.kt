@@ -3494,7 +3494,8 @@ class CloudFolderSyncWorker(
                     TimeUnit.SECONDS,
                 )
                 .build()
-            WorkManager.getInstance(context.applicationContext).enqueueUniqueWork(
+            SafeWorkManager.enqueueUniqueWork(
+                context.applicationContext,
                 workName(normalizedAccountId, normalizedRootId, Direction.DELETE),
                 ExistingWorkPolicy.REPLACE,
                 request,
@@ -3538,7 +3539,7 @@ class CloudFolderSyncWorker(
                     TimeUnit.SECONDS,
                 )
                 .build()
-            val workManager = WorkManager.getInstance(context.applicationContext)
+            val workManager = SafeWorkManager.getOrNull(context.applicationContext)
             val policy = when {
                 metadataOnly && !replace -> {
                     metadataWorkPolicyForExisting(
@@ -3568,18 +3569,37 @@ class CloudFolderSyncWorker(
                         "result=selected policy=${policy.name} forcedReplace=$replace",
                 )
             }
-            workManager.enqueueUniqueWork(
-                workName,
-                policy,
-                request,
-            )
+            if (workManager == null) {
+                // WorkManager is unavailable on this device (see
+                // SafeWorkManager); the helpers above already fell back to
+                // their safe defaults, and there is nothing to enqueue to.
+                cloudFolderLogD(
+                    "event=cloud_worker_enqueue root=${cloudFolderSafeId(normalizedRootId)} " +
+                        "result=skipped reason=work_manager_unavailable",
+                )
+                return
+            }
+            try {
+                workManager.enqueueUniqueWork(
+                    workName,
+                    policy,
+                    request,
+                )
+            } catch (error: Throwable) {
+                cloudFolderLogError(
+                    event = "cloud_worker_enqueue",
+                    error = error,
+                    details = "root=${cloudFolderSafeId(normalizedRootId)} result=skipped",
+                )
+            }
         }
 
         private fun metadataWorkPolicyForExisting(
-            workManager: WorkManager,
+            workManager: WorkManager?,
             workName: String,
             rootId: String,
         ): ExistingWorkPolicy {
+            if (workManager == null) return ExistingWorkPolicy.REPLACE
             val infos = runCatching {
                 // Metadata wakes are issued from an IO coroutine after a
                 // sidecar commit. Querying here lets us distinguish an active
@@ -3613,10 +3633,11 @@ class CloudFolderSyncWorker(
         }
 
         private fun pullWorkPolicyForExisting(
-            workManager: WorkManager,
+            workManager: WorkManager?,
             workName: String,
             rootId: String,
         ): ExistingWorkPolicy {
+            if (workManager == null) return ExistingWorkPolicy.KEEP
             val infos = runCatching {
                 workManager.getWorkInfosForUniqueWork(workName).get()
             }.getOrElse { error ->
@@ -3684,7 +3705,8 @@ class CloudFolderSyncWorker(
                     TimeUnit.SECONDS,
                 )
                 .build()
-            WorkManager.getInstance(context.applicationContext).enqueueUniqueWork(
+            SafeWorkManager.enqueueUniqueWork(
+                context.applicationContext,
                 workName(normalizedAccountId, "", Direction.GC),
                 if (replace) ExistingWorkPolicy.REPLACE else ExistingWorkPolicy.KEEP,
                 request,
@@ -3694,11 +3716,11 @@ class CloudFolderSyncWorker(
         fun cancelForAccount(context: Context, accountId: String) {
             val normalizedAccountId = accountId.trim()
             if (normalizedAccountId.isBlank()) return
-            val workManager = WorkManager.getInstance(context.applicationContext)
-            workManager.cancelAllWorkByTag(accountTag(normalizedAccountId))
+            val appContext = context.applicationContext
+            SafeWorkManager.cancelAllWorkByTag(appContext, accountTag(normalizedAccountId))
             // Cancel work scheduled by the pre-account-scoped implementation;
             // those requests intentionally self-abort when they lack an ID.
-            workManager.cancelUniqueWork(WORK_NAME)
+            SafeWorkManager.cancelUniqueWork(appContext, WORK_NAME)
         }
 
         private fun workName(

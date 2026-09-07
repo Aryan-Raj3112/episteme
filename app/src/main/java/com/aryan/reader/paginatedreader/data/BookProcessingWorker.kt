@@ -33,8 +33,8 @@ import androidx.work.CoroutineWorker
 import androidx.work.Data
 import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import com.aryan.reader.SafeWorkManager
 import com.aryan.reader.applyBookReplacementsToHtmlDocument
 import com.aryan.reader.epub.epubContentFilePath
 import com.aryan.reader.paginatedreader.CssParser
@@ -107,7 +107,7 @@ class BookProcessingWorker(
         private fun uniqueWorkName(bookId: String): String = "process_$bookId"
 
         fun cancelForBook(context: Context, bookId: String) {
-            WorkManager.getInstance(context).cancelUniqueWork(uniqueWorkName(bookId))
+            SafeWorkManager.cancelUniqueWork(context, uniqueWorkName(bookId))
             Timber.i("Cancelled stale background processing for book: $bookId")
         }
 
@@ -136,7 +136,8 @@ class BookProcessingWorker(
                 .addTag(WORK_TAG)
                 .build()
 
-            WorkManager.getInstance(context).enqueueUniqueWork(
+            SafeWorkManager.enqueueUniqueWork(
+                context,
                 uniqueWorkName(bookId),
                 ExistingWorkPolicy.REPLACE,
                 workRequest

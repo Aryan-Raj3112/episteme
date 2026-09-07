@@ -10,8 +10,8 @@ import androidx.lifecycle.viewModelScope
 import androidx.work.Data
 import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.WorkManager
 import com.aryan.reader.FolderSyncWorker
+import com.aryan.reader.SafeWorkManager
 import com.aryan.reader.R
 import com.aryan.reader.shared.opds.SharedOpdsController
 import com.aryan.reader.shared.opds.SharedOpdsDownloadLocation
@@ -184,7 +184,8 @@ class OpdsViewModel(application: Application) : AndroidViewModel(application) {
             .putString(FolderSyncWorker.KEY_TARGET_FOLDER_URI, folderUriString)
             .build()
         val request = OneTimeWorkRequestBuilder<FolderSyncWorker>().setInputData(data).build()
-        WorkManager.getInstance(context).enqueueUniqueWork(
+        SafeWorkManager.enqueueUniqueWork(
+            context,
             FolderSyncWorker.WORK_NAME_ONETIME,
             ExistingWorkPolicy.REPLACE,
             request

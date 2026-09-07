@@ -29,7 +29,6 @@ import androidx.work.CoroutineWorker
 import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkerParameters
-import androidx.work.WorkManager
 import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.data.RecentFilesRepository
 import com.aryan.reader.data.AndroidBookArtifactPaths
@@ -100,7 +99,8 @@ class FolderSyncWorker(
                         .build()
                 )
                 .build()
-            WorkManager.getInstance(context.applicationContext).enqueueUniqueWork(
+            SafeWorkManager.enqueueUniqueWork(
+                context.applicationContext,
                 "$CLOUD_INDEX_WORK_PREFIX:$normalizedRoot",
                 ExistingWorkPolicy.REPLACE,
                 request,
@@ -602,7 +602,8 @@ class FolderSyncWorker(
                             TimeUnit.SECONDS
                         )
                         .build()
-                    WorkManager.getInstance(appContext).enqueueUniqueWork(
+                    SafeWorkManager.enqueueUniqueWork(
+                        appContext,
                         MetadataExtractionWorker.WORK_NAME,
                         ExistingWorkPolicy.APPEND_OR_REPLACE,
                         metaRequest

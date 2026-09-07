@@ -7,7 +7,6 @@ import androidx.work.CoroutineWorker
 import androidx.work.Data
 import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.aryan.reader.data.AppDatabase
 import com.aryan.reader.data.PendingFolderAnnotationExportEntity
@@ -99,7 +98,8 @@ class FolderAnnotationExportWorker(
                 .setInitialDelay(delay, TimeUnit.MILLISECONDS)
                 .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 10, TimeUnit.SECONDS)
                 .build()
-            WorkManager.getInstance(context).enqueueUniqueWork(
+            SafeWorkManager.enqueueUniqueWork(
+                context,
                 uniqueWorkName(pending.bookId),
                 when {
                     append || (replace && !immediate && delay == 0L) ->

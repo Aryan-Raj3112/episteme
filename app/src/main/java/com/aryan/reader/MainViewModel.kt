@@ -52,7 +52,6 @@ import androidx.media3.common.util.UnstableApi
 import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkInfo
-import androidx.work.WorkManager
 import com.aryan.reader.data.BookMetadata
 import com.aryan.reader.data.BookMetadataEdit
 import com.aryan.reader.data.CloudBookDeletePersistence
@@ -1693,10 +1692,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 .collectLatest(::reconcilePdfSplitWorkspace)
         }
 
-        WorkManager.getInstance(application).apply {
-            cancelUniqueWork(FolderSyncWorker.WORK_NAME)
-            pruneWork()
-        }
+        SafeWorkManager.cancelUniqueWork(application, FolderSyncWorker.WORK_NAME)
+        SafeWorkManager.pruneWork(application)
 
         viewModelScope.launch(Dispatchers.IO) {
             FolderAnnotationExportWorker.scheduleAllPending(appContext)
@@ -4310,10 +4307,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun removeSyncedFolder(folder: SyncedFolder) {
         viewModelScope.launch {
-            val workManager = WorkManager.getInstance(appContext)
             ReaderPerfLog.d("FolderRemove request folder=${folder.uriString}")
-            workManager.cancelUniqueWork(FolderSyncWorker.WORK_NAME_ONETIME)
-            workManager.cancelUniqueWork(MetadataExtractionWorker.WORK_NAME)
+            SafeWorkManager.cancelUniqueWork(appContext, FolderSyncWorker.WORK_NAME_ONETIME)
+            SafeWorkManager.cancelUniqueWork(appContext, MetadataExtractionWorker.WORK_NAME)
 
             val currentFolders = _internalState.value.syncedFolders.withoutSyncedFolder(folder.uriString)
 
@@ -4345,7 +4341,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             }
 
             if (currentFolders.isEmpty()) {
-                workManager.cancelUniqueWork(FolderSyncWorker.WORK_NAME)
+                SafeWorkManager.cancelUniqueWork(appContext, FolderSyncWorker.WORK_NAME)
             }
 
             showBanner(appContext.getString(R.string.banner_folder_removed))
@@ -4373,9 +4369,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     targetFolderUriString = updatedFolder.uriString
                 )
             } else {
-                val workManager = WorkManager.getInstance(appContext)
-                workManager.cancelUniqueWork(FolderSyncWorker.WORK_NAME_ONETIME)
-                workManager.cancelUniqueWork(MetadataExtractionWorker.WORK_NAME)
+                SafeWorkManager.cancelUniqueWork(appContext, FolderSyncWorker.WORK_NAME_ONETIME)
+                SafeWorkManager.cancelUniqueWork(appContext, MetadataExtractionWorker.WORK_NAME)
 
                 if (removeSyncDataFolder) {
                     val removed = withContext(Dispatchers.IO) {
@@ -4480,9 +4475,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 "metadataOnly=$metadataOnly feedback=$showFeedback"
         )
 
-        val workManager = WorkManager.getInstance(appContext)
         if (!metadataOnly) {
-            workManager.cancelUniqueWork(MetadataExtractionWorker.WORK_NAME)
+            SafeWorkManager.cancelUniqueWork(appContext, MetadataExtractionWorker.WORK_NAME)
         }
         val data = androidx.work.Data.Builder()
             .putBoolean(FolderSyncWorker.KEY_METADATA_ONLY, metadataOnly)
@@ -4495,12 +4489,34 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
         val request = OneTimeWorkRequestBuilder<FolderSyncWorker>().setInputData(data).build()
 
-        workManager.enqueueUniqueWork(
+        val enqueued = SafeWorkManager.enqueueUniqueWork(
+            appContext,
             FolderSyncWorker.WORK_NAME_ONETIME, ExistingWorkPolicy.REPLACE, request
         )
+        // WorkManager can be unavailable on devices with a broken JobScheduler
+        // (see SafeWorkManager); report it like any other sync failure instead
+        // of observing a request that will never run.
+        val workInfoFlow = if (enqueued) {
+            SafeWorkManager.getWorkInfoByIdFlow(appContext, request.id)
+        } else {
+            null
+        }
+        if (workInfoFlow == null) {
+            if (showFeedback) {
+                _internalState.update {
+                    it.copy(
+                        isLoading = false,
+                        isRefreshing = false,
+                        errorMessage = appContext.getString(R.string.error_sync_failed),
+                        bannerMessage = null
+                    )
+                }
+            }
+            return
+        }
 
         viewModelScope.launch {
-            workManager.getWorkInfoByIdFlow(request.id).filterNotNull().first { workInfo ->
+            workInfoFlow.filterNotNull().first { workInfo ->
                 when (workInfo.state) {
                     WorkInfo.State.RUNNING, WorkInfo.State.ENQUEUED -> {
                         if (showFeedback) {
@@ -4542,7 +4558,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 }
 
                 if (workInfo.state.isFinished) {
-                    workManager.pruneWork()
+                    SafeWorkManager.pruneWork(appContext)
                 }
                 workInfo.state.isFinished
             }
@@ -4590,11 +4606,10 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun disconnectAllSyncedFolders() {
         viewModelScope.launch {
-            val workManager = WorkManager.getInstance(appContext)
             ReaderPerfLog.d("FolderRemove disconnect all folders=${_internalState.value.syncedFolders.size}")
-            workManager.cancelUniqueWork(FolderSyncWorker.WORK_NAME_ONETIME)
-            workManager.cancelUniqueWork(FolderSyncWorker.WORK_NAME)
-            workManager.cancelUniqueWork(MetadataExtractionWorker.WORK_NAME)
+            SafeWorkManager.cancelUniqueWork(appContext, FolderSyncWorker.WORK_NAME_ONETIME)
+            SafeWorkManager.cancelUniqueWork(appContext, FolderSyncWorker.WORK_NAME)
+            SafeWorkManager.cancelUniqueWork(appContext, MetadataExtractionWorker.WORK_NAME)
 
             val folders = _internalState.value.syncedFolders
             folders.forEach { folder ->
@@ -7148,8 +7163,6 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 return@launch
             }
 
-            val workManager = WorkManager.getInstance(appContext)
-
             val inputData =
                 androidx.work.Data.Builder().putString(ReflowWorker.KEY_BOOK_ID, pdfBookId)
                     .putString(ReflowWorker.KEY_PDF_URI, pdfUri.toString())
@@ -7158,18 +7171,28 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             val request = OneTimeWorkRequestBuilder<ReflowWorker>().setInputData(inputData)
                 .addTag(ReflowWorker.WORK_NAME).addTag("book_$pdfBookId").build()
 
-            workManager.enqueueUniqueWork(
+            val enqueued = SafeWorkManager.enqueueUniqueWork(
+                appContext,
                 "reflow_$pdfBookId", ExistingWorkPolicy.KEEP, request
             )
+            if (!enqueued) {
+                showBanner(appContext.getString(R.string.error_text_view_generation_failed), true)
+                return@launch
+            }
+            val workInfoFlow = SafeWorkManager.getWorkInfoByIdFlow(appContext, request.id)
+            if (workInfoFlow == null) {
+                showBanner(appContext.getString(R.string.error_text_view_generation_failed), true)
+                return@launch
+            }
 
             val finalWorkInfo = CompletableDeferred<WorkInfo>()
 
             launch {
-                workManager.getWorkInfoByIdFlow(request.id).filterNotNull().first { workInfo ->
+                workInfoFlow.filterNotNull().first { workInfo ->
                     _reflowWorkInfo.value = workInfo
                     if (workInfo.state.isFinished) {
                         finalWorkInfo.complete(workInfo)
-                        workManager.pruneWork()
+                        SafeWorkManager.pruneWork(appContext)
                     }
                     workInfo.state.isFinished
                 }
@@ -8057,8 +8080,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     fun clearBookCache() {
         viewModelScope.launch {
             bookCacheDao.clearAllCache()
-            WorkManager.getInstance(getApplication())
-                .cancelAllWorkByTag(BookProcessingWorker.WORK_TAG)
+            SafeWorkManager.cancelAllWorkByTag(getApplication(), BookProcessingWorker.WORK_TAG)
             Timber.i("Book cache has been cleared and all processing workers cancelled.")
         }
     }
