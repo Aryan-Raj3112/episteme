@@ -717,14 +717,16 @@ private class IosUrlSessionDelegate(
         completionHandler: (Long, NSURLCredential?) -> Unit
     ) {
         val user = username?.takeIf { it.isNotBlank() }
-        val pass = password?.takeIf { it.isNotBlank() }
-        if (user == null || pass == null) {
+        if (user == null) {
             completionHandler(NSURLSessionAuthChallengePerformDefaultHandling, null)
             return
         }
+        // Only the username is required; some servers use token-style
+        // setups with an empty password. Matches the preemptive header
+        // rule in basicAuthHeader and Android/Desktop stream auth.
         val credential = NSURLCredential.create(
             user = user,
-            password = pass,
+            password = password.orEmpty(),
             persistence = NSURLCredentialPersistence.NSURLCredentialPersistenceForSession
         )
         completionHandler(NSURLSessionAuthChallengeUseCredential, credential)

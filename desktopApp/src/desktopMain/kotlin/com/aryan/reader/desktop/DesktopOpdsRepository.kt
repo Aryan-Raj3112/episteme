@@ -170,7 +170,14 @@ internal object DesktopOpdsHttp {
     ): HttpResponse<T> {
         ensureNetworkAccess()
         val uri = URI(url.trim())
-        val response = client().send(request(uri).build(), bodyHandler)
+        // Send Basic credentials on the first request: stream page fetches
+        // (and servers/proxies that don't return a WWW-Authenticate
+        // challenge) fail without preemptive Authorization. The 401
+        // challenge retry below stays as a fallback (e.g. Digest).
+        val initialRequest = request(uri).apply {
+            preemptiveBasicAuthHeader(username, password)?.let { header("Authorization", it) }
+        }.build()
+        val response = client().send(initialRequest, bodyHandler)
         val challenge = response.headers().firstValue("www-authenticate").orElse(null)
         val authorization = if (response.statusCode() == 401) {
             authorizationHeaderForChallenge(
@@ -212,8 +219,18 @@ internal object DesktopOpdsHttp {
         }
     }
 
-    internal fun authorizationHeaderForChallenge(
-        challenge: String?,
+    /**
+     * Preemptive Basic credential for the first request. Only the username
+     * is required; some servers use token-style setups with an empty
+     * password. Kept consistent with Android/iOS stream auth.
+     */
+    internal fun preemptiveBasicAuthHeader(username: String?, password: String?): String? {
+        val user = username?.takeIf { it.isNotBlank() } ?: return null
+        val credentials = "$user:${password.orEmpty()}".toByteArray(Charsets.ISO_8859_1)
+        return "Basic ${Base64.getEncoder().encodeToString(credentials)}"
+    }
+
+    internal fun authorizationHeaderForChallenge(        challenge: String?,
         url: String,
         username: String?,
         password: String?,

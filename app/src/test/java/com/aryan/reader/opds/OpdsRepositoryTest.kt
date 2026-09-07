@@ -122,6 +122,24 @@ class OpdsRepositoryTest {
     }
 
     @Test
+    fun `preemptive basic header is sent for stream pages with username only`() {
+        assertEquals(
+            "Basic dXNlcjpwYXNz",
+            OpdsRepository.preemptiveBasicAuthHeader("user", "pass")
+        )
+        assertEquals(
+            "Basic dXNlcjo=",
+            OpdsRepository.preemptiveBasicAuthHeader("user", null)
+        )
+        assertEquals(
+            "Basic dXNlcjo=",
+            OpdsRepository.preemptiveBasicAuthHeader("user", "")
+        )
+        assertNull(OpdsRepository.preemptiveBasicAuthHeader(null, "pass"))
+        assertNull(OpdsRepository.preemptiveBasicAuthHeader("   ", "pass"))
+    }
+
+    @Test
     fun `authenticator ignores unsupported challenge`() {
         val request = Request.Builder().url("https://example.org/feed").build()
 
