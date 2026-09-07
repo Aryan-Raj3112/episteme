@@ -906,6 +906,19 @@ class TtsService : MediaSessionService() {
         }
     }
 
+    // Media3 confines ExoPlayer (and the start/stopForeground bookkeeping around it) to
+    // the application thread, but TtsPlaybackManager invokes the session callbacks below
+    // from worker coroutines (e.g. the first-chunk failure path on DefaultDispatcher), which
+    // crashes in ExoPlayerImpl.verifyApplicationThread. Hop when off-thread (same pattern as
+    // TtsPlaybackManager.updateSessionControls); run inline when already on the app thread.
+    private fun runOnApplicationThread(block: () -> Unit) {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            scope.launch { block() }
+        } else {
+            block()
+        }
+    }
+
     private fun onPlaybackSessionPreparing(bookTitle: String?, chapterTitle: String?) {
         foregroundPlaybackExpected = true
         foregroundIdleJob?.cancel()
@@ -1343,8 +1356,12 @@ class TtsService : MediaSessionService() {
             player = player,
             generateAudioChunk = audioGenerator,
             onResetContext = { liveClient.close() },
-            onPlaybackSessionPreparing = ::onPlaybackSessionPreparing,
-            onPlaybackSessionStopped = ::onPlaybackSessionStopped,
+            onPlaybackSessionPreparing = { bookTitle, chapterTitle ->
+                runOnApplicationThread { onPlaybackSessionPreparing(bookTitle, chapterTitle) }
+            },
+            onPlaybackSessionStopped = {
+                runOnApplicationThread { onPlaybackSessionStopped() }
+            },
             onExplicitStopRequested = {
                 // Manual stop and sleep-timer stop both terminate the complete session.
                 // Natural chapter handoffs never invoke this callback.

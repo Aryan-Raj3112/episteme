@@ -224,6 +224,31 @@ class TtsLifecycleSourceTest {
         )
     }
 
+    @Test
+    fun `session lifecycle callbacks reach the app thread before touching the player`() {
+        val source = sourceFile("com/aryan/reader/tts/TtsService.kt").readText()
+        val wiringBody = source.substringAfter("playbackManager = TtsPlaybackManager(")
+            .substringBefore("val sessionPlayer = TtsSessionPlayer(")
+
+        // TtsPlaybackManager invokes these from worker coroutines (first-chunk failure path);
+        // the bodies read the main-confined ExoPlayer, so the wiring must hop threads first.
+        assertTrue(
+            wiringBody.contains("runOnApplicationThread { onPlaybackSessionPreparing")
+        )
+        assertTrue(
+            wiringBody.contains("runOnApplicationThread { onPlaybackSessionStopped() }")
+        )
+
+        val helperBody = source.substringAfter("private fun runOnApplicationThread")
+            .substringBefore("private fun onPlaybackSessionPreparing")
+        assertTrue(
+            helperBody.contains("if (Looper.myLooper() != Looper.getMainLooper())")
+        )
+        assertTrue(
+            helperBody.contains("scope.launch { block() }")
+        )
+    }
+
     private fun sourceFile(relativePath: String): File {
         val candidates = listOf(
             File("src/main/java/$relativePath"),
