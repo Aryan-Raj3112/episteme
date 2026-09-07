@@ -799,7 +799,7 @@ internal fun SharedPdfAnnotationToolSettingsPanel(
                             )
                             drawCircle(
                                 color = Color.White,
-                                radius = size.minDimension / 2f,
+                                radius = sharedPdfSelectionRingRadius(size.minDimension, 2.dp.toPx()),
                                 style = Stroke(width = 2.dp.toPx())
                             )
                         }
@@ -809,7 +809,7 @@ internal fun SharedPdfAnnotationToolSettingsPanel(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(125.dp),
+                        .height(150.dp),
                     contentAlignment = Alignment.BottomCenter
                 ) {
                     Row(
@@ -925,7 +925,7 @@ internal fun SharedPdfAnnotationToolSettingsPanel(
                                         if (isSelected) {
                                             drawCircle(
                                                 color = Color.White,
-                                                radius = size.minDimension / 2f,
+                                                radius = sharedPdfSelectionRingRadius(size.minDimension, 2.dp.toPx()),
                                                 style = Stroke(width = 2.dp.toPx())
                                             )
                                         }
@@ -1092,7 +1092,7 @@ private fun SharedPdfSettingsToolItem(
     Box(
         modifier = Modifier
             .width(44.dp)
-            .height(100.dp)
+            .height(150.dp)
             .scale(scale)
             .semantics { selected = isSelected }
             .clickable(onClick = onClick),

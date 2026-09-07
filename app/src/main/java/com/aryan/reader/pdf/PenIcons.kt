@@ -47,6 +47,11 @@ import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import com.aryan.reader.pdf.data.PdfAnnotation
+import com.aryan.reader.shared.ui.SharedPdfInkPreviewCommand
+import com.aryan.reader.shared.ui.SharedPdfPenIconInkHeadroomFraction
+import com.aryan.reader.shared.ui.SharedPdfPenIconInkStartXFraction
+import com.aryan.reader.shared.ui.applySharedPdfInkPreview
+import com.aryan.reader.shared.ui.sharedPdfInkPreviewCommands
 import android.graphics.Paint as NativePaint
 
 private val BODY_COLOR = Color(0xFF454545)
@@ -80,14 +85,18 @@ fun PenIcon(
         val penWidth = w * 0.65f
         val startX = (w - penWidth) / 2f
 
-        val tipHeight = h * 0.45f
-        val collarHeight = h * 0.15f
-        val bodyHeight = h * 0.35f
-        val topPadding = h * 0.05f
+        // Reserve the top of the canvas for the ink flourish so the selection
+        // animation is not clipped; the pen itself is drawn in the area below.
+        // Mirrors SharedPdfPenIcon's headroom so both platforms match.
+        val penTop = h * SharedPdfPenIconInkHeadroomFraction
+        val penHeight = h - penTop
+        val tipHeight = penHeight * 0.45f
+        val collarHeight = penHeight * 0.15f
+        val bodyHeight = penHeight * 0.35f
 
-        val tipRect = Rect(offset = Offset(startX, topPadding), size = Size(penWidth, tipHeight))
-        val collarRect = Rect(offset = Offset(startX, topPadding + tipHeight), size = Size(penWidth, collarHeight))
-        val bodyRect = Rect(offset = Offset(startX, topPadding + tipHeight + collarHeight), size = Size(penWidth, bodyHeight))
+        val tipRect = Rect(offset = Offset(startX, penTop), size = Size(penWidth, tipHeight))
+        val collarRect = Rect(offset = Offset(startX, penTop + tipHeight), size = Size(penWidth, collarHeight))
+        val bodyRect = Rect(offset = Offset(startX, penTop + tipHeight + collarHeight), size = Size(penWidth, bodyHeight))
 
         drawMatteCylinder(BODY_COLOR, bodyRect)
 
@@ -120,11 +129,11 @@ fun PenIcon(
         }
 
         if (inkProgress > 0.01f) {
-            val tipX = size.width / 2f
+            val tipX = size.width * SharedPdfPenIconInkStartXFraction
             val tipY = when (type) {
-                PenType.HIGHLIGHTER -> topPadding
-                PenType.HIGHLIGHTER_ROUND -> topPadding + tipHeight * 0.15f
-                else -> topPadding
+                PenType.HIGHLIGHTER -> penTop
+                PenType.HIGHLIGHTER_ROUND -> penTop + tipHeight * 0.15f
+                else -> penTop
             }
 
             drawInkSquiggle(
@@ -409,6 +418,23 @@ private fun DrawScope.drawHighlighterRoundParts(color: Color, collarRect: Rect, 
     )
 }
 
+/**
+ * Ink-preview flourish commands for the Android tool-settings icon.
+ * Highlighters reuse the shared metrics; pens draw the same full-size swirl
+ * as shared (Android's signature sweep, expressed in canvas fractions) so the
+ * animation stays inside the canvas at any size and both platforms match.
+ */
+fun pdfInkPreviewCommands(isHighlighter: Boolean, straight: Boolean): List<SharedPdfInkPreviewCommand> {
+    if (isHighlighter) {
+        return sharedPdfInkPreviewCommands(isHighlighter = true, straight = straight)
+    }
+    return listOf(
+        SharedPdfInkPreviewCommand.MoveTo(0f, 0f),
+        SharedPdfInkPreviewCommand.CubicTo(0.225f, -0.133f, -0.225f, -0.29f, -0.097f, -0.15f),
+        SharedPdfInkPreviewCommand.CubicTo(-0.032f, -0.033f, 0.29f, -0.083f, 0.40f, -0.183f),
+    )
+}
+
 private fun DrawScope.drawInkSquiggle(
     type: PenType,
     forcedInkType: InkType?,
@@ -420,34 +446,16 @@ private fun DrawScope.drawInkSquiggle(
 ) {
     val x = startPoint.x
     val y = startPoint.y - 2f
+    val canvasSize = size
+    val isHighlighter = type == PenType.HIGHLIGHTER || type == PenType.HIGHLIGHTER_ROUND
     val path = Path().apply {
         moveTo(x, y)
-
-        if (type == PenType.HIGHLIGHTER || type == PenType.HIGHLIGHTER_ROUND) {
-            val waveWidth = 70f
-
-            if (isStraight) {
-                lineTo(x + waveWidth, y)
-            } else {
-                val amplitude = 20f
-                cubicTo(
-                    x + waveWidth * 0.35f, y - amplitude,
-                    x + waveWidth * 0.65f, y + amplitude,
-                    x + waveWidth, y
-                )
-            }
-        } else {
-            cubicTo(
-                x + 35f, y - 40f,
-                x - 35f, y - 90f,
-                x - 15f, y - 45f
-            )
-            cubicTo(
-                x - 5f, y - 10f,
-                x + 50f, y - 25f,
-                x + 70f, y - 55f
-            )
-        }
+        // Skip the initial MoveTo: the path already starts at the ink start point.
+        applySharedPdfInkPreview(
+            commands = pdfInkPreviewCommands(isHighlighter = isHighlighter, straight = isStraight).drop(1),
+            start = Offset(x, y),
+            size = canvasSize,
+        )
     }
 
     val inkType = forcedInkType ?: when(type) {

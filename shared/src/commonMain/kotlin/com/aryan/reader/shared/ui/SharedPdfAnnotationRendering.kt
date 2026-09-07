@@ -650,13 +650,16 @@ internal fun SharedPdfPenIcon(
     Canvas(modifier = modifier) {
         val penWidth = size.width * 0.65f
         val startX = (size.width - penWidth) / 2f
-        val tipHeight = size.height * 0.45f
-        val collarHeight = size.height * 0.15f
-        val bodyHeight = size.height * 0.35f
-        val topPadding = size.height * 0.05f
-        val tipRect = Rect(Offset(startX, topPadding), Size(penWidth, tipHeight))
-        val collarRect = Rect(Offset(startX, topPadding + tipHeight), Size(penWidth, collarHeight))
-        val bodyRect = Rect(Offset(startX, topPadding + tipHeight + collarHeight), Size(penWidth, bodyHeight))
+        // Reserve the top of the canvas for the ink flourish so the selection
+        // animation is not clipped; the pen itself is drawn in the area below.
+        val penTop = size.height * SharedPdfPenIconInkHeadroomFraction
+        val penHeight = size.height - penTop
+        val tipHeight = penHeight * 0.45f
+        val collarHeight = penHeight * 0.15f
+        val bodyHeight = penHeight * 0.35f
+        val tipRect = Rect(Offset(startX, penTop), Size(penWidth, tipHeight))
+        val collarRect = Rect(Offset(startX, penTop + tipHeight), Size(penWidth, collarHeight))
+        val bodyRect = Rect(Offset(startX, penTop + tipHeight + collarHeight), Size(penWidth, bodyHeight))
 
         drawMatteCylinder(Color(0xFF454545), bodyRect)
         when (tool) {
@@ -681,15 +684,15 @@ internal fun SharedPdfPenIcon(
 
         if (inkProgress > 0.01f) {
             val tipY = when (tool) {
-                PdfInkTool.HIGHLIGHTER -> topPadding
-                PdfInkTool.HIGHLIGHTER_ROUND -> topPadding + tipHeight * 0.15f
-                else -> topPadding
+                PdfInkTool.HIGHLIGHTER -> penTop
+                PdfInkTool.HIGHLIGHTER_ROUND -> penTop + tipHeight * 0.15f
+                else -> penTop
             }
             drawInkPreview(
                 tool = tool,
                 color = animatedInkColor,
                 progress = inkProgress,
-                startPoint = Offset(size.width / 2f, tipY),
+                startPoint = Offset(size.width * SharedPdfPenIconInkStartXFraction, tipY),
                 strokeWidth = strokeWidth,
                 isStraight = showHighlighterSnap
             )
@@ -1025,41 +1028,16 @@ internal fun DrawScope.drawInkPreview(
 ) {
     val x = startPoint.x
     val y = startPoint.y - 2f
+    val canvasSize = size
+    val commands = sharedPdfInkPreviewCommands(isHighlighter = tool.isHighlighter, straight = isStraight)
     val path = Path().apply {
         moveTo(x, y)
-        if (tool.isHighlighter) {
-            val waveWidth = 70f
-            if (isStraight) {
-                lineTo(x + waveWidth, y)
-            } else {
-                val amplitude = 20f
-                cubicTo(
-                    x + waveWidth * 0.35f,
-                    y - amplitude,
-                    x + waveWidth * 0.65f,
-                    y + amplitude,
-                    x + waveWidth,
-                    y
-                )
-            }
-        } else {
-            cubicTo(
-                x + 16f,
-                y - 18f,
-                x - 18f,
-                y - 34f,
-                x - 7f,
-                y - 21f
-            )
-            cubicTo(
-                x - 2f,
-                y - 5f,
-                x + 22f,
-                y - 11f,
-                x + 31f,
-                y - 26f
-            )
-        }
+        // Skip the initial MoveTo: the path already starts at the ink start point.
+        applySharedPdfInkPreview(
+            commands = commands.drop(1),
+            start = Offset(x, y),
+            size = canvasSize,
+        )
     }
     val revealProgress = sharedPdfInkPreviewRevealProgress(progress)
     val pathMeasure = PathMeasure()
@@ -1084,6 +1062,163 @@ internal fun DrawScope.drawInkPreview(
 
 internal fun sharedPdfInkPreviewRevealProgress(progress: Float): Float {
     return progress.coerceIn(0f, 1f)
+}
+
+/**
+ * Fraction of the pen-icon canvas height reserved above the pen tip for the ink
+ * flourish animation. Without this headroom the flourish (which sweeps upward
+ * from the tip) is clipped by the canvas bounds. Sized to fit the full swirl
+ * plus half the widest preview stroke; the icon boxes are grown accordingly so
+ * the pen artwork keeps its size.
+ */
+const val SharedPdfPenIconInkHeadroomFraction = 0.34f
+
+/** Horizontal center of the pen-icon canvas, where the ink flourish starts. */
+const val SharedPdfPenIconInkStartXFraction = 0.5f
+
+/**
+ * A single ink-preview path command, expressed in fractions of the canvas size
+ * relative to the ink start point. Fraction-based (instead of raw px) so the
+ * flourish keeps its proportions — and stays inside the canvas — at any
+ * density or icon size.
+ */
+sealed interface SharedPdfInkPreviewCommand {
+    data class MoveTo(val dxWidthFraction: Float, val dyHeightFraction: Float) : SharedPdfInkPreviewCommand
+    data class LineTo(val dxWidthFraction: Float, val dyHeightFraction: Float) : SharedPdfInkPreviewCommand
+    data class CubicTo(
+        val control1DxWidthFraction: Float,
+        val control1DyHeightFraction: Float,
+        val control2DxWidthFraction: Float,
+        val control2DyHeightFraction: Float,
+        val dxWidthFraction: Float,
+        val dyHeightFraction: Float,
+    ) : SharedPdfInkPreviewCommand
+}
+
+/** Ink-preview flourish bounds, as fractions of the canvas size. */
+data class SharedPdfPreviewExtents(val minX: Float, val minY: Float, val maxX: Float, val maxY: Float)
+
+/**
+ * Ink-preview flourish for the tool-settings icon. Pen tips draw a generous
+ * upward swirl that uses the full icon headroom; highlighters draw a wave
+ * (or a straight stroke when snapping is on).
+ */
+fun sharedPdfInkPreviewCommands(isHighlighter: Boolean, straight: Boolean): List<SharedPdfInkPreviewCommand> {
+    if (isHighlighter) {
+        // Long wave centered on the tip: as wide as the canvas allows while
+        // keeping room for the stroke on the smallest icon.
+        val startDX = -0.30f
+        val waveWidthFraction = 0.60f
+        return if (straight) {
+            listOf(
+                SharedPdfInkPreviewCommand.MoveTo(startDX, 0f),
+                SharedPdfInkPreviewCommand.LineTo(startDX + waveWidthFraction, 0f),
+            )
+        } else {
+            listOf(
+                SharedPdfInkPreviewCommand.MoveTo(startDX, 0f),
+                SharedPdfInkPreviewCommand.CubicTo(
+                    control1DxWidthFraction = startDX + waveWidthFraction * 0.35f,
+                    control1DyHeightFraction = -0.07f,
+                    control2DxWidthFraction = startDX + waveWidthFraction * 0.65f,
+                    control2DyHeightFraction = 0.07f,
+                    dxWidthFraction = startDX + waveWidthFraction,
+                    dyHeightFraction = 0f,
+                ),
+            )
+        }
+    }
+    return listOf(
+        SharedPdfInkPreviewCommand.MoveTo(0f, 0f),
+        SharedPdfInkPreviewCommand.CubicTo(0.225f, -0.133f, -0.225f, -0.29f, -0.097f, -0.15f),
+        SharedPdfInkPreviewCommand.CubicTo(-0.032f, -0.033f, 0.29f, -0.083f, 0.40f, -0.183f),
+    )
+}
+
+/** Bounds of [sharedPdfInkPreviewCommands] for a start point, in canvas fractions. */
+fun List<SharedPdfInkPreviewCommand>.sharedPdfInkPreviewBounds(
+    startXFraction: Float = SharedPdfPenIconInkStartXFraction,
+    startYFraction: Float = SharedPdfPenIconInkHeadroomFraction,
+): SharedPdfPreviewExtents {
+    var minX = startXFraction
+    var minY = startYFraction
+    var maxX = startXFraction
+    var maxY = startYFraction
+    fun include(dxWidthFraction: Float, dyHeightFraction: Float) {
+        minX = minOf(minX, startXFraction + dxWidthFraction)
+        maxX = maxOf(maxX, startXFraction + dxWidthFraction)
+        minY = minOf(minY, startYFraction + dyHeightFraction)
+        maxY = maxOf(maxY, startYFraction + dyHeightFraction)
+    }
+    forEach { command ->
+        when (command) {
+            is SharedPdfInkPreviewCommand.MoveTo -> include(command.dxWidthFraction, command.dyHeightFraction)
+            is SharedPdfInkPreviewCommand.LineTo -> include(command.dxWidthFraction, command.dyHeightFraction)
+            is SharedPdfInkPreviewCommand.CubicTo -> {
+                include(command.control1DxWidthFraction, command.control1DyHeightFraction)
+                include(command.control2DxWidthFraction, command.control2DyHeightFraction)
+                include(command.dxWidthFraction, command.dyHeightFraction)
+            }
+        }
+    }
+    return SharedPdfPreviewExtents(minX, minY, maxX, maxY)
+}
+
+/**
+ * True when a flourish with [extents] drawn with a centered [strokeWidthPx]
+ * stroke stays fully inside a [widthPx] x [heightPx] canvas (i.e. the ink
+ * animation is not cut off).
+ */
+fun sharedPdfPreviewFitsCanvas(
+    widthPx: Float,
+    heightPx: Float,
+    extents: SharedPdfPreviewExtents,
+    strokeWidthPx: Float,
+): Boolean {
+    if (widthPx <= 0f || heightPx <= 0f) return false
+    val halfStroke = strokeWidthPx / 2f
+    return extents.minX * widthPx - halfStroke >= 0f &&
+        extents.maxX * widthPx + halfStroke <= widthPx &&
+        extents.minY * heightPx - halfStroke >= 0f &&
+        extents.maxY * heightPx + halfStroke <= heightPx
+}
+
+/**
+ * Radius for a stroked selection ring that keeps the whole stroke inside the
+ * canvas. A ring drawn at `minDimension / 2` centers its stroke on the canvas
+ * edge, so the outer half gets clipped ("chipped"); insetting by half the
+ * stroke width fixes it.
+ */
+fun sharedPdfSelectionRingRadius(canvasMinDimensionPx: Float, strokeWidthPx: Float): Float {
+    return ((canvasMinDimensionPx - strokeWidthPx) / 2f).coerceAtLeast(0f)
+}
+
+/** Applies ink-preview [commands] to a [Path] for a canvas of [size] starting at [start]. */
+fun Path.applySharedPdfInkPreview(
+    commands: List<SharedPdfInkPreviewCommand>,
+    start: Offset,
+    size: Size,
+) {
+    commands.forEach { command ->
+        when (command) {
+            is SharedPdfInkPreviewCommand.MoveTo -> moveTo(
+                start.x + command.dxWidthFraction * size.width,
+                start.y + command.dyHeightFraction * size.height,
+            )
+            is SharedPdfInkPreviewCommand.LineTo -> lineTo(
+                start.x + command.dxWidthFraction * size.width,
+                start.y + command.dyHeightFraction * size.height,
+            )
+            is SharedPdfInkPreviewCommand.CubicTo -> cubicTo(
+                start.x + command.control1DxWidthFraction * size.width,
+                start.y + command.control1DyHeightFraction * size.height,
+                start.x + command.control2DxWidthFraction * size.width,
+                start.y + command.control2DyHeightFraction * size.height,
+                start.x + command.dxWidthFraction * size.width,
+                start.y + command.dyHeightFraction * size.height,
+            )
+        }
+    }
 }
 
 internal val PdfInkTool.isDesktopPenTool: Boolean

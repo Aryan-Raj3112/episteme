@@ -23,6 +23,9 @@ import com.aryan.reader.shared.pdf.SharedPdfAnnotationDefaults
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationSerializer
 import com.aryan.reader.shared.pdf.sanitizedSharedPdfTextAnnotation
 import com.aryan.reader.shared.pdf.SharedPdfHighlighterPalette
+import com.aryan.reader.shared.ui.sharedPdfInkPreviewBounds
+import com.aryan.reader.shared.ui.sharedPdfPreviewFitsCanvas
+import com.aryan.reader.shared.ui.sharedPdfSelectionRingRadius
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -74,12 +77,80 @@ class PdfReaderSettingsAndSharedModelsTest {
     }
 
     @Test
+    fun `android ink preview flourish stays inside the icon canvas`() {
+        val canvases = listOf(44f to 100f, 44f to 150f, 88f to 200f, 132f to 300f, 200f to 120f)
+
+        for ((width, height) in canvases) {
+            val penExtents = pdfInkPreviewCommands(isHighlighter = false, straight = false)
+                .sharedPdfInkPreviewBounds()
+            assertTrue(
+                "pen flourish clipped on ${width}x$height canvas",
+                sharedPdfPreviewFitsCanvas(width, height, penExtents, 8f)
+            )
+            for (straight in listOf(false, true)) {
+                val highlighterExtents = pdfInkPreviewCommands(isHighlighter = true, straight = straight)
+                    .sharedPdfInkPreviewBounds()
+                assertTrue(
+                    "highlighter flourish clipped on ${width}x$height canvas (straight=$straight)",
+                    sharedPdfPreviewFitsCanvas(width, height, highlighterExtents, 16f)
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `selection ring keeps its stroke inside the canvas`() {
+        assertEquals(26f, sharedPdfSelectionRingRadius(56f, 4f), 0.0001f)
+    }
+
+    @Test
     fun `AnnotationSettingsRepository loads stored settings off construction path`() {
         val source = readSourceFile("src/main/java/com/aryan/reader/pdf/data/AnnotationSettingsRepository.kt")
 
         assertTrue(source.contains("MutableStateFlow(AnnotationToolSettings())"))
         assertTrue(source.contains("scope.launch"))
         assertFalse(source.contains("MutableStateFlow(loadSettings())"))
+    }
+
+    @Test
+    fun `annotation bridge keeps tool color size and snap observable`() {
+        val source = readSourceFile("src/main/java/com/aryan/reader/pdf/PdfViewerScreen.kt")
+
+        val observableFields = listOf(
+            "isHighlighterSnapEnabled",
+            "isCurrentToolHighlighter",
+            "currentIsHighlighter",
+            "currentSnapEnabled",
+            "isDrawingActive",
+            "currentStrokeColor",
+            "currentStrokeWidth",
+            "currentEraserStrokeWidth",
+            "eraserToolThickness",
+            "activeToolThickness",
+            "dockPenColor",
+            "dockHighlighterColor",
+            "fountainPenColor",
+            "markerColor",
+            "pencilColor",
+            "highlighterColor",
+            "highlighterRoundColor",
+            "lastPenTool",
+            "lastHighlighterTool",
+            "penPalette",
+            "highlighterPalette",
+            "toolSettings"
+        )
+
+        observableFields.forEach { field ->
+            val declaration = source.lines().firstOrNull { line ->
+                line.contains(field) && (line.contains("var $field") || line.contains("lateinit var $field"))
+            }
+            assertTrue("Expected an observable bridge declaration for $field", declaration != null)
+            assertTrue(
+                "Bridge field $field must use snapshot state so color/size updates recompose (got: $declaration)",
+                declaration!!.contains(" by ") && declaration.contains("mutableStateOf")
+            )
+        }
     }
 
     @Test

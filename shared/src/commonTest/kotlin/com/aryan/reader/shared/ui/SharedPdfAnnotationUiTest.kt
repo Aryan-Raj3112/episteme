@@ -1,7 +1,11 @@
 package com.aryan.reader.shared.ui
 
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathMeasure
 import androidx.compose.ui.graphics.toArgb
 import com.aryan.reader.shared.pdf.PdfAnnotationKind
 import com.aryan.reader.shared.pdf.PdfInkTool
@@ -9,6 +13,7 @@ import com.aryan.reader.shared.pdf.SharedPdfAndroidHighlightColors
 import com.aryan.reader.shared.pdf.SharedPdfAnnotation
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 class SharedPdfAnnotationUiTest {
     @Test
@@ -112,5 +117,77 @@ class SharedPdfAnnotationUiTest {
         assertEquals(0f, sharedPdfInkPreviewRevealProgress(-0.5f))
         assertEquals(0.45f, sharedPdfInkPreviewRevealProgress(0.45f))
         assertEquals(1f, sharedPdfInkPreviewRevealProgress(1.5f))
+    }
+
+    @Test
+    fun `selection ring keeps its stroke inside the canvas`() {
+        val strokeWidth = 4f
+        val canvasMinDimension = 56f
+
+        assertEquals(
+            (canvasMinDimension - strokeWidth) / 2f,
+            sharedPdfSelectionRingRadius(canvasMinDimension, strokeWidth)
+        )
+        // Outer edge of the stroke lands exactly on the canvas edge: not chipped, not inset.
+        assertEquals(
+            canvasMinDimension / 2f,
+            sharedPdfSelectionRingRadius(canvasMinDimension, strokeWidth) + strokeWidth / 2f,
+            0.0001f
+        )
+    }
+
+    @Test
+    fun `ink preview path has length to animate`() {
+        val size = Size(132f, 300f)
+        val start = Offset(
+            size.width * SharedPdfPenIconInkStartXFraction,
+            size.height * SharedPdfPenIconInkHeadroomFraction
+        )
+        for (isHighlighter in listOf(false, true)) {
+            for (straight in listOf(false, true)) {
+                val path = Path().apply {
+                    moveTo(start.x, start.y)
+                    applySharedPdfInkPreview(
+                        sharedPdfInkPreviewCommands(isHighlighter, straight).drop(1),
+                        start,
+                        size
+                    )
+                }
+                val measure = PathMeasure()
+                measure.setPath(path, false)
+                assertTrue(
+                    measure.length > 10f,
+                    "ink preview path is degenerate (highlighter=$isHighlighter straight=$straight)"
+                )
+                // Mid-animation reveal must extract a segment, like drawInkPreview does.
+                assertTrue(
+                    measure.getSegment(0f, measure.length / 2f, Path(), true)
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `ink preview flourish stays inside the icon canvas`() {
+        // Same stroke clamps as drawInkPreview: pens 1.2..5px, highlighters 5..16px.
+        val canvases = listOf(44f to 100f, 44f to 150f, 88f to 200f, 132f to 300f, 200f to 120f)
+        for ((width, height) in canvases) {
+            val penExtents = sharedPdfInkPreviewCommands(isHighlighter = false, straight = false)
+                .sharedPdfInkPreviewBounds()
+            assertEquals(
+                true,
+                sharedPdfPreviewFitsCanvas(width, height, penExtents, 5f),
+                "pen flourish clipped on ${width}x$height canvas"
+            )
+            for (straight in listOf(false, true)) {
+                val highlighterExtents = sharedPdfInkPreviewCommands(isHighlighter = true, straight = straight)
+                    .sharedPdfInkPreviewBounds()
+                assertEquals(
+                    true,
+                    sharedPdfPreviewFitsCanvas(width, height, highlighterExtents, 16f),
+                    "highlighter flourish clipped on ${width}x$height canvas (straight=$straight)"
+                )
+            }
+        }
     }
 }
