@@ -77,6 +77,9 @@ import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.ImageShader
 import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.TileMode
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -754,16 +757,22 @@ internal fun SharedMobileEpubPageInfo(
     val foreground = settings.readerTextColor().copy(alpha = 0.8f)
     val texture = sharedMobileEpubTextureBitmap(settings.textureId)
     val clockTime = rememberReaderClockTime()
+    val centerLabel = pageInfo?.let {
+        "$chapterTitle (${it.currentPageInChapter}/${it.totalPagesInChapter})"
+    } ?: chapterTitle
+    val axDescription = pageInfo?.let {
+        "$chapterTitle, page ${it.currentPageInChapter} of ${it.totalPagesInChapter}, ${formatReaderProgress(progressPercent)} percent"
+    } ?: chapterTitle
     Box(
         modifier.fillMaxWidth().height(25.dp).background(background)
             .then(texture?.let { bitmap -> Modifier.drawBehind { drawRect(ShaderBrush(ImageShader(bitmap, TileMode.Repeated, TileMode.Repeated)), alpha = settings.textureAlpha.coerceIn(0f, 1f), blendMode = if (settings.darkMode) BlendMode.Screen else BlendMode.Multiply) } } ?: Modifier)
-            .padding(horizontal = 16.dp),
+            .padding(horizontal = 16.dp)
+            .testTag(SharedMobileEpubAxTags.PAGE_INFO)
+            .semantics(mergeDescendants = true) { contentDescription = axDescription },
         contentAlignment = Alignment.Center
     ) {
             Text(
-                pageInfo?.let {
-                    "$chapterTitle (${it.currentPageInChapter}/${it.totalPagesInChapter})"
-                } ?: chapterTitle,
+                centerLabel,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 style = MaterialTheme.typography.bodySmall,

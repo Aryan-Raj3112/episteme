@@ -33,6 +33,32 @@ import android.graphics.Color as AndroidColor
 
 data class PdfTile(val bitmap: Bitmap, val renderRect: Rect, val tileId: Int, val renderScale: Float = 1f)
 
+/**
+ * High-res tile reconciliation policy.
+ *
+ * While zoomed and panning, the already-sharp region must stay sharp: new
+ * renders pause during motion, but drawn tiles are frozen (never recycled or
+ * hidden) until idle. A plain touch/hold without movement never enters motion,
+ * so tiles stay drawn with no low-res flash.
+ */
+internal data class PdfTileRenderPlan(val toRender: Set<Int>, val toRecycle: Set<Int>)
+
+internal fun planPdfHighResTileUpdate(
+    requiredTileIds: Set<Int>,
+    validCurrentTileIds: Set<Int>,
+    currentTileIds: Set<Int>,
+    motionPaused: Boolean,
+): PdfTileRenderPlan {
+    if (motionPaused) return PdfTileRenderPlan(emptySet(), emptySet())
+    return PdfTileRenderPlan(
+        toRender = requiredTileIds - validCurrentTileIds,
+        toRecycle = currentTileIds - requiredTileIds,
+    )
+}
+
+/** Drawn tiles are independent of the render pause: cached sharp tiles stay visible while panning. */
+internal fun shouldDrawPdfHighResTiles(needsTiling: Boolean): Boolean = needsTiling
+
 object PdfInkGeometry {
     fun calculateFountainPenPoints(
         points: List<PdfPoint>, baseWidth: Float, pageWidth: Float, pageHeight: Float

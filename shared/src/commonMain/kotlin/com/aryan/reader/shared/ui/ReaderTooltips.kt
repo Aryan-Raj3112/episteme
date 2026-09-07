@@ -3,6 +3,7 @@ package com.aryan.reader.shared.ui
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -13,6 +14,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -27,7 +29,9 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 @Composable
 fun ReaderTooltipIconButton(
@@ -39,6 +43,11 @@ fun ReaderTooltipIconButton(
 ) {
     var hovered by remember { mutableStateOf(false) }
     var visible by remember { mutableStateOf(false) }
+    // Android parity (long-press TooltipBox): touch screens have no hover, so
+    // a long-press shows the same bubble transiently instead of clicking.
+    var touchTipVisible by remember { mutableStateOf(false) }
+    var touchTipDismiss by remember { mutableStateOf<Job?>(null) }
+    val scope = rememberCoroutineScope()
     val density = LocalDensity.current
     val marginPx = with(density) { 8.dp.roundToPx() }
     val offsetPx = with(density) { 8.dp.roundToPx() }
@@ -74,10 +83,34 @@ fun ReaderTooltipIconButton(
             }
         }
     ) {
-        IconButton(onClick = onClick, modifier = modifier, enabled = enabled) {
+        IconButton(
+            onClick = {
+                touchTipDismiss?.cancel()
+                touchTipVisible = false
+                onClick()
+            },
+            modifier = modifier.pointerInput(tooltip) {
+                // No onTap: taps fall through to the IconButton untouched; a
+                // long-press consumes the gesture (suppressing the click) and
+                // shows the tooltip bubble briefly instead.
+                detectTapGestures(
+                    onLongPress = {
+                        if (tooltip.isNotBlank()) {
+                            touchTipDismiss?.cancel()
+                            touchTipVisible = true
+                            touchTipDismiss = scope.launch {
+                                delay(2500L)
+                                touchTipVisible = false
+                            }
+                        }
+                    }
+                )
+            },
+            enabled = enabled
+        ) {
             content.invoke()
         }
-        if (visible) {
+        if (visible || touchTipVisible) {
             Popup(
                 popupPositionProvider = ReaderTooltipPositionProvider(
                     marginPx = marginPx,

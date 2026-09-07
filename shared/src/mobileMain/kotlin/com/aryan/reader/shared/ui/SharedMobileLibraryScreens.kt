@@ -153,7 +153,7 @@ private fun MobileUnifiedLibraryDrawerLabel.readerString(): String = when (this)
     MobileUnifiedLibraryDrawerLabel.SHELVES -> readerString("tab_shelves", "Shelves")
     MobileUnifiedLibraryDrawerLabel.FOLDERS -> readerString("tab_folders", "Folders")
     MobileUnifiedLibraryDrawerLabel.CATALOGS -> readerString("tab_catalogs", "Catalogs")
-    MobileUnifiedLibraryDrawerLabel.THEME -> readerString("app_theme_title", "App theme")
+    MobileUnifiedLibraryDrawerLabel.THEME -> readerString("app_theme_title", "App Theme")
     MobileUnifiedLibraryDrawerLabel.SETTINGS -> readerString("settings", "Settings")
     MobileUnifiedLibraryDrawerLabel.FONTS -> readerString("drawer_custom_fonts", "Custom fonts")
     MobileUnifiedLibraryDrawerLabel.AI -> readerString("ai_settings_title", "AI settings")
@@ -531,7 +531,7 @@ fun SharedMobileUnifiedLibraryScreen(
                                 val progress = (book.progressPercentage ?: 0f).coerceIn(0f, 100f)
                                 SharedAndroidUnifiedContinueCard(
                                     sectionLabel = readerString("unified_library_continue_reading", "Continue reading"),
-                                    title = book.cardTitle(),
+                                    title = book.cardTitle(LocalUsePdfFileNameAsDisplayName.current),
                                     author = book.cardAuthor(),
                                     progressPercent = progress,
                                     progressLabel = readerString("progress_complete", "%1\$d%% complete", progress.roundToInt()),
@@ -2733,7 +2733,7 @@ private fun SharedMobileHomeTopBar(
         title = {},
         navigationIcon = {
             IconButton(onClick = onDrawerClick, modifier = Modifier.testTag("MobileHomeMenu")) {
-                Icon(Icons.Default.Menu, contentDescription = "Menu")
+                Icon(Icons.Default.Menu, contentDescription = readerString("content_desc_open_drawer", "Open Drawer"))
             }
         },
         actions = {
@@ -2741,7 +2741,7 @@ private fun SharedMobileHomeTopBar(
                 Icon(Icons.Default.Settings, contentDescription = "Settings")
             }
             IconButton(onClick = onAppThemeClick, modifier = Modifier.testTag("MobileHomeTheme")) {
-                Icon(Icons.Default.Palette, contentDescription = readerString("app_theme", "App theme"))
+                Icon(Icons.Default.Palette, contentDescription = readerString("app_theme_title", "App Theme"))
             }
             IconButton(onClick = onRecentLimitClick, modifier = Modifier.testTag("MobileHomeRecentLimit")) {
                 Icon(
@@ -2751,7 +2751,7 @@ private fun SharedMobileHomeTopBar(
             }
             Box {
                 IconButton(onClick = { showOptionsMenu = true }, modifier = Modifier.testTag("MobileHomeMore")) {
-                    Icon(Icons.Default.MoreVert, contentDescription = "More actions")
+                    Icon(Icons.Default.MoreVert, contentDescription = readerString("tooltip_more_options", "More Options"))
                 }
                 DropdownMenu(
                     expanded = showOptionsMenu,

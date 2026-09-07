@@ -27,11 +27,21 @@ class PdfToolbarPreferencesTest {
     }
 
     @Test
+    fun `split view stays available but unpinned like the android benchmark`() {
+        val preferences = PdfToolbarPreferences()
+
+        // Reachable through Hidden tools / Customize Toolbar, never pinned.
+        assertFalse(preferences.isVisible(PdfReaderTool.SPLIT_VIEW))
+        assertTrue(PdfReaderTool.SPLIT_VIEW.supportsToolbarPlacement)
+        assertTrue(PdfReaderTool.SPLIT_VIEW in preferences.toolOrder)
+    }
+
+    @Test
     fun `split view tool defaults beside external apps and supports placement`() {
         val preferences = PdfToolbarPreferences()
 
         assertTrue(PdfReaderTool.SPLIT_VIEW.supportsToolbarPlacement)
-        assertTrue(preferences.isVisible(PdfReaderTool.SPLIT_VIEW))
+        assertFalse(preferences.isVisible(PdfReaderTool.SPLIT_VIEW))
         assertFalse(preferences.isBottom(PdfReaderTool.SPLIT_VIEW))
         assertEquals(PdfReaderTool.DICTIONARY, preferences.toolOrder.first())
         assertEquals(PdfReaderTool.SPLIT_VIEW, preferences.toolOrder[1])

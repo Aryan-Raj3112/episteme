@@ -105,6 +105,16 @@ set_target_properties(mobi PROPERTIES C_VISIBILITY_PRESET default)
 
 
 # ===================================================================
+# MD4C MARKDOWN PARSER (vendored, MIT license: see md4c/LICENSE.md)
+# ===================================================================
+add_library(md4c STATIC
+        md4c/md4c.c
+        md4c/md4c-html.c
+        md4c/entity.c
+)
+target_include_directories(md4c PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/md4c)
+
+# ===================================================================
 # FINAL NATIVE LIBRARY FOR THE APP
 # ===================================================================
 # 6. Define our final JNI wrapper library.
@@ -114,6 +124,7 @@ add_library(
         Woff2Converter.cpp
         mobi_jni_bridge.c
         pdfium_bridge.cpp  # Add this new file
+        md4c_jni.c
 )
 
 # 7. Tell our library where to find all necessary header files.
@@ -133,6 +144,7 @@ target_link_libraries(
         PRIVATE
         woff2dec
         mobi
+        md4c
         ${log-lib}
         ${z-lib}
         dl

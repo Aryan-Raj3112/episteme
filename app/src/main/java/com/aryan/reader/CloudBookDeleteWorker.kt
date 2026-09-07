@@ -10,7 +10,6 @@ import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.OutOfQuotaPolicy
-import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.aryan.reader.data.CloudBookDeleteIntentEntity
 import com.aryan.reader.data.CloudBookDeletePersistence
@@ -335,7 +334,8 @@ class CloudBookDeleteWorker(
                 )
                 .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
                 .build()
-            WorkManager.getInstance(context.applicationContext).enqueueUniqueWork(
+            SafeWorkManager.enqueueUniqueWork(
+                context.applicationContext,
                 workName(normalizedAccountId),
                 // APPEND_OR_REPLACE captures a request added while a worker
                 // is running without cancelling its current batch.
@@ -347,8 +347,10 @@ class CloudBookDeleteWorker(
         fun cancelForAccount(context: Context, accountId: String) {
             val normalizedAccountId = accountId.trim()
             if (normalizedAccountId.isBlank()) return
-            WorkManager.getInstance(context.applicationContext)
-                .cancelUniqueWork(workName(normalizedAccountId))
+            SafeWorkManager.cancelUniqueWork(
+                context.applicationContext,
+                workName(normalizedAccountId),
+            )
         }
 
         private fun workName(accountId: String): String = WORK_NAME_PREFIX + accountId

@@ -53,6 +53,7 @@ import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -557,12 +558,26 @@ internal fun SharedReaderAiResultSheet(
         onDismiss = onDismiss
     ) {
         val errorMessage = result.errorMessage
+        // Android parity (EpubReaderControls "Thinking" row): a spinner next
+        // to the status text so generation never looks idle/hung.
         when {
-            result.isLoading && result.text.isBlank() -> Text(readerString("desktop_working", "Working..."), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            result.isLoading && result.text.isBlank() -> Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                Text(readerString("desktop_working", "Working..."), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
             errorMessage != null -> Text(errorMessage, color = MaterialTheme.colorScheme.error)
             else -> {
                 if (result.isLoading) {
-                    Text(readerString("desktop_working", "Working..."), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                        Text(readerString("desktop_working", "Working..."), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
                 SharedMarkdownText(result.text)
             }

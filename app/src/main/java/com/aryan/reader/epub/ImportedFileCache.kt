@@ -1,6 +1,8 @@
 package com.aryan.reader.epub
 
 import android.content.Context
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.UUID
 
@@ -49,20 +51,25 @@ object ImportedFileCache {
         return directory
     }
 
-    fun clearBookCache(context: Context, bookId: String) {
+    // Recursive deletes of extracted-book dirs (thousands of files) must never run on
+    // the caller thread: book cleanup is reachable from the main dispatcher and per-file
+    // `remove` syscalls ANR there (see docs/crashlytics-triage.md#18). The I/O boundary
+    // owns the hop so every caller is safe regardless of its dispatcher.
+    suspend fun clearBookCache(context: Context, bookId: String) = withContext(Dispatchers.IO) {
         activeBookDir(context, bookId).takeIf { it.exists() }?.deleteRecursively()
         legacyActiveBookDir(context, bookId).takeIf { it.exists() }?.deleteRecursively()
         clearTemporaryBookDirs(context, bookId)
     }
 
-    fun clearTemporaryBookDirs(context: Context, bookId: String) {
-        val marker = "_${bookMarker(bookId)}_"
-        context.cacheDir.listFiles()?.forEach { file ->
-            if (isTemporaryBookDir(file.name) && file.name.contains(marker)) {
-                file.deleteRecursively()
+    suspend fun clearTemporaryBookDirs(context: Context, bookId: String) =
+        withContext(Dispatchers.IO) {
+            val marker = "_${bookMarker(bookId)}_"
+            context.cacheDir.listFiles()?.forEach { file ->
+                if (isTemporaryBookDir(file.name) && file.name.contains(marker)) {
+                    file.deleteRecursively()
+                }
             }
         }
-    }
 
     fun deleteStaleTemporaryBookDirs(
         context: Context,

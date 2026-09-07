@@ -3,6 +3,7 @@ package com.aryan.reader.shared
 import com.aryan.reader.shared.reader.ReaderReadingMode
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.SharedReaderTextAlign
+import com.aryan.reader.shared.reader.DefaultIosPdfReaderSettings
 import com.aryan.reader.shared.reader.DefaultPdfReaderSettings
 import com.aryan.reader.shared.pdf.PdfReverseColorMode
 import kotlin.test.Test
@@ -20,6 +21,17 @@ class ReaderDefaultSettingsStateTest {
     fun `pdf defaults to sync system ui while epub defaults to system default`() {
         assertEquals(SystemUiMode.SYNC, DefaultPdfReaderSettings.systemUiMode)
         assertEquals(SystemUiMode.DEFAULT, ReaderSettings().systemUiMode)
+    }
+
+    @Test
+    fun `ios pdf defaults to always show while android benchmark stays sync`() {
+        assertEquals(SystemUiMode.SYNC, DefaultPdfReaderSettings.systemUiMode)
+        assertEquals(SystemUiMode.DEFAULT, DefaultIosPdfReaderSettings.systemUiMode)
+        assertEquals(DefaultPdfReaderSettings.themeId, DefaultIosPdfReaderSettings.themeId)
+        assertEquals(
+            DefaultPdfReaderSettings.tapToNavigateEnabled,
+            DefaultIosPdfReaderSettings.tapToNavigateEnabled
+        )
     }
 
     @Test

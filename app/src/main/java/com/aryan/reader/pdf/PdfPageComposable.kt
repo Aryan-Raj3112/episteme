@@ -1224,8 +1224,15 @@ internal fun PdfPageComposable(
                 val currentTileIds = tiles.map { it.tileId }.toSet()
 
                 val validCurrentTileIds = tiles.filter { it.renderScale == renderScale }.map { it.tileId }.toSet()
-                val tilesToRenderIds = requiredTileIds - validCurrentTileIds
-                val tilesToRecycleIds = currentTileIds - requiredTileIds
+                // Freeze while in motion: keep drawn tiles, defer render + recycle until idle.
+                val tilePlan = planPdfHighResTileUpdate(
+                    requiredTileIds = requiredTileIds,
+                    validCurrentTileIds = validCurrentTileIds,
+                    currentTileIds = currentTileIds,
+                    motionPaused = latestShouldPauseHighResTileRendering,
+                )
+                val tilesToRenderIds = tilePlan.toRender
+                val tilesToRecycleIds = tilePlan.toRecycle
 
                 val duration = (System.nanoTime() - tileCalcStart) / 1_000_000f
                 val nowMs = System.currentTimeMillis()
@@ -1246,14 +1253,9 @@ internal fun PdfPageComposable(
                     )
                 }
 
-                if (tilesToRecycleIds.isNotEmpty()) {
-                    val (tilesToRecycle, tilesToKeep) = tiles.partition { it.tileId in tilesToRecycleIds }
-                    tiles = tilesToKeep
-                    withContext(Dispatchers.IO) {
-                        tilesToRecycle.forEach { PdfBitmapPool.recycle(it.bitmap) }
-                    }
-                }
-
+                // Freeze the tile set while in motion (pan/zoom/fling/scroll):
+                // keep already-sharp tiles drawn instead of dropping to low-res.
+                // New renders and recycling resume once idle.
                 if (latestShouldPauseHighResTileRendering) {
                     if (shouldLogTileSample) {
                         PdfVerticalPerfLog.d(
@@ -1262,6 +1264,14 @@ internal fun PdfPageComposable(
                         )
                     }
                     return@collectLatest
+                }
+
+                if (tilesToRecycleIds.isNotEmpty()) {
+                    val (tilesToRecycle, tilesToKeep) = tiles.partition { it.tileId in tilesToRecycleIds }
+                    tiles = tilesToKeep
+                    withContext(Dispatchers.IO) {
+                        tilesToRecycle.forEach { PdfBitmapPool.recycle(it.bitmap) }
+                    }
                 }
 
                 if (requiredTileIds != validCurrentTileIds) {
@@ -2946,13 +2956,13 @@ internal fun PdfPageComposable(
                             paginationPanFlingJob = null
                             oneHandZoomStartScale = latestScale
                             oneHandZoomStartOffset = latestOffset
-                            isPaginationPageGestureActive = true
                         } else if (isVerticalScroll && !isScrollLocked) {
                             currentOnDoubleTapDragZoomStart?.invoke(Offset(size.width / 2f, size.height / 2f))
                         }
                     },
                     onOneHandZoom = { _, totalDragY ->
                         if (isZoomEnabled && !isVerticalScroll && !isScrollLocked && actualBitmapWidthPx > 0) {
+                            isPaginationPageGestureActive = true
                             val pivot = Offset(size.width / 2f, size.height / 2f)
                             val newScale = pdfOneHandZoomScale(
                                 startScale = oneHandZoomStartScale,
@@ -3030,7 +3040,9 @@ internal fun PdfPageComposable(
                         "page.panDetector.down page=$pageIndex consumed=${down.isConsumed} " +
                             "scale=$scale offset=$offset scrollLocked=$isScrollLocked"
                     )
-                    isPaginationPageGestureActive = true
+                    // Don't mark motion on press alone: a touch/hold without
+                    // movement must keep sharp tiles (no low-res flash).
+                    // The flag is set once pan/zoom/swipe actually starts below.
                     try {
                     paginationPanFlingJob?.cancel()
                     paginationPanFlingJob = null
@@ -3071,6 +3083,7 @@ internal fun PdfPageComposable(
                                         accumulatedPan += panChange
                                         if (accumulatedPan.getDistance() > touchSlop) {
                                             mode = 1
+                                            isPaginationPageGestureActive = true
                                             Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
                                                 "page.panDetector.modePanSingle page=$pageIndex accumulatedPan=$accumulatedPan scale=$scale"
                                             )
@@ -3085,12 +3098,14 @@ internal fun PdfPageComposable(
 
                                         if (zoomDiff > 0.05f) {
                                             mode = 2
+                                            isPaginationPageGestureActive = true
                                             Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
                                                 "page.panDetector.modeZoomMulti page=$pageIndex zoomDiff=$zoomDiff panDist=$panDist scale=$scale"
                                             )
                                             Timber.tag("PdfZoomDebug").d("Mode Change: ZOOM (Multi Pointer)")
                                         } else if (panDist > touchSlop) {
                                             mode = 1
+                                            isPaginationPageGestureActive = true
                                             Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
                                                 "page.panDetector.modePanMulti page=$pageIndex zoomDiff=$zoomDiff panDist=$panDist scale=$scale"
                                             )
@@ -3164,9 +3179,11 @@ internal fun PdfPageComposable(
 
                                         if (abs(accumulatedZoom - 1f) > 0.05f) {
                                             mode = 2
+                                            isPaginationPageGestureActive = true
                                         } else if (accumulatedPan.getDistance() > touchSlop) {
                                             if (abs(accumulatedPan.x) > abs(accumulatedPan.y) * 1.5f) {
                                                 mode = 3
+                                                isPaginationPageGestureActive = true
                                             }
                                         }
                                     }
@@ -4030,7 +4047,10 @@ internal fun PdfPageComposable(
                     val stableTiles = remember(tiles) { StableHolder(tiles) }
                     val stableColorFilter = remember(colorFilter) { StableHolder(colorFilter) }
                     val stableImageRects = remember(imageScreenRects) { StableHolder(imageScreenRects) }
-                    val shouldDrawHighResTiles = !shouldPauseHighResTileRendering && needsTilingNow
+                    // Keep already-rendered tiles drawn during motion (pan/zoom/fling):
+                    // only new renders pause. Hiding tiles on touch made the sharp
+                    // region drop to low-res, unlike other readers.
+                    val shouldDrawHighResTiles = shouldDrawPdfHighResTiles(needsTilingNow)
                     LaunchedEffect(shouldDrawHighResTiles, stableTiles.item.size, effectiveScale) {
                         if (needsTilingNow || stableTiles.item.isNotEmpty()) {
                             pdfZoomDiagnostic(

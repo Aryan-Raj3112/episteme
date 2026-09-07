@@ -680,4 +680,19 @@ class ReaderExtrasModelsTest {
         assertEquals(false, ReaderTranslateServiceOptions.contains(ReaderExternalLookupService.SYSTEM))
         assertEquals(false, ReaderSearchServiceOptions.contains(ReaderExternalLookupService.SYSTEM))
     }
+
+    @Test
+    fun `tts cache speaker parsed from chunk file name`() {
+        assertEquals("Aoede", readerTtsCacheSpeakerId("cached_chunk_Aoede_a1b2c3d4e5f60718.wav"))
+        assertNull(readerTtsCacheSpeakerId("voice_sample_Aoede.wav"))
+        assertNull(readerTtsCacheSpeakerId("chapter_notes.txt"))
+        assertNull(readerTtsCacheSpeakerId("cached_chunk_.wav"))
+    }
+
+    @Test
+    fun `tts cache segment label drops digest and restores spaces`() {
+        assertEquals("Chapter 1", readerTtsCacheDisplayLabel("Chapter_1_a1b2c3d4e5f60718"))
+        assertEquals("Pride and Prejudice", readerTtsCacheDisplayLabel("Pride_and_Prejudice_0123456789abcdef"))
+        assertEquals("plain", readerTtsCacheDisplayLabel("plain"))
+    }
 }

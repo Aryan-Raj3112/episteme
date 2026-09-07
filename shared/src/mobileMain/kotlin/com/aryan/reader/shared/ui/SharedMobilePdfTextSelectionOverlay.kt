@@ -7,16 +7,22 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -43,6 +49,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -60,6 +67,9 @@ import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChanged
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
@@ -81,6 +91,7 @@ import com.aryan.reader.shared.pdf.PdfPageBounds
 import com.aryan.reader.shared.pdf.PdfSelectionHandle
 import com.aryan.reader.shared.pdf.PdfTextPageSession
 import com.aryan.reader.shared.pdf.PdfTextSelectionEngine
+import com.aryan.reader.shared.pdf.PdfTextProcessing
 import com.aryan.reader.shared.pdf.PdfTextSelectionRange
 import com.aryan.reader.shared.pdf.pdfLinkLog
 import com.aryan.reader.shared.currentTimestamp
@@ -94,6 +105,9 @@ import com.aryan.reader.shared.generated.resources.strikethrough
 import com.aryan.reader.shared.generated.resources.teardrop
 import com.aryan.reader.shared.generated.resources.translate
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 import org.jetbrains.compose.resources.painterResource
 
@@ -128,6 +142,7 @@ internal fun SharedMobilePdfTextSelectionOverlay(
     onReadAloud: (Int) -> Unit,
     onAiDefine: ((String) -> Unit)? = null,
     onClipboardError: ((String) -> Unit)? = null,
+    onSelectionDragActiveChange: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     if (canvasSize.width <= 0 || canvasSize.height <= 0) return
@@ -137,10 +152,15 @@ internal fun SharedMobilePdfTextSelectionOverlay(
     val copiedTextLabel = readerString("clip_label_copied_text", "Copied Text")
     val clipboardErrorMessage = readerString("error_copy_to_clipboard", "Could not copy to clipboard")
     val density = LocalDensity.current
+    // Android parity (PdfPageComposable teardropWidthPxState): handles stay a
+    // constant 24dp on screen at any zoom by dividing by the visual scale.
+    // The overlay lives inside the zoom viewport's scaled layer, so without
+    // this both the teardrops and their hit rects grow with the zoom.
+    val zoomForHandles = zoomScale.takeIf { it.isFinite() && it > 0f } ?: 1f
     val teardropWidthDp = 24.dp
     val teardropHeightDp = 24.dp
-    var teardropWidthPx = with(density) { teardropWidthDp.toPx() }
-    val teardropHeightPx = with(density) { teardropHeightDp.toPx() }
+    var teardropWidthPx = with(density) { teardropWidthDp.toPx() } / zoomForHandles
+    val teardropHeightPx = with(density) { teardropHeightDp.toPx() } / zoomForHandles
 
     androidx.compose.runtime.LaunchedEffect(book.path, pageIndex, password, canvasSize) {
         selLog { "overlay mount page=$pageIndex canvas=${canvasSize.width}x${canvasSize.height} tool=$selectedTool session=${session != null} pageChars=${session?.pageCharCount ?: -1}" }
@@ -159,6 +179,16 @@ internal fun SharedMobilePdfTextSelectionOverlay(
         )
     }
 
+    // Android parity (PdfPageComposable mergedSelectionRects): glyph rects are
+    // merged into line rects before display so the highlight is a continuous
+    // band per line instead of per-glyph boxes with seams.
+    fun mergeCanvasRectsIntoLines(rects: List<Rect>): List<Rect> {
+        if (rects.isEmpty()) return rects
+        return PdfTextProcessing.mergeScreenBoundsIntoLines(
+            rects.map { PdfPageBounds(it.left, it.top, it.right, it.bottom) }
+        ).map { Rect(it.left, it.top, it.right, it.bottom) }
+    }
+
     fun applyRangeUpdate(
         range: PdfTextSelectionRange?,
         rects: List<Rect>,
@@ -169,13 +199,14 @@ internal fun SharedMobilePdfTextSelectionOverlay(
             state = SharedMobilePdfTextSelectionState()
             return
         }
-        val anchor = if (rects.isNotEmpty()) {
-            val first = rects.first()
+        val displayRects = mergeCanvasRectsIntoLines(rects)
+        val anchor = if (displayRects.isNotEmpty()) {
+            val first = displayRects.first()
             var left = first.left
             var top = first.top
             var right = first.right
             var bottom = first.bottom
-            rects.drop(1).forEach { rect ->
+            displayRects.drop(1).forEach { rect ->
                 left = minOf(left, rect.left)
                 top = minOf(top, rect.top)
                 right = maxOf(right, rect.right)
@@ -183,10 +214,10 @@ internal fun SharedMobilePdfTextSelectionOverlay(
             }
             Rect(left, top, right, bottom)
         } else null
-        selLog { "applyRangeUpdate: range=${range.start}..${range.end} rects=${rects.size} textLen=${text?.length ?: 0}" }
+        selLog { "applyRangeUpdate: range=${range.start}..${range.end} rects=${rects.size}->${displayRects.size} textLen=${text?.length ?: 0}" }
         state = state.copy(
             range = range,
-            selectionRects = rects,
+            selectionRects = displayRects,
             selectedText = text,
             menuAnchor = anchor
         )
@@ -335,9 +366,22 @@ internal fun SharedMobilePdfTextSelectionOverlay(
     // the anchors float during the drag).
     var dragPointerId: Any? by remember { mutableStateOf<Any?>(null) }
     var dragHandle: PdfSelectionHandle? by remember { mutableStateOf<PdfSelectionHandle?>(null) }
+    // Window rect of the drag Box, used only for drag-coordinate diagnostics:
+    // it lets us tell which space move positions arrive in.
+    var overlayWindowRect by remember { mutableStateOf<Rect?>(null) }
+    // Live layout coordinates of the drag Box. Unlike the snapshot window
+    // rect, localToWindow() on these accounts for the zoom viewport's
+    // graphicsLayer scale + pan + Center pivot at call time, which is what
+    // the selection-menu anchor mapping needs at any zoom (Android parity:
+    // contentToScreen + LayoutCoordinates.localToWindow).
+    var overlayCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    // Generation guard so a previous gesture's drain/cleanup cannot clobber a
+    // newer in-flight drag (cleanup runs async after the worker drains).
+    var dragGeneration by remember { mutableStateOf(0) }
 
     var showMagnifier by remember { mutableStateOf(false) }
     var magnifierActiveHandle by remember { mutableStateOf<PdfSelectionHandle?>(null) }
+    val latestOnSelectionDragActiveChange by rememberUpdatedState(onSelectionDragActiveChange)
 
     // Android-exact magnifier metrics: 120x60dp lens, 24dp above the handle,
     // centered on the handle x, sampling 2x of the on-screen content.
@@ -346,13 +390,17 @@ internal fun SharedMobilePdfTextSelectionOverlay(
     val magnifierOffsetAboveHandleDp = 24.dp
 
     val touchExpansionDp = 8.dp
-    val touchExpansionPx = with(density) { touchExpansionDp.toPx() }
+    val touchExpansionPx = with(density) { touchExpansionDp.toPx() } / zoomForHandles
     val touchW = teardropWidthPx + touchExpansionPx
     val touchH = teardropHeightPx + touchExpansionPx
 
     Box(
         modifier = modifier
             .fillMaxSize()
+            .onGloballyPositioned {
+                overlayWindowRect = it.boundsInWindow()
+                overlayCoordinates = it
+            }
             .then(tapDetector)
             .pointerInput(book.path, pageIndex, canvasSize, teardropWidthPx, teardropHeightPx, touchExpansionPx) {
                 // Eager drag routed entirely in canvas coords. This matches
@@ -388,6 +436,12 @@ internal fun SharedMobilePdfTextSelectionOverlay(
                         else -> null
                     }
                     if (handle == null) {
+                        pdfTextDragLog {
+                            "down page=$pageIndex gen=${dragGeneration + 1} result=miss " +
+                                "pos=(${pos.x},${pos.y}) canvas=${canvasSize.width}x${canvasSize.height} " +
+                                "zoom=$zoomScale startHit=$startHit endHit=$endHit " +
+                                "range=${state.range} rects=${currentRects.size}"
+                        }
                         selLog { "drag.down outside handles -> not consumed" }
                         return@awaitEachGesture
                     }
@@ -397,57 +451,232 @@ internal fun SharedMobilePdfTextSelectionOverlay(
                     dragHandle = handle
                     showMagnifier = true
                     magnifierActiveHandle = handle
+                    val myGeneration = dragGeneration + 1
+                    dragGeneration = myGeneration
+                    pdfTextDragLog {
+                        "down page=$pageIndex gen=$myGeneration result=hit handle=$handle " +
+                            "pos=(${pos.x},${pos.y}) canvas=${canvasSize.width}x${canvasSize.height} " +
+                            "zoom=$zoomScale range=${state.range} rects=${currentRects.size} " +
+                            "touchW=$touchW touchH=$touchH sessionChars=${session?.pageCharCount ?: -1} " +
+                            "winRect=$overlayWindowRect"
+                    }
+                    // Android parity (PdfPageComposable activeDraggingHandle):
+                    // zoom/pan is disabled while a handle drag is in flight.
+                    latestOnSelectionDragActiveChange(true)
                     val pointerId = down.id
+                    // Android parity (PdfPageComposable dragWorker): a single
+                    // conflated worker processes moves sequentially off the
+                    // main thread. Per-move launches raced (out-of-order
+                    // commits snapped the selection back, so drags stuck).
+                    val dragChannel = Channel<PdfTextDragMove>(Channel.CONFLATED)
+                    var sendSeq = 0L
+                    var probeMoves = 0
+                    // Self-calibration for the iOS move-coordinate jump: the
+                    // first move's previousPosition is always the down
+                    // position, so a huge jump between them is physically
+                    // impossible finger motion and must be a coordinate-space
+                    // offset. Subtract it for the rest of this gesture only.
+                    var gestureSpaceOffset: Offset? = null
+                    val downTimeMs = down.uptimeMillis
+                    var appliedSeq = -1L
+                    var appliedRange: PdfTextSelectionRange? = null
+                    val gestureStartMs = currentTimestamp()
+                    val dragWorker = scope.launch(Dispatchers.Default) {
+                        pdfTextDragLog { "worker-start page=$pageIndex gen=$myGeneration" }
+                        for (move in dragChannel) {
+                            val recvMs = currentTimestamp()
+                            val s = session
+                            if (s == null) {
+                                pdfTextDragLog { "worker-recv page=$pageIndex gen=$myGeneration seq=${move.seq} result=no-session" }
+                                continue
+                            }
+                            val base = state.range
+                            if (base == null) {
+                                pdfTextDragLog { "worker-recv page=$pageIndex gen=$myGeneration seq=${move.seq} result=no-range" }
+                                continue
+                            }
+                            val fingerCanvas = move.offset
+                            val normX = (fingerCanvas.x / canvasSize.width).coerceIn(0f, 1f)
+                            val normY = (fingerCanvas.y / canvasSize.height).coerceIn(0f, 1f)
+                            val lookupStartMs = currentTimestamp()
+                            var charIndex = s.charIndexAtNormalized(
+                                normX = normX, normY = normY,
+                                xTolerance = DragCharTolerance,
+                                yTolerance = DragCharTolerance * DragWideYToleranceMultiplier
+                            )
+                            var fallbackUsed = false
+                            var anchorIndexForLog: Int? = null
+                            if (charIndex < 0) {
+                                // Android parity (wide-search fallback): when
+                                // the finger is in a gap, retry across the full
+                                // page width at the anchor line so the drag
+                                // keeps moving forward instead of sticking.
+                                val anchorIndex = if ((dragHandle ?: handle) == PdfSelectionHandle.START) {
+                                    base.coerced(s.pageCharCount).start
+                                } else {
+                                    (base.coerced(s.pageCharCount).end - 1).coerceAtLeast(0)
+                                }
+                                anchorIndexForLog = anchorIndex
+                                val anchorBox = s.charBoxNormalized(anchorIndex)
+                                if (anchorBox != null) {
+                                    fallbackUsed = true
+                                    charIndex = s.charIndexAtNormalized(
+                                        normX = normX,
+                                        normY = ((anchorBox.top + anchorBox.bottom) / 2f).coerceIn(0f, 1f),
+                                        xTolerance = 1000.0,
+                                        yTolerance = DragCharTolerance * DragWideYToleranceMultiplier
+                                    )
+                                }
+                                if (charIndex < 0) {
+                                    pdfTextDragLog {
+                                        "worker-recv page=$pageIndex gen=$myGeneration seq=${move.seq} " +
+                                            "result=gap finger=(${fingerCanvas.x},${fingerCanvas.y}) " +
+                                            "norm=($normX,$normY) fallback=$fallbackUsed " +
+                                            "anchor=$anchorIndexForLog base=$base"
+                                    }
+                                    continue
+                                }
+                            }
+                            // Android parity (extendRange activeHandle):
+                            // crossing over swaps the active handle so
+                            // the other handle continues the drag.
+                            val activeForUpdate = dragHandle ?: handle
+                            val update = PdfTextSelectionEngine.extendRange(
+                                backend = s,
+                                current = base.coerced(s.pageCharCount),
+                                activeHandle = activeForUpdate,
+                                newCharIndex = charIndex
+                            )
+                            val coerced = update.range.coerced(s.pageCharCount)
+                            val rectStartMs = currentTimestamp()
+                            val rects = s.rectsForRangeNormalized(coerced.start, coerced.length)
+                                .map(::boundsToCanvas)
+                                .filter { it.width > 0f && it.height > 0f }
+                            val text = s.textForRange(coerced.start, coerced.length)
+                                ?.takeIf { it.isNotBlank() }
+                            val lookupMs = rectStartMs - lookupStartMs
+                            val rectMs = currentTimestamp() - rectStartMs
+                            val queuedFor = recvMs - gestureStartMs
+                            withContext(Dispatchers.Main) {
+                                // Drop results from a superseded gesture.
+                                if (dragGeneration != myGeneration) {
+                                    pdfTextDragLog {
+                                        "worker-drop page=$pageIndex gen=$myGeneration seq=${move.seq} " +
+                                            "reason=superseded currentGen=$dragGeneration"
+                                    }
+                                    return@withContext
+                                }
+                                selLog { "drag update=${coerced.start}..${coerced.end} handle=${update.activeHandle}" }
+                                pdfTextDragLog {
+                                    "worker-apply page=$pageIndex gen=$myGeneration seq=${move.seq} " +
+                                        "char=$charIndex fallback=$fallbackUsed anchor=$anchorIndexForLog " +
+                                        "base=$base update=${coerced.start}..${coerced.end} " +
+                                        "handle=$activeForUpdate->${update.activeHandle} " +
+                                        "rects=${rects.size} textLen=${text?.length ?: 0} " +
+                                        "lookupMs=$lookupMs rectMs=$rectMs queuedForMs=$queuedFor"
+                                }
+                                dragHandle = update.activeHandle
+                                magnifierActiveHandle = update.activeHandle
+                                appliedSeq = move.seq
+                                appliedRange = coerced
+                                applyRangeUpdate(coerced, rects, text)
+                            }
+                        }
+                        pdfTextDragLog { "worker-end page=$pageIndex gen=$myGeneration appliedSeq=$appliedSeq appliedRange=$appliedRange" }
+                    }
                     try {
                         while (true) {
                             val event = awaitPointerEvent(PointerEventPass.Initial)
                             val change = event.changes.firstOrNull { it.id == pointerId }
                             if (change == null) {
+                                pdfTextDragLog { "event page=$pageIndex gen=$myGeneration type=no-change sent=$sendSeq applied=$appliedSeq" }
                                 selLog { "drag[$handle] change=null -> end" }
                                 break
                             }
                             if (change.changedToUp()) {
                                 selLog { "drag[$handle] up canvas=(${change.position.x},${change.position.y})" }
+                                pdfTextDragLog {
+                                    "event page=$pageIndex gen=$myGeneration type=up " +
+                                        "pos=(${change.position.x},${change.position.y}) " +
+                                        "sent=$sendSeq applied=$appliedSeq range=${state.range}"
+                                }
                                 change.consume()
                                 break
                             }
                             if (change.positionChanged()) {
                                 change.consume()
-                                val fingerCanvas = change.position
-                                selLog { "drag[$handle] move canvas=(${fingerCanvas.x},${fingerCanvas.y})" }
-                                val s = session
-                                val currentRange = state.range
-                                if (s == null || currentRange == null) {
-                                    selLog { "drag[$handle] missing session/range in loop" }
-                                    continue
+                                sendSeq += 1
+                                if (sendSeq == 1L) {
+                                    val delta0 = change.position - pos
+                                    val dtMs = (change.uptimeMillis - downTimeMs).coerceAtLeast(1L)
+                                    val velocityPxS = delta0.getDistance() / dtMs.toFloat() * 1000f
+                                    if (delta0.getDistance() > 250f && velocityPxS > 12000f) {
+                                        gestureSpaceOffset = delta0
+                                    }
+                                    pdfTextDragLog {
+                                        "calibrate page=$pageIndex gen=$myGeneration " +
+                                            "delta0=(${delta0.x},${delta0.y}) dtMs=$dtMs " +
+                                            "velocityPxS=$velocityPxS offset=$gestureSpaceOffset"
+                                    }
                                 }
-                                val normX = (fingerCanvas.x / canvasSize.width).coerceIn(0f, 1f)
-                                val normY = (fingerCanvas.y / canvasSize.height).coerceIn(0f, 1f)
-                                scope.launch {
-                                    val charIndex = s.charIndexAtNormalized(
-                                        normX = normX, normY = normY,
-                                        xTolerance = DragCharTolerance,
-                                        yTolerance = DragCharTolerance * DragWideYToleranceMultiplier
-                                    )
-                                    selLog { "drag[$handle] charIndex=$charIndex" }
-                                    if (charIndex < 0) return@launch
-                                    val update = PdfTextSelectionEngine.extendRange(
-                                        backend = s,
-                                        current = currentRange.coerced(s.pageCharCount),
-                                        activeHandle = handle,
-                                        newCharIndex = charIndex
-                                    )
-                                    selLog { "drag[$handle] update=${update.range.start}..${update.range.end} handle=${update.activeHandle}" }
-                                    computeAndApply(update.range)
+                                val adjusted = gestureSpaceOffset?.let { change.position - it } ?: change.position
+                                selLog { "drag[$handle] move canvas=(${adjusted.x},${adjusted.y})" }
+                                val result = dragChannel.trySend(PdfTextDragMove(sendSeq, adjusted))
+                                pdfTextDragLog {
+                                    "event page=$pageIndex gen=$myGeneration type=move seq=$sendSeq " +
+                                        "pos=(${change.position.x},${change.position.y}) " +
+                                        "adjusted=(${adjusted.x},${adjusted.y}) " +
+                                        "sendOk=${result.isSuccess} sendClosed=${result.isClosed}"
+                                }
+                                // Probe the coordinate space of the first few
+                                // moves: log previous position plus the
+                                // calibrated position actually used.
+                                if (probeMoves < 3) {
+                                    probeMoves += 1
+                                    val rect = overlayWindowRect
+                                    val prev = change.previousPosition
+                                    pdfTextDragLog {
+                                        "probe page=$pageIndex gen=$myGeneration seq=$sendSeq " +
+                                            "pos=(${change.position.x},${change.position.y}) " +
+                                            "adjusted=(${adjusted.x},${adjusted.y}) " +
+                                            "prev=(${prev.x},${prev.y}) down=(${pos.x},${pos.y}) " +
+                                            "changes=${event.changes.size} " +
+                                            "winRect=$rect offset=$gestureSpaceOffset"
+                                    }
                                 }
                             }
                         }
                     } finally {
-                        dragPointerId = null
-                        dragHandle = null
-                        showMagnifier = false
-                        magnifierActiveHandle = null
-                        selLog { "drag[$handle] gesture ended" }
+                        dragChannel.close()
+                        // Drain the latest move before clearing drag state so
+                        // the final position is not lost. join() is a member
+                        // suspend fun and cannot run in this restricted
+                        // pointer-input scope, so defer the drain + cleanup.
+                        val worker = dragWorker
+                        val sent = sendSeq
+                        pdfTextDragLog {
+                            "cleanup page=$pageIndex gen=$myGeneration closing sent=$sent applied=$appliedSeq"
+                        }
+                        scope.launch(Dispatchers.Main) {
+                            runCatching { worker.join() }
+                            if (dragGeneration != myGeneration) {
+                                pdfTextDragLog {
+                                    "cleanup page=$pageIndex gen=$myGeneration result=superseded " +
+                                        "currentGen=$dragGeneration"
+                                }
+                                return@launch
+                            }
+                            dragPointerId = null
+                            dragHandle = null
+                            showMagnifier = false
+                            magnifierActiveHandle = null
+                            latestOnSelectionDragActiveChange(false)
+                            pdfTextDragLog {
+                                "cleanup page=$pageIndex gen=$myGeneration result=done " +
+                                    "sent=$sent applied=$appliedSeq range=${state.range}"
+                            }
+                            selLog { "drag[$handle] gesture ended" }
+                        }
                     }
                 }
             }
@@ -456,7 +685,8 @@ internal fun SharedMobilePdfTextSelectionOverlay(
             Canvas(Modifier.fillMaxSize()) {
                 state.selectionRects.forEach { rect ->
                     drawRect(
-                        color = Color(0x663399FF),
+                        // Android parity (selectionHighlightColor).
+                        color = Color(0x6633B5E5),
                         topLeft = rect.topLeft,
                         size = rect.size
                     )
@@ -481,11 +711,19 @@ internal fun SharedMobilePdfTextSelectionOverlay(
 
     val anchor = state.menuAnchor
     val selectedText = state.selectedText
-    if (anchor != null && selectedText != null && selectedText.isNotBlank()) {
+    // Hide the menu while a handle drag is in flight, matching Android's
+    // shouldShowPdfSelectionMenu (menu only when no active handle drag).
+    val isHandleDragging = dragHandle != null
+    if (anchor != null && selectedText != null && selectedText.isNotBlank() && !isHandleDragging) {
+        // Snapshot the coordinates for the menu provider: localToWindow() on
+        // these maps canvas points through the live zoom transform.
+        val menuCoordinates = overlayCoordinates
         Popup(
             popupPositionProvider = SharedMobilePdfSelectionMenuPositionProvider(
                 anchor = anchor,
-                marginPx = with(density) { 16.dp.toPx() }
+                canvasSize = canvasSize,
+                marginPx = with(density) { 16.dp.toPx() },
+                mapToWindow = { offset -> menuCoordinates?.localToWindow(offset) }
             ),
             onDismissRequest = { selLog { "popup onDismissRequest (ignored — not clearing selection automatically)" } },
             properties = PopupProperties(focusable = false)
@@ -622,6 +860,18 @@ internal fun selLog(message: () -> String) {
 }
 
 /**
+ * Dedicated drag-diagnostics log with a single greppable tag.
+ * Filter logcat / Xcode output for `PdfTextDrag` and attach it when
+ * reporting that a handle drag sticks or jumps.
+ */
+private const val PDF_TEXT_DRAG_LOG_TAG = "PdfTextDrag"
+internal fun pdfTextDragLog(message: () -> String) {
+    println("[$PDF_TEXT_DRAG_LOG_TAG] ${message()}")
+}
+
+private data class PdfTextDragMove(val seq: Long, val offset: Offset)
+
+/**
  * Detector that fires `onLongPress` *only* after the finger stays stationary
  * for `ViewConfiguration.longPressTimeoutMillis`. Doesn't consume on quick tap
  * (so parent `Modifier.clickable` / `detectTapGestures.onTap` still fires to
@@ -679,7 +929,9 @@ private suspend fun PointerInputScope.detectTapOrLongPress(
 
 private class SharedMobilePdfSelectionMenuPositionProvider(
     private val anchor: Rect,
-    private val marginPx: Float
+    private val canvasSize: IntSize,
+    private val marginPx: Float,
+    private val mapToWindow: (Offset) -> Offset? = { null }
 ) : PopupPositionProvider {
     override fun calculatePosition(
         anchorBounds: IntRect,
@@ -687,20 +939,43 @@ private class SharedMobilePdfSelectionMenuPositionProvider(
         layoutDirection: LayoutDirection,
         popupContentSize: IntSize
     ): IntOffset {
-        // The selection bounds are local to the page overlay. Popup placement is in window
-        // coordinates, so account for the overlay's window origin before applying the exact
-        // shared policy used by Android PDF and EPUB readers.
+        // Prefer the framework's live mapping (accounts for the zoom
+        // viewport's graphicsLayer scale + pan + Center pivot at call time).
+        // Fall back to the fractional overlay-bounds mapping when coordinates
+        // are not yet available. Either way the same shared
+        // above > below > side > fallback policy runs on the result.
+        val mappedTopLeft = mapToWindow(anchor.topLeft)
+        val mappedBottomRight = mapToWindow(anchor.bottomRight)
+        val selection = if (mappedTopLeft != null && mappedBottomRight != null) {
+            SharedSelectionMenuRect(
+                left = minOf(mappedTopLeft.x, mappedBottomRight.x),
+                top = minOf(mappedTopLeft.y, mappedBottomRight.y),
+                right = maxOf(mappedTopLeft.x, mappedBottomRight.x),
+                bottom = maxOf(mappedTopLeft.y, mappedBottomRight.y)
+            )
+        } else {
+            sharedPdfSelectionWindowRect(
+                anchor = SharedSelectionMenuRect(anchor.left, anchor.top, anchor.right, anchor.bottom),
+                canvasWidth = canvasSize.width,
+                canvasHeight = canvasSize.height,
+                overlayLeft = anchorBounds.left,
+                overlayTop = anchorBounds.top,
+                overlayWidth = anchorBounds.right - anchorBounds.left,
+                overlayHeight = anchorBounds.bottom - anchorBounds.top,
+            )
+        }
         val placement = sharedSelectionMenuPlacement(
             viewport = SharedSelectionMenuViewport(windowSize.width, windowSize.height),
             popup = SharedSelectionMenuSize(popupContentSize.width, popupContentSize.height),
-            selection = SharedSelectionMenuRect(
-                left = anchorBounds.left + anchor.left,
-                top = anchorBounds.top + anchor.top,
-                right = anchorBounds.left + anchor.right,
-                bottom = anchorBounds.top + anchor.bottom
-            ),
+            selection = selection,
             marginPx = marginPx,
             gapPx = marginPx
+        )
+        println(
+            "[PdfTextDrag] menu anchorCanvas=$anchor mapped=$selection " +
+                "viaLiveMap=${mappedTopLeft != null} viewport=${windowSize.width}x${windowSize.height} " +
+                "popup=${popupContentSize.width}x${popupContentSize.height} " +
+                "placement=${placement.placement} at=(${placement.x},${placement.y})"
         )
         return IntOffset(placement.x, placement.y)
     }
@@ -720,14 +995,28 @@ private fun SharedMobilePdfSelectionMenu(
 ) {
     var selectedStyle by remember { mutableStateOf(HighlightStyle.BACKGROUND) }
     val colors = SharedPdfAndroidHighlightColors.palette.take(4)
-    Surface(
-        shape = RoundedCornerShape(12.dp),
-        color = MaterialTheme.colorScheme.surface,
-        shadowElevation = 8.dp,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        modifier = Modifier.widthIn(max = 280.dp)
-    ) {
-        Column {
+    // Android parity (PdfSelectionMenuPopup): cap height to window - 32dp
+    // (min 160dp) with scrolling, and wrap width to content via
+    // IntrinsicSize.Max so the menu matches Android's size. BoxWithConstraints
+    // inside the Popup reports the window size on all mobile targets.
+    BoxWithConstraints {
+        val selectionMenuMaxHeight = (maxHeight - 32.dp).coerceAtLeast(160.dp)
+        val menuScrollState = rememberScrollState()
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.surface,
+            shadowElevation = 8.dp,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            modifier = Modifier
+                .widthIn(max = 280.dp)
+                .heightIn(max = selectionMenuMaxHeight)
+        ) {
+            Column(
+                modifier = Modifier
+                    .width(IntrinsicSize.Max)
+                    .heightIn(max = selectionMenuMaxHeight)
+                    .verticalScroll(menuScrollState)
+            ) {
             Row(
                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp, start = 10.dp, end = 10.dp),
                 horizontalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
@@ -798,6 +1087,7 @@ private fun SharedMobilePdfSelectionMenu(
                     }
                 }
             }
+            }
         }
     }
 }
@@ -821,6 +1111,8 @@ private fun SharedMobilePdfSelectionMenuAction(
             action.iconResource != null -> Icon(painterResource(action.iconResource), action.label, Modifier.size(22.dp))
             action.imageVector != null -> Icon(action.imageVector, action.label, Modifier.size(22.dp))
         }
+        // Android parity: 2dp gap between icon and label.
+        Spacer(modifier = Modifier.height(2.dp))
         Text(action.label, style = MaterialTheme.typography.labelSmall, maxLines = 1)
     }
 }

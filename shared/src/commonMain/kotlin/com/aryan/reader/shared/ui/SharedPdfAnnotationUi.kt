@@ -120,7 +120,7 @@ val SharedPdfAnnotationDefaultTools: List<PdfInkTool> = listOf(
     PdfInkTool.ERASER
 )
 
-private enum class SharedPdfAnnotationSettingsPanel {
+internal enum class SharedPdfAnnotationSettingsPanel {
     PEN,
     HIGHLIGHTER,
     ERASER
@@ -698,7 +698,7 @@ fun SharedPdfAnnotationToolDock(
 }
 
 @Composable
-private fun SharedPdfAnnotationToolSettingsPanel(
+internal fun SharedPdfAnnotationToolSettingsPanel(
     panel: SharedPdfAnnotationSettingsPanel,
     tools: List<PdfInkTool>,
     selectedTool: PdfInkTool,
@@ -799,7 +799,7 @@ private fun SharedPdfAnnotationToolSettingsPanel(
                             )
                             drawCircle(
                                 color = Color.White,
-                                radius = size.minDimension / 2f,
+                                radius = sharedPdfSelectionRingRadius(size.minDimension, 2.dp.toPx()),
                                 style = Stroke(width = 2.dp.toPx())
                             )
                         }
@@ -809,7 +809,7 @@ private fun SharedPdfAnnotationToolSettingsPanel(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(125.dp),
+                        .height(150.dp),
                     contentAlignment = Alignment.BottomCenter
                 ) {
                     Row(
@@ -925,7 +925,7 @@ private fun SharedPdfAnnotationToolSettingsPanel(
                                         if (isSelected) {
                                             drawCircle(
                                                 color = Color.White,
-                                                radius = size.minDimension / 2f,
+                                                radius = sharedPdfSelectionRingRadius(size.minDimension, 2.dp.toPx()),
                                                 style = Stroke(width = 2.dp.toPx())
                                             )
                                         }
@@ -1092,7 +1092,7 @@ private fun SharedPdfSettingsToolItem(
     Box(
         modifier = Modifier
             .width(44.dp)
-            .height(100.dp)
+            .height(150.dp)
             .scale(scale)
             .semantics { selected = isSelected }
             .clickable(onClick = onClick),

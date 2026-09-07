@@ -2,6 +2,7 @@ package com.aryan.reader.data
 
 import java.io.File
 import java.io.IOException
+import timber.log.Timber
 
 /** Writes UTF-8 JSON with Android's backup/restore atomic-file protocol. */
 fun File.writeJsonAtomically(json: String) {
@@ -11,9 +12,18 @@ fun File.writeJsonAtomically(json: String) {
 
     if (exists()) {
         if (!backupName.exists()) {
-            if (!renameTo(backupName)) {
-                copyTo(backupName, overwrite = true)
-                delete()
+            if (!renameTo(backupName) && exists()) {
+                // renameTo fails silently, and the source can vanish between
+                // the exists() check and here when two saves to the same file
+                // race (or it is deleted concurrently). There is then nothing
+                // to back up: persist best-effort and continue with the fresh
+                // write instead of crashing the save.
+                runCatching {
+                    copyTo(backupName, overwrite = true)
+                    delete()
+                }.onFailure { error ->
+                    Timber.w(error, "Skipping backup of $absolutePath.")
+                }
             }
         } else {
             delete()
@@ -31,8 +41,11 @@ fun File.writeJsonAtomically(json: String) {
     } catch (error: Throwable) {
         delete()
         if (backupName.exists() && !backupName.renameTo(this)) {
-            backupName.copyTo(this, overwrite = true)
-            backupName.delete()
+            // Best-effort restore: never let it mask the original failure.
+            runCatching {
+                backupName.copyTo(this, overwrite = true)
+                backupName.delete()
+            }
         }
         newName.delete()
         throw error

@@ -2980,6 +2980,7 @@ internal fun PdfReaderScreen(
                 pageIndex = pageIndex,
                 sortedHighlights = sortedSidebarHighlights,
                 bookmarks = bookmarks,
+                themeStyle = pdfThemeStyle,
                 onPageSelected = { page -> goToPage(page, recordJump = true) },
                 onAnnotationOpened = ::goToAnnotation,
                 onAnnotationSelected = ::selectAnnotation,

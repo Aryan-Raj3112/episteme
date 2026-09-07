@@ -76,6 +76,7 @@ import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.aryan.reader.R
+import com.aryan.reader.shared.ui.sharedPdfSelectionRingRadius
 
 @Composable
 fun AnnotationDock(
@@ -406,7 +407,7 @@ fun PenPlayground(onClose: () -> Unit) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(140.dp),
+                    .height(170.dp),
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.Bottom
             ) {
@@ -434,7 +435,7 @@ fun PenPlayground(onClose: () -> Unit) {
                         Box(
                             modifier = Modifier
                                 .width(40.dp)
-                                .height(120.dp),
+                                .height(150.dp),
                             contentAlignment = Alignment.BottomCenter
                         ) {
                             PenIcon(
@@ -443,7 +444,7 @@ fun PenPlayground(onClose: () -> Unit) {
                                 isSelected = isSelected,
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .fillMaxHeight(0.8f)
+                                    .fillMaxHeight(0.95f)
                             )
                         }
                     }
@@ -477,7 +478,7 @@ fun PenPlayground(onClose: () -> Unit) {
                             if (isSelected) {
                                 drawCircle(
                                     color = Color.White,
-                                    radius = size.minDimension / 2,
+                                    radius = sharedPdfSelectionRingRadius(size.minDimension, 3.dp.toPx()),
                                     style = Stroke(width = 3.dp.toPx())
                                 )
                             }

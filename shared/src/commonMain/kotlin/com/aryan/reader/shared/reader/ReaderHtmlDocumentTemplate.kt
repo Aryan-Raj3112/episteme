@@ -16,13 +16,15 @@ internal fun document(
     readerAiFeaturesEnabled: Boolean,
     cloudTtsEnabled: Boolean,
     externalLookupEnabled: Boolean,
-    textureDataUri: String?
+    textureDataUri: String?,
+    documentLanguage: String = "en"
 ): String {
     val appearance = settings.toDocumentAppearanceCss(textureDataUri)
     val align = settings.readerTextAlignCss()
     val customFontCss = settings.readerCustomFontFaceCss()
     val family = settings.readerFontFamilyCss()
     val highlightButtons = if (highlightActionsEnabled) highlightPalette.toSelectionPaletteButtons() else ""
+    val highlightStyleButtons = if (highlightActionsEnabled) readerSelectionStyleButtons() else ""
     val noteButton = if (highlightActionsEnabled) {
         readerSelectionActionButton("note", "Note", ReaderSelectionIconNotePath)
     } else {
@@ -60,7 +62,7 @@ internal fun document(
     val script = readerDocumentScript(pageAnchorJson).replace("\n", "\n          ")
     return """
         <!doctype html>
-        <html class="${if (settings.readingMode == ReaderReadingMode.PAGINATED) "reader-paginated-root" else "reader-vertical-root"}">
+        <html lang="${documentLanguage.escapeHtml()}" class="${if (settings.readingMode == ReaderReadingMode.PAGINATED) "reader-paginated-root" else "reader-vertical-root"}">
         <head>
           <meta charset="utf-8">
           <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -70,6 +72,9 @@ internal fun document(
         <body class="${if (settings.readingMode == ReaderReadingMode.PAGINATED) "reader-paginated" else "reader-vertical"}" data-search="${searchQuery.escapeHtml()}"$navigationAttributes>
           $body
           <div id="reader-selection-menu" role="toolbar" aria-label="Selection actions">
+            <div class="reader-selection-styles" aria-label="Highlight styles">
+              $highlightStyleButtons
+            </div>
             <div class="reader-selection-colors" aria-label="Highlight colors">
               $highlightButtons
             </div>

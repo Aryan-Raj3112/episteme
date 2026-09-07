@@ -660,6 +660,7 @@ internal fun SharedNativeInteractiveText(
     color: Color,
     textAlign: TextAlign,
     style: TextStyle,
+    inlineContent: Map<String, androidx.compose.foundation.text.InlineTextContent> = emptyMap(),
     activeSelection: SharedNativeReaderTextSelection?,
     onReaderTap: () -> Unit,
     onSelectionChange: (SharedNativeReaderTextSelection?) -> Unit,
@@ -912,7 +913,8 @@ internal fun SharedNativeInteractiveText(
             modifier = Modifier.fillMaxWidth(),
             textAlign = textAlign,
             style = style,
-            onTextLayout = { textLayoutResult = it }
+            onTextLayout = { textLayoutResult = it },
+            inlineContent = inlineContent
         )
         if (paintOnlyColorOverlayText.isNotEmpty()) {
             Text(
@@ -921,7 +923,8 @@ internal fun SharedNativeInteractiveText(
                     .fillMaxWidth()
                     .clearAndSetSemantics {},
                 textAlign = textAlign,
-                style = style.copy(color = Color.Transparent)
+                style = style.copy(color = Color.Transparent),
+                inlineContent = inlineContent
             )
         }
     }

@@ -89,6 +89,7 @@ import com.aryan.reader.R
 import com.aryan.reader.RgbInputColumn
 import com.aryan.reader.SpectrumBox
 import com.aryan.reader.readerModalMaxHeightDp
+import com.aryan.reader.shared.ui.sharedPdfSelectionRingRadius
 import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -199,7 +200,7 @@ fun ToolSettingsPopup(
                             )
                             drawCircle(
                                 color = Color.White,
-                                radius = size.width / 2,
+                                radius = sharedPdfSelectionRingRadius(size.width, 2.dp.toPx()),
                                 style = Stroke(width = 2.dp.toPx())
                             )
                         }
@@ -209,7 +210,7 @@ fun ToolSettingsPopup(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(125.dp),
+                        .height(150.dp),
                     contentAlignment = Alignment.BottomCenter
                 ) {
                     Row(
@@ -361,7 +362,7 @@ fun ToolSettingsPopup(
                                     if (isSelected) {
                                         drawCircle(
                                             color = Color.White,
-                                            radius = size.minDimension / 2,
+                                            radius = sharedPdfSelectionRingRadius(size.minDimension, 2.dp.toPx()),
                                             style = Stroke(width = 2.dp.toPx())
                                         )
                                     }
@@ -624,7 +625,7 @@ private fun PenItem(
     Box(
         modifier = Modifier
             .width(44.dp)
-            .height(100.dp)
+            .height(150.dp)
             .scale(scale)
             .testTag("SettingsItem_${type.name}")
             .semantics { this.selected = isSelected }

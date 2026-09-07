@@ -15,8 +15,10 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -30,9 +32,12 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.only
@@ -55,6 +60,8 @@ import androidx.compose.material.icons.automirrored.filled.NavigateBefore
 import androidx.compose.material.icons.automirrored.filled.NavigateNext
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Ai
+import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
@@ -89,6 +96,8 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -119,6 +128,8 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -129,13 +140,18 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.focusable
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageShader
+import androidx.compose.ui.graphics.ShaderBrush
+import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.key.KeyEventType
@@ -143,19 +159,29 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.positionInParent
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.platform.LocalDensity
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.CustomFontItem
+import com.aryan.reader.shared.DockLocation
 import com.aryan.reader.shared.ReaderAiFeature
+import com.aryan.reader.shared.SharedSummaryCache
 import com.aryan.reader.shared.ReaderAiResultState
 import com.aryan.reader.shared.ReaderExtrasState
 import com.aryan.reader.shared.BuiltInPdfReaderThemes
@@ -165,6 +191,9 @@ import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.PdfDisplayMode
 import com.aryan.reader.shared.PdfReaderTool
 import com.aryan.reader.shared.pdf.SharedPdfOcrLanguage
+import com.aryan.reader.shared.pdf.buildPdfAiHubRecapText
+import com.aryan.reader.shared.pdf.PDF_AI_HUB_MAX_CHARS
+import com.aryan.reader.shared.pdf.PDF_AI_HUB_RECAP_PAGE_WINDOW
 import com.aryan.reader.shared.PdfToolbarPreferences
 import com.aryan.reader.shared.isPdfReaderToolEnabledDuringTts
 import com.aryan.reader.shared.PdfTocEntry
@@ -195,10 +224,20 @@ import com.aryan.reader.shared.pdf.PdfChromeMotionDurationMillis
 import com.aryan.reader.shared.pdf.animatesPagination
 import com.aryan.reader.shared.pdf.PdfZoomCamera
 import com.aryan.reader.shared.pdf.PdfZoomPoint
+import com.aryan.reader.shared.pdf.SharedPdfAnnotationDefaults
+import com.aryan.reader.shared.pdf.SharedPdfAnnotationHighlighterTools
+import com.aryan.reader.shared.pdf.SharedPdfAnnotationPenTools
+import com.aryan.reader.shared.pdf.isPdfTextDockTopAnchored
+import com.aryan.reader.shared.pdf.isSharedPdfAnnotationDockInBottomHalf
+import com.aryan.reader.shared.pdf.isSharedPdfAnnotationDockSticky
+import com.aryan.reader.shared.pdf.pdfTextDockKeyboardLiftPx
+import com.aryan.reader.shared.pdf.pdfTextDockRestingBottomPadding
+import com.aryan.reader.shared.pdf.sharedPdfAnnotationDockTopYPx
+import com.aryan.reader.shared.pdf.shouldShowPdfTextDock
+import com.aryan.reader.shared.pdf.toSharedPdfRichSpanStyle
 import com.aryan.reader.shared.reader.ReaderScreenOrientationMode
 import com.aryan.reader.shared.pdf.SharedPdfAnnotation
 import com.aryan.reader.shared.pdf.SharedPdfBookmark
-import com.aryan.reader.shared.pdf.SharedPdfAnnotationDefaults
 import com.aryan.reader.shared.pdf.SharedPdfHighlighterPalette
 import com.aryan.reader.shared.pdf.SharedPdfRichTextController
 import com.aryan.reader.shared.pdf.SharedPdfRichTextSerializer
@@ -229,6 +268,7 @@ import com.aryan.reader.shared.pdf.loadSharedPdfCustomFontFamilies
 import com.aryan.reader.shared.reader.ReaderPageSpreadMode
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.mobilePdfSystemBarsVisibility
+import com.aryan.reader.shared.reader.shouldPadPdfVerticalContentBelowStatusBar
 import com.aryan.reader.shared.reader.captureCurrentPdfHistoryPage
 import com.aryan.reader.shared.reader.capturePdfJumpHistoryOrigin
 import com.aryan.reader.shared.SystemUiMode
@@ -237,6 +277,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
+import kotlin.math.roundToInt
 
 enum class SharedMobilePdfNativeAction {
     DICTIONARY_SETTINGS,
@@ -304,6 +345,7 @@ fun SharedMobilePdfReaderScreen(
     onOpenAiHub: () -> Unit = {},
     onTtsError: ((String) -> Unit)? = null,
     onClipboardError: ((String) -> Unit)? = null,
+    onPasswordProtectedPrint: (String) -> Unit = {},
     initialReaderState: SharedPdfReaderState? = null,
     readerDefaultSettings: ReaderSettings = DefaultPdfReaderSettings,
     onReaderDefaultSettingsChange: (ReaderSettings) -> Unit = {},
@@ -321,6 +363,8 @@ fun SharedMobilePdfReaderScreen(
     onStylusOnlyModePreferenceChange: (Boolean) -> Unit = {},
     initialPageSliderVisible: Boolean = false,
     onPageSliderVisibilityPreferenceChange: (Boolean) -> Unit = {},
+    initialTtsOverlaySize: SharedPdfTtsOverlaySize = SharedPdfTtsOverlaySize.LARGE,
+    onTtsOverlaySizePreferenceChange: (SharedPdfTtsOverlaySize) -> Unit = {},
     onReaderStateChange: (SharedPdfReaderState) -> Unit = {},
     pdfAutoScrollGlobalProfile: PdfAutoScrollProfile = PdfAutoScrollProfile(),
     onPdfAutoScrollGlobalProfileChange: (PdfAutoScrollProfile) -> Unit = {},
@@ -333,6 +377,13 @@ fun SharedMobilePdfReaderScreen(
     onSystemUiAppearanceChange: (hidden: Boolean, lightContent: Boolean, backgroundArgb: Long, edgeToEdge: Boolean) -> Unit = { _, _, _, _ -> },
     onSystemUiRelease: () -> Unit = {},
     modifier: Modifier = Modifier,
+    summaryCache: SharedSummaryCache? = null,
+    aiCredits: Int? = null,
+    initialShowTopToolbar: Boolean = true,
+    onShowTopToolbarChange: (Boolean) -> Unit = {},
+    initialShowBottomToolbar: Boolean = true,
+    onShowBottomToolbarChange: (Boolean) -> Unit = {},
+    isPdfExportBusy: Boolean = false,
 ) {
     SharedMobilePdfReaderHost(
         book = book,
@@ -352,6 +403,11 @@ fun SharedMobilePdfReaderScreen(
         knownTags = knownTags,
         pdfToolbarPreferences = pdfToolbarPreferences,
         onPdfToolbarPreferencesChange = onPdfToolbarPreferencesChange,
+        initialShowTopToolbar = initialShowTopToolbar,
+        onShowTopToolbarChange = onShowTopToolbarChange,
+        initialShowBottomToolbar = initialShowBottomToolbar,
+        onShowBottomToolbarChange = onShowBottomToolbarChange,
+        isPdfExportBusy = isPdfExportBusy,
         ocrLanguage = ocrLanguage,
         onOcrLanguageChange = onOcrLanguageChange,
         readerBrightness = readerBrightness,
@@ -373,8 +429,11 @@ fun SharedMobilePdfReaderScreen(
         onAiAction = onAiAction,
         onAiResultDismiss = onAiResultDismiss,
         onOpenAiHub = onOpenAiHub,
+        summaryCache = summaryCache,
+        aiCredits = aiCredits,
         onTtsError = onTtsError,
         onClipboardError = onClipboardError,
+        onPasswordProtectedPrint = onPasswordProtectedPrint,
         initialReaderState = initialReaderState,
         readerDefaultSettings = readerDefaultSettings,
         onReaderDefaultSettingsChange = onReaderDefaultSettingsChange,
@@ -392,6 +451,8 @@ fun SharedMobilePdfReaderScreen(
         onStylusOnlyModePreferenceChange = onStylusOnlyModePreferenceChange,
         initialPageSliderVisible = initialPageSliderVisible,
         onPageSliderVisibilityPreferenceChange = onPageSliderVisibilityPreferenceChange,
+        initialTtsOverlaySize = initialTtsOverlaySize,
+        onTtsOverlaySizePreferenceChange = onTtsOverlaySizePreferenceChange,
         onReaderStateChange = onReaderStateChange,
         pdfAutoScrollGlobalProfile = pdfAutoScrollGlobalProfile,
         onPdfAutoScrollGlobalProfileChange = onPdfAutoScrollGlobalProfileChange,
@@ -457,6 +518,7 @@ fun SharedMobilePdfReaderHost(
     onOpenAiHub: () -> Unit = {},
     onTtsError: ((String) -> Unit)? = null,
     onClipboardError: ((String) -> Unit)? = null,
+    onPasswordProtectedPrint: (String) -> Unit = {},
     initialReaderState: SharedPdfReaderState? = null,
     readerDefaultSettings: ReaderSettings = DefaultPdfReaderSettings,
     onReaderDefaultSettingsChange: (ReaderSettings) -> Unit = {},
@@ -474,6 +536,8 @@ fun SharedMobilePdfReaderHost(
     onStylusOnlyModePreferenceChange: (Boolean) -> Unit = {},
     initialPageSliderVisible: Boolean = false,
     onPageSliderVisibilityPreferenceChange: (Boolean) -> Unit = {},
+    initialTtsOverlaySize: SharedPdfTtsOverlaySize = SharedPdfTtsOverlaySize.LARGE,
+    onTtsOverlaySizePreferenceChange: (SharedPdfTtsOverlaySize) -> Unit = {},
     onReaderStateChange: (SharedPdfReaderState) -> Unit = {},
     onReaderSessionStateChange: (SharedPdfReaderSessionKey, SharedPdfReaderState) -> Unit = { _, _ -> },
     pdfAutoScrollGlobalProfile: PdfAutoScrollProfile = PdfAutoScrollProfile(),
@@ -488,8 +552,15 @@ fun SharedMobilePdfReaderHost(
     onSystemUiRelease: () -> Unit = {},
     modifier: Modifier = Modifier,
     hostConfig: SharedPdfReaderHostConfig = SharedPdfReaderHostConfig.fullScreen(book.id),
+    initialShowTopToolbar: Boolean = true,
+    onShowTopToolbarChange: (Boolean) -> Unit = {},
+    initialShowBottomToolbar: Boolean = true,
+    onShowBottomToolbarChange: (Boolean) -> Unit = {},
+    isPdfExportBusy: Boolean = false,
     /** True when this reader is mounted inside a split-workspace pane. */
     isSplitPane: Boolean = false,
+    summaryCache: SharedSummaryCache? = null,
+    aiCredits: Int? = null,
 ) {
     val readerSessionKey = hostConfig.sessionKey
     val ownsSystemUi = hostConfig.owns(SharedPdfReaderGlobalResource.SYSTEM_UI)
@@ -517,9 +588,22 @@ fun SharedMobilePdfReaderHost(
     }
     // Android intentionally starts every PDF session distraction-free.
     var showChrome by remember(readerSessionKey) { mutableStateOf(false) }
+    // Android benchmark (PdfViewerScreen.kt:439-440, PdfPreferences
+    // PDF_TOP/BOTTOM_TOOLBAR_VISIBLE_KEY, default true): per-bar visibility.
+    var showTopToolbar by remember(readerSessionKey, initialShowTopToolbar) {
+        mutableStateOf(initialShowTopToolbar)
+    }
+    var showBottomToolbar by remember(readerSessionKey, initialShowBottomToolbar) {
+        mutableStateOf(initialShowBottomToolbar)
+    }
     var showReaderOptions by remember(readerSessionKey) { mutableStateOf(false) }
     var showThemePanel by remember(readerSessionKey) { mutableStateOf(false) }
     var showPageSlider by remember(readerSessionKey) { mutableStateOf(initialPageSliderVisible) }
+    // Android parity (load/saveReaderTtsOverlaySize): the player size persists
+    // across sessions instead of resetting to LARGE every open.
+    var ttsOverlaySize by remember(readerSessionKey, initialTtsOverlaySize) {
+        mutableStateOf(initialTtsOverlaySize)
+    }
     var showFileInformation by remember(readerSessionKey) { mutableStateOf(false) }
     var showBrightnessSheet by remember(readerSessionKey) { mutableStateOf(false) }
     var showScreenOrientationSheet by remember(readerSessionKey) { mutableStateOf(false) }
@@ -528,11 +612,14 @@ fun SharedMobilePdfReaderHost(
     var showTtsSettingsSheet by remember(readerSessionKey) { mutableStateOf(false) }
     var showTtsReplacementsSheet by remember(readerSessionKey) { mutableStateOf(false) }
     var showNewPdfTabSheet by remember(readerSessionKey) { mutableStateOf(false) }
+    var showAiHub by remember(readerSessionKey) { mutableStateOf(false) }
+    var aiCacheRevision by remember(readerSessionKey) { mutableIntStateOf(0) }
+    var pendingSummarySave by remember(readerSessionKey) { mutableStateOf<Triple<String, Int, String>?>(null) }
     var pendingExternalLink by remember(readerSessionKey) { mutableStateOf<String?>(null) }
     var pdfPassword by remember(readerSessionKey) { mutableStateOf<String?>(null) }
     var pdfPasswordDraft by remember(readerSessionKey) { mutableStateOf("") }
-    var showPasswordProtectedPrintWarning by remember(readerSessionKey) { mutableStateOf(false) }
     var showShareFormatChoice by remember(readerSessionKey) { mutableStateOf(false) }
+    var showSaveFormatChoice by remember(readerSessionKey) { mutableStateOf(false) }
     var showVerticalPageGap by remember(readerSessionKey) {
         mutableStateOf(readerDefaultSettings.pdfVerticalPageGapVisible)
     }
@@ -556,6 +643,22 @@ fun SharedMobilePdfReaderHost(
     }
     var keepScreenOn by remember(readerSessionKey) { mutableStateOf(initialKeepScreenOn) }
     var isStylusOnlyMode by remember(readerSessionKey) { mutableStateOf(initialStylusOnlyMode) }
+    // Android-parity annotation dock chrome (benchmark: PdfViewerScreen.kt dock
+    // location / minimize / tool-settings popup). Floating offset is px-based
+    // like Android's dockOffset; sticky TOP/BOTTOM docks ignore it.
+    var annotationDockLocation by remember(readerSessionKey) { mutableStateOf(DockLocation.BOTTOM) }
+    var annotationDockOffset by remember(readerSessionKey) { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+    var isAnnotationDockDragging by remember(readerSessionKey) { mutableStateOf(false) }
+    var annotationSnapPreview by remember(readerSessionKey) { mutableStateOf<DockLocation?>(null) }
+    var isAnnotationDockMinimized by remember(readerSessionKey) { mutableStateOf(false) }
+    var showAnnotationToolSettings by remember(readerSessionKey) { mutableStateOf(false) }
+    // Android-parity text dock placement (benchmark: PdfViewerScreen text dock
+    // chrome): draggable TOP / BOTTOM / FLOATING like the pen dock, kept
+    // in-memory like the pen dock above (Android persists both to prefs).
+    var textDockLocation by remember(readerSessionKey) { mutableStateOf(DockLocation.BOTTOM) }
+    var textDockOffset by remember(readerSessionKey) { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+    var isTextDockDragging by remember(readerSessionKey) { mutableStateOf(false) }
+    var textDockMeasuredOffset by remember(readerSessionKey) { mutableStateOf<androidx.compose.ui.geometry.Offset?>(null) }
     var autoScrollModeActive by remember(readerSessionKey) { mutableStateOf(false) }
     var autoScrollPlaying by remember(readerSessionKey) { mutableStateOf(false) }
     var autoScrollTemporarilyPaused by remember(readerSessionKey) { mutableStateOf(false) }
@@ -723,7 +826,6 @@ fun SharedMobilePdfReaderHost(
             showTtsSettingsSheet = false
             showTtsReplacementsSheet = false
             showNewPdfTabSheet = false
-            showPasswordProtectedPrintWarning = false
             showShareFormatChoice = false
             pendingExternalLink = null
             noteAnnotationId = null
@@ -738,13 +840,28 @@ fun SharedMobilePdfReaderHost(
         runCatching { pdfReaderFocusRequester.requestFocus() }
     }
     var richTextDocumentJson by remember(readerSessionKey) { mutableStateOf(initialReaderState?.richTextDocumentJson.orEmpty()) }
+    // Android parity (RichTextSystem): the shared controller applies imported
+    // font families to rich text and explicitly shows the software keyboard
+    // when editing focus is requested; without the latter the iOS keyboard
+    // never opens (focus alone is not enough there).
+    val pdfKeyboardController = LocalSoftwareKeyboardController.current
+    // Ref (not a remember key): recreating the controller on font import
+    // would drop unsaved in-progress edits, so the font lookup always reads
+    // the latest map through this holder instead.
+    val latestCustomPdfFontFamilies = rememberUpdatedState(customPdfFontFamilies)
+    val latestPdfKeyboardController = rememberUpdatedState(pdfKeyboardController)
     val richTextController = remember(readerSessionKey, initialReaderState) {
         SharedPdfRichTextController(
             scope = scope,
             initialDocument = SharedPdfRichTextSerializer.decode(initialReaderState?.richTextDocumentJson.orEmpty()),
             onDocumentChange = { document ->
                 richTextDocumentJson = SharedPdfRichTextSerializer.encode(document)
-            }
+            },
+            styleForFontPath = { style, fontPath ->
+                val families = latestCustomPdfFontFamilies.value
+                style.copy(fontFamily = families[fontPath] ?: sharedPdfFontFamily(fontPath, families))
+            },
+            onEditingFocusRequested = { latestPdfKeyboardController.value?.show() },
         )
     }
     fun publishReaderState(state: SharedPdfReaderState) {
@@ -824,6 +941,10 @@ fun SharedMobilePdfReaderHost(
     val copiedTextLabel = readerString("clip_label_copied_text", "Copied Text")
     val copiedLinkLabel = readerString("clip_label_copied_link", "Copied Link")
     val clipboardErrorMessage = readerString("error_copy_to_clipboard", "Could not copy to clipboard")
+    val passwordPrintBlockedMessage = readerString(
+        "error_print_password_protected",
+        "Password protected PDF files cannot be printed"
+    )
 
     fun copyToClipboard(text: String, label: String = copiedTextLabel): SharedClipboardResult {
         val result = writeSharedClipboard(label = label, text = text)
@@ -843,11 +964,32 @@ fun SharedMobilePdfReaderHost(
         }
     }
     val pdfBottomChromePadding = if (isSplitPane) 56.dp else 56.dp + effectiveBottomSystemInset
-    val isJumpHistoryVisible = showChrome && !readerState.isSearchActive && jumpHistory.hasJumpTargets
+    // Android parity: standard top/bottom bars hide while annotating
+    // (benchmark: showStandardBars = showBars && !isEditMode). The floating
+    // annotation dock overlay owns edit-mode chrome instead.
+    val isPdfEditMode = readerState.selectedTool != PdfInkTool.NONE
+    // Android parity: the text dock observes the IME (resting above the
+    // keyboard, floating-bar lift) exactly like the benchmark.
+    // WindowInsets.isImeVisible is Android-only in this CMP version, so
+    // visibility is derived from a non-zero IME inset instead — equivalent
+    // for open/closed and gracefully false where IME insets are unsupported.
+    val isPdfImeVisible = WindowInsets.ime.getBottom(density) > 0
+    val isJumpHistoryVisible = showChrome && !readerState.isSearchActive && !isPdfEditMode && jumpHistory.hasJumpTargets
     val isPdfTtsPlayingOrLoading =
         pdfTts.state == SharedMobileEpubLocalTtsState.SPEAKING || pendingTtsStart != null ||
             cloudTtsState.isLoading || cloudTtsState.isPlaying || cloudTtsState.isPaused
     val pdfSliderBottomPadding = pdfBottomChromePadding + if (isJumpHistoryVisible) 40.dp else 0.dp
+    // In Always Show mode vertical content is anchored below the status bar
+    // so the first page never draws underneath it. In Sync with Menus the
+    // content stays edge-to-edge under the status bar so showing the menu
+    // does not push the page down. Split panes already sit below the
+    // workspace toolbar, so they never pad. Pagination is unchanged.
+    val pdfVerticalContentBelowStatusBar = shouldPadPdfVerticalContentBelowStatusBar(
+        mode = systemUiMode.toReaderSystemUiMode(),
+        standardReaderChromeVisible = showChrome,
+        isVerticalMode = readerState.displayMode == PdfDisplayMode.VERTICAL_SCROLL,
+        isSplitPane = isSplitPane,
+    )
     val latestSystemUiAppearanceChange = rememberUpdatedState(onSystemUiAppearanceChange)
     val latestSystemUiRelease = rememberUpdatedState(onSystemUiRelease)
     LaunchedEffect(readerSessionKey, hideSystemUi, systemBarColor, edgeToEdgeSystemUi, ownsSystemUi) {
@@ -869,9 +1011,18 @@ fun SharedMobilePdfReaderHost(
     }
     var canvasSize by remember(readerSessionKey) { mutableStateOf(IntSize.Zero) }
     val activeStroke = remember(readerSessionKey, readerState.pageIndex) { mutableStateListOf<PdfPagePoint>() }
+    // Android parity (PdfViewerScreen erasedAnnotationsFromStroke): ink hit by
+    // the current erase drag, grouped per page. Live-removed immediately for
+    // eraser feedback; recorded as ONE undo step on stroke end.
+    val erasedInStroke = remember(readerSessionKey) { mutableStateMapOf<Int, MutableList<SharedPdfAnnotation>>() }
     var textStyle by remember(readerSessionKey) { mutableStateOf(SharedPdfTextStyleConfig()) }
     var textDraft by remember(readerSessionKey) { mutableStateOf<SharedPdfTextDraft?>(null) }
-    val isRichTextEditingEnabled = readerState.selectedTool == PdfInkTool.TEXT && textDraft == null
+    // Android parity: minimized dock stops all annotation input
+    // (isDrawingActive = isEditMode && !isDockMinimized).
+    val isRichTextEditingEnabled =
+        readerState.selectedTool == PdfInkTool.TEXT && textDraft == null && !isAnnotationDockMinimized
+    val readerStateForPages =
+        if (isAnnotationDockMinimized) readerState.copy(selectedTool = PdfInkTool.NONE) else readerState
 
     fun dispatch(action: SharedPdfReaderAction) {
         readerState = readerState.reduce(action)
@@ -1145,10 +1296,91 @@ fun SharedMobilePdfReaderHost(
         }
     }
 
+    // Android-parity annotation dock interactions (benchmark:
+    // PdfViewerScreen.kt onToolClick + onClose). TEXT selects directly without
+    // settings; re-tapping the active pen/highlighter/eraser toggles settings;
+    // switching tools while settings are open re-opens them after 250ms so the
+    // popup follows the new tool instead of sticking to the old one.
+    fun onAnnotationDockToolClick(clicked: PdfInkTool) {
+        if (clicked == PdfInkTool.TEXT) {
+            setTool(PdfInkTool.TEXT)
+            showAnnotationToolSettings = false
+            return
+        }
+        if (readerState.selectedTool == clicked) {
+            showAnnotationToolSettings = !showAnnotationToolSettings
+            return
+        }
+        if (showAnnotationToolSettings) {
+            showAnnotationToolSettings = false
+            scope.launch {
+                delay(250)
+                setTool(clicked)
+                showAnnotationToolSettings = true
+            }
+        } else {
+            setTool(clicked)
+        }
+    }
+
+    fun closeAnnotationDock() {
+        showAnnotationToolSettings = false
+        isAnnotationDockMinimized = false
+        setTool(PdfInkTool.NONE)
+        showChrome = true
+    }
+
+    val annotationDockPenColor: Color = run {
+        val lastPen = readerState.lastActivePenTool
+        val argb = if (readerState.selectedTool in SharedPdfAnnotationPenTools) {
+            readerState.selectedColorArgb
+        } else {
+            readerState.toolConfigs[lastPen]?.colorArgb
+                ?: SharedPdfAnnotationDefaults.configFor(lastPen).colorArgb
+        }
+        Color(argb)
+    }
+    val annotationDockHighlighterColor: Color = run {
+        val lastHighlighter = readerState.lastActiveHighlighterTool
+        val argb = if (readerState.selectedTool in SharedPdfAnnotationHighlighterTools) {
+            readerState.selectedColorArgb
+        } else {
+            readerState.toolConfigs[lastHighlighter]?.colorArgb
+                ?: SharedPdfAnnotationDefaults.configFor(lastHighlighter).colorArgb
+        }
+        Color(argb)
+    }
+
+    // Flushes one page's staged erase batch as a single undo step. Runs on
+    // every stroke end (ink or eraser) so a batch left by an aborted erase
+    // gesture still commits, mirroring onDrawEnd running both blocks.
+    fun commitEraseBatch(pageIndex: Int) {
+        val batch = erasedInStroke[pageIndex]?.toList().orEmpty()
+        erasedInStroke.remove(pageIndex)
+        if (batch.isNotEmpty()) {
+            dispatch(SharedPdfReaderAction.EraserStrokeCommitted(mapOf(pageIndex to batch)))
+        }
+    }
+
     fun finishInkStroke(pageIndex: Int, eraserOverride: Boolean = false) {
+        // Android parity: minimized dock stops drawing
+        // (isDrawingActive = isEditMode && !isDockMinimized).
+        if (isAnnotationDockMinimized && !eraserOverride) {
+            activeStroke.clear()
+            return
+        }
         val effectiveTool = if (eraserOverride) PdfInkTool.ERASER else readerState.selectedTool
+        // Android parity (PdfViewerScreen onDrawEnd): an erase stroke never
+        // creates ink. The live-removed batch is recorded as ONE undo step;
+        // an empty batch preserves redo via the reducer's no-op guard.
+        if (effectiveTool == PdfInkTool.ERASER || eraserOverride) {
+            activeStroke.clear()
+            commitEraseBatch(pageIndex)
+            return
+        }
         if (activeStroke.size < 2 || effectiveTool == PdfInkTool.NONE || effectiveTool == PdfInkTool.TEXT) {
             activeStroke.clear()
+            commitEraseBatch(pageIndex)
             return
         }
         val annotation = SharedPdfAnnotation(
@@ -1163,6 +1395,34 @@ fun SharedMobilePdfReaderHost(
         )
         dispatch(SharedPdfReaderAction.AnnotationAdded(annotation))
         activeStroke.clear()
+        commitEraseBatch(pageIndex)
+    }
+
+    // Android parity (onDrawStartStable): a stroke beginning while the
+    // tool-settings popup is open only dismisses the popup — the touch draws
+    // nothing. Returns true when the stroke was swallowed.
+    fun onInkStrokeStart(pageIndex: Int): Boolean {
+        if (showAnnotationToolSettings) {
+            showAnnotationToolSettings = false
+            activeStroke.clear()
+            return true
+        }
+        return false
+    }
+
+    // Android parity (onDrawStable eraser branch): live-removes hit ink and
+    // stages it in the per-page stroke batch for the end-of-stroke commit.
+    // Unknown ids (already removed by an earlier move event's stale snapshot)
+    // are ignored so a fast drag never double-counts.
+    fun onEraseAnnotations(pageIndex: Int, annotationIds: Set<String>) {
+        if (annotationIds.isEmpty() || isAnnotationDockMinimized) return
+        val present = readerState.annotations.filter { it.pageIndex == pageIndex && it.id in annotationIds }
+        if (present.isEmpty()) return
+        val stagedIds = erasedInStroke.values.flatten().mapTo(mutableSetOf()) { it.id }
+        val fresh = present.filterNot { it.id in stagedIds }
+        if (fresh.isEmpty()) return
+        erasedInStroke.getOrPut(pageIndex) { mutableListOf() }.addAll(fresh)
+        dispatch(SharedPdfReaderAction.AnnotationsRemovedLive(fresh.mapTo(mutableSetOf()) { it.id }))
     }
 
     fun addTextHighlight(
@@ -1197,6 +1457,21 @@ fun SharedMobilePdfReaderHost(
     LaunchedEffect(readerSessionKey, pageCount) {
         if (readerState.pageCount != pageCount) {
             readerState = readerState.copy(pageCount = pageCount).coerced()
+        }
+    }
+
+    // Android parity: tool-settings popup only applies to pen/highlighter/
+    // eraser. Exiting edit mode or switching to TEXT always dismisses it, and
+    // minimizing dismisses it so a dimmed dock never sits under an open popup.
+    LaunchedEffect(readerSessionKey, readerState.selectedTool, isAnnotationDockMinimized) {
+        if (readerState.selectedTool == PdfInkTool.NONE ||
+            readerState.selectedTool == PdfInkTool.TEXT ||
+            isAnnotationDockMinimized
+        ) {
+            showAnnotationToolSettings = false
+        }
+        if (isAnnotationDockMinimized) {
+            activeStroke.clear()
         }
     }
 
@@ -1372,6 +1647,8 @@ fun SharedMobilePdfReaderHost(
             SharedMobilePdfReaderDrawer(
                 book = book,
                 state = readerState,
+                activeTheme = activeTheme,
+                textureAlpha = 1f - globalTextureTransparency,
                 tableOfContents = tableOfContents,
                 onGoToPage = { page ->
                     navigateToPage(sharedPdfDisplayIndexFor(virtualLayout, page), reason = PdfNavigationReason.TABLE_OF_CONTENTS)
@@ -1411,7 +1688,7 @@ fun SharedMobilePdfReaderHost(
         Scaffold(
             topBar = {
                 AnimatedVisibility(
-                    visible = showChrome,
+                    visible = showChrome && !isPdfEditMode && showTopToolbar,
                     enter = slideInVertically(tween(PdfChromeMotionDurationMillis)) { -it } + fadeIn(tween(PdfChromeMotionDurationMillis)),
                     exit = slideOutVertically(tween(PdfChromeMotionDurationMillis)) { -it } + fadeOut(tween(PdfChromeMotionDurationMillis))
                 ) {
@@ -1442,6 +1719,11 @@ fun SharedMobilePdfReaderHost(
                                 dispatch(SharedPdfReaderAction.BookmarkToggled(currentPdfIndex, createdAt = currentTimestamp()))
                             },
                             onToggleDisplayMode = ::toggleDisplayMode,
+                            rightToLeftPagination = rightToLeftPagination,
+                            onRightToLeftPaginationChange = {
+                                rightToLeftPagination = it
+                                onReaderDefaultSettingsChange(readerDefaultSettings.copy(rightToLeftPagination = it))
+                            },
                             onTheme = { if (ownsGlobalModal) showThemePanel = true },
                             onVisualOptions = { if (ownsGlobalModal) showReaderOptions = !showReaderOptions },
                             tapToTurnPages = tapToTurnPages,
@@ -1491,7 +1773,11 @@ fun SharedMobilePdfReaderHost(
                                 setTool(if (readerState.selectedTool == PdfInkTool.NONE) PdfInkTool.PEN else PdfInkTool.NONE)
                             },
                             onShowSlider = {
-                                showPageSlider = !showPageSlider
+                                // Android parity: opening the slider reveals the
+                                // chrome (it renders in the bottom-chrome zone).
+                                val opening = !showPageSlider
+                                showPageSlider = opening
+                                if (opening) showChrome = true
                                 onPageSliderVisibilityPreferenceChange(showPageSlider)
                             },
                             onToggleTts = {
@@ -1508,7 +1794,10 @@ fun SharedMobilePdfReaderHost(
                             onNativeAction = { action ->
                                 if (ownsNativeAction) {
                                     if (action == SharedMobilePdfNativeAction.PRINT && pdfPassword != null) {
-                                        showPasswordProtectedPrintWarning = true
+                                        // Android parity (print-blocked banner):
+                                        // a transient host banner, not a modal
+                                        // dialog, using the benchmark copy.
+                                        onPasswordProtectedPrint(passwordPrintBlockedMessage)
                                     } else if (action == SharedMobilePdfNativeAction.SHARE && shouldShowPdfAnnotationExportChoice(
                                             sidecarsReady = true,
                                             inkAnnotationCounts = readerState.annotations
@@ -1521,13 +1810,15 @@ fun SharedMobilePdfReaderHost(
                                         )
                                     ) {
                                         showShareFormatChoice = true
+                                    } else if (action == SharedMobilePdfNativeAction.SAVE_COPY) {
+                                        showSaveFormatChoice = true
                                     } else {
                                         dispatchNativePdfAction(action, SharedPdfExportSnapshot(readerState.copy(richTextDocumentJson = richTextDocumentJson), richTextController.pageLayouts))
                                     }
                                 }
                             },
                             onAiAction = { feature, text -> onAiAction(feature, text) },
-                            onOpenAiHub = onOpenAiHub,
+                            onOpenAiHub = { showAiHub = true; onOpenAiHub() },
                             aiAvailable = readerAiAvailable,
                             ocrLanguage = ocrLanguage,
                             onOcrLanguage = { if (ownsGlobalModal) showOcrLanguageDialog = true },
@@ -1570,26 +1861,21 @@ fun SharedMobilePdfReaderHost(
             },
             bottomBar = {
                 AnimatedVisibility(
-                    visible = showChrome && !readerState.isSearchActive,
+                    visible = showChrome && !readerState.isSearchActive && !isPdfEditMode && showBottomToolbar,
                     enter = slideInVertically(tween(PdfChromeMotionDurationMillis)) { it } + fadeIn(tween(PdfChromeMotionDurationMillis)),
                     exit = slideOutVertically(tween(PdfChromeMotionDurationMillis)) { it } + fadeOut(tween(PdfChromeMotionDurationMillis))
                 ) {
                     SharedMobilePdfReaderBottomBar(
                         state = readerState,
                         tools = pdfBottomTools,
-                        onShowSlider = { showPageSlider = !showPageSlider },
+                        onShowSlider = {
+                            val opening = !showPageSlider
+                            showPageSlider = opening
+                            if (opening) showChrome = true
+                        },
                         onOpenDrawer = { scope.launch { drawerState.open() } },
                         onSearch = { dispatch(SharedPdfReaderAction.SearchOpened) },
                         onToolSelected = ::setTool,
-                        onColorSelected = { dispatch(SharedPdfReaderAction.ColorSelected(it)) },
-                        onStrokeWidthChange = { dispatch(SharedPdfReaderAction.StrokeWidthChanged(it)) },
-                        onHighlighterPaletteChange = ::updatePdfHighlighterPalette,
-                        onHighlighterSnapChange = ::updatePdfHighlighterSnap,
-                        onUndo = { dispatch(SharedPdfReaderAction.UndoLastAnnotationOnPage(readerState.pageIndex)) },
-                        onRedo = { dispatch(SharedPdfReaderAction.RedoAnnotationEdit) },
-                        onClearPage = { dispatch(SharedPdfReaderAction.ClearPageAnnotations(readerState.pageIndex)) },
-                        isStylusOnlyMode = isStylusOnlyMode,
-                        onToggleStylusOnlyMode = { isStylusOnlyMode = !isStylusOnlyMode },
                         ttsState = if (cloudTtsAvailable) {
                             if (cloudTtsState.isPlaying) SharedMobileEpubLocalTtsState.SPEAKING
                             else if (cloudTtsState.isPaused || cloudTtsState.isLoading) SharedMobileEpubLocalTtsState.PAUSED
@@ -1619,7 +1905,7 @@ fun SharedMobilePdfReaderHost(
                         },
                         onScreenOrientation = { if (ownsGlobalModal) showScreenOrientationSheet = true },
                         onDictionary = { dispatchNativePdfAction(SharedMobilePdfNativeAction.DICTIONARY_SETTINGS, SharedPdfExportSnapshot(readerState)) },
-                        onOpenAiHub = onOpenAiHub,
+                        onOpenAiHub = { showAiHub = true; onOpenAiHub() },
                         aiAvailable = readerAiAvailable,
                         showAllTextHighlights = showAllTextHighlights,
                         isAllTextHighlightLoading = isAllTextHighlightLoading,
@@ -1673,7 +1959,7 @@ fun SharedMobilePdfReaderHost(
                     SharedMobilePdfVerticalPages(
                         book = book,
                         pdfPassword = pdfPassword,
-                        state = readerState,
+                        state = readerStateForPages,
                         activeTheme = activeTheme,
                         reverseColorMode = effectiveReverseColorMode,
                         preserveImageColors = readerState.preserveImageColors,
@@ -1704,6 +1990,10 @@ fun SharedMobilePdfReaderHost(
                         onVisiblePageChanged = { dispatch(SharedPdfReaderAction.GoToPage(it)) },
                         onCanvasSizeChanged = { canvasSize = it },
                         onFinishInkStroke = { page, eraserOverride -> finishInkStroke(page, eraserOverride) },
+                        eraserStrokeWidth = readerState.toolConfigs[PdfInkTool.ERASER]?.strokeWidth
+                            ?: SharedPdfAnnotationDefaults.configFor(PdfInkTool.ERASER).strokeWidth,
+                        onInkStrokeStart = ::onInkStrokeStart,
+                        onEraseAnnotations = ::onEraseAnnotations,
                         onExternalLink = { url -> if (ownsGlobalModal) pendingExternalLink = url },
                         onInternalLink = { navigateToPage(sharedPdfDisplayIndexFor(virtualLayout, it), reason = PdfNavigationReason.INTERNAL_LINK) },
                         onExistingHighlightTap = { noteAnnotationId = it.id },
@@ -1729,13 +2019,19 @@ fun SharedMobilePdfReaderHost(
                         onToggleChrome = {
                             if (!(autoScrollMusicianMode && autoScrollModeActive)) showChrome = !showChrome
                         },
-                        modifier = Modifier.fillMaxSize()
+                        modifier = Modifier.fillMaxSize().then(
+                            if (pdfVerticalContentBelowStatusBar) {
+                                Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top))
+                            } else {
+                                Modifier
+                            }
+                        )
                     )
                 } else {
                     SharedMobilePdfPaginatedPages(
                         book = book,
                         pdfPassword = pdfPassword,
-                        state = readerState,
+                        state = readerStateForPages,
                         activeTheme = activeTheme,
                         reverseColorMode = effectiveReverseColorMode,
                         preserveImageColors = readerState.preserveImageColors,
@@ -1786,11 +2082,18 @@ fun SharedMobilePdfReaderHost(
                         onToggleChrome = { showChrome = !showChrome },
                         onCanvasSizeChanged = { canvasSize = it },
                         onFinishInkStroke = { page, eraserOverride -> finishInkStroke(page, eraserOverride) },
+                        eraserStrokeWidth = readerState.toolConfigs[PdfInkTool.ERASER]?.strokeWidth
+                            ?: SharedPdfAnnotationDefaults.configFor(PdfInkTool.ERASER).strokeWidth,
+                        onInkStrokeStart = ::onInkStrokeStart,
+                        onEraseAnnotations = ::onEraseAnnotations,
                         modifier = Modifier.fillMaxSize()
                     )
                 }
                 AnimatedVisibility(
-                    visible = showChrome && showPageSlider,
+                    // Android parity (shouldRenderReaderSlider): the slider
+                    // belongs to visible bottom chrome and never shows during
+                    // search.
+                    visible = showChrome && showPageSlider && !readerState.isSearchActive,
                     enter = slideInVertically { it } + fadeIn(),
                     exit = slideOutVertically { it } + fadeOut(),
                     modifier = Modifier.align(Alignment.BottomCenter)
@@ -1873,8 +2176,7 @@ fun SharedMobilePdfReaderHost(
                         pageIndex = ttsPageIndex,
                         pageCount = pageCount,
                         chunkIndex = pdfTts.progress.currentChunkIndex,
-                        chunkCount = pdfTts.progress.chunks.size,
-                        onPauseResume = {
+                        chunkCount = pdfTts.progress.chunks.size,                        onPauseResume = {
                             if (ownsTts) {
                                 if (pdfTts.state == SharedMobileEpubLocalTtsState.SPEAKING) pdfTts.pause() else pdfTts.resume()
                             }
@@ -1911,6 +2213,11 @@ fun SharedMobilePdfReaderHost(
                             pendingTtsStartAtLastChunk = false
                             ttsHighlightBounds = emptyList()
                         },
+                        overlaySize = ttsOverlaySize,
+                        onOverlaySizeChange = {
+                            ttsOverlaySize = it
+                            onTtsOverlaySizePreferenceChange(it)
+                        },
                         modifier = Modifier.padding(bottom = ttsBottomPadding)
                     )
                 }
@@ -1933,6 +2240,41 @@ fun SharedMobilePdfReaderHost(
                                 }
                             },
                             modifier = Modifier.padding(bottom = ttsBottomPadding),
+                        )
+                    }
+                }
+                // Android parity (PdfViewerScreen scroll-to-TTs FAB): in vertical
+                // mode while TTS is active on an off-screen page, a transient
+                // button jumps back to the reading page. The in-overlay locate
+                // action stays for the on-screen case.
+                val isPdfTtsPageBelow = ttsPageIndex > currentPdfIndex
+                AnimatedVisibility(
+                    visible = readerState.displayMode == PdfDisplayMode.VERTICAL_SCROLL &&
+                        (pdfTts.isSessionActive || pendingTtsStart != null || cloudTtsState.isLoading || cloudTtsState.isPlaying || cloudTtsState.isPaused) &&
+                        ttsPageIndex != currentPdfIndex,
+                    enter = fadeIn(animationSpec = tween(PdfChromeMotionDurationMillis)),
+                    exit = fadeOut(animationSpec = tween(PdfChromeMotionDurationMillis)),
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = ttsBottomPadding)
+                        .padding(horizontal = 16.dp)
+                ) {
+                    FloatingActionButton(
+                        onClick = {
+                            navigateToPage(
+                                sharedPdfDisplayIndexFor(virtualLayout, ttsPageIndex),
+                                recordHistory = false,
+                                reason = PdfNavigationReason.TTS
+                            )
+                        },
+                        shape = CircleShape,
+                        containerColor = Color.Black.copy(alpha = 0.7f),
+                        contentColor = Color.White,
+                        elevation = FloatingActionButtonDefaults.elevation(0.dp, 0.dp, 0.dp, 0.dp)
+                    ) {
+                        Icon(
+                            imageVector = if (isPdfTtsPageBelow) Icons.Default.ArrowDownward else Icons.Default.ArrowUpward,
+                            contentDescription = readerString("content_desc_scroll_to_reading_page", "Scroll to reading page")
                         )
                     }
                 }
@@ -1975,6 +2317,9 @@ fun SharedMobilePdfReaderHost(
                             autoScrollModeActive = false
                             autoScrollPlaying = false
                             autoScrollTemporarilyPaused = false
+                            // Android parity (PdfViewerScreen auto-scroll
+                            // onClose): closing restores the chrome.
+                            showChrome = true
                         },
                         modifier = Modifier.padding(
                             start = 12.dp,
@@ -1984,7 +2329,9 @@ fun SharedMobilePdfReaderHost(
                     )
                 }
                 AnimatedVisibility(
-                    visible = readerState.isSearchActive && readerState.showSearchResultsPanel && readerState.searchQuery.isNotBlank()
+                    // Android parity: the panel shows for blank queries too
+                    // (it renders its own "Enter a search term" prompt).
+                    visible = readerState.isSearchActive && readerState.showSearchResultsPanel
                 ) {
                     SharedMobilePdfSearchResultsPanel(
                         query = readerState.searchQuery,
@@ -2020,33 +2367,453 @@ fun SharedMobilePdfReaderHost(
                             .padding(bottom = 24.dp)
                     )
                 }
-                AnimatedVisibility(
-                    visible = readerState.selectedTool == PdfInkTool.TEXT && !readerState.isSearchActive,
-                    enter = slideInVertically(tween(PdfChromeMotionDurationMillis)) { it } + fadeIn(tween(PdfChromeMotionDurationMillis)),
-                    exit = slideOutVertically(tween(PdfChromeMotionDurationMillis)) { it } + fadeOut(tween(PdfChromeMotionDurationMillis)),
-                    modifier = Modifier.align(Alignment.BottomCenter)
-                ) {
-                    val activeTextStyle = textDraft?.style ?: textStyle
-                    SharedMobilePdfTextDock(
-                        style = activeTextStyle,
-                        onStyleChange = { newStyle ->
-                            textStyle = newStyle
-                            textDraft?.let { draft ->
-                                updateTextDraft(draft.withStyle(newStyle, canvasSize))
-                            }
-                        },
-                        onInsertTextBox = ::insertTextBox,
-                        customFonts = customFonts,
-                        customFontFamilies = customPdfFontFamilies,
-                        onImportFont = onImportFont,
-                        modifier = Modifier.padding(
-                            start = 12.dp,
-                            end = 12.dp,
-                            bottom = if (showChrome) 96.dp + effectiveBottomSystemInset else 16.dp + effectiveBottomSystemInset
+                // Android parity (PdfViewerScreen hiddenRichTextInputEnabled =
+                // edit mode + TEXT tool + no legacy box selected): the 1dp
+                // invisible field that owns the IME for flowing text. Without
+                // it the controller's focus requests hit an unattached node
+                // (the FocusRequester warning) and the keyboard never opens.
+                SharedPdfRichTextHiddenInput(
+                    controller = richTextController,
+                    enabled = isPdfEditMode && readerState.selectedTool == PdfInkTool.TEXT && textDraft == null,
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars))
+                        .padding(start = 16.dp, bottom = 120.dp)
+                )
+                // Android-parity floating annotation dock (benchmark:
+                // PdfViewerScreen.kt edit-mode chrome + AnnotationDock.kt).
+                // Replaces the old bottom-bar-embedded interaction dock: close,
+                // minimize, stylus-only, pen / highlighter / text / eraser,
+                // undo + redo, draggable TOP / BOTTOM / FLOATING with the
+                // tool-settings popup on the opposite side of the dock.
+                if (isPdfEditMode) {
+                    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                        val boxMaxWidthPx = with(density) { maxWidth.toPx() }
+                        val boxMaxHeightPx = with(density) { maxHeight.toPx() }
+                        val annotationDockHeight = 56.dp
+                        val annotationDockHeightPx = with(density) { annotationDockHeight.toPx() }
+                        val isSticky = isSharedPdfAnnotationDockSticky(
+                            annotationDockLocation,
+                            isAnnotationDockDragging,
                         )
-                    )
+                        val dockTopYPx = sharedPdfAnnotationDockTopYPx(
+                            annotationDockLocation,
+                            annotationDockOffset.y,
+                            boxMaxHeightPx,
+                            annotationDockHeightPx,
+                        )
+                        val popupAboveDock = isSharedPdfAnnotationDockInBottomHalf(
+                            dockTopYPx,
+                            annotationDockHeightPx,
+                            boxMaxHeightPx,
+                        )
+                        val popupAlign = if (popupAboveDock) Alignment.BottomCenter else Alignment.TopCenter
+                        val popupMargin = 16.dp
+                        val popupTopPad = if (!popupAboveDock) {
+                            with(density) { (dockTopYPx + annotationDockHeightPx).toDp() } + popupMargin
+                        } else {
+                            0.dp
+                        }
+                        val popupBottomPad = if (popupAboveDock) {
+                            with(density) { (boxMaxHeightPx - dockTopYPx).toDp() } + popupMargin
+                        } else {
+                            0.dp
+                        }
+                        Box(modifier = Modifier.fillMaxSize()) {
+                            androidx.compose.animation.AnimatedVisibility(
+                                visible = showAnnotationToolSettings,
+                                enter = fadeIn(),
+                                exit = fadeOut(),
+                                modifier = Modifier
+                                    .align(popupAlign)
+                                    .padding(top = popupTopPad, bottom = popupBottomPad)
+                                    .testTag("ToolSettingsPopup"),
+                            ) {
+                                SharedPdfAndroidToolSettingsPopup(
+                                    selectedTool = readerState.selectedTool,
+                                    selectedColor = readerState.selectedColorArgb,
+                                    strokeWidth = readerState.strokeWidth,
+                                    actualToolConfigs = readerState.toolConfigs,
+                                    penPalette = readerState.penPalette,
+                                    highlighterPalette = readerState.highlighterPalette,
+                                    onToolSelected = { setTool(it) },
+                                    onColorSelected = { dispatch(SharedPdfReaderAction.ColorSelected(it)) },
+                                    onStrokeWidthChange = { dispatch(SharedPdfReaderAction.StrokeWidthChanged(it)) },
+                                    onPaletteChange = { nextPalette ->
+                                        if (readerState.selectedTool in SharedPdfAnnotationHighlighterTools) {
+                                            updatePdfHighlighterPalette(
+                                                SharedPdfHighlighterPalette(nextPalette),
+                                            )
+                                        } else {
+                                            dispatch(SharedPdfReaderAction.PenPaletteChanged(nextPalette))
+                                        }
+                                    },
+                                    isHighlighterSnapEnabled = readerState.isHighlighterSnapEnabled,
+                                    onHighlighterSnapChange = ::updatePdfHighlighterSnap,
+                                )
+                            }
+
+                            annotationSnapPreview?.let { location ->
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(annotationDockHeight)
+                                        .align(
+                                            if (location == DockLocation.TOP) Alignment.TopCenter
+                                            else Alignment.BottomCenter,
+                                        )
+                                        .background(Color.Black),
+                                )
+                            }
+
+                            Box(
+                                modifier = Modifier.fillMaxSize(),
+                            ) {
+                                val dragModifier =
+                                    if (isAnnotationDockDragging || annotationDockLocation == DockLocation.FLOATING) {
+                                        Modifier.offset {
+                                            IntOffset(
+                                                annotationDockOffset.x.roundToInt(),
+                                                annotationDockOffset.y.roundToInt(),
+                                            )
+                                        }
+                                    } else {
+                                        Modifier
+                                    }
+                                val alignModifier = when {
+                                    isAnnotationDockDragging || annotationDockLocation == DockLocation.FLOATING -> Modifier
+                                    annotationDockLocation == DockLocation.TOP -> Modifier.align(Alignment.TopCenter)
+                                    annotationDockLocation == DockLocation.BOTTOM -> Modifier.align(Alignment.BottomCenter)
+                                    else -> Modifier
+                                }
+                                val widthModifier =
+                                    if ((annotationDockLocation == DockLocation.TOP || annotationDockLocation == DockLocation.BOTTOM) && !isAnnotationDockDragging) {
+                                        Modifier.fillMaxWidth()
+                                    } else {
+                                        Modifier.padding(horizontal = 16.dp)
+                                    }
+                                val statusTopDp = with(density) {
+                                    WindowInsets.safeDrawing.getTop(density).toDp()
+                                }
+                                val paddingModifier =
+                                    if ((annotationDockLocation == DockLocation.TOP || annotationDockLocation == DockLocation.BOTTOM) && !isAnnotationDockDragging) {
+                                        Modifier.padding(
+                                            bottom = if (annotationDockLocation == DockLocation.BOTTOM) effectiveBottomSystemInset else 0.dp,
+                                            top = if (annotationDockLocation == DockLocation.TOP) statusTopDp else 0.dp,
+                                        )
+                                    } else {
+                                        Modifier.padding(vertical = 16.dp)
+                                    }
+                                Box(
+                                    modifier = Modifier
+                                        .then(alignModifier)
+                                        .then(dragModifier)
+                                        .pointerInput(annotationDockLocation, isAnnotationDockMinimized) {
+                                            val onDragStart: (androidx.compose.ui.geometry.Offset) -> Unit = {
+                                                isAnnotationDockDragging = true
+                                                val startX = (boxMaxWidthPx / 2) - (size.width / 2)
+                                                if (annotationDockLocation == DockLocation.BOTTOM) {
+                                                    annotationDockOffset = androidx.compose.ui.geometry.Offset(
+                                                        startX,
+                                                        boxMaxHeightPx - annotationDockHeightPx - 50f,
+                                                    )
+                                                } else if (annotationDockLocation == DockLocation.TOP) {
+                                                    annotationDockOffset = androidx.compose.ui.geometry.Offset(startX, 50f)
+                                                }
+                                            }
+                                            val onDrag: (
+                                                androidx.compose.ui.input.pointer.PointerInputChange,
+                                                androidx.compose.ui.geometry.Offset,
+                                            ) -> Unit = { change, dragAmount ->
+                                                change.consume()
+                                                annotationDockOffset += dragAmount
+                                                val topSnapThreshold = 150f
+                                                val bottomSnapThreshold = boxMaxHeightPx - 250f
+                                                annotationSnapPreview = when {
+                                                    annotationDockOffset.y < topSnapThreshold -> DockLocation.TOP
+                                                    annotationDockOffset.y > bottomSnapThreshold -> DockLocation.BOTTOM
+                                                    else -> null
+                                                }
+                                            }
+                                            val onDragEnd: () -> Unit = {
+                                                isAnnotationDockDragging = false
+                                                if (annotationSnapPreview != null) {
+                                                    annotationDockLocation = annotationSnapPreview!!
+                                                    annotationSnapPreview = null
+                                                } else {
+                                                    annotationDockLocation = DockLocation.FLOATING
+                                                    val safeX = annotationDockOffset.x.coerceIn(
+                                                        0f,
+                                                        boxMaxWidthPx - 100f,
+                                                    )
+                                                    val safeY = annotationDockOffset.y.coerceIn(
+                                                        0f,
+                                                        boxMaxHeightPx - annotationDockHeightPx,
+                                                    )
+                                                    annotationDockOffset = androidx.compose.ui.geometry.Offset(safeX, safeY)
+                                                }
+                                            }
+                                            val onDragCancel: () -> Unit = {
+                                                isAnnotationDockDragging = false
+                                                annotationSnapPreview = null
+                                            }
+                                            if (annotationDockLocation == DockLocation.FLOATING) {
+                                                detectDragGestures(
+                                                    onDragStart = onDragStart,
+                                                    onDrag = onDrag,
+                                                    onDragEnd = onDragEnd,
+                                                    onDragCancel = onDragCancel,
+                                                )
+                                            } else {
+                                                detectDragGesturesAfterLongPress(
+                                                    onDragStart = onDragStart,
+                                                    onDrag = onDrag,
+                                                    onDragEnd = onDragEnd,
+                                                    onDragCancel = onDragCancel,
+                                                )
+                                            }
+                                        },
+                                ) {
+                                    SharedPdfAndroidAnnotationDock(
+                                        selectedTool = readerState.selectedTool,
+                                        activePenColor = annotationDockPenColor,
+                                        activeHighlighterColor = annotationDockHighlighterColor,
+                                        lastPenTool = readerState.lastActivePenTool,
+                                        lastHighlighterTool = readerState.lastActiveHighlighterTool,
+                                        isStylusOnlyMode = isStylusOnlyMode,
+                                        onToggleStylusOnlyMode = { isStylusOnlyMode = !isStylusOnlyMode },
+                                        onToolClick = ::onAnnotationDockToolClick,
+                                        // Android + desktop parity: undo pops the
+                                        // global history stack (draw or erase),
+                                        // enabled while anything is undoable —
+                                        // NOT "delete last on page" (that pushed
+                                        // a new Remove and wiped redo).
+                                        onUndo = { dispatch(SharedPdfReaderAction.UndoAnnotationEdit) },
+                                        onRedo = { dispatch(SharedPdfReaderAction.RedoAnnotationEdit) },
+                                        onClose = ::closeAnnotationDock,
+                                        canUndo = readerState.canUndoAnnotationEdit,
+                                        canRedo = readerState.canRedoAnnotationEdit,
+                                        isSticky = isSticky,
+                                        modifier = Modifier
+                                            .then(widthModifier)
+                                            .then(paddingModifier),
+                                        isMinimized = isAnnotationDockMinimized,
+                                        onToggleMinimize = { isAnnotationDockMinimized = !isAnnotationDockMinimized },
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
-                if (pdfReflowUiState.isGenerating) {
+                // Android-parity draggable text formatting dock (benchmark:
+                // PdfViewerScreen.kt text dock chrome + TextAnnotationDock.kt).
+                // Composed AFTER the pen dock so it draws above it (the reported
+                // "text toolbar under main toolbar" bug was the old order).
+                // Bottom-docked it clears the pen dock via resting padding,
+                // top-docked it stacks below the pen dock, floating it rides
+                // above the keyboard. Drag/long-press lives on the bar only —
+                // the container stays touch-transparent for controls beneath.
+                if (shouldShowPdfTextDock(isPdfEditMode, readerState.selectedTool == PdfInkTool.TEXT) && !readerState.isSearchActive) {
+                    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                        val textBoxMaxWidthPx = with(density) { maxWidth.toPx() }
+                        val textBoxMaxHeightPx = with(density) { maxHeight.toPx() }
+                        val textDockBarHeight = 48.dp
+                        val textDockHeightPx = with(density) { textDockBarHeight.toPx() }
+                        val textDockFloatPad = 16.dp
+                        val textDockFloatPadPx = with(density) { textDockFloatPad.toPx() }
+                        // Resting clearance keys off the PEN dock (benchmark:
+                        // bottomPadding clears the pen dock when closed, 0 when
+                        // the keyboard is open since insets position it).
+                        val textBottomPadding = pdfTextDockRestingBottomPadding(
+                            isImeVisible = isPdfImeVisible,
+                            dockLocation = annotationDockLocation,
+                            isDockMinimized = isAnnotationDockMinimized,
+                        )
+                        val textPopupsBelowBar = isPdfTextDockTopAnchored(textDockLocation, isTextDockDragging)
+                        val isTextStickyBottom = textDockLocation == DockLocation.BOTTOM && !isTextDockDragging
+                        val isTextFloating = isTextDockDragging || textDockLocation == DockLocation.FLOATING
+                        // A floating (or in-drag) bar parked where the keyboard
+                        // opens rides up to sit just above it, like bottom-dock.
+                        val textDockLiftPx = pdfTextDockKeyboardLiftPx(
+                            isImeVisible = isPdfImeVisible,
+                            isFloating = isTextFloating,
+                            dockBottomPx = textDockOffset.y + textDockFloatPadPx + textDockHeightPx,
+                            keyboardTopPx = textBoxMaxHeightPx - WindowInsets.ime.getBottom(density),
+                        )
+                        Box(modifier = Modifier.fillMaxSize()) {
+                            val textDragModifier =
+                                if (isTextFloating) {
+                                    Modifier.offset {
+                                        IntOffset(
+                                            textDockOffset.x.roundToInt(),
+                                            (textDockOffset.y - textDockLiftPx).roundToInt()
+                                        )
+                                    }
+                                } else {
+                                    Modifier
+                                }
+                            val textAlignModifier = when {
+                                isTextFloating -> Modifier
+                                textPopupsBelowBar -> Modifier.align(Alignment.TopCenter)
+                                else -> Modifier.align(Alignment.BottomCenter)
+                            }
+                            val textWidthModifier =
+                                if ((textDockLocation == DockLocation.TOP || textDockLocation == DockLocation.BOTTOM) && !isTextDockDragging) {
+                                    Modifier.fillMaxWidth()
+                                } else {
+                                    Modifier.padding(horizontal = 16.dp)
+                                }
+                            val textInsetsModifier =
+                                if (isTextStickyBottom) {
+                                    Modifier.windowInsetsPadding(
+                                        if (isPdfImeVisible) WindowInsets.ime.union(WindowInsets.navigationBars)
+                                        else WindowInsets.navigationBars
+                                    )
+                                } else {
+                                    Modifier
+                                }
+                            // A top-docked text bar stacks below a top-docked
+                            // pen dock (shared 56.dp dock height), mirroring
+                            // how the bottom bar clears it via resting padding.
+                            val textStatusTopDp = with(density) {
+                                WindowInsets.safeDrawing.getTop(density).toDp()
+                            }
+                            val textPaddingModifier = when {
+                                isTextStickyBottom -> Modifier.padding(bottom = textBottomPadding)
+                                textPopupsBelowBar -> Modifier.padding(
+                                    top = (if (annotationDockLocation == DockLocation.TOP && !isAnnotationDockDragging) 56.dp else 0.dp) + textStatusTopDp
+                                )
+                                else -> Modifier.padding(vertical = textDockFloatPad)
+                            }
+                            val textDockDragGesture = Modifier.pointerInput(textDockLocation) {
+                                val onDragStart: (Offset) -> Unit = {
+                                    isTextDockDragging = true
+                                    // Seed from the last measured position so
+                                    // picking the bar up never teleports it:
+                                    // sticky positions carry inset/resting
+                                    // offsets a formula can't reproduce.
+                                    val measured = textDockMeasuredOffset
+                                    if (measured != null) {
+                                        textDockOffset = measured
+                                    } else {
+                                        val startX = (textBoxMaxWidthPx / 2) - (size.width / 2)
+                                        if (textDockLocation == DockLocation.BOTTOM) {
+                                            textDockOffset = Offset(
+                                                startX, textBoxMaxHeightPx - textDockHeightPx - 50f
+                                            )
+                                        } else if (textDockLocation == DockLocation.TOP) {
+                                            textDockOffset = Offset(startX, 50f)
+                                        }
+                                    }
+                                }
+                                val onDrag: (
+                                    androidx.compose.ui.input.pointer.PointerInputChange,
+                                    Offset
+                                ) -> Unit = { change, dragAmount ->
+                                    change.consume()
+                                    textDockOffset += dragAmount
+                                }
+                                val onDragEnd: () -> Unit = {
+                                    isTextDockDragging = false
+                                    val topSnapThreshold = 150f
+                                    // Bottom snaps only at/below the docked band
+                                    // (resting bar position minus a grab margin):
+                                    // dropping the bar over the pen dock stays
+                                    // floating instead, exactly like the benchmark.
+                                    val bottomSnapThreshold = textBoxMaxHeightPx -
+                                        with(density) { effectiveBottomSystemInset.toPx() } -
+                                        with(density) { textBottomPadding.toPx() } -
+                                        textDockHeightPx -
+                                        with(density) { 24.dp.toPx() }
+                                    textDockLocation = when {
+                                        textDockOffset.y < topSnapThreshold -> DockLocation.TOP
+                                        textDockOffset.y > bottomSnapThreshold -> DockLocation.BOTTOM
+                                        else -> DockLocation.FLOATING
+                                    }
+                                    if (textDockLocation == DockLocation.FLOATING) {
+                                        val safeX = textDockOffset.x.coerceIn(
+                                            0f, textBoxMaxWidthPx - 100f
+                                        )
+                                        val safeY = textDockOffset.y.coerceIn(
+                                            0f, textBoxMaxHeightPx - textDockHeightPx
+                                        )
+                                        textDockOffset = Offset(safeX, safeY)
+                                    }
+                                }
+                                val onDragCancel: () -> Unit = {
+                                    isTextDockDragging = false
+                                }
+                                if (textDockLocation == DockLocation.FLOATING) {
+                                    detectDragGestures(
+                                        onDragStart = onDragStart,
+                                        onDrag = onDrag,
+                                        onDragEnd = onDragEnd,
+                                        onDragCancel = onDragCancel
+                                    )
+                                } else {
+                                    detectDragGesturesAfterLongPress(
+                                        onDragStart = onDragStart,
+                                        onDrag = onDrag,
+                                        onDragEnd = onDragEnd,
+                                        onDragCancel = onDragCancel
+                                    )
+                                }
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .then(textAlignModifier)
+                                    .then(textDragModifier)
+                                    .onGloballyPositioned {
+                                        if (!isTextDockDragging) textDockMeasuredOffset = it.positionInParent()
+                                    }
+                                    .then(textWidthModifier)
+                                    .then(textInsetsModifier)
+                                    .then(textPaddingModifier)
+                            ) {
+                                val activeTextStyle = textDraft?.style ?: textStyle
+                                SharedMobilePdfTextDock(
+                                    style = activeTextStyle,
+                                    onStyleChange = { newStyle ->
+                                        // Android parity (TextAnnotationDock
+                                        // onUpdateStyle): the tool default is
+                                        // always persisted; live edits go to
+                                        // the open draft, otherwise to the
+                                        // flowing rich-text selection/cursor
+                                        // (which also re-requests the keyboard,
+                                        // keeping it up while formatting).
+                                        textStyle = newStyle
+                                        val draft = textDraft
+                                        if (draft != null) {
+                                            updateTextDraft(draft.withStyle(newStyle, canvasSize))
+                                        } else {
+                                            richTextController.updateCurrentStyle(
+                                                newStyle.toSharedPdfRichSpanStyle(),
+                                                newStyle.fontPath,
+                                                newStyle.fontName
+                                            )
+                                        }
+                                    },
+                                    onInsertTextBox = ::insertTextBox,
+                                    customFonts = customFonts,
+                                    customFontFamilies = customPdfFontFamilies,
+                                    onImportFont = onImportFont,
+                                    dragGestureModifier = textDockDragGesture,
+                                    popupsBelowBar = textPopupsBelowBar,
+                                    onPopupStateChange = { richTextController.showCursorOverride = !it },
+                                )
+                            }
+                        }
+                    }
+                }
+                // Android parity (ReflowProgressOverlay): a non-blocking top
+                // strip instead of a fullscreen scrim, so reading continues
+                // during generation. Gated on chrome like showStandardBars.
+                AnimatedVisibility(
+                    visible = showChrome && !readerState.isSearchActive && pdfReflowUiState.isGenerating,
+                    enter = slideInVertically(animationSpec = tween(PdfChromeMotionDurationMillis)) { -it } + fadeIn(animationSpec = tween(PdfChromeMotionDurationMillis)),
+                    exit = slideOutVertically(animationSpec = tween(PdfChromeMotionDurationMillis)) { -it } + fadeOut(animationSpec = tween(PdfChromeMotionDurationMillis)),
+                    modifier = Modifier.align(Alignment.TopCenter)
+                ) {
                     SharedMobilePdfReflowProgressOverlay(progress = pdfReflowUiState.progress)
                 }
             }
@@ -2119,25 +2886,28 @@ fun SharedMobilePdfReaderHost(
             )
         }
         if (showReaderOptions) {
-            SharedMobilePdfVisualOptionsSheet(
+            // Android benchmark (PdfSettingsSheets.kt:150-214 PdfVisualOptionsSheet):
+            // the shared sheet owns toolbar toggles + localized copy; the
+            // right-to-left row is mobile-only (shown via the optional callback).
+            SharedPdfVisualOptionsSheet(
                 displayMode = readerState.displayMode,
-                systemUiMode = systemUiMode,
-                useTwoPageSpread = useTwoPageSpread,
+                systemUiMode = systemUiMode.toReaderSystemUiMode(),
+                pageSpreadMode = if (useTwoPageSpread) {
+                    ReaderPageSpreadMode.TWO_PAGE
+                } else {
+                    ReaderPageSpreadMode.SINGLE
+                },
                 firstPageStandaloneInSpread = firstPageStandaloneInSpread,
-                rightToLeftPagination = rightToLeftPagination,
                 showVerticalPageGap = showVerticalPageGap,
                 showPageNumberOverlay = showPageNumberOverlay,
-                onSystemUiModeChange = { mode ->
-                    systemUiMode = mode
-                    onReaderDefaultSettingsChange(
-                        readerDefaultSettings.copy(systemUiMode = mode.toReaderSystemUiMode())
-                    )
-                },
-                onTwoPageSpreadChange = {
-                    useTwoPageSpread = it
+                showTopToolbar = showTopToolbar,
+                showBottomToolbar = showBottomToolbar,
+                onPageSpreadModeChange = {
+                    val twoPage = it == ReaderPageSpreadMode.TWO_PAGE
+                    useTwoPageSpread = twoPage
                     onReaderDefaultSettingsChange(
                         readerDefaultSettings.copy(
-                            pageSpreadMode = if (it) {
+                            pageSpreadMode = if (twoPage) {
                                 ReaderPageSpreadMode.TWO_PAGE
                             } else {
                                 ReaderPageSpreadMode.SINGLE
@@ -2145,15 +2915,17 @@ fun SharedMobilePdfReaderHost(
                         )
                     )
                 },
-                onFirstPageStandaloneChange = {
+                onFirstPageStandaloneInSpreadChange = {
                     firstPageStandaloneInSpread = it
                     onReaderDefaultSettingsChange(
                         readerDefaultSettings.copy(pdfFirstPageStandaloneInSpread = it)
                     )
                 },
-                onRightToLeftPaginationChange = {
-                    rightToLeftPagination = it
-                    onReaderDefaultSettingsChange(readerDefaultSettings.copy(rightToLeftPagination = it))
+                onSystemUiModeChange = { mode ->
+                    systemUiMode = mode.toSharedMobilePdfSystemUiMode()
+                    onReaderDefaultSettingsChange(
+                        readerDefaultSettings.copy(systemUiMode = mode)
+                    )
                 },
                 onShowVerticalPageGapChange = {
                     showVerticalPageGap = it
@@ -2163,13 +2935,96 @@ fun SharedMobilePdfReaderHost(
                     showPageNumberOverlay = it
                     onReaderDefaultSettingsChange(readerDefaultSettings.copy(pdfPageNumberOverlayVisible = it))
                 },
+                onShowTopToolbarChange = { visible ->
+                    showTopToolbar = visible
+                    onShowTopToolbarChange(visible)
+                },
+                onShowBottomToolbarChange = { visible ->
+                    showBottomToolbar = visible
+                    onShowBottomToolbarChange(visible)
+                },
+                rightToLeftPagination = rightToLeftPagination,
+                onRightToLeftPaginationChange = {
+                    rightToLeftPagination = it
+                    onReaderDefaultSettingsChange(readerDefaultSettings.copy(rightToLeftPagination = it))
+                },
+                maxSheetHeight = 680.dp,
+                labels = SharedPdfVisualOptionsLabels(
+                    title = readerString("menu_visual_options", "Visual Options"),
+                    close = readerString("action_close", "Close"),
+                    systemUi = readerString("visual_options_system_ui", "System UI (Status & Navigation Bars)"),
+                    systemUiDescription = readerString(
+                        "visual_options_system_ui_desc",
+                        "Control the visibility of the device's system bars."
+                    ),
+                    systemUiOptions = mapOf(
+                        SystemUiMode.DEFAULT to readerString("label_always_show", "Always Show"),
+                        SystemUiMode.SYNC to readerString("label_sync_with_menus", "Sync with Menus"),
+                        SystemUiMode.HIDDEN to readerString("label_always_hide", "Always Hide"),
+                    ),
+                    toolbars = readerString("visual_options_toolbars", "Toolbars"),
+                    topToolbar = readerString("visual_options_top_toolbar", "Show top toolbar"),
+                    topToolbarDescription = readerString(
+                        "visual_options_top_toolbar_desc",
+                        "Hide it to read with only the bottom tools"
+                    ),
+                    bottomToolbar = readerString("visual_options_bottom_toolbar", "Show bottom toolbar"),
+                    bottomToolbarDescription = readerString(
+                        "visual_options_bottom_toolbar_desc",
+                        "Hide it to read with only the top tools"
+                    ),
+                    pageLayout = readerString("visual_options_page_layout", "Page layout"),
+                    pageSpread = readerString("visual_options_pdf_page_spread", "PDF page spread"),
+                    spreadOptions = mapOf(
+                        ReaderPageSpreadMode.SINGLE to readerString(
+                            "visual_options_pdf_spread_single",
+                            "Single page"
+                        ),
+                        ReaderPageSpreadMode.TWO_PAGE to readerString(
+                            "visual_options_pdf_spread_two",
+                            "Two pages"
+                        ),
+                    ),
+                    firstPageAlone = readerString(
+                        "visual_options_pdf_first_page_alone",
+                        "First page alone"
+                    ),
+                    firstPageAloneDescription = readerString(
+                        "visual_options_pdf_first_page_alone_desc",
+                        "Starts facing-page spreads after the cover page."
+                    ),
+                    removePageGap = readerString(
+                        "visual_options_remove_page_gap",
+                        "Remove gap between pages"
+                    ),
+                    removePageGapDescription = readerString(
+                        "visual_options_remove_page_gap_desc",
+                        "Applies to vertical reading and two-page spreads."
+                    ),
+                    hidePageNumberOverlay = readerString(
+                        "visual_options_hide_page_number_overlay",
+                        "Hide page number overlay"
+                    ),
+                    hidePageNumberOverlayDescription = readerString(
+                        "visual_options_hide_page_number_overlay_desc",
+                        "Removes the small page count label from each page."
+                    ),
+                    rightToLeft = readerString(
+                        "menu_right_to_left_pagination",
+                        "Paginated (right-to-left)"
+                    ),
+                    rightToLeftDescription = readerString(
+                        "visual_options_pdf_right_to_left",
+                        "Use right-to-left page order and edge navigation."
+                    ),
+                ),
                 onDismiss = { showReaderOptions = false }
             )
         }
         if (readerExtrasState.aiResult.hasContent) {
             SharedReaderAiResultSheet(
                 result = readerExtrasState.aiResult,
-                onDismiss = onAiResultDismiss,
+                onDismiss = { pendingSummarySave = null; onAiResultDismiss() },
             )
         }
     }
@@ -2222,62 +3077,98 @@ fun SharedMobilePdfReaderHost(
             onRestore = {},
         )
     }
-    if (documentRender.openError == SharedMobilePdfOpenError.PASSWORD_REQUIRED) {
-        AlertDialog(
-            onDismissRequest = closeReader,
-            title = { Text("Password protected") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("This PDF is password protected. Enter the password to open it.")
-                    OutlinedTextField(
-                        value = pdfPasswordDraft,
-                        onValueChange = { pdfPasswordDraft = it },
-                        label = { Text("Password") },
-                        singleLine = true,
-                        visualTransformation = PasswordVisualTransformation(),
-                        isError = pdfPassword != null,
-                        supportingText = if (pdfPassword != null) {
-                            { Text("Incorrect password") }
-                        } else {
-                            null
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
+    if (showAiHub) {
+        // Fixed-size window of text sessions, newest-first, opened only while
+        // the hub is presented; disposal closes them on dismiss.
+        val hubBasePage = readerState.pageIndex
+        val hubPageTitle = readerString("pdf_page_label", "Page %1\$d", hubBasePage + 1)
+        val hubBookTitle = book.title?.takeIf { it.isNotBlank() } ?: book.displayName
+        val hubPageSessions = (0 until PDF_AI_HUB_RECAP_PAGE_WINDOW).map { back ->
+            rememberPdfTextPageSession(book, (hubBasePage - back).coerceAtLeast(0), pdfPassword)
+        }
+        val hubCacheEntries = remember(readerSessionKey, aiCacheRevision) {
+            summaryCache?.getAllSummaries(hubBookTitle).orEmpty()
+        }
+        SharedMobileAiHubSheet(
+            sectionTitle = hubPageTitle,
+            cachedSummary = hubCacheEntries.firstOrNull { it.sectionIndex == hubBasePage },
+            cacheEntries = hubCacheEntries,
+            showCacheTab = summaryCache != null,
+            credits = aiCredits,
+            onGenerateSummary = {
+                showAiHub = false
+                hubPageSessions.firstOrNull()?.let { session ->
+                    session.textForRange(0, session.pageCharCount)
+                        ?.takeIf(String::isNotBlank)
+                        ?.let {
+                            pendingSummarySave = Triple(hubBookTitle, hubBasePage, hubPageTitle)
+                            onAiAction(ReaderAiFeature.SUMMARIZE, it.take(PDF_AI_HUB_MAX_CHARS))
+                        }
                 }
             },
-            confirmButton = {
-                Button(
-                    onClick = { pdfPassword = pdfPasswordDraft },
-                    enabled = pdfPasswordDraft.isNotBlank(),
-                ) {
-                    Text("Open")
+            onGenerateRecap = {
+                showAiHub = false
+                val pages = hubPageSessions.map { session ->
+                    session?.let { it.textForRange(0, it.pageCharCount) }
                 }
+                buildPdfAiHubRecapText(pages)?.let { onAiAction(ReaderAiFeature.RECAP, it) }
             },
-            dismissButton = {
-                TextButton(onClick = closeReader) { Text("Cancel") }
+            onDeleteCached = { entry ->
+                summaryCache?.deleteSummary(entry.bookTitle, entry.sectionIndex)
+                aiCacheRevision++
             },
-            properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false),
+            onClearCache = {
+                summaryCache?.clearBookCache(hubBookTitle)
+                aiCacheRevision++
+            },
+            onDismiss = { showAiHub = false },
         )
     }
-    if (showPasswordProtectedPrintWarning) {
-        AlertDialog(
-            onDismissRequest = { showPasswordProtectedPrintWarning = false },
-            title = { Text("Printing unavailable") },
-            text = { Text("Password-protected PDFs cannot be printed.") },
-            confirmButton = {
-                TextButton(onClick = { showPasswordProtectedPrintWarning = false }) {
-                    Text("OK")
-                }
+    LaunchedEffect(readerExtrasState.aiResult) {
+        val pending = pendingSummarySave ?: return@LaunchedEffect
+        val result = readerExtrasState.aiResult
+        if (result.isLoading) return@LaunchedEffect
+        pendingSummarySave = null
+        if (result.errorMessage == null &&
+            result.text.isNotBlank() &&
+            result.title == ReaderAiFeature.SUMMARIZE.displayName
+        ) {
+            summaryCache?.saveSummary(pending.first, pending.second, pending.third, result.text)
+            aiCacheRevision++
+        }
+    }
+    if (documentRender.openError == SharedMobilePdfOpenError.PASSWORD_REQUIRED) {
+        SharedMobilePdfPasswordDialog(
+            labels = SharedMobilePdfPasswordLabels(
+                title = readerString("title_password_protected", "Password Protected"),
+                description = readerString(
+                    "desc_password_protected",
+                    "This document is encrypted. Please enter the password to view it."
+                ),
+                password = readerString("password", "Password"),
+                incorrectPassword = readerString("error_incorrect_password", "Incorrect password"),
+                showPassword = readerString("content_desc_show_password", "Show password"),
+                hidePassword = readerString("content_desc_hide_password", "Hide password"),
+                open = readerString("action_open", "Open"),
+                cancel = readerString("action_cancel", "Cancel"),
+            ),
+            // Android benchmark (PdfViewerScreen.kt:4705): explicit error state —
+            // a password was tried and rejected, not merely "a draft exists".
+            isError = pdfPassword != null,
+            onDismiss = closeReader,
+            onConfirm = { password ->
+                pdfPasswordDraft = password
+                pdfPassword = password
             },
         )
     }
     if (showShareFormatChoice) {
         SharedMobileDocumentFormatDialog(
-            title = "Share",
-            description = "Choose a format for sharing",
-            annotatedLabel = "With annotations",
-            originalLabel = "Original",
-            cancelLabel = "Cancel",
+            title = readerString("share_chooser_title", "Share PDF"),
+            description = readerString("desc_choose_format_share", "Choose format to share:"),
+            annotatedLabel = readerString("action_with_annotations", "With Annotations"),
+            originalLabel = readerString("action_original", "Original"),
+            cancelLabel = readerString("action_cancel", "Cancel"),
             onAnnotated = {
                 showShareFormatChoice = false
                 dispatchNativePdfAction(SharedMobilePdfNativeAction.SHARE_ANNOTATED, SharedPdfExportSnapshot(readerState.copy(richTextDocumentJson = richTextDocumentJson), richTextController.pageLayouts))
@@ -2288,6 +3179,72 @@ fun SharedMobilePdfReaderHost(
             },
             onDismiss = { showShareFormatChoice = false },
         )
+    }
+    // Android benchmark (PdfViewerScreen.kt:5130-5150): Save Copy offers the
+    // same annotated/original choice instead of exporting blindly. "Original"
+    // strips reader-owned content so the host exports the source bytes
+    // (SharedPdfExportMode.ORIGINAL), exactly like an unannotated document.
+    if (showSaveFormatChoice) {
+        SharedMobileDocumentFormatDialog(
+            title = readerString("title_save_to_device", "Save to Device"),
+            description = readerString("desc_choose_format_save", "Choose format to save:"),
+            annotatedLabel = readerString("action_with_annotations", "With Annotations"),
+            originalLabel = readerString("action_original", "Original"),
+            cancelLabel = readerString("action_cancel", "Cancel"),
+            onAnnotated = {
+                showSaveFormatChoice = false
+                dispatchNativePdfAction(
+                    SharedMobilePdfNativeAction.SAVE_COPY,
+                    SharedPdfExportSnapshot(readerState.copy(richTextDocumentJson = richTextDocumentJson), richTextController.pageLayouts)
+                )
+            },
+            onOriginal = {
+                showSaveFormatChoice = false
+                dispatchNativePdfAction(
+                    SharedMobilePdfNativeAction.SAVE_COPY,
+                    SharedPdfExportSnapshot(
+                        readerState.copy(
+                            annotations = emptyList(),
+                            blankPageInsertions = emptyList(),
+                            richTextDocumentJson = ""
+                        )
+                    )
+                )
+            },
+            onDismiss = { showSaveFormatChoice = false },
+        )
+    }
+    // Android benchmark (PdfViewerScreen.kt:5171-5199): blocking scrim while
+    // the host prepares the export file.
+    if (isPdfExportBusy) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.5f))
+                .clickable(enabled = false) {},
+            contentAlignment = Alignment.Center
+        ) {
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 6.dp
+            ) {
+                Column(
+                    modifier = Modifier.padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(32.dp), strokeWidth = 3.dp
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = readerString("msg_preparing_pdf", "Preparing PDF…"),
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                }
+            }
+        }
     }
     if (showBrightnessSheet) {
         SharedMobileReaderBrightnessSheet(
@@ -2539,12 +3496,15 @@ private fun SharedMobilePdfReaderTopBar(
     onBrightness: () -> Unit,
     onScreenOrientation: () -> Unit,
     isTtsPlayingOrLoading: Boolean,
+    rightToLeftPagination: Boolean = false,
+    onRightToLeftPaginationChange: (Boolean) -> Unit = {},
     topTools: List<PdfReaderTool>,
     toolbarPreferences: PdfToolbarPreferences,
     onCustomizeToolbar: () -> Unit,
     applySystemBarInsets: Boolean
 ) {
     val searchFocusRequester = remember { FocusRequester() }
+    val searchKeyboardController = LocalSoftwareKeyboardController.current
     LaunchedEffect(isSearchActive) {
         if (isSearchActive) {
             delay(100)
@@ -2579,14 +3539,6 @@ private fun SharedMobilePdfReaderTopBar(
             IconButton(onClick = onBack) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = readerString("tooltip_back", "Back"))
             }
-            if (onOpenSplit != null) {
-                SharedMobilePdfTopToolButton(
-                    label = readerString("pdf_split_reader_open", "Open in split reader"),
-                    onClick = onOpenSplit,
-                ) {
-                    Icon(Icons.Default.OpenInNew, contentDescription = readerString("pdf_split_reader_open", "Open in split reader"))
-                }
-            }
             if (isSearchActive) {
                 OutlinedTextField(
                     value = searchQuery,
@@ -2595,10 +3547,29 @@ private fun SharedMobilePdfReaderTopBar(
                     placeholder = { Text(readerString("desktop_type_to_search_pdf", "Search PDF")) },
                     leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
                     trailingIcon = {
-                        IconButton(onClick = onCloseSearch) {
-                            Icon(Icons.Default.Close, contentDescription = readerString("content_desc_close_search", "Close search"))
+                        // Android benchmark (AndroidSearchUi.kt:271-282): a clear
+                        // affordance empties the query; closing is separate.
+                        IconButton(
+                            onClick = {
+                                if (searchQuery.isNotBlank()) onSearchQueryChange("") else onCloseSearch()
+                            }
+                        ) {
+                            Icon(
+                                Icons.Default.Close,
+                                contentDescription = if (searchQuery.isNotBlank()) {
+                                    readerString("action_clear_search", "Clear search")
+                                } else {
+                                    readerString("content_desc_close_search", "Close search")
+                                }
+                            )
                         }
                     },
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(
+                        // Android benchmark (:247-268): IME Search confirms the
+                        // query — search is live, so dismiss the keyboard.
+                        onSearch = { searchKeyboardController?.hide() }
+                    ),
                     modifier = Modifier
                         .weight(1f)
                         .focusRequester(searchFocusRequester)
@@ -2629,6 +3600,7 @@ private fun SharedMobilePdfReaderTopBar(
                         topTools.forEach { tool ->
                             when (tool) {
                                 PdfReaderTool.DICTIONARY -> SharedMobilePdfTopToolButton(sharedPdfReaderToolLabel(tool), { onNativeAction(SharedMobilePdfNativeAction.DICTIONARY_SETTINGS) }) { Icon(SharedReaderIcons.Dictionary, contentDescription = null) }
+                                PdfReaderTool.SPLIT_VIEW -> if (onOpenSplit != null) SharedMobilePdfTopToolButton(sharedPdfReaderToolLabel(tool), onOpenSplit) { Icon(Icons.Default.OpenInNew, contentDescription = null) }
                                 PdfReaderTool.THEME -> SharedMobilePdfTopToolButton(sharedPdfReaderToolLabel(tool), onTheme) { Icon(Icons.Default.Palette, contentDescription = null) }
                                 PdfReaderTool.BRIGHTNESS -> SharedMobilePdfTopToolButton(sharedPdfReaderToolLabel(tool), onBrightness) { Icon(SharedReaderIcons.Contrast, contentDescription = null) }
                                 PdfReaderTool.LOCK_PANNING -> SharedMobilePdfTopToolButton(sharedPdfReaderToolLabel(tool, isScrollLocked = isScrollLocked), onToggleScrollLock) { Icon(if (isScrollLocked) Icons.Default.Lock else Icons.Default.LockOpen, contentDescription = null) }
@@ -2691,6 +3663,7 @@ private fun SharedMobilePdfReaderTopBar(
                         }
                         when (tool) {
                             PdfReaderTool.DICTIONARY -> SharedMobilePdfOverflowItem(sharedPdfReaderToolLabel(tool), leadingIcon = { Icon(SharedReaderIcons.Dictionary, contentDescription = null) }, onClick = { closeMenuAndRun { onNativeAction(SharedMobilePdfNativeAction.DICTIONARY_SETTINGS) } })
+                            PdfReaderTool.SPLIT_VIEW -> if (onOpenSplit != null) SharedMobilePdfOverflowItem(sharedPdfReaderToolLabel(tool), leadingIcon = { Icon(Icons.Default.OpenInNew, contentDescription = null) }, onClick = { closeMenuAndRun(onOpenSplit) })
                             PdfReaderTool.THEME -> SharedMobilePdfOverflowItem(sharedPdfReaderToolLabel(tool), onClick = { closeMenuAndRun(onTheme) })
                             PdfReaderTool.BRIGHTNESS -> SharedMobilePdfOverflowItem(sharedPdfReaderToolLabel(tool), leadingIcon = { Icon(SharedReaderIcons.Contrast, contentDescription = null) }, onClick = { closeMenuAndRun(onBrightness) })
                             PdfReaderTool.LOCK_PANNING -> SharedMobilePdfOverflowItem(sharedPdfReaderToolLabel(tool, isScrollLocked = isScrollLocked), onClick = { closeMenuAndRun(onToggleScrollLock) })
@@ -2720,6 +3693,14 @@ private fun SharedMobilePdfReaderTopBar(
                         }
                     }
                 }
+                if (toolbarPreferences.isVisible(PdfReaderTool.FILE_INFO)) SharedMobilePdfOverflowItem(
+                    sharedPdfReaderToolTitle(PdfReaderTool.FILE_INFO),
+                    leadingIcon = { Icon(Icons.Default.Info, contentDescription = null) },
+                    onClick = {
+                        showMoreMenu = false
+                        onFileInformation()
+                    }
+                )
                 if (toolbarPreferences.isVisible(PdfReaderTool.OCR_LANGUAGE)) SharedMobilePdfOverflowItem(
                     "${readerString("menu_ocr_language", "OCR Language")}: ${ocrLanguage.displayName}",
                     onClick = { showMoreMenu = false; onOcrLanguage() }
@@ -2740,6 +3721,7 @@ private fun SharedMobilePdfReaderTopBar(
                 if (showReadingModeExpanded && toolbarPreferences.isVisible(PdfReaderTool.READING_MODE)) {
                     SharedMobilePdfOverflowItem(
                         readerString("menu_reading_mode_vertical", "Vertical"),
+                        enabled = !isTtsPlayingOrLoading,
                         trailingIcon = { if (displayMode == PdfDisplayMode.VERTICAL_SCROLL) Icon(Icons.Default.Check, contentDescription = readerString("content_desc_selected", "Selected")) },
                         onClick = {
                             if (displayMode != PdfDisplayMode.VERTICAL_SCROLL) onToggleDisplayMode()
@@ -2748,9 +3730,25 @@ private fun SharedMobilePdfReaderTopBar(
                     )
                     SharedMobilePdfOverflowItem(
                         readerString("menu_reading_mode_paginated", "Paginated (left-to-right)"),
-                        trailingIcon = { if (displayMode == PdfDisplayMode.PAGINATION) Icon(Icons.Default.Check, contentDescription = readerString("content_desc_selected", "Selected")) },
+                        enabled = !isTtsPlayingOrLoading,
+                        trailingIcon = { if (displayMode == PdfDisplayMode.PAGINATION && !rightToLeftPagination) Icon(Icons.Default.Check, contentDescription = readerString("content_desc_selected", "Selected")) },
                         onClick = {
-                            if (displayMode != PdfDisplayMode.PAGINATION) onToggleDisplayMode()
+                            if (displayMode != PdfDisplayMode.PAGINATION || rightToLeftPagination) {
+                                onRightToLeftPaginationChange(false)
+                                if (displayMode != PdfDisplayMode.PAGINATION) onToggleDisplayMode()
+                            }
+                            showMoreMenu = false
+                        }
+                    )
+                    SharedMobilePdfOverflowItem(
+                        readerString("menu_right_to_left_pagination", "Paginated (right-to-left)"),
+                        enabled = !isTtsPlayingOrLoading,
+                        trailingIcon = { if (displayMode == PdfDisplayMode.PAGINATION && rightToLeftPagination) Icon(Icons.Default.Check, contentDescription = readerString("content_desc_selected", "Selected")) },
+                        onClick = {
+                            if (displayMode != PdfDisplayMode.PAGINATION || !rightToLeftPagination) {
+                                onRightToLeftPaginationChange(true)
+                                if (displayMode != PdfDisplayMode.PAGINATION) onToggleDisplayMode()
+                            }
                             showMoreMenu = false
                         }
                     )
@@ -2783,7 +3781,7 @@ private fun SharedMobilePdfReaderTopBar(
                 )
                 if (toolbarPreferences.isVisible(PdfReaderTool.AUTO_SCROLL)) SharedMobilePdfOverflowItem(
                     readerString("menu_auto_scroll", "Auto Scroll"),
-                    enabled = displayMode == PdfDisplayMode.VERTICAL_SCROLL,
+                    enabled = !isTtsPlayingOrLoading && displayMode == PdfDisplayMode.VERTICAL_SCROLL,
                     onClick = {
                         showMoreMenu = false
                         onToggleAutoScroll()
@@ -2794,14 +3792,15 @@ private fun SharedMobilePdfReaderTopBar(
                 val showWordReplacements = PdfReaderTool.TTS_REPLACEMENTS in SharedMobilePdfAvailableTools &&
                     toolbarPreferences.isVisible(PdfReaderTool.TTS_REPLACEMENTS)
                 if (showVoiceSettings || showWordReplacements) SharedMobilePdfOverflowItem(
-                    readerString("menu_tts_voice_settings", "TTS Voice Settings"),
+                    readerString("menu_tts_settings", "TTS Settings"),
                     leadingIcon = { Icon(Icons.Default.GraphicEq, contentDescription = null) },
                     trailingIcon = { Icon(Icons.Default.KeyboardArrowDown, contentDescription = null) },
                     onClick = { showTtsSettingsExpanded = !showTtsSettingsExpanded }
                 )
                 if (showTtsSettingsExpanded) {
                     if (showVoiceSettings) SharedMobilePdfOverflowItem(
-                        readerString("tts_voice_selection", "Voice Selection"),
+                        readerString("menu_tts_voice_settings", "TTS Voice Settings"),
+                        enabled = !isTtsPlayingOrLoading,
                         leadingIcon = { Icon(Icons.Default.GraphicEq, contentDescription = null) },
                         onClick = {
                             showMoreMenu = false
@@ -2872,14 +3871,6 @@ private fun SharedMobilePdfReaderTopBar(
                     if (toolbarPreferences.isVisible(PdfReaderTool.SAVE_COPY)) SharedMobilePdfOverflowItem(sharedPdfReaderToolTitle(PdfReaderTool.SAVE_COPY), leadingIcon = { Icon(Icons.Default.Description, contentDescription = null) }, onClick = { showMoreMenu = false; onNativeAction(SharedMobilePdfNativeAction.SAVE_COPY) })
                     if (toolbarPreferences.isVisible(PdfReaderTool.PRINT)) SharedMobilePdfOverflowItem(sharedPdfReaderToolTitle(PdfReaderTool.PRINT), leadingIcon = { Icon(Icons.Default.Description, contentDescription = null) }, onClick = { showMoreMenu = false; onNativeAction(SharedMobilePdfNativeAction.PRINT) })
                 }
-                if (toolbarPreferences.isVisible(PdfReaderTool.FILE_INFO)) SharedMobilePdfOverflowItem(
-                    sharedPdfReaderToolTitle(PdfReaderTool.FILE_INFO),
-                    leadingIcon = { Icon(Icons.Default.Info, contentDescription = null) },
-                    onClick = {
-                        showMoreMenu = false
-                        onFileInformation()
-                    }
-                )
                 }
             }
         }
@@ -2888,7 +3879,7 @@ private fun SharedMobilePdfReaderTopBar(
 
 @Composable
 private fun sharedPdfReaderToolTitle(tool: PdfReaderTool): String = when (tool) {
-    PdfReaderTool.DICTIONARY -> readerString("tool_external_apps", "External Apps")
+    PdfReaderTool.DICTIONARY -> readerString("content_desc_dictionary_settings", "Dictionary Settings")
     PdfReaderTool.SPLIT_VIEW -> readerString("tool_split_view", "Split View")
     PdfReaderTool.THEME -> readerString("tooltip_theme", "Theme")
     PdfReaderTool.BRIGHTNESS -> readerString("tool_brightness", "Brightness")
@@ -2925,6 +3916,7 @@ private fun sharedPdfReaderToolLabel(
     isScrollLocked: Boolean = false,
     isTtsPlayingOrLoading: Boolean = false,
 ): String = when (tool) {
+    PdfReaderTool.SPLIT_VIEW -> readerString("pdf_split_reader_open", "Open in split reader")
     PdfReaderTool.LOCK_PANNING -> readerString(
         if (isScrollLocked) "tooltip_unlock_pan" else "tooltip_lock_pan",
         if (isScrollLocked) "Unlock Panning" else "Lock Panning",
@@ -2966,6 +3958,7 @@ private fun SharedMobilePdfTopToolButton(
 
 private val SharedMobilePdfAvailableTools = setOf(
     PdfReaderTool.DICTIONARY,
+    PdfReaderTool.SPLIT_VIEW,
     PdfReaderTool.THEME,
     PdfReaderTool.BRIGHTNESS,
     PdfReaderTool.LOCK_PANNING,
@@ -3087,37 +4080,35 @@ private fun SharedMobilePdfToolbarCustomizationSheet(
 
 @Composable
 private fun SharedMobilePdfReflowProgressOverlay(progress: Float) {
+    // Android parity (PdfToolbars.ReflowProgressOverlay): a top strip card
+    // with title, percent and linear progress — non-blocking.
     Surface(
-        modifier = Modifier
-            .fillMaxSize()
-            .clickable(enabled = true, onClick = {}),
-        color = Color.Black.copy(alpha = 0.35f),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(bottomStart = 8.dp, bottomEnd = 8.dp),
+        shadowElevation = 4.dp
     ) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Column(
-                modifier = Modifier
-                    .width(240.dp)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(16.dp))
-                    .padding(24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                 Text(
-                    text = "Generating Text View…",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
+                    text = readerString("generating_text_view", "Generating Text View…"),
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f)
                 )
                 Text(
                     text = "${(progress.coerceIn(0f, 1f) * 100).toInt()}%",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                LinearProgressIndicator(
-                    progress = { progress.coerceIn(0f, 1f) },
-                    modifier = Modifier.fillMaxWidth(),
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
                 )
             }
+            Spacer(Modifier.height(8.dp))
+            LinearProgressIndicator(
+                progress = { progress.coerceIn(0f, 1f) },
+                modifier = Modifier.fillMaxWidth().height(6.dp),
+                trackColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+            )
         }
     }
 }
@@ -3181,176 +4172,14 @@ private fun SharedMobilePdfSystemUiMode.toReaderSystemUiMode(): SystemUiMode = w
     SharedMobilePdfSystemUiMode.ALWAYS_HIDE -> SystemUiMode.HIDDEN
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun SharedMobilePdfVisualOptionsSheet(
-    displayMode: PdfDisplayMode,
-    systemUiMode: SharedMobilePdfSystemUiMode,
-    useTwoPageSpread: Boolean,
-    firstPageStandaloneInSpread: Boolean,
-    rightToLeftPagination: Boolean,
-    showVerticalPageGap: Boolean,
-    showPageNumberOverlay: Boolean,
-    onSystemUiModeChange: (SharedMobilePdfSystemUiMode) -> Unit,
-    onTwoPageSpreadChange: (Boolean) -> Unit,
-    onFirstPageStandaloneChange: (Boolean) -> Unit,
-    onRightToLeftPaginationChange: (Boolean) -> Unit,
-    onShowVerticalPageGapChange: (Boolean) -> Unit,
-    onShowPageNumberOverlayChange: (Boolean) -> Unit,
-    onDismiss: () -> Unit
-) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        containerColor = MaterialTheme.colorScheme.surface
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(max = 680.dp)
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 24.dp, vertical = 8.dp)
-                .padding(bottom = 32.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("Visual Options", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                IconButton(onClick = onDismiss) {
-                    Icon(Icons.Default.Close, contentDescription = readerString("action_close", "Close"))
-                }
-            }
-            Spacer(Modifier.height(16.dp))
-            Text("System UI", style = MaterialTheme.typography.titleMedium)
-            Text(
-                "Choose when the reader toolbars and system controls are visible.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.height(12.dp))
-            SharedMobilePdfSegmentedControl(
-                options = SharedMobilePdfSystemUiMode.entries,
-                selectedOption = systemUiMode,
-                onOptionSelected = onSystemUiModeChange,
-                label = { it.label }
-            )
-            Spacer(Modifier.height(20.dp))
-            HorizontalDivider()
-            Spacer(Modifier.height(12.dp))
-            Text("Page Layout", style = MaterialTheme.typography.titleMedium)
-            if (displayMode == PdfDisplayMode.PAGINATION) {
-                Spacer(Modifier.height(4.dp))
-                Text("PDF Page Spread", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Spacer(Modifier.height(8.dp))
-                SharedMobilePdfSegmentedControl(
-                    options = listOf(false, true),
-                    selectedOption = useTwoPageSpread,
-                    onOptionSelected = onTwoPageSpreadChange,
-                    label = { if (it) "Two Page" else "Single" }
-                )
-                if (useTwoPageSpread) {
-                    SharedMobilePdfVisualOptionSwitchRow(
-                        title = "First Page Alone",
-                        description = "Show the cover by itself before paired pages.",
-                        checked = firstPageStandaloneInSpread,
-                        onCheckedChange = onFirstPageStandaloneChange
-                    )
-                }
-                SharedMobilePdfVisualOptionSwitchRow(
-                    title = "Paginated (right-to-left)",
-                    description = "Use right-to-left page order and edge navigation.",
-                    checked = rightToLeftPagination,
-                    onCheckedChange = onRightToLeftPaginationChange,
-                )
-                Spacer(Modifier.height(12.dp))
-            }
-            SharedMobilePdfVisualOptionSwitchRow(
-                title = "Remove Page Gap",
-                description = "Display adjacent pages without spacing.",
-                checked = !showVerticalPageGap,
-                onCheckedChange = { onShowVerticalPageGapChange(!it) }
-            )
-            SharedMobilePdfVisualOptionSwitchRow(
-                title = "Hide Page Number Overlay",
-                description = "Hide the number shown on each PDF page.",
-                checked = !showPageNumberOverlay,
-                onCheckedChange = { onShowPageNumberOverlayChange(!it) }
-            )
-            }
-        }
-    }
-@Composable
-private fun <T> SharedMobilePdfSegmentedControl(
-    options: List<T>,
-    selectedOption: T,
-    onOptionSelected: (T) -> Unit,
-    label: (T) -> String
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
-            .padding(4.dp),
-        horizontalArrangement = Arrangement.spacedBy(4.dp)
-    ) {
-        options.forEach { option ->
-            val selected = option == selectedOption
-            Box(
-                modifier = Modifier.weight(1f).clip(RoundedCornerShape(8.dp))
-                    .background(if (selected) MaterialTheme.colorScheme.primary else Color.Transparent)
-                    .clickable { onOptionSelected(option) }
-                    .padding(vertical = 10.dp, horizontal = 4.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = label(option),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun SharedMobilePdfVisualOptionSwitchRow(
-    title: String,
-    description: String,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.bodyLarge)
-            Text(description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        Switch(checked = checked, onCheckedChange = onCheckedChange)
-    }
-}
-
 @Composable
 private fun SharedMobilePdfReaderBottomBar(
     state: SharedPdfReaderState,
     tools: List<PdfReaderTool>,
-    isStylusOnlyMode: Boolean = false,
-    onToggleStylusOnlyMode: (() -> Unit)? = null,
     onShowSlider: () -> Unit,
     onOpenDrawer: () -> Unit,
     onSearch: () -> Unit,
     onToolSelected: (PdfInkTool) -> Unit,
-    onColorSelected: (Int) -> Unit,
-    onStrokeWidthChange: (Float) -> Unit,
-    onHighlighterPaletteChange: (SharedPdfHighlighterPalette) -> Unit,
-    onHighlighterSnapChange: (Boolean) -> Unit,
-    onUndo: () -> Unit,
-    onRedo: () -> Unit,
-    onClearPage: () -> Unit,
     ttsState: SharedMobileEpubLocalTtsState,
     isTtsPlayingOrLoading: Boolean,
             onToggleTts: () -> Unit,
@@ -3431,35 +4260,10 @@ private fun SharedMobilePdfReaderBottomBar(
                     }
                 }
             }
-            if (state.selectedTool != PdfInkTool.NONE) {
-                SharedPdfInteractionDock(
-                    isTextSelectionMode = false,
-                    isStylusOnlyMode = isStylusOnlyMode,
-                    onToggleStylusOnlyMode = onToggleStylusOnlyMode,
-                    selectedTool = state.selectedTool,
-                    selectedColor = state.selectedColorArgb,
-                    strokeWidth = state.strokeWidth,
-                    toolConfigs = state.toolConfigs,
-                    penPalette = state.penPalette,
-                    highlighterPalette = state.highlighterPalette,
-                    lastActivePenTool = state.lastActivePenTool,
-                    lastActiveHighlighterTool = state.lastActiveHighlighterTool,
-                    onPanSelected = { onToolSelected(PdfInkTool.NONE) },
-                    onTextSelectionSelected = { onToolSelected(PdfInkTool.NONE) },
-                    onToolSelected = onToolSelected,
-                    onColorSelected = onColorSelected,
-                    onStrokeWidthChange = onStrokeWidthChange,
-                    isHighlighterSnapEnabled = state.isHighlighterSnapEnabled,
-                    onHighlighterSnapChange = onHighlighterSnapChange,
-                    onHighlighterPaletteChange = { onHighlighterPaletteChange(SharedPdfHighlighterPalette(it)) },
-                    onUndo = onUndo,
-                    onRedo = onRedo,
-                    onClearPage = onClearPage,
-                    canUndo = state.annotations.any { it.pageIndex == state.pageIndex },
-                    canRedo = state.canRedoAnnotationEdit,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)
-                )
-            }
+            // Android parity: annotation tools live in the floating
+            // SharedPdfAndroidAnnotationDock overlay (see edit-mode chrome
+            // below), not embedded in the standard bottom bar. The benchmark
+            // hides standard bars entirely while annotating.
         }
     }
 }
@@ -3496,6 +4300,8 @@ private fun SharedMobilePdfBottomToolButton(
 private fun SharedMobilePdfReaderDrawer(
     book: BookItem,
     state: SharedPdfReaderState,
+    activeTheme: ReaderTheme,
+    textureAlpha: Float = 0f,
     tableOfContents: List<PdfTocEntry>,
     onGoToPage: (Int) -> Unit,
     onEditNote: (SharedPdfAnnotation) -> Unit,
@@ -3550,6 +4356,8 @@ private fun SharedMobilePdfReaderDrawer(
                     PdfDrawerSection.PAGES -> SharedMobilePdfPagesDrawerPage(
                         book = book,
                         state = state,
+                        activeTheme = activeTheme,
+                        textureAlpha = textureAlpha,
                         pdfPassword = pdfPassword,
                         onGoToPage = onGoToDisplayPage,
                         modifier = Modifier.fillMaxSize()
@@ -3656,6 +4464,8 @@ private fun SharedMobilePdfTabsDrawerPage(
 private fun SharedMobilePdfPagesDrawerPage(
     book: BookItem,
     state: SharedPdfReaderState,
+    activeTheme: ReaderTheme,
+    textureAlpha: Float = 0f,
     pdfPassword: String?,
     onGoToPage: (Int) -> Unit,
     modifier: Modifier = Modifier
@@ -3665,6 +4475,14 @@ private fun SharedMobilePdfPagesDrawerPage(
     val currentRowIndex = sharedPdfThumbnailRowFor(state.pageIndex)
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
+    val pageBackground = sharedMobilePdfPageBackground(activeTheme)
+    val effectiveReverseColorMode = if (state.themeId == "reverse") {
+        state.reverseColorMode
+    } else {
+        PdfReverseColorMode.RGB
+    }
+    val textureBitmap = sharedMobilePdfTextureBitmap(activeTheme)
+    val textureBlendMode = sharedMobilePdfThumbnailBlendMode(activeTheme)
     Column(modifier.fillMaxSize()) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
@@ -3706,7 +4524,7 @@ private fun SharedMobilePdfPagesDrawerPage(
                                     .weight(1f)
                                     .aspectRatio(0.707f)
                                     .background(
-                                        MaterialTheme.colorScheme.surfaceVariant,
+                                        pageBackground,
                                         RoundedCornerShape(4.dp)
                                     )
                                     .border(
@@ -3714,6 +4532,7 @@ private fun SharedMobilePdfPagesDrawerPage(
                                         color = if (isCurrent) MaterialTheme.colorScheme.primary else Color.Black.copy(alpha = 0.1f),
                                         shape = RoundedCornerShape(4.dp)
                                     )
+                                    .clip(RoundedCornerShape(4.dp))
                                     .clickable { onGoToPage(pageIdx) },
                                 contentAlignment = Alignment.Center
                             ) {
@@ -3722,19 +4541,36 @@ private fun SharedMobilePdfPagesDrawerPage(
                                         book = book,
                                         pageIndex = pdfPage,
                                         password = pdfPassword,
-                                        reverseColorMode = if (state.themeId == "reverse") {
-                                            state.reverseColorMode
-                                        } else {
-                                            PdfReverseColorMode.RGB
-                                        },
+                                        reverseColorMode = effectiveReverseColorMode,
                                         preserveImageColors = state.themeId == "reverse" && state.preserveImageColors,
                                     )
                                     thumbnail.bitmap?.let { bitmap ->
                                         Image(
                                             bitmap = bitmap,
                                             contentDescription = readerString("desktop_pdf_page_content_desc", "PDF page %1\$d", pageIdx + 1),
+                                            contentScale = ContentScale.Fit,
+                                            colorFilter = sharedMobilePdfThumbnailColorFilter(
+                                                activeTheme,
+                                                effectiveReverseColorMode,
+                                                thumbnail.rasterizedReverseColorMode
+                                            ),
                                             modifier = Modifier.fillMaxSize()
                                         )
+                                        if (textureBitmap != null && textureAlpha > 0f) {
+                                            Canvas(modifier = Modifier.fillMaxSize()) {
+                                                drawRect(
+                                                    brush = ShaderBrush(
+                                                        ImageShader(
+                                                            textureBitmap,
+                                                            TileMode.Repeated,
+                                                            TileMode.Repeated
+                                                        )
+                                                    ),
+                                                    alpha = textureAlpha.coerceIn(0f, 1f),
+                                                    blendMode = textureBlendMode
+                                                )
+                                            }
+                                        }
                                     }
                                 }
                                 Text(

@@ -17,6 +17,7 @@ import com.aryan.reader.paginatedreader.SemanticSpan
 import com.aryan.reader.paginatedreader.SemanticTable
 import com.aryan.reader.paginatedreader.SemanticTableCell
 import com.aryan.reader.shared.HighlightColor
+import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.ReaderLocator
 import com.aryan.reader.shared.ReaderHighlightPalette
 import com.aryan.reader.shared.ReaderTexture
@@ -558,7 +559,7 @@ class ReaderHtmlDocumentBuilderTest {
 
         assertTrue(html.contains("--reader-scrollbar-track: color-mix(in srgb, var(--reader-bg)"))
         assertTrue(html.contains("--reader-scrollbar-thumb: color-mix(in srgb, var(--reader-fg)"))
-        assertTrue(html.contains("""<html class="reader-vertical-root">"""))
+        assertTrue(html.contains("""<html lang="en" class="reader-vertical-root">"""))
         assertTrue(
             Regex(
                 "html\\.reader-vertical-root \\{\\s*" +
@@ -1014,6 +1015,59 @@ class ReaderHtmlDocumentBuilderTest {
         assertTrue(html.contains("document.caretRangeFromPoint"))
         assertTrue(html.contains("wrapRangeTextSegments(range"))
         assertFalse(html.contains("surroundContents"))
+    }
+
+    @Test
+    fun `selection menu renders highlight style row matching android benchmark`() {
+        val html = ReaderHtmlDocumentBuilder.verticalDocument(
+            book = repeatedWordBook("alpha beta"),
+            settings = ReaderSettings(readingMode = ReaderReadingMode.VERTICAL)
+        )
+
+        assertEquals(4, Regex("""class="reader-selection-style[" ]""").findAll(html).count())
+        HighlightStyle.entries.forEach { style ->
+            assertTrue(html.contains("""data-style-id="${style.id}""""))
+        }
+        assertTrue(html.contains("""data-action="select-style""""))
+        assertTrue(html.contains("""class="reader-selection-style selected""""))
+    }
+
+    @Test
+    fun `selection script trims whitespace boundaries and applies chosen style`() {
+        val script = readerHtmlSelectionScript()
+
+        assertTrue(script.contains("function trimRangeWhitespace(range)"))
+        assertTrue(script.contains("""/^\s$/.test(startValue.charAt(startOffset))"""))
+        assertTrue(script.contains("readerSelectedHighlightStyleId = 'background'"))
+        assertTrue(script.contains("data-reader-highlight-style"))
+        assertTrue(script.contains("function readerHighlightStyleDeclarations(styleId, colorCss)"))
+        assertTrue(script.contains("text-decoration-line: underline !important"))
+        assertTrue(script.contains("text-decoration-line: line-through !important"))
+        assertTrue(script.contains("text-decoration-style: ' + (style === 'wavy_underline' ? 'wavy' : 'solid') + ' !important"))
+    }
+
+    @Test
+    fun `annotation script selects style, sends styleId payloads and uses trimmed range`() {
+        val script = readerHtmlAnnotationScript()
+
+        assertTrue(script.contains("if (action === 'select-style')"))
+        assertTrue(script.contains("readerSelectedHighlightStyleId = target.getAttribute('data-style-id') || 'background';"))
+        assertTrue(script.contains("syncReaderStyleSelection()"))
+        assertTrue(script.contains("var range = trimRangeWhitespace(selection.getRangeAt(0)) || selection.getRangeAt(0);"))
+        assertTrue(script.contains("var styleId = readerSelectedHighlightStyle();"))
+        assertTrue(script.contains("styleId: styleId,"))
+        assertTrue(script.contains("highlight.colorArgb, highlight.style || 'background'"))
+    }
+
+    @Test
+    fun `apply highlights keeps already painted markers instead of re-deriving them`() {
+        val script = readerHtmlAnnotationScript()
+
+        assertTrue(script.contains("function markerMatchesHighlight(marker, highlight)"))
+        assertTrue(script.contains("incomingIds[highlight.id] = highlight;"))
+        assertTrue(script.contains("marker.setAttribute('data-reader-highlight-id', highlight.id)"))
+        assertTrue(script.contains("web_apply_skip_painted"))
+        assertTrue(script.contains("while (marker.firstChild) parent.insertBefore(marker.firstChild, marker);"))
     }
 
     @Test

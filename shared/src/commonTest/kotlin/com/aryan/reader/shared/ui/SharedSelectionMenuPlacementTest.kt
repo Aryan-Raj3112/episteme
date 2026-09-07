@@ -78,6 +78,37 @@ class SharedSelectionMenuPlacementTest {
         assertEquals(30, result.x)
         assertEquals(16, result.y)
     }
+
+    @Test
+    fun `maps canvas anchor to window without scale`() {
+        val result = sharedPdfSelectionWindowRect(
+            anchor = SharedSelectionMenuRect(left = 10f, top = 20f, right = 50f, bottom = 40f),
+            canvasWidth = 100,
+            canvasHeight = 200,
+            overlayLeft = 0,
+            overlayTop = 0,
+            overlayWidth = 100,
+            overlayHeight = 200,
+        )
+
+        assertEquals(SharedSelectionMenuRect(left = 10f, top = 20f, right = 50f, bottom = 40f), result)
+    }
+
+    @Test
+    fun `maps canvas anchor to window when zoomed and panned`() {
+        // Canvas 100x200 at 2x zoom, overlay origin panned to (30, 40).
+        val result = sharedPdfSelectionWindowRect(
+            anchor = SharedSelectionMenuRect(left = 10f, top = 20f, right = 50f, bottom = 40f),
+            canvasWidth = 100,
+            canvasHeight = 200,
+            overlayLeft = 30,
+            overlayTop = 40,
+            overlayWidth = 200,
+            overlayHeight = 400,
+        )
+
+        assertEquals(SharedSelectionMenuRect(left = 50f, top = 80f, right = 130f, bottom = 120f), result)
+    }
 }
 
 private fun SharedSelectionMenuPlacementResult.rect(

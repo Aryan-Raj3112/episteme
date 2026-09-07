@@ -156,6 +156,9 @@ import com.aryan.reader.shared.currentTimestamp
 import com.aryan.reader.shared.pdf.PdfAnnotationKind
 import com.aryan.reader.shared.pdf.PdfReverseColorMode
 import com.aryan.reader.shared.pdf.PdfInkTool
+import com.aryan.reader.shared.pdf.SharedPdfAnnotationDefaults
+import com.aryan.reader.shared.pdf.SharedPdfInkRenderer
+import com.aryan.reader.pdf.resolveEraserStrokeWidth
 import com.aryan.reader.shared.pdf.sharedPdfIsInkDownAllowed
 import com.aryan.reader.shared.pdf.sharedPdfIsEraserOverride
 import com.aryan.reader.shared.sharedPdfStylusBarrelPressed
@@ -218,6 +221,21 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import org.jetbrains.compose.resources.imageResource
 import kotlin.math.roundToInt
 import kotlin.time.TimeSource
+
+internal fun sharedMobilePdfThumbnailColorFilter(
+    theme: ReaderTheme,
+    reverseColorMode: PdfReverseColorMode = PdfReverseColorMode.RGB,
+    rasterizedReverseColorMode: PdfReverseColorMode? = null,
+): ColorFilter? {
+    // Mirrors full-page rendering: a baked Okular transform (non-RGB reverse, or
+    // RGB with preserved image rects) must not get a second Compose filter.
+    if (rasterizedReverseColorMode != null) return null
+    return sharedMobilePdfColorFilter(theme, reverseColorMode)
+}
+
+internal fun sharedMobilePdfThumbnailBlendMode(theme: ReaderTheme): BlendMode {
+    return if (theme.isDark || theme.id == "reverse") BlendMode.Screen else BlendMode.Multiply
+}
 
 @Composable
 internal fun sharedMobilePdfViewerBackground(theme: ReaderTheme, displayMode: PdfDisplayMode): Color {
@@ -689,7 +707,10 @@ internal fun SharedMobilePdfVerticalPages(
     showAllTextHighlights: Boolean = false,
     onAllTextHighlightsLoadingChange: (Boolean) -> Unit = {},
     onToggleChrome: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    eraserStrokeWidth: Float = SharedPdfAnnotationDefaults.configFor(PdfInkTool.ERASER).strokeWidth,
+    onInkStrokeStart: (Int) -> Boolean = { false },
+    onEraseAnnotations: (Int, Set<String>) -> Unit = { _, _ -> }
 ) {
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = state.pageIndex.coerceIn(0, pageCount - 1))
     val scope = rememberCoroutineScope()
@@ -701,6 +722,9 @@ internal fun SharedMobilePdfVerticalPages(
     var viewportSize by remember(book.id) { mutableStateOf(IntSize.Zero) }
     var musicianLeftHoldProgress by remember(book.id) { mutableStateOf(0f) }
     var musicianRightHoldProgress by remember(book.id) { mutableStateOf(0f) }
+    // Android parity (PdfPageComposable activeDraggingHandle): zoom, pan and
+    // list scroll are disabled while a text-selection handle drag is active.
+    var selectionDragActive by remember(book.id) { mutableStateOf(false) }
     LaunchedEffect(isListDragged) {
         if (isListDragged && autoScrollPlaying) onAutoScrollInteraction(300L)
     }
@@ -757,7 +781,7 @@ internal fun SharedMobilePdfVerticalPages(
         SharedMobilePdfZoomViewport(
             camera = zoomCamera,
             onCameraChanged = onZoomCameraChanged,
-            zoomEnabled = userScrollEnabled && state.selectedTool == PdfInkTool.NONE,
+            zoomEnabled = userScrollEnabled && state.selectedTool == PdfInkTool.NONE && !selectionDragActive,
             tapGesturesEnabled = state.selectedTool == PdfInkTool.NONE || state.selectedTool == PdfInkTool.TEXT || isStylusOnlyMode,
             maxScale = PDF_MAX_ZOOM_SCALE,
             verticalDocumentMode = true,
@@ -767,7 +791,7 @@ internal fun SharedMobilePdfVerticalPages(
             val zoomScale = zoomCamera.scale
             LazyColumn(
                 state = listState,
-                userScrollEnabled = userScrollEnabled && state.selectedTool == PdfInkTool.NONE,
+                userScrollEnabled = userScrollEnabled && state.selectedTool == PdfInkTool.NONE && !selectionDragActive,
                 modifier = Modifier.fillMaxSize().onSizeChanged { viewportSize = it },
                 contentPadding = PaddingValues(0.dp),
                 verticalArrangement = Arrangement.spacedBy(if (showPageGap) 8.dp else 0.dp)
@@ -842,6 +866,10 @@ internal fun SharedMobilePdfVerticalPages(
                         onFinishInkStroke = onFinishInkStroke,
                             showAllTextHighlights = showAllTextHighlights,
                             onAllTextHighlightsLoadingChange = onAllTextHighlightsLoadingChange,
+                            onSelectionDragActiveChange = { selectionDragActive = it },
+                            eraserStrokeWidth = eraserStrokeWidth,
+                            onInkStrokeStart = onInkStrokeStart,
+                            onEraseAnnotations = onEraseAnnotations,
                             modifier = Modifier.fillMaxWidth()
                         )
                     }
@@ -1009,13 +1037,18 @@ internal fun SharedMobilePdfPaginatedPages(
     onFinishInkStroke: (Int, Boolean) -> Unit,
     showAllTextHighlights: Boolean = false,
     onAllTextHighlightsLoadingChange: (Boolean) -> Unit = {},
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    eraserStrokeWidth: Float = SharedPdfAnnotationDefaults.configFor(PdfInkTool.ERASER).strokeWidth,
+    onInkStrokeStart: (Int) -> Boolean = { false },
+    onEraseAnnotations: (Int, Set<String>) -> Unit = { _, _ -> }
 ) {
     val scope = rememberCoroutineScope()
     var paginationViewportSize by remember(book.id) { mutableStateOf(IntSize.Zero) }
     var pagerWindowRect by remember(book.id) { mutableStateOf<Rect?>(null) }
     val pageSurfaceWindowRects = remember(book.id) { mutableStateMapOf<Int, Rect>() }
     var textDrag by remember(book.id) { mutableStateOf<SharedPdfTextDragState?>(null) }
+    // Android parity: zoom is disabled while a text-selection handle drag runs.
+    var paginatedSelectionDragActive by remember(book.id) { mutableStateOf(false) }
     val spreadStarts = remember(pageCount, useTwoPageSpread, firstPageStandaloneInSpread) {
         sharedMobilePdfSpreadStarts(pageCount, useTwoPageSpread, firstPageStandaloneInSpread)
     }
@@ -1218,7 +1251,7 @@ internal fun SharedMobilePdfPaginatedPages(
         SharedMobilePdfZoomViewport(
             camera = zoomCamera,
             onCameraChanged = onZoomCameraChanged,
-            zoomEnabled = userScrollEnabled && state.selectedTool == PdfInkTool.NONE,
+            zoomEnabled = userScrollEnabled && state.selectedTool == PdfInkTool.NONE && !paginatedSelectionDragActive,
             tapGesturesEnabled = state.selectedTool == PdfInkTool.NONE || state.selectedTool == PdfInkTool.TEXT || isStylusOnlyMode,
             maxScale = PDF_MAX_ZOOM_SCALE,
             onSingleTap = { offset ->
@@ -1357,6 +1390,10 @@ internal fun SharedMobilePdfPaginatedPages(
                                     onFinishInkStroke = onFinishInkStroke,
                                     showAllTextHighlights = showAllTextHighlights,
                                     onAllTextHighlightsLoadingChange = onAllTextHighlightsLoadingChange,
+                                    onSelectionDragActiveChange = { paginatedSelectionDragActive = it },
+                                    eraserStrokeWidth = eraserStrokeWidth,
+                                    onInkStrokeStart = onInkStrokeStart,
+                                    onEraseAnnotations = onEraseAnnotations,
                                     modifier = Modifier.size(fittedWidth, fittedHeight).then(turnSheetModifier)
                                 )
                             }
@@ -1759,7 +1796,7 @@ internal fun SharedMobilePdfAutoScrollControls(
     }
 }
 
-private enum class SharedPdfTtsOverlaySize { LARGE, MEDIUM, SMALL }
+enum class SharedPdfTtsOverlaySize { LARGE, MEDIUM, SMALL }
 
 @Composable
 internal fun SharedMobilePdfTtsControls(
@@ -1773,9 +1810,10 @@ internal fun SharedMobilePdfTtsControls(
     onNextPage: () -> Unit,
     onLocate: () -> Unit,
     onStop: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    overlaySize: SharedPdfTtsOverlaySize = SharedPdfTtsOverlaySize.LARGE,
+    onOverlaySizeChange: (SharedPdfTtsOverlaySize) -> Unit = {},
 ) {
-    var overlaySize by remember { mutableStateOf(SharedPdfTtsOverlaySize.LARGE) }
     var rate by remember(tts.speechRate) { mutableStateOf(tts.speechRate) }
     var pitch by remember(tts.speechPitch) { mutableStateOf(tts.speechPitch) }
     val isSpeaking = tts.state == SharedMobileEpubLocalTtsState.SPEAKING
@@ -1805,10 +1843,10 @@ internal fun SharedMobilePdfTtsControls(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    IconButton(onClick = { overlaySize = SharedPdfTtsOverlaySize.LARGE }, modifier = Modifier.size(36.dp)) {
+                    IconButton(onClick = { onOverlaySizeChange(SharedPdfTtsOverlaySize.LARGE) }, modifier = Modifier.size(36.dp)) {
                         Icon(Icons.Default.KeyboardArrowUp, "Expand TTS player", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    IconButton(onClick = { overlaySize = SharedPdfTtsOverlaySize.MEDIUM }, modifier = Modifier.size(36.dp)) {
+                    IconButton(onClick = { onOverlaySizeChange(SharedPdfTtsOverlaySize.MEDIUM) }, modifier = Modifier.size(36.dp)) {
                         Icon(Icons.Default.KeyboardArrowLeft, "Expand TTS player", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     PdfTtsPlayButton(isSpeaking, isPreparing, onPauseResume, 36.dp, 20.dp)
@@ -1832,10 +1870,10 @@ internal fun SharedMobilePdfTtsControls(
                     IconButton(onClick = onNextPage, enabled = canNext, modifier = Modifier.size(40.dp)) {
                         Icon(Icons.Default.SkipNext, "Next reading part")
                     }
-                    IconButton(onClick = { overlaySize = SharedPdfTtsOverlaySize.LARGE }, modifier = Modifier.size(34.dp)) {
+                    IconButton(onClick = { onOverlaySizeChange(SharedPdfTtsOverlaySize.LARGE) }, modifier = Modifier.size(34.dp)) {
                         Icon(Icons.Default.KeyboardArrowUp, "Expand TTS player", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    IconButton(onClick = { overlaySize = SharedPdfTtsOverlaySize.SMALL }, modifier = Modifier.size(34.dp)) {
+                    IconButton(onClick = { onOverlaySizeChange(SharedPdfTtsOverlaySize.SMALL) }, modifier = Modifier.size(34.dp)) {
                         Icon(Icons.Default.KeyboardArrowRight, "Collapse TTS player", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
@@ -1850,10 +1888,10 @@ internal fun SharedMobilePdfTtsControls(
                         IconButton(onClick = onLocate, modifier = Modifier.size(32.dp)) {
                             Icon(Icons.Default.PushPin, "Locate current part", modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
-                        IconButton(onClick = { overlaySize = SharedPdfTtsOverlaySize.MEDIUM }, modifier = Modifier.size(32.dp)) {
+                        IconButton(onClick = { onOverlaySizeChange(SharedPdfTtsOverlaySize.MEDIUM) }, modifier = Modifier.size(32.dp)) {
                             Icon(Icons.Default.KeyboardArrowDown, "Collapse TTS player", modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
-                        IconButton(onClick = { overlaySize = SharedPdfTtsOverlaySize.SMALL }, modifier = Modifier.size(32.dp)) {
+                        IconButton(onClick = { onOverlaySizeChange(SharedPdfTtsOverlaySize.SMALL) }, modifier = Modifier.size(32.dp)) {
                             Icon(Icons.Default.KeyboardArrowRight, "Collapse TTS player", modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         IconButton(onClick = onStop, modifier = Modifier.size(32.dp)) {
@@ -2103,12 +2141,22 @@ internal fun SharedMobilePdfPageSurface(
     onFinishInkStroke: (Int, Boolean) -> Unit,
     showAllTextHighlights: Boolean = false,
     onAllTextHighlightsLoadingChange: (Boolean) -> Unit = {},
-    modifier: Modifier = Modifier
+    onSelectionDragActiveChange: (Boolean) -> Unit = {},
+    modifier: Modifier = Modifier,
+    eraserStrokeWidth: Float = SharedPdfAnnotationDefaults.configFor(PdfInkTool.ERASER).strokeWidth,
+    onInkStrokeStart: (Int) -> Boolean = { false },
+    onEraseAnnotations: (Int, Set<String>) -> Unit = { _, _ -> }
 ) {
     var localCanvasSize by remember(pageIndex) { mutableStateOf(IntSize.Zero) }
     var pageSurfaceWindowRect by remember(pageIndex) { mutableStateOf(Rect.Zero) }
     var isEraserOverrideActive by remember(pageIndex) { mutableStateOf(false) }
     var eraserOverridePosition by remember(pageIndex) { mutableStateOf<Offset?>(null) }
+    // Latest callbacks: the ink pointerInput block below is keyed on tool /
+    // canvas / page (NOT on these lambdas) so an in-flight stroke survives the
+    // recompositions caused by live eraser removal; updated-state reads keep
+    // the gesture calling the current screen handlers (not stale captures).
+    val latestOnInkStrokeStart by rememberUpdatedState(onInkStrokeStart)
+    val latestOnEraseAnnotations by rememberUpdatedState(onEraseAnnotations)
     var visiblePageBounds by remember(pageIndex) { mutableStateOf<PdfPageBounds?>(null) }
     val textSession = rememberPdfTextPageSession(book, pageIndex, pdfPassword)
     var allTextHighlightBounds by remember(pageIndex) { mutableStateOf<List<PdfPageBounds>>(emptyList()) }
@@ -2203,6 +2251,31 @@ internal fun SharedMobilePdfPageSurface(
                         var committed = false
                         var dragSum = Offset.Zero
                         var lastPoint: Offset? = null
+                        var lastEraserPoint: PdfPagePoint? = null
+                        // Android parity (PdfViewerScreen onDrawStartStable /
+                        // onDrawStable): the eraser deletes ink live during the
+                        // drag via segment hit-testing, tracking the previous
+                        // point exactly like the benchmark's lastEraserPoint.
+                        fun eraseAtFinger(position: Offset, previous: PdfPagePoint?) {
+                            if (localCanvasSize.width <= 0 || localCanvasSize.height <= 0) return
+                            val point = position.toSharedMobilePdfPoint(localCanvasSize)
+                            val width = resolveEraserStrokeWidth(eraserOverride, strokeWidth, eraserStrokeWidth)
+                            val hits = annotations.filter { it.pageIndex == pageIndex && it.kind == PdfAnnotationKind.INK }
+                                .filter {
+                                    SharedPdfInkRenderer.isAnnotationHit(
+                                        it,
+                                        point,
+                                        localCanvasSize.width.toFloat(),
+                                        pageRender.aspectRatio,
+                                        width,
+                                        previous
+                                    )
+                                }
+                                .map { it.id }
+                                .toSet()
+                            if (hits.isNotEmpty()) latestOnEraseAnnotations(pageIndex, hits)
+                            lastEraserPoint = point
+                        }
                         if (eraserOverride && localCanvasSize.width > 0 && localCanvasSize.height > 0) {
                             eraserOverridePosition = down.position
                             isEraserOverrideActive = true
@@ -2245,38 +2318,67 @@ internal fun SharedMobilePdfPageSurface(
                                         dragSum += change.positionChange()
                                         if (dragSum.getDistance() > touchSlop) {
                                             dragStarted = true
-                                            (activeStroke as? MutableList<PdfPagePoint>)?.clear()
-                                            if (localCanvasSize.width > 0 && localCanvasSize.height > 0) {
-                                                val startPoint = lastPoint ?: change.position
-                                                (activeStroke as? MutableList<PdfPagePoint>)?.add(startPoint.toSharedMobilePdfPoint(localCanvasSize))
-                                                if (eraserOverride) eraserOverridePosition = startPoint
+                                            // Android parity: starting a stroke
+                                            // dismisses the tool-settings popup
+                                            // and that first touch is swallowed
+                                            // (no draw/erase), matching
+                                            // onDrawStartStable's
+                                            // `if (showToolSettings)` branch.
+                                            if (latestOnInkStrokeStart(pageIndex)) {
+                                                (activeStroke as? MutableList<PdfPagePoint>)?.clear()
+                                                return@awaitEachGesture
                                             }
-                                            change.consume()
+                                            val strokeEraser = eraserOverride || selectedTool == PdfInkTool.ERASER
+                                            if (strokeEraser) {
+                                                if (localCanvasSize.width > 0 && localCanvasSize.height > 0) {
+                                                    val startPoint = lastPoint ?: change.position
+                                                    eraseAtFinger(startPoint, null)
+                                                    eraserOverridePosition = startPoint
+                                                }
+                                                change.consume()
+                                            } else {
+                                                (activeStroke as? MutableList<PdfPagePoint>)?.clear()
+                                                if (localCanvasSize.width > 0 && localCanvasSize.height > 0) {
+                                                    val startPoint = lastPoint ?: change.position
+                                                    (activeStroke as? MutableList<PdfPagePoint>)?.add(startPoint.toSharedMobilePdfPoint(localCanvasSize))
+                                                    if (eraserOverride) eraserOverridePosition = startPoint
+                                                }
+                                                change.consume()
+                                            }
                                         }
                                     }
                                     lastPoint = change.position
                                 } else {
-                                    if (localCanvasSize.width > 0 && localCanvasSize.height > 0) {
-                                        val mutableStroke = activeStroke as? MutableList<PdfPagePoint>
-                                        if (mutableStroke != null) {
-                                            val point = change.position.toSharedMobilePdfPoint(localCanvasSize)
-                                            val snapped = if (
-                                                highlighterSnapEnabled && selectedTool.isDesktopHighlighter &&
-                                                !eraserOverride
-                                            ) {
-                                                sharedPdfSnapHighlighterPoint(
-                                                    pageAspectRatio = pageRender.aspectRatio,
-                                                    currentPoint = point,
-                                                    startPoint = mutableStroke.firstOrNull(),
-                                                )
-                                            } else {
-                                                point
-                                            }
-                                            mutableStroke.add(snapped)
+                                    val strokeEraser = eraserOverride || selectedTool == PdfInkTool.ERASER
+                                    if (strokeEraser) {
+                                        if (localCanvasSize.width > 0 && localCanvasSize.height > 0) {
+                                            eraseAtFinger(change.position, lastEraserPoint)
+                                            eraserOverridePosition = change.position
                                         }
-                                        if (eraserOverride) eraserOverridePosition = change.position
+                                        change.consume()
+                                    } else {
+                                        if (localCanvasSize.width > 0 && localCanvasSize.height > 0) {
+                                            val mutableStroke = activeStroke as? MutableList<PdfPagePoint>
+                                            if (mutableStroke != null) {
+                                                val point = change.position.toSharedMobilePdfPoint(localCanvasSize)
+                                                val snapped = if (
+                                                    highlighterSnapEnabled && selectedTool.isDesktopHighlighter &&
+                                                    !eraserOverride
+                                                ) {
+                                                    sharedPdfSnapHighlighterPoint(
+                                                        pageAspectRatio = pageRender.aspectRatio,
+                                                        currentPoint = point,
+                                                        startPoint = mutableStroke.firstOrNull(),
+                                                    )
+                                                } else {
+                                                    point
+                                                }
+                                                mutableStroke.add(snapped)
+                                            }
+                                            if (eraserOverride) eraserOverridePosition = change.position
+                                        }
+                                        change.consume()
                                     }
-                                    change.consume()
                                 }
                             }
                         } finally {
@@ -2431,7 +2533,11 @@ internal fun SharedMobilePdfPageSurface(
                 activeStrokeColorArgb = selectedColorArgb,
                 activeStrokeWidth = strokeWidth,
                 eraserPosition = eraserOverridePosition,
-                showEraserIndicator = isEraserOverrideActive
+                // Android parity (PdfPageRendering eraser indicator): the
+                // circle follows the finger for the ERASER tool as well as
+                // the stylus override, sized by the resolved eraser width.
+                showEraserIndicator = isEraserOverrideActive || selectedTool == PdfInkTool.ERASER,
+                eraserStrokeWidth = resolveEraserStrokeWidth(isEraserOverrideActive, strokeWidth, eraserStrokeWidth)
             )
             SharedMobilePdfEmbeddedAnnotationLayer(embeddedAnnotations, localCanvasSize)
             textDraft?.takeIf { it.pageIndex == pageIndex }?.let { draft ->
@@ -2485,6 +2591,7 @@ internal fun SharedMobilePdfPageSurface(
                 onReadAloud = { charIndex -> onReadAloud(pageIndex, charIndex) },
                 onAiDefine = onAiDefine,
                 onClipboardError = onClipboardError,
+                onSelectionDragActiveChange = onSelectionDragActiveChange,
                 modifier = Modifier.fillMaxSize()
             )
             if (showPageNumberOverlay) {

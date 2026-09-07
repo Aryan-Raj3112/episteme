@@ -5,6 +5,13 @@ import androidx.compose.ui.text.ParagraphStyle
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextMeasurer
+import androidx.compose.ui.text.Placeholder
+import androidx.compose.ui.text.PlaceholderVerticalAlign
+import androidx.compose.foundation.text.InlineTextContent
+import androidx.compose.foundation.text.appendInlineContent
+import com.aryan.reader.paginatedreader.MATH_PLACEHOLDER_CHAR
+import com.aryan.reader.shared.ui.sharedNativeInlineMathId
+import com.aryan.reader.shared.ui.sharedNativeInlineMathMetrics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
@@ -451,7 +458,7 @@ class SharedMeasuredEpubPaginator(
             ?.let { lineHeight -> with(density) { lineHeight.toPx().roundToInt() } }
             ?: with(density) { (settings.fontSize * settings.lineSpacing).sp.toPx().roundToInt() }
         if (annotated.text.isBlank()) return minimumLineHeight.coerceAtLeast(1)
-        return measureTextLayout(annotated, style, widthPx)
+        return measureTextLayout(annotated, style, widthPx, block.mathPlaceholderRanges(style.fontSize.value))
             .size
             .height
             .let { height ->
@@ -463,13 +470,15 @@ class SharedMeasuredEpubPaginator(
     private suspend fun measureTextLayout(
         text: AnnotatedString,
         style: TextStyle,
-        widthPx: Int
+        widthPx: Int,
+        placeholders: List<AnnotatedString.Range<Placeholder>> = emptyList()
     ): TextLayoutResult {
         currentCoroutineContext().ensureActive()
         return withContext(Dispatchers.Main) {
             textMeasurer.measure(
                 text = text,
                 style = style,
+                placeholders = placeholders,
                 constraints = Constraints(maxWidth = widthPx.coerceAtLeast(1))
             )
         }
@@ -733,7 +742,8 @@ class SharedMeasuredEpubPaginator(
         val layoutResult = measureTextLayout(
             text = block.toAnnotatedString(style.fontSize.value, style.textAlign),
             style = style,
-            widthPx = contentWidth
+            widthPx = contentWidth,
+            placeholders = block.mathPlaceholderRanges(style.fontSize.value)
         )
         if (layoutResult.size.height <= availableTextHeight) return null
         // break-inside:avoid is best-effort; a block taller than a full page can never be
@@ -1254,9 +1264,43 @@ private fun SemanticTextBlock.toAnnotatedString(
     blockFontSizeSp: Float,
     fallbackTextAlign: TextAlign
 ): AnnotatedString {
+    val mathSpans = spans.filter { it.isInlineMath }
+    val inlineContents: Map<String, InlineTextContent> = if (mathSpans.isEmpty()) {
+        emptyMap()
+    } else {
+        buildMap<String, InlineTextContent> {
+            spans.forEachIndexed { index, span ->
+                val svg = span.mathSvg?.takeIf(String::isNotBlank) ?: return@forEachIndexed
+                val metrics = svg.sharedNativeInlineMathMetrics(blockFontSizeSp)
+                put(
+                    sharedNativeInlineMathId(index),
+                    InlineTextContent(
+                        placeholder = Placeholder(
+                            width = metrics.widthSp.sp,
+                            height = metrics.heightSp.sp,
+                            placeholderVerticalAlign = PlaceholderVerticalAlign.TextCenter
+                        )
+                    ) { }
+                )
+            }
+        }
+    }
     return buildAnnotatedString {
         withStyle(toMeasurementParagraphStyleForPagination(fallbackTextAlign)) {
-            append(text)
+            if (mathSpans.isEmpty()) {
+                append(text)
+            } else {
+                var cursor = 0
+                spans.forEachIndexed { index, span ->
+                    if (!span.isInlineMath) return@forEachIndexed
+                    val start = span.start.coerceIn(0, text.length)
+                    val end = span.end.coerceIn(start, text.length)
+                    if (start > cursor) append(text, cursor, start)
+                    appendInlineContent(sharedNativeInlineMathId(index), MATH_PLACEHOLDER_CHAR)
+                    cursor = end.coerceAtLeast(cursor)
+                }
+                if (cursor < text.length) append(text, cursor, text.length)
+            }
         }
         spans.forEach { span ->
             val start = span.start.coerceIn(0, text.length)
@@ -1646,3 +1690,25 @@ private fun String.logPreview(maxLength: Int = 96): String {
 
 private const val EpubPageFitTailBlockCount = 4
 private const val MeasuredListItemMarkerAreaWidthDp = 32
+
+/** Placeholder geometry list matching the render-side inline math contents. */
+internal fun SemanticTextBlock.mathPlaceholderRanges(
+    blockFontSizeSp: Float
+): List<AnnotatedString.Range<Placeholder>> {
+    if (spans.none { it.isInlineMath }) return emptyList()
+    return spans.mapIndexedNotNull { index, span ->
+        val svg = span.mathSvg?.takeIf(String::isNotBlank) ?: return@mapIndexedNotNull null
+        val metrics = svg.sharedNativeInlineMathMetrics(blockFontSizeSp)
+        val start = span.start.coerceIn(0, text.length)
+        val end = span.end.coerceIn(start, text.length)
+        AnnotatedString.Range(
+            Placeholder(
+                width = metrics.widthSp.sp,
+                height = metrics.heightSp.sp,
+                placeholderVerticalAlign = PlaceholderVerticalAlign.TextCenter
+            ),
+            start,
+            end
+        )
+    }
+}

@@ -588,6 +588,23 @@ sealed interface SharedPdfReaderAction {
     data object UndoAnnotationEdit : SharedPdfReaderAction
     data object RedoAnnotationEdit : SharedPdfReaderAction
     data class ClearPageAnnotations(val pageIndex: Int) : SharedPdfReaderAction
+    /**
+     * Live eraser removal, mirroring Android's per-move `allAnnotations`
+     * updates during an erase drag (`PdfViewerScreen.onDrawStable`): drops the
+     * given annotations immediately with no history change. The stroke-end
+     * commit ([EraserStrokeCommitted]) records them as a single undoable step,
+     * so redo is only cleared once per stroke like the benchmark.
+     */
+    data class AnnotationsRemovedLive(val annotationIds: Set<String>) : SharedPdfReaderAction
+    /**
+     * Records already-live-removed [itemsByPage] as one
+     * [SharedPdfAnnotationHistoryAction.Remove] step and clears redo,
+     * mirroring Android's erase-end `HistoryAction.Remove` push. No-op when
+     * every page list is empty (a stroke that hit nothing preserves redo,
+     * exactly like the benchmark's `erasedAnnotationsFromStroke.isNotEmpty()`
+     * guard).
+     */
+    data class EraserStrokeCommitted(val itemsByPage: Map<Int, List<SharedPdfAnnotation>>) : SharedPdfReaderAction
 }
 
 fun SharedPdfReaderState.reduce(
@@ -828,6 +845,30 @@ fun SharedPdfReaderState.reduce(
                     selectedAnnotationId = selectedAnnotationId?.takeIf { it !in removedIds },
                     annotationUndoStack = annotationUndoStack + SharedPdfAnnotationHistoryAction.Remove(
                         itemsByPage = mapOf(action.pageIndex to removed)
+                    ),
+                    annotationRedoStack = emptyList()
+                )
+            }
+        }
+        is SharedPdfReaderAction.AnnotationsRemovedLive -> {
+            if (action.annotationIds.isEmpty()) {
+                this
+            } else {
+                copy(
+                    annotations = annotations.filterNot { it.id in action.annotationIds },
+                    selectedAnnotationId = selectedAnnotationId?.takeIf { it !in action.annotationIds }
+                )
+            }
+        }
+        is SharedPdfReaderAction.EraserStrokeCommitted -> {
+            val nonEmpty = action.itemsByPage.mapValues { (_, items) -> items.toList() }
+                .filterValues { it.isNotEmpty() }
+            if (nonEmpty.isEmpty()) {
+                this
+            } else {
+                copy(
+                    annotationUndoStack = annotationUndoStack + SharedPdfAnnotationHistoryAction.Remove(
+                        itemsByPage = nonEmpty
                     ),
                     annotationRedoStack = emptyList()
                 )

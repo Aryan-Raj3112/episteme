@@ -134,6 +134,16 @@ val DefaultPdfReaderSettings: ReaderSettings = ReaderSettings(
     systemUiMode = SystemUiMode.SYNC,
 )
 
+/**
+ * iOS default for a new PDF reader session.
+ *
+ * Android remains the benchmark with [SystemUiMode.SYNC]; iOS defaults to
+ * [SystemUiMode.DEFAULT] (Always Show) so the status bar stays visible.
+ */
+val DefaultIosPdfReaderSettings: ReaderSettings = DefaultPdfReaderSettings.copy(
+    systemUiMode = SystemUiMode.DEFAULT,
+)
+
 data class ReaderLayoutSignature(
     val fontSize: Int,
     val fontWeight: Int,

@@ -38,6 +38,8 @@ internal data class SharedMobilePdfTileRender(
 internal data class SharedMobilePdfPageThumbnail(
     val bitmap: ImageBitmap? = null,
     val aspectRatio: Float = DefaultSharedMobilePdfPageAspectRatio,
+    /** Non-null when the reverse transform is already baked into [bitmap]. */
+    val rasterizedReverseColorMode: PdfReverseColorMode? = null,
 )
 
 /** Splits display pages into fixed-width grid rows, mirroring Android's PAGES drawer. */

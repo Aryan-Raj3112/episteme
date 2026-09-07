@@ -562,6 +562,59 @@ class SharedPdfAnnotationSerializerTest {
         assertEquals(PdfPagePoint(0.12346f, 0.5f, 7L), decoded.annotations.single().points.single())
     }
 
+    @Test
+    fun `legacy ink encode caps points per annotation like decode`() {
+        val points = (0 until SharedPdfLegacyInkCodec.MAX_POINTS_PER_ANNOTATION + 500).map { index ->
+            PdfPagePoint(0.1f, 0.2f, index.toLong())
+        }
+        val encoded = SharedPdfLegacyInkCodec.encode(
+            listOf(
+                SharedPdfLegacyInkAnnotation(
+                    id = "ink",
+                    pageIndex = 0,
+                    colorArgb = -1,
+                    strokeWidth = 0.5f,
+                    points = points,
+                )
+            )
+        )
+
+        // The persisted payload itself respects the cap, so saving huge ink
+        // collections cannot OOM building the JSON DOM.
+        val decoded = SharedPdfLegacyInkCodec.decode(encoded) { "generated" }
+        assertEquals(
+            SharedPdfLegacyInkCodec.MAX_POINTS_PER_ANNOTATION,
+            decoded.annotations.single().points.size,
+        )
+        assertEquals(0L, decoded.annotations.single().points.first().timestamp)
+        assertEquals(
+            (SharedPdfLegacyInkCodec.MAX_POINTS_PER_ANNOTATION - 1).toLong(),
+            decoded.annotations.single().points.last().timestamp,
+        )
+    }
+
+    @Test
+    fun `legacy ink encode caps annotation count like decode`() {
+        val annotations = (0 until SharedPdfLegacyInkCodec.MAX_ANNOTATIONS_PER_LOAD + 50).map { index ->
+            SharedPdfLegacyInkAnnotation(
+                id = "a$index",
+                pageIndex = 0,
+                colorArgb = -1,
+                strokeWidth = 0.5f,
+                points = listOf(PdfPagePoint(0.1f, 0.2f, 0L)),
+            )
+        }
+        val encoded = SharedPdfLegacyInkCodec.encode(annotations)
+
+        val decoded = SharedPdfLegacyInkCodec.decode(encoded) { "generated" }
+        assertEquals(SharedPdfLegacyInkCodec.MAX_ANNOTATIONS_PER_LOAD, decoded.annotations.size)
+        assertEquals("a0", decoded.annotations.first().id)
+        assertEquals(
+            "a${SharedPdfLegacyInkCodec.MAX_ANNOTATIONS_PER_LOAD - 1}",
+            decoded.annotations.last().id,
+        )
+    }
+
     private val testJson = Json {
         ignoreUnknownKeys = true
         encodeDefaults = true

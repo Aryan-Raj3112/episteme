@@ -90,6 +90,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
@@ -718,24 +719,30 @@ internal fun EpubReaderRenderSurfaces(
                                             </html>
                                         """.trimIndent()
 
-                                        val chapterFontFaceCss = remember(
+                                        // Same main-thread hazard as the book-level CSS above
+                                        // (font-dir stats + stylesheet parse in composition):
+                                        // build on IO, inject late via the runtime applier.
+                                        val chapterFontFaceCss by produceState(
+                                            "",
                                             chapterHead,
                                             chapterToRender.absPath,
                                             epubBook.extractionBasePath
                                         ) {
-                                            val fontFaces = Jsoup.parse("<head>$chapterHead</head>")
-                                                .head()
-                                                .getElementsByTag("style")
-                                                .flatMap { styleElement ->
-                                                    CssParser.parseFontFaces(
-                                                        cssContent = styleElement.data(),
-                                                        cssPath = chapterToRender.absPath,
-                                                        constraints = Constraints(maxWidth = 1, maxHeight = 1),
-                                                        isDarkTheme = false,
-                                                        adaptThemeColors = false
-                                                    )
-                                                }
-                                            buildEpubFontFaceCss(fontFaces, epubBook.extractionBasePath)
+                                            value = withContext(Dispatchers.IO) {
+                                                val fontFaces = Jsoup.parse("<head>$chapterHead</head>")
+                                                    .head()
+                                                    .getElementsByTag("style")
+                                                    .flatMap { styleElement ->
+                                                        CssParser.parseFontFaces(
+                                                            cssContent = styleElement.data(),
+                                                            cssPath = chapterToRender.absPath,
+                                                            constraints = Constraints(maxWidth = 1, maxHeight = 1),
+                                                            isDarkTheme = false,
+                                                            adaptThemeColors = false
+                                                        )
+                                                    }
+                                                buildEpubFontFaceCss(fontFaces, epubBook.extractionBasePath)
+                                            }
                                         }
                                         fun isCurrentRenderedChapter(): Boolean =
                                             targetChapterIndex == currentChapterIndex

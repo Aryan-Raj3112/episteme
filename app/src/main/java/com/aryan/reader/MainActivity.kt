@@ -37,9 +37,11 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.windowsizeclass.ExperimentalMaterial3WindowSizeClassApi
 import androidx.compose.material3.windowsizeclass.calculateWindowSizeClass
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.compose.rememberNavController
 import com.aryan.reader.data.PlatformFeaturesRepository
@@ -139,11 +141,17 @@ open class MainActivity : AppCompatActivity() {
                 ) {
                     val windowSizeClass = calculateWindowSizeClass(this)
                     val navController = rememberNavController()
-                    AppNavigation(
-                        navController = navController,
-                        windowSizeClass = windowSizeClass,
-                        viewModel = viewModel
-                    )
+                    // Every screen opens links through this handler: Custom Tabs
+                    // with a browser fallback that copies the link instead of
+                    // crashing on devices with no browser installed.
+                    val safeUriHandler = remember { CustomTabUriHandler(this) }
+                    CompositionLocalProvider(LocalUriHandler provides safeUriHandler) {
+                        AppNavigation(
+                            navController = navController,
+                            windowSizeClass = windowSizeClass,
+                            viewModel = viewModel
+                        )
+                    }
                 }
             }
         }

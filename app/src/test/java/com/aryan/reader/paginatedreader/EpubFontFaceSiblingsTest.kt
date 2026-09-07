@@ -137,6 +137,31 @@ class EpubFontFaceSiblingsTest {
     }
 
     @Test
+    fun fontFaceCssIsBuiltOffTheMainThreadWithEmptyInitialValue() {
+        // Font sibling expansion stats font dirs on disk (File.isFile/listFiles) and parses
+        // every stylesheet; doing that synchronously in composition ANRs on books with huge
+        // font dirs or slow storage (see docs/crashlytics-triage.md#5). Both reader call
+        // sites must build the CSS on IO via produceState with an empty initial value —
+        // ChapterWebView re-injects combined CSS via JS when it arrives.
+        val screenSource = sourceFile("com/aryan/reader/epubreader/EpubReaderScreen.kt").readText()
+        val bookCssBody = screenSource.substringAfter("val epubFontFaceCss by produceState")
+            .substringBefore("val isChapterParsingState")
+        assertTrue(bookCssBody.contains("withContext(Dispatchers.IO)"))
+        assertTrue(bookCssBody.contains("buildEpubFontFaceCss(fontFaces, epubBook.extractionBasePath)"))
+        assertTrue(
+            "book CSS must start empty so first render never blocks on font I/O",
+            screenSource.contains("val epubFontFaceCss by produceState(\"\", epubBook.css, epubBook.extractionBasePath)")
+        )
+
+        val surfacesSource =
+            sourceFile("com/aryan/reader/epubreader/EpubReaderRenderSurfaces.kt").readText()
+        val chapterCssBody = surfacesSource.substringAfter("val chapterFontFaceCss by produceState")
+            .substringBefore("fun isCurrentRenderedChapter")
+        assertTrue(chapterCssBody.contains("withContext(Dispatchers.IO)"))
+        assertTrue(chapterCssBody.contains("buildEpubFontFaceCss(fontFaces, epubBook.extractionBasePath)"))
+    }
+
+    @Test
     fun directoryListingsAreMemoizedSoRepeatedCallsAreConsistent() {
         createFontFile("fonts/Literata-Regular.ttf")
         createFontFile("fonts/Literata-Italic.ttf")
@@ -156,5 +181,14 @@ class EpubFontFaceSiblingsTest {
         File(root, "fonts/Literata-Italic.ttf").delete()
         val third = expandFontFacesWithSiblings(listOf(fontFace), root.absolutePath)
         assertEquals(first, third)
+    }
+
+    private fun sourceFile(relativePath: String): File {
+        val candidates = listOf(
+            File("src/main/java/$relativePath"),
+            File("app/src/main/java/$relativePath")
+        )
+        return candidates.firstOrNull(File::isFile)
+            ?: error("Unable to locate $relativePath from ${File(".").absolutePath}")
     }
 }

@@ -6,7 +6,6 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -62,7 +61,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -218,6 +216,7 @@ internal fun DesktopPdfNavigationSidebar(
     pageIndex: Int,
     sortedHighlights: List<SharedPdfAnnotation>,
     bookmarks: List<SharedPdfBookmark>,
+    themeStyle: DesktopPdfThemeStyle,
     onPageSelected: (Int) -> Unit,
     onAnnotationOpened: (SharedPdfAnnotation) -> Unit,
     onAnnotationSelected: (SharedPdfAnnotation) -> Unit,
@@ -649,6 +648,7 @@ internal fun DesktopPdfNavigationSidebar(
                                                 document = document,
                                                 pageIndex = page,
                                                 selected = page == pageIndex,
+                                                themeStyle = themeStyle,
                                                 onClick = { onPageSelected(page) },
                                                 modifier = Modifier.weight(1f)
                                             )
@@ -744,6 +744,7 @@ internal fun DesktopPdfThumbnailTile(
     document: DesktopPdfDocument,
     pageIndex: Int,
     selected: Boolean,
+    themeStyle: DesktopPdfThemeStyle,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -776,7 +777,7 @@ internal fun DesktopPdfThumbnailTile(
     Surface(
         modifier = modifier.aspectRatio(0.707f).clickable(onClick = onClick),
         shape = RoundedCornerShape(4.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant,
+        color = themeStyle.pageBackgroundColor,
         border = BorderStroke(
             width = if (selected) 2.dp else 1.dp,
             color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
@@ -785,10 +786,10 @@ internal fun DesktopPdfThumbnailTile(
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             val render = thumbnail
             if (render != null) {
-                Image(
+                DesktopPdfThemedPageImage(
                     bitmap = render.image,
                     contentDescription = readerString("pdf_page_short", "Page %1\$d", pageIndex + 1),
-                    contentScale = ContentScale.Fit,
+                    themeStyle = themeStyle,
                     modifier = Modifier.fillMaxSize().padding(3.dp)
                 )
             } else {

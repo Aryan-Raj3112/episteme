@@ -35,6 +35,35 @@ data class SharedSelectionMenuPlacementResult(
     val placement: SharedSelectionMenuPlacement
 )
 
+/**
+ * Maps a selection rect in overlay canvas coords to window coords.
+ *
+ * The overlay lives inside the zoom viewport's scaled layer, so its window
+ * rect already reflects scale + pan + Center pivot. Mapping fractionally keeps
+ * the menu anchored correctly at any zoom (Android parity via
+ * contentToScreen + localToWindow).
+ */
+fun sharedPdfSelectionWindowRect(
+    anchor: SharedSelectionMenuRect,
+    canvasWidth: Int,
+    canvasHeight: Int,
+    overlayLeft: Int,
+    overlayTop: Int,
+    overlayWidth: Int,
+    overlayHeight: Int,
+): SharedSelectionMenuRect {
+    val canvasW = canvasWidth.takeIf { it > 0 }?.toFloat() ?: 1f
+    val canvasH = canvasHeight.takeIf { it > 0 }?.toFloat() ?: 1f
+    val boxW = overlayWidth.takeIf { it > 0 }?.toFloat() ?: canvasW
+    val boxH = overlayHeight.takeIf { it > 0 }?.toFloat() ?: canvasH
+    return SharedSelectionMenuRect(
+        left = overlayLeft + anchor.left / canvasW * boxW,
+        top = overlayTop + anchor.top / canvasH * boxH,
+        right = overlayLeft + anchor.right / canvasW * boxW,
+        bottom = overlayTop + anchor.bottom / canvasH * boxH,
+    )
+}
+
 fun sharedSelectionMenuPlacement(
     viewport: SharedSelectionMenuViewport,
     popup: SharedSelectionMenuSize,

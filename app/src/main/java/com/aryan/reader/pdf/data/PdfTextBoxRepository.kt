@@ -20,6 +20,7 @@
 package com.aryan.reader.pdf.data
 
 import android.content.Context
+import com.aryan.reader.data.AndroidBookArtifactPaths
 import com.aryan.reader.logCloudAnnotationSyncTrace
 import com.aryan.reader.data.writeJsonAtomically
 import kotlinx.coroutines.Dispatchers
@@ -29,10 +30,15 @@ import java.io.File
 class PdfTextBoxRepository(private val context: Context) {
 
     private fun getFile(bookId: String): File {
-        val safeBookId = bookId.replace("/", "_")
         val dir = File(context.filesDir, "textboxes")
         if (!dir.exists()) dir.mkdirs()
-        return File(dir, "textboxes_$safeBookId.json")
+        // Length-bounded: raw titles can exceed the 255-byte filename limit.
+        val name = AndroidBookArtifactPaths.sidecarName(
+            prefix = "textboxes_",
+            sanitizedId = bookId.replace("/", "_"),
+            stableKey = bookId,
+        )
+        return File(dir, name)
     }
 
     suspend fun saveTextBoxes(bookId: String, textBoxes: List<PdfTextBox>) {

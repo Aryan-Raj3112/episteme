@@ -117,6 +117,7 @@ import com.aryan.reader.shared.MobilePdfLifecycleAction
 import com.aryan.reader.shared.mobilePdfLifecycleAction
 import com.aryan.reader.shared.SharedLibrarySnapshot
 import com.aryan.reader.shared.SharedLibrarySnapshotJson
+import com.aryan.reader.shared.SharedSummaryCache
 import com.aryan.reader.shared.SharedLegalProfile
 import com.aryan.reader.shared.SharedLibraryEditor
 import com.aryan.reader.shared.SharedImportPlanner
@@ -195,6 +196,7 @@ import com.aryan.reader.shared.withAudiobookImported
 import com.aryan.reader.shared.withAudiobookImportedToLibrary
 import com.aryan.reader.shared.withAudiobookPosition
 import com.aryan.reader.shared.withLoadedMetadata
+import com.aryan.reader.shared.cardTitle
 import com.aryan.reader.shared.withUserEditedMetadata
 import com.aryan.reader.shared.DefaultReaderCustomBrightness
 import com.aryan.reader.shared.normalizeReaderBrightness
@@ -253,6 +255,11 @@ import com.aryan.reader.shared.ui.SharedMobileEpubReaderScreen
 import com.aryan.reader.shared.ui.SharedMobileReaderTtsSettingsSheet
 import com.aryan.reader.shared.ui.SharedMobilePdfReaderHost
 import com.aryan.reader.shared.ui.SharedMobilePdfReflowUiState
+import com.aryan.reader.shared.ui.SharedPdfTtsOverlaySize
+import com.aryan.reader.shared.ui.SharedReaderTtsMiniBar
+import com.aryan.reader.shared.SharedReaderTtsMiniBarState
+import com.aryan.reader.shared.shouldShowSharedReaderTtsMiniBar
+import com.aryan.reader.shared.sharedReaderTtsMiniBarBottomPaddingDp
 import com.aryan.reader.shared.ui.SharedMobileDictionarySettingsSheet
 import com.aryan.reader.shared.ui.SharedAiSettingsScreen
 import com.aryan.reader.shared.ui.SharedAiSettingsStrings
@@ -284,6 +291,7 @@ import com.aryan.reader.shared.ui.readerLiteral
 import com.aryan.reader.shared.ui.readerString
 import com.aryan.reader.shared.ui.openSharedMobileExternalUrl
 import com.aryan.reader.shared.ui.rememberSharedMobileEpubLocalTts
+import com.aryan.reader.shared.ui.SharedMobileEpubLocalTtsState
 import com.aryan.reader.shared.ui.withoutIosFolderFilter
 import com.aryan.reader.shared.reader.ReaderScreenOrientationMode
 import com.aryan.reader.shared.reader.sharedEpubOpenTrace
@@ -996,7 +1004,11 @@ class ReaderIosBridge internal constructor(
     fun exportAnnotations(book: BookItem, format: AnnotationExportFormat): Boolean {
         val document = when (book.type) {
             FileType.PDF -> AnnotationExportFormatter.fromPdfAnnotations(
-                bookTitle = book.cardTitle(),
+                // Shared benchmark (SharedFormatters.cardTitle): honor the PDF
+                // filename toggle and blank-title fallback like Android.
+                bookTitle = book.cardTitle(
+                    usePdfFileNameAsDisplayName = loadIosLibrarySnapshot().usePdfFileNameAsDisplayName
+                ),
                 annotations = loadPersistedIosPdfReaderState(book)?.annotations.orEmpty(),
             )
             else -> AnnotationExportFormatter.fromEpubBook(book)
@@ -1791,6 +1803,8 @@ private const val IosPdfToolbarHiddenDefaultsKey = "reader_ios_pdf_toolbar_hidde
 private const val IosPdfToolbarOrderDefaultsKey = "reader_ios_pdf_toolbar_order_v1"
 private const val IosPdfToolbarBottomDefaultsKey = "reader_ios_pdf_toolbar_bottom_v1"
 private const val IosPdfTopTabStripVisibleDefaultsKey = "reader_ios_pdf_top_tab_strip_visible_v1"
+private const val IosPdfTopToolbarVisibleDefaultsKey = "reader_ios_pdf_top_toolbar_visible_v1"
+private const val IosPdfBottomToolbarVisibleDefaultsKey = "reader_ios_pdf_bottom_toolbar_visible_v1"
 private const val IosReaderAutoScrollSpeedDefaultsKey = "reader_ios_auto_scroll_speed_v1"
 private const val IosReaderAutoScrollMinDefaultsKey = "reader_ios_auto_scroll_min_v1"
 private const val IosReaderAutoScrollMaxDefaultsKey = "reader_ios_auto_scroll_max_v1"
@@ -2080,6 +2094,23 @@ private fun persistIosReaderTtsOverlaySize(size: ReaderTtsOverlaySize) {
     NSUserDefaults.standardUserDefaults.setObject(size.name, forKey = IosReaderTtsOverlaySizeDefaultsKey)
 }
 
+// Android parity (saveReaderTtsOverlaySize): the PDF player size persists
+// across sessions under its own key (EPUB uses the shared-reader key above;
+// the two players size independently on both platforms).
+private const val IosPdfTtsOverlaySizeDefaultsKey = "reader_ios_pdf_tts_overlay_size_v1"
+
+private fun loadIosPdfTtsOverlaySize(): SharedPdfTtsOverlaySize =
+    runCatching {
+        SharedPdfTtsOverlaySize.valueOf(
+            NSUserDefaults.standardUserDefaults.stringForKey(IosPdfTtsOverlaySizeDefaultsKey)
+                ?: return SharedPdfTtsOverlaySize.LARGE
+        )
+    }.getOrDefault(SharedPdfTtsOverlaySize.LARGE)
+
+private fun persistIosPdfTtsOverlaySize(size: SharedPdfTtsOverlaySize) {
+    NSUserDefaults.standardUserDefaults.setObject(size.name, forKey = IosPdfTtsOverlaySizeDefaultsKey)
+}
+
 private fun loadIosPdfPageSliderVisible(bookId: String): Boolean {
     return NSUserDefaults.standardUserDefaults.boolForKey(IosPdfPageSliderVisibleDefaultsPrefix + bookId)
 }
@@ -2148,6 +2179,21 @@ private fun loadIosPdfTopTabStripVisible(): Boolean {
 
 private fun persistIosPdfTopTabStripVisible(visible: Boolean) {
     NSUserDefaults.standardUserDefaults.setBool(visible, forKey = IosPdfTopTabStripVisibleDefaultsKey)
+}
+
+// Android benchmark (PdfViewerScreen.kt:439-440, PdfPreferences
+// PDF_TOP/BOTTOM_TOOLBAR_VISIBLE_KEY, default true).
+private fun loadIosPdfToolbarVisible(key: String): Boolean {
+    val defaults = NSUserDefaults.standardUserDefaults
+    return if (defaults.objectForKey(key) == null) {
+        true
+    } else {
+        defaults.boolForKey(key)
+    }
+}
+
+private fun persistIosPdfToolbarVisible(key: String, visible: Boolean) {
+    NSUserDefaults.standardUserDefaults.setBool(visible, forKey = key)
 }
 
 private fun loadPersistedImportedFiles(): List<IosImportedFile> {
@@ -2824,6 +2870,14 @@ private fun ReaderIosApp(
     }
     val ttsListenController = remember { IosBookTtsListeningController() }
     DisposableEffect(ttsListenController) { onDispose(ttsListenController::release) }
+    // Android parity (sharedListeningHandoff): cloud read-aloud wins the audio
+    // output — stop competing playback when it starts producing audio.
+    LaunchedEffect(readerCloudTts.state.isPlaying) {
+        if (readerCloudTts.state.isPlaying) {
+            audiobookPlayer.stop()
+            ttsListenController.stop()
+        }
+    }
     val audiobookPlaybackSnapshot = bridge.audiobookPlaybackSnapshot
     var lastAudiobookPersistAt by remember { mutableStateOf(0L) }
     LaunchedEffect(audiobookPlaybackSnapshot) {
@@ -3011,6 +3065,11 @@ private fun ReaderIosApp(
     var lookupSearchService by remember { mutableStateOf(initialLookupServices.third) }
     var pdfReflowProgress by remember { mutableStateOf<Float?>(null) }
     var activeReaderBook by remember { mutableStateOf(initialReaderBook) }
+    // App-level read-aloud engine + mini-bar state (Android `MainViewModel.ttsController`
+    // + `ReaderTtsMiniBar` parity). Hoisted above the reader branch so speech
+    // continues when the user leaves the reader; the global bar reopens the book.
+    val readerTtsEngine = rememberSharedMobileEpubLocalTts()
+    var readerTtsMiniBarState by remember { mutableStateOf<SharedReaderTtsMiniBarState?>(null) }
     var pdfSplitPickerTarget by remember { mutableStateOf<IosPdfSplitPickerTarget?>(null) }
     LaunchedEffect(state.rawLibraryBooks, pendingPdfSplitWorkspaceRestore) {
         val pending = pendingPdfSplitWorkspaceRestore ?: return@LaunchedEffect
@@ -3042,6 +3101,13 @@ private fun ReaderIosApp(
     var pdfToolbarPreferences by remember { mutableStateOf(loadIosPdfToolbarPreferences()) }
     var pdfOcrLanguage by remember { mutableStateOf(loadIosPdfOcrLanguage()) }
     var pdfTopTabStripVisible by remember { mutableStateOf(loadIosPdfTopTabStripVisible()) }
+    var pdfTopToolbarVisible by remember {
+        mutableStateOf(loadIosPdfToolbarVisible(IosPdfTopToolbarVisibleDefaultsKey))
+    }
+    var pdfBottomToolbarVisible by remember {
+        mutableStateOf(loadIosPdfToolbarVisible(IosPdfBottomToolbarVisibleDefaultsKey))
+    }
+    var pdfExportBusy by remember { mutableStateOf(false) }
     var readerAutoScrollProfile by remember { mutableStateOf(loadIosReaderAutoScrollProfile()) }
     var readerAutoScrollUseSlider by remember { mutableStateOf(loadIosReaderAutoScrollUseSlider()) }
     var readerAutoScrollMusicianMode by remember { mutableStateOf(loadIosReaderAutoScrollMusicianMode()) }
@@ -4017,16 +4083,17 @@ private fun ReaderIosApp(
                         showMessage("Could not write the edited EPUB back to $folderName")
                         refreshFolders()
                     } else {
-                        state = state.withUpdatedIosBook(
-                            persisted.copy(
-                                fileSize = replacement.fileSize,
-                                fileContentModifiedTimestamp = replacement.lastModifiedTimestamp,
-                            )
+                        val synced = persisted.copy(
+                            fileSize = replacement.fileSize,
+                            fileContentModifiedTimestamp = replacement.lastModifiedTimestamp,
                         )
+                        state = state.withUpdatedIosBook(synced)
+                        if (activeReaderBook?.id == synced.id) activeReaderBook = synced
                         showMessage("EPUB metadata updated")
                     }
                 } else {
                     state = state.withUpdatedIosBook(persisted)
+                    if (activeReaderBook?.id == persisted.id) activeReaderBook = persisted
                     showMessage("EPUB metadata updated")
                 }
             }.onFailure {
@@ -4440,6 +4507,8 @@ private fun ReaderIosApp(
                 dismissReaderAiResult()
             },
             onOpenAiHub = { utilityScreen = IosUtilityScreen.AI_SETTINGS },
+            summaryCache = remember { SharedSummaryCache() },
+            aiCredits = state.credits,
             pdfReflowUiState = SharedMobilePdfReflowUiState(
                 isGenerating = pdfReflowProgress != null,
                 progress = pdfReflowProgress ?: 0f,
@@ -4456,6 +4525,19 @@ private fun ReaderIosApp(
                     persistIosPdfTopTabStripVisible(visible)
                 }
             },
+            initialShowTopToolbar = pdfTopToolbarVisible,
+            onShowTopToolbarChange = { visible ->
+                if (!acceptsCurrentHostCallback()) return@SharedMobilePdfReaderHost
+                pdfTopToolbarVisible = visible
+                persistIosPdfToolbarVisible(IosPdfTopToolbarVisibleDefaultsKey, visible)
+            },
+            initialShowBottomToolbar = pdfBottomToolbarVisible,
+            onShowBottomToolbarChange = { visible ->
+                if (!acceptsCurrentHostCallback()) return@SharedMobilePdfReaderHost
+                pdfBottomToolbarVisible = visible
+                persistIosPdfToolbarVisible(IosPdfBottomToolbarVisibleDefaultsKey, visible)
+            },
+            isPdfExportBusy = pdfExportBusy,
             onOpenPdfTab = { tab ->
                 if (pdfTabsEnabled && acceptsCurrentHostCallback() && tab.id != paneBook.id) {
                     openLibraryBook(tab)
@@ -4488,23 +4570,33 @@ private fun ReaderIosApp(
                         startIosPdfReflow(pdfBook, password)
                     }
                     SharedMobilePdfNativeAction.SAVE_COPY -> scope.launch {
-                        when (val export = prepareIosPdfSaveCopy(pdfBook, password, pdfExport)) {
-                            is IosPdfSaveCopyPreparation.Ready -> {
-                                if (!bridge.performPdfNativeAction(export.book, action)) {
-                                    showMessage("Unable to export ${pdfBook.displayName}.")
+                        pdfExportBusy = true
+                        try {
+                            when (val export = prepareIosPdfSaveCopy(pdfBook, password, pdfExport)) {
+                                is IosPdfSaveCopyPreparation.Ready -> {
+                                    if (!bridge.performPdfNativeAction(export.book, action)) {
+                                        showMessage("Unable to export ${pdfBook.displayName}.")
+                                    }
                                 }
+                                is IosPdfSaveCopyPreparation.Unavailable -> showMessage(export.message)
                             }
-                            is IosPdfSaveCopyPreparation.Unavailable -> showMessage(export.message)
+                        } finally {
+                            pdfExportBusy = false
                         }
                     }
                     SharedMobilePdfNativeAction.SHARE_ANNOTATED -> scope.launch {
-                        when (val export = prepareIosPdfSaveCopy(pdfBook, password, pdfExport)) {
-                            is IosPdfSaveCopyPreparation.Ready -> {
-                                if (!bridge.performPdfNativeAction(export.book, SharedMobilePdfNativeAction.SHARE)) {
-                                    showMessage("Unable to share ${pdfBook.displayName}.")
+                        pdfExportBusy = true
+                        try {
+                            when (val export = prepareIosPdfSaveCopy(pdfBook, password, pdfExport)) {
+                                is IosPdfSaveCopyPreparation.Ready -> {
+                                    if (!bridge.performPdfNativeAction(export.book, SharedMobilePdfNativeAction.SHARE)) {
+                                        showMessage("Unable to share ${pdfBook.displayName}.")
+                                    }
                                 }
+                                is IosPdfSaveCopyPreparation.Unavailable -> showMessage(export.message)
                             }
-                            is IosPdfSaveCopyPreparation.Unavailable -> showMessage(export.message)
+                        } finally {
+                            pdfExportBusy = false
                         }
                     }
                     SharedMobilePdfNativeAction.SHARE_ORIGINAL -> {
@@ -4581,6 +4673,10 @@ private fun ReaderIosApp(
                 if (!acceptsCurrentHostCallback()) return@SharedMobilePdfReaderHost
                 state = state.reduce(AppAction.BannerShown(BannerMessage(message, isError = true)))
             },
+            onPasswordProtectedPrint = { message ->
+                if (!acceptsCurrentHostCallback()) return@SharedMobilePdfReaderHost
+                state = state.reduce(AppAction.BannerShown(BannerMessage(message, isError = true)))
+            },
             initialReaderState = initialPdfReaderState,
             readerDefaultSettings = state.pdfReaderDefaultSettings,
             onReaderDefaultSettingsChange = { defaults ->
@@ -4614,6 +4710,8 @@ private fun ReaderIosApp(
             onPageSliderVisibilityPreferenceChange = { visible ->
                 persistIosPdfPageSliderVisible(paneBook.id, visible)
             },
+            initialTtsOverlaySize = loadIosPdfTtsOverlaySize(),
+            onTtsOverlaySizePreferenceChange = ::persistIosPdfTtsOverlaySize,
             onReaderStateChange = {},
             onReaderSessionStateChange = { sessionKey, pdfState ->
                 if (!effectiveHostConfig.acceptsCallback(sessionKey)) {
@@ -4889,6 +4987,10 @@ private fun ReaderIosApp(
                                     state = state.withUpdatedIosBook(updatedBook)
                                 }
                             },
+                            onBookInfoChange = { updated ->
+                                updateIosBookMetadata(updated)
+                            },
+                            knownTags = state.allTags,
                             onKeepScreenOnChange = bridge::setKeepScreenOn,
                             appIsActive = bridge.appLifecycleState.isActive,
                             appLifecycleEventId = bridge.appLifecycleState.eventId,
@@ -4947,6 +5049,19 @@ private fun ReaderIosApp(
                                 dismissReaderAiResult()
                             },
                             onOpenAiHub = {},
+                            summaryCache = remember { SharedSummaryCache() },
+                            aiCredits = state.credits,
+                            externalLocalTts = readerTtsEngine,
+                            onReaderTtsSessionChange = {
+                                readerTtsMiniBarState = it
+                                // Android parity (sharedListeningHandoff): reader
+                                // read-aloud wins the audio output — stop any
+                                // competing playback when its session activates.
+                                if (it != null) {
+                                    audiobookPlayer.stop()
+                                    ttsListenController.stop()
+                                }
+                            },
                             readerBrightness = readerBrightness,
                             readerCustomBrightness = readerCustomBrightness,
                             readerBrightnessSupported = true,
@@ -4983,6 +5098,7 @@ private fun ReaderIosApp(
                             onClipboardError = { message ->
                                 state = state.reduce(AppAction.BannerShown(BannerMessage(message, isError = true)))
                             },
+                            onShowBanner = ::showMessage,
                             readerScreenOrientationMode = readerOrientation,
                             onReaderScreenOrientationModeChange = { mode ->
                                 readerOrientation = mode
@@ -6290,6 +6406,8 @@ private fun ReaderIosApp(
                                 audiobookPlayback = audiobookPlaybackSnapshot,
                                 onPlayAudiobook = { audiobook ->
                                     ttsListenController.stop()
+                                    readerTtsEngine.stop()
+                                    readerCloudTts.stop()
                                     audiobookPlayer.connect(
                                         SharedAudiobookPlaybackRequest(
                                             bookId = audiobook.bookId,
@@ -6305,7 +6423,12 @@ private fun ReaderIosApp(
                                         )
                                     )
                                 },
-                                onToggleAudiobookPlayback = audiobookPlayer::togglePlayPause,
+                                onToggleAudiobookPlayback = {
+                                    readerTtsEngine.stop()
+                                    readerCloudTts.stop()
+                                    ttsListenController.stop()
+                                    audiobookPlayer.togglePlayPause()
+                                },
                                 onSeekAudiobook = audiobookPlayer::seekTo,
                                 onAudiobookSpeedChange = audiobookPlayer::setSpeed,
                                 onAudiobookSleepTimer = { minutes -> if (minutes == null) audiobookPlayer.cancelSleepTimer() else audiobookPlayer.setSleepTimer(minutes) },
@@ -6327,6 +6450,8 @@ private fun ReaderIosApp(
                                             "path=${book.path ?: "<null>"}"
                                     )
                                     audiobookPlayer.stop()
+                                    readerTtsEngine.stop()
+                                    readerCloudTts.stop()
                                     ttsListenController.start(
                                         book,
                                         policy,
@@ -6375,6 +6500,40 @@ private fun ReaderIosApp(
                 ) {
                     MainScaffoldContent()
                 }
+            }
+        }
+        // Global read-aloud mini bar (Android `AppNavigation` overlay parity).
+        // Shown when the user leaves the reader with an active local-TTS
+        // session; tap returns to the book. Hidden on reader routes.
+        val showReaderTtsMiniBar = shouldShowSharedReaderTtsMiniBar(
+            readerTtsMiniBarState,
+            isOnReaderRoute = activeReaderBook != null
+        )
+        if (showReaderTtsMiniBar && readerTtsMiniBarState != null) {
+            val miniBarState = readerTtsMiniBarState!!
+            val isOnMainRoute = activeReaderBook == null &&
+                (selectedPage == SharedMobileMainDestination.HOME ||
+                    selectedPage == SharedMobileMainDestination.LIBRARY ||
+                    selectedPage == SharedMobileMainDestination.UNIFIED_LIBRARY)
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.BottomCenter
+            ) {
+                SharedReaderTtsMiniBar(
+                    state = miniBarState,
+                    onOpenReader = {
+                        state.rawLibraryBooks.firstOrNull { it.id == miniBarState.bookId }?.let { openLibraryBook(it) }
+                    },
+                    onTogglePlayPause = {
+                        if (readerTtsEngine.state == SharedMobileEpubLocalTtsState.SPEAKING) readerTtsEngine.pause()
+                        else readerTtsEngine.resume()
+                    },
+                    onPreviousChunk = { readerTtsEngine.skipPrevious() },
+                    onNextChunk = { readerTtsEngine.skipNext() },
+                    modifier = Modifier.fillMaxWidth()
+                        .padding(horizontal = 16.dp)
+                        .padding(bottom = sharedReaderTtsMiniBarBottomPaddingDp(isOnMainRoute).dp)
+                )
             }
         }
     }
@@ -8061,7 +8220,3 @@ private fun String.normalizedId(): String {
  */
 private fun newIosCloudRootId(): String =
     cloudFolderRootId("ios-root:${NSUUID.UUID().UUIDString}")
-
-private fun BookItem.cardTitle(): String {
-    return title ?: displayName
-}

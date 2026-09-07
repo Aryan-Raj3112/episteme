@@ -486,6 +486,7 @@ internal fun SharedSemanticBlockView(
                     block = block,
                     page = page,
                     modifier = contentModifier,
+                    imageContent = imageContent,
                     background = background,
                     foreground = foreground,
                     searchQuery = searchQuery,
@@ -507,9 +508,9 @@ internal fun SharedSemanticBlockView(
                 )
             }
 
-            is SemanticParagraph -> SharedSemanticTextView(block, page, contentModifier, background, foreground, searchQuery, searchHighlight, highlights, activeSelection, selectionHighlight, fallbackTextAlign, fallbackFontFamily, settings, onReaderTap = onReaderTap, onSelectionChange = onSelectionChange, onSelectionGestureActiveChange = onSelectionGestureActiveChange, onHighlightSelected = onHighlightSelected, onLinkClicked = onLinkClicked, selectionLayouts = selectionLayouts, onTextLaidOut = onTextLaidOut)
-            is SemanticListItem -> SharedSemanticTextView(block, page, contentModifier, background, foreground, searchQuery, searchHighlight, highlights, activeSelection, selectionHighlight, fallbackTextAlign, fallbackFontFamily, settings, onReaderTap = onReaderTap, onSelectionChange = onSelectionChange, onSelectionGestureActiveChange = onSelectionGestureActiveChange, onHighlightSelected = onHighlightSelected, onLinkClicked = onLinkClicked, selectionLayouts = selectionLayouts, onTextLaidOut = onTextLaidOut)
-            is SemanticTextBlock -> SharedSemanticTextView(block, page, contentModifier, background, foreground, searchQuery, searchHighlight, highlights, activeSelection, selectionHighlight, fallbackTextAlign, fallbackFontFamily, settings, onReaderTap = onReaderTap, onSelectionChange = onSelectionChange, onSelectionGestureActiveChange = onSelectionGestureActiveChange, onHighlightSelected = onHighlightSelected, onLinkClicked = onLinkClicked, selectionLayouts = selectionLayouts, onTextLaidOut = onTextLaidOut)
+            is SemanticParagraph -> SharedSemanticTextView(block, page, contentModifier, imageContent, background, foreground, searchQuery, searchHighlight, highlights, activeSelection, selectionHighlight, fallbackTextAlign, fallbackFontFamily, settings, onReaderTap = onReaderTap, onSelectionChange = onSelectionChange, onSelectionGestureActiveChange = onSelectionGestureActiveChange, onHighlightSelected = onHighlightSelected, onLinkClicked = onLinkClicked, selectionLayouts = selectionLayouts, onTextLaidOut = onTextLaidOut)
+            is SemanticListItem -> SharedSemanticTextView(block, page, contentModifier, imageContent, background, foreground, searchQuery, searchHighlight, highlights, activeSelection, selectionHighlight, fallbackTextAlign, fallbackFontFamily, settings, onReaderTap = onReaderTap, onSelectionChange = onSelectionChange, onSelectionGestureActiveChange = onSelectionGestureActiveChange, onHighlightSelected = onHighlightSelected, onLinkClicked = onLinkClicked, selectionLayouts = selectionLayouts, onTextLaidOut = onTextLaidOut)
+            is SemanticTextBlock -> SharedSemanticTextView(block, page, contentModifier, imageContent, background, foreground, searchQuery, searchHighlight, highlights, activeSelection, selectionHighlight, fallbackTextAlign, fallbackFontFamily, settings, onReaderTap = onReaderTap, onSelectionChange = onSelectionChange, onSelectionGestureActiveChange = onSelectionGestureActiveChange, onHighlightSelected = onHighlightSelected, onLinkClicked = onLinkClicked, selectionLayouts = selectionLayouts, onTextLaidOut = onTextLaidOut)
 
             is SemanticList -> {
                 Column(modifier = contentModifier, verticalArrangement = Arrangement.Top) {
@@ -588,6 +589,7 @@ internal fun SharedSemanticBlockView(
                                 block = item,
                                 page = page,
                                 modifier = Modifier.weight(1f),
+                                imageContent = imageContent,
                                 background = background,
                                 foreground = foreground,
                                 searchQuery = searchQuery,

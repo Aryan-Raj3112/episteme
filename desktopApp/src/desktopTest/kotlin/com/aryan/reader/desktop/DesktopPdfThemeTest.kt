@@ -4,8 +4,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.aryan.reader.shared.PdfDisplayMode
 import com.aryan.reader.shared.ReaderTheme
+import com.aryan.reader.shared.reader.ReaderSettings
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 
 class DesktopPdfThemeTest {
     @Test
@@ -80,5 +83,23 @@ class DesktopPdfThemeTest {
     fun `spread page gap follows pdf page gap visibility setting`() {
         assertEquals(18.dp, desktopPdfSpreadPageGapDp(isPageGapVisible = true))
         assertEquals(0.dp, desktopPdfSpreadPageGapDp(isPageGapVisible = false))
+    }
+
+    @Test
+    fun `pages sidebar theme style matches selected reader theme`() {
+        val noThemeStyle = ReaderSettings(themeId = "no_theme")
+            .toDesktopPdfThemeStyle(PdfDisplayMode.PAGINATION)
+        assertEquals(Color.Black, noThemeStyle.pageBackgroundColor)
+        assertNull(noThemeStyle.colorFilter)
+
+        val sepiaStyle = ReaderSettings(themeId = "sepia")
+            .toDesktopPdfThemeStyle(PdfDisplayMode.PAGINATION)
+        assertEquals(Color(0xFFFBF0D9), sepiaStyle.pageBackgroundColor)
+        assertNotNull(sepiaStyle.colorFilter)
+
+        val darkStyle = ReaderSettings(themeId = "dark")
+            .toDesktopPdfThemeStyle(PdfDisplayMode.VERTICAL_SCROLL)
+        assertEquals(Color(0xFF121212), darkStyle.pageBackgroundColor)
+        assertNotNull(darkStyle.colorFilter)
     }
 }

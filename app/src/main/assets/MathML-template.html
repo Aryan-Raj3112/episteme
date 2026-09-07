@@ -5,6 +5,12 @@
     <script>
         console.log("MATH_DIAGNOSTIC: MathML-template.html script block started.");
         window.MathJax = {
+            tex: {
+                // The hidden WebView renders via direct tex2svgPromise()/mathml2svgPromise()
+                // calls; these delimiters only document the supported inputs.
+                inlineMath: [['\\(', '\\)']],
+                displayMath: [['\\[', '\\]']]
+            },
             svg: {
                 fontCache: 'none', // Disable font cache for better performance in this context
                 displayAlign: 'left',

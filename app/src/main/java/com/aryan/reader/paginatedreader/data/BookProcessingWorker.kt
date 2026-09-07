@@ -33,8 +33,8 @@ import androidx.work.CoroutineWorker
 import androidx.work.Data
 import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import com.aryan.reader.SafeWorkManager
 import com.aryan.reader.applyBookReplacementsToHtmlDocument
 import com.aryan.reader.epub.epubContentFilePath
 import com.aryan.reader.paginatedreader.CssParser
@@ -107,7 +107,7 @@ class BookProcessingWorker(
         private fun uniqueWorkName(bookId: String): String = "process_$bookId"
 
         fun cancelForBook(context: Context, bookId: String) {
-            WorkManager.getInstance(context).cancelUniqueWork(uniqueWorkName(bookId))
+            SafeWorkManager.cancelUniqueWork(context, uniqueWorkName(bookId))
             Timber.i("Cancelled stale background processing for book: $bookId")
         }
 
@@ -136,7 +136,8 @@ class BookProcessingWorker(
                 .addTag(WORK_TAG)
                 .build()
 
-            WorkManager.getInstance(context).enqueueUniqueWork(
+            SafeWorkManager.enqueueUniqueWork(
+                context,
                 uniqueWorkName(bookId),
                 ExistingWorkPolicy.REPLACE,
                 workRequest
@@ -280,6 +281,22 @@ class BookProcessingWorker(
                             val mathElements = document.select("math")
                             val svgResults = mutableMapOf<String, String>()
 
+                            // Markdown import renders `$...$`/`$$...$$` to inline
+                            // SVG at import time (see SingleFileImporter), so no
+                            // span.math-* markers are expected here. Any that do
+                            // appear (e.g. books imported by an older build) are
+                            // still rendered for completeness.
+                            data class MarkdownEquation(val tex: String, val display: Boolean)
+                            val markdownEquations = LinkedHashMap<Element, MarkdownEquation>()
+                            document.select("span.math-inline").forEach { el ->
+                                val tex = el.text()
+                                if (tex.isNotBlank()) markdownEquations[el] = MarkdownEquation(tex, display = false)
+                            }
+                            document.select("span.math-display").forEach { el ->
+                                val tex = el.text()
+                                if (tex.isNotBlank()) markdownEquations[el] = MarkdownEquation(tex, display = true)
+                            }
+
                             if (mathElements.isNotEmpty()) {
                                 Timber.d("Chapter $index (Background Worker): Found ${mathElements.size} MathML elements to process.")
                                 mathElements.forEachIndexed { i, element ->
@@ -306,6 +323,25 @@ class BookProcessingWorker(
                                     element.replaceWith(placeholder)
                                 }
                                 Timber.d("Chapter $index (Background Worker): Finished processing MathML. SVG cache has ${svgResults.size} items. Keys: ${svgResults.keys.joinToString()}")
+                            }
+
+                            if (markdownEquations.isNotEmpty()) {
+                                Timber.d("Chapter $index (Background Worker): Found ${markdownEquations.size} Markdown math spans to process.")
+                                markdownEquations.toList().forEachIndexed { i, (element, equation) ->
+                                    val uniqueId = "math-ch${index}-eq${mathElements.size + i}"
+                                    val placeholder = Element("math-placeholder").attr("id", uniqueId)
+
+                                    when (val result = mathMLRenderer.renderTeX(equation.tex, equation.display, equation.tex)) {
+                                        is RenderResult.Success -> {
+                                            svgResults[uniqueId] = result.svg
+                                        }
+                                        is RenderResult.Failure -> {
+                                            Timber.w("Chapter $index (Background Worker): TeX render FAILURE for $uniqueId. Tex: ${equation.tex.take(64)}")
+                                            placeholder.attr("alttext", result.altText)
+                                        }
+                                    }
+                                    element.replaceWith(placeholder)
+                                }
                             }
                             applyBookReplacementsToHtmlDocument(
                                 document = document,

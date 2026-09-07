@@ -4,9 +4,11 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.SpanStyle
@@ -31,8 +33,16 @@ fun SharedMobilePdfTextDock(
     customFonts: List<CustomFontItem> = emptyList(),
     customFontFamilies: Map<String, FontFamily> = emptyMap(),
     onImportFont: () -> Unit = {},
+    // Android parity (TextAnnotationDock): drag/long-press detection owned by
+    // the caller and applied to the bar root only, so surrounding empty
+    // padding stays touch-transparent for controls beneath.
+    dragGestureModifier: Modifier = Modifier,
+    // A top-docked bar opens popups below itself instead of above.
+    popupsBelowBar: Boolean = false,
+    // Android parity: hides the rich-text cursor while a popup is open.
+    onPopupStateChange: (Boolean) -> Unit = {},
 ) {
-    val state = rememberPdfTextDockState {}
+    val state = rememberPdfTextDockState(onPopupStateChange)
     var textPalette by remember { mutableStateOf(SharedPdfTextAnnotationDefaults.textColorPalette.map(::Color)) }
     var backgroundPalette by remember { mutableStateOf(SharedPdfTextAnnotationDefaults.backgroundColorPalette.map(::Color)) }
     val spanStyle = style.toSharedPdfRichSpanStyle()
@@ -56,9 +66,11 @@ fun SharedMobilePdfTextDock(
         availableSharedPdfCustomFonts(customFonts, resolvedCustomFontFamilies.keys)
     }
 
-    Box(modifier.fillMaxWidth(), contentAlignment = Alignment.BottomCenter) {
+    Box(modifier.fillMaxWidth().then(dragGestureModifier), contentAlignment = Alignment.BottomCenter) {
         SharedPdfTextDockPopupHost(
             state = state, bottomDockPadding = 0.dp, currentStyle = spanStyle,
+            popupAlignment = if (popupsBelowBar) Alignment.TopCenter else Alignment.BottomCenter,
+            popupOffsetY = if (popupsBelowBar) 48.dp + 8.dp else null,
             textColorPalette = textPalette, onTextColorPaletteChange = { textPalette = it },
             backgroundColorPalette = backgroundPalette, onBackgroundColorPaletteChange = { backgroundPalette = it },
             onUpdateStyle = ::update, onApplyToSelection = {},
@@ -134,7 +146,11 @@ fun SharedMobilePdfTextDock(
                 Box(Modifier.width(16.dp).height(2.dp).background(color))
             } },
             fontSizePopup = {
-                if (state.popup == PdfTextDockPopup.FONT_SIZE) SharedPdfTextDockPopupDp(state::dismiss, Alignment.TopCenter, (-55).dp) {
+                if (state.popup == PdfTextDockPopup.FONT_SIZE) SharedPdfTextDockPopupDp(
+                    state::dismiss,
+                    if (popupsBelowBar) Alignment.BottomCenter else Alignment.TopCenter,
+                    if (popupsBelowBar) 55.dp else (-55).dp,
+                ) {
                     LazyColumn(Modifier.heightIn(max = 200.dp).width(80.dp).background(Color(0xFF1E1E1E), androidx.compose.foundation.shape.RoundedCornerShape(16.dp))) {
                         items(AndroidPdfTextDockFontSizes) { size -> SharedPdfTextDockFontSizeRow(size.value.toInt(), style.fontSize == size.value) {
                             onStyleChange(style.copy(fontSize = size.value)); state.dismiss()
@@ -142,6 +158,18 @@ fun SharedMobilePdfTextDock(
                     }
                 }
             },
+        )
+        // Drag-handle affordance: straddles the bar's outer edge (top when
+        // bottom-docked/floating, bottom when top-docked) so the bar reads as
+        // draggable. Touch-transparent; the dock container owns drag gestures.
+        Box(
+            modifier = Modifier
+                .align(if (popupsBelowBar) Alignment.BottomCenter else Alignment.TopCenter)
+                .offset(y = if (popupsBelowBar) 2.dp else (-2).dp)
+                .width(32.dp)
+                .height(4.dp)
+                .clip(RoundedCornerShape(50))
+                .background(Color.Black.copy(alpha = 0.25f))
         )
     }
 }

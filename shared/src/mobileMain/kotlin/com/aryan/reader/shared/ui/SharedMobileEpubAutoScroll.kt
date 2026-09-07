@@ -1,5 +1,11 @@
 package com.aryan.reader.shared.ui
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -156,6 +162,7 @@ internal fun SharedMobileEpubAutoScrollControls(
     onScrollToTop: () -> Unit,
     onLocalModeChange: (Boolean) -> Unit,
     onClose: () -> Unit,
+    isTempPaused: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     var showModeMenu by remember { mutableStateOf(false) }
@@ -164,12 +171,19 @@ internal fun SharedMobileEpubAutoScrollControls(
     Surface(
         modifier = modifier
             .then(if (isCollapsed) Modifier else Modifier.fillMaxWidth())
-            .widthIn(max = 400.dp),
+            .widthIn(max = 400.dp)
+            .animateContentSize(),
         shape = RoundedCornerShape(28.dp),
         tonalElevation = 8.dp,
         shadowElevation = 8.dp
     ) {
-        if (isCollapsed) {
+        // Android parity (AutoScrollControls): collapse crossfades, not snaps.
+        AnimatedContent(
+            targetState = isCollapsed,
+            transitionSpec = { fadeIn(animationSpec = tween(200)) togetherWith fadeOut(animationSpec = tween(200)) },
+            label = "EpubAutoScrollCollapse"
+        ) { collapsed ->
+            if (collapsed) {
             Row(
                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -178,17 +192,38 @@ internal fun SharedMobileEpubAutoScrollControls(
                 IconButton(onClick = { onCollapseChange(false) }, modifier = Modifier.size(36.dp)) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Expand Auto Scroll")
                 }
-                IconButton(onClick = onPlayPause, modifier = Modifier.size(36.dp)) {
-                    Icon(
-                        if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                        contentDescription = if (isPlaying) "Pause auto scroll" else "Resume auto scroll",
-                    )
+                Box(contentAlignment = Alignment.Center) {
+                    IconButton(onClick = onPlayPause, modifier = Modifier.size(36.dp)) {
+                        Icon(
+                            if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                            contentDescription = if (isPlaying) "Pause auto scroll" else "Resume auto scroll",
+                        )
+                    }
+                    // Android benchmark (EpubReaderControls.kt:1283-1289): spinner
+                    // over play while temporarily paused (e.g. finger on screen).
+                    if (isTempPaused && isPlaying) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(36.dp),
+                            color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.5f),
+                            strokeWidth = 2.dp
+                        )
+                    }
                 }
             }
         } else Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = onPlayPause) {
-                    Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, contentDescription = if (isPlaying) "Pause auto scroll" else "Resume auto scroll")
+                Box(contentAlignment = Alignment.Center) {
+                    IconButton(onClick = onPlayPause) {
+                        Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, contentDescription = if (isPlaying) "Pause auto scroll" else "Resume auto scroll")
+                    }
+                    // Android benchmark (EpubReaderControls.kt:1447-1453).
+                    if (isTempPaused && isPlaying) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(48.dp),
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                            strokeWidth = 3.dp
+                        )
+                    }
                 }
                 Box {
                     TextButton(onClick = { showModeMenu = true }) {
@@ -253,6 +288,7 @@ internal fun SharedMobileEpubAutoScrollControls(
                         Icon(Icons.Default.Add, contentDescription = "Faster")
                     }
                 }
+            }
             }
         }
     }

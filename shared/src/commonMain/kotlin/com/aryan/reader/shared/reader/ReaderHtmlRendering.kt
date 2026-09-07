@@ -263,11 +263,16 @@ internal fun String.needsPreservedWhitespace(): Boolean {
 }
 
 internal fun String.txtFormatTracePreview(maxLength: Int = 220): String {
-    return replace("\\", "\\\\")
+    // Truncate first: previews must stay allocation-bounded even when the
+    // caller passes a chapter-sized string.
+    val truncated = take(maxLength)
+    val suffix = if (length > maxLength) "..." else ""
+    return truncated
+        .replace("\\", "\\\\")
         .replace("\r", "\\r")
         .replace("\n", "\\n")
         .replace("\t", "\\t")
-        .let { if (it.length <= maxLength) it else it.take(maxLength) + "..." }
+        .plus(suffix)
         .replace("\"", "\\\"")
 }
 
@@ -374,6 +379,11 @@ internal fun SemanticTextBlock.textHtml(
         boundaries += span.end
     }
     boundaries += markersByOffset.keys
+    // Inline math spans carry their rendered SVG; the placeholder char is
+    // replaced by the SVG markup in the segment loop below.
+    val mathSvgByRange = inlineSpans
+        .filter { it.isInlineMath }
+        .associateBy { it.start to it.end }
 
     val ordered = boundaries.sorted()
     val builder = StringBuilder()
@@ -388,6 +398,11 @@ internal fun SemanticTextBlock.textHtml(
         val end = ordered[index + 1]
         appendMarkers(start)
         if (end <= start) continue
+        val mathSvg = mathSvgByRange[start to end]?.mathSvg
+        if (mathSvg != null) {
+            builder.append(mathSvg)
+            continue
+        }
         val html = text.substring(start, end).highlightAndEscape(searchQuery, searchOptions)
         val link = linkSpans.firstOrNull { it.start <= start && it.end >= end }
         val segmentStyle = inlineSpans

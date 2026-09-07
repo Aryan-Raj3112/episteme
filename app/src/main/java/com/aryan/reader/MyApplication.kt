@@ -20,7 +20,9 @@
 package com.aryan.reader
 
 import android.app.Application
+import android.util.Log
 import android.webkit.WebView
+import androidx.work.Configuration
 import coil.ImageLoader
 import coil.ImageLoaderFactory
 import coil.decode.SvgDecoder
@@ -34,7 +36,15 @@ import com.aryan.reader.pdf.SharedMobilePdfOcrAdapter
 import com.aryan.reader.data.AndroidBackupRestoreCoordinator
 import timber.log.Timber // Add this
 
-class MyApplication : Application(), ImageLoaderFactory {
+class MyApplication : Application(), ImageLoaderFactory, Configuration.Provider {
+    // WorkManager auto-init is disabled in the manifest so initialization
+    // happens on first use through SafeWorkManager. This only supplies the
+    // configuration; it never touches JobScheduler itself.
+    override val workManagerConfiguration: Configuration
+        get() = Configuration.Builder()
+            .setMinimumLoggingLevel(if (BuildConfig.DEBUG) Log.DEBUG else Log.INFO)
+            .build()
+
     override fun onCreate() {
         super.onCreate()
         registerSharedAndroidMobileApplicationContext(this)

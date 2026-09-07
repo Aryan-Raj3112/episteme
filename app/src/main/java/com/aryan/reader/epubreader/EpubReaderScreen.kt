@@ -107,6 +107,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
@@ -748,17 +749,24 @@ fun EpubReaderHost(
     var chapterChunkElementCounts by chapterChunkElementCountsState
     val chapterHeadState = remember(currentChapterIndex) { mutableStateOf("") }
     var chapterHead by chapterHeadState
-    val epubFontFaceCss = remember(epubBook.css, epubBook.extractionBasePath) {
-        val fontFaces = epubBook.css.flatMap { (path, content) ->
-            CssParser.parseFontFaces(
-                cssContent = content,
-                cssPath = path,
-                constraints = Constraints(maxWidth = 1, maxHeight = 1),
-                isDarkTheme = false,
-                adaptThemeColors = false
-            )
+    // Font sibling expansion stats font directories on disk (File.isFile/listFiles) and
+    // parses every stylesheet; on books with huge font dirs or slow storage that blocks the
+    // main thread and ANRs (see docs/crashlytics-triage.md#5). Build it on IO with an empty
+    // initial value — ChapterWebView re-injects combined CSS via JS when it arrives, so the
+    // only cost is custom fonts popping in late instead of an ANR.
+    val epubFontFaceCss by produceState("", epubBook.css, epubBook.extractionBasePath) {
+        value = withContext(Dispatchers.IO) {
+            val fontFaces = epubBook.css.flatMap { (path, content) ->
+                CssParser.parseFontFaces(
+                    cssContent = content,
+                    cssPath = path,
+                    constraints = Constraints(maxWidth = 1, maxHeight = 1),
+                    isDarkTheme = false,
+                    adaptThemeColors = false
+                )
+            }
+            buildEpubFontFaceCss(fontFaces, epubBook.extractionBasePath)
         }
-        buildEpubFontFaceCss(fontFaces, epubBook.extractionBasePath)
     }
     val isChapterParsingState = remember(currentChapterIndex) { mutableStateOf(true) }
     var isChapterParsing by isChapterParsingState

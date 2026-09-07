@@ -12,7 +12,6 @@ import androidx.work.CoroutineWorker
 import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkerParameters
-import androidx.work.WorkManager
 import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.data.RecentFilesRepository
 import com.aryan.reader.data.CloudFolderSyncRepository
@@ -502,7 +501,8 @@ class MetadataExtractionWorker(
                 TimeUnit.SECONDS
             )
             .build()
-        WorkManager.getInstance(appContext).enqueueUniqueWork(
+        SafeWorkManager.enqueueUniqueWork(
+            appContext,
             WORK_NAME,
             ExistingWorkPolicy.APPEND_OR_REPLACE,
             request

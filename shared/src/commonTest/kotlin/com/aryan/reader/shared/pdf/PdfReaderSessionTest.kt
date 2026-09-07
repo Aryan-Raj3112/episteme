@@ -370,6 +370,50 @@ class PdfReaderSessionTest {
     }
 
     @Test
+    fun `live eraser removal drops ink without history until stroke commit`() {
+        val first = annotation("first", pageIndex = 0)
+        val second = annotation("second", pageIndex = 0)
+
+        val loaded = SharedPdfReaderState.initial(pageCount = 1)
+            .reduce(SharedPdfReaderAction.AnnotationsLoaded(listOf(first, second)))
+
+        // Android parity: per-move removal is immediate but undoable only
+        // after the stroke-end commit; redo is untouched until then.
+        val liveRemoved = loaded.reduce(SharedPdfReaderAction.AnnotationsRemovedLive(setOf("first")))
+        assertEquals(listOf(second), liveRemoved.annotations)
+        assertEquals(false, liveRemoved.canUndoAnnotationEdit)
+        assertEquals(false, liveRemoved.canRedoAnnotationEdit)
+
+        val committed = liveRemoved.reduce(
+            SharedPdfReaderAction.EraserStrokeCommitted(mapOf(0 to listOf(first)))
+        )
+        assertEquals(listOf(second), committed.annotations)
+        assertEquals(true, committed.canUndoAnnotationEdit)
+
+        // Undo restores the erased stroke; redo removes it again — the exact
+        // Android HistoryAction.Remove round-trip.
+        val undoneErase = committed.reduce(SharedPdfReaderAction.UndoAnnotationEdit)
+        assertEquals(listOf(second, first).map { it.id }.toSet(), undoneErase.annotations.map { it.id }.toSet())
+        val redoneErase = undoneErase.reduce(SharedPdfReaderAction.RedoAnnotationEdit)
+        assertEquals(listOf(second), redoneErase.annotations)
+    }
+
+    @Test
+    fun `empty eraser commit preserves redo like android`() {
+        val first = annotation("first", pageIndex = 0)
+
+        val withRedo = SharedPdfReaderState.initial(pageCount = 1)
+            .reduce(SharedPdfReaderAction.AnnotationAdded(first))
+            .reduce(SharedPdfReaderAction.UndoAnnotationEdit)
+
+        assertEquals(true, withRedo.canRedoAnnotationEdit)
+        val afterEmptyCommit = withRedo.reduce(SharedPdfReaderAction.EraserStrokeCommitted(emptyMap()))
+
+        assertEquals(withRedo, afterEmptyCommit)
+        assertEquals(true, afterEmptyCommit.canRedoAnnotationEdit)
+    }
+
+    @Test
     fun `bookmark actions toggle and normalize pages`() {
         val state = SharedPdfReaderState.initial(pageCount = 4)
             .reduce(

@@ -20,6 +20,79 @@ class ReaderToolbarPreferencesTest {
     }
 
     @Test
+    fun `default bottom matches android six tool benchmark`() {
+        val bottom = ReaderToolbarPreferences.defaultBottomToolIds
+
+        assertTrue(ReaderTool.SLIDER.id in bottom)
+        assertTrue(ReaderTool.TOC.id in bottom)
+        assertTrue(ReaderTool.FORMAT.id in bottom)
+        assertTrue(ReaderTool.SEARCH.id in bottom)
+        assertTrue(ReaderTool.AI_FEATURES.id in bottom)
+        assertTrue(ReaderTool.TTS_CONTROLS.id in bottom)
+    }
+
+    @Test
+    fun `default overflow order follows android benchmark`() {        val overflow = ReaderToolbarPreferences().toolOrder
+            .filter { it.category == "Overflow Menu" }
+
+        // Benchmark: File Information stays last; Book Word Replacements
+        // precedes the TTS section.
+        assertEquals(ReaderTool.FILE_INFO, overflow.last())
+        val bookReplacements = overflow.indexOf(ReaderTool.BOOK_REPLACEMENTS)
+        val ttsSettings = overflow.indexOf(ReaderTool.TTS_SETTINGS)
+        val ttsReplacements = overflow.indexOf(ReaderTool.TTS_REPLACEMENTS)
+        assertTrue(bookReplacements in 0 until ttsSettings)
+        assertTrue(ttsSettings in 0 until ttsReplacements)
+    }
+
+    @Test
+    fun `legacy bottom sets migrate to android six tool benchmark`() {
+        val four = setOf(
+            ReaderTool.SLIDER.id,
+            ReaderTool.TOC.id,
+            ReaderTool.FORMAT.id,
+            ReaderTool.SEARCH.id
+        )
+        val expected = ReaderToolbarPreferences.defaultBottomToolIds
+
+        assertEquals(expected, migrateReaderBottomToolIds(four))
+        assertEquals(expected, migrateReaderBottomToolIds(four + ReaderTool.TTS_CONTROLS.id))
+        assertEquals(expected, migrateReaderBottomToolIds(four + ReaderTool.AI_FEATURES.id))
+
+        val custom = setOf(ReaderTool.SLIDER.id, ReaderTool.SEARCH.id)
+        assertEquals(custom, migrateReaderBottomToolIds(custom))
+
+        assertEquals(
+            expected,
+            ReaderToolbarPreferences(bottomToolIds = four).sanitized().bottomToolIds
+        )
+    }
+
+    @Test
+    fun `hidden defaults migrate by version like android`() {
+        assertEquals(
+            setOf(ReaderTool.SCREEN_ORIENTATION.id, ReaderTool.BRIGHTNESS.id),
+            readerHiddenToolsIntroducedAfter(0)
+        )
+        assertEquals(setOf(ReaderTool.BRIGHTNESS.id), readerHiddenToolsIntroducedAfter(1))
+        assertEquals(emptySet(), readerHiddenToolsIntroducedAfter(2))
+
+        val legacy = ReaderToolbarPreferences(
+            hiddenToolIds = emptySet(),
+            hiddenToolsDefaultsVersion = 0
+        ).sanitized()
+        assertTrue(ReaderTool.SCREEN_ORIENTATION.id in legacy.hiddenToolIds)
+        assertTrue(ReaderTool.BRIGHTNESS.id in legacy.hiddenToolIds)
+        assertEquals(ReaderHiddenToolsDefaultsVersion, legacy.hiddenToolsDefaultsVersion)
+
+        // Explicit user unhide on a current prefs object survives sanitize.
+        val unhidden = ReaderToolbarPreferences()
+            .withVisibility(ReaderTool.BRIGHTNESS, hidden = false)
+            .sanitized()
+        assertTrue(unhidden.isVisible(ReaderTool.BRIGHTNESS))
+        assertFalse(unhidden.isVisible(ReaderTool.SCREEN_ORIENTATION))
+    }
+    @Test
     fun `auto scroll follows overflow visibility customization`() {
         val hidden = ReaderToolbarPreferences().withVisibility(ReaderTool.AUTO_SCROLL, hidden = true)
 

@@ -4,6 +4,7 @@ import com.aryan.reader.shared.SharedLibrarySnapshot
 import com.aryan.reader.shared.SharedLibrarySnapshotJson
 import com.aryan.reader.shared.SharedReaderScreenState
 import com.aryan.reader.shared.migrateAndroidEpubFormatSettings
+import com.aryan.reader.shared.reader.DefaultIosPdfReaderSettings
 import com.aryan.reader.shared.toSharedMobileLibrarySnapshot
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
@@ -18,9 +19,14 @@ private const val IosLibrarySnapshotDefaultsKey = "reader_ios_library_snapshot_v
 private const val IosLibrarySnapshotPersistDelayMs = 500L
 
 internal fun decodeIosLibrarySnapshotJson(encoded: String): SharedLibrarySnapshot? {
-    return runCatching { SharedLibrarySnapshotJson.decodeOrEmpty(encoded) }
+    return runCatching {
+        SharedLibrarySnapshotJson.decodeOrEmpty(encoded, pdfDefaults = DefaultIosPdfReaderSettings)
+    }
         .getOrNull()
-        ?.takeIf { snapshot -> snapshot != SharedLibrarySnapshot() || encoded.isNotBlank() }
+        ?.takeIf { snapshot ->
+            snapshot != SharedLibrarySnapshot(pdfReaderDefaultSettings = DefaultIosPdfReaderSettings) ||
+                encoded.isNotBlank()
+        }
 }
 
 internal fun loadIosLibrarySnapshot(): SharedLibrarySnapshot {
@@ -29,7 +35,9 @@ internal fun loadIosLibrarySnapshot(): SharedLibrarySnapshot {
         ?: defaults.stringForKey(IosReaderPreferencesDefaultsKey)
 
     if (encoded != null) {
-        val decoded = runCatching { SharedLibrarySnapshotJson.decodeOrEmpty(encoded) }
+        val decoded = runCatching {
+            SharedLibrarySnapshotJson.decodeOrEmpty(encoded, pdfDefaults = DefaultIosPdfReaderSettings)
+        }
             .getOrNull()
             ?.migrateAndroidEpubFormatSettings()
         if (decoded != null) {
@@ -56,7 +64,7 @@ internal fun loadIosLibrarySnapshot(): SharedLibrarySnapshot {
             forKey = IosLibrarySnapshotDefaultsKey,
         )
     }
-    return (recovered ?: SharedLibrarySnapshot())
+    return (recovered ?: SharedLibrarySnapshot(pdfReaderDefaultSettings = DefaultIosPdfReaderSettings))
         .withResolvedIosBookPaths()
         .withResolvedIosAudiobookPaths()
 }

@@ -317,6 +317,7 @@ import com.aryan.reader.shared.reader.MobilePdfReaderBackAction
 import com.aryan.reader.shared.reader.MobilePdfReaderBackState
 import com.aryan.reader.shared.reader.selectMobilePdfReaderBackAction
 import com.aryan.reader.shared.reader.mobilePdfSystemBarsVisibility
+import com.aryan.reader.shared.reader.shouldPadPdfVerticalContentBelowStatusBar
 import com.aryan.reader.shared.reader.MobileReaderSystemBarsVisibility
 import com.aryan.reader.shared.reader.MobilePdfDocumentPresentation
 import com.aryan.reader.shared.reader.selectMobilePdfDocumentPresentation
@@ -4462,6 +4463,8 @@ private fun PdfViewerScreenOverlays(surfaceState: PdfViewerSurfaceState) {
                     isTopTabStripVisible = showTopTabStrip,
                     reverseColorMode = if (activeTheme.id == "reverse") reverseColorMode else PdfReverseColorMode.RGB,
                     excludeImages = excludeImages,
+                    activeTheme = activeTheme,
+                    activeTextureAlpha = 1f - globalTextureTransparency,
                     customHighlightColors = customHighlightColors,
                     onPageSelected = { targetPage ->
                         val targetDisplayPage = virtualPages.indexOfFirst {
@@ -6581,8 +6584,8 @@ private class PdfViewerSurfaceState {
     var window: android.view.Window? = null
     lateinit var view: android.view.View
     lateinit var activeDocumentRenderKey: String
-    var isHighlighterSnapEnabled: Boolean = false
-    var isCurrentToolHighlighter: Boolean = false
+    var isHighlighterSnapEnabled: Boolean by androidx.compose.runtime.mutableStateOf(false)
+    var isCurrentToolHighlighter: Boolean by androidx.compose.runtime.mutableStateOf(false)
     lateinit var calculateSnappedPoint: (Int, PdfPoint, PdfPoint?) -> PdfPoint
     lateinit var isLoadingDocument: PdfViewerMutableValue<Boolean>
     lateinit var errorMessage: PdfViewerMutableValue<String?>
@@ -6597,7 +6600,7 @@ private class PdfViewerSurfaceState {
     var dynamicBeyondViewportPageCount: Int by androidx.compose.runtime.mutableStateOf(0)
     lateinit var textBoxes: androidx.compose.runtime.snapshots.SnapshotStateList<PdfTextBox>
     lateinit var paginationDraggingBoxId: PdfViewerMutableValue<String?>
-    var isDrawingActive: Boolean = false
+    var isDrawingActive: Boolean by androidx.compose.runtime.mutableStateOf(false)
     lateinit var viewConfiguration: androidx.compose.ui.platform.ViewConfiguration
     lateinit var currentActiveScale: PdfViewerMutableValue<Float>
     lateinit var currentActiveOffset: PdfViewerMutableValue<Offset>
@@ -6628,15 +6631,15 @@ private class PdfViewerSurfaceState {
     lateinit var searchHighlightTarget: PdfViewerMutableValue<SearchResult?>
     lateinit var isOcrModelDownloading: PdfViewerMutableValue<Boolean>
     lateinit var allAnnotationsProvider: () -> Map<Int, List<PdfAnnotation>>
-    var currentStrokeColor: Color = Color.Unspecified
-    var currentStrokeWidth: Float = 0f
-    var currentEraserStrokeWidth: Float = 0f
+    var currentStrokeColor: Color by androidx.compose.runtime.mutableStateOf(Color.Unspecified)
+    var currentStrokeWidth: Float by androidx.compose.runtime.mutableStateOf(0f)
+    var currentEraserStrokeWidth: Float by androidx.compose.runtime.mutableStateOf(0f)
     lateinit var erasedAnnotationsFromStroke: androidx.compose.runtime.snapshots.SnapshotStateMap<Int, MutableList<PdfAnnotation>>
     lateinit var pageAspectRatios: PdfViewerMutableValue<List<Float>>
     lateinit var allAnnotations: PdfViewerMutableValue<Map<Int, List<PdfAnnotation>>>
     lateinit var lastEraserPoint: PdfViewerMutableValue<PdfPoint?>
-    var currentIsHighlighter: Boolean = false
-    var currentSnapEnabled: Boolean = false
+    var currentIsHighlighter: Boolean by androidx.compose.runtime.mutableStateOf(false)
+    var currentSnapEnabled: Boolean by androidx.compose.runtime.mutableStateOf(false)
     lateinit var showToolSettings: PdfViewerMutableValue<Boolean>
     lateinit var virtualPages: PdfViewerMutableValue<List<VirtualPage>>
     lateinit var globalTextureTransparency: PdfViewerMutableValue<Float>
@@ -6742,26 +6745,26 @@ private class PdfViewerSurfaceState {
     lateinit var textDockLocation: PdfViewerMutableValue<DockLocation>
     lateinit var textDockOffset: PdfViewerMutableValue<Offset>
     lateinit var isTextDockDragging: PdfViewerMutableValue<Boolean>
-    lateinit var highlighterPalette: List<Color>
-    lateinit var penPalette: List<Color>
-    var activeToolThickness: Float = 0f
-    var fountainPenColor: Color = Color.Unspecified
-    var markerColor: Color = Color.Unspecified
-    var pencilColor: Color = Color.Unspecified
-    var highlighterColor: Color = Color.Unspecified
-    var highlighterRoundColor: Color = Color.Unspecified
+    var highlighterPalette: List<Color> by androidx.compose.runtime.mutableStateOf(emptyList())
+    var penPalette: List<Color> by androidx.compose.runtime.mutableStateOf(emptyList())
+    var activeToolThickness: Float by androidx.compose.runtime.mutableStateOf(0f)
+    var fountainPenColor: Color by androidx.compose.runtime.mutableStateOf(Color.Unspecified)
+    var markerColor: Color by androidx.compose.runtime.mutableStateOf(Color.Unspecified)
+    var pencilColor: Color by androidx.compose.runtime.mutableStateOf(Color.Unspecified)
+    var highlighterColor: Color by androidx.compose.runtime.mutableStateOf(Color.Unspecified)
+    var highlighterRoundColor: Color by androidx.compose.runtime.mutableStateOf(Color.Unspecified)
     lateinit var annotationSettingsRepo: AnnotationSettingsRepository
     lateinit var snapPreviewLocation: PdfViewerMutableValue<DockLocation?>
     var dockHeight: androidx.compose.ui.unit.Dp = 0.dp
     lateinit var isDockDragging: PdfViewerMutableValue<Boolean>
     lateinit var isDockMinimized: PdfViewerMutableValue<Boolean>
-    var dockPenColor: Color = Color.Unspecified
-    var dockHighlighterColor: Color = Color.Unspecified
-    lateinit var lastPenTool: InkType
-    lateinit var lastHighlighterTool: InkType
+    var dockPenColor: Color by androidx.compose.runtime.mutableStateOf(Color.Unspecified)
+    var dockHighlighterColor: Color by androidx.compose.runtime.mutableStateOf(Color.Unspecified)
+    var lastPenTool: InkType by androidx.compose.runtime.mutableStateOf(InkType.PEN)
+    var lastHighlighterTool: InkType by androidx.compose.runtime.mutableStateOf(InkType.HIGHLIGHTER)
     lateinit var showZoomIndicator: PdfViewerMutableValue<Boolean>
     var zoomIndicatorPercentage: Int by mutableStateOf(0)
-    lateinit var toolSettings: AnnotationToolSettings
+    var toolSettings: AnnotationToolSettings by androidx.compose.runtime.mutableStateOf(AnnotationToolSettings())
     lateinit var onInsertTextBox: () -> Unit
     lateinit var customFonts: List<CustomFontEntity>
     lateinit var ttsOverlaySize: PdfViewerMutableValue<ReaderTtsOverlaySize>
@@ -6822,7 +6825,7 @@ private class PdfViewerSurfaceState {
     var activeLibraryItem: RecentFileItem? = null
     var isTtsPlaybackForThisPane: Boolean = false
     lateinit var pendingNoteForNewHighlight: PdfViewerMutableValue<Boolean>
-    var eraserToolThickness: Float = 0f
+    var eraserToolThickness: Float by androidx.compose.runtime.mutableStateOf(0f)
     lateinit var annotationRepository: PdfAnnotationRepository
     lateinit var textBoxRepository: PdfTextBoxRepository
     lateinit var highlightRepository: PdfHighlightRepository
@@ -7224,6 +7227,19 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                     DisplayMode.VERTICAL_SCROLL -> {
                         val headerHeight = verticalHeaderHeight
                         val footerHeight = verticalFooterHeight
+                        // In Always Show mode vertical content starts below the
+                        // status bar; in Sync with Menus it stays edge-to-edge
+                        // under it so the menu never pushes the page down.
+                        // Mirrors shared shouldPadPdfVerticalContentBelowStatusBar.
+                        val verticalShowBars by surfaceState.showBars
+                        val verticalSystemUiMode by surfaceState.systemUiMode
+                        val verticalStatusBarHeightDp = surfaceState.statusBarHeightDp.value
+                        val padVerticalBelowStatusBar = shouldPadPdfVerticalContentBelowStatusBar(
+                            mode = verticalSystemUiMode,
+                            standardReaderChromeVisible = verticalShowBars && !isEditMode,
+                            isVerticalMode = true,
+                            isSplitPane = surfaceState.isSplitPane,
+                        )
 
                         val currentSelectedTool by rememberUpdatedState(selectedTool)
                         val currentStrokeColorState by rememberUpdatedState(
@@ -7328,6 +7344,13 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
 
                         Box(modifier = Modifier
                             .fillMaxSize()
+                            .then(
+                                if (padVerticalBelowStatusBar) {
+                                    Modifier.padding(top = verticalStatusBarHeightDp)
+                                } else {
+                                    Modifier
+                                }
+                            )
                             .clip(RectangleShape)) {
                             val docHolder = remember(activeDocumentRenderKey, pdfDocument) {
                                 StableHolder(pdfDocument!!)

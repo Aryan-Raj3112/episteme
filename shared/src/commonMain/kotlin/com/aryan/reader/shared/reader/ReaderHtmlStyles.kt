@@ -52,6 +52,9 @@ internal fun readerDocumentStyles(
               font-weight: var(--reader-font-weight);
               letter-spacing: var(--reader-letter-spacing);
               line-height: var(--reader-line-height);
+              /* iOS parity with Android's suppressed ActionMode: the reader page
+                 draws its own selection menu, so never show WebKit's callout. */
+              -webkit-touch-callout: none;
             }
             html {
               scrollbar-color: var(--reader-scrollbar-thumb) var(--reader-scrollbar-track);
@@ -407,6 +410,31 @@ internal fun readerDocumentStyles(
             }
             #reader-selection-menu button:hover {
               background: color-mix(in srgb, var(--reader-fg) 10%, transparent);
+            }
+            #reader-selection-menu .reader-selection-styles {
+              display: flex;
+              justify-content: center;
+              align-items: center;
+              gap: 4px;
+              width: 100%;
+              box-sizing: border-box;
+              padding: 8px 10px 0;
+              overflow-x: auto;
+            }
+            #reader-selection-menu .reader-selection-style {
+              width: 28px;
+              height: 28px;
+              flex: 0 0 auto;
+              padding: 0;
+              border-radius: 8px;
+              font-size: 12px;
+              font-weight: 700;
+              border: 1px solid color-mix(in srgb, var(--reader-fg) 24%, transparent);
+              background: color-mix(in srgb, var(--reader-fg) 5%, transparent);
+            }
+            #reader-selection-menu .reader-selection-style.selected {
+              background: color-mix(in srgb, var(--reader-fg) 18%, transparent);
+              border-color: color-mix(in srgb, var(--reader-fg) 55%, transparent);
             }
             #reader-selection-menu .reader-selection-colors {
               display: flex;

@@ -64,7 +64,6 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.LayoutCoordinates
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
@@ -78,7 +77,6 @@ import androidx.compose.ui.util.lerp
 import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.zIndex
 import androidx.core.graphics.scale
-import com.aryan.reader.R
 import com.aryan.reader.isCanvasSafeBitmap
 import com.aryan.reader.ml.SpeechBubble
 import com.aryan.reader.pdf.data.PdfAnnotation
@@ -141,6 +139,33 @@ internal fun OcrProcessingIndicator(position: Offset) {
             center = position,
             style = Stroke(width = (4.dp * animatedAlpha).toPx())
         )
+    }
+}
+
+internal const val PdfTeardropViewportSize = 960f
+
+/**
+ * Vector teardrop for text-selection drag handles (mirrors
+ * res/drawable-nodpi/teardrop.xml). Drawn as a path so it stays sharp inside
+ * the zoom graphicsLayer at any scale; the old painterResource bitmap was
+ * rasterized once at ~24dp and looked pixelated when magnified.
+ */
+internal fun pdfTeardropPath(size: Size): Path {
+    val sx = size.width / PdfTeardropViewportSize
+    val sy = size.height / PdfTeardropViewportSize
+    return Path().apply {
+        moveTo(480f * sx, 860f * sy)
+        quadraticTo(347f * sx, 860f * sy, 253.5f * sx, 768f * sy)
+        quadraticTo(160f * sx, 676f * sy, 160f * sx, 544f * sy)
+        quadraticTo(160f * sx, 481f * sy, 184.5f * sx, 423.5f * sy)
+        quadraticTo(209f * sx, 366f * sy, 254f * sx, 322f * sy)
+        lineTo(480f * sx, 100f * sy)
+        lineTo(706f * sx, 322f * sy)
+        quadraticTo(751f * sx, 366f * sy, 775.5f * sx, 423.5f * sy)
+        quadraticTo(800f * sx, 481f * sy, 800f * sx, 544f * sy)
+        quadraticTo(800f * sx, 676f * sy, 706.5f * sx, 768f * sy)
+        quadraticTo(613f * sx, 860f * sy, 480f * sx, 860f * sy)
+        close()
     }
 }
 
@@ -1427,8 +1452,6 @@ internal fun PdfPageRenderer(
             }
         }
 
-        val teardropPainter = painterResource(id = R.drawable.teardrop)
-
         if (isEditMode && (selectedTool == InkType.ERASER || isStylusEraserOverride) && eraserPosition != null) {
             Canvas(modifier = Modifier.fillMaxSize()) {
                 val eraserStrokeWidth = resolveEraserStrokeWidth(
@@ -1465,12 +1488,10 @@ internal fun PdfPageRenderer(
                 val position = contentToScreenCoordinates(contentPos)
                 translate(left = position.x - teardropWidthPx / 2, top = position.y) {
                     rotate(degrees = tiltAngleDegrees, pivot = Offset(teardropWidthPx / 2f, 0f)) {
-                        with(teardropPainter) {
-                            draw(
-                                size = Size(teardropWidthPx, teardropHeightPx),
-                                colorFilter = ColorFilter.tint(handleColor)
-                            )
-                        }
+                        drawPath(
+                            path = pdfTeardropPath(Size(teardropWidthPx, teardropHeightPx)),
+                            color = handleColor
+                        )
                     }
                 }
             }
@@ -1478,12 +1499,10 @@ internal fun PdfPageRenderer(
                 val position = contentToScreenCoordinates(contentPos)
                 translate(left = position.x - teardropWidthPx / 2, top = position.y) {
                     rotate(degrees = -tiltAngleDegrees, pivot = Offset(teardropWidthPx / 2f, 0f)) {
-                        with(teardropPainter) {
-                            draw(
-                                size = Size(teardropWidthPx, teardropHeightPx),
-                                colorFilter = ColorFilter.tint(handleColor)
-                            )
-                        }
+                        drawPath(
+                            path = pdfTeardropPath(Size(teardropWidthPx, teardropHeightPx)),
+                            color = handleColor
+                        )
                     }
                 }
             }
