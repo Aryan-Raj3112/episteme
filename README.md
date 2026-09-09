@@ -119,7 +119,7 @@ Thank you to the people helping keep Episteme Reader moving:
 | Supporter | Platform |
 |---|---|
 | <img src="https://github.com/Myshadowslullaby.png?size=48" width="24" height="24" valign="middle" alt="Myshadowslullaby avatar"> [ProgrammerWhoPrograms](https://github.com/ProgrammerWhoPrograms) | GitHub Sponsors |
-| <img src="https://github.com/litaeusworks.png?size=48" width="24" height="24" valign="middle" alt="litaeusworks avatar"> [litaeusworks](https://github.com/litaeusworks) | GitHub Sponsors |
+| <img src="https://github.com/litaeusworks.png?size=48" width="24" height="24" valign="middle" alt="litaeusworks avatar"> [litaeusworks](https://github.com/litaeusworks) | Patreon |
 
 ## Support the Project
 
