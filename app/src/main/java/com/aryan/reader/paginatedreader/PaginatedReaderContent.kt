@@ -336,14 +336,36 @@ internal fun PaginatedReaderContent(
                             )
                         } else Modifier
 
-                        var pageContent by remember { mutableStateOf<Page?>(null) }
+                        // Keyed by page: pager slots are recycled across page turns, so an
+                        // unkeyed state would flash the previous page's content (and its
+                        // highlights) until the fetch below completes.
+                        var pageContent by remember(pageIndex, uiState.generation) { mutableStateOf<Page?>(null) }
                         var currentChapterPath by remember { mutableStateOf<String?>(null) }
                         var pageLayoutCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
                         val pageChapterIndex = onGetChapterIndex(pageIndex)
-                        val pageUserHighlights = highlightsForPaginatedPage(
-                            pageChapterIndex = pageChapterIndex,
-                            userHighlights = userHighlights
-                        )
+                        // Page char range derived from the fetched blocks. Unknown until content
+                        // arrives; the scope filter then falls back to chapter-only behavior.
+                        val pageTextBlocks = remember(pageContent) {
+                            pageContent?.content?.extractTextBlocks().orEmpty()
+                        }
+                        val pageCharRange = remember(pageTextBlocks) {
+                            val starts = pageTextBlocks.map { it.startCharOffsetInSource }
+                            val ends = pageTextBlocks.map {
+                                it.endCharOffsetInSource.takeIf { end -> end > it.startCharOffsetInSource }
+                                    ?: (it.startCharOffsetInSource + it.content.text.length)
+                            }
+                            if (starts.isEmpty() || ends.isEmpty()) null
+                            else starts.min()..ends.max()
+                        }
+                        val pageUserHighlights = remember(pageChapterIndex, userHighlights, pageCharRange, pageTextBlocks) {
+                            highlightsForPaginatedPage(
+                                pageChapterIndex = pageChapterIndex,
+                                userHighlights = userHighlights,
+                                pageStartOffset = pageCharRange?.first,
+                                pageEndOffset = pageCharRange?.last,
+                                pageBlocks = pageTextBlocks.ifEmpty { null }
+                            )
+                        }
                         val themedPageContent = remember(pageContent, isDarkTheme, effectiveBg, effectiveText) {
                             pageContent?.applyReaderThemeForDisplay(
                                 isDarkTheme = isDarkTheme,

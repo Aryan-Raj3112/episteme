@@ -2089,6 +2089,14 @@ internal fun getHighlightOffsetsInBlock(
                     blockEndAbs = blockEndAbs,
                     textLength = blockText.length
                 )
+                if (relOffset == null) {
+                    Timber.tag(TAG_HIGHLIGHT_DIAG).d(
+                        "map_skip reason=start_offset_outside_block blockIndex=${block.blockIndex} blockCfi=${block.cfi} " +
+                            "rawOffset=$rawOffset blockAbs=$blockStartAbs..$blockEndAbs " +
+                            highlight.androidHighlightRenderLabel()
+                    )
+                    return null
+                }
 
                 if (relOffset < 0) {
                     s = 0
@@ -2139,6 +2147,14 @@ internal fun getHighlightOffsetsInBlock(
                     blockEndAbs = blockEndAbs,
                     textLength = blockText.length
                 )
+                if (relOffset == null) {
+                    Timber.tag(TAG_HIGHLIGHT_DIAG).d(
+                        "map_skip reason=end_offset_outside_block blockIndex=${block.blockIndex} blockCfi=${block.cfi} " +
+                            "rawOffset=$rawOffset blockAbs=$blockStartAbs..$blockEndAbs " +
+                            highlight.androidHighlightRenderLabel()
+                    )
+                    return null
+                }
 
                 Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
                     "map_end_match blockCfi=${block.cfi} highlightId=${highlight.id} " +
@@ -2181,6 +2197,24 @@ internal fun getHighlightOffsetsInBlock(
                 return null
             }
         }
+    }
+
+    // Structural gate: highlights carrying an absolute text range already had their chance
+    // via absolute-offset intersection and CFI-offset resolution above (both page-safe after
+    // page-level scoping). Falling through to text-quote search here is how repeated
+    // sentences paint on unrelated blocks/pages. Quote/fuzzy recovery stays available for
+    // legacy highlights without an absolute range. Mirrors the shared structural-scope rule.
+    if (highlight.locator.hasTextRange) {
+        Timber.tag(TAG_HIGHLIGHT_DIAG).d(
+            "map_skip reason=structural_quote_skip blockIndex=${block.blockIndex} blockCfi=${block.cfi} " +
+                "blockAbs=$blockStartAbs..$blockEndAbs sourceCfi=$sourceCfi " +
+                highlight.androidHighlightRenderLabel()
+        )
+        Timber.tag(TAG_ANDROID_HIGHLIGHT_RENDER_DIAG).d(
+            "map_skip reason=precise_locator_and_cfi_miss blockIndex=${block.blockIndex} blockCfi=${block.cfi} " +
+                "sourceCfi=$sourceCfi " + highlight.androidHighlightRenderLabel()
+        )
+        return null
     }
 
     if (highlightText.contains(blockText, ignoreCase = false)) {
@@ -2250,14 +2284,6 @@ internal fun getHighlightOffsetsInBlock(
         )
     }
 
-    if (highlight.locator.hasTextRange) {
-        Timber.tag(TAG_ANDROID_HIGHLIGHT_RENDER_DIAG).d(
-            "map_skip reason=precise_locator_and_cfi_miss blockIndex=${block.blockIndex} blockCfi=${block.cfi} " +
-                "sourceCfi=$sourceCfi " + highlight.androidHighlightRenderLabel()
-        )
-        return null
-    }
-
     Timber.tag(TAG_ANDROID_HIGHLIGHT_RENDER_DIAG).d(
         "map_skip reason=no_mapping_match blockIndex=${block.blockIndex} blockCfi=${block.cfi} " +
             highlight.androidHighlightRenderLabel()
@@ -2305,11 +2331,13 @@ internal fun cfiOffsetToBlockLocal(
     blockStartAbs: Int,
     blockEndAbs: Int,
     textLength: Int
-): Int {
+): Int? {
     return when {
         offset in 0..textLength -> offset
         offset in blockStartAbs..blockEndAbs -> offset - blockStartAbs
-        else -> offset
+        // Fits neither interpretation: the offset belongs to a different block.
+        // Returning the raw offset here used to clamp onto this block's tail and paint ghosts.
+        else -> null
     }
 }
 

@@ -118,6 +118,13 @@ internal fun PaginatedSelection.toSharedHighlightLocator(
     val endAbsoluteOffset = endBlockCharOffset + endOffset
     val rangeStart = minOf(startAbsoluteOffset, endAbsoluteOffset)
     val rangeEnd = maxOf(startAbsoluteOffset, endAbsoluteOffset)
+    // Note: pageIndex is a volatile pagination hint (shifts with font/margin settings).
+    // Render scoping intentionally ignores it and uses the absolute offsets + structural
+    // scope below, so stored page numbers can never hide a highlight after repagination.
+    Timber.tag(TAG_HIGHLIGHT_DIAG).d(
+        "create chapter=$chapterIndex absoluteRange=$rangeStart..$rangeEnd " +
+            "blockIndex=$startBlockIndex pageHint=$startPageIndex..$endPageIndex cfi=$cfi"
+    )
     return SharedReaderLocator(
         chapterIndex = chapterIndex,
         pageIndex = startPageIndex,
@@ -286,6 +293,12 @@ internal const val AndroidEpubWrapShortLineFraction = 0.28f
 internal const val READER_UI_STABLE_PAGE_NAV_TAG = "StablePageNav"
 internal const val TAG_PAGINATED_HIGHLIGHT_DIAG = "PaginatedHighlightDiag"
 internal const val TAG_ANDROID_HIGHLIGHT_RENDER_DIAG = "AndroidHighlightRenderDiag"
+/**
+ * Common tag for all highlight-diagnosis logs across create/scope/map/pager stages.
+ * Filter logcat on `HighlightDiag` when testing annotations; the two tags above keep
+ * the verbose per-block/per-decision traces.
+ */
+internal const val TAG_HIGHLIGHT_DIAG = "HighlightDiag"
 internal const val TAG_READER_INTERACTION_DIAG = "ReaderInteractionDiag"
 internal object ReaderSelectionHandleOverlayAlignment : Alignment {
     override fun align(
@@ -751,9 +764,28 @@ internal fun updatedSelectionForHandleDrag(
     return selectionWithText.copy(rect = newRect) to activeDragHandle
 }
 
+/**
+ * Page-level highlight scoping for paginated rendering.
+ *
+ * Chapter matching is mandatory. When the page's absolute char range is known, highlights
+ * whose absolute text range cannot touch the page are dropped here, before per-block
+ * mapping runs — otherwise repeated sentences paint on every page of the chapter via
+ * text-quote fallbacks. Highlights without an absolute range (legacy, quote-anchored)
+ * keep the previous chapter-wide behavior; per-block CFI/quote mapping still decides them.
+ *
+ * A highlight whose range misses the page is still kept when its structural anchor
+ * (block index or source CFI) touches a block on this page, so CFI-anchored recovery
+ * keeps working when absolute offsets went stale after a reparse. The stored
+ * [ReaderLocator.pageIndex][com.aryan.reader.shared.ReaderLocator.pageIndex] is
+ * intentionally NOT used for filtering: global page numbers shift with font/margin
+ * settings, so a stored page hint would hide highlights after repagination.
+ */
 internal fun highlightsForPaginatedPage(
     pageChapterIndex: Int?,
-    userHighlights: List<UserHighlight>
+    userHighlights: List<UserHighlight>,
+    pageStartOffset: Int? = null,
+    pageEndOffset: Int? = null,
+    pageBlocks: List<TextContentBlock>? = null
 ): List<UserHighlight> {
     if (pageChapterIndex == null) {
         if (userHighlights.isNotEmpty()) {
@@ -764,11 +796,41 @@ internal fun highlightsForPaginatedPage(
         return emptyList()
     }
     val scoped = userHighlights.filter { it.chapterIndex == pageChapterIndex }
+    if (pageStartOffset == null || pageEndOffset == null) {
+        Timber.tag(TAG_HIGHLIGHT_DIAG).d(
+            "scope pageChapter=$pageChapterIndex mode=chapter_only " +
+                "inputHighlightCount=${userHighlights.size} scopedHighlightCount=${scoped.size}"
+        )
+        return scoped
+    }
+    val visible = scoped.filter { highlight ->
+        val locator = highlight.locator
+        if (highlightTextRangeOverlapsPage(locator.startOffset, locator.endOffset, pageStartOffset, pageEndOffset)) {
+            true
+        } else {
+            // Range misses the page: keep only for structural recovery via a block on this page.
+            val touches = pageBlocks?.any { block ->
+                (locator.blockIndex != null && locator.blockIndex == block.blockIndex) ||
+                    androidHighlightCfiTouchesBlock(highlight, block.cfi)
+            } == true
+            Timber.tag(TAG_HIGHLIGHT_DIAG).d(
+                "scope_drop pageChapter=$pageChapterIndex pageRange=$pageStartOffset..$pageEndOffset " +
+                    "highlightId=${highlight.id} highlightRange=${locator.startOffset}..${locator.endOffset} " +
+                    "structuralTouch=$touches locatorBlock=${locator.blockIndex}"
+            )
+            touches
+        }
+    }
+    Timber.tag(TAG_HIGHLIGHT_DIAG).d(
+        "scope pageChapter=$pageChapterIndex pageRange=$pageStartOffset..$pageEndOffset " +
+            "inputHighlightCount=${userHighlights.size} scopedHighlightCount=${scoped.size} " +
+            "visibleHighlightCount=${visible.size}"
+    )
     Timber.tag(TAG_ANDROID_HIGHLIGHT_RENDER_DIAG).d(
         "page_scope pageChapter=$pageChapterIndex inputHighlightCount=${userHighlights.size} " +
             "scopedHighlightCount=${scoped.size} scopedIds=${scoped.map { it.id }}"
     )
-    return scoped
+    return visible
 }
 
 class ReactiveBlockMap(
