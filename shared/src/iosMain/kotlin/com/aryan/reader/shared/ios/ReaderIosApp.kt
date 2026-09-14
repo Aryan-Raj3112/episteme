@@ -3968,7 +3968,10 @@ private fun ReaderIosApp(
             showCreditsBalance = IosFeatureGating.SHOW_CREDITS_PURCHASE,
             isSyncEnabled = state.isSyncEnabled,
             isFolderSyncEnabled = state.isFolderSyncEnabled,
-            onSignInClick = { runAction { utilityScreen = IosUtilityScreen.ACCOUNT } },
+            // Android parity (`HomeScreen.AppDrawerContent.onSignInClick` ->
+            // `viewModel.signIn`): trigger Apple sign-in directly instead of
+            // opening the account screen.
+            onSignInClick = { runAction { bridge.requestAuthentication("APPLE") } },
             onSignOutClick = { runAction { showSignOutConfirmation = true } },
             onSyncToggle = { enabled ->
                 if (!enabled || canUseCloudSync(
@@ -5204,7 +5207,10 @@ private fun ReaderIosApp(
                         onBack = { utilityScreen = null },
                         onPurchase = bridge::requestLocalStoreKitPurchase,
                         onRestore = bridge::requestLocalStoreKitRestore,
-                        onSignInClick = { utilityScreen = IosUtilityScreen.ACCOUNT },
+                        // Android parity (`HomeScreen.AppDrawerContent.onSignInClick` ->
+                        // `viewModel.signIn`): trigger Apple sign-in directly instead of
+                        // opening the account screen.
+                        onSignInClick = { bridge.requestAuthentication("APPLE") },
                     )
                     IosUtilityScreen.DEVICES -> IosDeviceManagementScreen(
                         devices = bridge.registeredDevices,
@@ -7331,12 +7337,14 @@ private fun IosLocalStoreKitScreen(
         IosConfirmationDialog(
             title = readerString("sign_in_required", "Sign in Required"),
             message = readerString(
-                "dialog_sign_in_required_desc",
-                // Intentional temporary iOS scope: Pro-only copy while
-                // credits purchase is hidden.
-                "Please sign in to your Episteme account to purchase Pro and unlock all premium features.",
+                // Intentional temporary iOS scope: Apple-only copy. The shared
+                // `dialog_sign_in_required_desc` key resolves to Google copy.
+                "dialog_sign_in_required_apple_desc",
+                "Please sign in with Apple to purchase Pro and unlock all premium features.",
             ),
-            confirmLabel = readerString("drawer_sign_in", "Sign in"),
+            // Same Apple-only key/copy as the drawer sign-in button: the
+            // shared `drawer_sign_in` key resolves to Google copy.
+            confirmLabel = readerString("account_sign_in", "Sign in with Apple"),
             onConfirm = {
                 showSignInRequiredDialog = false
                 onSignInClick()
@@ -7347,8 +7355,8 @@ private fun IosLocalStoreKitScreen(
     // Android parity (`ProScreen`): pill TabRow + pager, empty top-bar title,
     // Pro tab first. The credits tab/card is kept but gated (see
     // IosFeatureGating): for now only the Pro purchase remains visible.
-    // `onRestore` has no Android counterpart; it stays as an iOS StoreKit
-    // requirement below the pager.
+    // `onRestore` is kept for the StoreKit restore handler, but the restore
+    // button is intentionally hidden from the Pro screen.
     // Intentional temporary iOS scope: empty title matches Android's
     // `TopAppBar(title = { })`.
     IosUtilityPage(title = "", onBack = onBack) {
@@ -7372,6 +7380,10 @@ private fun IosLocalStoreKitScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Spacer(modifier = Modifier.height(16.dp))
+            // Single-tab scope: the star/Episteme Pro tab button is hidden while
+            // credits purchase is gated. The TabRow returns with the credits tab
+            // when SHOW_CREDITS_PURCHASE flips back on.
+            if (tabCount > 1) {
             TabRow(
                 selectedTabIndex = selectedTabIndex,
                 modifier = Modifier
@@ -7456,6 +7468,7 @@ private fun IosLocalStoreKitScreen(
                 }
             }
             Spacer(modifier = Modifier.height(16.dp))
+            }
             HorizontalPager(
                 state = pagerState,
                 modifier = Modifier.fillMaxWidth().weight(1f),
@@ -7483,9 +7496,9 @@ private fun IosLocalStoreKitScreen(
                 }
             }
             Spacer(modifier = Modifier.height(8.dp))
-            TextButton(enabled = store.available && account.uid != null, onClick = onRestore) {
-                Text(readerString("storekit_restore_purchases", "Restore purchases"))
-            }
+            // Restore purchases is intentionally hidden. The restore handler
+            // (`onRestore`) is kept so automatic reconciliation on
+            // foreground/auth change still runs.
             store.status?.let {
                 Text(readerLiteral(it), modifier = Modifier.padding(vertical = 8.dp))
             }
@@ -7725,9 +7738,9 @@ private fun IosProTierCard(
                     !isSignedIn -> {
                         Text(
                             readerString(
-                                "storekit_sign_in_before_purchase",
-                                // Intentional temporary iOS scope: Apple-only
-                                // copy while Google sign-in is hidden.
+                                // Intentional temporary iOS scope: Apple-only copy. The shared
+                                // `storekit_sign_in_before_purchase` key resolves to Apple-or-Google copy.
+                                "storekit_sign_in_before_purchase_apple",
                                 "Sign in with Apple before purchasing or restoring.",
                             ),
                             style = MaterialTheme.typography.bodySmall,
