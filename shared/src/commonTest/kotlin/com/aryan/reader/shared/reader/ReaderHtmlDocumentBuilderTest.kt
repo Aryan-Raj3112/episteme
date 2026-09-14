@@ -1536,6 +1536,54 @@ class ReaderHtmlDocumentBuilderTest {
         assertTrue(html.contains(".reader-content :where(*)"))
     }
 
+    @Test
+    fun `contrast fixup mirrors pagination thresholds and restores author styles`() {
+        val script = readerHtmlThemeFixupScript()
+
+        assertTrue(script.contains("window.readerAdjustAuthorColorsForContrast"))
+        // Pagination parity: neutral low-contrast text -> theme text, light bgs cleared on dark.
+        assertTrue(script.contains("4.5"))
+        assertTrue(script.contains("0.2"))
+        assertTrue(script.contains("0.5"))
+        // Restore-on-theme-switch so author inline styles survive toggling.
+        assertTrue(script.contains("data-reader-orig-color"))
+        assertTrue(script.contains("data-reader-orig-bg"))
+        // Reader-owned and saturated content must be left alone.
+        assertTrue(script.contains("a[href]"))
+        assertTrue(script.contains("user-highlight"))
+        // Virtualized chunks arriving after theme application are re-fixed.
+        assertTrue(script.contains("__readerLastContrastArgs"))
+        assertTrue(script.contains("MutationObserver"))
+    }
+
+    @Test
+    fun `appearance update script reapplies author contrast fixup`() {
+        val darkScript = ReaderHtmlDocumentBuilder.appearanceUpdateScript(
+            settings = ReaderSettings(darkMode = true)
+        )
+        assertTrue(darkScript.contains("window.readerAdjustAuthorColorsForContrast"))
+        assertTrue(darkScript.contains("true"))
+        assertTrue(darkScript.contains("#171a17"))
+        assertTrue(darkScript.contains("#e7e3d8"))
+
+        val lightScript = ReaderHtmlDocumentBuilder.appearanceUpdateScript(
+            settings = ReaderSettings(darkMode = false)
+        )
+        assertTrue(lightScript.contains("window.readerAdjustAuthorColorsForContrast"))
+        assertTrue(lightScript.contains("false"))
+    }
+
+    @Test
+    fun `vertical document includes contrast fixup for verbatim book css`() {
+        val html = ReaderHtmlDocumentBuilder.verticalDocument(
+            book = repeatedWordBook("alpha beta"),
+            settings = ReaderSettings(readingMode = ReaderReadingMode.VERTICAL),
+        )
+
+        assertTrue(html.contains("window.readerAdjustAuthorColorsForContrast"))
+        assertTrue(html.contains("data-reader-orig-color"))
+    }
+
     private fun repeatedWordBook(text: String): SharedEpubBook {
         return SharedEpubBook(
             id = "book",

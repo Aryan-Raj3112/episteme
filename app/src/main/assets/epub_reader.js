@@ -520,8 +520,10 @@
 
         themeStyleElement.innerHTML = css;
 
-        if (window.adjustInlineColorsForContrast) {
-             window.adjustInlineColorsForContrast(isDark, effectiveBg);
+        if (window.readerAdjustAuthorColorsForContrast) {
+             window.readerAdjustAuthorColorsForContrast(isDark, effectiveBg, effectiveText);
+        } else if (window.adjustInlineColorsForContrast) {
+             window.adjustInlineColorsForContrast(isDark, effectiveBg, effectiveText);
         }
     };
 
@@ -655,52 +657,178 @@
         return[Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
     }
 
-    window.adjustInlineColorsForContrast = function(isDark, bgHex) {
-        var bgRgb = hexToRgb(bgHex);
-        var bgLum = getLuminance(bgRgb.r, bgRgb.g, bgRgb.b);
+    // Contrast fixup shared with pagination (CssParser.adaptColorForTheme):
+    // stylesheet rules like p.P_Plat{color:#000} beat inherited body color, so we must
+    // walk computed styles for all elements, not just [style*="color"]. Neutral
+    // low-contrast text becomes the theme text color; saturated author colors are kept.
+    function readerContrastShouldSkip(el) {
+        if (!el || !el.tagName) return true;
+        var tag = el.tagName.toUpperCase();
+        if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'LINK' || tag === 'META' ||
+            tag === 'IMG' || tag === 'VIDEO' || tag === 'CANVAS' ||
+            tag === 'INPUT' || tag === 'BUTTON' || tag === 'SELECT' || tag === 'TEXTAREA') {
+            return true;
+        }
+        if (el.closest) {
+            if (el.closest('svg')) return true;
+            if (el.closest('a[href]')) return true;
+            if (el.closest('#reader-selection-menu, .reader-selection-handle, #reader-tts-highlight-layer')) return true;
+            if (el.closest('span[class*="user-highlight-"], mark.reader-user-highlight, .reader-highlight')) return true;
+        }
+        return false;
+    }
 
-        var elements = document.querySelectorAll('[style*="color"]');
-        elements.forEach(function(el) {
-            if (el.closest && el.closest('a[href]')) return;
-            var style = window.getComputedStyle(el);
-            var colorStr = style.color;
-            var rgb = rgbStringToRgb(colorStr);
-            if (rgb) {
-                var lum = getLuminance(rgb.r, rgb.g, rgb.b);
-                var l1 = Math.max(bgLum, lum);
-                var l2 = Math.min(bgLum, lum);
-                var contrast = (l1 + 0.05) / (l2 + 0.05);
+    function readerContrastChroma(rgb) {
+        var max = Math.max(rgb.r, rgb.g, rgb.b) / 255;
+        var min = Math.min(rgb.r, rgb.g, rgb.b) / 255;
+        return max - min;
+    }
 
-                if (contrast < 4.5) {
-                    var hsl = rgbToHsl(rgb.r, rgb.g, rgb.b);
-                    if (bgLum < 0.5) {
-                        hsl[2] = Math.max(hsl[2], 0.7); // Lighten
-                    } else {
-                        hsl[2] = Math.min(hsl[2], 0.3); // Darken
-                    }
-                    var newRgb = hslToRgb(hsl[0], hsl[1], hsl[2]);
-                    el.style.setProperty('color', `rgb(${newRgb[0]}, ${newRgb[1]}, ${newRgb[2]})`, 'important');
-                }
+    function readerContrastRestore(el) {
+        if (el.hasAttribute('data-reader-orig-color')) {
+            var origColor = el.getAttribute('data-reader-orig-color');
+            var origColorPriority = el.getAttribute('data-reader-orig-color-priority') || '';
+            if (origColor) {
+                el.style.setProperty('color', origColor, origColorPriority);
+            } else {
+                el.style.removeProperty('color');
             }
-        });
+            el.removeAttribute('data-reader-orig-color');
+            el.removeAttribute('data-reader-orig-color-priority');
+        } else if (el.hasAttribute('data-reader-contrast-fg')) {
+            el.style.removeProperty('color');
+            el.removeAttribute('data-reader-contrast-fg');
+        }
+        if (el.hasAttribute('data-reader-orig-bg')) {
+            var origBg = el.getAttribute('data-reader-orig-bg');
+            var origBgPriority = el.getAttribute('data-reader-orig-bg-priority') || '';
+            if (origBg) {
+                el.style.setProperty('background-color', origBg, origBgPriority);
+            } else {
+                el.style.removeProperty('background-color');
+            }
+            el.removeAttribute('data-reader-orig-bg');
+            el.removeAttribute('data-reader-orig-bg-priority');
+        } else if (el.hasAttribute('data-reader-contrast-bg')) {
+            el.style.removeProperty('background-color');
+            el.removeAttribute('data-reader-contrast-bg');
+        }
+    }
 
-        var bgElements = document.querySelectorAll('[style*="background"]');
-        bgElements.forEach(function(el) {
-            var style = window.getComputedStyle(el);
-            var bgStr = style.backgroundColor;
-            if (bgStr && bgStr !== 'rgba(0, 0, 0, 0)' && bgStr !== 'transparent') {
-                var rgb = rgbStringToRgb(bgStr);
+    function readerContrastRemember(el, kind) {
+        if (kind === 'color') {
+            if (!el.hasAttribute('data-reader-orig-color') && !el.hasAttribute('data-reader-contrast-fg')) {
+                el.setAttribute('data-reader-orig-color', el.style.getPropertyValue('color') || '');
+                el.setAttribute('data-reader-orig-color-priority', el.style.getPropertyPriority('color') || '');
+            }
+        } else {
+            if (!el.hasAttribute('data-reader-orig-bg') && !el.hasAttribute('data-reader-contrast-bg')) {
+                el.setAttribute('data-reader-orig-bg', el.style.getPropertyValue('background-color') || '');
+                el.setAttribute('data-reader-orig-bg-priority', el.style.getPropertyPriority('background-color') || '');
+            }
+        }
+    }
+
+    window.readerAdjustAuthorColorsForContrast = function(isDark, bgHex, textHex) {
+        try {
+            var effectiveText = textHex || (isDark ? '#E0E0E0' : '#000000');
+            var bgRgb = hexToRgb(bgHex);
+            var bgLum = getLuminance(bgRgb.r, bgRgb.g, bgRgb.b);
+            if (!document.body) return 0;
+            var previouslyFixed = document.querySelectorAll(
+                '[data-reader-orig-color], [data-reader-orig-bg], [data-reader-contrast-fg], [data-reader-contrast-bg]'
+            );
+            for (var restoreIndex = 0; restoreIndex < previouslyFixed.length; restoreIndex++) {
+                readerContrastRestore(previouslyFixed[restoreIndex]);
+            }
+            var fixed = 0;
+            var elements = document.body.querySelectorAll('*');
+            for (var index = 0; index < elements.length; index++) {
+                var el = elements[index];
+                if (readerContrastShouldSkip(el)) continue;
+                var style = null;
+                try {
+                    style = window.getComputedStyle(el);
+                } catch (e) {
+                    continue;
+                }
+                if (!style) continue;
+                var rgb = rgbStringToRgb(style.color);
                 if (rgb) {
-                    var lum = getLuminance(rgb.r, rgb.g, rgb.b);
-                    if (isDark && lum > 0.5) {
-                        el.style.setProperty('background-color', 'transparent', 'important');
-                    } else if (!isDark && lum < 0.2) {
-                        el.style.setProperty('background-color', 'transparent', 'important');
+                    if (readerContrastChroma(rgb) < 0.2 && contrastRatio(rgb, bgRgb) < 4.5) {
+                        readerContrastRemember(el, 'color');
+                        el.style.setProperty('color', effectiveText, 'important');
+                        el.setAttribute('data-reader-contrast-fg', 'true');
+                        fixed++;
+                    }
+                }
+                var bgStr = style.backgroundColor;
+                if (bgStr && bgStr !== 'rgba(0, 0, 0, 0)' && bgStr !== 'transparent') {
+                    var bgImage = style.backgroundImage;
+                    if (!bgImage || bgImage === 'none') {
+                        var elementBg = rgbStringToRgb(bgStr);
+                        if (elementBg) {
+                            var lum = getLuminance(elementBg.r, elementBg.g, elementBg.b);
+                            var shouldClear = (isDark && lum > 0.5) || (!isDark && lum < 0.2);
+                            if (shouldClear) {
+                                readerContrastRemember(el, 'background');
+                                el.style.setProperty('background-color', 'transparent', 'important');
+                                el.setAttribute('data-reader-contrast-bg', 'true');
+                                fixed++;
+                            }
+                        }
                     }
                 }
             }
-        });
+            window.__readerLastContrastArgs = { isDark: !!isDark, bgHex: bgHex, textHex: effectiveText };
+            return fixed;
+        } catch (e) {
+            return 0;
+        }
     };
+
+    // Legacy name kept for existing native callers; now covers stylesheet colors too.
+    window.adjustInlineColorsForContrast = function(isDark, bgHex, textHex) {
+        return window.readerAdjustAuthorColorsForContrast(isDark, bgHex, textHex);
+    };
+
+    (function installContrastMutationObserver() {
+        if (!window.MutationObserver || window.__readerContrastObserverInstalled) return;
+        window.__readerContrastObserverInstalled = true;
+        var debounce = null;
+        function schedule() {
+            if (debounce !== null) return;
+            debounce = window.setTimeout(function () {
+                debounce = null;
+                var args = window.__readerLastContrastArgs;
+                if (args && window.readerAdjustAuthorColorsForContrast) {
+                    window.readerAdjustAuthorColorsForContrast(args.isDark, args.bgHex, args.textHex);
+                }
+            }, 250);
+        }
+        function observe() {
+            if (!document.body) {
+                window.setTimeout(observe, 300);
+                return;
+            }
+            try {
+                var observer = new MutationObserver(function (mutations) {
+                    for (var i = 0; i < mutations.length; i++) {
+                        if (mutations[i].addedNodes && mutations[i].addedNodes.length) {
+                            schedule();
+                            return;
+                        }
+                    }
+                });
+                observer.observe(document.body, { childList: true, subtree: true });
+            } catch (e) {}
+        }
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', observe, { once: true });
+        } else {
+            observe();
+        }
+    })();
 
     function handleHighlightInteraction(e) {
         if (window.getSelection && window.getSelection().toString().trim().length > 0) {

@@ -148,6 +148,12 @@ object ReaderHtmlDocumentBuilder {
                     var snapshot = window.readerCurrentHighlightsSnapshot && window.readerCurrentHighlightsSnapshot();
                     if (snapshot && snapshot.length) window.readerApplyHighlights(snapshot);
                 }
+                // Fresh chunks carry verbatim author colors; re-run the contrast pass
+                // with the last theme args (MutationObserver also covers this).
+                var contrastArgs = window.__readerLastContrastArgs;
+                if (window.readerAdjustAuthorColorsForContrast && contrastArgs) {
+                    window.readerAdjustAuthorColorsForContrast(contrastArgs.isDark, contrastArgs.bgHex, contrastArgs.textHex);
+                }
             }
             };
             function install() {
@@ -365,6 +371,13 @@ object ReaderHtmlDocumentBuilder {
                 document.head.appendChild(textureStyle);
               }
               textureStyle.textContent = ${appearance.textureOverlayCss.toJsStringLiteral()};
+              if (window.readerAdjustAuthorColorsForContrast) {
+                window.readerAdjustAuthorColorsForContrast(
+                  ${if (settings.darkMode) "true" else "false"},
+                  ${appearance.background.toJsStringLiteral()},
+                  ${appearance.foreground.toJsStringLiteral()}
+                );
+              }
             })();
         """.trimIndent()
     }
