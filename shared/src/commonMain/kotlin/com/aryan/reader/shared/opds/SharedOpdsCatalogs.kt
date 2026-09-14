@@ -62,7 +62,7 @@ object SharedOpdsCatalogs {
         idFactory: () -> String
     ): List<OpdsCatalog> {
         val normalizedTitle = title.trim()
-        val normalizedUrl = url.trim()
+        val normalizedUrl = normalizeCatalogUrl(url)
         if (normalizedTitle.isBlank() || normalizedUrl.isBlank()) return catalogs
         return catalogs + OpdsCatalog(
             id = idFactory(),
@@ -87,12 +87,27 @@ object SharedOpdsCatalogs {
             } else {
                 catalog.copy(
                     title = title.trim(),
-                    url = url.trim(),
+                    url = normalizeCatalogUrl(url).ifBlank { catalog.url },
                     username = username.normalizedCredential(),
                     password = password.normalizedCredential()
                 )
             }
         }
+    }
+
+    /**
+     * User-entered catalog URLs often omit the scheme ("example.com/opds").
+     * Browsers and OkHttp clients default such input to HTTPS, so do the same
+     * here instead of persisting a URL that fails late at request time.
+     * Values that already carry a scheme (including plain http:// for LAN
+     * servers) are preserved verbatim apart from trimming.
+     */
+    fun normalizeCatalogUrl(url: String): String {
+        val trimmed = url.trim()
+        if (trimmed.isEmpty()) return ""
+        if (trimmed.startsWith("//")) return "https:$trimmed"
+        if (UrlSchemeRegex.containsMatchIn(trimmed)) return trimmed
+        return "https://$trimmed"
     }
 
     fun removeCatalog(catalogs: List<OpdsCatalog>, id: String): List<OpdsCatalog> {
@@ -141,4 +156,6 @@ object SharedOpdsCatalogs {
     private fun String?.normalizedCredential(): String? {
         return this?.trim()?.takeIf { it.isNotBlank() }
     }
+
+    private val UrlSchemeRegex = Regex("^[a-zA-Z][a-zA-Z0-9+.-]*://")
 }

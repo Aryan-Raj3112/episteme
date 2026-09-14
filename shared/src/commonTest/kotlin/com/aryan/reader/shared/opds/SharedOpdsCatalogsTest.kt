@@ -39,6 +39,25 @@ class SharedOpdsCatalogsTest {
     }
 
     @Test
+    fun `catalog urls default to https when the scheme is omitted`() {
+        assertEquals("https://example.org/opds", SharedOpdsCatalogs.normalizeCatalogUrl("example.org/opds"))
+        assertEquals("https://example.org/opds", SharedOpdsCatalogs.normalizeCatalogUrl("  example.org/opds  "))
+        assertEquals("https://example.org/opds", SharedOpdsCatalogs.normalizeCatalogUrl("//example.org/opds"))
+        assertEquals("http://192.168.1.10:8080/opds", SharedOpdsCatalogs.normalizeCatalogUrl("http://192.168.1.10:8080/opds"))
+        assertEquals("https://example.org/opds", SharedOpdsCatalogs.normalizeCatalogUrl("https://example.org/opds"))
+        assertEquals("", SharedOpdsCatalogs.normalizeCatalogUrl("   "))
+    }
+
+    @Test
+    fun `added catalogs persist the normalized url`() {
+        var nextId = 0
+        val added = SharedOpdsCatalogs.addCatalog(
+            emptyList(), "LAN", "192.168.1.10:8080/opds", null, null, idFactory = { "id-${nextId++}" }
+        )
+        assertEquals("https://192.168.1.10:8080/opds", added.single().url)
+    }
+
+    @Test
     fun `catalog json decodes null credentials as absent credentials`() {
         val catalogs = SharedOpdsCatalogs.decode(
             """

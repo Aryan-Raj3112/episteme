@@ -843,7 +843,6 @@ class OpdsStreamDocumentWrapper(
                 catalogId = catalogId,
             ),
             pageIndex = pageIndex,
-            catalogUrl = streamCatalog?.url,
         )
 
         // Stream pages must carry credentials on the first request: unlike

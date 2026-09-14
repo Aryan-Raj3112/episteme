@@ -319,7 +319,6 @@ internal class IosOpdsRepository(
             reference = reference,
             pageIndex = pageIndex,
             maxWidth = maxWidth,
-            catalogUrl = catalog?.url,
         )
         val response = fetchBinary(url, catalog?.username, catalog?.password)
         val data = response.data?.toByteArray()

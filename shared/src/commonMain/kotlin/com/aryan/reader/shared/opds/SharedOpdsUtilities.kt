@@ -309,16 +309,21 @@ object SharedOpdsStreamRequest {
     const val ResourceScheme = "reader-opds-page"
     private const val RESOURCE_PREFIX = "$ResourceScheme://stream"
 
+    /**
+     * Stream page URLs are used exactly as the feed advertises them (relative
+     * links are already resolved to absolute URLs by the parser). Never
+     * rewrite the host: feeds may legitimately serve pages from a CDN host,
+     * and swapping in the catalog authority can downgrade HTTPS to HTTP and
+     * leak credentials over cleartext.
+     */
     fun buildPageUrl(
         reference: OpdsStreamReference,
         pageIndex: Int,
         maxWidth: Int = DefaultMaxWidth,
-        catalogUrl: String? = null,
     ): String {
         require(pageIndex >= 0) { "OPDS stream page index must be non-negative" }
         require(maxWidth > 0) { "OPDS stream max width must be positive" }
-        val template = rewriteCatalogHost(reference.urlTemplate, catalogUrl)
-        return template
+        return reference.urlTemplate
             .replace("{pageNumber}", pageIndex.toString())
             .replace("{maxWidth}", maxWidth.toString())
     }
@@ -366,37 +371,6 @@ object SharedOpdsStreamRequest {
             pageIndex = pageIndex,
             maxWidth = maxWidth,
         )
-    }
-
-    /**
-     * OPDS-PSE feeds sometimes serve the stream from a transient CDN/feed host.
-     * Android resolves the persisted catalog authority before fetching; keep that
-     * policy in shared code so the iOS resource handler follows the same rule.
-     */
-    fun rewriteCatalogHost(urlTemplate: String, catalogUrl: String?): String {
-        val sourceAuthority = httpAuthority(urlTemplate) ?: return urlTemplate
-        val targetAuthority = httpAuthority(catalogUrl.orEmpty()) ?: return urlTemplate
-        return urlTemplate.replace(sourceAuthority, targetAuthority)
-    }
-
-    private fun httpAuthority(url: String): String? {
-        val schemeEnd = url.indexOf("://")
-        if (schemeEnd <= 0) return null
-        val scheme = url.substring(0, schemeEnd)
-        if (!scheme.equals("http", ignoreCase = true) && !scheme.equals("https", ignoreCase = true)) {
-            return null
-        }
-        val authorityStart = schemeEnd + 3
-        if (authorityStart >= url.length) return null
-        val authorityEnd = url.indexOfFirstAfterAuthority(authorityStart)
-        return url.substring(0, authorityEnd)
-    }
-
-    private fun String.indexOfFirstAfterAuthority(startIndex: Int): Int {
-        val slash = indexOf('/', startIndex).takeIf { it >= 0 } ?: length
-        val query = indexOf('?', startIndex).takeIf { it >= 0 } ?: length
-        val fragment = indexOf('#', startIndex).takeIf { it >= 0 } ?: length
-        return minOf(slash, query, fragment)
     }
 }
 

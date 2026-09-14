@@ -1767,6 +1767,8 @@
     <!-- OPDS = Open Publication Distribution System; keep the acronym as-is. %1$s = error detail. Example: "Failed to load feed: Unauthorized". -->
     <string name="opds_error_load_feed">Failed to load feed: %1$s</string>
     <string name="opds_error_empty_response">Empty body</string>
+    <!-- OPDS = Open Publication Distribution System; keep the acronym as-is. Shown when the server certificate is not trusted (self-signed or private CA). -->
+    <string name="opds_error_certificate">Server certificate not trusted. Use a publicly signed certificate or install the server CA on this device.</string>
     <!-- OPDS = Open Publication Distribution System; keep the acronym as-is. %1$s = server message. Example: "Download failed: File unavailable". -->
     <string name="opds_error_download_failed">Download failed: %1$s</string>
     <!-- OPDS = Open Publication Distribution System; keep the acronym as-is. %1$s = error detail. Example: "Download error: Connection reset". -->
