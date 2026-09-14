@@ -12,15 +12,24 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.Dp
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -83,6 +92,10 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -105,6 +118,7 @@ import com.aryan.reader.shared.withAndroidEpubFormatSliderValue
 import com.aryan.reader.shared.reader.ReaderPageInfo
 import com.aryan.reader.shared.reader.ReaderReadingMode
 import com.aryan.reader.shared.reader.ReaderSettings
+import com.aryan.reader.shared.reader.writeSharedReaderDiagnostic
 import com.aryan.reader.shared.reader.pullToTurnEnabled
 import com.aryan.reader.shared.reader.seamlessChapterTransitionEnabled
 import com.aryan.reader.shared.reader.SharedReaderTextAlign
@@ -745,15 +759,56 @@ internal fun SharedMobileEpubThemeGridItem(
     }
 }
 
+/**
+ * Content height of the shared mobile PageInfo bar.
+ *
+ * Android benchmark ([PAGE_INFO_BAR_HEIGHT]) adds a rounded-corner allowance on
+ * top of this; the safe-area background extension below covers the iOS home
+ * indicator and curved corners instead of growing the content row.
+ */
+internal val SharedMobileEpubPageInfoBarContentHeight = 25.dp
+
+/** Common log tag for PageInfo-bar clipping diagnosis on iOS and Android. */
+internal const val ReaderPageInfoBarDiagTag = "ReaderPageInfoBar"
+
+/** Bump when the bar layout changes, so logs prove which code produced them. */
+internal const val ReaderPageInfoBarDiagRevision = 7
+
+/**
+ * Bottom safe padding owned by the PageInfo bar (single source of truth).
+ *
+ * Used both for the bar's own background extension and, at the call site, for
+ * the chrome offset and the WebView reserve — the three must agree, otherwise
+ * the bottom toolbar overlaps the bar text (or floats far from it).
+ */
+@Composable
+internal fun rememberSharedMobileEpubPageInfoBottomPad(
+    pageInfoPosition: PageInfoPosition,
+    applySystemBarsInsets: Boolean
+): Dp {
+    val safeBottom = WindowInsets.safeDrawing.asPaddingValues().calculateBottomPadding()
+    return if (applySystemBarsInsets && pageInfoPosition == PageInfoPosition.BOTTOM) {
+        (safeBottom - sharedMobileEpubPageInfoCornerClearance).coerceAtLeast(0.dp)
+    } else {
+        0.dp
+    }
+}
+
 @Composable
 internal fun SharedMobileEpubPageInfo(
     chapterTitle: String,
     pageInfo: ReaderPageInfo?,
     progressPercent: Float,
     settings: ReaderSettings,
+    pageInfoPosition: PageInfoPosition,
+    applySystemBarsInsets: Boolean,
     modifier: Modifier = Modifier
 ) {
-    val background = settings.readerPageInfoBackgroundColor()
+    val background = if (sharedMobileEpubPageInfoMatchesReaderBackground) {
+        settings.readerBackgroundColor()
+    } else {
+        settings.readerPageInfoBackgroundColor()
+    }
     val foreground = settings.readerTextColor().copy(alpha = 0.8f)
     val texture = sharedMobileEpubTextureBitmap(settings.textureId)
     val clockTime = rememberReaderClockTime()
@@ -763,14 +818,113 @@ internal fun SharedMobileEpubPageInfo(
     val axDescription = pageInfo?.let {
         "$chapterTitle, page ${it.currentPageInChapter} of ${it.totalPagesInChapter}, ${formatReaderProgress(progressPercent)} percent"
     } ?: chapterTitle
+    // Temporary clipping diagnosis: environment + inputs + measured rect under
+    // one tag. Config logs on input change; layout logs only when the on-screen
+    // rect moves (rotation, chrome toggle), so idle sessions stay quiet.
+    val density = LocalDensity.current
+    val containerSize = LocalWindowInfo.current.containerSize
+    val safeDrawing = WindowInsets.safeDrawing.asPaddingValues()
+    val cutout = WindowInsets.displayCutout.asPaddingValues()
+    val sidePadding = 16.dp + sharedMobileEpubPageInfoCornerClearance
+    val centerReserve = 48.dp + sharedMobileEpubPageInfoCornerClearance
+    // Hug the bottom edge a little closer than the full safe inset so the bar
+    // doesn't float high above it; the same corner room keeps the content clear
+    // of the home indicator and the curve. Android clearance is 0.dp, so its
+    // exact benchmark padding is untouched. Top keeps the full inset.
+    val bottomPad = rememberSharedMobileEpubPageInfoBottomPad(pageInfoPosition, applySystemBarsInsets)
+    val orientation = when {
+        containerSize.width > containerSize.height -> "landscape"
+        containerSize.width < containerSize.height -> "portrait"
+        else -> "square"
+    }
+    LaunchedEffect(
+        pageInfoPosition, applySystemBarsInsets, sidePadding, centerReserve,
+        containerSize, orientation, density.density, density.fontScale
+    ) {
+        writeSharedReaderDiagnostic(
+            ReaderPageInfoBarDiagTag,
+            "config rev=$ReaderPageInfoBarDiagRevision pos=$pageInfoPosition applyInsets=$applySystemBarsInsets " +
+                "clearance=$sharedMobileEpubPageInfoCornerClearance sidePad=$sidePadding " +
+                "centerReserve=$centerReserve density=${density.density} " +
+                "fontScale=${density.fontScale} container=$containerSize orient=$orientation " +
+                "safeDrawing=l${safeDrawing.calculateLeftPadding(LayoutDirection.Ltr)}" +
+                "t${safeDrawing.calculateTopPadding()}r${safeDrawing.calculateRightPadding(LayoutDirection.Ltr)}" +
+                "b${safeDrawing.calculateBottomPadding()} " +
+                "cutout=l${cutout.calculateLeftPadding(LayoutDirection.Ltr)}" +
+                "t${cutout.calculateTopPadding()}r${cutout.calculateRightPadding(LayoutDirection.Ltr)}" +
+                "b${cutout.calculateBottomPadding()} bottomPad=$bottomPad"
+        )
+    }
+    var lastRootRect by remember { mutableStateOf<String?>(null) }
+    // The bottom safe pad must be painted, not transparent: in Compose a
+    // padding modifier outside the background leaves that strip unpainted, so
+    // on iOS (where bottomPad is nonzero while chrome hides) the page showed
+    // through below the bar. The background and texture therefore go outside
+    // the bottom padding and cover the full bar down to the screen edge, while
+    // the 25.dp content row stays clear of the home indicator. TOP and the
+    // no-insets states keep the benchmark modifier order pixel-identical. The
+    // inner horizontal safe-drawing padding keeps the clock and percentage
+    // clear of the notch and curved screen corners: displayCutout alone
+    // reports 0 on iOS, safeDrawing carries the insets on both platforms (on
+    // Android it already includes the cutout).
+    val extendBackgroundThroughBottomPad =
+        applySystemBarsInsets && pageInfoPosition == PageInfoPosition.BOTTOM && bottomPad > 0.dp
+    val textureModifier = texture?.let { bitmap ->
+        Modifier.drawBehind {
+            drawRect(
+                ShaderBrush(ImageShader(bitmap, TileMode.Repeated, TileMode.Repeated)),
+                alpha = settings.textureAlpha.coerceIn(0f, 1f),
+                blendMode = if (settings.darkMode) BlendMode.Screen else BlendMode.Multiply
+            )
+        }
+    } ?: Modifier
     Box(
-        modifier.fillMaxWidth().height(25.dp).background(background)
-            .then(texture?.let { bitmap -> Modifier.drawBehind { drawRect(ShaderBrush(ImageShader(bitmap, TileMode.Repeated, TileMode.Repeated)), alpha = settings.textureAlpha.coerceIn(0f, 1f), blendMode = if (settings.darkMode) BlendMode.Screen else BlendMode.Multiply) } } ?: Modifier)
-            .padding(horizontal = 16.dp)
+        modifier.fillMaxWidth()
+            .then(
+                if (extendBackgroundThroughBottomPad) {
+                    Modifier.background(background).then(textureModifier)
+                } else {
+                    Modifier
+                }
+            )
+            .then(
+                if (!applySystemBarsInsets) {
+                    Modifier
+                } else if (pageInfoPosition == PageInfoPosition.TOP) {
+                    Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top))
+                } else {
+                    Modifier.padding(bottom = bottomPad)
+                }
+            )
+            .then(
+                if (extendBackgroundThroughBottomPad) {
+                    Modifier
+                } else {
+                    Modifier.background(background).then(textureModifier)
+                }
+            )
             .testTag(SharedMobileEpubAxTags.PAGE_INFO)
-            .semantics(mergeDescendants = true) { contentDescription = axDescription },
+            .semantics(mergeDescendants = true) { contentDescription = axDescription }
+            .onGloballyPositioned { coordinates ->
+                val rect = coordinates.boundsInRoot()
+                val fingerprint = with(density) {
+                    "rect=${rect.left.toDp()}x${rect.top.toDp()} " +
+                        "size=${rect.width.toDp()}x${rect.height.toDp()} " +
+                        "px=[${rect.left.toInt()},${rect.top.toInt()},${rect.width.toInt()},${rect.height.toInt()}]"
+                }
+                if (fingerprint != lastRootRect) {
+                    lastRootRect = fingerprint
+                    writeSharedReaderDiagnostic(ReaderPageInfoBarDiagTag, "layout $fingerprint")
+                }
+            },
         contentAlignment = Alignment.Center
     ) {
+        Box(
+            Modifier.fillMaxWidth().height(SharedMobileEpubPageInfoBarContentHeight)
+                .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
+                .padding(horizontal = 16.dp + sharedMobileEpubPageInfoCornerClearance),
+            contentAlignment = Alignment.Center
+        ) {
             Text(
                 centerLabel,
                 maxLines = 1,
@@ -778,7 +932,7 @@ internal fun SharedMobileEpubPageInfo(
                 style = MaterialTheme.typography.bodySmall,
                 color = foreground,
                 textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 48.dp)
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 48.dp + sharedMobileEpubPageInfoCornerClearance)
             )
             Text(
                 clockTime,
@@ -792,6 +946,7 @@ internal fun SharedMobileEpubPageInfo(
                 color = foreground,
                 modifier = Modifier.align(Alignment.CenterEnd)
             )
+        }
     }
 }
 

@@ -2,6 +2,7 @@ package com.aryan.reader.shared.ui
 
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.Dp
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.ReaderAiByokSettings
 import com.aryan.reader.shared.ReaderCloudTtsState
@@ -87,10 +88,41 @@ internal expect fun SharedMobileEpubWebView(
     positionController: SharedMobileEpubWebViewController? = null,
     streamPageLoader: SharedMobileEpubStreamPageLoader? = null,
     streamPageUnavailableLabel: String,
+    contentBackgroundArgb: Long,
     modifier: Modifier = Modifier
 )
 
 internal expect fun openSharedMobileEpubExternalLink(url: String): Boolean
+
+/**
+ * Extra PageInfo side clearance for rounded screen corners.
+ *
+ * Android keeps the benchmark 16.dp side padding untouched (0.dp here);
+ * iOS adds room because portrait reports no horizontal safe inset while the
+ * physical corners still curve into the bar's edge-pinned clock/percentage.
+ */
+internal expect val sharedMobileEpubPageInfoCornerClearance: Dp
+
+/**
+ * Whether a visible bottom PageInfo bar always stays above the bottom safe
+ * area, even when the reader chrome (and with it the system nav bars) hides.
+ *
+ * iOS needs this: with menus hidden the bar would otherwise sit flush at the
+ * bottom edge, where the corner curve eats the edge-pinned clock/percentage
+ * (the background still extends to the edge, so nothing turns black). Android
+ * keeps the benchmark flush-when-hidden behavior.
+ */
+internal expect val sharedMobileEpubPageInfoAlwaysApplyBottomSafeInset: Boolean
+
+/**
+ * Whether the PageInfo bar uses the exact reader background instead of the
+ * tinted/translucent info-bar color.
+ *
+ * iOS needs this: the bar must read as a continuation of the page (any tonal
+ * step makes it look like a floating strip pasted over the book). Android
+ * keeps its benchmark tinted bar.
+ */
+internal expect val sharedMobileEpubPageInfoMatchesReaderBackground: Boolean
 internal expect fun openSharedMobileEpubLookup(action: ReaderExternalLookupAction, text: String): Boolean
 internal expect fun shareSharedMobileEpubImage(bytes: ByteArray, fileName: String): Boolean
 

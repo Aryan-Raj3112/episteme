@@ -6,7 +6,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -714,26 +713,36 @@ internal fun SharedSemanticBlockView(
                         } else {
                             blockStyle.borderSpacing.takeIfPositiveSpecified() ?: 8.dp
                         }
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(IntrinsicSize.Min),
-                            horizontalArrangement = Arrangement.spacedBy(cellGap)
-                        ) {
-                            row.forEach { cell ->
-                                val cellBlockStyle = cell.style.blockStyle.sharedNativeThemeBlockStyle(
-                                    isDarkTheme = settings.darkMode,
-                                    background = background,
-                                    foreground = foreground
+                        val cellStyles = row.map { cell ->
+                            cell.style.blockStyle.sharedNativeThemeBlockStyle(
+                                isDarkTheme = settings.darkMode,
+                                background = background,
+                                foreground = foreground
+                            )
+                        }
+                        val sizings = row.mapIndexed { index, cell ->
+                            val themedWidth = cellStyles[index].width
+                            if (hasFixedWidths && themedWidth.isPositiveSpecified()) {
+                                SharedNativeTableCellSizing.Fixed(themedWidth)
+                            } else {
+                                SharedNativeTableCellSizing.Weighted(
+                                    cell.colspan.toFloat().coerceAtLeast(1f)
                                 )
+                            }
+                        }
+                        // Equal-height row without IntrinsicSize.Min: the old
+                        // Row(height(IntrinsicSize.Min)) crashed when a cell contained
+                        // a SubcomposeLayout (BoxWithConstraints image, inline math),
+                        // which does not support intrinsic measurement.
+                        SharedNativeTableRow(
+                            sizings = sizings,
+                            cellGap = cellGap,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            row.forEachIndexed { index, cell ->
+                                val cellBlockStyle = cellStyles[index]
                                 val cellModifier = Modifier
-                                    .then(
-                                        if (hasFixedWidths && cellBlockStyle.width.isPositiveSpecified()) {
-                                            Modifier.width(cellBlockStyle.width)
-                                        } else {
-                                            Modifier.weight(cell.colspan.toFloat().coerceAtLeast(1f), fill = true)
-                                        }
-                                    )
+                                    .fillMaxWidth()
                                     .sharedNativeCssBox(cellBlockStyle)
                                     .padding(
                                         start = cellBlockStyle.padding.left.safeDp(),

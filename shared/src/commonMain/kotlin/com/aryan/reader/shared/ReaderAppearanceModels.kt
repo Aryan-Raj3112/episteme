@@ -4,6 +4,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.isSpecified
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import com.aryan.reader.shared.reader.ReaderReadingMode
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.SharedReaderTextAlign
@@ -66,6 +68,31 @@ fun shouldReserveEpubPageInfoBarSpace(
 ): Boolean {
     if (isNativeVerticalMode || pageInfoMode == PageInfoMode.SYNC) return false
     return shouldShowEpubPageInfoBar(pageInfoMode, showReaderChrome)
+}
+
+/**
+ * Bottom space a WebView reader must reserve for a BOTTOM PageInfo bar so book
+ * text never slides under the bar or peeks through its safe-area extension.
+ *
+ * This is the bar's full height ([contentHeight] + [bottomPad]), not just the
+ * content row: where the visible bar grows a bottom safe pad (iOS with chrome
+ * hidden), reserving only the content row leaves a gap below the bar where the
+ * page shows through. Returns 0.dp unless the bar actually occupies bottom
+ * space (BOTTOM position, really shown, and reserving per
+ * [shouldReserveEpubPageInfoBarSpace]).
+ */
+fun pageInfoBarBottomReserve(
+    pageInfoPosition: PageInfoPosition,
+    pageInfoMode: PageInfoMode,
+    showReaderChrome: Boolean,
+    barVisible: Boolean,
+    contentHeight: Dp,
+    bottomPad: Dp
+): Dp {
+    if (pageInfoPosition != PageInfoPosition.BOTTOM) return 0.dp
+    if (!barVisible) return 0.dp
+    if (!shouldReserveEpubPageInfoBarSpace(pageInfoMode, showReaderChrome, isNativeVerticalMode = false)) return 0.dp
+    return contentHeight + bottomPad
 }
 
 fun stepEpubFormatValue(

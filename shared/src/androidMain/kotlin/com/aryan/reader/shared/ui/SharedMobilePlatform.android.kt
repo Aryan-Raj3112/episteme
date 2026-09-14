@@ -16,6 +16,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import io.legere.pdfiumandroid.api.Bookmark
 import io.legere.pdfiumandroid.suspend.PdfDocumentKt
@@ -130,6 +132,7 @@ internal actual fun SharedMobileEpubWebView(
     positionController: SharedMobileEpubWebViewController?,
     streamPageLoader: SharedMobileEpubStreamPageLoader?,
     streamPageUnavailableLabel: String,
+    contentBackgroundArgb: Long,
     modifier: Modifier,
 ) {
     rememberAndroidSharedMobileContext()
@@ -144,7 +147,7 @@ internal actual fun SharedMobileEpubWebView(
         factory = coordinator::createWebView,
         update = { webView -> coordinator.update(
             webView, html, contentChunks, appearanceScript, navigationScript, navigationRequestId,
-            highlightsApplyScript,
+            highlightsApplyScript, contentBackgroundArgb,
         ) },
         onRelease = coordinator::release,
     )
@@ -168,6 +171,7 @@ private class AndroidEpubWebViewCoordinator(
     private var appliedAppearanceHash: Int? = null
     private var appliedHighlightsHash: Int? = null
     private var appliedNavigationRequestId = Long.MIN_VALUE
+    private var appliedBackgroundArgb: Long? = null
     private var latestAppearanceScript = ""
     private var latestNavigationScript: String? = null
     private var latestNavigationRequestId = Long.MIN_VALUE
@@ -217,9 +221,14 @@ private class AndroidEpubWebViewCoordinator(
         navigationScript: String?,
         navigationRequestId: Long,
         highlightsApplyScript: String,
+        contentBackgroundArgb: Long,
     ) {
         activeWebView = webView
         this.contentChunks = contentChunks
+        if (appliedBackgroundArgb != contentBackgroundArgb) {
+            appliedBackgroundArgb = contentBackgroundArgb
+            webView.setBackgroundColor((contentBackgroundArgb and 0xFFFFFFFFL).toInt())
+        }
         latestAppearanceScript = appearanceScript
         latestNavigationScript = navigationScript
         latestNavigationRequestId = navigationRequestId
@@ -297,6 +306,7 @@ private class AndroidEpubWebViewCoordinator(
         webView.destroy()
         activeWebView = null
         contentChunks = emptyList()
+        appliedBackgroundArgb = null
     }
 }
 
@@ -314,6 +324,15 @@ private val AndroidEpubBridgeBootstrapScript = """
 """.trimIndent()
 
 internal actual fun openSharedMobileEpubExternalLink(url: String): Boolean = openAndroidUrl(url)
+
+// Android benchmark: side padding stays exactly 16.dp, no corner allowance.
+internal actual val sharedMobileEpubPageInfoCornerClearance: Dp = 0.dp
+
+// Android benchmark: the bar sits flush at the bottom edge when chrome hides.
+internal actual val sharedMobileEpubPageInfoAlwaysApplyBottomSafeInset: Boolean = false
+
+// Android benchmark: tinted/translucent info-bar color.
+internal actual val sharedMobileEpubPageInfoMatchesReaderBackground: Boolean = false
 
 internal actual fun openSharedMobileEpubLookup(action: ReaderExternalLookupAction, text: String): Boolean =
     openAndroidUrl(externalLookupUrl(action, text))

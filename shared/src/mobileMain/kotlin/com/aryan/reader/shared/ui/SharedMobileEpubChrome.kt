@@ -712,6 +712,12 @@ internal fun SharedMobileEpubBottomBar(
     cloudTtsAvailable: Boolean = false,
     onCloudTtsToggle: () -> Unit = {},
     onCloudTtsStop: () -> Unit = {},
+    // When true the bottom system-bars inset is consumed *inside* the Surface
+    // so the toolbar background (with its tonal elevation) paints the full
+    // toolbar rect down to the screen edge. Applying it outside the Surface
+    // leaves a transparent strip where the WebView shows through below the
+    // toolbar. Geometry is unchanged either way (45.dp row + inset).
+    applyBottomSafeInset: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val formatContentDescription = readerString("tooltip_format", "Text formatting")
@@ -810,6 +816,9 @@ internal fun SharedMobileEpubBottomBar(
                         else -> Unit
                     }
                 }
+            }
+            if (applyBottomSafeInset) {
+                Spacer(Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom)))
             }
         }
     }

@@ -83,6 +83,17 @@ class ReaderHtmlDocumentBuilderTest {
     }
 
     @Test
+    fun `vertical documents cover the viewport and clear the home indicator`() {
+        val html = ReaderHtmlDocumentBuilder.verticalDocument(
+            book = repeatedWordBook("alpha beta"),
+            settings = ReaderSettings(readingMode = ReaderReadingMode.VERTICAL),
+        )
+
+        assertTrue(html.contains("viewport-fit=cover"))
+        assertTrue(html.contains("env(safe-area-inset-bottom, 0px)"))
+    }
+
+    @Test
     fun `plain text fallback preserves txt line breaks and spacing`() {
         val text = """
             [ID]          72694621

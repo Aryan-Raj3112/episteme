@@ -14,6 +14,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.UIKitInteropInteractionMode
 import androidx.compose.ui.viewinterop.UIKitInteropProperties
 import androidx.compose.ui.viewinterop.UIKitView
@@ -73,6 +75,8 @@ import platform.Foundation.NSUserDefaults
 import platform.Foundation.dataWithLength
 import platform.UIKit.UIApplication
 import platform.UIKit.UIColor
+import platform.UIKit.UIEdgeInsetsMake
+import platform.UIKit.UIScrollViewContentInsetAdjustmentBehavior
 import platform.UIKit.UIActivityViewController
 import platform.UIKit.UIModalPresentationFullScreen
 import platform.UIKit.UIReferenceLibraryViewController
@@ -148,6 +152,7 @@ internal actual fun SharedMobileEpubWebView(
     positionController: SharedMobileEpubWebViewController?,
     streamPageLoader: SharedMobileEpubStreamPageLoader?,
     streamPageUnavailableLabel: String,
+    contentBackgroundArgb: Long,
     modifier: Modifier
 ) {
     val latestBridgeMessage by rememberUpdatedState(onBridgeMessage)
@@ -176,7 +181,8 @@ internal actual fun SharedMobileEpubWebView(
                 appearanceScript = appearanceScript,
                 navigationScript = navigationScript,
                 navigationRequestId = navigationRequestId,
-                highlightsApplyScript = highlightsApplyScript
+                highlightsApplyScript = highlightsApplyScript,
+                contentBackgroundArgb = contentBackgroundArgb
             )
         },
         onRelease = coordinator::release,
@@ -192,6 +198,22 @@ internal actual fun openSharedMobileEpubExternalLink(url: String): Boolean {
     val target = NSURL.URLWithString(normalized) ?: return false
     return UIApplication.sharedApplication.openURL(target)
 }
+
+// iPhone corner radii (~13-16pt) curve into the benchmark 16.dp side padding,
+// so the edge-pinned clock/percentage gain room that safeDrawing cannot
+// provide (it reports 0 horizontally in portrait).
+internal actual val sharedMobileEpubPageInfoCornerClearance: Dp = 8.dp
+
+// With menus hidden the bar would sit flush at the bottom edge, inside the
+// corner curve. Always lifting it above the home-indicator zone keeps the
+// clock/percentage on straight screen edges; the bar background still extends
+// to the bottom edge underneath.
+internal actual val sharedMobileEpubPageInfoAlwaysApplyBottomSafeInset: Boolean = true
+
+// The tinted info-bar color renders as a visible step against the page, making
+// the bar look like a floating strip. The exact opaque reader background
+// continues the page seamlessly (texture overlay is unchanged).
+internal actual val sharedMobileEpubPageInfoMatchesReaderBackground: Boolean = true
 
 internal object IosReaderLookupServices {
     var dictionary: ReaderExternalLookupService = ReaderExternalLookupService.SYSTEM
@@ -715,6 +737,7 @@ private class IosEpubWebViewCoordinator(
     private var appliedAppearanceHash: Int? = null
     private var appliedHighlightsHash: Int? = null
     private var appliedNavigationRequestId: Long = Long.MIN_VALUE
+    private var appliedBackgroundArgb: Long? = null
     private var latestAppearanceScript: String = ""
     private var latestNavigationScript: String? = null
     private var latestNavigationRequestId: Long = Long.MIN_VALUE
@@ -749,9 +772,18 @@ private class IosEpubWebViewCoordinator(
         return WKWebView(frame = CGRectMake(0.0, 0.0, 0.0, 0.0), configuration = configuration).apply {
             activeWebView = this
             navigationDelegate = this@IosEpubWebViewCoordinator.navigationDelegate
-            opaque = false
-            backgroundColor = UIColor.clearColor
-            scrollView.backgroundColor = UIColor.clearColor
+            opaque = true
+            backgroundColor = UIColor.whiteColor
+            scrollView.backgroundColor = UIColor.whiteColor
+            // Compose owns the safe area (PageInfo reserve + bar insets) and the
+            // HTML owns the home-indicator bottom clearance, so WebKit must not
+            // add its own automatic bottom inset. That inset lifts the chapter
+            // end above the PageInfo bar and leaves a gap that only vanishes
+            // after the first scroll.
+            scrollView.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentBehavior.UIScrollViewContentInsetAdjustmentNever
+            scrollView.automaticallyAdjustsScrollIndicatorInsets = false
+            scrollView.contentInset = UIEdgeInsetsMake(0.0, 0.0, 0.0, 0.0)
+            scrollView.scrollIndicatorInsets = UIEdgeInsetsMake(0.0, 0.0, 0.0, 0.0)
             scrollView.bounces = true
             scrollView.alwaysBounceVertical = true
             scrollView.alwaysBounceHorizontal = false
@@ -766,10 +798,18 @@ private class IosEpubWebViewCoordinator(
         appearanceScript: String,
         navigationScript: String?,
         navigationRequestId: Long,
-        highlightsApplyScript: String
+        highlightsApplyScript: String,
+        contentBackgroundArgb: Long
     ) {
         activeWebView = webView
         this.contentChunks = contentChunks
+        if (appliedBackgroundArgb != contentBackgroundArgb) {
+            appliedBackgroundArgb = contentBackgroundArgb
+            val nativeBackground = contentBackgroundArgb.toIosReaderColor()
+            webView.opaque = true
+            webView.backgroundColor = nativeBackground
+            webView.scrollView.backgroundColor = nativeBackground
+        }
         latestAppearanceScript = appearanceScript
         latestNavigationScript = navigationScript
         latestNavigationRequestId = navigationRequestId
@@ -913,11 +953,20 @@ private class IosEpubWebViewCoordinator(
         loadedHtmlHash = null
         loadedHtmlLength = -1
         appliedHighlightsHash = null
+        appliedBackgroundArgb = null
         latestHighlightsApplyScript = ""
         pendingScrollRestore = null
         htmlLoadStartMark = null
         reportedFirstPosition = false
     }
+}
+
+private fun Long.toIosReaderColor(): UIColor {
+    val alpha = ((this ushr 24) and 0xFF).toDouble() / 255.0
+    val red = ((this ushr 16) and 0xFF).toDouble() / 255.0
+    val green = ((this ushr 8) and 0xFF).toDouble() / 255.0
+    val blue = (this and 0xFF).toDouble() / 255.0
+    return UIColor.colorWithRed(red, green, blue, alpha)
 }
 
 private class IosEpubResourceSchemeHandler : NSObject(), WKURLSchemeHandlerProtocol {

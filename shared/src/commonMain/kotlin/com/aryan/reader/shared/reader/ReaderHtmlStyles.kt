@@ -112,6 +112,14 @@ internal fun readerDocumentStyles(
               overflow-x: hidden;
               overflow-y: auto;
               padding: var(--reader-vertical-margin-y) 0;
+              /*
+               * iOS WKWebView runs with contentInsetAdjustmentBehavior=never and the
+               * Compose PageInfo bar overlays the WebView, so the document owns the
+               * bottom clearance: reader margin plus the home-indicator safe area.
+               * This keeps the chapter end above the bar instead of showing a gap
+               * that only disappears after the first scroll.
+               */
+              padding-bottom: calc(var(--reader-vertical-margin-y) + env(safe-area-inset-bottom, 0px));
               scrollbar-gutter: stable;
             }
             body.reader-paginated {
