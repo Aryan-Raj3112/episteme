@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
@@ -30,14 +31,24 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Ai
+import androidx.compose.material.icons.filled.Book
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.Feedback
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.DrawerValue
@@ -51,6 +62,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDrawerState
@@ -66,6 +79,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontFamily
@@ -96,6 +111,7 @@ import com.aryan.reader.shared.CloudSyncSetupIntent
 import com.aryan.reader.shared.CloudSyncSetupRoute
 import com.aryan.reader.shared.CustomFontItem
 import com.aryan.reader.shared.FileType
+import com.aryan.reader.shared.IosFeatureGating
 import com.aryan.reader.shared.pdf.IosPdfiumRuntime
 import com.aryan.reader.shared.ImportedBookFile
 import com.aryan.reader.shared.LibraryAction
@@ -3892,13 +3908,19 @@ private fun ReaderIosApp(
             action()
             closeDrawer()
         }
+        // Intentional temporary iOS scope (IosFeatureGating): Google sign-in,
+        // cloud sync, credits purchase, and cloud TTS are hidden from the UI
+        // while their logic/data stays intact for later. Only Apple sign-in
+        // and Pro purchase remain visible for now. Flip the gating flags back
+        // to restore the hidden options.
         SharedMobileAppDrawerContent(
             account = MobileAccountPresentation(
                 currentUser = state.currentUser,
                 providers = bridge.accountState.providers,
+                // Intentional temporary iOS scope: Apple-only sign-in.
+                // Google logic is kept; re-add AccountAuthProvider.GOOGLE later.
                 supportedSignInProviders = setOf(
                     AccountAuthProvider.APPLE,
-                    AccountAuthProvider.GOOGLE,
                 ),
                 isProUser = state.isProUser,
                 credits = state.credits,
@@ -3908,11 +3930,14 @@ private fun ReaderIosApp(
                 edition = null,
                 signInLabel = readerString(
                     "account_sign_in",
-                    "Sign in with Apple or Google",
+                    // Intentional temporary iOS scope: Apple-only copy.
+                    "Sign in with Apple",
                 ),
                 signedOutDescription = readerString(
                     "drawer_signed_out_desc",
-                    "Sync account, Pro features, and credits.",
+                    // Intentional temporary iOS scope: Pro-only copy while
+                    // cloud sync and credits purchase are hidden.
+                    "Sign in for Pro features.",
                 ),
                 legalDisclosure = if (state.currentUser == null) {
                     MobileAccountLegalDisclosure(
@@ -3921,7 +3946,8 @@ private fun ReaderIosApp(
                             "%1\$s you agree to our %2\$s and acknowledge you have read our %3\$s.",
                             readerString(
                                 "account_drawer_by_signing_in",
-                                "By signing in with Apple or Google,",
+                                // Intentional temporary iOS scope: Apple-only copy.
+                                "By signing in with Apple,",
                             ),
                             readerString("legal_terms_of_service", "Terms of Service"),
                             readerString("legal_privacy_policy", "Privacy Policy"),
@@ -3935,6 +3961,11 @@ private fun ReaderIosApp(
             ),
             accountAvatar = { user, modifier -> IosAccountAvatar(user, modifier) },
             drawerCapabilities = capabilities,
+            // Intentional temporary iOS scope: cloud sync rows hidden.
+            showSyncControls = IosFeatureGating.SHOW_CLOUD_SYNC,
+            // Intentional temporary iOS scope: credits badge hidden in favor
+            // of Pro status while credits purchase is hidden.
+            showCreditsBalance = IosFeatureGating.SHOW_CREDITS_PURCHASE,
             isSyncEnabled = state.isSyncEnabled,
             isFolderSyncEnabled = state.isFolderSyncEnabled,
             onSignInClick = { runAction { utilityScreen = IosUtilityScreen.ACCOUNT } },
@@ -4496,7 +4527,9 @@ private fun ReaderIosApp(
             onOpenSplit = onOpenSplit,
             readerAiAvailable = readerAiAvailable,
             readerExtrasState = readerExtrasState.copy(cloudTts = readerCloudTts.state),
-            cloudTts = readerCloudTts,
+            // Intentional temporary iOS scope: hide cloud TTS UI by passing
+            // null while keeping readerCloudTts logic/configured for later.
+            cloudTts = if (IosFeatureGating.SHOW_CLOUD_TTS) readerCloudTts else null,
             cloudTtsModeEnabled = effectiveReaderAiSettings.ttsModel == com.aryan.reader.shared.GEMINI_CLOUD_TTS_MODEL_ID,
             onCloudTtsModeChange = ::updateCloudTtsMode,
             cloudTtsVoiceId = effectiveReaderAiSettings.ttsSpeakerId,
@@ -4508,7 +4541,9 @@ private fun ReaderIosApp(
             },
             onOpenAiHub = { utilityScreen = IosUtilityScreen.AI_SETTINGS },
             summaryCache = remember { SharedSummaryCache() },
-            aiCredits = state.credits,
+            // Intentional temporary iOS scope: hide credits balance while
+            // keeping state.credits data for later.
+            aiCredits = if (IosFeatureGating.SHOW_CREDITS_PURCHASE) state.credits else null,
             pdfReflowUiState = SharedMobilePdfReflowUiState(
                 isGenerating = pdfReflowProgress != null,
                 progress = pdfReflowProgress ?: 0f,
@@ -5036,7 +5071,9 @@ private fun ReaderIosApp(
                             onOpenDictionarySettings = { showDictionarySettingsSheet = true },
                             readerAiAvailable = readerAiAvailable,
                             readerExtrasState = readerExtrasState.copy(cloudTts = readerCloudTts.state),
-                            cloudTts = readerCloudTts,
+                            // Intentional temporary iOS scope: hide cloud TTS UI
+                            // by passing null while keeping the controller for later.
+                            cloudTts = if (IosFeatureGating.SHOW_CLOUD_TTS) readerCloudTts else null,
                             cloudTtsModeEnabled = effectiveReaderAiSettings.ttsModel == com.aryan.reader.shared.GEMINI_CLOUD_TTS_MODEL_ID,
                             onCloudTtsModeChange = ::updateCloudTtsMode,
                             cloudTtsVoiceId = effectiveReaderAiSettings.ttsSpeakerId,
@@ -5050,7 +5087,9 @@ private fun ReaderIosApp(
                             },
                             onOpenAiHub = {},
                             summaryCache = remember { SharedSummaryCache() },
-                            aiCredits = state.credits,
+                            // Intentional temporary iOS scope: hide credits
+                            // balance while keeping state.credits data.
+                            aiCredits = if (IosFeatureGating.SHOW_CREDITS_PURCHASE) state.credits else null,
                             externalLocalTts = readerTtsEngine,
                             onReaderTtsSessionChange = {
                                 readerTtsMiniBarState = it
@@ -5189,9 +5228,12 @@ private fun ReaderIosApp(
                                 isProUser = state.isProUser,
                                 accountAvailable = true,
                                 includeAccountAuthActions = true,
-                                syncAvailable = true,
+                                // Intentional temporary iOS scope: cloud sync
+                                // rows hidden (logic kept for later). Android
+                                // benchmark inputs are unchanged.
+                                syncAvailable = IosFeatureGating.SHOW_CLOUD_SYNC,
                                 cloudSyncSetupIntent = cloudSyncSetupIntent,
-                                folderSyncAvailable = true,
+                                folderSyncAvailable = IosFeatureGating.SHOW_CLOUD_SYNC,
                                 aiSettingsAvailable = true,
                                 ttsSettingsAvailable = true,
                                 bookCacheMaintenanceAvailable = false,
@@ -5479,7 +5521,13 @@ private fun ReaderIosApp(
                         settings = effectiveReaderAiSettings,
                         maskedKeys = readerAiSettingsStore.maskedKeys(),
                         strings = SharedAiSettingsStrings(
-                            title = readerString("ai_settings_title", "AI and cloud TTS"),
+                            // Intentional temporary iOS scope: cloud TTS is
+                            // hidden, so the title stays Pro/AI-only for now.
+                            title = if (IosFeatureGating.SHOW_CLOUD_TTS) {
+                                readerString("ai_settings_title", "AI and cloud TTS")
+                            } else {
+                                readerString("ai_settings_title_no_cloud_tts", "AI settings")
+                            },
                             backDescription = readerString("action_back", "Back"),
                             savedKeys = readerString("ai_settings_saved_keys", "Saved API keys"),
                             noKeySaved = readerString("ai_settings_no_key_saved", "No key saved"),
@@ -5548,6 +5596,9 @@ private fun ReaderIosApp(
                         },
                         cloudCacheSummary = readerCloudTts.state.cacheSummary,
                         onClearCloudTtsCache = readerCloudTts::clearCache,
+                        // Intentional temporary iOS scope: cloud TTS controls
+                        // hidden (controller logic kept for later).
+                        showCloudTts = IosFeatureGating.SHOW_CLOUD_TTS,
                         modifier = Modifier.fillMaxSize().statusBarsPadding(),
                     )
                     IosUtilityScreen.LANGUAGE -> IosUtilityPage(title = readerString("options_language", "Language"), onBack = { utilityScreen = languageReturnScreen }) {
@@ -7190,18 +7241,25 @@ private fun IosAccountScreen(
                     }
                 )
             }
-            TextButton(onClick = { onAuthenticate("GOOGLE") }) {
-                Text(
-                    when {
-                        AccountAuthProvider.GOOGLE in account.providers ->
-                            readerString("account_google_linked", "Google linked")
-                        account.uid != null ->
-                            readerString("account_link_google", "Link Google sign-in")
-                        else -> readerString("drawer_sign_in", "Continue with Google")
-                    }
-                )
+            // Intentional temporary iOS scope: Google sign-in is hidden from
+            // the UI (auth/linking logic kept for later). Only Apple remains.
+            // To restore: remove this `if` gate.
+            if (IosFeatureGating.SHOW_GOOGLE_SIGN_IN) {
+                TextButton(onClick = { onAuthenticate("GOOGLE") }) {
+                    Text(
+                        when {
+                            AccountAuthProvider.GOOGLE in account.providers ->
+                                readerString("account_google_linked", "Google linked")
+                            account.uid != null ->
+                                readerString("account_link_google", "Link Google sign-in")
+                            else -> readerString("drawer_sign_in", "Continue with Google")
+                        }
+                    )
+                }
             }
-            if (account.uid != null && account.providers.size == 1) {
+            // Intentional temporary iOS scope: linking copy only makes sense
+            // with a second provider visible, so it is hidden with Google.
+            if (IosFeatureGating.SHOW_GOOGLE_SIGN_IN && account.uid != null && account.providers.size == 1) {
                 Text(
                     readerString(
                         "account_linking_desc",
@@ -7210,25 +7268,29 @@ private fun IosAccountScreen(
                     modifier = Modifier.padding(bottom = 12.dp),
                 )
             }
-            Text(
-                when {
-                    account.canSync -> readerString(
-                        "account_google_drive_sync_available",
-                        "Google Drive sync is available.",
-                    )
-                    AccountAuthProvider.GOOGLE in account.providers ->
-                        readerString(
-                            "account_authorize_google_drive",
-                            "Authorize Google Drive to enable full library sync.",
+            // Intentional temporary iOS scope: cloud sync status copy hidden
+            // with cloud sync (sync eligibility logic kept for later).
+            if (IosFeatureGating.SHOW_CLOUD_SYNC) {
+                Text(
+                    when {
+                        account.canSync -> readerString(
+                            "account_google_drive_sync_available",
+                            "Google Drive sync is available.",
                         )
-                    else ->
-                        readerString(
-                            "account_google_required_for_sync",
-                            "Sync requires Google. Apple-only accounts can use Pro and credits but cannot sync.",
-                        )
-                },
-                modifier = Modifier.padding(vertical = 12.dp),
-            )
+                        AccountAuthProvider.GOOGLE in account.providers ->
+                            readerString(
+                                "account_authorize_google_drive",
+                                "Authorize Google Drive to enable full library sync.",
+                            )
+                        else ->
+                            readerString(
+                                "account_google_required_for_sync",
+                                "Sync requires Google. Apple-only accounts can use Pro and credits but cannot sync.",
+                            )
+                    },
+                    modifier = Modifier.padding(vertical = 12.dp),
+                )
+            }
             if (account.uid != null) {
                 TextButton(onClick = onSignOut) {
                     Text(readerString("drawer_sign_out", "Sign out"))
@@ -7241,6 +7303,7 @@ private fun IosAccountScreen(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun IosLocalStoreKitScreen(
     store: IosLocalStoreKitState,
@@ -7269,7 +7332,9 @@ private fun IosLocalStoreKitScreen(
             title = readerString("sign_in_required", "Sign in Required"),
             message = readerString(
                 "dialog_sign_in_required_desc",
-                "Please sign in to your Episteme account to purchase Pro and credits and unlock all premium features.",
+                // Intentional temporary iOS scope: Pro-only copy while
+                // credits purchase is hidden.
+                "Please sign in to your Episteme account to purchase Pro and unlock all premium features.",
             ),
             confirmLabel = readerString("drawer_sign_in", "Sign in"),
             onConfirm = {
@@ -7279,26 +7344,144 @@ private fun IosLocalStoreKitScreen(
             onDismiss = { showSignInRequiredDialog = false },
         )
     }
-    IosUtilityPage(title = readerString("storekit_title", "Pro and Credits"), onBack = onBack) {
+    // Android parity (`ProScreen`): pill TabRow + pager, empty top-bar title,
+    // Pro tab first. The credits tab/card is kept but gated (see
+    // IosFeatureGating): for now only the Pro purchase remains visible.
+    // `onRestore` has no Android counterpart; it stays as an iOS StoreKit
+    // requirement below the pager.
+    // Intentional temporary iOS scope: empty title matches Android's
+    // `TopAppBar(title = { })`.
+    IosUtilityPage(title = "", onBack = onBack) {
+        // Intentional temporary iOS scope: single Pro tab while credits
+        // purchase is hidden. Flip SHOW_CREDITS_PURCHASE to restore the
+        // second tab (matches Android's `pro` flavor tabCount).
+        val tabCount = if (IosFeatureGating.SHOW_CREDITS_PURCHASE) 2 else 1
+        val pagerState = rememberPagerState(initialPage = 0) { tabCount }
+        var selectedTabIndex by remember { mutableStateOf(0) }
+        val scope = rememberCoroutineScope()
+        LaunchedEffect(pagerState.currentPage) {
+            selectedTabIndex = pagerState.currentPage
+        }
+        LaunchedEffect(selectedTabIndex, tabCount) {
+            scope.launch {
+                pagerState.animateScrollToPage(selectedTabIndex.coerceAtMost(tabCount - 1))
+            }
+        }
         Column(
-            modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp).verticalScroll(rememberScrollState()),
+            modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Spacer(modifier = Modifier.height(16.dp))
-            IosProTierCard(
-                store = store,
-                isSignedIn = account.uid != null,
-                onBuyPro = { onPurchase(IosStoreKitProductIds.PRO_LIFETIME) },
-                onShowExistingPurchaseDialog = { showExistingPurchaseDialog = true },
-                onSignInRequiredClick = { showSignInRequiredDialog = true },
-            )
+            TabRow(
+                selectedTabIndex = selectedTabIndex,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(MaterialTheme.shapes.extraLarge)
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                indicator = {},
+                divider = {},
+            ) {
+                Tab(
+                    selected = selectedTabIndex == 0,
+                    onClick = { selectedTabIndex = 0 },
+                    modifier = Modifier
+                        .height(56.dp)
+                        .clip(CircleShape)
+                        .background(
+                            if (selectedTabIndex == 0) MaterialTheme.colorScheme.surface else Color.Transparent,
+                        )
+                        .border(
+                            width = if (selectedTabIndex == 0) 2.dp else 0.dp,
+                            color = if (selectedTabIndex == 0) MaterialTheme.colorScheme.primary else Color.Transparent,
+                            shape = CircleShape,
+                        ),
+                    text = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.Star,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                                tint = if (selectedTabIndex == 0) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                readerString("drawer_pro_unlocked", "Episteme Pro"),
+                                color = if (selectedTabIndex == 0) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                    },
+                    selectedContentColor = MaterialTheme.colorScheme.primary,
+                    unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                // Intentional temporary iOS scope: credits tab hidden with
+                // credits purchase (kept for later).
+                if (IosFeatureGating.SHOW_CREDITS_PURCHASE) {
+                    Tab(
+                        selected = selectedTabIndex == 1,
+                        onClick = { selectedTabIndex = 1 },
+                        modifier = Modifier
+                            .height(56.dp)
+                            .clip(CircleShape)
+                            .background(
+                                if (selectedTabIndex == 1) MaterialTheme.colorScheme.surface else Color.Transparent,
+                            )
+                            .border(
+                                width = if (selectedTabIndex == 1) 2.dp else 0.dp,
+                                color = if (selectedTabIndex == 1) MaterialTheme.colorScheme.primary else Color.Transparent,
+                                shape = CircleShape,
+                            ),
+                        text = {
+                            Text(
+                                readerString("credits_tab", "Credits"),
+                                color = if (selectedTabIndex == 1) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        },
+                        selectedContentColor = MaterialTheme.colorScheme.primary,
+                        unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
             Spacer(modifier = Modifier.height(16.dp))
-            IosCreditTierCard(
-                store = store,
-                isSignedIn = account.uid != null,
-                onBuyCredits = onPurchase,
-                onSignInRequiredClick = { showSignInRequiredDialog = true },
-            )
+            HorizontalPager(
+                state = pagerState,
+                modifier = Modifier.fillMaxWidth().weight(1f),
+                userScrollEnabled = tabCount > 1,
+            ) { page ->
+                when (page) {
+                    0 -> IosProTierCard(
+                        store = store,
+                        isSignedIn = account.uid != null,
+                        onBuyPro = { onPurchase(IosStoreKitProductIds.PRO_LIFETIME) },
+                        onShowExistingPurchaseDialog = { showExistingPurchaseDialog = true },
+                        onSignInRequiredClick = { showSignInRequiredDialog = true },
+                    )
+                    // Intentional temporary iOS scope: unreachable while
+                    // credits purchase is hidden; kept so re-enabling is a
+                    // flag flip.
+                    1 -> if (IosFeatureGating.SHOW_CREDITS_PURCHASE) {
+                        IosCreditTierCard(
+                            store = store,
+                            isSignedIn = account.uid != null,
+                            onBuyCredits = onPurchase,
+                            onSignInRequiredClick = { showSignInRequiredDialog = true },
+                        )
+                    }
+                }
+            }
             Spacer(modifier = Modifier.height(8.dp))
             TextButton(enabled = store.available && account.uid != null, onClick = onRestore) {
                 Text(readerString("storekit_restore_purchases", "Restore purchases"))
@@ -7315,7 +7498,11 @@ private fun IosLocalStoreKitScreen(
  * Android parity (`ProScreen.ProTierCard`): crown header, strikethrough
  * anchor price, one-time/lifetime pill, feature list, gated CTA, footer.
  * The crown drawable has no iOS counterpart; a tinted star carries the same
- * visual role.
+ * visual role. Feature icons map Android drawables to Material icons
+ * (summarize -> Ai, dictionary -> Book, priority/chat -> Feedback).
+ * Intentional temporary iOS scope: the Cloud Sync feature row is removed
+ * while cloud sync logic is kept (see IosFeatureGating). Re-add it with the
+ * other rows when cloud sync returns.
  */
 @Composable
 private fun IosProTierCard(
@@ -7326,9 +7513,14 @@ private fun IosProTierCard(
     onSignInRequiredClick: () -> Unit,
 ) {
     val showConflict = !store.proUnlocked && store.hasAccountConflict
-    Card(modifier = Modifier.fillMaxWidth()) {
+    Card(
+        modifier = Modifier.fillMaxWidth().fillMaxHeight(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface,
+        ),
+    ) {
         Column(
-            modifier = Modifier.padding(16.dp).fillMaxWidth(),
+            modifier = Modifier.padding(16.dp).fillMaxWidth().verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -7404,14 +7596,11 @@ private fun IosProTierCard(
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.padding(bottom = 8.dp),
                 )
+                // Intentional temporary iOS scope: Cloud Sync row removed
+                // (Android `feature_cloud_sync` parity kept in strings for
+                // later). Only non-sync Pro features remain for now.
                 IosProFeatureItem(
-                    title = readerString("feature_cloud_sync", "Cloud Sync Across Devices"),
-                    description = readerString(
-                        "feature_cloud_sync_desc",
-                        "Keep your entire library, including book files and reading progress, synced across your devices.",
-                    ),
-                )
-                IosProFeatureItem(
+                    icon = Icons.Default.Ai,
                     title = readerString("feature_summarize", "Summarization"),
                     description = readerString(
                         "feature_summarize_desc",
@@ -7419,6 +7608,7 @@ private fun IosProTierCard(
                     ),
                 )
                 IosProFeatureItem(
+                    icon = Icons.Default.Book,
                     title = readerString("feature_smart_dict", "Smart Dictionary"),
                     description = readerString(
                         "feature_smart_dict_desc",
@@ -7426,6 +7616,7 @@ private fun IosProTierCard(
                     ),
                 )
                 IosProFeatureItem(
+                    icon = Icons.Default.Feedback,
                     title = readerString("feature_priority", "Priority Feature Requests"),
                     description = readerString(
                         "feature_priority_desc",
@@ -7435,29 +7626,30 @@ private fun IosProTierCard(
             }
             Spacer(modifier = Modifier.height(16.dp))
             if (store.proUnlocked) {
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = MaterialTheme.shapes.medium,
-                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f),
+                // Android parity: fixed 48.dp banner (was wrap-content Surface).
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .background(
+                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f),
+                            MaterialTheme.shapes.medium,
+                        ),
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center,
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Star,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            readerString("pro_unlocked", "Pro Features Unlocked!"),
-                            style = MaterialTheme.typography.bodyLarge,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.primary,
-                        )
-                    }
+                    Icon(
+                        imageVector = Icons.Default.Star,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        readerString("pro_unlocked", "Pro Features Unlocked!"),
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
                 }
             } else {
                 when {
@@ -7534,7 +7726,9 @@ private fun IosProTierCard(
                         Text(
                             readerString(
                                 "storekit_sign_in_before_purchase",
-                                "Sign in with Apple or Google before purchasing or restoring.",
+                                // Intentional temporary iOS scope: Apple-only
+                                // copy while Google sign-in is hidden.
+                                "Sign in with Apple before purchasing or restoring.",
                             ),
                             style = MaterialTheme.typography.bodySmall,
                             textAlign = TextAlign.Center,
@@ -7580,10 +7774,16 @@ private fun IosProTierCard(
 }
 
 @Composable
-private fun IosProFeatureItem(title: String, description: String) {
+private fun IosProFeatureItem(
+    title: String,
+    description: String,
+    // Android parity (`ProScreen.FeatureListItem`): per-feature icon instead
+    // of a shared check. Defaults to Check for existing call sites.
+    icon: androidx.compose.ui.graphics.vector.ImageVector = Icons.Default.Check,
+) {
     Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         Icon(
-            imageVector = Icons.Default.Check,
+            imageVector = icon,
             contentDescription = null,
             tint = MaterialTheme.colorScheme.primary,
             modifier = Modifier.size(20.dp),
@@ -7603,6 +7803,8 @@ private fun IosProFeatureItem(title: String, description: String) {
  * Android parity (`ProScreen.CreditTierCard` + `CostBreakdownItem`): credit
  * balance, per-product cards with App Store names/descriptions, estimated
  * cost breakdown.
+ * Intentional temporary iOS scope: currently unreachable (no credits tab
+ * while SHOW_CREDITS_PURCHASE is false). Kept intact for later.
  */
 @Composable
 private fun IosCreditTierCard(
@@ -7611,9 +7813,14 @@ private fun IosCreditTierCard(
     onBuyCredits: (String) -> Unit,
     onSignInRequiredClick: () -> Unit,
 ) {
-    Card(modifier = Modifier.fillMaxWidth()) {
+    Card(
+        modifier = Modifier.fillMaxWidth().fillMaxHeight(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface,
+        ),
+    ) {
         Column(
-            modifier = Modifier.padding(16.dp).fillMaxWidth(),
+            modifier = Modifier.padding(16.dp).fillMaxWidth().verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Text(
