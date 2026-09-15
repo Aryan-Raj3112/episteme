@@ -674,7 +674,7 @@ class ReaderHtmlDocumentBuilderTest {
                 "padding: var\\(--reader-vertical-margin-y\\) 0;"
         )
 
-        assertTrue(html.contains("--reader-vertical-margin-y: 16px;"))
+        assertTrue(html.contains("--reader-vertical-margin-y: 5px;"))
         assertTrue(html.contains("--reader-vertical-content-width: 92ch;"))
         assertTrue(html.contains("--reader-vertical-page-width: max(0px, calc(100% - (var(--reader-margin-x) * 2)));"))
         assertFalse(html.contains("body.reader-vertical .chapter,"))
@@ -1058,7 +1058,7 @@ class ReaderHtmlDocumentBuilderTest {
     }
 
     @Test
-    fun `annotation script selects style, sends styleId payloads and uses trimmed range`() {
+    fun `annotation script selects style and sends styleId payloads and uses trimmed range`() {
         val script = readerHtmlAnnotationScript()
 
         assertTrue(script.contains("if (action === 'select-style')"))

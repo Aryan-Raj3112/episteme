@@ -13,11 +13,15 @@ import kotlin.math.roundToInt
  * the stable portability benchmark used by Android's settings bridge and by
  * the shared renderer; they describe the value represented by a 1.0x slider
  * position, not a replacement for Android's runtime typography.
+ *
+ * Margins use 16px because both Android surfaces render a 1.0x margin as 16
+ * (native 16.dp in PaginatedReader, 16px in epub_reader.js), so a 1.0x slider
+ * looks the same on Android and on shared/iOS readers.
  */
 object AndroidEpubFormatBenchmark {
     const val baseFontSizeSp: Float = 18f
     const val baseLineSpacing: Float = 1.45f
-    const val baseMarginPx: Float = 48f
+    const val baseMarginPx: Float = 16f
 }
 
 enum class AndroidEpubFormatSlider {

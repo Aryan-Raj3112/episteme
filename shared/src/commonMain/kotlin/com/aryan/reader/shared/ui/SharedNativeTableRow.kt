@@ -2,7 +2,7 @@ package com.aryan.reader.shared.ui
 
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.SubcomposeLayout
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -12,10 +12,11 @@ import kotlin.math.roundToInt
  * Sizing for one table cell in [SharedNativeTableRow].
  *
  * Tables previously used `Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min))`
- * to stretch every cell to the tallest cell. That intrinsic query crashes as soon
- * as any cell contains a `SubcomposeLayout` (for example `BoxWithConstraints`
- * used by [SharedNativeImageBlock], or `Text` with `InlineTextContent` for inline
- * math), because `SubcomposeLayout` does not support intrinsic measurement.
+ * to stretch every cell to the tallest cell (same as Android's
+ * `PaginatedReaderContent`). That intrinsic query crashes as soon as any cell
+ * contains a `SubcomposeLayout` (for example `BoxWithConstraints` used by
+ * [SharedNativeImageBlock]), because `SubcomposeLayout` does not support
+ * intrinsic measurement.
  */
 internal sealed interface SharedNativeTableCellSizing {
     data class Fixed(val width: Dp) : SharedNativeTableCellSizing
@@ -24,6 +25,9 @@ internal sealed interface SharedNativeTableCellSizing {
 
 /**
  * Pure width distribution used by [SharedNativeTableRow].
+ *
+ * Mirrors Android `Row` weight distribution: fixed cells keep their width,
+ * remaining space is split by weight.
  *
  * @param availableWidthPx width available for cells (total width minus gaps).
  * @param fixedWidthsPx fixed cell widths in px, or null for weighted cells.
@@ -77,12 +81,15 @@ internal fun sharedNativeTableCellWidthsPx(
 }
 
 /**
- * Equal-height table row without intrinsic measurement.
+ * Equal-height table row without intrinsic measurement, mirroring Android's
+ * `Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min))` visually.
  *
- * Measures every cell with a normal (non-intrinsic) pass using its distributed
- * width, takes the tallest height, then remeasures every cell at that exact
- * height so backgrounds/borders stretch like `IntrinsicSize.Min` did, without
- * ever querying intrinsics on `SubcomposeLayout` children.
+ * Uses [SubcomposeLayout] with two slots: the first pass measures content at
+ * distributed widths with loose height to find the tallest cell (normal
+ * measures only, safe for `SubcomposeLayout` children like images), then the
+ * second pass subcomposes the same content again and measures at that exact
+ * height so backgrounds/borders stretch. Each `Measurable` is measured exactly
+ * once because each slot produces fresh measurables.
  */
 @Composable
 internal fun SharedNativeTableRow(
@@ -91,38 +98,34 @@ internal fun SharedNativeTableRow(
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit,
 ) {
-    Layout(
-        content = content,
+    SubcomposeLayout(
         modifier = modifier,
-    ) { measurables, constraints ->
-        if (measurables.isEmpty()) {
-            return@Layout layout(0, 0) {}
+    ) { constraints ->
+        val cellCount = sizings.size
+        if (cellCount == 0) {
+            return@SubcomposeLayout layout(0, 0) {}
         }
         val gapPx = cellGap.coerceAtLeast(0.dp).roundToPx()
-        val totalGapPx = gapPx * (measurables.size - 1).coerceAtLeast(0)
+        val totalGapPx = gapPx * (cellCount - 1).coerceAtLeast(0)
         val maxWidth = constraints.maxWidth
 
-        if (maxWidth == Constraints.Infinity || measurables.size != sizings.size) {
-            // Unconstrained or unexpected: fall back to loose measurement.
-            // This path never queries intrinsics either.
+        if (maxWidth == Constraints.Infinity) {
+            // Unconstrained fallback: single pass, loose measurement.
+            val measurables = subcompose("fallback") { content() }
             val placeables = measurables.map { measurable ->
                 measurable.measure(
                     Constraints(
                         minWidth = 0,
-                        maxWidth = if (maxWidth == Constraints.Infinity) Constraints.Infinity else maxWidth,
+                        maxWidth = Constraints.Infinity,
                         minHeight = 0,
                         maxHeight = constraints.maxHeight,
                     ),
                 )
             }
-            val width = if (maxWidth == Constraints.Infinity) {
-                placeables.sumOf { it.width } + totalGapPx
-            } else {
-                (placeables.sumOf { it.width } + totalGapPx).coerceIn(constraints.minWidth, maxWidth)
-            }
+            val width = placeables.sumOf { it.width } + totalGapPx
             val height = (placeables.maxOfOrNull { it.height } ?: 0)
                 .coerceIn(constraints.minHeight, constraints.maxHeight)
-            return@Layout layout(width, height) {
+            return@SubcomposeLayout layout(width, height) {
                 var x = 0
                 placeables.forEach { placeable ->
                     placeable.placeRelative(x, 0)
@@ -149,27 +152,27 @@ internal fun SharedNativeTableRow(
             fixedWidthsPx = fixedWidthsPx,
             weights = weights,
         )
-        // First pass: natural heights at distributed widths (normal measure, safe).
-        val maxHeightBound = constraints.maxHeight
-        val firstPass = measurables.mapIndexed { index, measurable ->
+        // First pass: fresh measurables, natural heights at distributed widths.
+        // Normal measures only — safe for BoxWithConstraints / image content.
+        val firstPass = subcompose("measure") { content() }.mapIndexed { index, measurable ->
             val cellWidth = widths.getOrElse(index) { 0 }
             measurable.measure(
                 Constraints(
                     minWidth = cellWidth,
                     maxWidth = cellWidth,
                     minHeight = 0,
-                    maxHeight = maxHeightBound,
+                    maxHeight = constraints.maxHeight,
                 ),
             )
         }
         var rowHeight = firstPass.maxOfOrNull { it.height } ?: 0
-        if (maxHeightBound != Constraints.Infinity) {
-            rowHeight = rowHeight.coerceAtMost(maxHeightBound)
+        if (constraints.maxHeight != Constraints.Infinity) {
+            rowHeight = rowHeight.coerceAtMost(constraints.maxHeight)
         }
         rowHeight = rowHeight.coerceAtLeast(constraints.minHeight).coerceAtLeast(0)
-        // Second pass: stretch every cell to the tallest height so cell
-        // backgrounds/borders fill the row, like IntrinsicSize.Min.
-        val secondPass = measurables.mapIndexed { index, measurable ->
+        // Second pass: subcompose again (fresh measurables, each measured once)
+        // at the exact row height so cell backgrounds/borders stretch.
+        val secondPass = subcompose("place") { content() }.mapIndexed { index, measurable ->
             val cellWidth = widths.getOrElse(index) { 0 }
             measurable.measure(
                 Constraints(

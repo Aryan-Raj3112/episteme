@@ -84,7 +84,12 @@ data class ReaderSettings(
     val fontWeight: Int = 0,
     val letterSpacing: Float = 0f,
     val lineSpacing: Float = 1.45f,
-    val margin: Int = 48,
+    /**
+     * Default page margin in px. Matches the Android benchmark: both Android
+     * surfaces render a 1.0x margin as 16 (native 16.dp, WebView 16px), so the
+     * shared default and [AndroidEpubFormatBenchmark.baseMarginPx] use 16.
+     */
+    val margin: Int = 16,
     val darkMode: Boolean = false,
     val readingMode: ReaderReadingMode = ReaderReadingMode.VERTICAL,
     val textAlign: SharedReaderTextAlign = SharedReaderTextAlign.START,

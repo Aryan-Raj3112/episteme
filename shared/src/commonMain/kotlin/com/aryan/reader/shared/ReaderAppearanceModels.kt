@@ -385,7 +385,10 @@ private object ReaderAppearanceDefaults {
     const val lineSpacing = 1.45f
     const val minLineSpacing = 1.0f
     const val maxLineSpacing = 2.8f
-    const val marginPx = 48f
+    // 1.0x margin base. Matches AndroidEpubFormatBenchmark.baseMarginPx and the
+    // Android benchmark (native 16.dp, WebView 16px at 1.0x). maxMarginPx keeps
+    // headroom for larger values persisted before the alignment.
+    const val marginPx = 16f
     const val minMarginPx = 0
     const val maxMarginPx = 160
     const val minParagraphSpacing = 0.5f

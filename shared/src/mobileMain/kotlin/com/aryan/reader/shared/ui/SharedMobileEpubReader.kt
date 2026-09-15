@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
@@ -507,6 +508,35 @@ fun SharedMobileEpubReaderScreen(
     val systemBarsVisibility = mobileEpubSystemBarsVisibility(settings.systemUiMode, showChrome)
     val systemUiHidden = !systemBarsVisibility.statusBarsVisible
     val navigationUiHidden = !systemBarsVisibility.navigationBarsVisible
+    // Android parity (EpubReaderRenderSurfaces paginated + WebView branch below):
+    // the native paginated pager is measured inside the PageInfo reserve, so
+    // pagination and rendering share one box and text never slides under the
+    // bar. Content-row height only (like Android's exact bar height) and stable
+    // across chrome toggles: folding the chrome-dependent bottom safe pad into
+    // the paginator viewport would repaginate on every tap.
+    val nativePaginatedPageInfoReserveTop = if (
+        settings.pageInfoPosition == PageInfoPosition.TOP &&
+        shouldReserveEpubPageInfoBarSpace(
+            pageInfoMode = settings.pageInfoMode,
+            showReaderChrome = showChrome,
+            isNativeVerticalMode = false
+        )
+    ) {
+        SharedMobileEpubPageInfoBarContentHeight
+    } else {
+        0.dp
+    }
+    val nativePaginatedPageInfoReserveBottom = pageInfoBarBottomReserve(
+        pageInfoPosition = settings.pageInfoPosition,
+        pageInfoMode = settings.pageInfoMode,
+        showReaderChrome = showChrome,
+        barVisible = shouldShowEpubPageInfoBar(
+            pageInfoMode = settings.pageInfoMode,
+            showReaderChrome = showChrome
+        ),
+        contentHeight = SharedMobileEpubPageInfoBarContentHeight,
+        bottomPad = 0.dp
+    )
 
     fun refreshSelectedTocIndex(
         locator: ReaderLocator? = currentLocator,
@@ -570,19 +600,50 @@ fun SharedMobileEpubReaderScreen(
         currentPageIndex = readerState.currentPageIndex.coerceIn(0, readerState.pages.lastIndex.coerceAtLeast(0))
     }
 
+    // Android parity (PaginatedReader BoxWithConstraints): onSizeChanged above
+    // observes the pre-inset fullscreen box, but the pager renders inside the
+    // status inset and the PageInfo reserve. Deriving the paginated viewport
+    // arithmetically keeps measured pagination and rendering on the same box.
+    val paginatedViewportTopInset = if (!systemUiHidden) {
+        WindowInsets.safeDrawing.asPaddingValues().calculateTopPadding()
+    } else {
+        0.dp
+    }
+    val paginatedContentViewport = remember(
+        readerViewport,
+        paginatedViewportTopInset,
+        nativePaginatedPageInfoReserveTop,
+        nativePaginatedPageInfoReserveBottom,
+        settings.readingMode,
+        readerDensity
+    ) {
+        if (settings.readingMode != ReaderReadingMode.PAGINATED || !readerViewport.isSpecified) {
+            readerViewport
+        } else {
+            with(readerDensity) {
+                val usedHeightPx = (
+                    paginatedViewportTopInset.roundToPx() +
+                        nativePaginatedPageInfoReserveTop.roundToPx() +
+                        nativePaginatedPageInfoReserveBottom.roundToPx()
+                    ).coerceAtLeast(0)
+                readerViewport.copy(heightPx = (readerViewport.heightPx - usedHeightPx).coerceAtLeast(1))
+            }
+        }
+    }
+
     LaunchedEffect(
         loadedBook,
         settings.layoutSignature(),
-        readerViewport,
+        paginatedContentViewport,
         measuredPaginator
     ) {
         val epub = loadedBook ?: return@LaunchedEffect
         if (settings.readingMode != ReaderReadingMode.PAGINATED) return@LaunchedEffect
-        if (!readerViewport.isSpecified) return@LaunchedEffect
+        if (!paginatedContentViewport.isSpecified) return@LaunchedEffect
         val paginateMark = sharedEpubOpenTraceMark()
-        sharedEpubOpenTrace { "readerScreen measuredPaginate start viewport=${readerViewport.widthPx}x${readerViewport.heightPx}" }
+        sharedEpubOpenTrace { "readerScreen measuredPaginate start viewport=${paginatedContentViewport.widthPx}x${paginatedContentViewport.heightPx}" }
         val measuredPages = withContext(Dispatchers.Default) {
-            measuredPaginator.paginate(epub, settings, readerViewport)
+            measuredPaginator.paginate(epub, settings, paginatedContentViewport)
         }
         sharedEpubOpenTrace { "readerScreen measuredPaginate done pages=${measuredPages.size} ms=${sharedEpubOpenTraceMs(sharedEpubOpenTraceElapsedMs(paginateMark))}" }
         measuredPagesApplied = true
@@ -1560,7 +1621,17 @@ fun SharedMobileEpubReaderScreen(
                                     )
                                 }
                             }
-                            Box(Modifier.fillMaxSize()) {
+                            // Android parity (EpubReaderRenderSurfaces paginated):
+                            // shrink the pager by the PageInfo reserve instead of
+                            // overlaying the bar, so the chapter end lands above it.
+                            // Matches paginatedContentViewport above.
+                            Box(
+                                Modifier.fillMaxSize()
+                                    .padding(
+                                        top = nativePaginatedPageInfoReserveTop,
+                                        bottom = nativePaginatedPageInfoReserveBottom
+                                    )
+                            ) {
                                 if (overlayFirst) {
                                     turnOverlay()
                                 }

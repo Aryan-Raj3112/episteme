@@ -418,11 +418,46 @@ fun String.percentDecode(): String {
 object SharedOpdsText {
     fun cleanSummary(summary: String?): String {
         if (summary.isNullOrBlank()) return ""
-        return summary
-            .replace(Regex("""<br\s*/?>""", RegexOption.IGNORE_CASE), "\n")
-            .replace(Regex("""</p\s*>""", RegexOption.IGNORE_CASE), "\n\n")
-            .replace(Regex("""<[^>]+>"""), " ")
+        return stripXmlTags(
+            summary
+                .replace(Regex("""<br\s*/?>""", RegexOption.IGNORE_CASE), "\n")
+                .replace(Regex("""</p\s*>""", RegexOption.IGNORE_CASE), "\n\n")
+        )
             .replace(Regex("""\s+"""), " ")
             .trim()
+    }
+
+    /**
+     * Replaces `<...>` tag spans with a single space, matching the old
+     * `<[^>]+>` behavior exactly: a `<` is only treated as a tag when a
+     * closing `>` exists later (and `<>` is kept literally).
+     *
+     * Single forward pass, O(n). The regex it replaces backtracks
+     * quadratically on text with many `<` and no following `>` (e.g. a long
+     * plain-text summary full of comparisons), which froze the UI thread
+     * for tens of seconds on ~250KB inputs.
+     */
+    fun stripXmlTags(input: String): String {
+        var scanIndex = 0
+        var output: StringBuilder? = null
+        while (scanIndex < input.length) {
+            val nextOpen = input.indexOf('<', scanIndex)
+            if (nextOpen < 0) break
+            val nextClose = input.indexOf('>', nextOpen + 1)
+            // No closing '>' anywhere ahead: no tag can start in the
+            // remainder, so it is kept verbatim without rescanning.
+            if (nextClose < 0) break
+            if (nextClose == nextOpen + 1) {
+                // "<>" is not a tag; keep scanning after this '<'.
+                scanIndex = nextOpen + 1
+                continue
+            }
+            if (output == null) output = StringBuilder(input.length)
+            output.append(input, scanIndex, nextOpen).append(' ')
+            scanIndex = nextClose + 1
+        }
+        if (output == null) return input
+        output.append(input, scanIndex, input.length)
+        return output.toString()
     }
 }
