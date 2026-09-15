@@ -999,7 +999,8 @@ private fun base64Encode(bytes: ByteArray): String {
     return output.toString()
 }
 
-private class IosOpdsParser {
+/** Visible for testing: feed parsing must stay linear on link-heavy catalogs. */
+internal class IosOpdsParser {
     private val json = Json {
         ignoreUnknownKeys = true
         isLenient = true
@@ -1301,7 +1302,7 @@ private class IosOpdsParser {
 
     private fun resolveUrl(baseUrl: String, href: String): String {
         if (href.startsWith("http://") || href.startsWith("https://") || href.startsWith("opds-pse://")) return href
-        val baseMatch = Regex("""^(https?://[^/]+)(/.*)?$""").find(baseUrl) ?: return href
+        val baseMatch = OriginPattern.find(baseUrl) ?: return href
         val origin = baseMatch.groupValues[1]
         val path = baseMatch.groupValues.getOrNull(2).orEmpty()
         return when {
@@ -1350,7 +1351,7 @@ private class IosOpdsParser {
         }
     }
 
-    private fun String.relTokens(): List<String> = trim().split(Regex("""\s+""")).filter { it.isNotBlank() }
+    private fun String.relTokens(): List<String> = trim().split(whitespaceRegex).filter { it.isNotBlank() }
     private fun String.isDownloadableMediaType(): Boolean {
         val normalized = lowercase().substringBefore(';').trim()
         return normalized in DownloadableMediaTypes || DownloadableMediaTypeHints.any { normalized.contains(it) }
@@ -1360,6 +1361,7 @@ private class IosOpdsParser {
 
     private companion object {
         private const val PseStreamRel = "http://vaemendis.net/opds-pse/stream"
+        private val OriginPattern = Regex("""^(https?://[^/]+)(/.*)?$""")
         private const val ImageTypeCoverPriority = 1
         private const val GenericCoverPriority = 2
         private const val ThumbnailCoverPriority = 3
@@ -1401,15 +1403,11 @@ private data class XmlElement(
         fun firstText(xml: String, tag: String): String = findAll(xml, tag).firstOrNull()?.text.orEmpty()
 
         fun findAll(xml: String, tag: String): List<XmlElement> {
-            val tagName = Regex.escape(tag)
-            val pattern = Regex(
-                """<([A-Za-z0-9_:-]*:?$tagName)\b([^>]*)>(.*?)</\1>|<([A-Za-z0-9_:-]*:?$tagName)\b([^>]*)/>""",
-                setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
-            )
+            val pattern = findPattern(tag)
             return pattern.findAll(xml).map { match ->
-                val name = match.groupValues[1].ifBlank { match.groupValues[4] }
-                val attrs = match.groupValues[2].ifBlank { match.groupValues[5] }
-                val body = match.groupValues[3]
+                val name = match.groupValues[1].ifBlank { match.groupValues[3] }
+                val attrs = match.groupValues[2].ifBlank { match.groupValues[4] }
+                val body = match.groupValues[5]
                 XmlElement(
                     name = name,
                     attributes = parseAttributes(attrs),
@@ -1421,20 +1419,53 @@ private data class XmlElement(
 
         private fun parseAttributes(source: String): Map<String, String> {
             val attrs = linkedMapOf<String, String>()
-            Regex("""([A-Za-z0-9_:-]+)\s*=\s*(['"])(.*?)\2""", RegexOption.DOT_MATCHES_ALL)
+            attributePattern
                 .findAll(source)
                 .forEach { match -> attrs[match.groupValues[1]] = match.groupValues[3].decodeXmlEntities() }
             return attrs
         }
+
+        /**
+         * Element patterns are compiled once and shared: recompiling per tag
+         * cost ~230k Pattern compilations on a 1500-entry feed.
+         * The immutable map is safe for concurrent parses.
+         */
+        private val findPatterns: Map<String, Regex> = listOf(
+            "Url", "feed", "title", "link", "entry", "author", "name", "uri",
+            "category", "publisher", "published", "updated", "language", "meta",
+            "summary", "content", "id"
+        ).associateWith(::compileFindPattern)
+
+        private fun findPattern(tag: String): Regex {
+            return findPatterns[tag] ?: compileFindPattern(tag)
+        }
+
+        private fun compileFindPattern(tag: String): Regex {
+            val tagName = Regex.escape(tag)
+            // Self-closing alternative first: void elements (e.g. <link/>)
+            // must match immediately instead of scanning the rest of the
+            // document for a closing tag that never comes.
+            return Regex(
+                """<([A-Za-z0-9_:-]*:?$tagName)\b([^>]*)/>|<([A-Za-z0-9_:-]*:?$tagName)\b([^>]*)>(.*?)</\3>""",
+                setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+            )
+        }
+
+        private val attributePattern =
+            Regex("""([A-Za-z0-9_:-]+)\s*=\s*(['"])(.*?)\2""", RegexOption.DOT_MATCHES_ALL)
     }
 }
 
+private val whitespaceRegex = Regex("""\s+""")
+private val breakRegex = Regex("""<br\s*/?>""", RegexOption.IGNORE_CASE)
+private val paragraphCloseRegex = Regex("""</p\s*>""", RegexOption.IGNORE_CASE)
+
 private fun String.stripXml(): String {
     return SharedOpdsText.stripXmlTags(
-        replace(Regex("""<br\s*/?>""", RegexOption.IGNORE_CASE), "\n")
-            .replace(Regex("""</p\s*>""", RegexOption.IGNORE_CASE), "\n\n")
+        replace(breakRegex, "\n")
+            .replace(paragraphCloseRegex, "\n\n")
     )
-        .replace(Regex("""\s+"""), " ")
+        .replace(whitespaceRegex, " ")
 }
 
 private fun String.decodeXmlEntities(): String {
