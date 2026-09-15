@@ -1143,6 +1143,10 @@ private val IosEpubBridgeBootstrapScript = """
         callNative: function (method, payload) { return post(method, payload); }
       };
       window.readerDisableLinkFallback = true;
+      // WKWebView draws its own native selection handles; showing the reader's
+      // custom teardrop handles on top would double them. The shared selection
+      // script checks this flag and leaves handle display/drag to WebKit.
+      window.readerIosNativeSelectionHandles = true;
       if (!window.readerIosPointerBridgeInstalled) {
         window.readerIosPointerBridgeInstalled = true;
         var start = null;

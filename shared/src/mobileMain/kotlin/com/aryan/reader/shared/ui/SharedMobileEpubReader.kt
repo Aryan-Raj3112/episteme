@@ -511,9 +511,11 @@ fun SharedMobileEpubReaderScreen(
     // Android parity (EpubReaderRenderSurfaces paginated + WebView branch below):
     // the native paginated pager is measured inside the PageInfo reserve, so
     // pagination and rendering share one box and text never slides under the
-    // bar. Content-row height only (like Android's exact bar height) and stable
-    // across chrome toggles: folding the chrome-dependent bottom safe pad into
-    // the paginator viewport would repaginate on every tap.
+    // bar. The reserve covers the bar's full visual height (content row plus
+    // the maximum bottom safe pad, like Android's exact bar height) and stays
+    // stable across chrome toggles: the live chrome-dependent pad would
+    // repaginate on every tap, so the paginator uses the chrome-independent
+    // maximum and the render box shares it.
     val nativePaginatedPageInfoReserveTop = if (
         settings.pageInfoPosition == PageInfoPosition.TOP &&
         shouldReserveEpubPageInfoBarSpace(
@@ -526,6 +528,8 @@ fun SharedMobileEpubReaderScreen(
     } else {
         0.dp
     }
+    val nativePaginatedPageInfoMaxBottomPad =
+        rememberSharedMobileEpubPageInfoMaxBottomPad(settings.pageInfoPosition)
     val nativePaginatedPageInfoReserveBottom = pageInfoBarBottomReserve(
         pageInfoPosition = settings.pageInfoPosition,
         pageInfoMode = settings.pageInfoMode,
@@ -535,7 +539,7 @@ fun SharedMobileEpubReaderScreen(
             showReaderChrome = showChrome
         ),
         contentHeight = SharedMobileEpubPageInfoBarContentHeight,
-        bottomPad = 0.dp
+        bottomPad = nativePaginatedPageInfoMaxBottomPad
     )
 
     fun refreshSelectedTocIndex(
@@ -1631,7 +1635,15 @@ fun SharedMobileEpubReaderScreen(
                                         searchHighlight = MaterialTheme.colorScheme.primary.copy(alpha = 0.28f),
                                         selectionHighlight = MaterialTheme.colorScheme.primary.copy(alpha = 0.28f),
                                         pageTurn = overlaySpec,
-                                        background = turnOverlayBackground
+                                        background = turnOverlayBackground,
+                                        imageContent = { image, imageModifier ->
+                                            if (!settings.hideImages) {
+                                                SharedMobileEpubNativeImage(
+                                                    image = image,
+                                                    modifier = imageModifier
+                                                )
+                                            }
+                                        }
                                     )
                                 }
                             }
@@ -1710,7 +1722,17 @@ fun SharedMobileEpubReaderScreen(
                                     positionController = nativePaginatedPositionController,
                                     pageTurn = if (pageDragActive) dragCurrentSpec else incomingTurnSpec,
                                     pageDragController = pageDragController,
-                                    contentBackground = turnMainBackground
+                                    contentBackground = turnMainBackground,
+                                    // Native-vertical parity (:1809): without this the paginated
+                                    // reader falls back to alt-text/file-name labels.
+                                    imageContent = { image, imageModifier ->
+                                        if (!settings.hideImages) {
+                                            SharedMobileEpubNativeImage(
+                                                image = image,
+                                                modifier = imageModifier
+                                            )
+                                        }
+                                    }
                                 )
                                 if (!overlayFirst) {
                                     turnOverlay()

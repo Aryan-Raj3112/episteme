@@ -772,7 +772,7 @@ internal val SharedMobileEpubPageInfoBarContentHeight = 25.dp
 internal const val ReaderPageInfoBarDiagTag = "ReaderPageInfoBar"
 
 /** Bump when the bar layout changes, so logs prove which code produced them. */
-internal const val ReaderPageInfoBarDiagRevision = 7
+internal const val ReaderPageInfoBarDiagRevision = 8
 
 /**
  * Bottom safe padding owned by the PageInfo bar (single source of truth).
@@ -788,6 +788,29 @@ internal fun rememberSharedMobileEpubPageInfoBottomPad(
 ): Dp {
     val safeBottom = WindowInsets.safeDrawing.asPaddingValues().calculateBottomPadding()
     return if (applySystemBarsInsets && pageInfoPosition == PageInfoPosition.BOTTOM) {
+        (safeBottom - sharedMobileEpubPageInfoCornerClearance).coerceAtLeast(0.dp)
+    } else {
+        0.dp
+    }
+}
+
+/**
+ * Chrome-stable version of the PageInfo bottom safe pad for paginated layout.
+ *
+ * Android benchmark ([PAGE_INFO_BAR_HEIGHT]) reserves one exact bar height that
+ * never changes with chrome state. The live [rememberSharedMobileEpubPageInfoBottomPad]
+ * is chrome-dependent (0 when the toolbar covers the home-indicator zone, full
+ * safe pad when chrome hides), so folding it into the paginator viewport would
+ * repaginate on every tap. Paginating with the maximum instead keeps one stable
+ * viewport whose text box always clears the bar: exact when chrome hides, with
+ * harmless extra bottom margin when chrome shows — and never clipped under it.
+ */
+@Composable
+internal fun rememberSharedMobileEpubPageInfoMaxBottomPad(
+    pageInfoPosition: PageInfoPosition
+): Dp {
+    val safeBottom = WindowInsets.safeDrawing.asPaddingValues().calculateBottomPadding()
+    return if (pageInfoPosition == PageInfoPosition.BOTTOM) {
         (safeBottom - sharedMobileEpubPageInfoCornerClearance).coerceAtLeast(0.dp)
     } else {
         0.dp

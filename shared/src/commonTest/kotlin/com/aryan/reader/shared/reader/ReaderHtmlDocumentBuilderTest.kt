@@ -1024,6 +1024,11 @@ class ReaderHtmlDocumentBuilderTest {
         assertTrue(html.contains("""id="reader-selection-start-handle""""))
         assertTrue(html.contains("""id="reader-selection-end-handle""""))
         assertTrue(html.contains("beginSelectionHandleDrag('start'"))
+        // iOS WKWebView draws native handles; the shared script must leave
+        // handle display/drag to WebKit there while keeping custom handles
+        // for Android/desktop WebViews.
+        assertTrue(html.contains("readerUsesNativeSelectionHandles"))
+        assertTrue(html.contains("window.readerIosNativeSelectionHandles === true"))
         assertTrue(html.contains("requestSelectionHandleUpdate(event)"))
         assertTrue(html.contains("document.addEventListener('selectstart'"))
         assertTrue(html.contains("EPUB_SELECTION_DEBUG"))

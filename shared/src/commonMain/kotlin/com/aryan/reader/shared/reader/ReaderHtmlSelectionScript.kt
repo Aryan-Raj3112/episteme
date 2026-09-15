@@ -258,7 +258,14 @@ internal fun readerHtmlSelectionScript(): String = """
                 menu.style.top = nextTop + 'px';
                 menu.style.visibility = 'visible';
               }
+              function readerUsesNativeSelectionHandles() {
+                return window.readerIosNativeSelectionHandles === true;
+              }
               function showSelectionHandle(handle, rect, x) {
+                // iOS WKWebView draws its own native handles; the app's custom
+                // teardrops stay hidden there so handles never double up.
+                // Android/desktop WebViews keep the custom handles.
+                if (readerUsesNativeSelectionHandles()) return;
                 if (!handle || !rect) return;
                 handle.hidden = false;
                 handle.style.display = 'block';
@@ -520,6 +527,7 @@ internal fun readerHtmlSelectionScript(): String = """
                 pendingSelectionHandleEvent = null;
               }
               function beginSelectionHandleDrag(handleName, event) {
+                if (readerUsesNativeSelectionHandles()) return;
                 if (!savedRange && !restoreRange()) return;
                 cancelSelectionHandleFrame();
                 activeSelectionHandle = handleName;
