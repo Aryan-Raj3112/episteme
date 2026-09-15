@@ -372,11 +372,23 @@ internal fun SharedNativeSelectionMenu(
                 )
             )
         }
+        // WebView parity (ReaderHtmlDocumentTemplate action order Copy, Define,
+        // Speak, Dictionary, Translate, Search, Note, Clear): Dictionary is its
+        // own entry. Like the WebView template it reuses the Define book glyph.
+        if (SharedNativeReaderSelectionAction.DICTIONARY in enabledSelectionActions) {
+            add(
+                SharedNativeSelectionMenuAction(
+                    "Dictionary",
+                    SharedNativeSelectionVectorIcons.Define,
+                    { onSelectionAction(SharedNativeReaderSelectionAction.DICTIONARY) }
+                )
+            )
+        }
         if (SharedNativeReaderSelectionAction.TRANSLATE in enabledSelectionActions) {
             add(
                 SharedNativeSelectionMenuAction(
                     "Translate",
-                    SharedNativeSelectionVectorIcons.Define,
+                    SharedNativeSelectionVectorIcons.Translate,
                     { onSelectionAction(SharedNativeReaderSelectionAction.TRANSLATE) }
                 )
             )
@@ -394,7 +406,7 @@ internal fun SharedNativeSelectionMenu(
             add(
                 SharedNativeSelectionMenuAction(
                     "Note",
-                    SharedNativeSelectionVectorIcons.Copy,
+                    SharedNativeSelectionVectorIcons.Note,
                     { onSelectionAction(SharedNativeReaderSelectionAction.NOTE) }
                 )
             )

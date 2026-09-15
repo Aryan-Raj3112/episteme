@@ -1604,6 +1604,19 @@ fun SharedMobileEpubReaderScreen(
                             } else {
                                 (activeTurn?.direction ?: 0) < 0
                             }
+                            // Android benchmark parity: the pager slots sit side-by-side, so the
+                            // curling sheet reveals the set beneath with shadows. The shared
+                            // reader stacks both sets, so the beneath layer stays opaque while
+                            // the top layer goes transparent — otherwise the top layer's
+                            // full-size paper background hides the incoming set until the turn
+                            // overlay is removed at the end.
+                            val turnLayerActive = activeTurn != null || dragOverlayPlan != null
+                            val (turnMainBackground, turnOverlayBackground) =
+                                sharedPaginatedTurnLayerBackgrounds(
+                                    turnActive = turnLayerActive,
+                                    overlayFirst = overlayFirst,
+                                    baseBackground = paginatedRenderPlan.background
+                                )
                             val turnOverlay: @Composable () -> Unit = {
                                 val overlayPlan = when {
                                     dragOverlayPlan != null -> dragOverlayPlan
@@ -1617,7 +1630,8 @@ fun SharedMobileEpubReaderScreen(
                                         readerFontFamily = settings.toSharedReaderFontFamily(),
                                         searchHighlight = MaterialTheme.colorScheme.primary.copy(alpha = 0.28f),
                                         selectionHighlight = MaterialTheme.colorScheme.primary.copy(alpha = 0.28f),
-                                        pageTurn = overlaySpec
+                                        pageTurn = overlaySpec,
+                                        background = turnOverlayBackground
                                     )
                                 }
                             }
@@ -1695,7 +1709,8 @@ fun SharedMobileEpubReaderScreen(
                                     modifier = Modifier.fillMaxSize().testTag(SharedMobileEpubAxTags.CONTENT),
                                     positionController = nativePaginatedPositionController,
                                     pageTurn = if (pageDragActive) dragCurrentSpec else incomingTurnSpec,
-                                    pageDragController = pageDragController
+                                    pageDragController = pageDragController,
+                                    contentBackground = turnMainBackground
                                 )
                                 if (!overlayFirst) {
                                     turnOverlay()
