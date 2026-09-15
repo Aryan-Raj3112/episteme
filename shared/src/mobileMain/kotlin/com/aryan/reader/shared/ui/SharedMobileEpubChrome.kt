@@ -71,7 +71,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
-import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
@@ -239,7 +238,7 @@ internal fun SharedMobileEpubTopBar(
             IconButton(
                 onClick = onBack,
                 modifier = Modifier.testTag(SharedMobileEpubAxTags.BACK).semantics { contentDescription = "Back" }
-            ) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null) }
+            ) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface) }
             Text(
                 chromeTitle,
                 maxLines = 1,
@@ -249,36 +248,41 @@ internal fun SharedMobileEpubTopBar(
                     .semantics(mergeDescendants = true) { heading(); contentDescription = title }
             )
             topTools.forEach { tool ->
+                // Android benchmark (EpubReaderControls): inactive chrome icons use
+                // onSurface explicitly (slider/TTS active -> primary). Explicit tint
+                // keeps custom SharedReaderIcons visible on iOS even if
+                // LocalContentColor propagation differs; Menu/Search already worked
+                // because they are Material vectors, custom ones did not.
                 when (tool) {
                     ReaderTool.THEME -> IconButton(
                         onClick = onTheme,
                         modifier = Modifier.testTag("EpubTopTheme").semantics { contentDescription = "Theme" }
                     ) {
-                        Icon(Icons.Default.Palette, contentDescription = null)
+                        Icon(Icons.Default.Palette, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface)
                     }
                     ReaderTool.TOC -> IconButton(
                         onClick = onOpenToc,
                         modifier = Modifier.testTag("EpubTopToc").semantics { contentDescription = "Contents" }
                     ) {
-                        Icon(Icons.Default.Menu, contentDescription = null)
+                        Icon(Icons.Default.Menu, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface)
                     }
                     ReaderTool.FORMAT -> IconButton(
                         onClick = onFormat,
                         modifier = Modifier.testTag("EpubTopFormat").semantics { contentDescription = formatContentDescription }
                     ) {
-                        Icon(SharedReaderIcons.FormatSize, contentDescription = null)
+                        Icon(SharedReaderIcons.FormatSize, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface)
                     }
                     ReaderTool.SEARCH -> IconButton(
                         onClick = onSearch,
                         modifier = Modifier.testTag("EpubTopSearch").semantics { contentDescription = "Search" }
                     ) {
-                        Icon(Icons.Default.Search, contentDescription = null)
+                        Icon(Icons.Default.Search, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface)
                     }
                     ReaderTool.SLIDER -> IconButton(
                         onClick = onOpenSlider,
                         modifier = Modifier.testTag("EpubTopSlider").semantics { contentDescription = "Navigation slider" }
                     ) {
-                        Icon(SharedReaderIcons.Slider, contentDescription = null)
+                        Icon(SharedReaderIcons.Slider, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface)
                     }
                     ReaderTool.TTS_CONTROLS -> IconButton(
                         onClick = { if (readAloudActive) onReadAloudStop() else onReadAloudToggle() },
@@ -287,32 +291,32 @@ internal fun SharedMobileEpubTopBar(
                         Icon(
                             readAloudIcon,
                             contentDescription = null,
-                            tint = if (readAloudActive) MaterialTheme.colorScheme.primary else LocalContentColor.current
+                            tint = if (readAloudActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                         )
                     }
                     ReaderTool.BRIGHTNESS -> IconButton(
                         onClick = onBrightness,
                         modifier = Modifier.testTag("EpubTopBrightness").semantics { contentDescription = "Brightness" }
                     ) {
-                        Icon(SharedReaderIcons.Contrast, contentDescription = null)
+                        Icon(SharedReaderIcons.Contrast, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface)
                     }
                     ReaderTool.SCREEN_ORIENTATION -> IconButton(
                         onClick = onScreenOrientation,
                         modifier = Modifier.testTag("EpubTopOrientation").semantics { contentDescription = "Screen orientation" }
                     ) {
-                        Icon(SharedReaderIcons.ScreenRotation, contentDescription = null)
+                        Icon(SharedReaderIcons.ScreenRotation, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface)
                     }
                     ReaderTool.DICTIONARY -> IconButton(
                         onClick = onOpenDictionarySettings,
                         modifier = Modifier.testTag("EpubTopDictionary").semantics { contentDescription = "Dictionary" }
                     ) {
-                        Icon(SharedReaderIcons.Dictionary, contentDescription = null)
+                        Icon(SharedReaderIcons.Dictionary, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface)
                     }
                     ReaderTool.AI_FEATURES -> if (aiAvailable) IconButton(
                         onClick = onOpenAiHub,
                         modifier = Modifier.testTag("EpubTopAi").semantics { contentDescription = "AI features" }
                     ) {
-                        Icon(Icons.Default.Ai, contentDescription = null)
+                        Icon(Icons.Default.Ai, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface)
                     }
                     else -> Unit
                 }
@@ -321,7 +325,7 @@ internal fun SharedMobileEpubTopBar(
                 IconButton(
                     onClick = { onShowMoreChange(true) },
                     modifier = Modifier.testTag(SharedMobileEpubAxTags.MORE).semantics { contentDescription = "More options" }
-                ) { Icon(Icons.Default.MoreVert, contentDescription = null) }
+                ) { Icon(Icons.Default.MoreVert, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface) }
                 DropdownMenu(expanded = showMore, onDismissRequest = { onShowMoreChange(false) }) {
                     DropdownMenuItem(
                         text = { Text("Customize Toolbar") },
@@ -756,25 +760,28 @@ internal fun SharedMobileEpubBottomBar(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 tools.forEach { tool ->
+                    // Android benchmark (EpubReaderControls): inactive icons use
+                    // onSurface explicitly, active slider/TTS use primary. Explicit
+                    // tint keeps custom icons visible on iOS.
                     when (tool) {
                         ReaderTool.TOC -> IconButton(
                             onClick = onToc,
                             modifier = Modifier.testTag("EpubBottomToc").semantics { contentDescription = "Contents" }
-                        ) { Icon(Icons.Default.Menu, contentDescription = null) }
+                        ) { Icon(Icons.Default.Menu, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface) }
                         ReaderTool.FORMAT -> IconButton(
                             onClick = onFormat,
                             modifier = Modifier.testTag("EpubBottomFormat").semantics { contentDescription = formatContentDescription }
                         ) {
-                            Icon(SharedReaderIcons.FormatSize, contentDescription = null)
+                            Icon(SharedReaderIcons.FormatSize, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface)
                         }
                         ReaderTool.SEARCH -> IconButton(
                             onClick = onSearch,
                             modifier = Modifier.testTag("EpubBottomSearch").semantics { contentDescription = "Search" }
-                        ) { Icon(Icons.Default.Search, contentDescription = null) }
+                        ) { Icon(Icons.Default.Search, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface) }
                         ReaderTool.THEME -> IconButton(
                             onClick = onTheme,
                             modifier = Modifier.testTag("EpubBottomTheme").semantics { contentDescription = "Theme" }
-                        ) { Icon(Icons.Default.Palette, contentDescription = null) }
+                        ) { Icon(Icons.Default.Palette, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface) }
                         ReaderTool.BOOKMARK -> {
                             val bookmarkLabel = if (isBookmarked) "Remove bookmark" else "Bookmark this page"
                             IconButton(
@@ -783,26 +790,27 @@ internal fun SharedMobileEpubBottomBar(
                             ) {
                                 Icon(
                                     if (isBookmarked) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
-                                    contentDescription = null
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onSurface
                                 )
                             }
                         }
                         ReaderTool.VISUAL_OPTIONS -> IconButton(
                             onClick = onVisualOptions,
                             modifier = Modifier.testTag("EpubBottomVisual").semantics { contentDescription = "Visual options" }
-                        ) { Icon(Icons.Default.Visibility, contentDescription = null) }
+                        ) { Icon(Icons.Default.Visibility, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface) }
                         ReaderTool.SLIDER -> IconButton(
                             onClick = onOpenSlider,
                             modifier = Modifier.testTag("EpubBottomSlider").semantics { contentDescription = "Navigation slider" }
-                        ) { Icon(SharedReaderIcons.Slider, contentDescription = null) }
+                        ) { Icon(SharedReaderIcons.Slider, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface) }
                         ReaderTool.DICTIONARY -> IconButton(
                             onClick = onDictionary,
                             modifier = Modifier.testTag("EpubBottomDictionary").semantics { contentDescription = "Dictionary" }
-                        ) { Icon(SharedReaderIcons.Dictionary, contentDescription = null) }
+                        ) { Icon(SharedReaderIcons.Dictionary, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface) }
                         ReaderTool.AI_FEATURES -> if (aiAvailable) IconButton(
                             onClick = onOpenAiHub,
                             modifier = Modifier.testTag("EpubBottomAi").semantics { contentDescription = "AI features" }
-                        ) { Icon(Icons.Default.Ai, contentDescription = null) }
+                        ) { Icon(Icons.Default.Ai, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface) }
                         ReaderTool.TTS_CONTROLS -> IconButton(
                             onClick = { if (readAloudActive) onReadAloudStop() else onReadAloudToggle() },
                             modifier = Modifier.testTag("EpubBottomTts").semantics { contentDescription = readAloudLabel }
@@ -810,7 +818,7 @@ internal fun SharedMobileEpubBottomBar(
                             Icon(
                                 readAloudIcon,
                                 contentDescription = null,
-                                tint = if (readAloudActive) MaterialTheme.colorScheme.primary else LocalContentColor.current
+                                tint = if (readAloudActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                             )
                         }
                         else -> Unit

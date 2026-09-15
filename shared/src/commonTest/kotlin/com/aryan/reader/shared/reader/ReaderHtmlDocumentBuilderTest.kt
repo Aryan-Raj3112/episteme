@@ -574,10 +574,10 @@ class ReaderHtmlDocumentBuilderTest {
         assertTrue(
             Regex(
                 "html\\.reader-vertical-root \\{\\s*" +
-                    "width: 100%;\\s*" +
-                    "max-width: 100%;\\s*" +
+                    "width: 100% !important;\\s*" +
+                    "max-width: 100% !important;\\s*" +
                     "min-width: 0;\\s*" +
-                    "overflow-x: hidden;\\s*" +
+                    "overflow-x: hidden !important;\\s*" +
                     "overflow-y: scroll;\\s*" +
                     "scrollbar-width: thin;",
             ).containsMatchIn(html),
@@ -585,6 +585,14 @@ class ReaderHtmlDocumentBuilderTest {
         assertTrue(html.contains("html.reader-vertical-root::-webkit-scrollbar"))
         assertFalse(html.contains("html.reader-vertical-root::-webkit-scrollbar,\n                body.reader-vertical::-webkit-scrollbar {\n                  width: 0;"))
         assertTrue(html.contains("scrollbar-gutter: stable;"))
+        // Android benchmark parity: touch WebViews (iOS WKWebView + Android
+        // WebView) must use overlay scrollbars with zero reservation so side
+        // gaps stay exactly --reader-margin-x. Desktop keeps stable gutter.
+        assertTrue(html.contains("@media (hover: none)"))
+        assertTrue(html.contains("scrollbar-gutter: auto;"))
+        // Body box must beat publication CSS like Android's !important padding.
+        assertTrue(html.contains("margin: 0 !important;"))
+        assertTrue(html.contains("padding: var(--reader-margin-y) var(--reader-margin-x) !important;"))
     }
 
     @Test
@@ -663,15 +671,15 @@ class ReaderHtmlDocumentBuilderTest {
         )
         val verticalBodyCss = Regex(
             "body\\.reader-vertical \\{\\s*" +
-                "width: 100%;\\s*" +
-                "max-width: 100%;\\s*" +
+                "width: 100% !important;\\s*" +
+                "max-width: 100% !important;\\s*" +
                 "height: auto !important;\\s*" +
                 "min-height: 100vh;\\s*" +
                 "min-height: 100dvh;\\s*" +
                 "min-width: 0;\\s*" +
-                "overflow-x: hidden;\\s*" +
+                "overflow-x: hidden !important;\\s*" +
                 "overflow-y: auto;\\s*" +
-                "padding: var\\(--reader-vertical-margin-y\\) 0;"
+                "padding: var\\(--reader-vertical-margin-y\\) 0 !important;"
         )
 
         assertTrue(html.contains("--reader-vertical-margin-y: 5px;"))

@@ -44,7 +44,12 @@ internal fun readerDocumentStyles(
             }
             html, body {
               min-height: 100%;
-              margin: 0;
+              /* Android benchmark (epub_reader.js) uses !important for body
+                 padding/width so publication CSS cannot widen the side gaps.
+                 Shared must do the same or book CSS with !important would
+                 stack on top of the inner --reader-vertical-page-width margins
+                 on iOS while Android stays at exactly 16px. */
+              margin: 0 !important;
               background: var(--reader-bg);
               color: var(--reader-fg);
               font-family: var(--reader-family);
@@ -69,10 +74,10 @@ internal fun readerDocumentStyles(
               height: auto !important;
             }
             html.reader-vertical-root {
-              width: 100%;
-              max-width: 100%;
+              width: 100% !important;
+              max-width: 100% !important;
               min-width: 0;
-              overflow-x: hidden;
+              overflow-x: hidden !important;
               overflow-y: scroll;
               scrollbar-width: thin;
             }
@@ -97,21 +102,24 @@ internal fun readerDocumentStyles(
               background: var(--reader-scrollbar-thumb-hover);
             }
             body {
-              box-sizing: border-box;
-              padding: var(--reader-margin-y) var(--reader-margin-x);
+              box-sizing: border-box !important;
+              padding: var(--reader-margin-y) var(--reader-margin-x) !important;
               overflow-wrap: anywhere;
               position: relative;
+              width: 100% !important;
+              max-width: 100% !important;
+              overflow-x: hidden !important;
             }
             body.reader-vertical {
-              width: 100%;
-              max-width: 100%;
+              width: 100% !important;
+              max-width: 100% !important;
               height: auto !important;
               min-height: 100vh;
               min-height: 100dvh;
               min-width: 0;
-              overflow-x: hidden;
+              overflow-x: hidden !important;
               overflow-y: auto;
-              padding: var(--reader-vertical-margin-y) 0;
+              padding: var(--reader-vertical-margin-y) 0 !important;
               /*
                * iOS WKWebView runs with contentInsetAdjustmentBehavior=never and the
                * Compose PageInfo bar overlays the WebView, so the document owns the
@@ -119,8 +127,28 @@ internal fun readerDocumentStyles(
                * This keeps the chapter end above the bar instead of showing a gap
                * that only disappears after the first scroll.
                */
-              padding-bottom: calc(var(--reader-vertical-margin-y) + env(safe-area-inset-bottom, 0px));
+              padding-bottom: calc(var(--reader-vertical-margin-y) + env(safe-area-inset-bottom, 0px)) !important;
               scrollbar-gutter: stable;
+            }
+            /*
+             * Android benchmark parity (epub_reader.js has no scrollbar-gutter
+             * and no custom webkit-scrollbar width): touch WebViews use overlay
+             * scrollbars with zero reservation, so the side gaps stay exactly
+             * --reader-margin-x (16px default). Desktop keeps the stable gutter
+             * + 12px custom track to avoid shifts between chapters. Without this,
+             * iOS WKWebView honors the 12px track + stable gutter as classic
+             * scrollbars while Android overlays, leaving iOS narrower with
+             * visibly larger left/right gaps than the Android default.
+             */
+            @media (hover: none) {
+              body.reader-vertical {
+                scrollbar-gutter: auto;
+              }
+              html.reader-vertical-root::-webkit-scrollbar,
+              body.reader-vertical::-webkit-scrollbar {
+                width: 0;
+                height: 0;
+              }
             }
             body.reader-paginated {
               height: 100vh;
