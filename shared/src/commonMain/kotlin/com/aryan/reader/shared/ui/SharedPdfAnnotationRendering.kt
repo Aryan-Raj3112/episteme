@@ -1026,6 +1026,13 @@ internal fun DrawScope.drawInkPreview(
     strokeWidth: Float,
     isStraight: Boolean = false
 ) {
+    // Android parity (PenIcons.drawInkSquiggle): sample the flourish via
+    // PathMeasure, then render through the real ink pipeline
+    // (SharedPdfInkRenderer, the shared counterpart of
+    // PdfAnnotationRenderHelper) instead of stroking the raw segment. That
+    // keeps width/cap/blend identical on both platforms — the old direct
+    // getSegment stroke was thinner (5..16px coercion) with Butt caps, while
+    // Android draws base*1000px with Square caps for highlighters.
     val x = startPoint.x
     val y = startPoint.y - 2f
     val canvasSize = size
@@ -1042,22 +1049,59 @@ internal fun DrawScope.drawInkPreview(
     val revealProgress = sharedPdfInkPreviewRevealProgress(progress)
     val pathMeasure = PathMeasure()
     pathMeasure.setPath(path, false)
-    val revealedPath = Path()
     val targetLength = pathMeasure.length * revealProgress
-    if (targetLength <= 0f || !pathMeasure.getSegment(0f, targetLength, revealedPath, true)) return
+    if (targetLength <= 0f) return
+    val pointCount = (targetLength / 2f).toInt().coerceAtLeast(2)
+    val points = ArrayList<PdfPagePoint>(pointCount)
+    var currentTime = 0L
+    for (i in 0 until pointCount) {
+        val distance = (i.toFloat() / pointCount) * targetLength
+        currentTime += 15L
+        val offset = pathMeasure.getPosition(distance)
+        points.add(PdfPagePoint(offset.x, offset.y, timestamp = currentTime))
+    }
+    if (points.isEmpty()) return
 
-    val width = SharedPdfInkRenderer.effectiveStrokeWidthPx(strokeWidth, pageWidthPx = 700f)
-        .coerceIn(if (tool.isHighlighter) 5f else 1.2f, if (tool.isHighlighter) 16f else 5f)
-    drawPath(
-        path = revealedPath,
-        color = color,
-        style = Stroke(
-            width = width,
-            cap = if (tool == PdfInkTool.HIGHLIGHTER) StrokeCap.Butt else StrokeCap.Round,
-            join = StrokeJoin.Round
-        ),
-        blendMode = if (tool.isHighlighter) BlendMode.SrcOver else BlendMode.SrcOver
+    val simulationScale = 1000f
+    val annotation = SharedPdfAnnotation(
+        id = "preview",
+        pageIndex = 0,
+        kind = PdfAnnotationKind.INK,
+        tool = tool,
+        points = points,
+        colorArgb = color.toArgb(),
+        strokeWidth = strokeWidth * simulationScale,
     )
+    val renderData = SharedPdfInkRenderer.createRenderData(
+        annotation = annotation,
+        canvasSize = IntSize(1, 1),
+    ) ?: return
+    when (renderData) {
+        is SharedPdfInkRenderData.Standard -> {
+            drawPath(
+                path = renderData.path,
+                color = renderData.color,
+                style = Stroke(
+                    width = renderData.strokeWidthPx,
+                    // Android benchmark: Square for the chisel highlighter,
+                    // Round for everything else (incl. round highlighter).
+                    cap = if (tool == PdfInkTool.HIGHLIGHTER) StrokeCap.Square else StrokeCap.Round,
+                    join = StrokeJoin.Round,
+                ),
+                blendMode = BlendMode.SrcOver,
+            )
+        }
+        is SharedPdfInkRenderData.Fountain -> {
+            drawPath(path = renderData.path, color = renderData.color, style = Fill)
+        }
+        is SharedPdfInkRenderData.Pencil -> {
+            drawPath(
+                path = renderData.path,
+                color = renderData.color.copy(alpha = renderData.color.alpha * renderData.velocityAlpha),
+                style = Stroke(width = renderData.strokeWidthPx, cap = StrokeCap.Round, join = StrokeJoin.Round),
+            )
+        }
+    }
 }
 
 internal fun sharedPdfInkPreviewRevealProgress(progress: Float): Float {

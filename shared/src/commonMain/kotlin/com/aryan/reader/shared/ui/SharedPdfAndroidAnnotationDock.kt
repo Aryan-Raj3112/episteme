@@ -365,6 +365,7 @@ fun SharedPdfAndroidToolSettingsPopup(
     isHighlighterSnapEnabled: Boolean,
     onHighlighterSnapChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
+    maxHeight: androidx.compose.ui.unit.Dp? = null,
 ) {
     val isEraser = selectedTool == PdfInkTool.ERASER
     val isHighlighter = selectedTool in SharedPdfAnnotationHighlighterTools
@@ -401,6 +402,7 @@ fun SharedPdfAndroidToolSettingsPopup(
             onPaletteChange = onPaletteChange,
             isHighlighterSnapEnabled = isHighlighterSnapEnabled,
             onHighlighterSnapChange = onHighlighterSnapChange,
+            maxHeight = maxHeight,
         )
     }
 }

@@ -4806,6 +4806,7 @@ private fun ReaderIosApp(
             modifier = Modifier.fillMaxSize(),
             hostConfig = effectiveHostConfig,
             isSplitPane = isSplitPane,
+            isDebugBuild = bridge.isDebugBuild,
         )
     }
 

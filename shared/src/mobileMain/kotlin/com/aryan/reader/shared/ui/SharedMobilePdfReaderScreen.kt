@@ -84,6 +84,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
@@ -229,6 +230,7 @@ import com.aryan.reader.shared.pdf.SharedPdfAnnotationHighlighterTools
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationPenTools
 import com.aryan.reader.shared.pdf.isPdfTextDockTopAnchored
 import com.aryan.reader.shared.pdf.isSharedPdfAnnotationDockInBottomHalf
+import com.aryan.reader.shared.pdf.sharedPdfPopupMaxHeightDp
 import com.aryan.reader.shared.pdf.isSharedPdfAnnotationDockSticky
 import com.aryan.reader.shared.pdf.pdfTextDockKeyboardLiftPx
 import com.aryan.reader.shared.pdf.pdfTextDockRestingBottomPadding
@@ -238,6 +240,7 @@ import com.aryan.reader.shared.pdf.toSharedPdfRichSpanStyle
 import com.aryan.reader.shared.reader.ReaderScreenOrientationMode
 import com.aryan.reader.shared.pdf.SharedPdfAnnotation
 import com.aryan.reader.shared.pdf.SharedPdfBookmark
+import com.aryan.reader.shared.pdf.SharedPdfDemoAnnotations
 import com.aryan.reader.shared.pdf.SharedPdfHighlighterPalette
 import com.aryan.reader.shared.pdf.SharedPdfRichTextController
 import com.aryan.reader.shared.pdf.SharedPdfRichTextSerializer
@@ -384,6 +387,7 @@ fun SharedMobilePdfReaderScreen(
     initialShowBottomToolbar: Boolean = true,
     onShowBottomToolbarChange: (Boolean) -> Unit = {},
     isPdfExportBusy: Boolean = false,
+    isDebugBuild: Boolean = false,
 ) {
     SharedMobilePdfReaderHost(
         book = book,
@@ -466,6 +470,7 @@ fun SharedMobilePdfReaderScreen(
         onSystemUiRelease = onSystemUiRelease,
         modifier = modifier,
         hostConfig = SharedPdfReaderHostConfig.fullScreen(book.id),
+        isDebugBuild = isDebugBuild,
     )
 }
 
@@ -561,6 +566,11 @@ fun SharedMobilePdfReaderHost(
     isSplitPane: Boolean = false,
     summaryCache: SharedSummaryCache? = null,
     aiCredits: Int? = null,
+    /**
+     * Android parity (PdfToolbars includeDebugActions = BuildConfig.DEBUG):
+     * debug builds expose the "Try Episteme" demo artwork action.
+     */
+    isDebugBuild: Boolean = false,
 ) {
     val readerSessionKey = hostConfig.sessionKey
     val ownsSystemUi = hostConfig.owns(SharedPdfReaderGlobalResource.SYSTEM_UI)
@@ -1027,6 +1037,20 @@ fun SharedMobilePdfReaderHost(
     fun dispatch(action: SharedPdfReaderAction) {
         readerState = readerState.reduce(action)
     }
+
+    // Android parity (PdfViewerScreen onGenerateDemoAnnotations + onImportSvg
+    // demo_art.svg): debug-only "Try Episteme!" ink artwork on the current
+    // pdf page. Each stroke dispatches AnnotationAdded so undo/redo + sidecar
+    // persistence behave like hand-drawn ink.
+    fun drawDebugDemoAnnotations() {
+        val targetPage = readerState.currentNearestPdfPageIndex ?: currentPdfIndex
+        val demo = SharedPdfDemoAnnotations.generate(
+            pageIndex = targetPage,
+            baseTimestamp = currentTimestamp(),
+        )
+        demo.forEach { dispatch(SharedPdfReaderAction.AnnotationAdded(it)) }
+    }
+
     fun stopPdfTtsSession() {
         if (ownsTts) pdfTts.stop()
         if (ownsTts) cloudTts?.stop()
@@ -1840,7 +1864,9 @@ fun SharedMobilePdfReaderHost(
                             applySystemBarInsets = !isSplitPane && mobilePdfSystemBarsVisibility(
                                 systemUiMode.toReaderSystemUiMode(),
                                 showChrome,
-                            ).statusBarsVisible
+                            ).statusBarsVisible,
+                            isDebugBuild = isDebugBuild,
+                            onDrawDebugDemoAnnotations = ::drawDebugDemoAnnotations,
                         )
                         if (
                             pdfTabsEnabled &&
@@ -2409,16 +2435,32 @@ fun SharedMobilePdfReaderHost(
                         )
                         val popupAlign = if (popupAboveDock) Alignment.BottomCenter else Alignment.TopCenter
                         val popupMargin = 16.dp
+                        // Android parity: the sticky dock carries system-inset
+                        // padding (home-indicator / status bar) below/above its
+                        // 56dp bar, which the raw dockTopY math doesn't include.
+                        // Without it the inset eats the margin on iOS and the
+                        // popup sits flush against (or overlaps) the dock.
+                        val statusTopDp = with(density) {
+                            WindowInsets.safeDrawing.getTop(density).toDp()
+                        }
+                        val popupDockBottomInset =
+                            if (isSticky && annotationDockLocation == DockLocation.BOTTOM) effectiveBottomSystemInset else 0.dp
+                        val popupDockTopInset =
+                            if (isSticky && annotationDockLocation == DockLocation.TOP) statusTopDp else 0.dp
                         val popupTopPad = if (!popupAboveDock) {
-                            with(density) { (dockTopYPx + annotationDockHeightPx).toDp() } + popupMargin
+                            with(density) { (dockTopYPx + annotationDockHeightPx).toDp() } + popupDockTopInset + popupMargin
                         } else {
                             0.dp
                         }
                         val popupBottomPad = if (popupAboveDock) {
-                            with(density) { (boxMaxHeightPx - dockTopYPx).toDp() } + popupMargin
+                            with(density) { (boxMaxHeightPx - dockTopYPx).toDp() } + popupDockBottomInset + popupMargin
                         } else {
                             0.dp
                         }
+                        // Hoisted: AnimatedVisibility content has its own
+                        // receiver, so BoxWithConstraints maxHeight isn't
+                        // visible inside the popup call below.
+                        val popupMaxHeight = sharedPdfPopupMaxHeightDp(maxHeight.value.roundToInt()).dp
                         Box(modifier = Modifier.fillMaxSize()) {
                             androidx.compose.animation.AnimatedVisibility(
                                 visible = showAnnotationToolSettings,
@@ -2450,6 +2492,11 @@ fun SharedMobilePdfReaderHost(
                                     },
                                     isHighlighterSnapEnabled = readerState.isHighlighterSnapEnabled,
                                     onHighlighterSnapChange = ::updatePdfHighlighterSnap,
+                                    // Android parity (ToolSettingsPopup
+                                    // maxPopupHeight): cap against the reader
+                                    // height so the popup scrolls instead of
+                                    // overflowing on small screens.
+                                    maxHeight = popupMaxHeight,
                                 )
                             }
 
@@ -2492,9 +2539,6 @@ fun SharedMobilePdfReaderHost(
                                     } else {
                                         Modifier.padding(horizontal = 16.dp)
                                     }
-                                val statusTopDp = with(density) {
-                                    WindowInsets.safeDrawing.getTop(density).toDp()
-                                }
                                 val paddingModifier =
                                     if ((annotationDockLocation == DockLocation.TOP || annotationDockLocation == DockLocation.BOTTOM) && !isAnnotationDockDragging) {
                                         Modifier.padding(
@@ -3501,7 +3545,9 @@ private fun SharedMobilePdfReaderTopBar(
     topTools: List<PdfReaderTool>,
     toolbarPreferences: PdfToolbarPreferences,
     onCustomizeToolbar: () -> Unit,
-    applySystemBarInsets: Boolean
+    applySystemBarInsets: Boolean,
+    isDebugBuild: Boolean = false,
+    onDrawDebugDemoAnnotations: () -> Unit = {},
 ) {
     val searchFocusRequester = remember { FocusRequester() }
     val searchKeyboardController = LocalSoftwareKeyboardController.current
@@ -3619,6 +3665,14 @@ private fun SharedMobilePdfReaderTopBar(
                                 PdfReaderTool.AI_FEATURES -> if (aiAvailable) SharedMobilePdfTopToolButton(sharedPdfReaderToolLabel(tool), onOpenAiHub) { Icon(Icons.Default.Ai, contentDescription = null) }
                                 else -> Unit
                             }
+                        }
+                        if (isDebugBuild) {
+                            // Android parity (PdfToolbars includeDebugActions):
+                            // debug-only "Try Episteme!" demo artwork.
+                            SharedMobilePdfTopToolButton(
+                                readerString("tooltip_demo_annotations", "Demo annotations"),
+                                onDrawDebugDemoAnnotations,
+                            ) { Icon(Icons.Filled.BugReport, contentDescription = null) }
                         }
                     }
                 }
@@ -3870,6 +3924,18 @@ private fun SharedMobilePdfReaderTopBar(
                     if (toolbarPreferences.isVisible(PdfReaderTool.SHARE)) SharedMobilePdfOverflowItem(sharedPdfReaderToolTitle(PdfReaderTool.SHARE), leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) }, onClick = { showMoreMenu = false; onNativeAction(SharedMobilePdfNativeAction.SHARE) })
                     if (toolbarPreferences.isVisible(PdfReaderTool.SAVE_COPY)) SharedMobilePdfOverflowItem(sharedPdfReaderToolTitle(PdfReaderTool.SAVE_COPY), leadingIcon = { Icon(Icons.Default.Description, contentDescription = null) }, onClick = { showMoreMenu = false; onNativeAction(SharedMobilePdfNativeAction.SAVE_COPY) })
                     if (toolbarPreferences.isVisible(PdfReaderTool.PRINT)) SharedMobilePdfOverflowItem(sharedPdfReaderToolTitle(PdfReaderTool.PRINT), leadingIcon = { Icon(Icons.Default.Description, contentDescription = null) }, onClick = { showMoreMenu = false; onNativeAction(SharedMobilePdfNativeAction.PRINT) })
+                }
+                if (isDebugBuild) {
+                    // Android parity (PdfToolbars import_svg/demo_annotations):
+                    // debug-only "Try Episteme!" demo artwork.
+                    SharedMobilePdfOverflowItem(
+                        readerString("tooltip_demo_annotations", "Demo annotations"),
+                        leadingIcon = { Icon(Icons.Filled.BugReport, contentDescription = null) },
+                        onClick = {
+                            showMoreMenu = false
+                            onDrawDebugDemoAnnotations()
+                        }
+                    )
                 }
                 }
             }

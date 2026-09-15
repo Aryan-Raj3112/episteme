@@ -2308,6 +2308,14 @@ internal fun SharedMobilePdfPageSurface(
                                         onFinishInkStroke(pageIndex, eraserOverride)
                                         committed = true
                                     } else {
+                                        // Android parity (PdfPageComposable tap
+                                        // -> onDrawStart -> onDrawEnd): a tap
+                                        // without drag dismisses the
+                                        // tool-settings popup like the
+                                        // drag-start path does. Taps previously
+                                        // fell through here without notifying,
+                                        // so the popup stayed open on iOS.
+                                        latestOnInkStrokeStart(pageIndex)
                                         (activeStroke as? MutableList<PdfPagePoint>)?.clear()
                                     }
                                     return@awaitEachGesture
