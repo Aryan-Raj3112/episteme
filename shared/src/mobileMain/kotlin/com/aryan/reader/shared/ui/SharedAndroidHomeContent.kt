@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
@@ -103,8 +102,6 @@ fun SharedAndroidHomeRecentContent(
     }
 }
 
-enum class SharedAndroidHomeWidthClass { COMPACT, MEDIUM, EXPANDED }
-
 /** Exact Android active-tabs header and recent-books grid; Android supplies its existing cards. */
 @Composable
 fun <T> SharedAndroidHomeRecentGrid(
@@ -125,11 +122,7 @@ fun <T> SharedAndroidHomeRecentGrid(
     contentPadding: PaddingValues = PaddingValues(vertical = 8.dp),
     modifier: Modifier = Modifier,
 ) {
-    val gridCells = when (widthClass) {
-        SharedAndroidHomeWidthClass.COMPACT -> GridCells.Fixed(3)
-        SharedAndroidHomeWidthClass.MEDIUM -> GridCells.Adaptive(minSize = 140.dp)
-        SharedAndroidHomeWidthClass.EXPANDED -> GridCells.Adaptive(minSize = 160.dp)
-    }
+    val gridCells = widthClass.bookGridCells()
     val showTabs = tabsEnabled && openTabs.isNotEmpty()
     androidx.compose.foundation.layout.Column(modifier = modifier) {
         if (showTabs) {

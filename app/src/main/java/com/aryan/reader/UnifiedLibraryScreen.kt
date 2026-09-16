@@ -622,6 +622,7 @@ fun UnifiedLibraryScreen(
                     selectedBookIds = uiState.contextualActionItems.mapTo(mutableSetOf()) { it.bookId },
                     downloadingBookIds = uiState.downloadingBookIds,
                     usePdfFileNameAsDisplayName = uiState.usePdfFileNameAsDisplayName,
+                    widthSizeClass = widthSizeClass,
                     onShelfSelected = { selectedShelfId = it.id },
                     onBookClick = viewModel::onRecentFileClicked,
                     onBookLongClick = viewModel::onRecentItemLongPress
@@ -1126,6 +1127,7 @@ private fun UnifiedLibrarySearchResults(
     selectedBookIds: Set<String>,
     downloadingBookIds: Set<String>,
     usePdfFileNameAsDisplayName: Boolean,
+    widthSizeClass: WindowWidthSizeClass,
     onQueryChange: (String) -> Unit,
     onClose: () -> Unit,
     onBookClick: (RecentFileItem) -> Unit,
@@ -1143,6 +1145,11 @@ private fun UnifiedLibrarySearchResults(
         onQueryChange = onQueryChange,
         onClose = onClose,
         modifier = modifier,
+        widthClass = when (widthSizeClass) {
+            WindowWidthSizeClass.Compact -> com.aryan.reader.shared.ui.SharedAndroidHomeWidthClass.COMPACT
+            WindowWidthSizeClass.Medium -> com.aryan.reader.shared.ui.SharedAndroidHomeWidthClass.MEDIUM
+            else -> com.aryan.reader.shared.ui.SharedAndroidHomeWidthClass.EXPANDED
+        },
         bookCard = { item ->
             RecentFileCard(
                 item = item,
@@ -1165,6 +1172,7 @@ private fun UnifiedShelvesSection(
     selectedBookIds: Set<String>,
     downloadingBookIds: Set<String>,
     usePdfFileNameAsDisplayName: Boolean,
+    widthSizeClass: WindowWidthSizeClass,
     onShelfSelected: (Shelf) -> Unit,
     onBookClick: (RecentFileItem) -> Unit,
     onBookLongClick: (RecentFileItem) -> Unit,
@@ -1181,6 +1189,11 @@ private fun UnifiedShelvesSection(
         shelfBookCountLabel = { "${it.bookCount} ${if (it.bookCount == 1) "book" else "books"}" },
         bookKey = { it.bookId },
         onShelfSelected = onShelfSelected,
+        widthClass = when (widthSizeClass) {
+            WindowWidthSizeClass.Compact -> com.aryan.reader.shared.ui.SharedAndroidHomeWidthClass.COMPACT
+            WindowWidthSizeClass.Medium -> com.aryan.reader.shared.ui.SharedAndroidHomeWidthClass.MEDIUM
+            else -> com.aryan.reader.shared.ui.SharedAndroidHomeWidthClass.EXPANDED
+        },
         modifier = modifier,
         bookCard = { item ->
             RecentFileCard(

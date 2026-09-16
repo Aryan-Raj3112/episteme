@@ -16,6 +16,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -34,9 +35,6 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -993,27 +991,40 @@ internal fun SharedMobileBookGridSection(
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(title, style = MaterialTheme.typography.titleLarge)
-        LazyVerticalGrid(
-            columns = GridCells.Fixed(3),
-            contentPadding = PaddingValues(vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
-            verticalArrangement = Arrangement.spacedBy(24.dp),
-            modifier = Modifier.height((((books.size + 2) / 3).coerceAtLeast(1) * 244).dp)
-        ) {
-            items(books, key = { it.id }) { book ->
-                SharedMobileBookCard(
-                    book = book,
-                    selected = book.id in selectedBookIds,
-                    pinned = book.id in pinnedBookIds,
-                    downloading = book.id in downloadingBookIds,
-                    onClick = { onOpenBook(book) },
-                    onLongClick = {
-                        if (shouldSelectBookOnLongPress(book.id, selectedBookIds)) {
-                            onLongPressBook(book)
+        // A lazy grid cannot nest inside the outer scrolling column, and the
+        // previous fixed row height (244dp) clipped cards on wider screens:
+        // wider cells are also taller via the cover aspect ratio. Chunked rows
+        // size naturally from their content while the column count grows with
+        // available width (phones stay at 3), which caps the card size.
+        BoxWithConstraints(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+            val columns = sharedMobileWidthClassForWidth(maxWidth).bookGridColumns(maxWidth)
+            Column(verticalArrangement = Arrangement.spacedBy(24.dp)) {
+                books.chunked(columns).forEach { row ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    ) {
+                        row.forEach { book ->
+                            SharedMobileBookCard(
+                                book = book,
+                                selected = book.id in selectedBookIds,
+                                pinned = book.id in pinnedBookIds,
+                                downloading = book.id in downloadingBookIds,
+                                onClick = { onOpenBook(book) },
+                                onLongClick = {
+                                    if (shouldSelectBookOnLongPress(book.id, selectedBookIds)) {
+                                        onLongPressBook(book)
+                                    }
+                                },
+                                onTogglePinned = { onTogglePinned(book) },
+                                modifier = Modifier.weight(1f),
+                            )
                         }
-                    },
-                    onTogglePinned = { onTogglePinned(book) }
-                )
+                        repeat(columns - row.size) {
+                            Spacer(Modifier.weight(1f))
+                        }
+                    }
+                }
             }
         }
     }

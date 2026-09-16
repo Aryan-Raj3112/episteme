@@ -9,6 +9,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -478,55 +479,59 @@ fun SharedMobileUnifiedLibraryScreen(
             when (displayedSection) {
                 MobileUnifiedLibrarySection.HOME -> {
                     if (unifiedLibraryModel.showSearchResults) {
-                        SharedAndroidUnifiedLibrarySearch(
-                            books = unifiedLibraryModel.visibleBooks,
-                            query = query,
-                            searchPlaceholder = readerString("unified_library_search_books", "Search your books"),
-                            clearDescription = readerString("content_desc_clear_query", "Clear search"),
-                            closeDescription = readerString("action_close", "Close"),
-                            resultLabel = readerQuantityString("unified_library_search_results", visibleBooks.size, "%1\$d result", "%1\$d results", visibleBooks.size),
-                            noResultsLabel = readerString("no_results_found", "No results found for %1\$s", query),
-                            showSearchField = false,
-                            itemKey = { it.id },
-                            onQueryChange = { query = it },
-                            onClose = { query = "" },
-                            bookCard = { book ->
-                                SharedMobileBookCard(
-                                    book = book,
-                                    selected = book.id in selectedIds,
-                                    pinned = book.id in state.pinnedLibraryBookIds,
-                                    downloading = book.id in state.downloadingBookIds,
-                                    onClick = { if (selectedIds.isEmpty()) onOpenBook(book) else onLongPressBook(book) },
-                                    onLongClick = { if (shouldSelectBookOnLongPress(book.id, selectedIds)) onLongPressBook(book) },
-                                    onTogglePinned = { onTogglePinned(book) },
-                                    modifier = Modifier.fillMaxWidth(),
-                                )
-                            },
-                            modifier = Modifier.padding(padding),
-                        )
+                        BoxWithConstraints(Modifier.padding(padding)) {
+                            SharedAndroidUnifiedLibrarySearch(
+                                books = unifiedLibraryModel.visibleBooks,
+                                query = query,
+                                searchPlaceholder = readerString("unified_library_search_books", "Search your books"),
+                                clearDescription = readerString("content_desc_clear_query", "Clear search"),
+                                closeDescription = readerString("action_close", "Close"),
+                                resultLabel = readerQuantityString("unified_library_search_results", visibleBooks.size, "%1\$d result", "%1\$d results", visibleBooks.size),
+                                noResultsLabel = readerString("no_results_found", "No results found for %1\$s", query),
+                                showSearchField = false,
+                                itemKey = { it.id },
+                                onQueryChange = { query = it },
+                                onClose = { query = "" },
+                                bookCard = { book ->
+                                    SharedMobileBookCard(
+                                        book = book,
+                                        selected = book.id in selectedIds,
+                                        pinned = book.id in state.pinnedLibraryBookIds,
+                                        downloading = book.id in state.downloadingBookIds,
+                                        onClick = { if (selectedIds.isEmpty()) onOpenBook(book) else onLongPressBook(book) },
+                                        onLongClick = { if (shouldSelectBookOnLongPress(book.id, selectedIds)) onLongPressBook(book) },
+                                        onTogglePinned = { onTogglePinned(book) },
+                                        modifier = Modifier.fillMaxWidth(),
+                                    )
+                                },
+                                widthClass = sharedMobileWidthClassForWidth(maxWidth),
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
                     } else {
-                        SharedAndroidUnifiedLibraryHome(
-                            books = unifiedLibraryModel.visibleBooks,
-                            continueReading = unifiedLibraryModel.continueReading.takeIf { unifiedLibraryModel.showContinueReading },
-                            filter = filter,
-                            sortLabel = state.sortOrder.sharedMobileLabel(),
-                            advancedFilterCount = advancedFilterCount,
-                            useListView = useListView,
-                            strings = SharedAndroidUnifiedHomeStrings(
-                                noBooks = readerString("unified_library_no_books", "No books in this view"),
-                                filterBooks = readerString("content_desc_filter", "Filter"),
-                                gridView = readerString("unified_library_grid_view", "Grid view"),
-                                listView = readerString("unified_library_list_view", "List view"),
-                                filterLabels = MobileUnifiedLibraryFilter.entries.associateWith { option -> readerString(option.stringKey, option.fallbackLabel) },
-                            ),
-                            itemKey = { it.id },
-                            onFilterChange = { filter = it },
-                            onControls = { showLibraryControls = true },
-                            onAdvancedFilters = {
-                                showLibraryControls = false
-                                showFilters = true
-                            },
-                            onListViewChange = onListViewChange,
+                        BoxWithConstraints(Modifier.padding(padding)) {
+                            SharedAndroidUnifiedLibraryHome(
+                                books = unifiedLibraryModel.visibleBooks,
+                                continueReading = unifiedLibraryModel.continueReading.takeIf { unifiedLibraryModel.showContinueReading },
+                                filter = filter,
+                                sortLabel = state.sortOrder.sharedMobileLabel(),
+                                advancedFilterCount = advancedFilterCount,
+                                useListView = useListView,
+                                strings = SharedAndroidUnifiedHomeStrings(
+                                    noBooks = readerString("unified_library_no_books", "No books in this view"),
+                                    filterBooks = readerString("content_desc_filter", "Filter"),
+                                    gridView = readerString("unified_library_grid_view", "Grid view"),
+                                    listView = readerString("unified_library_list_view", "List view"),
+                                    filterLabels = MobileUnifiedLibraryFilter.entries.associateWith { option -> readerString(option.stringKey, option.fallbackLabel) },
+                                ),
+                                itemKey = { it.id },
+                                onFilterChange = { filter = it },
+                                onControls = { showLibraryControls = true },
+                                onAdvancedFilters = {
+                                    showLibraryControls = false
+                                    showFilters = true
+                                },
+                                onListViewChange = onListViewChange,
                             continueCard = { book, cardModifier ->
                                 val progress = (book.progressPercentage ?: 0f).coerceIn(0f, 100f)
                                 SharedAndroidUnifiedContinueCard(
@@ -582,36 +587,41 @@ fun SharedMobileUnifiedLibraryScreen(
                                     onTogglePinned = { onTogglePinned(book) },
                                 )
                             },
-                            modifier = Modifier.padding(padding),
+                            widthClass = sharedMobileWidthClassForWidth(maxWidth),
+                            modifier = Modifier.fillMaxSize(),
                         )
+                        }
                     }
                 }
                 MobileUnifiedLibrarySection.SHELVES -> {
                     val selectedShelf = selectedShelfId?.let { id -> state.shelves.firstOrNull { it.id == id } }
-                    SharedAndroidUnifiedShelves(
-                        visibleShelves = state.shelves.filter { it.type != ShelfType.TAG && it.parentShelfId == null },
-                        selectedShelf = selectedShelf,
-                        selectedBooks = selectedShelf?.directBooks.orEmpty(),
-                        noShelvesLabel = readerString("unified_library_no_shelves", "No shelves yet"),
-                        shelfKey = { it.id },
-                        shelfName = { it.name },
-                        shelfBookCountLabel = { shelf -> readerQuantityString("book_count", shelf.bookCount, "%1\$d book", "%1\$d books", shelf.bookCount) },
-                        bookKey = { it.id },
-                        onShelfSelected = { selectedShelfId = it.id },
-                        bookCard = { book ->
-                            SharedMobileBookCard(
-                                book = book,
-                                selected = book.id in selectedIds,
-                                pinned = book.id in state.pinnedLibraryBookIds,
-                                downloading = book.id in state.downloadingBookIds,
-                                onClick = { if (selectedIds.isEmpty()) onOpenBook(book) else onLongPressBook(book) },
-                                onLongClick = { if (shouldSelectBookOnLongPress(book.id, selectedIds)) onLongPressBook(book) },
-                                onTogglePinned = { onTogglePinned(book) },
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                        },
-                        modifier = Modifier.padding(padding),
-                    )
+                    BoxWithConstraints(Modifier.padding(padding)) {
+                        SharedAndroidUnifiedShelves(
+                            visibleShelves = state.shelves.filter { it.type != ShelfType.TAG && it.parentShelfId == null },
+                            selectedShelf = selectedShelf,
+                            selectedBooks = selectedShelf?.directBooks.orEmpty(),
+                            noShelvesLabel = readerString("unified_library_no_shelves", "No shelves yet"),
+                            shelfKey = { it.id },
+                            shelfName = { it.name },
+                            shelfBookCountLabel = { shelf -> readerQuantityString("book_count", shelf.bookCount, "%1\$d book", "%1\$d books", shelf.bookCount) },
+                            bookKey = { it.id },
+                            onShelfSelected = { selectedShelfId = it.id },
+                            bookCard = { book ->
+                                SharedMobileBookCard(
+                                    book = book,
+                                    selected = book.id in selectedIds,
+                                    pinned = book.id in state.pinnedLibraryBookIds,
+                                    downloading = book.id in state.downloadingBookIds,
+                                    onClick = { if (selectedIds.isEmpty()) onOpenBook(book) else onLongPressBook(book) },
+                                    onLongClick = { if (shouldSelectBookOnLongPress(book.id, selectedIds)) onLongPressBook(book) },
+                                    onTogglePinned = { onTogglePinned(book) },
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                            },
+                            widthClass = sharedMobileWidthClassForWidth(maxWidth),
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
                 }
                 MobileUnifiedLibrarySection.FOLDERS -> SharedMobileFolderSyncScreen(
                     folders = state.syncedFolders,
