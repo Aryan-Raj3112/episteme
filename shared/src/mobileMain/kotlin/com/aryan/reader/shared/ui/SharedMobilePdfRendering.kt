@@ -676,6 +676,10 @@ internal fun SharedMobilePdfVerticalPages(
     ttsPageIndex: Int?,
     ttsHighlightBounds: List<PdfPageBounds>,
     activeStroke: List<PdfPagePoint>,
+    // Pdf page index that owns the in-flight stroke, or null when no stroke
+    // is in flight. Like Android's single drawingState, one stroke runs at a
+    // time, but it may start on ANY visible page (free drawing).
+    activeStrokeOwnerPdfPage: Int? = null,
     customFontFamilies: Map<String, FontFamily> = emptyMap(),
     highlighterSnapEnabled: Boolean = false,
     isStylusOnlyMode: Boolean = false,
@@ -688,6 +692,7 @@ internal fun SharedMobilePdfVerticalPages(
     onVisiblePageChanged: (Int) -> Unit,
     onCanvasSizeChanged: (IntSize) -> Unit,
     onFinishInkStroke: (Int, Boolean) -> Unit,
+    onInkStrokeEnd: (Int) -> Unit = {},
     onExternalLink: (String) -> Unit,
     onInternalLink: (Int) -> Unit,
     onExistingHighlightTap: (SharedPdfAnnotation) -> Unit,
@@ -842,7 +847,7 @@ internal fun SharedMobilePdfVerticalPages(
                         searchHighlightMode = state.searchHighlightMode,
                         ttsHighlights = if (ttsPageIndex == pdfPage && !zoomCamera.isZoomed()) ttsHighlightBounds else emptyList(),
                         annotations = state.annotations.filter { it.pageIndex == pdfPage },
-                        activeStroke = if (page == state.pageIndex) activeStroke else emptyList(),
+                        activeStroke = activeStroke,
                         customFontFamilies = customFontFamilies,
                         highlighterSnapEnabled = highlighterSnapEnabled,
                         isStylusOnlyMode = isStylusOnlyMode,
@@ -870,6 +875,8 @@ internal fun SharedMobilePdfVerticalPages(
                             eraserStrokeWidth = eraserStrokeWidth,
                             onInkStrokeStart = onInkStrokeStart,
                             onEraseAnnotations = onEraseAnnotations,
+                            isActiveStrokeOwner = activeStrokeOwnerPdfPage == null || activeStrokeOwnerPdfPage == pdfPage,
+                            onInkStrokeEnd = onInkStrokeEnd,
                             modifier = Modifier.fillMaxWidth()
                         )
                     }
@@ -1008,6 +1015,10 @@ internal fun SharedMobilePdfPaginatedPages(
     ttsPageIndex: Int?,
     ttsHighlightBounds: List<PdfPageBounds>,
     activeStroke: List<PdfPagePoint>,
+    // Pdf page index that owns the in-flight stroke, or null when no stroke
+    // is in flight. Like Android's single drawingState, one stroke runs at a
+    // time, but it may start on ANY visible page (free drawing).
+    activeStrokeOwnerPdfPage: Int? = null,
     customFontFamilies: Map<String, FontFamily> = emptyMap(),
     highlighterSnapEnabled: Boolean = false,
     isStylusOnlyMode: Boolean = false,
@@ -1035,6 +1046,7 @@ internal fun SharedMobilePdfPaginatedPages(
     onToggleChrome: () -> Unit,
     onCanvasSizeChanged: (IntSize) -> Unit,
     onFinishInkStroke: (Int, Boolean) -> Unit,
+    onInkStrokeEnd: (Int) -> Unit = {},
     showAllTextHighlights: Boolean = false,
     onAllTextHighlightsLoadingChange: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier,
@@ -1359,7 +1371,7 @@ internal fun SharedMobilePdfPaginatedPages(
                                     searchHighlightMode = state.searchHighlightMode,
                                     ttsHighlights = if (ttsPageIndex == pdfPage && !activeZoomCamera.isZoomed()) ttsHighlightBounds else emptyList(),
                                     annotations = state.annotations.filter { it.pageIndex == pdfPage },
-                                    activeStroke = if (displayPage == state.pageIndex) activeStroke else emptyList(),
+                                    activeStroke = activeStroke,
                                     customFontFamilies = customFontFamilies,
                                     highlighterSnapEnabled = highlighterSnapEnabled,
                                     isStylusOnlyMode = isStylusOnlyMode,
@@ -1394,6 +1406,8 @@ internal fun SharedMobilePdfPaginatedPages(
                                     eraserStrokeWidth = eraserStrokeWidth,
                                     onInkStrokeStart = onInkStrokeStart,
                                     onEraseAnnotations = onEraseAnnotations,
+                                    isActiveStrokeOwner = activeStrokeOwnerPdfPage == null || activeStrokeOwnerPdfPage == pdfPage,
+                                    onInkStrokeEnd = onInkStrokeEnd,
                                     modifier = Modifier.size(fittedWidth, fittedHeight).then(turnSheetModifier)
                                 )
                             }
@@ -2145,7 +2159,21 @@ internal fun SharedMobilePdfPageSurface(
     modifier: Modifier = Modifier,
     eraserStrokeWidth: Float = SharedPdfAnnotationDefaults.configFor(PdfInkTool.ERASER).strokeWidth,
     onInkStrokeStart: (Int) -> Boolean = { false },
-    onEraseAnnotations: (Int, Set<String>) -> Unit = { _, _ -> }
+    onEraseAnnotations: (Int, Set<String>) -> Unit = { _, _ -> },
+    /**
+     * True when this page may append to [activeStroke]: no stroke is in
+     * flight anywhere, or this page owns it. Like Android's single
+     * drawingState, one stroke runs at a time, but it may start on ANY
+     * visible page. Read through [latestIsActiveStrokeOwner] inside the
+     * gesture so an in-flight stroke survives recomposition.
+     */
+    isActiveStrokeOwner: Boolean = true,
+    /**
+     * Releases the stroke ownership claimed via [onInkStrokeStart]. Always
+     * invoked when the gesture ends (finished, cancelled or swallowed) so a
+     * stale owner can never block later strokes.
+     */
+    onInkStrokeEnd: (Int) -> Unit = {},
 ) {
     var localCanvasSize by remember(pageIndex) { mutableStateOf(IntSize.Zero) }
     var pageSurfaceWindowRect by remember(pageIndex) { mutableStateOf(Rect.Zero) }
@@ -2157,6 +2185,8 @@ internal fun SharedMobilePdfPageSurface(
     // the gesture calling the current screen handlers (not stale captures).
     val latestOnInkStrokeStart by rememberUpdatedState(onInkStrokeStart)
     val latestOnEraseAnnotations by rememberUpdatedState(onEraseAnnotations)
+    val latestIsActiveStrokeOwner by rememberUpdatedState(isActiveStrokeOwner)
+    val latestOnInkStrokeEnd by rememberUpdatedState(onInkStrokeEnd)
     var visiblePageBounds by remember(pageIndex) { mutableStateOf<PdfPageBounds?>(null) }
     val textSession = rememberPdfTextPageSession(book, pageIndex, pdfPassword)
     var allTextHighlightBounds by remember(pageIndex) { mutableStateOf<List<PdfPageBounds>>(emptyList()) }
@@ -2245,6 +2275,17 @@ internal fun SharedMobilePdfPageSurface(
                         if (!sharedPdfIsInkDownAllowed(isStylusOnlyMode, down.type)) {
                             return@awaitEachGesture
                         }
+                        // Free drawing (Android parity): a stroke may start on
+                        // ANY visible page. Single-stroke ownership is claimed
+                        // in onInkStrokeStart and released in onInkStrokeEnd /
+                        // onFinishInkStroke; every stroke-list clear below is
+                        // owner-guarded so a concurrent gesture on another page
+                        // can never wipe the in-flight stroke.
+                        fun clearOwnedStroke() {
+                            if (latestIsActiveStrokeOwner) {
+                                (activeStroke as? MutableList<PdfPagePoint>)?.clear()
+                            }
+                        }
                         var eraserOverride = sharedPdfIsEraserOverride(down.type, false)
                         val touchSlop = viewConfiguration.touchSlop
                         var dragStarted = false
@@ -2298,7 +2339,7 @@ internal fun SharedMobilePdfPageSurface(
                                     }
                                 }
                                 if (event.changes.size > 1) {
-                                    (activeStroke as? MutableList<PdfPagePoint>)?.clear()
+                                    clearOwnedStroke()
                                     return@awaitEachGesture
                                 }
                                 val change = event.changes.firstOrNull { it.id == down.id } ?: return@awaitEachGesture
@@ -2316,7 +2357,7 @@ internal fun SharedMobilePdfPageSurface(
                                         // fell through here without notifying,
                                         // so the popup stayed open on iOS.
                                         latestOnInkStrokeStart(pageIndex)
-                                        (activeStroke as? MutableList<PdfPagePoint>)?.clear()
+                                        clearOwnedStroke()
                                     }
                                     return@awaitEachGesture
                                 }
@@ -2333,7 +2374,7 @@ internal fun SharedMobilePdfPageSurface(
                                             // onDrawStartStable's
                                             // `if (showToolSettings)` branch.
                                             if (latestOnInkStrokeStart(pageIndex)) {
-                                                (activeStroke as? MutableList<PdfPagePoint>)?.clear()
+                                                clearOwnedStroke()
                                                 return@awaitEachGesture
                                             }
                                             val strokeEraser = eraserOverride || selectedTool == PdfInkTool.ERASER
@@ -2345,7 +2386,7 @@ internal fun SharedMobilePdfPageSurface(
                                                 }
                                                 change.consume()
                                             } else {
-                                                (activeStroke as? MutableList<PdfPagePoint>)?.clear()
+                                                clearOwnedStroke()
                                                 if (localCanvasSize.width > 0 && localCanvasSize.height > 0) {
                                                     val startPoint = lastPoint ?: change.position
                                                     (activeStroke as? MutableList<PdfPagePoint>)?.add(startPoint.toSharedMobilePdfPoint(localCanvasSize))
@@ -2357,6 +2398,13 @@ internal fun SharedMobilePdfPageSurface(
                                     }
                                     lastPoint = change.position
                                 } else {
+                                    // Ownership is only lost through an external
+                                    // reset (tool switch, minimized dock, page
+                                    // turn): stop feeding a stroke that no longer
+                                    // previews or commits.
+                                    if (!latestIsActiveStrokeOwner) {
+                                        return@awaitEachGesture
+                                    }
                                     val strokeEraser = eraserOverride || selectedTool == PdfInkTool.ERASER
                                     if (strokeEraser) {
                                         if (localCanvasSize.width > 0 && localCanvasSize.height > 0) {
@@ -2391,8 +2439,9 @@ internal fun SharedMobilePdfPageSurface(
                             }
                         } finally {
                             if (!committed) {
-                                (activeStroke as? MutableList<PdfPagePoint>)?.clear()
+                                clearOwnedStroke()
                             }
+                            latestOnInkStrokeEnd(pageIndex)
                             isEraserOverrideActive = false
                             eraserOverridePosition = null
                         }
@@ -2534,7 +2583,11 @@ internal fun SharedMobilePdfPageSurface(
             }
             SharedPdfAnnotationOverlay(
                 annotations = annotations,
-                activeStroke = activeStroke,
+                // The gesture always mutates the shared list object (captured
+                // at composition time), but only the owning page previews it:
+                // a non-empty list always implies an owner, so this shows the
+                // live stroke exactly once, on the page being drawn on.
+                activeStroke = if (isActiveStrokeOwner) activeStroke else emptyList(),
                 canvasSize = localCanvasSize,
                 customFontFamilies = customFontFamilies,
                 activeTool = if (isEraserOverrideActive) PdfInkTool.ERASER else selectedTool,

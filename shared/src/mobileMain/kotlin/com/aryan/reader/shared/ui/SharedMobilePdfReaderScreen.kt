@@ -263,6 +263,7 @@ import com.aryan.reader.shared.pdf.buildSharedPdfVirtualPageLayout
 import com.aryan.reader.shared.pdf.sharedPdfPdfPageIndexAt
 import com.aryan.reader.shared.pdf.sharedPdfDisplayIndexFor
 import com.aryan.reader.shared.pdf.sharedPdfNearestPdfPageIndex
+import com.aryan.reader.shared.pdf.sharedPdfResolveInkStrokeOwner
 import com.aryan.reader.shared.pdf.reduce
 import com.aryan.reader.shared.pdf.sharedPdfPageRangeLabel
 import com.aryan.reader.shared.pdf.SharedPdfKeyboardNavigationAction
@@ -1021,6 +1022,12 @@ fun SharedMobilePdfReaderHost(
     }
     var canvasSize by remember(readerSessionKey) { mutableStateOf(IntSize.Zero) }
     val activeStroke = remember(readerSessionKey, readerState.pageIndex) { mutableStateListOf<PdfPagePoint>() }
+    // Single-stroke ownership (Android parity: one drawingState at a time).
+    // The pdf page index that owns the in-flight stroke, or null when no
+    // stroke is in flight. Any visible page may claim it, which is what
+    // allows free drawing like Android; a second concurrent claim is
+    // rejected so points from two pages can never interleave in one stroke.
+    var activeStrokeOwnerPdfPage by remember(readerSessionKey) { mutableStateOf<Int?>(null) }
     // Android parity (PdfViewerScreen erasedAnnotationsFromStroke): ink hit by
     // the current erase drag, grouped per page. Live-removed immediately for
     // eraser feedback; recorded as ONE undo step on stroke end.
@@ -1387,6 +1394,8 @@ fun SharedMobilePdfReaderHost(
     }
 
     fun finishInkStroke(pageIndex: Int, eraserOverride: Boolean = false) {
+        // The gesture is over: release stroke ownership on every path below.
+        activeStrokeOwnerPdfPage = null
         // Android parity: minimized dock stops drawing
         // (isDrawingActive = isEditMode && !isDockMinimized).
         if (isAnnotationDockMinimized && !eraserOverride) {
@@ -1424,14 +1433,29 @@ fun SharedMobilePdfReaderHost(
 
     // Android parity (onDrawStartStable): a stroke beginning while the
     // tool-settings popup is open only dismisses the popup — the touch draws
-    // nothing. Returns true when the stroke was swallowed.
+    // nothing. A stroke starting on another page while one is already in
+    // flight is likewise swallowed so points from two pages can never
+    // interleave in the single shared stroke list. Returns true when the
+    // stroke was swallowed.
     fun onInkStrokeStart(pageIndex: Int): Boolean {
         if (showAnnotationToolSettings) {
             showAnnotationToolSettings = false
             activeStroke.clear()
+            activeStrokeOwnerPdfPage = null
             return true
         }
+        if (sharedPdfResolveInkStrokeOwner(activeStrokeOwnerPdfPage, pageIndex) != pageIndex) {
+            return true
+        }
+        activeStrokeOwnerPdfPage = pageIndex
         return false
+    }
+
+    // Releases a claim made in [onInkStrokeStart] when the gesture ends
+    // without [finishInkStroke] (cancelled or swallowed), so a stale owner
+    // can never block later strokes.
+    fun onInkStrokeEnd(pageIndex: Int) {
+        if (activeStrokeOwnerPdfPage == pageIndex) activeStrokeOwnerPdfPage = null
     }
 
     // Android parity (onDrawStable eraser branch): live-removes hit ink and
@@ -1496,7 +1520,14 @@ fun SharedMobilePdfReaderHost(
         }
         if (isAnnotationDockMinimized) {
             activeStroke.clear()
+            activeStrokeOwnerPdfPage = null
         }
+    }
+
+    // The stroke list above is keyed on the current page, so a page turn wipes
+    // it; the owner must reset together or later strokes stay blocked.
+    LaunchedEffect(readerSessionKey, readerState.pageIndex) {
+        activeStrokeOwnerPdfPage = null
     }
 
     // Mirrors Android's auto page management for the flowing rich text document
@@ -2001,6 +2032,7 @@ fun SharedMobilePdfReaderHost(
                         ttsPageIndex = ttsPageIndex.takeIf { pdfTts.isSessionActive || pendingTtsStart != null },
                         ttsHighlightBounds = ttsHighlightBounds,
                         activeStroke = activeStroke,
+                        activeStrokeOwnerPdfPage = activeStrokeOwnerPdfPage,
                         customFontFamilies = customPdfFontFamilies,
                         highlighterSnapEnabled = readerState.isHighlighterSnapEnabled,
                         isStylusOnlyMode = isStylusOnlyMode,
@@ -2016,6 +2048,7 @@ fun SharedMobilePdfReaderHost(
                         onVisiblePageChanged = { dispatch(SharedPdfReaderAction.GoToPage(it)) },
                         onCanvasSizeChanged = { canvasSize = it },
                         onFinishInkStroke = { page, eraserOverride -> finishInkStroke(page, eraserOverride) },
+                        onInkStrokeEnd = ::onInkStrokeEnd,
                         eraserStrokeWidth = readerState.toolConfigs[PdfInkTool.ERASER]?.strokeWidth
                             ?: SharedPdfAnnotationDefaults.configFor(PdfInkTool.ERASER).strokeWidth,
                         onInkStrokeStart = ::onInkStrokeStart,
@@ -2075,6 +2108,7 @@ fun SharedMobilePdfReaderHost(
                         ttsPageIndex = ttsPageIndex.takeIf { pdfTts.isSessionActive || pendingTtsStart != null },
                         ttsHighlightBounds = ttsHighlightBounds,
                         activeStroke = activeStroke,
+                        activeStrokeOwnerPdfPage = activeStrokeOwnerPdfPage,
                         customFontFamilies = customPdfFontFamilies,
                         highlighterSnapEnabled = readerState.isHighlighterSnapEnabled,
                         isStylusOnlyMode = isStylusOnlyMode,
@@ -2108,6 +2142,7 @@ fun SharedMobilePdfReaderHost(
                         onToggleChrome = { showChrome = !showChrome },
                         onCanvasSizeChanged = { canvasSize = it },
                         onFinishInkStroke = { page, eraserOverride -> finishInkStroke(page, eraserOverride) },
+                        onInkStrokeEnd = ::onInkStrokeEnd,
                         eraserStrokeWidth = readerState.toolConfigs[PdfInkTool.ERASER]?.strokeWidth
                             ?: SharedPdfAnnotationDefaults.configFor(PdfInkTool.ERASER).strokeWidth,
                         onInkStrokeStart = ::onInkStrokeStart,
