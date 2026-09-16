@@ -6774,7 +6774,13 @@ private fun IosAppTopBanner(
         exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut(),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
+        // Android parity (SharedMobileTopBanner): keep the banner below the
+        // status bar. Without this the message renders under the notch area
+        // on library, custom fonts, and every other surface using this overlay.
+        Box(
+            Modifier.fillMaxWidth().statusBarsPadding(),
+            contentAlignment = Alignment.TopCenter
+        ) {
             Surface(
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                 color = if (bannerMessage.isError) {
