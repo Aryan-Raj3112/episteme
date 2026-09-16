@@ -1,6 +1,7 @@
 package com.aryan.reader.shared
 
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontFamily
 import com.aryan.reader.shared.pdf.SharedPdfHighlighterPalette
 import com.aryan.reader.shared.reader.DefaultPdfReaderSettings
 import com.aryan.reader.shared.reader.ReaderSettings
@@ -191,6 +192,23 @@ data class AppFontPreference(
         fun custom(customFontId: String): AppFontPreference {
             return AppFontPreference(AppFontPreferenceKind.CUSTOM, customFontId).sanitized()
         }
+    }
+}
+
+/**
+ * Shared baseline for the app-text font (Android benchmark).
+ *
+ * Built-in kinds resolve to a platform-independent [FontFamily]. SYSTEM and
+ * CUSTOM resolve to null here: SYSTEM means the platform default typography,
+ * while CUSTOM needs a platform file lookup that lives in the platform layer.
+ */
+fun AppFontPreference.toBaselineAppFontFamily(): FontFamily? {
+    return when (sanitized().kind) {
+        AppFontPreferenceKind.SYSTEM -> null
+        AppFontPreferenceKind.SERIF -> FontFamily.Serif
+        AppFontPreferenceKind.SANS_SERIF -> FontFamily.SansSerif
+        AppFontPreferenceKind.MONOSPACE -> FontFamily.Monospace
+        AppFontPreferenceKind.CUSTOM -> null
     }
 }
 

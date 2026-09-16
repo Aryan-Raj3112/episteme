@@ -3933,12 +3933,8 @@ private fun ReaderIosApp(
                     // Intentional temporary iOS scope: Apple-only copy.
                     "Sign in with Apple",
                 ),
-                signedOutDescription = readerString(
-                    "drawer_signed_out_desc",
-                    // Intentional temporary iOS scope: Pro-only copy while
-                    // cloud sync and credits purchase are hidden.
-                    "Sign in for Pro features.",
-                ),
+                // Android parity: no signed-out description line. Android's
+                // drawer shows only the sign-in action plus legal text.
                 legalDisclosure = if (state.currentUser == null) {
                     MobileAccountLegalDisclosure(
                         text = readerString(
@@ -4810,12 +4806,21 @@ private fun ReaderIosApp(
         )
     }
 
+    // Android parity (MainActivity appFontFamily): the custom-fonts screen
+    // writes state.appFontPreference, but iOS never applied it to the theme,
+    // so changing the app font appeared to do nothing. Resolve it here with
+    // the same baseline + custom-file fallback as Android.
+    val iosAppFontFamily = remember(state.appFontPreference, state.customFonts) {
+        state.appFontPreference.toIosAppFontFamily(state.customFonts)
+    }
+
     SharedAppTheme(
         appThemeMode = state.appThemeMode,
         appContrastOption = state.appContrastOption,
         appTextDimFactorLight = state.appTextDimFactorLight,
         appTextDimFactorDark = state.appTextDimFactorDark,
-        appSeedColor = state.appSeedColor
+        appSeedColor = state.appSeedColor,
+        appFontFamily = iosAppFontFamily
     ) {
         val appDarkTheme = resolveSharedAppDarkTheme(state.appThemeMode, isSystemInDarkTheme())
         val appBackgroundArgb = MaterialTheme.colorScheme.background.toArgb().toLong()
@@ -5709,7 +5714,11 @@ private fun ReaderIosApp(
                 return@Surface
             }
 
-            val appDrawerCapabilities = MobileAppDrawerCapabilities.GLOBAL
+            // Intentional temporary iOS scope: AI keys and models stay hidden
+            // for now (logic kept for later). Android remains the benchmark.
+            val appDrawerCapabilities = MobileAppDrawerCapabilities.GLOBAL.copy(
+                showAiSettings = false,
+            )
 
             @Composable
             fun MainScaffoldContent() {

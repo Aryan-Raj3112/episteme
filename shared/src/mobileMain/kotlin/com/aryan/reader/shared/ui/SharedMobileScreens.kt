@@ -163,22 +163,17 @@ fun SharedMobileAppDrawerContent(
                     onClick = onSignInClick,
                     modifier = Modifier.padding(horizontal = 12.dp).testTag("MobileDrawerSignIn")
                 )
-                Text(
-                    text = account.signedOutDescription ?: if (edition == MobileAppEdition.STANDARD) {
-                        readerString(
-                            "drawer_signed_out_standard_desc",
-                            "Sync account and app settings.",
-                        )
-                    } else {
-                        readerString(
-                            "drawer_signed_out_desc",
-                            "Sync account, Pro features, and credits.",
-                        )
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 28.dp, vertical = 10.dp)
-                )
+                // Android parity: no signed-out description line. Android's drawer
+                // shows only the sign-in action plus legal text, so only render
+                // this when a host explicitly provides copy.
+                account.signedOutDescription?.let { description ->
+                    Text(
+                        text = description,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 28.dp, vertical = 10.dp)
+                    )
+                }
                 account.legalDisclosure?.let { disclosure ->
                     val annotatedDisclosure = buildAnnotatedString {
                         append(disclosure.text)
