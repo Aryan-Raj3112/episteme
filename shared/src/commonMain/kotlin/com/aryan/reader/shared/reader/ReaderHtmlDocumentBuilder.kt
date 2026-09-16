@@ -105,12 +105,13 @@ object ReaderHtmlDocumentBuilder {
     fun verticalChapterChunks(
         book: SharedEpubBook,
         chapterIndex: Int,
-        chunkNodeCount: Int = 20
+        chunkNodeCount: Int = 20,
+        maxChunkChars: Int = MaxVirtualReaderChunkChars
     ): List<String> {
         val chapter = book.chapters.getOrNull(chapterIndex) ?: return emptyList()
         val html = chapter.htmlContent.takeIf { it.isNotBlank() }
             ?: chapter.toHtml("", ReaderSearchOptions())
-        return splitReaderHtmlAtTopLevel(html, chunkNodeCount)
+        return splitReaderHtmlAtTopLevel(html, chunkNodeCount, maxChunkChars)
     }
 
     private fun virtualReaderBootstrapScript(totalChunks: Int): String = """
@@ -118,18 +119,31 @@ object ReaderHtmlDocumentBuilder {
           (function () {
             var observer = null;
             var requested = Object.create(null);
+            var bridgeRetries = Object.create(null);
             function chunk(index) {
               return document.querySelector('.reader-virtual-chunk[data-reader-chunk-index="' + index + '"]');
             }
             function request(index) {
               if (requested[index]) return;
-              requested[index] = true;
               if (window.kmpJsBridge && window.kmpJsBridge.callNative) {
+                requested[index] = true;
+                bridgeRetries[index] = 0;
                 window.kmpJsBridge.callNative('readerChunkRequested', JSON.stringify({ index: index }));
+              } else {
+                // Android parity: the shared Android bridge is injected in
+                // onPageFinished, after DOMContentLoaded. Marking requested
+                // before the bridge exists would drop the first visible
+                // chunks forever. Retry briefly until the bridge arrives.
+                var retries = bridgeRetries[index] || 0;
+                if (retries < 50) {
+                  bridgeRetries[index] = retries + 1;
+                  window.setTimeout(function () { request(index); }, 100);
+                }
               }
             }
             window.readerVirtualization = {
               totalChunks: $totalChunks,
+            requestChunk: function (index) { request(index); },
             provideChunk: function (index, html) {
                 var host = chunk(index);
                 if (!host) return;
@@ -150,8 +164,12 @@ object ReaderHtmlDocumentBuilder {
                 }
                 // Fresh chunks carry verbatim author colors; re-run the contrast pass
                 // with the last theme args (MutationObserver also covers this).
+                // Image-heavy chapters provide dozens of chunks while scrolling,
+                // so skip the full-document walk for chunks without any inline
+                // styling instead of re-scanning thousands of nodes per chunk.
                 var contrastArgs = window.__readerLastContrastArgs;
-                if (window.readerAdjustAuthorColorsForContrast && contrastArgs) {
+                if (window.readerAdjustAuthorColorsForContrast && contrastArgs &&
+                    /style=|color/i.test(html || '')) {
                     window.readerAdjustAuthorColorsForContrast(contrastArgs.isDark, contrastArgs.bgHex, contrastArgs.textHex);
                 }
             }
@@ -181,14 +199,172 @@ object ReaderHtmlDocumentBuilder {
         </script>
     """.trimIndent()
 
-    private fun splitReaderHtmlAtTopLevel(html: String, chunkNodeCount: Int): List<String> {
+    private fun splitReaderHtmlAtTopLevel(
+        html: String,
+        chunkNodeCount: Int,
+        maxChunkChars: Int = MaxVirtualReaderChunkChars
+    ): List<String> {
         if (html.isBlank()) return emptyList()
         val size = chunkNodeCount.coerceAtLeast(1)
-        val nodeRanges = topLevelReaderHtmlNodeRanges(html)
-        if (nodeRanges.isEmpty()) return listOf(html)
-        return nodeRanges.chunked(size).map { ranges ->
-            html.substring(ranges.first().first, ranges.last().last + 1)
+        val charBudget = maxChunkChars.coerceAtLeast(MinVirtualReaderChunkChars)
+        // Standard Ebooks chapters wrap everything in a single container
+        // (<section id="...">); without unwrapping, virtualization collapses to
+        // one giant chunk (a 222000px page that stalls scrolling for seconds).
+        // Fragment fallbacks land at chapter start either way, which is exactly
+        // where the dropped wrapper sat, so nothing observable is lost.
+        val (sourceHtml, nodeRanges) = unwrapSingleReaderContainer(html, size, charBudget)
+        if (nodeRanges.isEmpty()) return splitLargeReaderChunk(sourceHtml, charBudget)
+        val chunks = mutableListOf<String>()
+        // Linear accumulation keeps the common case (many small nodes) allocation-bounded:
+        // at most MaxInitialVirtualReaderChunks end up inline in verticalDocument.
+        val pending = mutableListOf<IntRange>()
+        var pendingChars = 0
+        for (range in nodeRanges) {
+            val nodeChars = range.last - range.first + 1
+            if (nodeChars > charBudget) {
+                if (pending.isNotEmpty()) {
+                    chunks += splitNodeGroup(pending.toList(), sourceHtml, charBudget)
+                    pending.clear()
+                    pendingChars = 0
+                }
+                chunks += splitLargeReaderChunk(sourceHtml.substring(range.first, range.last + 1), charBudget)
+                continue
+            }
+            if (pending.size >= size || pendingChars + nodeChars > charBudget) {
+                chunks += splitNodeGroup(pending.toList(), sourceHtml, charBudget)
+                pending.clear()
+                pendingChars = 0
+            }
+            pending += range
+            pendingChars += nodeChars
         }
+        if (pending.isNotEmpty()) {
+            chunks += splitNodeGroup(pending.toList(), sourceHtml, charBudget)
+        }
+        return chunks.ifEmpty { listOf(sourceHtml) }
+    }
+
+    private fun unwrapSingleReaderContainer(
+        html: String,
+        chunkNodeCount: Int,
+        charBudget: Int
+    ): Pair<String, List<IntRange>> {
+        var sourceHtml = html
+        var ranges = topLevelReaderHtmlNodeRanges(sourceHtml)
+        var guard = 0
+        while (ranges.size == 1 && guard++ < 8) {
+            val only = sourceHtml.substring(ranges.first().first, ranges.first().last + 1)
+            val outer = outerReaderHtmlElement(only) ?: break
+            if (outer.openTag.readerHtmlTagName() !in ReaderHtmlPassthroughContainers) break
+            if (outer.inner.isBlank()) break
+            val innerRanges = topLevelReaderHtmlNodeRanges(outer.inner)
+            // Small wrappers stay intact: zero behavior change for normal books.
+            if (innerRanges.size <= chunkNodeCount && outer.inner.length <= charBudget) break
+            if (innerRanges.isEmpty()) break
+            sourceHtml = outer.inner
+            ranges = innerRanges
+        }
+        return sourceHtml to ranges
+    }
+
+    private fun splitNodeGroup(ranges: List<IntRange>, html: String, charBudget: Int): List<String> {
+        if (ranges.isEmpty()) return emptyList()
+        val groupHtml = buildString {
+            for (range in ranges) append(html.substring(range.first, range.last + 1))
+        }
+        if (groupHtml.length <= charBudget) return listOf(groupHtml)
+        if (ranges.size <= 1) return splitLargeReaderChunk(groupHtml, charBudget)
+        val mid = ranges.size / 2
+        return splitNodeGroup(ranges.subList(0, mid), html, charBudget) +
+            splitNodeGroup(ranges.subList(mid, ranges.size), html, charBudget)
+    }
+
+    /**
+     * Splits a single oversized top-level node (huge `<pre>`, single-div TXT/HTML
+     * chapters) without breaking tags. Prefers whitespace outside markup; falls
+     * back to tag-boundary cuts so WKWebView/Android `evaluateJavaScript`
+     * payloads stay bounded and `loadHTMLString` never receives a multi-MB blob.
+     */
+    internal fun splitLargeReaderChunk(html: String, maxChars: Int): List<String> {
+        val budget = maxChars.coerceAtLeast(MinVirtualReaderChunkChars)
+        if (html.length <= budget) return listOf(html)
+        val outer = outerReaderHtmlElement(html)
+        if (outer != null) {
+            val (openTag, inner, closeTag) = outer
+            // If the wrapper itself is huge (attributes), give up on re-wrapping.
+            if (openTag.length + closeTag.length + 16 < budget) {
+                val innerBudget = budget - openTag.length - closeTag.length
+                return splitHtmlByCharsPreservingTags(inner, innerBudget).map { slice ->
+                    openTag + slice + closeTag
+                }
+            }
+        }
+        return splitHtmlByCharsPreservingTags(html, budget)
+    }
+
+    private data class OuterReaderHtmlElement(val openTag: String, val inner: String, val closeTag: String)
+
+    private fun outerReaderHtmlElement(html: String): OuterReaderHtmlElement? {
+        val trimmed = html.trim()
+        if (!trimmed.startsWith("<") || !trimmed.endsWith(">")) return null
+        val openEnd = readerHtmlTagEnd(trimmed, 0)
+        if (openEnd < 0) return null
+        val openTag = trimmed.substring(0, openEnd + 1)
+        if (openTag.startsWith("</") || openTag.startsWith("<!--") || openTag.startsWith("<!") || openTag.startsWith("<?")) return null
+        if (openTag.trimEnd().endsWith("/>")) return null
+        val tagName = openTag.readerHtmlTagName()
+        if (tagName.isBlank() || tagName in ReaderHtmlVoidTags) return null
+        val closeTag = "</$tagName>"
+        if (!trimmed.endsWith(closeTag, ignoreCase = true)) return null
+        val inner = trimmed.substring(openTag.length, trimmed.length - closeTag.length)
+        if (inner.isBlank()) return null
+        return OuterReaderHtmlElement(openTag, inner, closeTag)
+    }
+
+    private fun splitHtmlByCharsPreservingTags(html: String, maxChars: Int): List<String> {
+        val budget = maxChars.coerceAtLeast(MinVirtualReaderChunkChars)
+        if (html.length <= budget) return listOf(html)
+        val slices = mutableListOf<String>()
+        var cursor = 0
+        while (cursor < html.length) {
+            if (html.length - cursor <= budget) {
+                slices += html.substring(cursor)
+                break
+            }
+            var cut = cursor + budget
+            // Never cut inside `<...>`; back up to the tag start.
+            val tagStart = html.lastIndexOf('<', cut - 1)
+            if (tagStart >= cursor) {
+                val tagEnd = readerHtmlTagEnd(html, tagStart)
+                if (tagEnd >= cut) {
+                    cut = tagStart
+                }
+            }
+            if (cut <= cursor) cut = cursor + budget
+            // Prefer whitespace outside markup so words stay intact.
+            var preferred = -1
+            var scan = cut - 1
+            val scanFloor = maxOf(cursor, cut - 2048)
+            while (scan >= scanFloor) {
+                val char = html[scan]
+                if (char.isWhitespace()) {
+                    // Verify the whitespace is not inside a tag.
+                    val open = html.lastIndexOf('<', scan)
+                    val close = html.lastIndexOf('>', scan)
+                    if (open < 0 || close > open) {
+                        preferred = scan + 1
+                        break
+                    }
+                }
+                scan--
+            }
+            if (preferred > cursor && preferred < html.length) cut = preferred
+            // Avoid empty progress on pathological markup without whitespace.
+            if (cut <= cursor) cut = minOf(html.length, cursor + budget)
+            slices += html.substring(cursor, cut)
+            cursor = cut
+        }
+        return slices.ifEmpty { listOf(html) }
     }
 
     private fun topLevelReaderHtmlNodeRanges(html: String): List<IntRange> {
@@ -233,7 +409,18 @@ object ReaderHtmlDocumentBuilder {
     }
 
     private fun estimateVirtualReaderChunkHeightPx(html: String): Int {
-        return topLevelReaderHtmlNodeRanges(html).size.coerceAtLeast(1) * EstimatedVirtualReaderNodeHeightPx
+        val nodeCount = topLevelReaderHtmlNodeRanges(html).size.coerceAtLeast(1)
+        val nodeHeight = nodeCount * EstimatedVirtualReaderNodeHeightPx
+        // Char-split slices of a huge single node report a single top-level node;
+        // estimate from visible text so the placeholder still reserves scroll range.
+        val visibleChars = html.replace(Regex("<[^>]+>"), "").length
+        val textHeight = (visibleChars * EstimatedVirtualReaderCharHeightPxNumerator / EstimatedVirtualReaderCharHeightPxDenominator)
+            .coerceIn(0, MaxVirtualReaderPlaceholderHeightPx)
+        // Illustrations without decoded dimensions (or before they load) would
+        // otherwise reserve a single 72px row and collapse into blank gaps that
+        // only fill in seconds later as bitmaps decode mid-scroll.
+        val imageHeight = countReaderImages(html) * EstimatedVirtualReaderImageHeightPx
+        return maxOf(nodeHeight + imageHeight, EstimatedVirtualReaderNodeHeightPx, textHeight)
     }
 
     private fun readerHtmlTagEnd(html: String, start: Int): Int {
@@ -261,7 +448,24 @@ object ReaderHtmlDocumentBuilder {
 
     private const val MaxInitialVirtualReaderChunks = 8
     private const val EstimatedVirtualReaderNodeHeightPx = 72
+    // Typical column-scaled illustration height before real dimensions are known.
+    const val EstimatedVirtualReaderImageHeightPx = 280
+    // Keeps WKWebView loadHTMLString and Android/iOS evaluateJavaScript payloads
+    // bounded: 120k chars stays well under IPC/JS string limits even after JSON escaping.
+    const val MaxVirtualReaderChunkChars = 120_000
+    const val MinVirtualReaderChunkChars = 8_000
+    // Navigation/search scripts inline small chunks for instant landing; larger
+    // chunks are fetched through the chunk bridge so a multi-MB chapter cannot
+    // blow up a single evaluateJavaScript call.
+    const val MaxInlineVirtualChunkChars = 80_000
+    // ~0.4px per visible char (≈60 chars/line at 24px line height on mobile).
+    private const val EstimatedVirtualReaderCharHeightPxNumerator = 2
+    private const val EstimatedVirtualReaderCharHeightPxDenominator = 5
+    private const val MaxVirtualReaderPlaceholderHeightPx = 60_000
     private val ReaderHtmlVoidTags = setOf("area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr")
+    // Structural wrappers that carry no content of their own; a chapter using
+    // exactly one of these as its body child is chunked by its children.
+    private val ReaderHtmlPassthroughContainers = setOf("section", "div", "article", "main", "aside")
 
     fun pageDocument(
         book: SharedEpubBook,

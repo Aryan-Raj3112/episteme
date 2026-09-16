@@ -1608,6 +1608,124 @@ class ReaderHtmlDocumentBuilderTest {
         assertTrue(html.contains("data-reader-orig-color"))
     }
 
+    @Test
+    fun `section wrapped chapter chunks by inner nodes instead of one giant chunk`() {
+        val inner = (0 until 45).joinToString("") { index -> "<p id=\"p$index\">Paragraph $index</p>" }
+        val book = SharedEpubBook(
+            id = "wrapped-book",
+            fileName = "wrapped.epub",
+            title = "Wrapped",
+            chapters = listOf(
+                SharedEpubChapter(
+                    "chapter",
+                    "Chapter",
+                    "Paragraph",
+                    htmlContent = "<section id=\"the-path-to-rome\">$inner</section>"
+                )
+            )
+        )
+
+        val chunks = ReaderHtmlDocumentBuilder.verticalChapterChunks(book, chapterIndex = 0)
+
+        assertEquals(3, chunks.size)
+        assertTrue(chunks[0].contains("id=\"p0\""))
+        assertTrue(chunks[2].contains("id=\"p44\""))
+        assertFalse(chunks[0].contains("<section"))
+    }
+
+    @Test
+    fun `small single container stays intact`() {
+        val inner = (0 until 3).joinToString("") { index -> "<p id=\"q$index\">Q $index</p>" }
+        val book = SharedEpubBook(
+            id = "small-book",
+            fileName = "small.epub",
+            title = "Small",
+            chapters = listOf(
+                SharedEpubChapter(
+                    "chapter",
+                    "Chapter",
+                    "Q",
+                    htmlContent = "<div class=\"wrapper\">$inner</div>"
+                )
+            )
+        )
+
+        val chunks = ReaderHtmlDocumentBuilder.verticalChapterChunks(book, chapterIndex = 0)
+
+        assertEquals(1, chunks.size)
+        assertTrue(chunks[0].contains("<div"))
+    }
+
+    @Test
+    fun `huge single node chapter splits into bounded chunks`() {
+        val bigText = buildString {
+            repeat(30_000) { append("word ") }
+        }
+        val body = "<pre>$bigText</pre>"
+        val book = SharedEpubBook(
+            id = "big-book",
+            fileName = "big.epub",
+            title = "Big",
+            chapters = listOf(SharedEpubChapter("chapter", "Chapter", bigText, htmlContent = body))
+        )
+
+        val chunks = ReaderHtmlDocumentBuilder.verticalChapterChunks(book, chapterIndex = 0)
+
+        assertTrue(chunks.size > 1, "Single huge <pre> must split, got ${chunks.size}")
+        assertTrue(
+            chunks.all { it.length <= ReaderHtmlDocumentBuilder.MaxVirtualReaderChunkChars },
+            "All chunks bounded, sizes=${chunks.map { it.length }}"
+        )
+        assertTrue(chunks.all { it.contains("<pre") && it.contains("</pre>") })
+    }
+
+    @Test
+    fun `distant illustration chunks reserve image space in placeholders`() {
+        val textChunks = (0 until 4).map { index -> "<p>Paragraph $index</p>" }
+        val figureChunk = """<figure><img src="../images/a.png" alt="A"></figure>"""
+        val chunks = textChunks + figureChunk
+        val book = SharedEpubBook(
+            id = "illustrated-book",
+            fileName = "illustrated.epub",
+            title = "Illustrated",
+            chapters = listOf(SharedEpubChapter("chapter", "Chapter", "Paragraph", htmlContent = "<p>x</p>"))
+        )
+
+        val html = ReaderHtmlDocumentBuilder.verticalDocument(
+            book = book,
+            settings = ReaderSettings(readingMode = ReaderReadingMode.VERTICAL),
+            renderedChapterRange = 0..0,
+            virtualizedChapterChunks = mapOf(0 to chunks),
+            virtualizedInitialChunkIndex = 0
+        )
+
+        // One figure node (72px) plus one illustration allowance (280px).
+        assertTrue(html.contains("data-reader-chunk-index=\"4\" style=\"height: 352px\""))
+        assertTrue(html.contains("data-reader-chunk-index=\"2\" style=\"height: 72px\""))
+    }
+
+    @Test
+    fun `virtualization bridge retries when native bridge arrives late`() {
+        val body = (0 until 45).joinToString("") { index -> "<p id=\"p$index\">Paragraph $index</p>" }
+        val book = SharedEpubBook(
+            id = "virtual-book",
+            fileName = "virtual.epub",
+            title = "Virtual",
+            chapters = listOf(SharedEpubChapter("chapter", "Chapter", "Paragraph", htmlContent = body))
+        )
+        val chunks = ReaderHtmlDocumentBuilder.verticalChapterChunks(book, chapterIndex = 0)
+        val html = ReaderHtmlDocumentBuilder.verticalDocument(
+            book = book,
+            settings = ReaderSettings(readingMode = ReaderReadingMode.VERTICAL),
+            renderedChapterRange = 0..0,
+            virtualizedChapterChunks = mapOf(0 to chunks),
+        )
+
+        assertTrue(html.contains("requestChunk"))
+        assertTrue(html.contains("bridgeRetries"))
+        assertTrue(html.contains("request(index);"))
+    }
+
     private fun repeatedWordBook(text: String): SharedEpubBook {
         return SharedEpubBook(
             id = "book",

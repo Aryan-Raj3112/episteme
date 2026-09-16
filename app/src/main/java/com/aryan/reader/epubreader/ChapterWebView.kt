@@ -255,8 +255,154 @@ private val READER_LAYOUT_DIAGNOSTICS_JS = """
         } catch (e) { found.push('scan-error:' + e); }
         return found.slice(0, 20);
       }
+      function sheetState() {
+        var out = [];
+        try {
+          for (var i = 0; i < document.styleSheets.length; i++) {
+            var sheet = document.styleSheets[i];
+            var owner = sheet.ownerNode;
+            var label = owner && owner.id ? owner.id : (owner && owner.tagName ? owner.tagName.toLowerCase() : ('sheet' + i));
+            var href = null;
+            try { href = sheet.href ? sheet.href.split('/').slice(-2).join('/') : null; } catch (e) { href = 'href-err'; }
+            var count = -1;
+            try { count = sheet.cssRules ? sheet.cssRules.length : -1; } catch (e) { out.push(label + ':' + href + ':DENIED'); continue; }
+            out.push(label + ':' + href + ':rules=' + count + (sheet.disabled ? ':DISABLED' : ''));
+          }
+        } catch (e) { out.push('scan-error:' + e); }
+        return out.slice(0, 12);
+      }
+      function imageFigureRules() {
+        var out = [];
+        try {
+          for (var i = 0; i < document.styleSheets.length; i++) {
+            var sheet = document.styleSheets[i];
+            var owner = sheet.ownerNode;
+            var label = owner && owner.id ? owner.id : (owner && owner.tagName ? owner.tagName.toLowerCase() : ('sheet' + i));
+            var rules;
+            try { rules = sheet.cssRules; } catch (e) { continue; }
+            for (var r = 0; r < rules.length; r++) {
+              var rule = rules[r];
+              if (!rule.selectorText || !rule.style) continue;
+              var sel = rule.selectorText.toLowerCase();
+              if (sel.indexOf('img') === -1 && sel.indexOf('figure') === -1 && sel.indexOf('aside') === -1) continue;
+              var txt = '';
+              try { txt = rule.style.cssText || ''; } catch (e) { txt = 'csstext-err'; }
+              out.push(label + '|' + rule.selectorText.slice(0, 90) + '|{' + txt.slice(0, 160) + '}');
+              if (out.length >= 24) return out;
+            }
+          }
+        } catch (e) { out.push('scan-error:' + e); }
+        return out;
+      }
       var c = document.getElementById('content-container');
       var chunks = [].slice.call(document.querySelectorAll('.chunk-container'));
+      function absUrl(rel) {
+        try { return new URL(rel, document.baseURI).href.split('/').slice(-3).join('/'); }
+        catch (e) { return 'resolve-err'; }
+      }
+      function imgState() {
+        try {
+          var imgs = [].slice.call(document.images || []);
+          var broken = 0, pending = 0;
+          imgs.forEach(function (im) {
+            if (im.complete && im.naturalWidth === 0) broken++;
+            else if (!im.complete) pending++;
+          });
+          return {
+            total: imgs.length, broken: broken, pending: pending,
+            base: (function () { try { return document.baseURI.split('/').slice(-4).join('/'); } catch (e) { return 'base-err'; } })(),
+            imgVar: (function () {
+              try { return getComputedStyle(document.documentElement).getPropertyValue('--reader-image-size'); }
+              catch (e) { return 'err'; }
+            })(),
+            sample: imgs.slice(0, 5).map(function (im) {
+              var r = im.getBoundingClientRect();
+              var cs = getComputedStyle(im);
+              var chain = [];
+              var node = im.parentElement;
+              var depth = 0;
+              while (node && depth < 5) {
+                var ncs;
+                try { ncs = getComputedStyle(node); } catch (e) { break; }
+                chain.push(node.tagName + ':' + Math.round(node.clientWidth) + 'x' + Math.round(node.clientHeight) + ':' + ncs.display + '/pos=' + ncs.position + '/ov=' + ncs.overflowX + ',' + ncs.overflowY + '/mw=' + ncs.maxWidth + '/mh=' + ncs.maxHeight);
+                node = node.parentElement;
+                depth++;
+              }
+              var fig = im.closest ? im.closest('figure') : null;
+              var figCs = null, figRect = null;
+              try {
+                if (fig) { var fcs = getComputedStyle(fig); var fr = fig.getBoundingClientRect(); figCs = 'd=' + fcs.display + '/w=' + fcs.width + '/mw=' + fcs.maxWidth + '/h=' + fcs.height + '/mh=' + fcs.maxHeight + '/m=' + fcs.margin + '/pos=' + fcs.position + '/vis=' + fcs.visibility + '/op=' + fcs.opacity; figRect = Math.round(fr.width) + 'x' + Math.round(fr.height); }
+              } catch (e) { figCs = 'fig-err:' + e; }
+              return {
+                src: ((im.getAttribute('src') || '').split('/').pop() || '').slice(-40),
+                abs: absUrl(im.getAttribute('src') || ''),
+                hasSrcset: !!im.getAttribute('srcset'),
+                srcsetTail: ((im.getAttribute('srcset') || '').slice(-80)),
+                cur: ((im.currentSrc || '').split('/').pop() || '').slice(-40),
+                nat: im.naturalWidth + 'x' + im.naturalHeight,
+                complete: !!im.complete,
+                client: im.clientWidth + 'x' + im.clientHeight,
+                offParent: (function () { try { return im.offsetParent ? im.offsetParent.tagName : 'null'; } catch (e) { return 'err'; } })(),
+                rect: Math.round(r.width) + 'x' + Math.round(r.height),
+                disp: cs.display, vis: cs.visibility, op: cs.opacity, pos: cs.position, fl: cs.float,
+                cssW: cs.width, cssMW: cs.maxWidth, cssH: cs.height, cssMH: cs.maxHeight, cssMinW: cs.minWidth, cssMinH: cs.minHeight, objFit: cs.objectFit,
+                attrWH: (im.getAttribute('width') || '?') + 'x' + (im.getAttribute('height') || '?'),
+                loading: im.getAttribute('loading') || '',
+                figRect: figRect, figCs: figCs,
+                chain: chain.join(' < ')
+              };
+            })
+          };
+        } catch (e) { return { total: -1, err: String(e) }; }
+      }
+      function asideState() {
+        try {
+          var asides = [].slice.call(document.querySelectorAll('div.aside'));
+          return {
+            total: asides.length,
+            sample: asides.slice(0, 5).map(function (el) {
+              var r = el.getBoundingClientRect();
+              var cs = getComputedStyle(el);
+              return {
+                rect: [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)].join(','),
+                client: el.clientWidth + 'x' + el.clientHeight,
+                scroll: el.scrollWidth + 'x' + el.scrollHeight,
+                disp: cs.display, vis: cs.visibility, op: cs.opacity, pos: cs.position, fl: cs.float, clear: cs.clear,
+                w: cs.width, mw: cs.maxWidth, h: cs.height, mh: cs.minHeight,
+                border: cs.borderTopWidth + '/' + cs.borderTopStyle + '/' + cs.borderTopColor,
+                pad: cs.padding, marg: cs.margin, overflow: cs.overflowX + ',' + cs.overflowY,
+                offParent: (function () { try { return el.offsetParent ? el.offsetParent.tagName : 'null'; } catch (e) { return 'err'; } })(),
+                text: ((el.textContent || '').trim().slice(0, 60)),
+                chunk: (function () { var p = el.closest ? el.closest('.chunk-container') : null; return p ? (p.getAttribute('data-chunk-index') + ':' + (p.innerHTML.trim() === '' ? 'EMPTY' : 'loaded')) : 'no-chunk'; })()
+              };
+            })
+          };
+        } catch (e) { return { total: -1, err: String(e) }; }
+      }
+      function figureState() {
+        try {
+          var figs = [].slice.call(document.querySelectorAll('figure'));
+          return {
+            total: figs.length,
+            sample: figs.slice(0, 5).map(function (el) {
+              var r = el.getBoundingClientRect();
+              var cs = getComputedStyle(el);
+              var img = el.querySelector ? el.querySelector('img') : null;
+              var imgRect = null;
+              try { if (img) { var ir = img.getBoundingClientRect(); imgRect = Math.round(ir.width) + 'x' + Math.round(ir.height); } } catch (e) {}
+              return {
+                id: el.id || '',
+                rect: [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)].join(','),
+                client: el.clientWidth + 'x' + el.clientHeight,
+                disp: cs.display, vis: cs.visibility, pos: cs.position, fl: cs.float,
+                w: cs.width, mw: cs.maxWidth, h: cs.height, mh: cs.maxHeight, m: cs.margin,
+                imgRect: imgRect,
+                chunk: (function () { var p = el.closest ? el.closest('.chunk-container') : null; return p ? (p.getAttribute('data-chunk-index') + ':' + (p.innerHTML.trim() === '' ? 'EMPTY' : 'loaded')) : 'no-chunk'; })()
+              };
+            })
+          };
+        } catch (e) { return { total: -1, err: String(e) }; }
+      }
       var vv = window.visualViewport;
       var meta = document.querySelector('meta[name="viewport"]');
       return JSON.stringify({
@@ -280,10 +426,22 @@ private val READER_LAYOUT_DIAGNOSTICS_JS = """
         ccRect: rect(c),
         chunkTotal: chunks.length,
         chunkEmpty: chunks.filter(function (d) { return d.innerHTML.trim() === ''; }).length,
+        chunkLens: chunks.slice(0, 8).map(function (d) { return d.innerHTML.length; }),
+        images: imgState(),
+        asides: asideState(),
+        figures: figureState(),
+        sheets: sheetState(),
+        imgFigRules: imageFigureRules(),
         chunk0Rect: rect(chunks[0]),
         chunk0StyleH: chunks[0] ? (chunks[0].style.height || null) : null,
         firstChunkHeights: chunks.slice(0, 5).map(function (d) { return Math.round(d.getBoundingClientRect().height); }),
-        heightRules: heightRules()
+        heightRules: heightRules(),
+        virt: (function () {
+          try {
+            if (!window.virtualization) return 'no-virt';
+            return 'total=' + window.virtualization.totalChunks + ' dataLen=' + (window.virtualization.chunksData ? window.virtualization.chunksData.length : -1) + ' filled=' + (window.virtualization.chunksData ? window.virtualization.chunksData.filter(function (x) { return !!x; }).length : -1);
+          } catch (e) { return 'virt-err:' + e; }
+        })()
       });
     })();
 """.trimIndent()
@@ -933,6 +1091,11 @@ fun ChapterWebView(
                                         Timber.d("JS -> $message")
                                     }
 
+                                    message.startsWith("EpubBlankDiag:") -> {
+                                        Timber.tag(TAG_BLANK_PAGE_DIAG)
+                                            .d("JS -> ${message.substringAfter("EpubBlankDiag: ")}")
+                                    }
+
                                     message.startsWith("TTS_HIGHLIGHT_DIAGNOSIS:") -> {
                                         Timber.d(
                                             "JS -> ${message.substringAfter("TTS_HIGHLIGHT_DIAGNOSIS: ")}"
@@ -1077,6 +1240,37 @@ fun ChapterWebView(
                             ) {
                                 Timber.d(
                                     "WebView is attempting to load resource: $url"
+                                )
+                            }
+                        }
+
+                        override fun onReceivedError(
+                            view: WebView?,
+                            request: WebResourceRequest?,
+                            error: android.webkit.WebResourceError?
+                        ) {
+                            super.onReceivedError(view, request, error)
+                            // File-backed chapters resolve images relative to the
+                            // extraction base; log subresource failures so missing
+                            // illustrations point at the failing URL, not the parser.
+                            if (request?.isForMainFrame == false) {
+                                Timber.tag(TAG_BLANK_PAGE_DIAG).w(
+                                    "subresourceError chapter='$chapterTitle' url=${request.url} " +
+                                        "code=${error?.errorCode} desc=${error?.description}"
+                                )
+                            }
+                        }
+
+                        override fun onReceivedHttpError(
+                            view: WebView?,
+                            request: WebResourceRequest?,
+                            errorResponse: android.webkit.WebResourceResponse?
+                        ) {
+                            super.onReceivedHttpError(view, request, errorResponse)
+                            if (request?.isForMainFrame == false) {
+                                Timber.tag(TAG_BLANK_PAGE_DIAG).w(
+                                    "subresourceHttpError chapter='$chapterTitle' url=${request.url} " +
+                                        "status=${errorResponse?.statusCode}"
                                 )
                             }
                         }

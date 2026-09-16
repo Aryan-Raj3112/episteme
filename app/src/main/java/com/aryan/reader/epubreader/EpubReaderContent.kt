@@ -38,6 +38,7 @@ private const val TXT_FORMAT_TRACE_TAG = "TxtFormatTrace"
 private const val BLANK_PAGE_DIAG_TAG = "EpubBlankDiag"
 private const val MAX_INITIAL_WEBVIEW_CHUNKS = 8
 private const val ESTIMATED_READER_CHUNK_ELEMENT_HEIGHT_PX = 72
+private const val ESTIMATED_READER_CHUNK_IMAGE_HEIGHT_PX = 280
 
 private fun String.txtFormatTracePreview(maxLength: Int = 220): String {
     // Truncate first: previews must stay allocation-bounded even when the
@@ -73,8 +74,13 @@ internal fun splitBodyNodesIntoReaderChunks(
     bodyNodes: List<Node>,
     chunkSize: Int = 20
 ): List<ReaderHtmlChunk> {
+    // Standard Ebooks chapters wrap everything in a single container
+    // (<section id="...">); chunking the wrapper itself collapses the whole
+    // chapter into one 200000px+ chunk and defeats virtualization. Descend
+    // into lone passthrough containers so figures and paragraphs chunk.
+    val effectiveNodes = effectiveReaderChunkNodes(bodyNodes, chunkSize)
     var elementStartIndex = 0
-    return bodyNodes.chunked(chunkSize).map { nodes ->
+    return effectiveNodes.chunked(chunkSize).map { nodes ->
         val elementCount = nodes.count { it is Element }
         ReaderHtmlChunk(
             html = nodes.joinToString(separator = "\n") { it.outerHtml() },
@@ -84,6 +90,32 @@ internal fun splitBodyNodesIntoReaderChunks(
             elementStartIndex += elementCount
         }
     }
+}
+
+private val READER_CHUNK_PASSTHROUGH_CONTAINERS = setOf("section", "div", "article", "main", "aside")
+
+/**
+ * Unwraps lone structural containers so [splitBodyNodesIntoReaderChunks] and
+ * [Element.readerTopLevelBodyChildIndex] agree on what "top level" means.
+ * Small wrappers stay intact: zero behavior change for normal chapters.
+ */
+internal fun effectiveReaderChunkNodes(
+    bodyNodes: List<Node>,
+    chunkSize: Int = 20
+): List<Node> {
+    val size = chunkSize.coerceAtLeast(1)
+    var nodes = bodyNodes
+    var guard = 0
+    while (guard++ < 8) {
+        val elements = nodes.filterIsInstance<Element>()
+        if (elements.size != 1) break
+        val container = elements.single()
+        if (container.tagName().lowercase() !in READER_CHUNK_PASSTHROUGH_CONTAINERS) break
+        val innerElements = container.childNodes().filterIsInstance<Element>()
+        if (innerElements.size <= size) break
+        nodes = container.childNodes().toList()
+    }
+    return nodes
 }
 
 internal fun readerChunkContainerAttributes(
@@ -117,10 +149,158 @@ internal fun shouldInlineInitialReaderChunk(
 
 internal fun readerChunkPlaceholderHeightPx(
     index: Int,
-    chunkElementCounts: List<Int>
+    chunkElementCounts: List<Int>,
+    chunkImageCounts: List<Int> = emptyList()
 ): Int {
     val elementCount = chunkElementCounts.getOrElse(index) { 20 }.coerceAtLeast(1)
-    return elementCount * ESTIMATED_READER_CHUNK_ELEMENT_HEIGHT_PX
+    // Illustrations without decoded dimensions collapse to one 72px row and
+    // leave blank gaps that fill in late; reserve image space up front.
+    val imageCount = chunkImageCounts.getOrElse(index) { 0 }.coerceAtLeast(0)
+    return elementCount * ESTIMATED_READER_CHUNK_ELEMENT_HEIGHT_PX +
+        imageCount * ESTIMATED_READER_CHUNK_IMAGE_HEIGHT_PX
+}
+
+/**
+ * Marks content images lazy/async and backfills real bounds from local files
+ * so illustration chapters reserve space before first paint instead of
+ * shifting layout as each bitmap decodes mid-scroll. Runs on Dispatchers.IO
+ * inside [loadChapterContent]; file reads stay header-only via the shared
+ * bounds parser.
+ */
+internal fun applyReaderImageLoadingHints(
+    document: org.jsoup.nodes.Document,
+    chapterDirectory: File?,
+    extractionBasePath: String
+) {
+    val images = document.select("img")
+    if (images.isEmpty()) return
+    val extractionRoot = runCatching { File(extractionBasePath).canonicalFile }.getOrNull()
+    var hintedCount = 0
+    var measuredCount = 0
+    var prunedSrcsetCount = 0
+    val missingSources = mutableListOf<String>()
+    images.forEach { img ->
+        // Eager on purpose: chunk virtualization already windows content, and
+        // per-image lazy leaves decoded-but-never-laid-out (0x0) boxes on
+        // affected WebViews. See withReaderImageLoadingHints.
+        if (!img.hasAttr("loading")) {
+            img.attr("loading", "eager")
+            hintedCount++
+        }
+        if (!img.hasAttr("decoding")) img.attr("decoding", "async")
+        if (!img.hasAttr("width") || !img.hasAttr("height")) {
+            readerImageBytesForHints(img.attr("src"), chapterDirectory, extractionRoot)?.let { bytes ->
+                com.aryan.reader.shared.reader.parseReaderImageBounds(bytes)?.let { (width, height) ->
+                    if (!img.hasAttr("width")) img.attr("width", width.toString())
+                    if (!img.hasAttr("height")) img.attr("height", height.toString())
+                    measuredCount++
+                }
+            }
+        }
+        // A srcset candidate the WebView cannot resolve wins over a working
+        // src on hidpi screens and renders as a broken image with no error
+        // surfacing in most cases. Drop only the unresolvable candidates so a
+        // valid fallback always remains.
+        if (img.hasAttr("srcset")) {
+            val pruned = pruneUnresolvableSrcset(img.attr("srcset"), chapterDirectory, extractionRoot)
+            if (pruned != null) {
+                prunedSrcsetCount++
+                if (pruned.isBlank()) img.removeAttr("srcset") else img.attr("srcset", pruned)
+            }
+        }
+        if (missingSources.size < 3) {
+            readerImageFileForHints(img.attr("src"), chapterDirectory, extractionRoot)
+                ?.takeUnless { it.isFile }
+                ?.let { missingSources += img.attr("src") }
+        }
+    }
+    if (hintedCount > 0 || measuredCount > 0 || prunedSrcsetCount > 0 || missingSources.isNotEmpty()) {
+        Timber.tag(BLANK_PAGE_DIAG_TAG).d(
+            "event=android_image_hints hinted=$hintedCount measured=$measuredCount " +
+                "prunedSrcset=$prunedSrcsetCount missingSrc=${missingSources.size} total=${images.size} " +
+                "missingPreview=${missingSources.joinToString("|").take(220)}"
+        )
+    }
+}
+
+/**
+ * Returns the rewritten srcset with file-backed candidates that do not exist
+ * on disk removed, or null when nothing changed. data:/http(s) candidates are
+ * kept because they cannot be verified locally.
+ */
+internal fun pruneUnresolvableSrcset(
+    srcset: String,
+    chapterDirectory: File?,
+    extractionRoot: File?
+): String? {
+    if (srcset.isBlank()) return null
+    // Canonicalize once: TemporaryFolder-style symlinked roots (/var -> /private/var)
+    // otherwise never prefix-match canonical candidates below.
+    val canonicalRoot = extractionRoot?.let { runCatching { it.canonicalFile }.getOrNull() }
+        ?: extractionRoot
+    var changed = false
+    val kept = srcset.split(',').mapNotNull { rawCandidate ->
+        val candidate = rawCandidate.trim()
+        if (candidate.isEmpty()) {
+            changed = true
+            return@mapNotNull null
+        }
+        // Candidate is "url [descriptor]"; the URL itself never contains an
+        // unencoded space, so the descriptor (if any) follows the last space.
+        val url = candidate.substringBeforeLast(' ', missingDelimiterValue = "").trim()
+            .takeIf { it.isNotEmpty() } ?: candidate.substringBefore(' ').trim()
+        val fullUrl = if (url.isEmpty()) candidate else url
+        if (fullUrl.startsWith("data:", ignoreCase = true) ||
+            fullUrl.startsWith("blob:", ignoreCase = true) ||
+            fullUrl.startsWith("http://", ignoreCase = true) ||
+            fullUrl.startsWith("https://", ignoreCase = true) ||
+            fullUrl.startsWith("file://", ignoreCase = true)
+        ) {
+            return@mapNotNull candidate
+        }
+        val file = readerImageFileForHints(fullUrl, chapterDirectory, canonicalRoot)
+        if (file != null && file.isFile) candidate else {
+            changed = true
+            null
+        }
+    }
+    if (!changed) return null
+    return kept.joinToString(", ")
+}
+
+private fun readerImageBytesForHints(
+    src: String,
+    chapterDirectory: File?,
+    extractionRoot: File?
+): ByteArray? {
+    val candidate = readerImageFileForHints(src, chapterDirectory, extractionRoot) ?: return null
+    if (!candidate.isFile || candidate.length() <= 0 || candidate.length() > 12 * 1024 * 1024) return null
+    return runCatching { candidate.readBytes() }.getOrNull()
+}
+
+internal fun readerImageFileForHintsDiag(
+    src: String,
+    chapterDirectory: File?,
+    extractionRoot: File?
+): File? = readerImageFileForHints(src, chapterDirectory, extractionRoot)
+
+private fun readerImageFileForHints(
+    src: String,
+    chapterDirectory: File?,
+    extractionRoot: File?
+): File? {
+    val raw = src.substringBefore('#').substringBefore('?').trim()
+    if (raw.isBlank() || raw.startsWith("data:", ignoreCase = true) || raw.startsWith("blob:", ignoreCase = true)) return null
+    if (raw.startsWith("http://", ignoreCase = true) || raw.startsWith("https://", ignoreCase = true)) return null
+    if (raw.startsWith("file://", ignoreCase = true)) return null
+    val decoded = runCatching { java.net.URLDecoder.decode(raw, "UTF-8") }.getOrDefault(raw)
+    val base = chapterDirectory ?: return null
+    val candidate = runCatching { File(base, decoded).canonicalFile }.getOrNull() ?: return null
+    if (extractionRoot != null) {
+        val rootPath = extractionRoot.path.trimEnd(File.separatorChar) + File.separatorChar
+        if (!candidate.path.startsWith(rootPath)) return null
+    }
+    return candidate
 }
 
 /**
@@ -145,6 +325,20 @@ suspend fun loadChapterContent(
 
     try {
         val htmlFile = File(epubBook.extractionBasePath, chapter.contentFilePath())
+        // Cache/file diagnostics: prove whether missing images are a cache eviction
+        // (files gone) or a layout issue (files present but 0x0). Same EpubBlankDiag tag.
+        run {
+            val root = runCatching { File(epubBook.extractionBasePath).canonicalFile }.getOrNull()
+            val rootExists = root?.isDirectory == true
+            val rootEntries = if (rootExists) (root.list()?.size ?: -1) else -1
+            val chapterExists = htmlFile.isFile
+            val chapterLen = if (chapterExists) htmlFile.length() else -1L
+            Timber.tag(BLANK_PAGE_DIAG_TAG).d(
+                "event=android_cache_diag chapter=${chapterIndex + 1} file=${chapter.contentFilePath().txtFormatTracePreview()} " +
+                    "base=${epubBook.extractionBasePath.takeLast(80)} rootExists=$rootExists entries=$rootEntries " +
+                    "chapterExists=$chapterExists chapterBytes=$chapterLen"
+            )
+        }
 
         val (headContent, chunks, chunkElementStartIndices, chunkElementCounts) = if (htmlFile.exists()) {
             val doc = Jsoup.parse(htmlFile, "UTF-8")
@@ -156,11 +350,48 @@ suspend fun loadChapterContent(
                 preferences = bookReplacementPreferences,
                 fileId = bookReplacementFileId,
             )
+            applyReaderImageLoadingHints(doc, htmlFile.parentFile, epubBook.extractionBasePath)
+            // Log which linked stylesheets and images resolve to real files on disk.
+            run {
+                val chapterDir = htmlFile.parentFile
+                val root = runCatching { File(epubBook.extractionBasePath).canonicalFile }.getOrNull()
+                val cssLinks = doc.head().select("link[rel=stylesheet]").map { it.attr("href") }
+                val cssState = cssLinks.take(6).joinToString("|") { href ->
+                    val f = readerImageFileForHintsDiag(href, chapterDir, root)
+                    val ok = f?.isFile == true
+                    val bytes = if (ok) (f?.length() ?: -1L) else -1L
+                    "${href.takeLast(24)}:exists=$ok,bytes=$bytes"
+                }
+                val imgs = doc.select("img")
+                val imgState = imgs.take(6).joinToString("|") { img ->
+                    val src = img.attr("src")
+                    val f = readerImageFileForHintsDiag(src, chapterDir, root)
+                    val ok = f?.isFile == true
+                    "${src.takeLast(24)}:exists=$ok,w=${img.attr("width").ifBlank { "?" }},h=${img.attr("height").ifBlank { "?" }},ss=${if (img.hasAttr("srcset")) "y" else "n"}"
+                }
+                val asideCount = doc.select("div.aside").size
+                val figureCount = doc.select("figure").size
+                val firstAside = doc.select("div.aside").firstOrNull()?.text()?.take(60).orEmpty()
+                Timber.tag(BLANK_PAGE_DIAG_TAG).d(
+                    "event=android_file_diag chapter=${chapterIndex + 1} cssLinks=${cssLinks.size} [$cssState] " +
+                        "imgs=${imgs.size} [$imgState] asides=$asideCount figures=$figureCount firstAside='$firstAside'"
+                )
+            }
             val bodyNodes = doc.body().childNodes().toList()
             val htmlChunks = splitBodyNodesIntoReaderChunks(bodyNodes)
             val chunkPreviewSource = htmlChunks.firstOrNull()?.html.orEmpty()
             run {
                 val firstChild = doc.body().children().firstOrNull()
+                // Per-chunk content census so we can tell whether images/asides are in
+                // inline vs placeholder chunks at load time.
+                val chunkCensus = htmlChunks.take(12).mapIndexed { index, chunk ->
+                    val lower = chunk.html.lowercase()
+                    val imgs = "<img".toRegex().findAll(lower).count()
+                    val asides = "class=\"aside\"".toRegex().findAll(lower).count() +
+                        "class='aside'".toRegex().findAll(lower).count()
+                    val figs = "<figure".toRegex().findAll(lower).count()
+                    "$index:chars=${chunk.html.length},el=${chunk.elementCount},img=$imgs,aside=$asides,fig=$figs"
+                }.joinToString(" | ")
                 Timber.tag(BLANK_PAGE_DIAG_TAG).d(
                     "event=android_chunk_diag chapter=${chapterIndex + 1} file=${chapter.contentFilePath().txtFormatTracePreview()} " +
                         "headChars=${head.length} headHasViewportMeta=${head.contains("name=\"viewport\"")} " +
@@ -168,7 +399,8 @@ suspend fun loadChapterContent(
                         "firstChildTag=${firstChild?.tagName()} firstChildDir=${firstChild?.attr("dir").orEmpty()} " +
                         "chunks=${htmlChunks.size} " +
                         "chunkChars=[${htmlChunks.joinToString(",") { it.html.length.toString() }}] " +
-                        "elementCounts=[${htmlChunks.joinToString(",") { it.elementCount.toString() }}]"
+                        "elementCounts=[${htmlChunks.joinToString(",") { it.elementCount.toString() }}] " +
+                        "census=[$chunkCensus]"
                 )
             }
             Timber.tag(TXT_FORMAT_TRACE_TAG).d(

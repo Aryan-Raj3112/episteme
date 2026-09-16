@@ -263,6 +263,7 @@ private const val TAG_LINK_NAV = "LINK_NAV"
 private const val TAG_VERTICAL_JITTER = "EpubVerticalJitter"
 private const val TAG_STABLE_PAGE_NAV = "StablePageNav"
 private const val TAG_PAGINATED_HIGHLIGHT_DIAG = "PaginatedHighlightDiag"
+private val IMAGE_TAG_COUNT_REGEX = Regex("""(?i)<img\b""")
 
 @Suppress("UNUSED_PARAMETER", "LargeClass", "UnusedVariable")
 @Composable
@@ -678,11 +679,17 @@ internal fun EpubReaderRenderSurfaces(
                                     } else if (chapterChunks.isNotEmpty()) {
                                         var hasRequestedExtractionForThisChapter by remember(targetChapterIndex) { mutableStateOf(false) }
 
+                                        val chapterChunkImageCounts = remember(chapterChunks) {
+                                            chapterChunks.map { chunk ->
+                                                IMAGE_TAG_COUNT_REGEX.findAll(chunk).count()
+                                            }
+                                        }
                                         val initialContentToLoad = remember(
                                             loadUpToChunkIndex,
                                             chapterChunks,
                                             chapterChunkElementStartIndices,
-                                            chapterChunkElementCounts
+                                            chapterChunkElementCounts,
+                                            chapterChunkImageCounts
                                         ) {
                                             val targetIdx = loadUpToChunkIndex
 
@@ -697,7 +704,8 @@ internal fun EpubReaderRenderSurfaces(
                                                 } else {
                                                     val placeholderHeightPx = readerChunkPlaceholderHeightPx(
                                                         index,
-                                                        chapterChunkElementCounts
+                                                        chapterChunkElementCounts,
+                                                        chapterChunkImageCounts
                                                     )
                                                     "<div class='chunk-container' $attributes style='height: ${placeholderHeightPx}px'></div>"
                                                 }

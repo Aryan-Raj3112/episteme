@@ -368,16 +368,23 @@ internal val SharedMobileEpubAutoScrollStopScript = """
 """.trimIndent()
 
 internal fun sharedMobileEpubScrollToEndScript(chunkIndex: Int, chunkHtml: String?): String {
-    val chunkInjection = if (chunkIndex >= 0 && chunkHtml != null) {
-        "if (window.readerVirtualization) window.readerVirtualization.provideChunk($chunkIndex, ${JsonPrimitive(chunkHtml)});"
-    } else {
-        ""
+    val chunkInjection = when {
+        chunkIndex < 0 || chunkHtml == null -> ""
+        chunkHtml.length <= com.aryan.reader.shared.reader.ReaderHtmlDocumentBuilder.MaxInlineVirtualChunkChars ->
+            "if (window.readerVirtualization) window.readerVirtualization.provideChunk($chunkIndex, ${JsonPrimitive(chunkHtml)});"
+        else ->
+            "if (window.readerVirtualization&&window.readerVirtualization.requestChunk) window.readerVirtualization.requestChunk($chunkIndex);"
     }
     return """
         (function () {
           $chunkInjection
-          var root = document.scrollingElement || document.documentElement;
-          window.scrollTo(0, Math.max(0, root.scrollHeight - window.innerHeight));
+          function scrollEnd() {
+            var root = document.scrollingElement || document.documentElement;
+            window.scrollTo(0, Math.max(0, root.scrollHeight - window.innerHeight));
+          }
+          scrollEnd();
+          // Large tail chunks arrive via the bridge; re-scroll once loaded.
+          window.setTimeout(scrollEnd, 500);
         })();
     """.trimIndent()
 }

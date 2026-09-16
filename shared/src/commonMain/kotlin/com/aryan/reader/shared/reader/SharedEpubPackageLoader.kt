@@ -304,6 +304,13 @@ object SharedEpubPackageLoader {
             bodyExtractTotalMs += bodyMs
             val rewriteMark = sharedEpubOpenTraceMark()
             val body = bodyOnly.rewriteEpubHtmlResources(item.absPath, ::dataUri)
+                // Image-heavy chapters stall scrolling while bitmaps decode and
+                // layouts shift; hints keep offscreen work lazy and real bounds
+                // reserve space before first paint.
+                .withReaderImageLoadingHints()
+                .withReaderImageDimensions { src ->
+                    parseSharedEpubResourceUrl(src)?.let { resourceBytes(it.entryPath) }
+                }
             val rewriteMs = sharedEpubOpenTraceElapsedMs(rewriteMark)
             resourceRewriteTotalMs += rewriteMs
             val plainTextMark = sharedEpubOpenTraceMark()

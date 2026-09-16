@@ -1270,6 +1270,33 @@
                 overflow-wrap: break-word !important;
                 word-break: normal !important;
             }
+            /* Shoulder-note headings (Standard Ebooks div.aside: float right sidebar
+               in print) cannot survive single-column virtualized chunks: the float
+               context breaks across chunk boundaries and the headings vanish from
+               paint. Linearize them the way the publisher's own <=10em fallback
+               does; borders, margins and small-caps are preserved.
+               Visibility guards below are load-bearing: without explicit
+               display/visibility/overflow/position the linearized boxes have been
+               observed as 0-height or fully transparent in The_Path_to_Rome's
+               main chapter on Android WebView (see EpubBlankDiag asides). */
+            div.aside {
+                float: none !important;
+                clear: both !important;
+                max-width: 100% !important;
+                min-width: 0 !important;
+                width: auto !important;
+                height: auto !important;
+                min-height: 0 !important;
+                display: block !important;
+                visibility: visible !important;
+                opacity: 1 !important;
+                position: static !important;
+                overflow: visible !important;
+                border: 1px solid currentColor !important;
+                padding: 1em !important;
+                margin: 1em 0 !important;
+                box-sizing: border-box !important;
+            }
             pre, code, samp, kbd, .reader-txt-preformatted {
                 white-space: pre-wrap !important;
                 overflow-wrap: anywhere !important;
@@ -1297,16 +1324,42 @@
                 width: auto;
                 max-width: min(100%, calc(100% * var(--reader-image-size))) !important;
                 height: auto !important;
+                /* Book CSS (Standard Ebooks local.css) constrains figure images with
+                   parent-relative max-height (100%/60%). When the figure has no definite
+                   height yet (0px during first layout) that resolves to 0 and collapses
+                   the image to 0x0 even though the bitmap decoded (naturalWidth > 0).
+                   Viewport-relative caps never collapse: none first so vh-less WebViews
+                   still get a definite non-zero cap, then 92vh where supported. */
+                max-height: none !important;
+                max-height: 92vh !important;
+                min-width: 0 !important;
+                min-height: 0 !important;
                 display: block !important;
                 float: none !important;
                 margin-left: auto !important;
                 margin-right: auto !important;
                 object-fit: contain !important;
+                visibility: visible !important;
+                opacity: 1 !important;
             }
             body p:has(> img:only-child),
             body div:has(> img:only-child),
             body figure {
                 text-align: center !important;
+            }
+            body figure {
+                height: auto !important;
+                min-height: 0 !important;
+                max-height: none !important;
+                width: auto !important;
+                max-width: 100% !important;
+                overflow: visible !important;
+                visibility: visible !important;
+                opacity: 1 !important;
+            }
+            body figure img {
+                max-height: none !important;
+                max-height: 92vh !important;
             }
         `;
 
@@ -2317,8 +2370,17 @@
                 );
 
                 // FIX: If height has collapsed, manually calculate and set it forcefully.
-                if (img.complete && img.naturalWidth > 0 && img.clientWidth > 0 && img.clientHeight === 0) {
-                    console.log(logTag + ": CORRECTING GEOMETRY for Image #" + index);
+                // Covers both the historical clientWidth>0/height==0 case and the
+                // Standard Ebooks figure collapse where the image is fully 0x0 while
+                // the bitmap decoded (naturalWidth>0). Parent-relative max-height
+                // (100%/60% in local.css) resolving against a 0-height figure is the
+                // usual cause; the imageCss cap (none then 92vh) plus this band-aid
+                // recovers paint even if a publication rule still wins.
+                var collapsedHeightOnly = img.complete && img.naturalWidth > 0 && img.clientWidth > 0 && img.clientHeight === 0;
+                var collapsedFully = img.complete && img.naturalWidth > 0 && img.naturalHeight > 0 && img.clientWidth === 0 && img.clientHeight === 0;
+                if (collapsedHeightOnly || collapsedFully) {
+                    console.log(logTag + ": CORRECTING GEOMETRY for Image #" + index + " mode=" + (collapsedFully ? "fully-collapsed-0x0" : "height-only"));
+                    try { console.log("EpubBlankDiag: event=android_img_correct idx=" + index + " mode=" + (collapsedFully ? "0x0" : "h0") + " nat=" + img.naturalWidth + "x" + img.naturalHeight + " client=" + img.clientWidth + "x" + img.clientHeight + " src=" + ((img.getAttribute('src') || '').split('/').pop() || '').slice(-40)); } catch (e) {}
                     const parent = img.parentElement;
 
                     if (parent) {
@@ -2334,14 +2396,43 @@
                         );
                         // Force the parent's height to be determined by its content. This is crucial.
                         parent.style.setProperty("height", "auto", "important");
+                        parent.style.setProperty("max-height", "none", "important");
+                        if (collapsedFully && parent.tagName === "FIGURE") {
+                            parent.style.setProperty("width", "auto", "important");
+                            parent.style.setProperty("max-width", "100%", "important");
+                            parent.style.setProperty("overflow", "visible", "important");
+                        }
                     }
 
-                    const aspectRatio = img.naturalHeight / img.naturalWidth;
-                    const correctHeight = img.clientWidth * aspectRatio;
-
-                    // Remove the conflicting max-height property and then set the explicit height.
+                    // Remove the conflicting max-height property first; on 0x0 images
+                    // clientWidth is 0 so derive width from the figure/content width.
                     img.style.setProperty("max-height", "none", "important");
-                    img.style.setProperty("height", correctHeight + "px", "important");
+                    var targetWidth = img.clientWidth;
+                    if (!targetWidth) {
+                        try {
+                            var host = img.closest ? (img.closest("figure") || img.parentElement) : img.parentElement;
+                            targetWidth = host ? host.clientWidth : 0;
+                        } catch (e) { targetWidth = 0; }
+                    }
+                    if (!targetWidth) {
+                        try { targetWidth = Math.min(img.naturalWidth, (document.documentElement.clientWidth || window.innerWidth || 0) - 32); } catch (e) {}
+                    }
+                    if (targetWidth && targetWidth > 0) {
+                        var aspect = img.naturalHeight / img.naturalWidth;
+                        var h = Math.round(targetWidth * aspect);
+                        // Cap to viewport so portrait scans never blow out scroll range.
+                        try {
+                            var vh = window.innerHeight || document.documentElement.clientHeight || 0;
+                            if (vh > 0 && h > Math.round(vh * 0.92)) h = Math.round(vh * 0.92);
+                        } catch (e) {}
+                        img.style.setProperty("width", targetWidth + "px", "important");
+                        img.style.setProperty("height", h + "px", "important");
+                    } else {
+                        var aspectOnly = img.naturalHeight / img.naturalWidth;
+                        var fallbackW = img.clientWidth || 0;
+                        var correctH = fallbackW * aspectOnly;
+                        img.style.setProperty("height", correctH + "px", "important");
+                    }
 
                     console.log(logTag + ": Corrective styles applied to Image #" + index + ". Verifying height after a short delay for reflow...");
 
@@ -2350,7 +2441,8 @@
                     setTimeout(
                         function () {
                             console.log(logTag + ": Verified height for Image #" + index + ": " + img.clientHeight + "px");
-                            window.reportScrollState(); // Update scroll metrics now that the image has height
+                            try { console.log("EpubBlankDiag: event=android_img_corrected idx=" + index + " now=" + img.clientWidth + "x" + img.clientHeight); } catch (e) {}
+                            if (window.reportScrollState) window.reportScrollState(); // Update scroll metrics now that the image has height
                         },
 
                         150,

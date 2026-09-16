@@ -393,6 +393,18 @@ internal fun readerDocumentStyles(
               max-width: 100% !important;
               height: auto !important;
             }
+            /*
+             * Shoulder-note headings (Standard Ebooks div.aside: print-style
+             * float-right sidebars) cannot survive virtualized chunks: the float
+             * context breaks across chunk attach/detach and the headings drop
+             * out of paint. Linearize them the way the publisher's own narrow
+             * fallback does; borders, margins and small-caps are preserved.
+             */
+            .reader-content div.aside {
+              float: none !important;
+              clear: both !important;
+              max-width: 100% !important;
+            }
             .reader-highlight {
               background: var(--reader-highlight);
               color: inherit;

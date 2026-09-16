@@ -24,6 +24,7 @@ import com.aryan.reader.shared.ReaderTtsChunk
 import com.aryan.reader.shared.ReaderTtsProgress
 import com.aryan.reader.shared.ReaderExternalLookupAction
 import com.aryan.reader.shared.ReaderExternalLookupService
+import com.aryan.reader.shared.isReaderExternalHref
 import com.aryan.reader.shared.normalizeReaderHref
 import com.aryan.reader.shared.LocalTtsInterruptionAction
 import com.aryan.reader.shared.LocalTtsInterruptionEvent
@@ -65,7 +66,6 @@ import kotlinx.cinterop.useContents
 import platform.CoreGraphics.CGRectMake
 import platform.Foundation.NSData
 import platform.Foundation.NSError
-import platform.Foundation.NSNumber
 import platform.Foundation.NSMutableData
 import platform.Foundation.NSURL
 import platform.Foundation.NSURLResponse
@@ -83,6 +83,8 @@ import platform.UIKit.UIReferenceLibraryViewController
 import platform.WebKit.WKScriptMessage
 import platform.WebKit.WKScriptMessageHandlerProtocol
 import platform.WebKit.WKNavigation
+import platform.WebKit.WKNavigationAction
+import platform.WebKit.WKNavigationActionPolicy
 import platform.WebKit.WKNavigationDelegateProtocol
 import platform.WebKit.WKUserContentController
 import platform.WebKit.WKUserScript
@@ -724,7 +726,12 @@ private class IosEpubWebViewCoordinator(
     var onBridgeMessage: (String, String) -> Unit
 ) {
     private val messageHandler = IosEpubScriptMessageHandler(::handleBridgeMessage)
-    private val navigationDelegate = IosEpubNavigationDelegate(::documentDidFinishLoading)
+    private val navigationDelegate = IosEpubNavigationDelegate(
+        onFinished = ::documentDidFinishLoading,
+        onFailed = ::documentDidFailLoading,
+        onTerminated = ::documentProcessTerminated,
+        onDecidePolicy = ::shouldCancelNavigation,
+    )
     private val streamPageSchemeHandler = IosOpdsStreamPageSchemeHandler(
         loader = { streamPageLoader },
         unavailablePageLabel = { streamPageUnavailableLabel },
@@ -734,6 +741,7 @@ private class IosEpubWebViewCoordinator(
     private var contentChunks: List<String> = emptyList()
     private var loadedHtmlHash: Int? = null
     private var loadedHtmlLength: Int = -1
+    private var lastHtml: String? = null
     private var appliedAppearanceHash: Int? = null
     private var appliedHighlightsHash: Int? = null
     private var appliedNavigationRequestId: Long = Long.MIN_VALUE
@@ -742,7 +750,6 @@ private class IosEpubWebViewCoordinator(
     private var latestNavigationScript: String? = null
     private var latestNavigationRequestId: Long = Long.MIN_VALUE
     private var latestHighlightsApplyScript: String = ""
-    private var pendingScrollRestore: Pair<Double, Double>? = null
     private var htmlLoadStartMark: TimeSource.Monotonic.ValueTimeMark? = null
     private var reportedFirstPosition: Boolean = false
 
@@ -816,19 +823,14 @@ private class IosEpubWebViewCoordinator(
         latestHighlightsApplyScript = highlightsApplyScript
         val htmlHash = html.hashCode()
         if (loadedHtmlHash != htmlHash || loadedHtmlLength != html.length) {
-            // Android parity (ChapterWebView): highlight changes never reach here — the
-            // document renders without highlights and they are applied in place through
-            // the highlights payload, so a reload only happens for real document changes.
-            // Restore the exact scroll position only when the reload was not triggered
-            // by an explicit navigation (chapter/link/TOC); those re-run the navigation
-            // script which owns the landing position.
-            pendingScrollRestore = if (appliedNavigationRequestId == navigationRequestId) {
-                captureScrollForReload(webView)
-            } else {
-                null
-            }
+            // Android parity: highlight changes never reach here — the document
+            // renders without highlights and they are applied in place through
+            // the highlights payload, so a reload only happens for real document
+            // changes. Like Android, a reload lands via the navigation script;
+            // no async scroll capture (it raced the reload on big chapters).
             loadedHtmlHash = htmlHash
             loadedHtmlLength = html.length
+            lastHtml = html
             appliedAppearanceHash = null
             appliedHighlightsHash = null
             appliedNavigationRequestId = Long.MIN_VALUE
@@ -842,58 +844,112 @@ private class IosEpubWebViewCoordinator(
         val appearanceHash = appearanceScript.hashCode()
         if (appliedAppearanceHash != appearanceHash) {
             appliedAppearanceHash = appearanceHash
-            webView.evaluateJavaScript(appearanceScript, completionHandler = null)
+            evaluateReaderScript(webView, appearanceScript, "appearance")
         }
         val highlightsHash = highlightsApplyScript.hashCode()
         if (highlightsApplyScript.isNotBlank() && appliedHighlightsHash != highlightsHash) {
             appliedHighlightsHash = highlightsHash
-            webView.evaluateJavaScript(highlightsApplyScript, completionHandler = null)
+            evaluateReaderScript(webView, highlightsApplyScript, "highlights")
         }
         if (
             navigationScript != null &&
             appliedNavigationRequestId != navigationRequestId
         ) {
             appliedNavigationRequestId = navigationRequestId
-            webView.evaluateJavaScript(navigationScript, completionHandler = null)
+            evaluateReaderScript(webView, navigationScript, "navigation")
         }
     }
 
-    private fun captureScrollForReload(webView: WKWebView): Pair<Double, Double>? {
-        if (loadedHtmlHash == null) return null
-        return pendingScrollRestore ?: run {
-            webView.evaluateJavaScript(
-                "window.scrollY === undefined ? null : [window.scrollX, window.scrollY]",
-                completionHandler = { result, _ ->
-                    val pair = (result as? List<*>)?.let { list ->
-                        val x = (list.getOrNull(0) as? NSNumber)?.doubleValue
-                        val y = (list.getOrNull(1) as? NSNumber)?.doubleValue
-                        if (x != null && y != null) x to y else null
-                    }
-                    if (pair != null) pendingScrollRestore = pair
-                }
-            )
-            null
+    private fun evaluateReaderScript(webView: WKWebView, script: String, kind: String) {
+        if (script.isBlank()) return
+        webView.evaluateJavaScript(script) { _, error ->
+            if (error != null) {
+                sharedEpubOpenTrace { "webview evaluateFailed kind=$kind chars=${script.length} error=${error.localizedDescription}" }
+            }
         }
     }
 
     private fun documentDidFinishLoading(webView: WKWebView) {
         val loadMs = htmlLoadStartMark?.let { sharedEpubOpenTraceElapsedMs(it) }
         sharedEpubOpenTrace { "webview didFinishNavigation ms=${loadMs?.let { sharedEpubOpenTraceMs(it) } ?: "?"}" }
-        if (latestAppearanceScript.isNotBlank()) {
-            webView.evaluateJavaScript(latestAppearanceScript, completionHandler = null)
-            appliedAppearanceHash = latestAppearanceScript.hashCode()
+        // Sequence appearance -> highlights -> navigation so a big chapter
+        // finishes layout before the navigation scroll runs (Android parity).
+        val appearance = latestAppearanceScript.takeIf { it.isNotBlank() }
+        val highlights = latestHighlightsApplyScript.takeIf { it.isNotBlank() }
+        val navigation = latestNavigationScript
+        fun applyNavigation() {
+            if (navigation == null) return
+            webView.evaluateJavaScript(navigation) { _, error ->
+                if (error != null) {
+                    sharedEpubOpenTrace { "webview evaluateFailed kind=navigation chars=${navigation.length} error=${error.localizedDescription}" }
+                } else {
+                    appliedNavigationRequestId = latestNavigationRequestId
+                }
+            }
         }
-        if (latestHighlightsApplyScript.isNotBlank()) {
-            webView.evaluateJavaScript(latestHighlightsApplyScript, completionHandler = null)
-            appliedHighlightsHash = latestHighlightsApplyScript.hashCode()
+        fun applyHighlights() {
+            if (highlights == null) {
+                applyNavigation()
+                return
+            }
+            webView.evaluateJavaScript(highlights) { _, error ->
+                if (error != null) {
+                    sharedEpubOpenTrace { "webview evaluateFailed kind=highlights chars=${highlights.length} error=${error.localizedDescription}" }
+                } else {
+                    appliedHighlightsHash = highlights.hashCode()
+                }
+                applyNavigation()
+            }
         }
-        latestNavigationScript?.let { script ->
-            webView.evaluateJavaScript(script, completionHandler = null)
-            appliedNavigationRequestId = latestNavigationRequestId
+        if (appearance == null) {
+            applyHighlights()
+            return
         }
-        pendingScrollRestore?.let { (x, y) ->
-            pendingScrollRestore = null
-            webView.evaluateJavaScript("window.scrollTo($x, $y);", completionHandler = null)
+        webView.evaluateJavaScript(appearance) { _, error ->
+            if (error != null) {
+                sharedEpubOpenTrace { "webview evaluateFailed kind=appearance chars=${appearance.length} error=${error.localizedDescription}" }
+            } else {
+                appliedAppearanceHash = appearance.hashCode()
+            }
+            applyHighlights()
+        }
+    }
+
+    private fun documentDidFailLoading(webView: WKWebView, error: NSError) {
+        val loadMs = htmlLoadStartMark?.let { sharedEpubOpenTraceElapsedMs(it) }
+        sharedEpubOpenTrace {
+            "webview didFailNavigation ms=${loadMs?.let { sharedEpubOpenTraceMs(it) } ?: "?"} " +
+                "error=${error.localizedDescription} code=${error.code}"
+        }
+    }
+
+    private fun documentProcessTerminated(webView: WKWebView) {
+        sharedEpubOpenTrace { "webview contentProcessTerminated" }
+        // WKWebView kills the content process under memory pressure (likely for
+        // a big chapter). Reload the last document when this view is still active.
+        loadedHtmlHash = null
+        loadedHtmlLength = -1
+        appliedAppearanceHash = null
+        appliedHighlightsHash = null
+        appliedNavigationRequestId = Long.MIN_VALUE
+        val html = lastHtml
+        if (html != null && webView == activeWebView) {
+            htmlLoadStartMark = sharedEpubOpenTraceMark()
+            reportedFirstPosition = false
+            sharedEpubOpenTrace { "webview reloadAfterTerminate chars=${html.length}" }
+            webView.loadHTMLString(html, baseURL = null)
+        }
+    }
+
+    private fun shouldCancelNavigation(urlString: String?): Boolean {
+        val raw = urlString?.trim().orEmpty()
+        if (raw.isBlank() || raw == "about:blank") return false
+        val normalized = normalizeReaderHref(raw)
+        return if (isReaderExternalHref(normalized)) {
+            openSharedMobileEpubExternalLink(normalized)
+            true
+        } else {
+            false
         }
     }
 
@@ -919,9 +975,13 @@ private class IosEpubWebViewCoordinator(
             sharedEpubOpenTrace { "webview chunkProvide start index=$index chunkChars=${chunk.length}" }
             activeWebView?.evaluateJavaScript(
                 "window.readerVirtualization && window.readerVirtualization.provideChunk($index, ${JsonPrimitive(chunk)});",
-                completionHandler = null
-            )
-            sharedEpubOpenTrace { "webview chunkProvide dispatched index=$index dispatchMs=${sharedEpubOpenTraceMs(sharedEpubOpenTraceElapsedMs(provideMark))}" }
+            ) { _, error ->
+                if (error != null) {
+                    sharedEpubOpenTrace { "webview chunkProvide failed index=$index error=${error.localizedDescription}" }
+                } else {
+                    sharedEpubOpenTrace { "webview chunkProvide dispatched index=$index dispatchMs=${sharedEpubOpenTraceMs(sharedEpubOpenTraceElapsedMs(provideMark))}" }
+                }
+            }
             return
         }
         onBridgeMessage(method, payload)
@@ -952,10 +1012,10 @@ private class IosEpubWebViewCoordinator(
         contentChunks = emptyList()
         loadedHtmlHash = null
         loadedHtmlLength = -1
+        lastHtml = null
         appliedHighlightsHash = null
         appliedBackgroundArgb = null
         latestHighlightsApplyScript = ""
-        pendingScrollRestore = null
         htmlLoadStartMark = null
         reportedFirstPosition = false
     }
@@ -1105,10 +1165,46 @@ private fun ByteArray.toNSData(): NSData {
 }
 
 private class IosEpubNavigationDelegate(
-    private val onFinished: (WKWebView) -> Unit
+    private val onFinished: (WKWebView) -> Unit,
+    private val onFailed: (WKWebView, NSError) -> Unit,
+    private val onTerminated: (WKWebView) -> Unit,
+    private val onDecidePolicy: (String?) -> Boolean,
 ) : NSObject(), WKNavigationDelegateProtocol {
     override fun webView(webView: WKWebView, didFinishNavigation: WKNavigation?) {
         onFinished(webView)
+    }
+
+    @ObjCSignatureOverride
+    override fun webView(webView: WKWebView, didFailNavigation: WKNavigation?, withError: NSError) {
+        onFailed(webView, withError)
+    }
+
+    @ObjCSignatureOverride
+    override fun webView(webView: WKWebView, didFailProvisionalNavigation: WKNavigation?, withError: NSError) {
+        onFailed(webView, withError)
+    }
+
+    override fun webViewWebContentProcessDidTerminate(webView: WKWebView) {
+        onTerminated(webView)
+    }
+
+    override fun webView(
+        webView: WKWebView,
+        decidePolicyForNavigationAction: WKNavigationAction,
+        decisionHandler: (WKNavigationActionPolicy) -> Unit
+    ) {
+        // Android parity (shouldOverrideUrlLoading): external links leave the
+        // reader; anything else (including about:blank for loadHTMLString and
+        // reader-epub-res resources) stays in the WebView.
+        val cancel = try {
+            onDecidePolicy(decidePolicyForNavigationAction.request.URL?.absoluteString)
+        } catch (_: Exception) {
+            false
+        }
+        decisionHandler(
+            if (cancel) WKNavigationActionPolicy.WKNavigationActionPolicyCancel
+            else WKNavigationActionPolicy.WKNavigationActionPolicyAllow
+        )
     }
 }
 

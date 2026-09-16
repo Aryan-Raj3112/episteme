@@ -34,6 +34,10 @@ import com.aryan.reader.shared.pdf.PdfTextPageSession
 import com.aryan.reader.shared.pdf.SharedPdfSearchResult
 import com.aryan.reader.shared.pdf.SharedPdfSearchIndex
 import com.aryan.reader.shared.reader.SharedJvmBookLoader
+import com.aryan.reader.shared.reader.sharedEpubOpenTrace
+import com.aryan.reader.shared.reader.sharedEpubOpenTraceElapsedMs
+import com.aryan.reader.shared.reader.sharedEpubOpenTraceMark
+import com.aryan.reader.shared.reader.sharedEpubOpenTraceMs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -168,6 +172,7 @@ private class AndroidEpubWebViewCoordinator(
     private var contentChunks: List<String> = emptyList()
     private var loadedHtmlHash: Int? = null
     private var loadedHtmlLength = -1
+    private var lastHtml: String? = null
     private var appliedAppearanceHash: Int? = null
     private var appliedHighlightsHash: Int? = null
     private var appliedNavigationRequestId = Long.MIN_VALUE
@@ -176,6 +181,7 @@ private class AndroidEpubWebViewCoordinator(
     private var latestNavigationScript: String? = null
     private var latestNavigationRequestId = Long.MIN_VALUE
     private var latestHighlightsApplyScript = ""
+    private var htmlLoadStartMark: kotlin.time.TimeSource.Monotonic.ValueTimeMark? = null
 
     fun createWebView(context: Context): WebView = WebView(context).apply {
         activeWebView = this
@@ -186,18 +192,12 @@ private class AndroidEpubWebViewCoordinator(
         addJavascriptInterface(AndroidEpubBridge(this@AndroidEpubWebViewCoordinator), AndroidEpubBridgeName)
         webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView, url: String?) {
-                view.evaluateJavascript(AndroidEpubBridgeBootstrapScript, null)
-                latestAppearanceScript.takeIf { it.isNotBlank() }?.let {
-                    view.evaluateJavascript(it, null)
-                    appliedAppearanceHash = it.hashCode()
-                }
-                if (latestHighlightsApplyScript.isNotBlank()) {
-                    view.evaluateJavascript(latestHighlightsApplyScript, null)
-                    appliedHighlightsHash = latestHighlightsApplyScript.hashCode()
-                }
-                latestNavigationScript?.let {
-                    view.evaluateJavascript(it, null)
-                    appliedNavigationRequestId = latestNavigationRequestId
+                val loadMs = htmlLoadStartMark?.let { sharedEpubOpenTraceElapsedMs(it) }
+                sharedEpubOpenTrace { "webview didFinishLoad ms=${loadMs?.let { sharedEpubOpenTraceMs(it) } ?: "?"}" }
+                // Sequence appearance -> highlights -> navigation so a big chapter
+                // finishes layout before the navigation scroll runs.
+                view.evaluateJavascript(AndroidEpubBridgeBootstrapScript) { _ ->
+                    applyPendingScriptsInOrder(view)
                 }
             }
 
@@ -210,6 +210,59 @@ private class AndroidEpubWebViewCoordinator(
                     false
                 }
             }
+
+            override fun onRenderProcessGone(view: WebView, detail: android.webkit.RenderProcessGoneDetail): Boolean {
+                sharedEpubOpenTrace { "webview renderProcessGone didCrash=${detail.didCrash()}" }
+                // Drop hashes so the next update reloads; reload immediately when
+                // the crashed view is still the active one and we retain the doc.
+                loadedHtmlHash = null
+                loadedHtmlLength = -1
+                appliedAppearanceHash = null
+                appliedHighlightsHash = null
+                appliedNavigationRequestId = Long.MIN_VALUE
+                val html = lastHtml
+                if (html != null && view == activeWebView) {
+                    htmlLoadStartMark = sharedEpubOpenTraceMark()
+                    sharedEpubOpenTrace { "webview reloadAfterCrash chars=${html.length}" }
+                    view.loadDataWithBaseURL(null, html, "text/html", "UTF-8", null)
+                }
+                // Returning true means we handled the crash; the WebView can be reused.
+                // If the renderer crashed (not OOM-killed), destroying here would
+                // break the owning AndroidView, so let the framework recover it.
+                return true
+            }
+        }
+    }
+
+    private fun applyPendingScriptsInOrder(view: WebView) {
+        val appearance = latestAppearanceScript.takeIf { it.isNotBlank() }
+        val highlights = latestHighlightsApplyScript.takeIf { it.isNotBlank() }
+        val navigation = latestNavigationScript
+        if (appearance == null) {
+            applyHighlightsThenNavigation(view, highlights, navigation)
+            return
+        }
+        view.evaluateJavascript(appearance) { _ ->
+            appliedAppearanceHash = appearance.hashCode()
+            applyHighlightsThenNavigation(view, highlights, navigation)
+        }
+    }
+
+    private fun applyHighlightsThenNavigation(view: WebView, highlights: String?, navigation: String?) {
+        if (highlights == null) {
+            applyNavigationScript(view, navigation)
+            return
+        }
+        view.evaluateJavascript(highlights) { _ ->
+            appliedHighlightsHash = highlights.hashCode()
+            applyNavigationScript(view, navigation)
+        }
+    }
+
+    private fun applyNavigationScript(view: WebView, navigation: String?) {
+        if (navigation == null) return
+        view.evaluateJavascript(navigation) { _ ->
+            appliedNavigationRequestId = latestNavigationRequestId
         }
     }
 
@@ -237,9 +290,12 @@ private class AndroidEpubWebViewCoordinator(
         if (loadedHtmlHash != htmlHash || loadedHtmlLength != html.length) {
             loadedHtmlHash = htmlHash
             loadedHtmlLength = html.length
+            lastHtml = html
             appliedAppearanceHash = null
             appliedHighlightsHash = null
             appliedNavigationRequestId = Long.MIN_VALUE
+            htmlLoadStartMark = sharedEpubOpenTraceMark()
+            sharedEpubOpenTrace { "webview loadData start chars=${html.length} chunks=${contentChunks.size}" }
             webView.loadDataWithBaseURL(null, html, "text/html", "UTF-8", null)
             return
         }
@@ -274,11 +330,14 @@ private class AndroidEpubWebViewCoordinator(
             val index = AndroidEpubChunkIndexRegex.find(payload)
                 ?.groupValues?.getOrNull(1)?.toIntOrNull() ?: return false
             val chunk = contentChunks.getOrNull(index) ?: return false
+            val provideMark = sharedEpubOpenTraceMark()
+            sharedEpubOpenTrace { "webview chunkProvide start index=$index chunkChars=${chunk.length}" }
             activeWebView?.post {
                 activeWebView?.evaluateJavascript(
                     "window.readerVirtualization && window.readerVirtualization.provideChunk($index, ${JsonPrimitive(chunk)});",
-                    null,
-                )
+                ) { _ ->
+                    sharedEpubOpenTrace { "webview chunkProvide done index=$index dispatchMs=${sharedEpubOpenTraceMs(sharedEpubOpenTraceElapsedMs(provideMark))}" }
+                }
             }
             return true
         }
@@ -300,13 +359,18 @@ private class AndroidEpubWebViewCoordinator(
     }
 
     fun release(webView: WebView) {
+        sharedEpubOpenTrace { "webview release" }
         webView.stopLoading()
         webView.removeJavascriptInterface(AndroidEpubBridgeName)
         webView.webViewClient = WebViewClient()
         webView.destroy()
         activeWebView = null
         contentChunks = emptyList()
+        loadedHtmlHash = null
+        loadedHtmlLength = -1
+        lastHtml = null
         appliedBackgroundArgb = null
+        htmlLoadStartMark = null
     }
 }
 

@@ -42,6 +42,37 @@ class EpubReaderTtsHighlightAssetTest {
     }
 
     @Test
+    fun `vertical webview image css never collapses figure images to zero`() {
+        val js = epubReaderAsset().readText()
+
+        // Parent-relative max-height (100%/60% in Standard Ebooks local.css) resolves
+        // to 0 against a not-yet-laid-out figure; viewport-relative caps cannot.
+        assertTrue(js.contains("max-height: none !important;"))
+        assertTrue(js.contains("max-height: 92vh !important;"))
+        assertTrue(js.contains("body figure {"))
+        assertTrue(js.contains("body figure img {"))
+    }
+
+    @Test
+    fun `vertical webview linearizes shoulder-note asides without hiding them`() {
+        val js = epubReaderAsset().readText()
+
+        assertTrue(js.contains("div.aside {"))
+        assertTrue(js.contains("float: none !important;"))
+        assertTrue(js.contains("visibility: visible !important;"))
+        assertTrue(js.contains("border: 1px solid currentColor !important;"))
+    }
+
+    @Test
+    fun `vertical webview recovers fully collapsed zero by zero images`() {
+        val js = epubReaderAsset().readText()
+
+        assertTrue(js.contains("fully-collapsed-0x0"))
+        assertTrue(js.contains("android_img_correct"))
+        assertTrue(js.contains("android_img_corrected"))
+    }
+
+    @Test
     fun `vertical webview applies reader font weight and letter spacing`() {
         val js = epubReaderAsset().readText()
 
