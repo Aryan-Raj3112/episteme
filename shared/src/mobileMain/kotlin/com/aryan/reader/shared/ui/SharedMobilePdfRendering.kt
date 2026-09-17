@@ -174,6 +174,7 @@ import com.aryan.reader.shared.pdf.shouldPlayRealisticPdfPageTurn
 import com.aryan.reader.shared.pdf.sharedPdfSnapHighlighterPoint
 import com.aryan.reader.shared.pdf.pdfPaginationEdgeTarget
 import com.aryan.reader.shared.pdf.centeredPdfPageScrollOffset
+import com.aryan.reader.shared.pdf.isPdfVerticalSinglePageCentered
 import com.aryan.reader.shared.pdf.PdfSpreadLayout
 import com.aryan.reader.shared.pdf.PdfZoomCamera
 import com.aryan.reader.shared.pdf.PdfZoomPoint
@@ -799,7 +800,15 @@ internal fun SharedMobilePdfVerticalPages(
                 userScrollEnabled = userScrollEnabled && state.selectedTool == PdfInkTool.NONE && !selectionDragActive,
                 modifier = Modifier.fillMaxSize().onSizeChanged { viewportSize = it },
                 contentPadding = PaddingValues(0.dp),
-                verticalArrangement = Arrangement.spacedBy(if (showPageGap) 8.dp else 0.dp)
+                // Android parity (calculatePdfVerticalPageLayoutPx single-page branch):
+                // a one-page vertical document is centred in the viewport. Center
+                // only consumes free space, so taller-than-viewport pages still
+                // start at the top and scroll normally.
+                verticalArrangement = if (isPdfVerticalSinglePageCentered(pageCount)) {
+                    Arrangement.Center
+                } else {
+                    Arrangement.spacedBy(if (showPageGap) 8.dp else 0.dp)
+                }
             ) {
                 items(
                     count = pageCount,

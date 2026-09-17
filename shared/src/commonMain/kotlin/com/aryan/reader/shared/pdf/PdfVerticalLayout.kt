@@ -38,6 +38,17 @@ fun pdfVerticalPageGapDp(
     defaultGap: Dp
 ): Dp = if (isPageGapVisible) defaultGap else 0.dp
 
+/**
+ * Android parity ([calculatePdfVerticalPageLayoutPx] single-page branch):
+ * a one-display-page vertical document is centered in the viewport instead of
+ * being pinned to the top. The shared [SharedMobilePdfVerticalPages] list
+ * (iOS benchmark) uses this to pick [Arrangement.Center]; taller-than-viewport
+ * pages are unaffected because a lazy list only applies arrangement to free
+ * space.
+ */
+fun isPdfVerticalSinglePageCentered(displayPageCount: Int): Boolean =
+    displayPageCount == 1
+
 data class PdfVerticalPagePlacement(
     val pageIndex: Int,
     val topPx: Int,

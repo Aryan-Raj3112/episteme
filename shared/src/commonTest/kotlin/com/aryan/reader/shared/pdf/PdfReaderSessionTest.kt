@@ -9,6 +9,7 @@ import com.aryan.reader.shared.ui.sharedPdfThumbnailRowFor
 import com.aryan.reader.shared.ui.sharedPdfThumbnailRows
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class PdfReaderSessionTest {
@@ -808,6 +809,44 @@ class PdfReaderSessionTest {
         )
 
         assertEquals(layout.pages.first().bottomPx + 12, layout.pages.last().topPx)
+    }
+
+    @Test
+    fun `single short page is vertically centred like Android`() {
+        // viewport 1080x1920, portrait page 0.707 -> height 1527 < 1920,
+        // so Android offsets top by (1920-1527)/2 = 196.
+        val layout = calculatePdfVerticalPageLayoutPx(
+            pageAspectRatios = listOf(0.707f),
+            viewportWidthPx = 1080,
+            viewportHeightPx = 1920,
+            pageGapPx = 8
+        )
+
+        assertEquals(1, layout.pages.size)
+        assertTrue(layout.pages.first().topPx > 0)
+        assertEquals(
+            (1920 - layout.pages.first().heightPx) / 2,
+            layout.pages.first().topPx
+        )
+    }
+
+    @Test
+    fun `single tall page stays pinned to the top`() {
+        val layout = calculatePdfVerticalPageLayoutPx(
+            pageAspectRatios = listOf(0.5f),
+            viewportWidthPx = 1080,
+            viewportHeightPx = 800,
+            pageGapPx = 8
+        )
+
+        assertEquals(0, layout.pages.single().topPx)
+    }
+
+    @Test
+    fun `vertical list centres only a single display page`() {
+        assertTrue(isPdfVerticalSinglePageCentered(1))
+        assertFalse(isPdfVerticalSinglePageCentered(0))
+        assertFalse(isPdfVerticalSinglePageCentered(2))
     }
 
     private fun annotation(id: String, pageIndex: Int): SharedPdfAnnotation {
