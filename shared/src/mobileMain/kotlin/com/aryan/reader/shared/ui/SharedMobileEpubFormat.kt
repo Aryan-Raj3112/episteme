@@ -116,6 +116,7 @@ import com.aryan.reader.shared.toSharedReaderFontFamily
 import com.aryan.reader.shared.toAndroidEpubFormatSliderValues
 import com.aryan.reader.shared.withAndroidEpubFormatSliderValue
 import com.aryan.reader.shared.reader.ReaderPageInfo
+import com.aryan.reader.shared.reader.ReaderPageSpreadMode
 import com.aryan.reader.shared.reader.ReaderReadingMode
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.writeSharedReaderDiagnostic
@@ -1060,6 +1061,25 @@ internal fun SharedMobileEpubVisualOptionsSheet(
             SharedMobileEpubEnumChoices(PageInfoMode.entries, settings.pageInfoMode, { it.title }) { onSettingsChange(settings.copy(pageInfoMode = it)) }
             Text("Progress Bar Position", style = MaterialTheme.typography.titleSmall)
             SharedMobileEpubEnumChoices(PageInfoPosition.entries, settings.pageInfoPosition, { it.title }) { onSettingsChange(settings.copy(pageInfoPosition = it)) }
+            if (settings.readingMode == ReaderReadingMode.PAGINATED) {
+                Spacer(Modifier.height(8.dp))
+                Text("Page Spread", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "Show one page or two pages side by side.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                SharedMobileEpubEnumChoices(
+                    ReaderPageSpreadMode.entries,
+                    settings.pageSpreadMode,
+                    {
+                        when (it) {
+                            ReaderPageSpreadMode.SINGLE -> "Single"
+                            ReaderPageSpreadMode.TWO_PAGE -> "Two pages"
+                        }
+                    }
+                ) { onSettingsChange(settings.copy(pageSpreadMode = it)) }
+            }
             Spacer(Modifier.height(8.dp))
             Surface(
                 shape = RoundedCornerShape(12.dp),

@@ -136,6 +136,7 @@ typealias ReaderTextAlign = com.aryan.reader.shared.ReaderTextAlign
 typealias SystemUiMode = com.aryan.reader.shared.SystemUiMode
 typealias PageInfoMode = com.aryan.reader.shared.PageInfoMode
 typealias PageInfoPosition = com.aryan.reader.shared.PageInfoPosition
+typealias ReaderPageSpreadMode = com.aryan.reader.shared.reader.ReaderPageSpreadMode
 typealias FormatSettings = com.aryan.reader.shared.FormatSettings
 
 const val SETTINGS_PREFS_NAME = "epub_reader_settings"
@@ -156,6 +157,7 @@ private const val PAGE_INFO_POSITION_KEY = "reader_page_info_position"
 private const val PULL_TO_TURN_ENABLED_KEY = "reader_pull_to_turn_enabled"
 private const val HIDE_IMAGES_KEY = "reader_hide_images"
 private const val NATIVE_VERTICAL_RENDERER_KEY = "reader_native_vertical_renderer"
+private const val PAGE_SPREAD_MODE_KEY = "reader_page_spread_mode"
 
 const val DEFAULT_FONT_SIZE_VAL = 1.0f
 const val DEFAULT_LINE_HEIGHT_VAL = 1.0f
@@ -347,6 +349,18 @@ fun saveNativeVerticalRenderer(context: Context, enabled: Boolean) {
 fun loadNativeVerticalRenderer(context: Context): Boolean {
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
     return prefs.getBoolean(NATIVE_VERTICAL_RENDERER_KEY, false)
+}
+
+fun savePageSpreadMode(context: Context, mode: ReaderPageSpreadMode) {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit { putString(PAGE_SPREAD_MODE_KEY, mode.name) }
+}
+
+fun loadPageSpreadMode(context: Context): ReaderPageSpreadMode {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    val name = prefs.getString(PAGE_SPREAD_MODE_KEY, ReaderPageSpreadMode.SINGLE.name)
+    return runCatching { ReaderPageSpreadMode.valueOf(name ?: ReaderPageSpreadMode.SINGLE.name) }
+        .getOrDefault(ReaderPageSpreadMode.SINGLE)
 }
 
 private const val PULL_TO_TURN_MULTIPLIER_KEY = "reader_pull_to_turn_multiplier"
@@ -1076,6 +1090,9 @@ fun VisualOptionsSheet(
     onPullToTurnMultiplierChange: (Float) -> Unit,
     hideImages: Boolean,
     onHideImagesChange: (Boolean) -> Unit,
+    pageSpreadMode: ReaderPageSpreadMode,
+    onPageSpreadModeChange: (ReaderPageSpreadMode) -> Unit,
+    isPaginated: Boolean,
     onDismiss: () -> Unit
 ) {
     val configuration = LocalConfiguration.current
@@ -1111,8 +1128,18 @@ fun VisualOptionsSheet(
             shortDistance = stringResource(R.string.label_short),
             longDistance = stringResource(R.string.label_long),
             hideImages = stringResource(R.string.visual_options_hide_images),
-            hideImagesDescription = stringResource(R.string.visual_options_hide_images_desc)
+            hideImagesDescription = stringResource(R.string.visual_options_hide_images_desc),
+            pageSpread = stringResource(R.string.visual_options_epub_page_spread),
+            pageSpreadDescription = stringResource(R.string.visual_options_epub_page_spread_desc),
+            spreadOptions = ReaderPageSpreadMode.entries.associateWith {
+                when (it) {
+                    ReaderPageSpreadMode.SINGLE -> stringResource(R.string.visual_options_epub_spread_single)
+                    ReaderPageSpreadMode.TWO_PAGE -> stringResource(R.string.visual_options_epub_spread_two)
+                }
+            }
         ),
+        pageSpreadMode = pageSpreadMode.takeIf { isPaginated },
+        onPageSpreadModeChange = onPageSpreadModeChange.takeIf { isPaginated },
         onDismiss = onDismiss
     )
 }

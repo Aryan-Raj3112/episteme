@@ -1007,6 +1007,10 @@
     <string name="visual_options_edge_padding_desc">Removes the horizontal gap on the left and right edges.</string>
     <string name="visual_options_hide_images">Hide Images</string>
     <string name="visual_options_hide_images_desc">Turn this on to read with all images in the book hidden.</string>
+    <string name="visual_options_epub_page_spread">Page Spread</string>
+    <string name="visual_options_epub_page_spread_desc">Show one page or two pages side by side. Only applies in paginated mode.</string>
+    <string name="visual_options_epub_spread_single">Single</string>
+    <string name="visual_options_epub_spread_two">Two pages</string>
     <string name="reader_brightness_title">Brightness</string>
     <string name="reader_brightness_system">Use system brightness</string>
     <string name="reader_brightness_system_desc">Follows the device brightness setting.</string>

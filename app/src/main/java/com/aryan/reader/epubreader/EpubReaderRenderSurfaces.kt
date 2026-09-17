@@ -1689,6 +1689,7 @@ internal fun EpubReaderRenderSurfaces(
                                 effectiveText = effectiveText,
                                 pagerState = paginatedPagerState,
                                 isRightToLeftPagination = prefs.rightToLeftPagination,
+                                isTwoPageSpread = prefs.pageSpreadMode == ReaderPageSpreadMode.TWO_PAGE,
                                 searchQuery = searchState.searchQuery,
                                 fontSizeMultiplier = format.currentFontSizeEm,
                                 lineHeightMultiplier = format.currentLineHeight,

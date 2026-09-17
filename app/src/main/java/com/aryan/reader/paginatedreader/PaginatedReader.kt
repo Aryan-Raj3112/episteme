@@ -138,6 +138,7 @@ fun PaginatedReaderScreen(
     pagerState: PagerState,
     isPageTurnAnimationEnabled: Boolean,
     isRightToLeftPagination: Boolean = false,
+    isTwoPageSpread: Boolean = false,
     searchQuery: String,
     fontSizeMultiplier: Float,
     lineHeightMultiplier: Float,
@@ -241,8 +242,10 @@ fun PaginatedReaderScreen(
         if (previousConstraints != this.constraints) {
             val activePaginator = currentPaginatorRef.value
             val currentPage = pagerState.currentPage
+            val totalBookPages = (activePaginator as? BookPaginator)?.totalPageCount ?: 0
+            val bookPage = EpubPageSpread.spreadToBookPage(currentPage, totalBookPages, isTwoPageSpread)
             val locator = resolvePaginatedReconfigurationAnchor(
-                currentPageLocator = (activePaginator as? BookPaginator)?.getLocatorForPage(currentPage),
+                currentPageLocator = (activePaginator as? BookPaginator)?.getLocatorForPage(bookPage),
                 fallbackLocator = fallbackLocatorForReconfiguration
             )
             anchorLocatorForReconfig = locator
@@ -254,6 +257,33 @@ fun PaginatedReaderScreen(
             - Saved Locator: $locator
         """.trimIndent())
             previousConstraints = this.constraints
+        }
+
+        // Two-page split view toggle: the pager speaks spreads while the
+        // paginator speaks book pages, so capture a book-page locator with the
+        // outgoing mapping before the halved-constraints paginator below
+        // recreates. The restoration effect then re-seats the pager on the
+        // spread containing the same content.
+        var previousTwoPageSpread by remember { mutableStateOf(isTwoPageSpread) }
+        if (previousTwoPageSpread != isTwoPageSpread) {
+            val activePaginator = currentPaginatorRef.value
+            val oldSpread = pagerState.currentPage
+            val totalBookPages = (activePaginator as? BookPaginator)?.totalPageCount ?: 0
+            val bookPage = EpubPageSpread.spreadToBookPage(oldSpread, totalBookPages, previousTwoPageSpread)
+            val locator = resolvePaginatedReconfigurationAnchor(
+                currentPageLocator = (activePaginator as? BookPaginator)?.getLocatorForPage(bookPage),
+                fallbackLocator = fallbackLocatorForReconfiguration
+            )
+            anchorLocatorForReconfig = locator
+
+            Timber.tag("ThemeReconfig").d("""
+            RECONFIG DETECTED
+            - Reason: PageSpread
+            - Old spread: $oldSpread
+            - Book page: $bookPage
+            - Saved Locator: $locator
+        """.trimIndent())
+            previousTwoPageSpread = isTwoPageSpread
         }
 
         val layoutTextStyle = remember(
@@ -320,8 +350,10 @@ fun PaginatedReaderScreen(
 
                 val activePaginator = currentPaginatorRef.value
                 val currentPage = pagerState.currentPage
+                val totalBookPages = (activePaginator as? BookPaginator)?.totalPageCount ?: 0
+                val bookPage = EpubPageSpread.spreadToBookPage(currentPage, totalBookPages, isTwoPageSpread)
                 val locator = resolvePaginatedReconfigurationAnchor(
-                    currentPageLocator = (activePaginator as? BookPaginator)?.getLocatorForPage(currentPage),
+                    currentPageLocator = (activePaginator as? BookPaginator)?.getLocatorForPage(bookPage),
                     fallbackLocator = fallbackLocatorForReconfiguration
                 )
                 if (locator != null) {
@@ -358,16 +390,25 @@ fun PaginatedReaderScreen(
         val density = LocalDensity.current
         val requestedHorizontalPadding = 16.dp * debouncedHorizontalMarginMult
         val requestedVerticalPadding = 16.dp * debouncedVerticalMarginMult
+        // Two-page split view: each book page is laid out in half the viewport
+        // (minus the inter-page gutter), matching the shared measured paginator
+        // geometry. This repaginates (more, narrower pages) via textConstraints.
+        val spreadGutterPx = with(density) { EpubPageSpread.SpreadGutterDp.dp.roundToPx() }
+        val pageSlotMaxWidthPx = if (isTwoPageSpread) {
+            ((this.constraints.maxWidth - spreadGutterPx) / 2).coerceAtLeast(1)
+        } else {
+            this.constraints.maxWidth
+        }
         val effectiveReaderPadding =
-            remember(this.constraints, density, requestedHorizontalPadding, requestedVerticalPadding) {
+            remember(this.constraints, density, requestedHorizontalPadding, requestedVerticalPadding, pageSlotMaxWidthPx) {
                 val requestedHorizontalPaddingPx = with(density) { requestedHorizontalPadding.roundToPx() }
                 val requestedVerticalPaddingPx = with(density) { requestedVerticalPadding.roundToPx() }
                 val minReadableWidthPx = with(density) { 96.dp.roundToPx() }
-                    .coerceAtMost(this.constraints.maxWidth)
+                    .coerceAtMost(pageSlotMaxWidthPx)
                 val minReadableHeightPx = with(density) { 160.dp.roundToPx() }
                     .coerceAtMost(this.constraints.maxHeight)
                 val horizontalPaddingPx = requestedHorizontalPaddingPx.coerceAtMost(
-                    ((this.constraints.maxWidth - minReadableWidthPx) / 2).coerceAtLeast(0)
+                    ((pageSlotMaxWidthPx - minReadableWidthPx) / 2).coerceAtLeast(0)
                 )
                 val verticalPaddingPx = requestedVerticalPaddingPx.coerceAtMost(
                     ((this.constraints.maxHeight - minReadableHeightPx) / 2).coerceAtLeast(0)
@@ -380,12 +421,12 @@ fun PaginatedReaderScreen(
         val verticalPadding = effectiveReaderPadding.second
 
         val textConstraints =
-            remember(this.constraints, density, horizontalPadding, verticalPadding) {
+            remember(this.constraints, density, horizontalPadding, verticalPadding, pageSlotMaxWidthPx) {
                 val horizontalPaddingPx = with(density) { horizontalPadding.roundToPx() }
                 val verticalPaddingPx = with(density) { verticalPadding.roundToPx() }
                 val finalConstraints = this.constraints.copy(
                     minWidth = 0,
-                    maxWidth = (this.constraints.maxWidth - (2 * horizontalPaddingPx)).coerceAtLeast(1),
+                    maxWidth = (pageSlotMaxWidthPx - (2 * horizontalPaddingPx)).coerceAtLeast(1),
                     minHeight = 0,
                     maxHeight = (this.constraints.maxHeight - (2 * verticalPaddingPx)).coerceAtLeast(1)
                 )
@@ -415,7 +456,7 @@ fun PaginatedReaderScreen(
             }
         }
 
-        val paginator = remember(book, bookId, textConstraints, layoutTextStyle, userTextAlign, debouncedLineHeightMult, debouncedParagraphGapMult, debouncedImageSizeMult, debouncedHideImages, debouncedVerticalMarginMult, debouncedBookReplacementSignature, debouncedBookReplacementFileId) {
+        val paginator = remember(book, bookId, textConstraints, isTwoPageSpread, layoutTextStyle, userTextAlign, debouncedLineHeightMult, debouncedParagraphGapMult, debouncedImageSizeMult, debouncedHideImages, debouncedVerticalMarginMult, debouncedBookReplacementSignature, debouncedBookReplacementFileId) {
         val userAgentStylesheet = UserAgentStylesheet.default
             var allRules = OptimizedCssRules()
             val allFontFaces = mutableListOf<FontFaceInfo>()
@@ -518,14 +559,17 @@ fun PaginatedReaderScreen(
                         Timber.tag("POS_DIAG").d("Restoration Result: Paginator resolved locator to page: $page")
 
                         if (page != null) {
-                            pagerState.scrollToPage(page)
+                            val totalBookPages = (paginator as? BookPaginator)?.totalPageCount ?: 0
+                            val spread = EpubPageSpread.bookPageToSpread(page, totalBookPages, isTwoPageSpread)
+                            pagerState.scrollToPage(spread)
                             paginator.onUserScrolledTo(page)
-                            Timber.tag("POS_DIAG").i("Restoration: Pager scrolled to $page")
+                            Timber.tag("POS_DIAG").i("Restoration: Pager scrolled to $spread (book page $page)")
                         } else {
                             val startPage = paginator.chapterStartPageIndices[targetLocator.chapterIndex]
                             if (startPage != null) {
                                 Timber.tag("POS_DIAG").w("Restoration: Precise page not found, falling back to chapter start: $startPage")
-                                pagerState.scrollToPage(startPage)
+                                val totalBookPages = (paginator as? BookPaginator)?.totalPageCount ?: 0
+                                pagerState.scrollToPage(EpubPageSpread.bookPageToSpread(startPage, totalBookPages, isTwoPageSpread))
                                 paginator.onUserScrolledTo(startPage)
                             }
                         }
@@ -560,9 +604,12 @@ fun PaginatedReaderScreen(
 
         LaunchedEffect(pagerState, paginator) {
             snapshotFlow { pagerState.currentPage }.debounce(500)
-                .collectLatest { page ->
+                .collectLatest { spread ->
                     if (anchorLocatorForReconfig == null) {
-                        paginator.onUserScrolledTo(page)
+                        val totalBookPages = (paginator as? BookPaginator)?.totalPageCount ?: 0
+                        paginator.onUserScrolledTo(
+                            EpubPageSpread.spreadToBookPage(spread, totalBookPages, isTwoPageSpread)
+                        )
                     }
                 }
         }
@@ -576,7 +623,11 @@ fun PaginatedReaderScreen(
                 }
 
                 val bookPaginator = paginator as? BookPaginator
-                val currentPageBeforeShift = pagerState.currentPage
+                val currentSpreadBeforeShift = pagerState.currentPage
+                val totalBookPagesForShift = bookPaginator?.totalPageCount ?: 0
+                val currentPageBeforeShift = EpubPageSpread.spreadToBookPage(
+                    currentSpreadBeforeShift, totalBookPagesForShift, isTwoPageSpread
+                )
                 val now = System.currentTimeMillis()
                 val externalAgeMs = if (latestExternalNavigationEpoch > 0L) {
                     now - latestExternalNavigationEpoch
@@ -651,16 +702,23 @@ fun PaginatedReaderScreen(
                     Timber.tag(READER_UI_STABLE_PAGE_NAV_TAG).d(
                         "shift_apply_stable shift=$shiftAmount from=$currentPageBeforeShift to=$resolvedPage anchorSource=$anchorSource anchor=$anchor"
                     )
-                    pagerState.scrollToPage(resolvedPage)
+                    val totalBookPages = bookPaginator?.totalPageCount ?: 0
+                    pagerState.scrollToPage(
+                        EpubPageSpread.bookPageToSpread(resolvedPage, totalBookPages, isTwoPageSpread)
+                    )
                     paginator.onUserScrolledTo(resolvedPage)
                 } else {
                     val maxPage = (pagerState.pageCount - 1).coerceAtLeast(0)
-                    val newPage = (currentPageBeforeShift + shiftAmount).coerceIn(0, maxPage)
+                    val totalBookPages = bookPaginator?.totalPageCount ?: 0
+                    val shiftedBookPage = (currentPageBeforeShift + shiftAmount)
+                        .coerceIn(0, (totalBookPages - 1).coerceAtLeast(0))
+                    val newPage = EpubPageSpread.bookPageToSpread(shiftedBookPage, totalBookPages, isTwoPageSpread)
+                        .coerceIn(0, maxPage)
                     Timber.tag(READER_UI_STABLE_PAGE_NAV_TAG).w(
                         "shift_apply_relative shift=$shiftAmount from=$currentPageBeforeShift to=$newPage anchorSource=$anchorSource anchor=$anchor"
                     )
                     pagerState.scrollToPage(newPage)
-                    paginator.onUserScrolledTo(newPage)
+                    paginator.onUserScrolledTo(shiftedBookPage)
                 }
             }
         }
@@ -674,6 +732,8 @@ fun PaginatedReaderScreen(
             pagerState = pagerState,
             isPageTurnAnimationEnabled = isPageTurnAnimationEnabled,
             isRightToLeftPagination = isRightToLeftPagination,
+            isTwoPageSpread = isTwoPageSpread,
+            totalBookPageCount = totalPageCount,
             effectiveBg = effectiveBg,
             searchQuery = searchQuery,
             ttsHighlightInfo = ttsHighlightInfo,

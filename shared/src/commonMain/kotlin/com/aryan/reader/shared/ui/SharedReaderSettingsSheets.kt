@@ -89,7 +89,10 @@ data class SharedReaderVisualOptionsLabels(
     val shortDistance: String,
     val longDistance: String,
     val hideImages: String,
-    val hideImagesDescription: String
+    val hideImagesDescription: String,
+    val pageSpread: String = "",
+    val pageSpreadDescription: String = "",
+    val spreadOptions: Map<ReaderPageSpreadMode, String> = emptyMap()
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -109,7 +112,9 @@ fun SharedReaderVisualOptionsSheet(
     onHideImagesChange: (Boolean) -> Unit,
     maxSheetHeight: Dp,
     labels: SharedReaderVisualOptionsLabels,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    pageSpreadMode: ReaderPageSpreadMode? = null,
+    onPageSpreadModeChange: ((ReaderPageSpreadMode) -> Unit)? = null
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(
@@ -154,6 +159,21 @@ fun SharedReaderVisualOptionsSheet(
             Spacer(Modifier.height(8.dp))
             SharedReaderOptionSegmentedControl(PageInfoPosition.entries, pageInfoPosition, onPageInfoPositionChange) {
                 labels.pageInfoPositionOptions.getValue(it)
+            }
+            if (pageSpreadMode != null && onPageSpreadModeChange != null) {
+                Spacer(Modifier.height(24.dp))
+                if (labels.pageSpread.isNotBlank()) {
+                    Text(labels.pageSpread, style = MaterialTheme.typography.titleMedium)
+                }
+                if (labels.pageSpreadDescription.isNotBlank()) {
+                    Text(labels.pageSpreadDescription, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                if (labels.pageSpread.isNotBlank() || labels.pageSpreadDescription.isNotBlank()) {
+                    Spacer(Modifier.height(12.dp))
+                }
+                SharedReaderOptionSegmentedControl(ReaderPageSpreadMode.entries, pageSpreadMode, onPageSpreadModeChange) {
+                    labels.spreadOptions[it] ?: it.name
+                }
             }
             Spacer(Modifier.height(24.dp))
             Surface(

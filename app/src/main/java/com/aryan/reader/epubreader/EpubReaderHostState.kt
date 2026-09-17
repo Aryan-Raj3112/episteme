@@ -219,6 +219,7 @@ internal class EpubReaderReadingPrefsState(private val context: Context) {
     var pullToTurnEnabled by mutableStateOf(loadPullToTurn(context))
     var pullToTurnMultiplier by mutableFloatStateOf(loadPullToTurnMultiplier(context))
     var hideImages by mutableStateOf(loadHideImages(context))
+    var pageSpreadMode by mutableStateOf(loadPageSpreadMode(context))
     var showVisualOptionsSheet by mutableStateOf(false)
     var volumeScrollEnabled by mutableStateOf(loadVolumeScrollSetting(context))
     var tapToNavigateEnabled by mutableStateOf(loadTapToNavigateSetting(context))

@@ -36,6 +36,7 @@ import androidx.media3.common.util.UnstableApi
 import com.aryan.reader.RenderMode
 import com.aryan.reader.epub.EpubChapter
 import com.aryan.reader.paginatedreader.BookPaginator
+import com.aryan.reader.paginatedreader.EpubPageSpread
 import com.aryan.reader.paginatedreader.IPaginator
 import com.aryan.reader.shared.ReaderTtsReplacementPreferences
 import com.aryan.reader.tts.TtsController
@@ -119,7 +120,9 @@ fun TtsSessionObserver(
     locatorConverter: com.aryan.reader.paginatedreader.LocatorConverter, // NEW
     epubBook: com.aryan.reader.epub.EpubBook, // NEW
     ttsReplacementPreferences: ReaderTtsReplacementPreferences,
-    ttsReplacementBookId: String?
+    ttsReplacementBookId: String?,
+    isTwoPageSpread: Boolean = false,
+    totalBookPageCount: Int = 0
 ) {
     val currentRenderModeState = rememberUpdatedState(currentRenderMode)
     val loadedChunkCountState = rememberUpdatedState(loadedChunkCount)
@@ -137,6 +140,8 @@ fun TtsSessionObserver(
     val epubBookState = rememberUpdatedState(epubBook) // NEW
     val ttsReplacementPreferencesState = rememberUpdatedState(ttsReplacementPreferences)
     val ttsReplacementBookIdState = rememberUpdatedState(ttsReplacementBookId)
+    val isTwoPageSpreadState = rememberUpdatedState(isTwoPageSpread)
+    val totalBookPageCountState = rememberUpdatedState(totalBookPageCount)
 
     DisposableEffect(ttsController) {
         val job = scope.launch {
@@ -192,7 +197,9 @@ fun TtsSessionObserver(
                                 ttsMode = currentTtsMode,
                                 getAuthToken = getAuthToken,
                                 ttsReplacementPreferences = ttsReplacementPreferencesState.value,
-                                ttsReplacementBookId = ttsReplacementBookIdState.value
+                                ttsReplacementBookId = ttsReplacementBookIdState.value,
+                                isTwoPageSpread = isTwoPageSpreadState.value,
+                                totalBookPageCount = totalBookPageCountState.value
                             )
                         }
                     } else if (wasPlaying && !isPlaying && !sessionFinished) {
@@ -228,7 +235,9 @@ fun TtsHighlightHandler(
     paginator: IPaginator?,
     pagerState: PagerState,
     ttsChapterIndex: Int?,
-    scope: CoroutineScope
+    scope: CoroutineScope,
+    isTwoPageSpread: Boolean = false,
+    totalBookPageCount: Int = 0
 ) {
     LaunchedEffect(ttsState.currentText, ttsState.sourceCfi, ttsState.startOffsetInSource, webViewRef) {
         val text = ttsState.currentText
@@ -285,9 +294,27 @@ fun TtsHighlightHandler(
 
         val targetPage = pag.findPageForCfiAndOffset(chapterIdx, cfi, offset)
 
-        if (targetPage != null && targetPage != pagerState.currentPage) {
-            scope.launch {
-                pagerState.scrollToPage(targetPage)
+        if (targetPage != null) {
+            // In split view the pager speaks spreads: follow only when the
+            // target book page is outside the visible spread.
+            val targetPagerPage = if (isTwoPageSpread && totalBookPageCount > 0) {
+                EpubPageSpread.bookPageToSpread(targetPage, totalBookPageCount, true)
+            } else {
+                targetPage
+            }
+            val isVisible = if (isTwoPageSpread && totalBookPageCount > 0) {
+                targetPage in EpubPageSpread.visibleBookPages(
+                    pagerState.currentPage,
+                    totalBookPageCount,
+                    true
+                )
+            } else {
+                targetPage == pagerState.currentPage
+            }
+            if (!isVisible) {
+                scope.launch {
+                    pagerState.scrollToPage(targetPagerPage)
+                }
             }
         }
     }
@@ -420,7 +447,9 @@ private fun handlePaginatedAutoAdvance(
     ttsMode: TtsMode,
     getAuthToken: suspend () -> String?,
     ttsReplacementPreferences: ReaderTtsReplacementPreferences,
-    ttsReplacementBookId: String?
+    ttsReplacementBookId: String?,
+    isTwoPageSpread: Boolean = false,
+    totalBookPageCount: Int = 0
 ) {
     if (currentTtsChapterIndex != null && currentTtsChapterIndex < chapters.size - 1) {
         Timber.tag("TTS_CHAPTER_CHANGE_DIAG").d("Paginated: Searching for next TTS content...")
@@ -437,9 +466,14 @@ private fun handlePaginatedAutoAdvance(
 
             while (chapterToTry < chapters.size) {
                 val targetPage = bookPaginator.chapterStartPageIndices[chapterToTry]
-                if (targetPage != null && pagerState.currentPage != targetPage) {
+                val targetPagerPage = if (isTwoPageSpread && totalBookPageCount > 0 && targetPage != null) {
+                    EpubPageSpread.bookPageToSpread(targetPage, totalBookPageCount, true)
+                } else {
+                    targetPage
+                }
+                if (targetPagerPage != null && pagerState.currentPage != targetPagerPage) {
                     // CHANGED: Fire-and-forget scroll without frame blocking!
-                    launch { pagerState.scrollToPage(targetPage) }
+                    launch { pagerState.scrollToPage(targetPagerPage) }
                 }
 
                 val nextChapterChunks = bookPaginator.getTtsChunksForChapter(chapterToTry)
