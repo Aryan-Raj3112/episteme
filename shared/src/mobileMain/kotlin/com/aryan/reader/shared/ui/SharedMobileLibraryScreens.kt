@@ -443,7 +443,11 @@ fun SharedMobileUnifiedLibraryScreen(
                     drawerDescription = readerString("unified_library_drawer_title", "Your library"),
                     backToShelvesDescription = readerString("unified_library_back_to_shelves", "All shelves"),
                     onMenu = { unifiedScope.launch { unifiedDrawerState.open() } },
-                    onBackFromShelf = { selectedShelfId = null },
+                    onBackFromShelf = {
+                        selectedShelfId = selectedShelfId
+                            ?.let { id -> state.shelves.firstOrNull { it.id == id } }
+                            ?.parentShelfId
+                    },
                     onAccount = onOpenAccountDrawer,
                     accountAvatar = accountAvatar,
                     searchQuery = query.takeIf { section == MobileUnifiedLibrarySection.HOME },
@@ -595,6 +599,14 @@ fun SharedMobileUnifiedLibraryScreen(
                 }
                 MobileUnifiedLibrarySection.SHELVES -> {
                     val selectedShelf = selectedShelfId?.let { id -> state.shelves.firstOrNull { it.id == id } }
+                    val selectedChildShelves = remember(state.shelves, selectedShelf) {
+                        selectedShelf?.childShelfIds?.mapNotNull { childId ->
+                            state.shelves.firstOrNull { it.id == childId }
+                        }.orEmpty()
+                    }
+                    val shelvesBreadcrumb = remember(state.shelves, selectedShelfId) {
+                        shelfBreadcrumbPath(state.shelves, selectedShelfId)
+                    }
                     BoxWithConstraints(Modifier.padding(padding)) {
                         SharedAndroidUnifiedShelves(
                             visibleShelves = state.shelves.filter { it.type != ShelfType.TAG && it.parentShelfId == null },
@@ -603,7 +615,7 @@ fun SharedMobileUnifiedLibraryScreen(
                             noShelvesLabel = readerString("unified_library_no_shelves", "No shelves yet"),
                             shelfKey = { it.id },
                             shelfName = { it.name },
-                            shelfBookCountLabel = { shelf -> readerQuantityString("book_count", shelf.bookCount, "%1\$d book", "%1\$d books", shelf.bookCount) },
+                            shelfBookCountLabel = { shelf -> shelf.subtitleLabel() },
                             bookKey = { it.id },
                             onShelfSelected = { selectedShelfId = it.id },
                             bookCard = { book ->
@@ -620,6 +632,23 @@ fun SharedMobileUnifiedLibraryScreen(
                             },
                             widthClass = sharedMobileWidthClassForWidth(maxWidth),
                             modifier = Modifier.fillMaxSize(),
+                            childShelves = selectedChildShelves,
+                            onChildShelfSelected = { selectedShelfId = it.id },
+                            foldersSectionLabel = readerString("section_folders", "Folders"),
+                            filesSectionLabel = readerString("section_files", "Files"),
+                            emptyShelfLabel = readerString("shelf_empty", "This shelf is empty"),
+                            breadcrumbContent = {
+                                if (selectedShelf != null) {
+                                    SharedMobileShelfBreadcrumb(
+                                        entries = shelvesBreadcrumb,
+                                        onNavigate = { entry ->
+                                            selectedShelfId = entry.id
+                                        },
+                                        homeContentDescription = readerString("tab_shelves", "Shelves"),
+                                        modifier = Modifier.padding(horizontal = 20.dp).padding(top = 12.dp),
+                                    )
+                                }
+                            },
                         )
                     }
                 }
@@ -1312,6 +1341,9 @@ fun SharedMobileLibraryScreen(
     }
 
     if (viewedShelf != null) {
+        val shelfBreadcrumb = remember(state.shelves, viewedShelf.id) {
+            shelfBreadcrumbPath(state.shelves, viewedShelf.id)
+        }
         SharedMobileShelfDetail(
             shelf = viewedShelf,
             libraryBooks = state.rawLibraryBooks,
@@ -1349,7 +1381,16 @@ fun SharedMobileLibraryScreen(
             initialIsAddingBooks = state.isAddingBooksToShelf,
             initialAddBooksSource = state.addBooksSource,
             onAddingBooksStateChange = onShelfAddBooksStateChange,
-            modifier = modifier
+            modifier = modifier,
+            breadcrumbEntries = shelfBreadcrumb,
+            homeContentDescription = readerString("tab_shelves", "Shelves"),
+            onBreadcrumbNavigate = { entry ->
+                if (entry.id == null) {
+                    onNavigateShelfBack()
+                } else {
+                    state.shelves.firstOrNull { it.id == entry.id }?.let(onOpenShelf)
+                }
+            },
         )
         return
     }
@@ -1754,7 +1795,10 @@ private fun SharedMobileShelfDetail(
     initialIsAddingBooks: Boolean,
     initialAddBooksSource: AddBooksSource,
     onAddingBooksStateChange: (Boolean, AddBooksSource) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    breadcrumbEntries: List<SharedShelfBreadcrumbEntry> = emptyList(),
+    homeContentDescription: String = "",
+    onBreadcrumbNavigate: (SharedShelfBreadcrumbEntry) -> Unit = {},
 ) {
     var infoBook by remember { mutableStateOf<BookItem?>(null) }
     var showTagDialog by remember { mutableStateOf(false) }
@@ -1977,26 +2021,35 @@ private fun SharedMobileShelfDetail(
             }
         },
     ) { padding ->
-        if (visibleChildShelves.isEmpty() && visibleBooks.isEmpty()) {
-            Box(
-                modifier = Modifier.fillMaxSize().padding(padding),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = if (normalizedQuery.isBlank()) {
-                    readerString("shelf_empty", "This shelf is empty")
-                } else {
-                    readerString("no_results_found", "No results found for \"%1\$s\"", normalizedQuery)
-                    },
-                    style = MaterialTheme.typography.bodyLarge,
+        Column(Modifier.fillMaxSize().padding(padding)) {
+            if (breadcrumbEntries.size > 1 && normalizedQuery.isBlank()) {
+                SharedMobileShelfBreadcrumb(
+                    entries = breadcrumbEntries,
+                    onNavigate = onBreadcrumbNavigate,
+                    homeContentDescription = homeContentDescription,
+                    modifier = Modifier.padding(horizontal = 16.dp).padding(top = 4.dp),
                 )
             }
-        } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(padding),
-                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 88.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
+            if (visibleChildShelves.isEmpty() && visibleBooks.isEmpty()) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = if (normalizedQuery.isBlank()) {
+                        readerString("shelf_empty", "This shelf is empty")
+                    } else {
+                        readerString("no_results_found", "No results found for \"%1\$s\"", normalizedQuery)
+                        },
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 88.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
                 if (visibleChildShelves.isNotEmpty()) {
                     if (shelf.type == ShelfType.FOLDER) {
                         item("folder_section") {
@@ -2046,6 +2099,7 @@ private fun SharedMobileShelfDetail(
                         },
                         onTogglePinned = { onTogglePinned(book) },
                     )
+                }
                 }
             }
         }

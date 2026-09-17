@@ -111,6 +111,9 @@ fun <ShelfItem, BookItem> SharedAndroidShelfDetailScreen(
     searchFieldTestTag: String = "ShelfSearchTextField",
     sortButtonTestTag: String = "ShelfSortButton",
     modifier: Modifier = Modifier,
+    breadcrumbEntries: List<SharedShelfBreadcrumbEntry> = emptyList(),
+    homeContentDescription: String = "",
+    onBreadcrumbNavigate: (SharedShelfBreadcrumbEntry) -> Unit = {},
 ) {
     var showSortMenu by remember { mutableStateOf(false) }
     var showMoreMenu by remember { mutableStateOf(false) }
@@ -200,24 +203,34 @@ fun <ShelfItem, BookItem> SharedAndroidShelfDetailScreen(
             )
         },
     ) { padding ->
-        if (visibleShelves.isEmpty() && visibleBooks.isEmpty()) {
-            Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                Text(if (query.isBlank()) strings.emptyShelf else strings.noResults(query), style = MaterialTheme.typography.bodyLarge)
+        Column(Modifier.fillMaxSize().padding(padding)) {
+            if (breadcrumbEntries.size > 1 && query.isBlank()) {
+                SharedMobileShelfBreadcrumb(
+                    entries = breadcrumbEntries,
+                    onNavigate = onBreadcrumbNavigate,
+                    homeContentDescription = homeContentDescription,
+                    modifier = Modifier.padding(horizontal = 16.dp).padding(top = 12.dp),
+                )
             }
-        } else LazyColumn(
-            Modifier.fillMaxSize().padding(padding),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            if (visibleShelves.isNotEmpty()) {
-                if (isFolderShelf) item("folders_section") { SharedShelfSectionLabel(strings.foldersSection) }
-                items(visibleShelves, key = childKey) { childRow(it) }
+            if (visibleShelves.isEmpty() && visibleBooks.isEmpty()) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text(if (query.isBlank()) strings.emptyShelf else strings.noResults(query), style = MaterialTheme.typography.bodyLarge)
+                }
+            } else LazyColumn(
+                Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                if (visibleShelves.isNotEmpty()) {
+                    if (isFolderShelf) item("folders_section") { SharedShelfSectionLabel(strings.foldersSection) }
+                    items(visibleShelves, key = childKey) { childRow(it) }
+                }
+                if (visibleBooks.isNotEmpty() && isFolderShelf && visibleShelves.isNotEmpty()) {
+                    item("files_spacer") { Spacer(Modifier.height(4.dp)) }
+                    item("files_section") { SharedShelfSectionLabel(strings.filesSection) }
+                }
+                items(visibleBooks, key = bookKey) { bookRow(it) }
             }
-            if (visibleBooks.isNotEmpty() && isFolderShelf && visibleShelves.isNotEmpty()) {
-                item("files_spacer") { Spacer(Modifier.height(4.dp)) }
-                item("files_section") { SharedShelfSectionLabel(strings.filesSection) }
-            }
-            items(visibleBooks, key = bookKey) { bookRow(it) }
         }
     }
 }

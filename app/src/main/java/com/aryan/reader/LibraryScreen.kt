@@ -650,10 +650,14 @@ fun ShelfScreen(
                 ShelfDetailScreen(
                     shelf = currentShelf,
                     childShelves = childShelves,
+                    allShelves = shelves,
                     selectedItems = selectedItems,
                     sortOrder = sortOrder,
                     onSortOrderChange = viewModel::setSortOrder,
                     onBack = viewModel::navigateBackFromShelf,
+                    onBreadcrumbNavigate = { shelfId ->
+                        if (shelfId == null) viewModel.unselectShelf() else viewModel.navigateToShelf(shelfId)
+                    },
                     onAddBooksClick = viewModel::showAddBooksToShelf,
                     onChildShelfClick = viewModel::onShelfClick,
                     onBookClick = viewModel::onRecentFileClicked,
@@ -972,10 +976,12 @@ private fun CreateShelfDialog(onConfirm: (String) -> Unit, onDismiss: () -> Unit
 private fun ShelfDetailScreen(
     shelf: Shelf,
     childShelves: List<Shelf>,
+    allShelves: List<Shelf>,
     selectedItems: Set<RecentFileItem>,
     sortOrder: SortOrder,
     onSortOrderChange: (SortOrder) -> Unit,
     onBack: () -> Unit,
+    onBreadcrumbNavigate: (String?) -> Unit,
     onAddBooksClick: () -> Unit,
     onChildShelfClick: (Shelf) -> Unit,
     onBookClick: (RecentFileItem) -> Unit,
@@ -993,6 +999,15 @@ private fun ShelfDetailScreen(
 ) {
     val isFolderShelf = shelf.type == ShelfType.FOLDER
     val strings = sharedAndroidShelfScreenStrings()
+    val breadcrumbEntries = remember(allShelves, shelf.id) {
+        com.aryan.reader.shared.ui.genericShelfBreadcrumbPath(
+            currentShelfId = shelf.id,
+            lookup = { id -> allShelves.firstOrNull { it.id == id } },
+            idOf = { it.id },
+            nameOf = { it.name },
+            parentIdOf = { it.parentShelfId },
+        )
+    }
     com.aryan.reader.shared.ui.SharedAndroidShelfDetailScreen(
         shelfId = shelf.id,
         shelfName = shelf.name,
@@ -1048,6 +1063,9 @@ private fun ShelfDetailScreen(
         },
         sortIcon = { Icon(painterResource(R.drawable.sort), strings.sortDescription, Modifier.size(20.dp)) },
         platformBackHandler = { enabled, onBackHandler -> BackHandler(enabled = enabled, onBack = onBackHandler) },
+        breadcrumbEntries = breadcrumbEntries,
+        homeContentDescription = stringResource(R.string.tab_shelves),
+        onBreadcrumbNavigate = { entry -> onBreadcrumbNavigate(entry.id) },
     )
 }
 
