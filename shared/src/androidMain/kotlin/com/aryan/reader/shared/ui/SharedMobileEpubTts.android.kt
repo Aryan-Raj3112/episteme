@@ -69,6 +69,10 @@ private class AndroidSharedMobileEpubLocalTts(
         private set
     override var speechPitch by mutableStateOf(preferences.getFloat(PitchKey, 1f).coerceIn(0.5f, 2f))
         private set
+    private var previewSampleTextState by mutableStateOf(
+        effectiveSharedMobileTtsSampleText(preferences.getString(SampleTextKey, null))
+    )
+    override val previewSampleText: String get() = previewSampleTextState
     override var availableVoices by mutableStateOf(emptyList<SharedMobileEpubVoice>())
         private set
     override var selectedVoiceIdentifier by mutableStateOf(preferences.getString(VoiceKey, null))
@@ -166,6 +170,12 @@ private class AndroidSharedMobileEpubLocalTts(
         if (isSessionActive) restartCurrent()
     }
 
+    override fun setPreviewSampleText(text: String) {
+        val sanitized = sanitizeSharedMobileTtsSampleText(text)
+        preferences.edit().putString(SampleTextKey, sanitized).apply()
+        previewSampleTextState = effectiveSharedMobileTtsSampleText(sanitized)
+    }
+
     override fun setVoice(identifier: String?) {
         selectedVoiceIdentifier = identifier?.takeIf { candidate ->
             availableVoices.any { it.identifier == candidate }
@@ -185,7 +195,7 @@ private class AndroidSharedMobileEpubLocalTts(
         identifier?.let { id -> engine?.voices?.firstOrNull { it.name == id } }?.let { engine?.voice = it }
         engine?.setSpeechRate(speechRate)
         engine?.setPitch(speechPitch)
-        engine?.speak(PreviewText, TextToSpeech.QUEUE_FLUSH, Bundle.EMPTY, PreviewUtteranceId)
+        engine?.speak(previewSampleText, TextToSpeech.QUEUE_FLUSH, Bundle.EMPTY, PreviewUtteranceId)
     }
 
     override fun stop() {
@@ -320,7 +330,7 @@ private class AndroidSharedMobileEpubLocalTts(
         const val RateKey = "reader.tts.speechRate"
         const val PitchKey = "reader.tts.pitch"
         const val VoiceKey = "reader.tts.voiceIdentifier"
+        const val SampleTextKey = "reader.tts.previewSampleText"
         const val PreviewUtteranceId = "shared:preview"
-        const val PreviewText = "This is a sample of the selected reading voice."
     }
 }

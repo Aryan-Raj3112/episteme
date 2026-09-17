@@ -73,11 +73,16 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.edit
 import androidx.media3.common.util.UnstableApi
+import com.aryan.reader.shared.ui.SHARED_MOBILE_TTS_SAMPLE_MAX_LENGTH
+import com.aryan.reader.shared.ui.sanitizeSharedMobileTtsSampleText
 import com.aryan.reader.tts.GEMINI_TTS_SPEAKERS
 import com.aryan.reader.tts.SpeakerSamplePlayer
 import com.aryan.reader.tts.TtsCacheManager
 import com.aryan.reader.tts.TtsPlaybackManager
+import com.aryan.reader.tts.effectiveTtsPreviewSampleText
 import com.aryan.reader.tts.formatBytes
+import com.aryan.reader.tts.loadTtsPreviewSampleText
+import com.aryan.reader.tts.saveTtsPreviewSampleText
 import org.commonmark.node.ListItem
 import org.commonmark.node.Text
 import timber.log.Timber
@@ -308,6 +313,17 @@ fun DeviceVoicesTab(
 
     val isBaseMode = currentMode == TtsPlaybackManager.TtsMode.BASE
 
+    // Local-TTS voice preview text, persisted under the same key as the
+    // shared reader sheet so both stay in sync. Editing is harmless while
+    // TTS is active (only previews read it). The field always shows the
+    // effective text, so the default is visible until customized.
+    var sampleDraft by remember { mutableStateOf(effectiveTtsPreviewSampleText(context)) }
+    val sampleDefault = stringResource(R.string.tts_voice_sample_generic)
+    val hasCustomSample = loadTtsPreviewSampleText(context).isNotBlank()
+    val effectiveSample = remember(sampleDraft, sampleDefault) {
+        sanitizeSharedMobileTtsSampleText(sampleDraft).ifBlank { sampleDefault }
+    }
+
     Surface(
         color = if (isBaseMode && savedVoiceName == null) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
         shape = RoundedCornerShape(16.dp),
@@ -355,6 +371,33 @@ fun DeviceVoicesTab(
             if (isBaseMode && savedVoiceName == null) Icon(Icons.Default.Check, null, tint = MaterialTheme.colorScheme.primary)
         }
     }
+
+    Spacer(Modifier.height(16.dp))
+
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+        Text(stringResource(R.string.tts_preview_text_label), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+        TextButton(
+            onClick = {
+                saveTtsPreviewSampleText(context, "")
+                sampleDraft = effectiveTtsPreviewSampleText(context)
+            },
+            enabled = hasCustomSample || sampleDraft != sampleDefault,
+        ) {
+            Text(stringResource(R.string.action_reset))
+        }
+    }
+    OutlinedTextField(
+        value = sampleDraft,
+        onValueChange = { next ->
+            sampleDraft = next.take(SHARED_MOBILE_TTS_SAMPLE_MAX_LENGTH)
+            saveTtsPreviewSampleText(context, sampleDraft)
+        },
+        placeholder = { Text(sampleDefault) },
+        supportingText = { Text("${sampleDraft.length}/${SHARED_MOBILE_TTS_SAMPLE_MAX_LENGTH}") },
+        minLines = 2,
+        maxLines = 3,
+        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+    )
 
     androidx.compose.material3.ExposedDropdownMenuBox(
         expanded = languageMenuExpanded,
@@ -417,7 +460,7 @@ fun DeviceVoicesTab(
                         onClick = {
                             ttsEngine?.apply {
                                 this.voice = voice
-                                speak(context.getString(R.string.tts_voice_sample_generic), TextToSpeech.QUEUE_FLUSH, null, "sample_${voice.name}")
+                                speak(effectiveSample, TextToSpeech.QUEUE_FLUSH, null, "sample_${voice.name}")
                             }
                         }
                     ) {

@@ -55,6 +55,8 @@ internal class SharedMobileEpubTtsAdapter(context: Context) : SharedMobileEpubLo
         private set
     override var speechPitch by mutableStateOf(loadTtsPitch(appContext))
         private set
+    private var previewSampleTextState by mutableStateOf(effectiveTtsPreviewSampleText(appContext))
+    override val previewSampleText: String get() = previewSampleTextState
     override var availableVoices by mutableStateOf(emptyList<SharedMobileEpubVoice>())
         private set
     override var selectedVoiceIdentifier by mutableStateOf(loadNativeVoice(appContext))
@@ -148,6 +150,11 @@ internal class SharedMobileEpubTtsAdapter(context: Context) : SharedMobileEpubLo
         controller.setPlaybackParameters(speechRate, speechPitch)
     }
 
+    override fun setPreviewSampleText(text: String) {
+        saveTtsPreviewSampleText(appContext, text)
+        previewSampleTextState = effectiveTtsPreviewSampleText(appContext)
+    }
+
     override fun setVoice(identifier: String?) {
         selectedVoiceIdentifier = identifier?.takeIf { it.isNotBlank() }
         appContext.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE).edit().apply {
@@ -182,7 +189,7 @@ internal class SharedMobileEpubTtsAdapter(context: Context) : SharedMobileEpubLo
                 @Suppress("OVERRIDE_DEPRECATION")
                 override fun onError(utteranceId: String?) = releasePreviewEngine()
             })
-            engine.speak(PreviewText, TextToSpeech.QUEUE_FLUSH, Bundle.EMPTY, PreviewId)
+            engine.speak(previewSampleText, TextToSpeech.QUEUE_FLUSH, Bundle.EMPTY, PreviewId)
         }
     }
 
@@ -209,7 +216,6 @@ internal class SharedMobileEpubTtsAdapter(context: Context) : SharedMobileEpubLo
 
     private companion object {
         const val PreviewId = "shared-reader-preview"
-        const val PreviewText = "This is a sample of the selected reading voice."
     }
 }
 

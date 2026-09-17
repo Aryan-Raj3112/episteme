@@ -282,6 +282,7 @@ internal actual fun rememberSharedMobileEpubLocalTts(): SharedMobileEpubLocalTts
 private const val IosReaderTtsRateKey = "reader.tts.speechRate"
 private const val IosReaderTtsPitchKey = "reader.tts.pitch"
 private const val IosReaderTtsVoiceKey = "reader.tts.voiceIdentifier"
+private const val IosReaderTtsSampleTextKey = "reader.tts.previewSampleText"
 
 private fun NSUserDefaults.readerTtsFloat(key: String, fallback: Float): Float {
     return if (objectForKey(key) == null) fallback else doubleForKey(key).toFloat()
@@ -349,6 +350,10 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
         preferences.readerTtsFloat(IosReaderTtsPitchKey, 1f).coerceIn(0.5f, 2f)
     )
         private set
+    private var previewSampleTextState by mutableStateOf(
+        effectiveSharedMobileTtsSampleText(preferences.stringForKey(IosReaderTtsSampleTextKey))
+    )
+    override val previewSampleText: String get() = previewSampleTextState
     override val availableVoices: List<SharedMobileEpubVoice> =
         AVSpeechSynthesisVoice.speechVoices()
             .mapNotNull { it as? AVSpeechSynthesisVoice }
@@ -447,6 +452,12 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
         updateNowPlaying()
     }
 
+    override fun setPreviewSampleText(text: String) {
+        val sanitized = sanitizeSharedMobileTtsSampleText(text)
+        preferences.setObject(sanitized, IosReaderTtsSampleTextKey)
+        previewSampleTextState = effectiveSharedMobileTtsSampleText(sanitized)
+    }
+
     override fun setVoice(identifier: String?) {
         selectedVoiceIdentifier = identifier
             ?.takeIf { candidate -> availableVoices.any { it.identifier == candidate } }
@@ -461,7 +472,7 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
     override fun previewVoice(identifier: String?) {
         previewSynthesizer.stopSpeakingAtBoundary(AVSpeechBoundary.AVSpeechBoundaryImmediate)
         val utterance = AVSpeechUtterance(
-            string = "This is a sample of the selected reading voice."
+            string = previewSampleText
         ).apply {
             rate = (0.5f * speechRate).coerceIn(0.1f, 1f)
             pitchMultiplier = speechPitch

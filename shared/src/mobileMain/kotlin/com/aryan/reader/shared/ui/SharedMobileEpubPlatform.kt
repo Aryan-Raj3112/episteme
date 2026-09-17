@@ -198,6 +198,27 @@ fun sharedMobileEpubVoiceSubtitle(voice: SharedMobileEpubVoice, qualityLabel: St
     return "${voice.language} • $qualityLabel"
 }
 
+/** Default device-voice preview text. Matches Android's `tts_voice_sample_generic`. */
+const val SHARED_MOBILE_TTS_SAMPLE_DEFAULT = "This is a voice sample."
+
+/**
+ * Max characters for the custom preview text. Previews speak the full text,
+ * so the cap keeps them snappy and safely under engine input limits.
+ */
+const val SHARED_MOBILE_TTS_SAMPLE_MAX_LENGTH = 200
+
+/**
+ * Trims, collapses whitespace runs, and caps length. Blank is preserved as
+ * blank so clearing the field mid-edit doesn't snap back; use
+ * [effectiveSharedMobileTtsSampleText] for the speakable value.
+ */
+fun sanitizeSharedMobileTtsSampleText(raw: String?): String =
+    raw.orEmpty().trim().replace(Regex("\\s+"), " ").take(SHARED_MOBILE_TTS_SAMPLE_MAX_LENGTH)
+
+/** Speakable preview text; never blank (falls back to [SHARED_MOBILE_TTS_SAMPLE_DEFAULT]). */
+fun effectiveSharedMobileTtsSampleText(stored: String?): String =
+    sanitizeSharedMobileTtsSampleText(stored).ifBlank { SHARED_MOBILE_TTS_SAMPLE_DEFAULT }
+
 interface SharedMobileEpubLocalTts {
     val state: SharedMobileEpubLocalTtsState
     /** Remains true while moving between document pages, even when no utterance is active. */
@@ -206,6 +227,8 @@ interface SharedMobileEpubLocalTts {
     val progress: ReaderTtsProgress
     val speechRate: Float
     val speechPitch: Float
+    /** Effective voice-preview text; never blank (falls back to the default). */
+    val previewSampleText: String
     val availableVoices: List<SharedMobileEpubVoice>
     val selectedVoiceIdentifier: String?
     /** Non-null when the last playback attempt was interrupted or failed unexpectedly. */
@@ -226,6 +249,8 @@ interface SharedMobileEpubLocalTts {
     fun skipPrevious()
     fun skipNext()
     fun setSpeechParameters(rate: Float, pitch: Float)
+    /** Persists custom preview text; blank clears back to the default. */
+    fun setPreviewSampleText(text: String)
     fun setVoice(identifier: String?)
     fun previewVoice(identifier: String?)
     fun stop()

@@ -86,6 +86,32 @@ class SharedMobileEpubVoicesTest {
     }
 
     @Test
+    fun `sample text falls back to default when blank`() {
+        assertEquals(SHARED_MOBILE_TTS_SAMPLE_DEFAULT, effectiveSharedMobileTtsSampleText(null))
+        assertEquals(SHARED_MOBILE_TTS_SAMPLE_DEFAULT, effectiveSharedMobileTtsSampleText("   "))
+        assertEquals(
+            SHARED_MOBILE_TTS_SAMPLE_DEFAULT,
+            effectiveSharedMobileTtsSampleText(sanitizeSharedMobileTtsSampleText("  ")),
+        )
+    }
+
+    @Test
+    fun `sample text sanitizes whitespace and caps length`() {
+        assertEquals("", sanitizeSharedMobileTtsSampleText("   "))
+        assertEquals("hello world next", sanitizeSharedMobileTtsSampleText("  hello   world\n\tnext "))
+        assertEquals("hello world next", effectiveSharedMobileTtsSampleText("  hello   world\n\tnext "))
+        val overlong = "a".repeat(SHARED_MOBILE_TTS_SAMPLE_MAX_LENGTH + 50)
+        assertEquals(SHARED_MOBILE_TTS_SAMPLE_MAX_LENGTH, sanitizeSharedMobileTtsSampleText(overlong).length)
+        assertEquals(SHARED_MOBILE_TTS_SAMPLE_MAX_LENGTH, effectiveSharedMobileTtsSampleText(overlong).length)
+    }
+
+    @Test
+    fun `sample text preserves any language`() {
+        assertEquals("नमस्ते दुनिया", effectiveSharedMobileTtsSampleText("नमस्ते दुनिया"))
+        assertEquals("这是语音示例。", effectiveSharedMobileTtsSampleText("这是语音示例。"))
+    }
+
+    @Test
     fun `subtitle only carries quality suffix for non-standard tiers`() {
         assertEquals(
             "English (United States)",

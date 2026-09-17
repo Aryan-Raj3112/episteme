@@ -1578,6 +1578,7 @@
     <!-- Button label. %1$s = selected cloud TTS voice identifier. Example: "Clear Cache for Kore". -->
     <string name="tts_clear_cache_for_voice">Clear Cache for %1$s</string>
     <string name="tts_voice_sample_generic">This is a voice sample.</string>
+    <string name="tts_preview_text_label">Voice preview text</string>
 
     <!-- AI hub and Pro credits. AI = Artificial Intelligence. -->
     <string name="ai_features_title">AI Features</string>

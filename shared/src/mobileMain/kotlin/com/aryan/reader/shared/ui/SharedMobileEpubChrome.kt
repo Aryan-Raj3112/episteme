@@ -1404,6 +1404,39 @@ internal fun SharedMobileReaderTtsSettingsSheet(
                 }
                 HorizontalDivider()
             }
+            // Local TTS only: custom preview text for voice samples. Editing
+            // is harmless during a session (only previewVoice reads it), so
+            // unlike voice selection it is never locked.
+            var sampleDraft by remember { mutableStateOf(tts.previewSampleText) }
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("Voice preview text", fontWeight = FontWeight.SemiBold)
+                    TextButton(
+                        onClick = {
+                            tts.setPreviewSampleText("")
+                            sampleDraft = tts.previewSampleText
+                        },
+                        enabled = tts.previewSampleText != SHARED_MOBILE_TTS_SAMPLE_DEFAULT ||
+                            sampleDraft != SHARED_MOBILE_TTS_SAMPLE_DEFAULT,
+                    ) { Text("Reset") }
+                }
+                OutlinedTextField(
+                    value = sampleDraft,
+                    onValueChange = { next ->
+                        sampleDraft = next.take(SHARED_MOBILE_TTS_SAMPLE_MAX_LENGTH)
+                        tts.setPreviewSampleText(sampleDraft)
+                    },
+                    placeholder = { Text(SHARED_MOBILE_TTS_SAMPLE_DEFAULT) },
+                    supportingText = { Text("${sampleDraft.length}/${SHARED_MOBILE_TTS_SAMPLE_MAX_LENGTH}") },
+                    minLines = 2,
+                    maxLines = 3,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
             Box {
                 Surface(
                     modifier = Modifier.fillMaxWidth().clickable(enabled = !ttsVoiceLocked) { showVoices = true },
