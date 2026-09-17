@@ -10623,6 +10623,9 @@ private fun PdfViewerPaginationPage(
     val currentEraserStrokeWidthState by rememberUpdatedState(
         currentEraserStrokeWidth
     )
+    val currentIsHighlighterState by rememberUpdatedState(currentIsHighlighter)
+    val currentSnapEnabledState by rememberUpdatedState(currentSnapEnabled)
+    val currentCalculateSnappedPoint by rememberUpdatedState(calculateSnappedPoint)
 
     @Suppress("ControlFlowWithEmptyBody") val onDrawPagination =
         remember(pageIndex) {
@@ -10656,9 +10659,9 @@ private fun PdfViewerPaginationPage(
                             allAnnotations + (pageIndex to newList)
                     }
                 } else {
-                    if (currentIsHighlighter && currentSnapEnabled) {
+                    if (currentIsHighlighterState && currentSnapEnabledState) {
                         val startPoint = drawingState.currentAnnotation?.points?.firstOrNull()
-                        val effectivePoint = calculateSnappedPoint(pageIndex, point, startPoint)
+                        val effectivePoint = currentCalculateSnappedPoint(pageIndex, point, startPoint)
                         drawingState.updateDrag(effectivePoint.copy(timestamp = System.currentTimeMillis()))
                     } else {
                         drawingState.onDraw(point.copy(timestamp = System.currentTimeMillis()))

@@ -113,6 +113,27 @@ class PdfReaderSettingsAndSharedModelsTest {
     }
 
     @Test
+    fun `pagination draw handler stays live to straight-line toggle`() {
+        val source = readSourceFile("src/main/java/com/aryan/reader/pdf/PdfViewerScreen.kt")
+
+        assertTrue(source.contains("currentIsHighlighterState by rememberUpdatedState(currentIsHighlighter)"))
+        assertTrue(source.contains("currentSnapEnabledState by rememberUpdatedState(currentSnapEnabled)"))
+        assertTrue(source.contains("if (currentIsHighlighterState && currentSnapEnabledState)"))
+        // Scope the stale check to the pagination handler: the vertical handler
+        // legitimately uses the plain flags inside a remember keyed on them.
+        val paginationBlock = source.substringAfter("val onDrawPagination")
+        assertFalse(paginationBlock.contains("if (currentIsHighlighter && currentSnapEnabled)"))
+    }
+
+    @Test
+    fun `annotation settings updates are atomic read-modify-write`() {
+        val source = readSourceFile("src/main/java/com/aryan/reader/pdf/data/AnnotationSettingsRepository.kt")
+
+        assertTrue(source.contains("updateAndGet"))
+        assertFalse(source.contains("_settings.value.copy"))
+    }
+
+    @Test
     fun `annotation bridge keeps tool color size and snap observable`() {
         val source = readSourceFile("src/main/java/com/aryan/reader/pdf/PdfViewerScreen.kt")
 
