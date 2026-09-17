@@ -4456,6 +4456,8 @@ private fun PdfViewerScreenOverlays(surfaceState: PdfViewerSurfaceState) {
                     userHighlights = visibleUserHighlights,
                     currentPage = currentPage,
                     totalPages = totalDisplayPages,
+                    virtualPages = virtualPages,
+                    isDrawerOpen = drawerState.isOpen,
                     isTabsEnabled = canShowPdfTabs,
                     openTabs = openTabs,
                     activeTabBookId = activeTabBookId,
