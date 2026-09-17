@@ -283,6 +283,7 @@ private const val IosReaderTtsRateKey = "reader.tts.speechRate"
 private const val IosReaderTtsPitchKey = "reader.tts.pitch"
 private const val IosReaderTtsVoiceKey = "reader.tts.voiceIdentifier"
 private const val IosReaderTtsSampleTextKey = "reader.tts.previewSampleText"
+private const val IosReaderTtsFavoritesKey = "reader.tts.favoriteVoices"
 
 private fun NSUserDefaults.readerTtsFloat(key: String, fallback: Float): Float {
     return if (objectForKey(key) == null) fallback else doubleForKey(key).toFloat()
@@ -306,6 +307,14 @@ private fun iosTtsLanguageDisplayName(languageTag: String): String {
     }.getOrNull()?.takeIf { it.isNotBlank() }
     return display ?: trimmed
 }
+
+private fun iosTtsFavoriteVoices(preferences: NSUserDefaults): Set<String> =
+    runCatching { preferences.stringArrayForKey(IosReaderTtsFavoritesKey) as? List<*> }
+        .getOrNull()
+        .orEmpty()
+        .mapNotNull { it as? String }
+        .filter { it.isNotBlank() }
+        .toSet()
 
 private fun iosTtsVoiceQuality(voice: AVSpeechSynthesisVoice): SharedMobileEpubVoiceQuality {
     val quality = runCatching { voice.quality }.getOrNull()
@@ -354,6 +363,8 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
         effectiveSharedMobileTtsSampleText(preferences.stringForKey(IosReaderTtsSampleTextKey))
     )
     override val previewSampleText: String get() = previewSampleTextState
+    private var favoriteVoiceState by mutableStateOf(iosTtsFavoriteVoices(preferences))
+    override val favoriteVoiceIdentifiers: Set<String> get() = favoriteVoiceState
     override val availableVoices: List<SharedMobileEpubVoice> =
         AVSpeechSynthesisVoice.speechVoices()
             .mapNotNull { it as? AVSpeechSynthesisVoice }
@@ -456,6 +467,12 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
         val sanitized = sanitizeSharedMobileTtsSampleText(text)
         preferences.setObject(sanitized, IosReaderTtsSampleTextKey)
         previewSampleTextState = effectiveSharedMobileTtsSampleText(sanitized)
+    }
+
+    override fun toggleFavoriteVoice(identifier: String) {
+        if (identifier.isBlank()) return
+        favoriteVoiceState = toggleSharedMobileTtsVoiceFavorite(favoriteVoiceState, identifier)
+        preferences.setObject(favoriteVoiceState.toList(), IosReaderTtsFavoritesKey)
     }
 
     override fun setVoice(identifier: String?) {

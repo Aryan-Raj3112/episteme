@@ -112,6 +112,39 @@ class SharedMobileEpubVoicesTest {
     }
 
     @Test
+    fun `favorite toggle adds then removes identifiers`() {
+        assertEquals(setOf("a"), toggleSharedMobileTtsVoiceFavorite(emptySet(), "a"))
+        assertEquals(setOf("a", "b"), toggleSharedMobileTtsVoiceFavorite(setOf("a"), "b"))
+        assertEquals(setOf("b"), toggleSharedMobileTtsVoiceFavorite(setOf("a", "b"), "a"))
+        assertEquals(emptySet<String>(), toggleSharedMobileTtsVoiceFavorite(setOf("a"), "a"))
+    }
+
+    @Test
+    fun `favorites filter composes with language and quality`() {
+        val voices = listOf(
+            voice("A", "English", SharedMobileEpubVoiceQuality.STANDARD),
+            voice("B", "English", SharedMobileEpubVoiceQuality.ENHANCED),
+            voice("C", "German", SharedMobileEpubVoiceQuality.STANDARD),
+        )
+        val favorites = setOf(voices[1].identifier, voices[2].identifier)
+        assertEquals(
+            listOf("B", "C"),
+            voices.filteredForTtsDisplay("All", "All", null, favoritesOnly = true, favorites = favorites)
+                .map { it.name },
+        )
+        assertEquals(
+            listOf("B"),
+            voices.filteredForTtsDisplay("English", "All", null, favoritesOnly = true, favorites = favorites)
+                .map { it.name },
+        )
+        assertTrue(
+            voices.filteredForTtsDisplay("All", "All", null, favoritesOnly = true).isEmpty(),
+        )
+        // Default params preserve the unfiltered behavior.
+        assertEquals(3, voices.filteredForTtsDisplay("All", "All", null).size)
+    }
+
+    @Test
     fun `subtitle only carries quality suffix for non-standard tiers`() {
         assertEquals(
             "English (United States)",

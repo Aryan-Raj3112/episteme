@@ -1579,6 +1579,10 @@
     <string name="tts_clear_cache_for_voice">Clear Cache for %1$s</string>
     <string name="tts_voice_sample_generic">This is a voice sample.</string>
     <string name="tts_preview_text_label">Voice preview text</string>
+    <string name="tts_favorites">Favorites</string>
+    <string name="tts_no_favorite_voices">No favorite voices yet. Tap the star on any voice to add it here.</string>
+    <string name="tts_add_favorite">Add to favorites</string>
+    <string name="tts_remove_favorite">Remove from favorites</string>
 
     <!-- AI hub and Pro credits. AI = Artificial Intelligence. -->
     <string name="ai_features_title">AI Features</string>

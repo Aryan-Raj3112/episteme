@@ -48,6 +48,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Ai
 import androidx.compose.material.icons.filled.Check
@@ -1134,8 +1135,16 @@ internal fun SharedMobileReaderTtsSettingsSheet(
     // "All" instead of filtering everything out.
     val effectiveLanguage = selectedLanguage.takeIf { it in voiceLanguages } ?: allLanguagesLabel
     val effectiveQuality = selectedQuality.takeIf { it in presentQualities }
-    val filteredVoices = remember(tts.availableVoices, effectiveLanguage, effectiveQuality) {
-        tts.availableVoices.filteredForTtsDisplay(effectiveLanguage, allLanguagesLabel, effectiveQuality)
+    var favoritesOnly by remember { mutableStateOf(false) }
+    val favoriteIds = tts.favoriteVoiceIdentifiers
+    val filteredVoices = remember(tts.availableVoices, effectiveLanguage, effectiveQuality, favoritesOnly, favoriteIds) {
+        tts.availableVoices.filteredForTtsDisplay(
+            effectiveLanguage,
+            allLanguagesLabel,
+            effectiveQuality,
+            favoritesOnly,
+            favoriteIds,
+        )
     }
     // Android benchmark (AndroidTtsSettings.kt:153/239/317/372/409/415): voice
     // selection and previews freeze while a session is active.
@@ -1469,6 +1478,27 @@ internal fun SharedMobileReaderTtsSettingsSheet(
                     onDismissRequest = { showVoices = false },
                     modifier = Modifier.heightIn(max = 360.dp)
                 ) {
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                if (favoriteIds.isNotEmpty()) "Favorites only (${favoriteIds.size})"
+                                else "Favorites only"
+                            )
+                        },
+                        leadingIcon = {
+                            Icon(
+                                Icons.Default.Star,
+                                contentDescription = null,
+                                tint = if (favoritesOnly) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        },
+                        trailingIcon = if (favoritesOnly) {
+                            { Icon(Icons.Default.Check, contentDescription = null) }
+                        } else null,
+                        onClick = { favoritesOnly = !favoritesOnly },
+                    )
+                    HorizontalDivider()
                     if (voiceLanguages.size > 2) {
                         var showLanguages by remember { mutableStateOf(false) }
                         Box {
@@ -1551,7 +1581,21 @@ internal fun SharedMobileReaderTtsSettingsSheet(
                             }
                         }
                     )
+                    if (filteredVoices.isEmpty()) {
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    if (favoritesOnly) "No favorite voices yet — tap the star on any voice"
+                                    else "No voices match these filters",
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            },
+                            enabled = false,
+                            onClick = {},
+                        )
+                    }
                     filteredVoices.forEach { voice ->
+                        val isFavorite = voice.identifier in favoriteIds
                         DropdownMenuItem(
                             text = {
                                 Column {
@@ -1568,8 +1612,22 @@ internal fun SharedMobileReaderTtsSettingsSheet(
                             enabled = !ttsVoiceLocked,
                             onClick = { tts.setVoice(voice.identifier); showVoices = false },
                             trailingIcon = {
-                                IconButton(onClick = { tts.previewVoice(voice.identifier) }, enabled = !ttsVoiceLocked) {
-                                    Icon(Icons.Default.PlayArrow, contentDescription = "Preview ${voice.name}")
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    IconButton(onClick = { tts.toggleFavoriteVoice(voice.identifier) }) {
+                                        Icon(
+                                            Icons.Default.Star,
+                                            contentDescription = if (isFavorite) {
+                                                "Remove ${voice.name} from favorites"
+                                            } else {
+                                                "Add ${voice.name} to favorites"
+                                            },
+                                            tint = if (isFavorite) MaterialTheme.colorScheme.primary
+                                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                    IconButton(onClick = { tts.previewVoice(voice.identifier) }, enabled = !ttsVoiceLocked) {
+                                        Icon(Icons.Default.PlayArrow, contentDescription = "Preview ${voice.name}")
+                                    }
                                 }
                             }
                         )

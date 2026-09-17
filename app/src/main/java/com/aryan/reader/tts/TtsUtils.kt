@@ -119,6 +119,19 @@ internal fun saveTtsPreviewSampleText(context: Context, text: String) {
 internal fun effectiveTtsPreviewSampleText(context: Context): String =
     loadTtsPreviewSampleText(context).ifBlank { context.getString(R.string.tts_voice_sample_generic) }
 
+/** Starred voice identifiers, shared by the legacy sheet and the shared reader sheet. */
+internal const val TTS_FAVORITE_VOICES_KEY = "reader.tts.favoriteVoices"
+
+internal fun loadTtsFavoriteVoices(context: Context): Set<String> {
+    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+    return prefs.getStringSet(TTS_FAVORITE_VOICES_KEY, emptySet()).orEmpty().toSet()
+}
+
+internal fun saveTtsFavoriteVoices(context: Context, favorites: Set<String>) {
+    val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+    prefs.edit { putStringSet(TTS_FAVORITE_VOICES_KEY, favorites) }
+}
+
 data class TtsChapterCacheInfo(
     val chapterTitle: String,
     val chunkCount: Int,

@@ -179,11 +179,18 @@ fun List<SharedMobileEpubVoice>.filteredForTtsDisplay(
     selectedLanguage: String?,
     allLanguagesLabel: String,
     selectedQuality: SharedMobileEpubVoiceQuality?,
+    favoritesOnly: Boolean = false,
+    favorites: Set<String> = emptySet(),
 ): List<SharedMobileEpubVoice> =
     filter { voice ->
         (selectedLanguage == null || selectedLanguage == allLanguagesLabel || voice.language == selectedLanguage) &&
-            (selectedQuality == null || voice.quality == selectedQuality)
+            (selectedQuality == null || voice.quality == selectedQuality) &&
+            (!favoritesOnly || voice.identifier in favorites)
     }
+
+/** Adds the identifier when missing, removes it when present. */
+fun toggleSharedMobileTtsVoiceFavorite(favorites: Set<String>, identifier: String): Set<String> =
+    if (identifier in favorites) favorites - identifier else favorites + identifier
 
 /**
  * List subtitle for a device voice. The quality suffix only appears for
@@ -231,6 +238,8 @@ interface SharedMobileEpubLocalTts {
     val previewSampleText: String
     val availableVoices: List<SharedMobileEpubVoice>
     val selectedVoiceIdentifier: String?
+    /** Identifiers the user starred; survives engine/voice-list changes. */
+    val favoriteVoiceIdentifiers: Set<String>
     /** Non-null when the last playback attempt was interrupted or failed unexpectedly. */
     val errorMessage: String?
     /** Increments only when every chunk finishes naturally; explicit stop does not increment it. */
@@ -251,6 +260,8 @@ interface SharedMobileEpubLocalTts {
     fun setSpeechParameters(rate: Float, pitch: Float)
     /** Persists custom preview text; blank clears back to the default. */
     fun setPreviewSampleText(text: String)
+    /** Stars/unstarts a voice; persists the updated set. */
+    fun toggleFavoriteVoice(identifier: String)
     fun setVoice(identifier: String?)
     fun previewVoice(identifier: String?)
     fun stop()

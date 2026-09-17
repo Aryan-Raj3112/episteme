@@ -22,6 +22,7 @@ import com.aryan.reader.shared.ui.SharedMobileEpubLocalTtsState
 import com.aryan.reader.shared.ui.SharedMobileEpubVoice
 import com.aryan.reader.shared.ui.sharedMobileEpubVoiceQualityForAndroidQuality
 import com.aryan.reader.shared.ui.sortedForTtsDisplay
+import com.aryan.reader.shared.ui.toggleSharedMobileTtsVoiceFavorite
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -57,6 +58,8 @@ internal class SharedMobileEpubTtsAdapter(context: Context) : SharedMobileEpubLo
         private set
     private var previewSampleTextState by mutableStateOf(effectiveTtsPreviewSampleText(appContext))
     override val previewSampleText: String get() = previewSampleTextState
+    private var favoriteVoiceState by mutableStateOf(loadTtsFavoriteVoices(appContext))
+    override val favoriteVoiceIdentifiers: Set<String> get() = favoriteVoiceState
     override var availableVoices by mutableStateOf(emptyList<SharedMobileEpubVoice>())
         private set
     override var selectedVoiceIdentifier by mutableStateOf(loadNativeVoice(appContext))
@@ -153,6 +156,12 @@ internal class SharedMobileEpubTtsAdapter(context: Context) : SharedMobileEpubLo
     override fun setPreviewSampleText(text: String) {
         saveTtsPreviewSampleText(appContext, text)
         previewSampleTextState = effectiveTtsPreviewSampleText(appContext)
+    }
+
+    override fun toggleFavoriteVoice(identifier: String) {
+        if (identifier.isBlank()) return
+        favoriteVoiceState = toggleSharedMobileTtsVoiceFavorite(favoriteVoiceState, identifier)
+        saveTtsFavoriteVoices(appContext, favoriteVoiceState)
     }
 
     override fun setVoice(identifier: String?) {
