@@ -129,11 +129,74 @@ internal expect fun shareSharedMobileEpubImage(bytes: ByteArray, fileName: Strin
 /** Platform-backed device speech remains separate from shared cloud TTS. */
 enum class SharedMobileEpubLocalTtsState { IDLE, SPEAKING, PAUSED }
 
+/**
+ * Device TTS voice tier, normalized across platforms.
+ *
+ * Android exposes a 5-step `Voice.getQuality` int while
+ * iOS exposes default/enhanced/premium `AVSpeechSynthesisVoice.quality`.
+ * Both collapse to these three buckets so the shared sheet can offer one
+ * extra (quality) filter on top of the Android-benchmark language filter.
+ */
+enum class SharedMobileEpubVoiceQuality { STANDARD, ENHANCED, PREMIUM }
+
 data class SharedMobileEpubVoice(
     val identifier: String,
     val name: String,
-    val language: String
+    /** Localized display name, e.g. "English (United States)" — never the raw BCP-47 tag. */
+    val language: String,
+    /** Raw BCP-47 tag, e.g. "en-US". Empty when the platform did not report one. */
+    val languageTag: String = "",
+    val quality: SharedMobileEpubVoiceQuality = SharedMobileEpubVoiceQuality.STANDARD,
 )
+
+/** Android benchmark quality buckets: very-high ≈ premium, high ≈ enhanced. */
+fun sharedMobileEpubVoiceQualityForAndroidQuality(quality: Int): SharedMobileEpubVoiceQuality {
+    // android.speech.tts.Voice.QUALITY_* are 100/200/300/400/500; avoid a
+    // hard framework import here so this stays pure and unit-testable.
+    return when {
+        quality >= 500 -> SharedMobileEpubVoiceQuality.PREMIUM
+        quality >= 400 -> SharedMobileEpubVoiceQuality.ENHANCED
+        else -> SharedMobileEpubVoiceQuality.STANDARD
+    }
+}
+
+fun List<SharedMobileEpubVoice>.sortedForTtsDisplay(): List<SharedMobileEpubVoice> =
+    sortedWith(compareBy(SharedMobileEpubVoice::language, SharedMobileEpubVoice::name, SharedMobileEpubVoice::quality))
+
+fun sharedMobileEpubVoiceLanguageOptions(
+    voices: List<SharedMobileEpubVoice>,
+    allLabel: String,
+): List<String> =
+    listOf(allLabel) +
+        voices.map { it.language }.filter { it.isNotBlank() }.distinct().sorted()
+
+fun sharedMobileEpubVoiceQualityOptions(
+    voices: List<SharedMobileEpubVoice>,
+): List<SharedMobileEpubVoiceQuality> =
+    SharedMobileEpubVoiceQuality.entries.filter { tier -> voices.any { it.quality == tier } }
+
+fun List<SharedMobileEpubVoice>.filteredForTtsDisplay(
+    selectedLanguage: String?,
+    allLanguagesLabel: String,
+    selectedQuality: SharedMobileEpubVoiceQuality?,
+): List<SharedMobileEpubVoice> =
+    filter { voice ->
+        (selectedLanguage == null || selectedLanguage == allLanguagesLabel || voice.language == selectedLanguage) &&
+            (selectedQuality == null || voice.quality == selectedQuality)
+    }
+
+/**
+ * List subtitle for a device voice. The quality suffix only appears for
+ * non-standard tiers so the common case stays a clean "Name / Language"
+ * row matching the Android benchmark.
+ */
+fun sharedMobileEpubVoiceSubtitle(voice: SharedMobileEpubVoice, qualityLabel: String?): String {
+    if (voice.quality == SharedMobileEpubVoiceQuality.STANDARD || qualityLabel.isNullOrBlank()) {
+        return voice.language
+    }
+    if (voice.language.isBlank()) return qualityLabel
+    return "${voice.language} • $qualityLabel"
+}
 
 interface SharedMobileEpubLocalTts {
     val state: SharedMobileEpubLocalTtsState

@@ -243,8 +243,19 @@ private class AndroidSharedMobileEpubLocalTts(
 
     private fun refreshVoices() {
         availableVoices = engine?.voices.orEmpty()
-            .map { SharedMobileEpubVoice(it.name, it.name, it.locale?.displayName.orEmpty()) }
-            .sortedWith(compareBy(SharedMobileEpubVoice::language, SharedMobileEpubVoice::name))
+            .map { voice ->
+                val locale = voice.locale
+                SharedMobileEpubVoice(
+                    identifier = voice.name,
+                    name = voice.name,
+                    language = locale?.displayName?.takeIf { it.isNotBlank() }
+                        ?: locale?.toLanguageTag()?.takeIf { it.isNotBlank() }
+                        ?: voice.name,
+                    languageTag = runCatching { locale?.toLanguageTag().orEmpty() }.getOrDefault(""),
+                    quality = sharedMobileEpubVoiceQualityForAndroidQuality(voice.quality),
+                )
+            }
+            .sortedForTtsDisplay()
         if (selectedVoiceIdentifier !in availableVoices.map { it.identifier }.toSet()) {
             selectedVoiceIdentifier = null
         }

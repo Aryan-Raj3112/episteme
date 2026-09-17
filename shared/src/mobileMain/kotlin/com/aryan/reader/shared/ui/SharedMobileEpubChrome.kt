@@ -1092,6 +1092,14 @@ private fun SharedMobileEpubTtsOverlaySizeControls(
     }
 }
 
+@Composable
+private fun sharedMobileEpubVoiceQualityLabel(tier: SharedMobileEpubVoiceQuality): String =
+    when (tier) {
+        SharedMobileEpubVoiceQuality.STANDARD -> readerString("tts_voice_quality_standard", "Standard")
+        SharedMobileEpubVoiceQuality.ENHANCED -> readerString("tts_voice_quality_enhanced", "Enhanced")
+        SharedMobileEpubVoiceQuality.PREMIUM -> readerString("tts_voice_quality_premium", "Premium")
+    }
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun SharedMobileReaderTtsSettingsSheet(
@@ -1110,16 +1118,24 @@ internal fun SharedMobileReaderTtsSettingsSheet(
     var showCloudVoices by remember { mutableStateOf(false) }
     val selectedVoice = tts.availableVoices.firstOrNull { it.identifier == tts.selectedVoiceIdentifier }
     // Android benchmark (AndroidTtsSettings.kt:298-307/359-392): language
-    // filter over the device voice list.
+    // filter over the device voice list, plus a shared quality filter fed by
+    // Android Voice.getQuality and iOS AVSpeechSynthesisVoice.quality.
     val allLanguagesLabel = readerString("filter_all", "All")
+    val allQualitiesLabel = readerString("filter_all", "All")
     var selectedLanguage by remember { mutableStateOf(allLanguagesLabel) }
-    val voiceLanguages = remember(tts.availableVoices) {
-        listOf(allLanguagesLabel) +
-            tts.availableVoices.map { it.language }.filter { it.isNotBlank() }.distinct().sorted()
+    var selectedQuality by remember { mutableStateOf<SharedMobileEpubVoiceQuality?>(null) }
+    val voiceLanguages = remember(tts.availableVoices, allLanguagesLabel) {
+        sharedMobileEpubVoiceLanguageOptions(tts.availableVoices, allLanguagesLabel)
     }
-    val filteredVoices = remember(tts.availableVoices, selectedLanguage) {
-        if (selectedLanguage == allLanguagesLabel) tts.availableVoices
-        else tts.availableVoices.filter { it.language == selectedLanguage }
+    val presentQualities = remember(tts.availableVoices) {
+        sharedMobileEpubVoiceQualityOptions(tts.availableVoices)
+    }
+    // The Android engine binds async, so a stale selection must fall back to
+    // "All" instead of filtering everything out.
+    val effectiveLanguage = selectedLanguage.takeIf { it in voiceLanguages } ?: allLanguagesLabel
+    val effectiveQuality = selectedQuality.takeIf { it in presentQualities }
+    val filteredVoices = remember(tts.availableVoices, effectiveLanguage, effectiveQuality) {
+        tts.availableVoices.filteredForTtsDisplay(effectiveLanguage, allLanguagesLabel, effectiveQuality)
     }
     // Android benchmark (AndroidTtsSettings.kt:153/239/317/372/409/415): voice
     // selection and previews freeze while a session is active.
@@ -1402,7 +1418,12 @@ internal fun SharedMobileReaderTtsSettingsSheet(
                         Column(Modifier.weight(1f)) {
                             Text(selectedVoice?.name ?: "System default", fontWeight = FontWeight.SemiBold)
                             Text(
-                                selectedVoice?.language ?: "Uses the voice selected by iOS",
+                                selectedVoice?.let { voice ->
+                                    sharedMobileEpubVoiceSubtitle(
+                                        voice,
+                                        sharedMobileEpubVoiceQualityLabel(voice.quality),
+                                    )
+                                } ?: "Uses the voice selected by iOS",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -1419,7 +1440,7 @@ internal fun SharedMobileReaderTtsSettingsSheet(
                         var showLanguages by remember { mutableStateOf(false) }
                         Box {
                             DropdownMenuItem(
-                                text = { Text(selectedLanguage) },
+                                text = { Text(effectiveLanguage) },
                                 trailingIcon = { Icon(Icons.Default.ArrowDropDown, contentDescription = null) },
                                 onClick = { showLanguages = true },
                             )
@@ -1430,12 +1451,56 @@ internal fun SharedMobileReaderTtsSettingsSheet(
                                 voiceLanguages.forEach { language ->
                                     DropdownMenuItem(
                                         text = { Text(language) },
-                                        trailingIcon = if (language == selectedLanguage) {
+                                        trailingIcon = if (language == effectiveLanguage) {
                                             { Icon(Icons.Default.Check, contentDescription = null) }
                                         } else null,
                                         onClick = {
                                             selectedLanguage = language
                                             showLanguages = false
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                        HorizontalDivider()
+                    }
+                    if (presentQualities.size > 1) {
+                        var showQualities by remember { mutableStateOf(false) }
+                        Box {
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        effectiveQuality?.let { tier ->
+                                            sharedMobileEpubVoiceQualityLabel(tier)
+                                        } ?: allQualitiesLabel
+                                    )
+                                },
+                                trailingIcon = { Icon(Icons.Default.ArrowDropDown, contentDescription = null) },
+                                onClick = { showQualities = true },
+                            )
+                            DropdownMenu(
+                                expanded = showQualities,
+                                onDismissRequest = { showQualities = false },
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text(allQualitiesLabel) },
+                                    trailingIcon = if (effectiveQuality == null) {
+                                        { Icon(Icons.Default.Check, contentDescription = null) }
+                                    } else null,
+                                    onClick = {
+                                        selectedQuality = null
+                                        showQualities = false
+                                    },
+                                )
+                                presentQualities.forEach { tier ->
+                                    DropdownMenuItem(
+                                        text = { Text(sharedMobileEpubVoiceQualityLabel(tier)) },
+                                        trailingIcon = if (tier == effectiveQuality) {
+                                            { Icon(Icons.Default.Check, contentDescription = null) }
+                                        } else null,
+                                        onClick = {
+                                            selectedQuality = tier
+                                            showQualities = false
                                         },
                                     )
                                 }
@@ -1455,7 +1520,18 @@ internal fun SharedMobileReaderTtsSettingsSheet(
                     )
                     filteredVoices.forEach { voice ->
                         DropdownMenuItem(
-                            text = { Column { Text(voice.name); Text(voice.language, style = MaterialTheme.typography.bodySmall) } },
+                            text = {
+                                Column {
+                                    Text(voice.name)
+                                    Text(
+                                        sharedMobileEpubVoiceSubtitle(
+                                            voice,
+                                            sharedMobileEpubVoiceQualityLabel(voice.quality),
+                                        ),
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                }
+                            },
                             enabled = !ttsVoiceLocked,
                             onClick = { tts.setVoice(voice.identifier); showVoices = false },
                             trailingIcon = {

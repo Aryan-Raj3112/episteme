@@ -20,6 +20,8 @@ import com.aryan.reader.shared.ReaderTtsProgress
 import com.aryan.reader.shared.ui.SharedMobileEpubLocalTts
 import com.aryan.reader.shared.ui.SharedMobileEpubLocalTtsState
 import com.aryan.reader.shared.ui.SharedMobileEpubVoice
+import com.aryan.reader.shared.ui.sharedMobileEpubVoiceQualityForAndroidQuality
+import com.aryan.reader.shared.ui.sortedForTtsDisplay
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -160,8 +162,17 @@ internal class SharedMobileEpubTtsAdapter(context: Context) : SharedMobileEpubLo
             val engine = previewEngine ?: return@TextToSpeech
             if (status != TextToSpeech.SUCCESS) return@TextToSpeech
             availableVoices = engine.voices.orEmpty().map { voice ->
-                SharedMobileEpubVoice(voice.name, voice.name, voice.locale?.displayName.orEmpty())
-            }.sortedWith(compareBy(SharedMobileEpubVoice::language, SharedMobileEpubVoice::name))
+                val locale = voice.locale
+                SharedMobileEpubVoice(
+                    identifier = voice.name,
+                    name = voice.name,
+                    language = locale?.displayName?.takeIf { it.isNotBlank() }
+                        ?: runCatching { locale?.toLanguageTag() }.getOrNull()?.takeIf { it.isNotBlank() }
+                        ?: voice.name,
+                    languageTag = runCatching { locale?.toLanguageTag().orEmpty() }.getOrDefault(""),
+                    quality = sharedMobileEpubVoiceQualityForAndroidQuality(voice.quality),
+                )
+            }.sortedForTtsDisplay()
             identifier?.let { id -> engine.voices?.firstOrNull { it.name == id } }?.let { engine.voice = it }
             engine.setSpeechRate(speechRate)
             engine.setPitch(speechPitch)

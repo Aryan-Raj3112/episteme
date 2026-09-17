@@ -71,6 +71,9 @@ import platform.Foundation.NSURL
 import platform.Foundation.NSURLResponse
 import platform.Foundation.NSTemporaryDirectory
 import platform.Foundation.NSRange
+import platform.Foundation.NSBundle
+import platform.Foundation.NSLocale
+import platform.Foundation.NSLocaleIdentifier
 import platform.Foundation.NSUserDefaults
 import platform.Foundation.dataWithLength
 import platform.UIKit.UIApplication
@@ -97,6 +100,8 @@ import platform.AVFAudio.AVSpeechBoundary
 import platform.AVFAudio.AVSpeechSynthesizer
 import platform.AVFAudio.AVSpeechSynthesizerDelegateProtocol
 import platform.AVFAudio.AVSpeechSynthesisVoice
+import platform.AVFAudio.AVSpeechSynthesisVoiceQualityEnhanced
+import platform.AVFAudio.AVSpeechSynthesisVoiceQualityPremium
 import platform.AVFAudio.AVSpeechUtterance
 import platform.AVFAudio.AVAudioSession
 import platform.AVFAudio.AVAudioSessionCategoryPlayback
@@ -282,6 +287,39 @@ private fun NSUserDefaults.readerTtsFloat(key: String, fallback: Float): Float {
     return if (objectForKey(key) == null) fallback else doubleForKey(key).toFloat()
 }
 
+/**
+ * Android benchmark parity: the shared sheet groups by localized display
+ * name (e.g. "English (United States)"), not the raw BCP-47 tag ("en-US").
+ */
+private fun iosTtsLanguageDisplayName(languageTag: String): String {
+    val trimmed = languageTag.trim()
+    if (trimmed.isBlank()) return ""
+    val localeIdentifier = trimmed.replace('-', '_')
+    val display = runCatching {
+        val preferred = (NSBundle.mainBundle.preferredLocalizations.firstOrNull() as? String)
+            ?.replace('-', '_')
+            ?.takeIf { it.isNotBlank() }
+            ?: "en"
+        NSLocale(localeIdentifier = preferred)
+            .displayNameForKey(NSLocaleIdentifier, localeIdentifier)
+    }.getOrNull()?.takeIf { it.isNotBlank() }
+    return display ?: trimmed
+}
+
+private fun iosTtsVoiceQuality(voice: AVSpeechSynthesisVoice): SharedMobileEpubVoiceQuality {
+    val quality = runCatching { voice.quality }.getOrNull()
+    if (quality == AVSpeechSynthesisVoiceQualityPremium) return SharedMobileEpubVoiceQuality.PREMIUM
+    if (quality == AVSpeechSynthesisVoiceQualityEnhanced) return SharedMobileEpubVoiceQuality.ENHANCED
+    // Identifier heuristic: same-name voices (e.g. two "Nicky" entries) only
+    // differ by compact vs premium bundle once downloaded.
+    val identifier = runCatching { voice.identifier }.getOrNull().orEmpty().lowercase()
+    return when {
+        identifier.contains("premium") -> SharedMobileEpubVoiceQuality.PREMIUM
+        identifier.contains("enhanced") -> SharedMobileEpubVoiceQuality.ENHANCED
+        else -> SharedMobileEpubVoiceQuality.STANDARD
+    }
+}
+
 private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
     private val preferences = NSUserDefaults.standardUserDefaults
     private val synthesizer = AVSpeechSynthesizer()
@@ -315,13 +353,16 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
         AVSpeechSynthesisVoice.speechVoices()
             .mapNotNull { it as? AVSpeechSynthesisVoice }
             .map { voice ->
+                val languageTag = voice.language.orEmpty()
                 SharedMobileEpubVoice(
                     identifier = voice.identifier,
                     name = voice.name,
-                    language = voice.language
+                    language = iosTtsLanguageDisplayName(languageTag).ifBlank { languageTag },
+                    languageTag = languageTag,
+                    quality = iosTtsVoiceQuality(voice),
                 )
             }
-            .sortedWith(compareBy(SharedMobileEpubVoice::language, SharedMobileEpubVoice::name))
+            .sortedForTtsDisplay()
     override var selectedVoiceIdentifier by mutableStateOf(
         preferences.stringForKey(IosReaderTtsVoiceKey)
             ?.takeIf { saved -> availableVoices.any { it.identifier == saved } }
