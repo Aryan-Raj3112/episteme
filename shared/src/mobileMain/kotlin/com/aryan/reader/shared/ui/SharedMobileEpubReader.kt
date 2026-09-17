@@ -139,6 +139,7 @@ import com.aryan.reader.shared.reader.sharedEpubOpenTraceMs
 import com.aryan.reader.shared.reader.effectiveReaderTocEntries
 import com.aryan.reader.shared.reader.findPageIndexForLocator
 import com.aryan.reader.shared.reader.layoutSignature
+import com.aryan.reader.shared.reader.withUncappedPageWidth
 import com.aryan.reader.shared.reader.readerImageReferences
 import com.aryan.reader.shared.reader.readerTocActiveIndex
 import com.aryan.reader.shared.reader.pullToTurnEnabled
@@ -339,6 +340,12 @@ fun SharedMobileEpubReaderScreen(
             }
         )
     }
+    // Android parity (PaginatedReaderScreen has no page-width cap): the shared
+    // mobile paginated pipeline (estimate session, measured paginator, native
+    // render) uses uncapped settings so iOS fills viewport width like Android
+    // instead of letterboxing at the persisted/desktop pageWidth (760 default).
+    // Pagination and rendering share this instance so they stay identical.
+    val paginatedSettings = remember(settings) { settings.withUncappedPageWidth() }
     var pages by remember(book.id) { mutableStateOf<List<ReaderPage>>(emptyList()) }
     var measuredPagesApplied by remember(book.id) { mutableStateOf(false) }
     var currentLocator by remember(book.id) { mutableStateOf(book.readerPosition) }
@@ -585,7 +592,7 @@ fun SharedMobileEpubReaderScreen(
         }
     }
 
-    LaunchedEffect(loadedBook, settings.layoutSignature()) {
+    LaunchedEffect(loadedBook, paginatedSettings.layoutSignature()) {
         val epub = loadedBook ?: return@LaunchedEffect
         if (pages.isNotEmpty()) delay(180)
         if (measuredPagesApplied) return@LaunchedEffect
@@ -594,7 +601,7 @@ fun SharedMobileEpubReaderScreen(
         val readerState = withContext(Dispatchers.Default) {
             ReaderEngine().createSession(
                 book = epub,
-                settings = settings,
+                settings = paginatedSettings,
                 initialPageIndex = currentPageIndex,
                 initialLocator = locator
             ).reader
@@ -637,17 +644,17 @@ fun SharedMobileEpubReaderScreen(
 
     LaunchedEffect(
         loadedBook,
-        settings.layoutSignature(),
+        paginatedSettings.layoutSignature(),
         paginatedContentViewport,
         measuredPaginator
     ) {
         val epub = loadedBook ?: return@LaunchedEffect
-        if (settings.readingMode != ReaderReadingMode.PAGINATED) return@LaunchedEffect
+        if (paginatedSettings.readingMode != ReaderReadingMode.PAGINATED) return@LaunchedEffect
         if (!paginatedContentViewport.isSpecified) return@LaunchedEffect
         val paginateMark = sharedEpubOpenTraceMark()
         sharedEpubOpenTrace { "readerScreen measuredPaginate start viewport=${paginatedContentViewport.widthPx}x${paginatedContentViewport.heightPx}" }
         val measuredPages = withContext(Dispatchers.Default) {
-            measuredPaginator.paginate(epub, settings, paginatedContentViewport)
+            measuredPaginator.paginate(epub, paginatedSettings, paginatedContentViewport)
         }
         sharedEpubOpenTrace { "readerScreen measuredPaginate done pages=${measuredPages.size} ms=${sharedEpubOpenTraceMs(sharedEpubOpenTraceElapsedMs(paginateMark))}" }
         measuredPagesApplied = true
@@ -1321,15 +1328,15 @@ fun SharedMobileEpubReaderScreen(
                     loadState.errorMessage != null -> SharedMobileEpubError(loadState.errorMessage)
                     loadedBook != null && pages.isEmpty() -> SharedMobileEpubLoading("Preparing book layout…")
                     loadedBook != null -> {
-                        if (settings.readingMode == ReaderReadingMode.PAGINATED) {
+                        if (paginatedSettings.readingMode == ReaderReadingMode.PAGINATED) {
                             val visiblePages = ReaderSpreadLayout.visiblePageIndicesForDisplay(
                                 currentPageIndex,
                                 pages.size,
-                                settings
+                                paginatedSettings
                             ).mapNotNull(pages::getOrNull)
                             val paginatedRenderPlan = ReaderContentRenderPlan.NativePaginatedPages(
                                 visiblePages = visiblePages,
-                                settings = settings,
+                                settings = paginatedSettings,
                                 searchQuery = searchQuery,
                                 searchOptions = ReaderSearchOptions(),
                                 highlightPalette = readerHighlightPalette,

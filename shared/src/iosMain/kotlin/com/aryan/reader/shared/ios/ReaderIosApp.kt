@@ -5252,7 +5252,10 @@ private fun ReaderIosApp(
                                 reflowCacheMaintenanceAvailable = true,
                                 includeLanguage = true,
                                 includeScreenCaptureProtection = false,
-                                includeCloudLocalDataClear = true,
+                                // Intentional temporary iOS scope: clear-cloud data is part of
+                                // cloud sync (Android ties it to supportsSync), so hide it
+                                // together with the sync rows while logic is kept.
+                                includeCloudLocalDataClear = IosFeatureGating.SHOW_CLOUD_SYNC,
                                 includeDiagnosticLogExport = true,
                                 includeHideReaderAi = true,
                                 supportProjectAvailable = true,

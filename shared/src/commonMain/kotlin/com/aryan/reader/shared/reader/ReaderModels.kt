@@ -127,6 +127,24 @@ data class ReaderSettings(
 }
 
 /**
+ * Android benchmark parity: the native Android paginated reader
+ * (`PaginatedReaderScreen`) has no page-width cap and fills
+ * `maxWidth - 2 * margin`. Shared mobile (iOS) must ignore the persisted
+ * [ReaderSettings.pageWidth] (default 760, desktop-adjustable 520..1100) so it
+ * renders full-width like Android instead of letterboxing on wide screens
+ * such as iPad. Desktop keeps the adjustable cap.
+ *
+ * The value is larger than any real viewport (even scaled by [densityScale] in
+ * `scaleCssPx`: 100_000 * 4 = 400_000 < Int.MAX_VALUE) so the shared
+ * `min(available, configured)` / `coerceAtMost(configured)` geometry becomes a
+ * no-op and pagination stays identical to rendering.
+ */
+const val UncappedReaderPageWidthPx = 100_000
+
+fun ReaderSettings.withUncappedPageWidth(): ReaderSettings =
+    copy(pageWidth = UncappedReaderPageWidthPx)
+
+/**
  * Defaults for a new PDF reader session.
  *
  * PDF tap-to-turn is opt-in on Android (the benchmark implementation). Keep

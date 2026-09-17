@@ -87,6 +87,53 @@ class SharedMeasuredEpubPaginatorTest {
     }
 
     @Test
+    fun `uncapped mobile page width fills wide viewports like the android benchmark`() {
+        val geometry = measuredPageGeometryFor(
+            settings = ReaderSettings(
+                pageWidth = 760,
+                horizontalMargin = 80,
+                verticalMargin = 40,
+                readingMode = ReaderReadingMode.PAGINATED,
+                pageSpreadMode = ReaderPageSpreadMode.SINGLE
+            ).withUncappedPageWidth(),
+            viewport = ReaderViewportSpec(widthPx = 1_300, heightPx = 900)
+        )
+
+        assertEquals(1_140, geometry.pageWidthPx)
+        assertEquals(820, geometry.pageHeightPx)
+    }
+
+    @Test
+    fun `uncapped mobile page width fills ipad viewports with default margins`() {
+        val geometry = measuredPageGeometryFor(
+            settings = ReaderSettings(
+                readingMode = ReaderReadingMode.PAGINATED,
+                pageSpreadMode = ReaderPageSpreadMode.SINGLE
+            ).withUncappedPageWidth(),
+            viewport = ReaderViewportSpec(widthPx = 1_024, heightPx = 1_366)
+        )
+
+        assertEquals(992, geometry.pageWidthPx)
+        assertEquals(1_334, geometry.pageHeightPx)
+    }
+
+    @Test
+    fun `uncapped mobile page width stays overflow safe under display scale`() {
+        val geometry = measuredPageGeometryFor(
+            settings = ReaderSettings(
+                pageWidth = 760,
+                horizontalMargin = 0,
+                verticalMargin = 0
+            ).withUncappedPageWidth(),
+            viewport = ReaderViewportSpec(widthPx = 1_900, heightPx = 860),
+            densityScale = 4f
+        )
+
+        assertEquals(1_900, geometry.pageWidthPx)
+        assertEquals(860, geometry.pageHeightPx)
+    }
+
+    @Test
     fun `paginated two page geometry keeps half viewport spread slot per page`() {
         val twoPageGeometry = measuredPageGeometryFor(
             settings = ReaderSettings(

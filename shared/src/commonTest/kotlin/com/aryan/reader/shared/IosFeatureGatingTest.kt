@@ -27,11 +27,15 @@ class IosFeatureGatingTest {
         val model = sharedSettingsHubModel(
             SharedSettingsHubInput(
                 platform = SharedSettingsPlatform.IOS,
+                isDebugBuild = true,
                 isSignedIn = true,
                 isProUser = true,
                 // Mirrors the iOS caller while IosFeatureGating hides sync.
+                // Android benchmark ties clear-cloud-data to sync support,
+                // so iOS does the same via the gating flag.
                 syncAvailable = IosFeatureGating.SHOW_CLOUD_SYNC,
                 folderSyncAvailable = IosFeatureGating.SHOW_CLOUD_SYNC,
+                includeCloudLocalDataClear = IosFeatureGating.SHOW_CLOUD_SYNC,
             )
         )
         val actions = model.rootCategories.flatMap { category ->
@@ -40,6 +44,8 @@ class IosFeatureGatingTest {
 
         assertFalse(SharedSettingsAction.CLOUD_SYNC in actions)
         assertFalse(SharedSettingsAction.FOLDER_SYNC in actions)
+        assertFalse(SharedSettingsAction.DEVICE_MANAGEMENT in actions)
+        assertFalse(SharedSettingsAction.CLEAR_CLOUD_LOCAL_DATA in actions)
         assertTrue(SharedSettingsAction.SIGN_OUT in actions)
     }
 
