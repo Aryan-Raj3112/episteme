@@ -57,6 +57,11 @@ final class LocalAccountController: NSObject, ObservableObject {
     private var cloudSyncInFlight = false
     private var cloudSyncGeneration = 0
     private var cloudDataClearInFlight = false
+    private var accountDeletionInFlight = false
+    /// Set while the Apple sheet shown for account deletion is outstanding.
+    /// The authorization delegate branches on it (reauth + destroy) instead
+    /// of the normal sign-in/link path.
+    private var pendingAccountDeletion = false
     private var localCloudDataClearHandler: (() -> Void)?
 
     private weak var bridge: ReaderIosBridge?
@@ -134,6 +139,9 @@ final class LocalAccountController: NSObject, ObservableObject {
                 self?.signOut()
             }
         )
+        bridge.setAccountDeletionHandler { [weak self] in
+            Task { @MainActor in await self?.deleteAccount() }
+        }
         bridge.setCloudSyncHandlers(
             sync: { [weak self] snapshotJSON in
                 Task { @MainActor in await self?.syncCloudSnapshot(localJSON: snapshotJSON) }
@@ -583,6 +591,166 @@ final class LocalAccountController: NSObject, ObservableObject {
         publish(status: "Signed out.")
 #endif
     }
+
+    /// Permanently deletes the Episteme account. The shared UI confirms twice
+    /// before invoking this; Firebase still requires a fresh Apple credential,
+    /// so the Apple sheet is shown for re-authentication and the delegate
+    /// continues the pipeline via `reauthenticateAndDeleteAccount`.
+    func deleteAccount() async {
+        guard !accountDeletionInFlight, !pendingAccountDeletion else { return }
+#if canImport(FirebaseAuth) && canImport(FirebaseCore)
+        guard FirebaseApp.app() != nil else {
+            publish(status: "GoogleService-Info.plist is missing from the iOS target.")
+            bridge?.completeAccountDeletion(success: false, message: "Account deletion is unavailable.")
+            return
+        }
+        guard let user = Auth.auth().currentUser else {
+            publish(status: "You are not signed in.")
+            bridge?.completeAccountDeletion(success: false, message: "You are not signed in.")
+            return
+        }
+        // Google sign-in is hidden on iOS (Apple-only scope), so only the
+        // Apple re-auth path is implemented. A Google-linked account keeps
+        // working; deletion for it arrives with the Android/desktop path.
+        guard user.providerData.contains(where: { $0.providerID == "apple.com" }) else {
+            publish(status: "Account deletion on iOS needs an Apple-linked sign-in.")
+            bridge?.completeAccountDeletion(success: false, message: "Account deletion on iOS needs an Apple-linked sign-in.")
+            return
+        }
+        accountDeletionInFlight = true
+        pendingAccountDeletion = true
+        beginAppleSignIn()
+#else
+        publish(status: "Account deletion needs FirebaseAuth in the iOS target.")
+        bridge?.completeAccountDeletion(success: false, message: "Account deletion is unavailable.")
+#endif
+    }
+
+    private struct AccountDeleteResponse: Decodable {
+        let status: String
+        let message: String
+    }
+
+    private enum AccountDeleteError: LocalizedError {
+        case notSignedIn
+        case workerRejected(String)
+
+        var errorDescription: String? {
+            switch self {
+            case .notSignedIn: return "You are not signed in."
+            case .workerRejected(let message): return message
+            }
+        }
+    }
+
+#if canImport(FirebaseAuth) && canImport(FirebaseCore)
+    /// Re-authenticates with the fresh Apple credential (Firebase would reject
+    /// `user.delete()` on a stale session), then runs the destroy pipeline:
+    /// worker release → client Firestore/Drive cleanup → Auth deletion →
+    /// local sign-out. The worker step runs first so a lifetime Pro purchase
+    /// is released for reclaim; if a later step fails the user can retry and
+    /// the worker answers idempotently ("already deleted").
+    private func reauthenticateAndDeleteAccount(credential: AuthCredential) async throws {
+        guard let user = Auth.auth().currentUser else { throw AccountDeleteError.notSignedIn }
+        let uid = user.uid
+        do {
+            try await user.reauthenticate(with: credential)
+        } catch {
+            throw AccountDeleteError.workerRejected("Apple re-authentication failed: \(error.localizedDescription)")
+        }
+        let idToken: String = try await withCheckedThrowingContinuation { continuation in
+            user.getIDTokenForcingRefresh(true) { token, error in
+                if let token {
+                    continuation.resume(returning: token)
+                } else {
+                    continuation.resume(throwing: error ?? AccountDeleteError.notSignedIn)
+                }
+            }
+        }
+        do {
+            try await postAccountDelete(idToken: idToken)
+        } catch {
+            throw AccountDeleteError.workerRejected("Could not delete cloud account: \(error.localizedDescription)")
+        }
+        // Best-effort client cleanup. The user doc is already gone
+        // server-side; leftovers here only become unreachable orphans.
+        await deleteAccountSubcollections(uid: uid)
+#if canImport(GoogleSignIn)
+        if googleDriveAuthorized {
+            do {
+                let accessToken = try await googleDriveAccessToken()
+                for file in try await listDriveFiles(accessToken: accessToken) {
+                    try await deleteDriveFile(fileID: file.id, accessToken: accessToken)
+                }
+            } catch {
+                syncLogger.error("cloud_sync.delete_drive_cleanup_failed error=\(error.localizedDescription, privacy: .public)")
+            }
+        }
+#endif
+        await unregisterDevice(uid: uid)
+        do {
+            try await user.delete()
+        } catch {
+            // Data is gone but the Auth record survived (e.g. transient
+            // network). Retrying works: the worker call above is idempotent.
+            throw AccountDeleteError.workerRejected("Account data deleted, but final sign-out failed. Please try again: \(error.localizedDescription)")
+        }
+        signOut()
+        publish(status: "Your Episteme account was permanently deleted.")
+    }
+
+    /// Calls the purchase-verifier's account endpoint. Never refunds: Apple
+    /// keeps the money; only the Firestore entitlement binding is released so
+    /// Pro can be reclaimed on a fresh account. Credits die with the doc.
+    private func postAccountDelete(idToken: String) async throws {
+        guard let url = URL(string: "https://episteme-verifier.aryanrajivyms.workers.dev/v2/account/delete") else {
+            throw AccountDeleteError.workerRejected("Account deletion is misconfigured.")
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["idToken": idToken])
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            let message = (try? JSONDecoder().decode(AccountDeleteResponse.self, from: data).message)
+                ?? "Account deletion failed (HTTP \((response as? HTTPURLResponse)?.statusCode ?? -1))."
+            throw AccountDeleteError.workerRejected(message)
+        }
+        let decoded = try JSONDecoder().decode(AccountDeleteResponse.self, from: data)
+        guard decoded.status == "success" else {
+            throw AccountDeleteError.workerRejected(decoded.message)
+        }
+    }
+
+    /// Removes account subcollections the worker intentionally leaves behind
+    /// (it owns the user doc + claim release). Deleting the parent doc does
+    /// not remove these; without this they would linger as orphans.
+    private func deleteAccountSubcollections(uid: String) async {
+#if canImport(FirebaseFirestore)
+        guard FirebaseApp.app() != nil else { return }
+        let database = Firestore.firestore()
+        for collectionName in ["books", "shelves", "fonts", "devices"] {
+            do {
+                let snapshot = try await database
+                    .collection("users")
+                    .document(uid)
+                    .collection(collectionName)
+                    .getDocuments()
+                let references = snapshot.documents.map(\.reference)
+                for chunk in stride(from: 0, to: references.count, by: 450) {
+                    let batch = database.batch()
+                    for reference in references[chunk..<min(chunk + 450, references.count)] {
+                        batch.deleteDocument(reference)
+                    }
+                    try await batch.commit()
+                }
+            } catch {
+                syncLogger.error("cloud_sync.delete_subcollection_failed collection=\(collectionName, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
+            }
+        }
+#endif
+    }
+#endif
 
     /// Foreground + BGTask entry point. Re-arms the durable outbox retry when
     /// the app returns from background (Android: WorkManager re-gates on
@@ -2867,6 +3035,23 @@ extension LocalAccountController: ASAuthorizationControllerDelegate {
                 rawNonce: nonce,
                 fullName: appleCredential.fullName
             )
+            if self.pendingAccountDeletion {
+                self.pendingAccountDeletion = false
+                do {
+                    try await self.reauthenticateAndDeleteAccount(credential: credential)
+                    self.accountDeletionInFlight = false
+                    self.bridge?.completeAccountDeletion(
+                        success: true,
+                        message: "Your Episteme account was permanently deleted."
+                    )
+                } catch {
+                    self.accountDeletionInFlight = false
+                    let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                    self.bridge?.completeAccountDeletion(success: false, message: message)
+                    self.publish(status: message)
+                }
+                return
+            }
             do {
                 try await signInOrLink(
                     credential: credential,
@@ -2886,6 +3071,13 @@ extension LocalAccountController: ASAuthorizationControllerDelegate {
     ) {
         Task { @MainActor in
             appleNonce = nil
+            if pendingAccountDeletion {
+                pendingAccountDeletion = false
+                accountDeletionInFlight = false
+                bridge?.completeAccountDeletion(success: false, message: "Account deletion cancelled.")
+                publish(status: "Account deletion cancelled.")
+                return
+            }
             publish(status: Self.userFacingAuthError(error, provider: "Apple"))
         }
     }

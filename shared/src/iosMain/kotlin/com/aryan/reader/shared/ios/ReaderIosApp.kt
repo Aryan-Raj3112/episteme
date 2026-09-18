@@ -462,6 +462,10 @@ class ReaderIosBridge internal constructor(
         private set
     internal var cloudLocalDataClearStatus by mutableStateOf<String?>(null)
         private set
+    internal var isAccountDeletionLoading by mutableStateOf(false)
+        private set
+    internal var accountDeletionStatus by mutableStateOf<String?>(null)
+        private set
     internal var localCloudDataClearEvent by mutableStateOf(0)
         private set
     internal var isDebugBuild by mutableStateOf(false)
@@ -480,6 +484,7 @@ class ReaderIosBridge internal constructor(
     private var deviceRevokeHandler: ((String) -> Unit)? = null
     private var deviceReplaceHandler: ((String) -> Unit)? = null
     private var cloudLocalDataClearHandler: (() -> Unit)? = null
+    private var accountDeletionHandler: (() -> Unit)? = null
     private var folderFileDeletionHandler: ((String, List<String>) -> Unit)? = null
     private var folderFileReplacementHandler: ((String, String) -> String?)? = null
     private var folderFileAdditionHandler: ((String, String, String) -> String?)? = null
@@ -1376,6 +1381,25 @@ class ReaderIosBridge internal constructor(
     fun completeCloudLocalDataClear(success: Boolean, message: String) {
         isCloudLocalDataClearLoading = false
         cloudLocalDataClearStatus = message
+    }
+
+    fun setAccountDeletionHandler(handler: () -> Unit) {
+        accountDeletionHandler = handler
+    }
+
+    fun requestAccountDeletion() {
+        isAccountDeletionLoading = true
+        accountDeletionStatus = null
+        accountDeletionHandler?.invoke()
+            ?: completeAccountDeletion(
+                success = false,
+                message = "Account deletion is unavailable.",
+            )
+    }
+
+    fun completeAccountDeletion(success: Boolean, message: String) {
+        isAccountDeletionLoading = false
+        accountDeletionStatus = message
     }
 
     fun setDebugBuild(enabled: Boolean) {
@@ -3065,6 +3089,8 @@ private fun ReaderIosApp(
     var showClearReflowCacheConfirmation by remember { mutableStateOf(false) }
     var showClearCloudLocalDataConfirmation by remember { mutableStateOf(false) }
     var showSignOutConfirmation by remember { mutableStateOf(false) }
+    var showDeleteAccountConfirmation by remember { mutableStateOf(false) }
+    var showDeleteAccountFinalConfirmation by remember { mutableStateOf(false) }
     var showTtsSettings by remember { mutableStateOf(false) }
     var showIosTtsBookPicker by remember { mutableStateOf(false) }
     val settingsTts = rememberSharedMobileEpubLocalTts()
@@ -3190,6 +3216,12 @@ private fun ReaderIosApp(
     }
     LaunchedEffect(bridge.cloudLocalDataClearStatus) {
         localizedCloudLocalDataClearStatus?.let(::showMessage)
+    }
+    // Deletion statuses are already user-facing sentences from the native
+    // boundary, so they bypass the operation-code localization above.
+    val accountDeletionStatus = bridge.accountDeletionStatus
+    LaunchedEffect(bridge.accountDeletionStatus) {
+        accountDeletionStatus?.let(::showMessage)
     }
 
     fun dismissReaderAiResult() {
@@ -5206,6 +5238,7 @@ private fun ReaderIosApp(
                         },
                         onAuthenticate = bridge::requestAuthentication,
                         onSignOut = { showSignOutConfirmation = true },
+                        onDeleteAccount = { showDeleteAccountConfirmation = true },
                     )
                     IosUtilityScreen.PRO -> IosLocalStoreKitScreen(
                         store = bridge.localStoreKitState,
@@ -5256,6 +5289,10 @@ private fun ReaderIosApp(
                                 // cloud sync (Android ties it to supportsSync), so hide it
                                 // together with the sync rows while logic is kept.
                                 includeCloudLocalDataClear = IosFeatureGating.SHOW_CLOUD_SYNC,
+                                // Account deletion is always available on iOS
+                                // (Apple review requirement); sync rows above
+                                // stay hidden behind SHOW_CLOUD_SYNC.
+                                includeAccountDeletion = true,
                                 includeDiagnosticLogExport = true,
                                 includeHideReaderAi = true,
                                 supportProjectAvailable = true,
@@ -5364,6 +5401,7 @@ private fun ReaderIosApp(
                                     SharedSettingsAction.CUSTOM_FONTS -> utilityScreen = IosUtilityScreen.FONTS
                                     SharedSettingsAction.SIGN_IN -> utilityScreen = IosUtilityScreen.ACCOUNT
                                     SharedSettingsAction.SIGN_OUT -> showSignOutConfirmation = true
+                                    SharedSettingsAction.DELETE_ACCOUNT -> showDeleteAccountConfirmation = true
                                     SharedSettingsAction.CLOUD_SYNC -> {
                                         val enabled = !state.isSyncEnabled
                                         if (!enabled) {
@@ -6723,6 +6761,36 @@ private fun ReaderIosApp(
             onDismiss = { showSignOutConfirmation = false },
         )
     }
+    if (showDeleteAccountConfirmation) {
+        IosConfirmationDialog(
+            title = readerString("dialog_delete_account", "Delete account?"),
+            message = readerString(
+                "dialog_delete_account_desc",
+                "This permanently deletes your Episteme account, cloud books, shelves, fonts, and devices. Remaining credits are lost. App Store purchases are not refunded (refunds are handled by Apple). If you sign in again with the same Apple ID you can restore Pro with Restore Purchases. This cannot be undone.",
+            ),
+            confirmLabel = readerString("action_continue", "Continue"),
+            onConfirm = {
+                showDeleteAccountConfirmation = false
+                showDeleteAccountFinalConfirmation = true
+            },
+            onDismiss = { showDeleteAccountConfirmation = false },
+        )
+    }
+    if (showDeleteAccountFinalConfirmation) {
+        IosConfirmationDialog(
+            title = readerString("dialog_delete_account_final", "Delete your account?"),
+            message = readerString(
+                "dialog_delete_account_final_desc",
+                "You will be asked to sign in with Apple again to confirm. Are you sure you want to delete your account?",
+            ),
+            confirmLabel = readerString("action_delete_account", "Delete account"),
+            onConfirm = {
+                showDeleteAccountFinalConfirmation = false
+                bridge.requestAccountDeletion()
+            },
+            onDismiss = { showDeleteAccountFinalConfirmation = false },
+        )
+    }
     if (showClearCloudLocalDataConfirmation) {
         IosConfirmationDialog(
             title = readerString("settings_clear_cloud_local_title", "Clear cloud and local data?"),
@@ -7243,6 +7311,7 @@ private fun IosAccountScreen(
     onBack: () -> Unit,
     onAuthenticate: (String) -> Unit,
     onSignOut: () -> Unit,
+    onDeleteAccount: () -> Unit,
 ) {
     IosUtilityPage(title = readerString("account_title", "Episteme Account"), onBack = onBack) {
         Column(modifier = Modifier.fillMaxSize().padding(24.dp)) {
@@ -7320,6 +7389,12 @@ private fun IosAccountScreen(
                 TextButton(onClick = onSignOut) {
                     Text(readerString("drawer_sign_out", "Sign out"))
                 }
+                TextButton(
+                    onClick = onDeleteAccount,
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                ) {
+                    Text(readerString("action_delete_account", "Delete account"))
+                }
             }
             account.status?.let {
                 Text(readerLiteral(it), modifier = Modifier.padding(top = 12.dp))
@@ -7374,8 +7449,8 @@ private fun IosLocalStoreKitScreen(
     // Android parity (`ProScreen`): pill TabRow + pager, empty top-bar title,
     // Pro tab first. The credits tab/card is kept but gated (see
     // IosFeatureGating): for now only the Pro purchase remains visible.
-    // `onRestore` is kept for the StoreKit restore handler, but the restore
-    // button is intentionally hidden from the Pro screen.
+    // `onRestore` drives both the visible Restore Purchases button below and
+    // the automatic reconciliation on foreground/auth change.
     // Intentional temporary iOS scope: empty title matches Android's
     // `TopAppBar(title = { })`.
     IosUtilityPage(title = "", onBack = onBack) {
@@ -7515,9 +7590,20 @@ private fun IosLocalStoreKitScreen(
                 }
             }
             Spacer(modifier = Modifier.height(8.dp))
-            // Restore purchases is intentionally hidden. The restore handler
-            // (`onRestore`) is kept so automatic reconciliation on
-            // foreground/auth change still runs.
+            // Explicit restore for lifetime Pro (App Store convention) next to
+            // the automatic reconciliation on foreground/auth change. Signed-out
+            // users are routed to Apple sign-in first.
+            TextButton(
+                onClick = {
+                    if (account.uid != null) {
+                        onRestore()
+                    } else {
+                        showSignInRequiredDialog = true
+                    }
+                },
+            ) {
+                Text(readerString("action_restore_purchases", "Restore Purchases"))
+            }
             store.status?.let {
                 Text(readerLiteral(it), modifier = Modifier.padding(vertical = 8.dp))
             }

@@ -90,8 +90,6 @@ private fun androidSettingsLiteralResource(context: Context, literal: String): I
     "Global defaults for text, EPUB, PDF, toolbar, and speech" -> R.string.settings_hub_literal_1
     "App & library" -> R.string.settings_hub_literal_2
     "App preferences, imports, tabs, and local library behavior" -> R.string.settings_hub_literal_3
-    "Sync & accounts" -> R.string.settings_hub_literal_4
-    "Sign-in, cloud sync, and folder backup" -> R.string.settings_hub_literal_5
     "AI & TTS" -> R.string.settings_hub_literal_6
     "Reader AI, keys, models, voices, and speech preferences" -> R.string.settings_hub_literal_7
     "Storage & advanced" -> R.string.settings_hub_literal_8
@@ -110,8 +108,6 @@ private fun androidSettingsLiteralResource(context: Context, literal: String): I
     "App theme and general app behavior" -> R.string.settings_hub_literal_21
     "Library & Files" -> R.string.settings_hub_literal_22
     "Recent files and local reading fonts" -> R.string.settings_hub_literal_23
-    "Sync & Accounts" -> R.string.settings_hub_literal_24
-    "Sign-in, cloud sync, folder sync, and devices" -> R.string.settings_hub_literal_25
     "More-menu options, maintenance actions, diagnostics, and app info" -> R.string.settings_hub_literal_26
     "Help & About" -> R.string.settings_hub_literal_27
     "Feedback, support, project information, and licenses" -> R.string.settings_hub_literal_28
@@ -435,6 +431,9 @@ fun SettingsScreen(
                         }
                     }
                     SharedSettingsAction.SIGN_OUT -> showSignOutConfirmDialog = true
+                    // iOS-only for now: the shared model never emits this on
+                    // Android (includeAccountDeletion defaults to false).
+                    SharedSettingsAction.DELETE_ACCOUNT -> Unit
                     SharedSettingsAction.CLOUD_SYNC -> {
                         if (uiState.isProUser) {
                             viewModel.setSyncEnabled(!uiState.isSyncEnabled)

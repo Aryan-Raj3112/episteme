@@ -4314,6 +4314,8 @@ internal fun EpistemeDesktopApp(
                                     SharedSettingsAction.CLEAR_BOOK_CACHE -> showClearBookCacheDialog = true
                                     SharedSettingsAction.CLEAR_REFLOW_CACHE,
                                     SharedSettingsAction.CLEAR_CLOUD_LOCAL_DATA,
+                                    // iOS-only for now: never emitted on desktop.
+                                    SharedSettingsAction.DELETE_ACCOUNT,
                                     SharedSettingsAction.TEST_PANEL_DETECTION,
                                     SharedSettingsAction.TEST_SPEECH_BUBBLE_DETECTION,
                                     SharedSettingsAction.EXPORT_LOGS,

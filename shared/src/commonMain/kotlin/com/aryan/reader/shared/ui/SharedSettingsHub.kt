@@ -19,6 +19,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Feedback
@@ -707,6 +708,7 @@ private fun SharedSettingsDestination.iconForSettingsDestination(): ImageVector 
         SharedSettingsDestination.THEME_APPEARANCE -> Icons.Default.Palette
         SharedSettingsDestination.TTS_AI -> Icons.Default.Settings
         SharedSettingsDestination.LIBRARY_SYNC_STORAGE -> Icons.Default.Folder
+        SharedSettingsDestination.ACCOUNTS -> Icons.Default.AccountCircle
         SharedSettingsDestination.SYNC_ACCOUNTS -> Icons.Default.Cloud
         SharedSettingsDestination.EXTRA -> Icons.Default.Settings
         SharedSettingsDestination.HELP_ABOUT -> Icons.Default.Info
@@ -727,6 +729,7 @@ private fun SharedSettingsAction.iconForSettings(): ImageVector {
         SharedSettingsAction.SIGN_IN,
         SharedSettingsAction.SIGN_OUT,
         SharedSettingsAction.CLOUD_SYNC -> Icons.Default.Cloud
+        SharedSettingsAction.DELETE_ACCOUNT -> Icons.Default.Delete
         SharedSettingsAction.FOLDER_SYNC -> Icons.Default.Folder
         SharedSettingsAction.CLEAR_BOOK_CACHE,
         SharedSettingsAction.CLEAR_REFLOW_CACHE,

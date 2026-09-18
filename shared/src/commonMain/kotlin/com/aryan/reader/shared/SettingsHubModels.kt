@@ -19,8 +19,12 @@ enum class SharedSettingsSection(
         summary = "App preferences, imports, tabs, and local library behavior"
     ),
     SYNC_ACCOUNTS(
-        title = "Sync & accounts",
-        summary = "Sign-in, cloud sync, and folder backup"
+        title = "Sync",
+        summary = "Cloud sync and folder backup"
+    ),
+    ACCOUNTS(
+        title = "Account",
+        summary = "Sign-in and account management"
     ),
     AI_TTS(
         title = "AI & TTS",
@@ -48,6 +52,7 @@ enum class SharedSettingsDestination {
     TTS_AI,
     LIBRARY_SYNC_STORAGE,
     SYNC_ACCOUNTS,
+    ACCOUNTS,
     EXTRA,
     HELP_ABOUT,
     EPUB_FORMAT,
@@ -69,6 +74,7 @@ fun SharedSettingsDestination.parentDestination(): SharedSettingsDestination? {
         SharedSettingsDestination.TTS_AI,
         SharedSettingsDestination.LIBRARY_SYNC_STORAGE,
         SharedSettingsDestination.SYNC_ACCOUNTS,
+        SharedSettingsDestination.ACCOUNTS,
         SharedSettingsDestination.EXTRA,
         SharedSettingsDestination.HELP_ABOUT -> SharedSettingsDestination.ROOT
         SharedSettingsDestination.EPUB_FORMAT,
@@ -150,6 +156,7 @@ enum class SharedSettingsAction {
     CUSTOM_FONTS,
     SIGN_IN,
     SIGN_OUT,
+    DELETE_ACCOUNT,
     CLOUD_SYNC,
     FOLDER_SYNC,
     DEVICE_MANAGEMENT,
@@ -247,9 +254,15 @@ data class SharedSettingsHubModel(
             )
             SharedSettingsDestination.SYNC_ACCOUNTS -> categoryPage(
                 destination = destination,
-                title = "Sync & Accounts",
-                summary = "Sign-in, cloud sync, folder sync, and devices",
-                items = syncAndAccountItems()
+                title = "Sync",
+                summary = "Cloud sync and folder backup",
+                items = syncItems()
+            )
+            SharedSettingsDestination.ACCOUNTS -> categoryPage(
+                destination = destination,
+                title = "Account",
+                summary = "Sign-in and account management",
+                items = accountItems()
             )
             SharedSettingsDestination.EXTRA -> categoryPage(
                 destination = destination,
@@ -336,6 +349,7 @@ data class SharedSettingsHubModel(
             SharedSettingsDestination.TTS_AI,
             SharedSettingsDestination.LIBRARY_SYNC_STORAGE,
             SharedSettingsDestination.SYNC_ACCOUNTS,
+            SharedSettingsDestination.ACCOUNTS,
             SharedSettingsDestination.EXTRA
         ).flatMap { destination ->
             val page = page(destination)
@@ -411,10 +425,16 @@ data class SharedSettingsHubModel(
                 itemCount = libraryAndFileItems().size
             ),
             rootCategory(
+                destination = SharedSettingsDestination.ACCOUNTS,
+                title = "Account",
+                summary = "Sign-in and account management",
+                itemCount = accountItems().size
+            ),
+            rootCategory(
                 destination = SharedSettingsDestination.SYNC_ACCOUNTS,
-                title = "Sync & Accounts",
-                summary = "Sign-in, cloud sync, folder sync, and devices",
-                itemCount = syncAndAccountItems().size
+                title = "Sync",
+                summary = "Cloud sync and folder backup",
+                itemCount = syncItems().size
             ),
             rootCategory(
                 destination = SharedSettingsDestination.EXTRA,
@@ -566,13 +586,19 @@ data class SharedSettingsHubModel(
         )
     }
 
-    private fun syncAndAccountItems(): List<SharedSettingsItemModel> {
+    private fun accountItems(): List<SharedSettingsItemModel> {
         return itemsForActions(
             SharedSettingsAction.SIGN_IN,
             SharedSettingsAction.SIGN_OUT,
-            SharedSettingsAction.CLOUD_SYNC,
-            SharedSettingsAction.FOLDER_SYNC,
+            SharedSettingsAction.DELETE_ACCOUNT,
             SharedSettingsAction.DEVICE_MANAGEMENT
+        )
+    }
+
+    private fun syncItems(): List<SharedSettingsItemModel> {
+        return itemsForActions(
+            SharedSettingsAction.CLOUD_SYNC,
+            SharedSettingsAction.FOLDER_SYNC
         )
     }
 
@@ -672,6 +698,11 @@ data class SharedSettingsHubInput(
     val includeReaderTabs: Boolean = true,
     val includeHideReaderAi: Boolean = true,
     val includeCloudLocalDataClear: Boolean = false,
+    /**
+     * Shows the permanent "Delete account" entry. iOS-only for now: other
+     * platforms keep the default until their native re-auth + cleanup exists.
+     */
+    val includeAccountDeletion: Boolean = false,
     /** Exposes the platform's safe, app-owned recent-log export. */
     val includeDiagnosticLogExport: Boolean = false,
     val supportProjectAvailable: Boolean = true,
@@ -760,7 +791,7 @@ fun sharedSettingsHubModel(input: SharedSettingsHubInput): SharedSettingsHubMode
             }
         ),
         SharedSettingsSectionModel(
-            section = SharedSettingsSection.SYNC_ACCOUNTS,
+            section = SharedSettingsSection.ACCOUNTS,
             items = buildList {
                 if (input.includeAccountAuthActions && input.accountAvailable && input.featurePolicy.aiAndCloud) {
                     if (input.isSignedIn) {
@@ -782,6 +813,34 @@ fun sharedSettingsHubModel(input: SharedSettingsHubInput): SharedSettingsHubMode
                         )
                     }
                 }
+                // iOS-only for now: Android keeps no deletion entry until its
+                // native re-auth + backend cleanup path is built to match.
+                if (input.includeAccountDeletion && input.isSignedIn &&
+                    input.accountAvailable && input.featurePolicy.aiAndCloud
+                ) {
+                    add(
+                        SharedSettingsItemModel(
+                            action = SharedSettingsAction.DELETE_ACCOUNT,
+                            title = "Delete account",
+                            summary = "Permanently delete your account and cloud data. Purchases are not refunded and credits are lost.",
+                            kind = SharedSettingsItemKind.DESTRUCTIVE
+                        )
+                    )
+                }
+                if (input.isDebugBuild && input.featurePolicy.aiAndCloud && input.syncAvailable) {
+                    add(
+                        SharedSettingsItemModel(
+                            action = SharedSettingsAction.DEVICE_MANAGEMENT,
+                            title = "Device management",
+                            summary = "Inspect registered devices for this account"
+                        )
+                    )
+                }
+            }
+        ),
+        SharedSettingsSectionModel(
+            section = SharedSettingsSection.SYNC_ACCOUNTS,
+            items = buildList {
                 if (input.syncAvailable && input.featurePolicy.aiAndCloud) {
                     val setupIntent = input.cloudSyncSetupIntent
                     val syncEnabled = when (setupIntent) {
@@ -824,15 +883,6 @@ fun sharedSettingsHubModel(input: SharedSettingsHubInput): SharedSettingsHubMode
                             // than behaving like the single cloud-library
                             // switch.
                             kind = SharedSettingsItemKind.CONTROL,
-                        )
-                    )
-                }
-                if (input.isDebugBuild && input.featurePolicy.aiAndCloud && input.syncAvailable) {
-                    add(
-                        SharedSettingsItemModel(
-                            action = SharedSettingsAction.DEVICE_MANAGEMENT,
-                            title = "Device management",
-                            summary = "Inspect registered devices for this account"
                         )
                     )
                 }

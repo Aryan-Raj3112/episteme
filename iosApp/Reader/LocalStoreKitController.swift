@@ -175,7 +175,14 @@ final class LocalStoreKitController: ObservableObject {
                     applyLocalTestingTransaction(transaction)
                 } else {
                     do {
-                        try await claimWithServer(transaction, expectedAccountToken: token)
+                        try await claimOrReclaim(transaction, expectedAccountToken: token)
+                    } catch BillingError.accountMismatch where transaction.productID == ProductID.pro {
+                        // The server still binds this purchase to another
+                        // *active* account (no release marker): surface the
+                        // existing-purchase conflict instead of aborting.
+                        hasAccountConflict = true
+                        publish()
+                        continue
                     } catch {
                         // An already-claimed Pro stays unfinished (like Android,
                         // which never consumes it) so the conflict resurfaces
@@ -189,7 +196,6 @@ final class LocalStoreKitController: ObservableObject {
                         throw error
                     }
                 }
-                await transaction.finish()
             }
             await reconcileUnfinishedTransactions(expectedAccountToken: token)
             await refreshServerEntitlements()
@@ -216,7 +222,13 @@ final class LocalStoreKitController: ObservableObject {
                     applyLocalTestingTransaction(transaction)
                 } else {
                     do {
-                        try await claimWithServer(transaction, expectedAccountToken: token)
+                        try await claimOrReclaim(transaction, expectedAccountToken: token)
+                    } catch BillingError.accountMismatch where transaction.productID == ProductID.pro {
+                        // Same conflict rule as restore(): still owned
+                        // elsewhere, so keep it unfinished and retry later.
+                        hasAccountConflict = true
+                        publish()
+                        continue
                     } catch {
                         // Same already-claimed Pro rule as restore(): keep the
                         // transaction unfinished so the conflict resurfaces
@@ -249,7 +261,7 @@ final class LocalStoreKitController: ObservableObject {
                     } else {
                         let token = try await self.fetchAppAccountToken()
                         do {
-                            try await self.claimWithServer(transaction, expectedAccountToken: token)
+                            try await self.claimOrReclaim(transaction, expectedAccountToken: token)
                         } catch {
                             self.noteClaimError(error, productID: transaction.productID)
                             throw error
@@ -275,24 +287,49 @@ final class LocalStoreKitController: ObservableObject {
         return token
     }
 
-    private func claimWithServer(_ transaction: StoreKit.Transaction, expectedAccountToken: UUID) async throws {
+    private func claimWithServer(
+        _ transaction: StoreKit.Transaction,
+        expectedAccountToken: UUID,
+        allowReclaim: Bool = false
+    ) async throws {
         guard transaction.productID != ProductID.pro || transaction.revocationDate == nil else {
             throw BillingError.revokedTransaction
         }
-        guard transaction.appAccountToken == expectedAccountToken else { throw BillingError.accountMismatch }
+        // New purchases must bind to the current account. A mismatch is only
+        // tolerated as a reclaim: the worker rebinds a pre-deletion purchase
+        // solely when the old account was deleted (release marker present).
+        guard transaction.appAccountToken == expectedAccountToken || allowReclaim else {
+            throw BillingError.accountMismatch
+        }
+        var body: [String: Any] = [
+            "idToken": try await freshFirebaseIDToken(),
+            "transactionId": String(transaction.id),
+            "productId": transaction.productID,
+            "appAccountToken": expectedAccountToken.uuidString.lowercased(),
+        ]
+        if allowReclaim {
+            body["reclaim"] = true
+        }
         let response: VerificationResponse = try await postJSON(
             Endpoint.verify,
-            body: [
-                "idToken": try await freshFirebaseIDToken(),
-                "transactionId": String(transaction.id),
-                "productId": transaction.productID,
-                "appAccountToken": expectedAccountToken.uuidString.lowercased(),
-            ]
+            body: body
         )
         guard response.status == "success" else { throw BillingError.serverRejected(response.message) }
     }
 
-    private func postJSON<T: Decodable>(_ url: URL, body: [String: String]) async throws -> T {
+    /// Normal claim first; on a local account-token mismatch (a pre-deletion
+    /// purchase still bound to the gone account) retry as a server-side
+    /// reclaim. A mismatch against another *active* account still surfaces as
+    /// `accountMismatch` (server 409) for the caller's conflict handling.
+    private func claimOrReclaim(_ transaction: StoreKit.Transaction, expectedAccountToken: UUID) async throws {
+        do {
+            try await claimWithServer(transaction, expectedAccountToken: expectedAccountToken)
+        } catch BillingError.accountMismatch {
+            try await claimWithServer(transaction, expectedAccountToken: expectedAccountToken, allowReclaim: true)
+        }
+    }
+
+    private func postJSON<T: Decodable>(_ url: URL, body: [String: Any]) async throws -> T {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")

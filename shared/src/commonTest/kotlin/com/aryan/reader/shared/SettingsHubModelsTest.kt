@@ -20,6 +20,7 @@ class SettingsHubModelsTest {
                 SharedSettingsDestination.THEME_APPEARANCE,
                 SharedSettingsDestination.TTS_AI,
                 SharedSettingsDestination.LIBRARY_SYNC_STORAGE,
+                SharedSettingsDestination.ACCOUNTS,
                 SharedSettingsDestination.SYNC_ACCOUNTS,
                 SharedSettingsDestination.EXTRA
             ),
@@ -263,6 +264,86 @@ class SettingsHubModelsTest {
         assertEquals(SharedSettingsItemKind.INFO, note?.kind)
         assertTrue(note?.summary.orEmpty().contains("Local overrides"))
         assertTrue(note?.summary.orEmpty().contains("reader"))
+    }
+
+    @Test
+    fun `account and sync live on separate destinations`() {
+        val model = sharedSettingsHubModel(
+            SharedSettingsHubInput(
+                platform = SharedSettingsPlatform.ANDROID,
+                isSignedIn = true,
+                isProUser = true,
+                includeAccountDeletion = true,
+            )
+        )
+
+        val accountActions = model.page(SharedSettingsDestination.ACCOUNTS).items.map { it.action }
+        val syncActions = model.page(SharedSettingsDestination.SYNC_ACCOUNTS).items.map { it.action }
+
+        assertTrue(SharedSettingsAction.SIGN_OUT in accountActions)
+        assertTrue(SharedSettingsAction.DELETE_ACCOUNT in accountActions)
+        assertFalse(SharedSettingsAction.CLOUD_SYNC in accountActions)
+        assertTrue(SharedSettingsAction.CLOUD_SYNC in syncActions)
+        assertTrue(SharedSettingsAction.FOLDER_SYNC in syncActions)
+        assertFalse(SharedSettingsAction.SIGN_OUT in syncActions)
+        assertFalse(SharedSettingsAction.DELETE_ACCOUNT in syncActions)
+    }
+
+    @Test
+    fun `delete account is hidden unless explicitly enabled`() {
+        val defaultActions = sharedSettingsHubModel(
+            SharedSettingsHubInput(
+                platform = SharedSettingsPlatform.ANDROID,
+                isSignedIn = true,
+                isProUser = true,
+            )
+        ).visibleNestedActions()
+
+        assertFalse(SharedSettingsAction.DELETE_ACCOUNT in defaultActions)
+    }
+
+    @Test
+    fun `delete account requires a signed-in account`() {
+        val signedOutActions = sharedSettingsHubModel(
+            SharedSettingsHubInput(
+                platform = SharedSettingsPlatform.IOS,
+                isSignedIn = false,
+                includeAccountDeletion = true,
+            )
+        ).visibleNestedActions()
+        val signedInItem = sharedSettingsHubModel(
+            SharedSettingsHubInput(
+                platform = SharedSettingsPlatform.IOS,
+                isSignedIn = true,
+                includeAccountDeletion = true,
+            )
+        ).page(SharedSettingsDestination.ACCOUNTS)
+            .items
+            .single { it.action == SharedSettingsAction.DELETE_ACCOUNT }
+
+        assertFalse(SharedSettingsAction.DELETE_ACCOUNT in signedOutActions)
+        assertEquals(SharedSettingsItemKind.DESTRUCTIVE, signedInItem.kind)
+    }
+
+    @Test
+    fun `ios keeps the account category while sync stays hidden`() {
+        val model = sharedSettingsHubModel(
+            SharedSettingsHubInput(
+                platform = SharedSettingsPlatform.IOS,
+                isSignedIn = true,
+                accountAvailable = true,
+                includeAccountAuthActions = true,
+                includeAccountDeletion = true,
+                syncAvailable = false,
+                folderSyncAvailable = false,
+            )
+        )
+        val destinations = model.rootCategories.map { it.destination }
+
+        assertTrue(SharedSettingsDestination.ACCOUNTS in destinations)
+        assertFalse(SharedSettingsDestination.SYNC_ACCOUNTS in destinations)
+        assertTrue(SharedSettingsAction.SIGN_OUT in model.visibleNestedActions())
+        assertTrue(SharedSettingsAction.DELETE_ACCOUNT in model.visibleNestedActions())
     }
 
     @Test

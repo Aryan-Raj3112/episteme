@@ -165,6 +165,36 @@ class AndroidSettingsHubModelsTest {
     }
 
     @Test
+    fun `android never exposes account deletion while account and sync stay separate`() {
+        val model = sharedSettingsHubModel(
+            androidSettingsHubInput(
+                uiState = ReaderScreenState(
+                    currentUser = UserData(
+                        uid = "user-id",
+                        displayName = "Reader",
+                        photoUrl = null,
+                        email = "reader@example.com"
+                    ),
+                    isProUser = true
+                ),
+                isOssBuild = false,
+                isOfflineBuild = false,
+                isDebugBuild = false
+            )
+        )
+
+        assertFalse(SharedSettingsAction.DELETE_ACCOUNT in model.visibleNestedActions())
+        assertTrue(
+            SharedSettingsAction.SIGN_OUT in
+                model.page(SharedSettingsDestination.ACCOUNTS).items.map { it.action }
+        )
+        assertTrue(
+            SharedSettingsAction.CLOUD_SYNC in
+                model.page(SharedSettingsDestination.SYNC_ACCOUNTS).items.map { it.action }
+        )
+    }
+
+    @Test
     fun `cloud sync row remains actionable for free users so settings can open upgrade`() {
         val freeSync = sharedSettingsHubModel(
             androidSettingsHubInput(
