@@ -597,7 +597,7 @@ internal fun SharedNativePaginatedPagesContent(
             ),
         contentAlignment = Alignment.Center
     ) {
-        val pageGap = 28.dp
+        val pageGap = renderPlan.settings.pageSpreadGutterDp.dp
         val horizontalMargin = renderPlan.settings.resolvedHorizontalMargin.dp
         val configuredContentWidth = renderPlan.settings.pageWidth.dp
         val pageOuterWidth = if (renderPlan.settings.usesNativePaginatedSpreadPageSlot()) {

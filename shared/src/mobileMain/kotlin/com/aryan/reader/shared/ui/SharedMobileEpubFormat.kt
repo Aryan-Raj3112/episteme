@@ -118,6 +118,7 @@ import com.aryan.reader.shared.withAndroidEpubFormatSliderValue
 import com.aryan.reader.shared.reader.ReaderPageInfo
 import com.aryan.reader.shared.reader.ReaderPageSpreadMode
 import com.aryan.reader.shared.reader.ReaderReadingMode
+import com.aryan.reader.shared.reader.isTwoPageSpreadEnabled
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.writeSharedReaderDiagnostic
 import com.aryan.reader.shared.reader.pullToTurnEnabled
@@ -169,6 +170,7 @@ internal fun SharedMobileEpubFormatSheet(
         AndroidEpubFormatSlider.IMAGE_SIZE -> sliderValues.imageSize
         AndroidEpubFormatSlider.HORIZONTAL_MARGIN -> sliderValues.horizontalMargin
         AndroidEpubFormatSlider.VERTICAL_MARGIN -> sliderValues.verticalMargin
+        AndroidEpubFormatSlider.SPREAD_GAP -> sliderValues.spreadGapDp
     }
 
     fun adjust(slider: AndroidEpubFormatSlider, deltaSteps: Int) {
@@ -280,6 +282,15 @@ internal fun SharedMobileEpubFormatSheet(
                 SharedMobileEpubFormatStepperRow("Image Size", sharedMobileFormatMultiplier(sliderValues.imageSize), { adjust(AndroidEpubFormatSlider.IMAGE_SIZE, -1) }, { adjust(AndroidEpubFormatSlider.IMAGE_SIZE, 1) }, { activeAdjustment = SharedMobileReaderFormatAdjustment.IMAGE_SIZE })
                 SharedMobileEpubFormatStepperRow("Horizontal Margin", sharedMobileFormatMargin(sliderValues.horizontalMargin), { adjust(AndroidEpubFormatSlider.HORIZONTAL_MARGIN, -1) }, { adjust(AndroidEpubFormatSlider.HORIZONTAL_MARGIN, 1) }, { activeAdjustment = SharedMobileReaderFormatAdjustment.HORIZONTAL_MARGIN })
                 SharedMobileEpubFormatStepperRow("Vertical Margin", sharedMobileFormatMargin(sliderValues.verticalMargin), { adjust(AndroidEpubFormatSlider.VERTICAL_MARGIN, -1) }, { adjust(AndroidEpubFormatSlider.VERTICAL_MARGIN, 1) }, { activeAdjustment = SharedMobileReaderFormatAdjustment.VERTICAL_MARGIN })
+                if (settings.isTwoPageSpreadEnabled()) {
+                    SharedMobileEpubFormatStepperRow(
+                        "Spread Gap",
+                        sharedMobileFormatSpreadGap(sliderValues.spreadGapDp),
+                        { adjust(AndroidEpubFormatSlider.SPREAD_GAP, -1) },
+                        { adjust(AndroidEpubFormatSlider.SPREAD_GAP, 1) },
+                        { activeAdjustment = SharedMobileReaderFormatAdjustment.SPREAD_GAP }
+                    )
+                }
             }
         }
     }
@@ -348,7 +359,8 @@ internal enum class SharedMobileReaderFormatAdjustment(val title: String) {
     PARAGRAPH_GAP("Paragraph gap"),
     IMAGE_SIZE("Image size"),
     HORIZONTAL_MARGIN("Horizontal margin"),
-    VERTICAL_MARGIN("Vertical margin")
+    VERTICAL_MARGIN("Vertical margin"),
+    SPREAD_GAP("Spread gap")
 }
 
 @Composable
@@ -434,6 +446,7 @@ internal fun SharedMobileEpubFormatAdjustmentDialog(
         SharedMobileReaderFormatAdjustment.IMAGE_SIZE -> sliderValues.imageSize
         SharedMobileReaderFormatAdjustment.HORIZONTAL_MARGIN -> sliderValues.horizontalMargin
         SharedMobileReaderFormatAdjustment.VERTICAL_MARGIN -> sliderValues.verticalMargin
+        SharedMobileReaderFormatAdjustment.SPREAD_GAP -> sliderValues.spreadGapDp
     }
     val range = when (adjustment) {
         SharedMobileReaderFormatAdjustment.FONT_SIZE -> AndroidEpubFormatSliders.fontSize.minimum..AndroidEpubFormatSliders.fontSize.maximum
@@ -443,6 +456,7 @@ internal fun SharedMobileEpubFormatAdjustmentDialog(
         SharedMobileReaderFormatAdjustment.PARAGRAPH_GAP -> AndroidEpubFormatSliders.paragraphGap.minimum..AndroidEpubFormatSliders.paragraphGap.maximum
         SharedMobileReaderFormatAdjustment.HORIZONTAL_MARGIN -> AndroidEpubFormatSliders.horizontalMargin.minimum..AndroidEpubFormatSliders.horizontalMargin.maximum
         SharedMobileReaderFormatAdjustment.VERTICAL_MARGIN -> AndroidEpubFormatSliders.verticalMargin.minimum..AndroidEpubFormatSliders.verticalMargin.maximum
+        SharedMobileReaderFormatAdjustment.SPREAD_GAP -> AndroidEpubFormatSliders.spreadGap.minimum..AndroidEpubFormatSliders.spreadGap.maximum
         SharedMobileReaderFormatAdjustment.IMAGE_SIZE -> AndroidEpubFormatSliders.imageSize.minimum..AndroidEpubFormatSliders.imageSize.maximum
     }
     fun update(raw: Float) {
@@ -474,6 +488,10 @@ internal fun SharedMobileEpubFormatAdjustmentDialog(
                     AndroidEpubFormatSlider.VERTICAL_MARGIN,
                     AndroidEpubFormatSliders.verticalMargin.snap(raw)
                 )
+                SharedMobileReaderFormatAdjustment.SPREAD_GAP -> settings.withAndroidEpubFormatSliderValue(
+                    AndroidEpubFormatSlider.SPREAD_GAP,
+                    AndroidEpubFormatSliders.spreadGap.snap(raw)
+                )
             }
         )
     }
@@ -482,6 +500,7 @@ internal fun SharedMobileEpubFormatAdjustmentDialog(
         SharedMobileReaderFormatAdjustment.LETTER_SPACING -> sharedMobileFormatLetterSpacing(settings.letterSpacing)
         SharedMobileReaderFormatAdjustment.HORIZONTAL_MARGIN -> sharedMobileFormatMargin(value)
         SharedMobileReaderFormatAdjustment.VERTICAL_MARGIN -> sharedMobileFormatMargin(value)
+        SharedMobileReaderFormatAdjustment.SPREAD_GAP -> sharedMobileFormatSpreadGap(value)
         else -> sharedMobileFormatMultiplier(value)
     }
     AlertDialog(
@@ -528,6 +547,10 @@ internal fun SharedMobileEpubFormatAdjustmentDialog(
                             AndroidEpubFormatSlider.VERTICAL_MARGIN,
                             AndroidEpubFormatSliders.verticalMargin.default
                         )
+                        SharedMobileReaderFormatAdjustment.SPREAD_GAP -> settings.withAndroidEpubFormatSliderValue(
+                            AndroidEpubFormatSlider.SPREAD_GAP,
+                            AndroidEpubFormatSliders.spreadGap.default
+                        )
                     }
                 )
             }) { Text("Reset") }
@@ -551,6 +574,9 @@ internal fun sharedMobileFormatMargin(value: Float): String =
         value in 0.99f..1.01f -> "Original"
         else -> "${(value * 10).roundToInt() / 10f}x"
     }
+
+internal fun sharedMobileFormatSpreadGap(valueDp: Float): String =
+    "${valueDp.roundToInt()} dp"
 
 @Composable
 internal fun SharedMobileEpubFormatSlider(label: String, value: Float, range: ClosedFloatingPointRange<Float>, allowNone: Boolean = false, onValueChange: (Float) -> Unit) {

@@ -326,7 +326,8 @@ class SuspendingAndroidBlockMeasurementProvider(
                 block = imageBlock,
                 density = density,
                 maxWidthPx = constraints.maxWidth.toFloat(),
-                imageSizeMultiplier = imageSizeMultiplier
+                imageSizeMultiplier = imageSizeMultiplier,
+                maxHeightPx = constraints.maxHeight.toFloat()
             )
         }
 
@@ -862,7 +863,8 @@ private suspend fun measureBlockHeight(
                     block = block,
                     density = density,
                     contentMaxWidth = adjustedConstraints.maxWidth.toFloat(),
-                    imageSizeMultiplier = imageSizeMultiplier
+                    imageSizeMultiplier = imageSizeMultiplier,
+                    maxHeightPx = adjustedConstraints.maxHeight.toFloat()
                 ) ?: with(density) { 250.dp.toPx() }
 
                 val finalHeight = measuredHeight.coerceAtMost(constraints.maxHeight.toFloat()).roundToInt()
@@ -934,7 +936,8 @@ private suspend fun measureBlockHeight(
                     block = imageBlock,
                     density = density,
                     maxWidthPx = adjustedConstraints.maxWidth.toFloat(),
-                    imageSizeMultiplier = imageSizeMultiplier
+                    imageSizeMultiplier = imageSizeMultiplier,
+                    maxHeightPx = adjustedConstraints.maxHeight.toFloat()
                 )
             }
 
@@ -2167,19 +2170,22 @@ private fun measureScaledImageHeightPx(
     block: ImageBlock,
     density: Density,
     contentMaxWidth: Float,
-    imageSizeMultiplier: Float
+    imageSizeMultiplier: Float,
+    maxHeightPx: Float = Float.MAX_VALUE
 ): Float? = measureScaledImageSizePx(
     block = block,
     density = density,
     maxWidthPx = contentMaxWidth,
-    imageSizeMultiplier = imageSizeMultiplier
+    imageSizeMultiplier = imageSizeMultiplier,
+    maxHeightPx = maxHeightPx
 ).second.takeIf { it > 0f }
 
 private fun measureScaledImageSizePx(
     block: ImageBlock,
     density: Density,
     maxWidthPx: Float,
-    imageSizeMultiplier: Float
+    imageSizeMultiplier: Float,
+    maxHeightPx: Float = Float.MAX_VALUE
 ): Pair<Float, Float> {
     val intrinsicWidth = block.intrinsicWidth
     val intrinsicHeight = block.intrinsicHeight
@@ -2199,7 +2205,16 @@ private fun measureScaledImageSizePx(
     }
     scaledWidth = scaledWidth.coerceAtMost(maxWidthPx)
 
-    return scaledWidth to (scaledWidth * aspectRatio)
+    // Contain-fit: a width-fit tall image (e.g. portrait photo in a short
+    // landscape page) must shrink to the available height instead of
+    // overflowing the page. Aspect ratio is always preserved.
+    var scaledHeight = scaledWidth * aspectRatio
+    if (scaledHeight > maxHeightPx) {
+        scaledWidth = (maxHeightPx / aspectRatio).coerceAtLeast(0f)
+        scaledHeight = scaledWidth * aspectRatio
+    }
+
+    return scaledWidth to scaledHeight
 }
 
 /**

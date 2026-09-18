@@ -7,6 +7,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.aryan.reader.shared.reader.ReaderReadingMode
+import com.aryan.reader.shared.reader.DefaultReaderPageSpreadGutterDp
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.SharedReaderTextAlign
 import kotlin.math.max
@@ -120,7 +121,8 @@ data class FormatSettings(
     val textAlign: ReaderTextAlign,
     val verticalMargin: Float = 1.0f,
     val fontWeight: Int = 0,
-    val letterSpacing: Float = 0f
+    val letterSpacing: Float = 0f,
+    val spreadGapDp: Float = DefaultReaderPageSpreadGutterDp
 )
 
 enum class ReaderTexture(val id: String, val displayName: String, val assetPath: String) {
@@ -265,7 +267,8 @@ fun ReaderSettings.withReaderFormatFrom(format: ReaderSettings): ReaderSettings 
     fontFamily = format.fontFamily,
     customFontPath = format.customFontPath,
     paragraphSpacing = format.paragraphSpacing,
-    imageScale = format.imageScale
+    imageScale = format.imageScale,
+    pageSpreadGutterDp = format.pageSpreadGutterDp
 )
 
 fun ReaderTheme.toReaderSettings(base: ReaderSettings = ReaderSettings()): ReaderSettings {

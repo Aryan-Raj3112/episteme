@@ -165,6 +165,10 @@ const val DEFAULT_PARAGRAPH_GAP_VAL = 1.0f
 const val DEFAULT_IMAGE_SIZE_VAL = 1.0f
 const val DEFAULT_HORIZONTAL_MARGIN_VAL = 1.0f
 const val DEFAULT_VERTICAL_MARGIN_VAL = 1.0f
+const val DEFAULT_SPREAD_GAP_DP_VAL = 20f
+const val MIN_SPREAD_GAP_DP_VAL = 0f
+const val MAX_SPREAD_GAP_DP_VAL = 48f
+const val SPREAD_GAP_STEP_DP_VAL = 2f
 const val DEFAULT_FONT_WEIGHT_VAL = 0
 const val DEFAULT_LETTER_SPACING_VAL = 0f
 private const val TTS_SPEECH_RATE_KEY = "tts_speech_rate"
@@ -241,6 +245,8 @@ private const val LOCAL_FONT_FAMILY_PREFIX = "local_font_family_"
 private const val LOCAL_TEXT_ALIGN_PREFIX = "local_text_align_"
 private const val LOCAL_FONT_WEIGHT_PREFIX = "local_font_weight_"
 private const val LOCAL_LETTER_SPACING_PREFIX = "local_letter_spacing_"
+private const val LOCAL_SPREAD_GAP_PREFIX = "local_spread_gap_"
+private const val SPREAD_GAP_KEY = "reader_spread_gap_dp"
 private const val HORIZONTAL_MARGIN_KEY = "reader_horizontal_margin"
 private const val VERTICAL_MARGIN_KEY = "reader_vertical_margin"
 
@@ -267,7 +273,8 @@ fun saveLocalReaderSettings(
     customFontPath: String?,
     textAlign: ReaderTextAlign,
     fontWeight: Int = DEFAULT_FONT_WEIGHT_VAL,
-    letterSpacing: Float = DEFAULT_LETTER_SPACING_VAL
+    letterSpacing: Float = DEFAULT_LETTER_SPACING_VAL,
+    spreadGapDp: Float = DEFAULT_SPREAD_GAP_DP_VAL
 ) {
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
     prefs.edit {
@@ -285,6 +292,7 @@ fun saveLocalReaderSettings(
         putString(LOCAL_TEXT_ALIGN_PREFIX + bookId, textAlign.id)
         putInt(LOCAL_FONT_WEIGHT_PREFIX + bookId, fontWeight)
         putFloat(LOCAL_LETTER_SPACING_PREFIX + bookId, letterSpacing)
+        putFloat(LOCAL_SPREAD_GAP_PREFIX + bookId, spreadGapDp)
     }
 }
 
@@ -375,6 +383,17 @@ fun loadPullToTurnMultiplier(context: Context): Float {
     return prefs.getFloat(PULL_TO_TURN_MULTIPLIER_KEY, 1.0f)
 }
 
+fun loadSpreadGapDp(context: Context): Float {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    return prefs.getFloat(SPREAD_GAP_KEY, DEFAULT_SPREAD_GAP_DP_VAL)
+        .coerceIn(MIN_SPREAD_GAP_DP_VAL, MAX_SPREAD_GAP_DP_VAL)
+}
+
+fun saveSpreadGapDp(context: Context, gapDp: Float) {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit { putFloat(SPREAD_GAP_KEY, gapDp.coerceIn(MIN_SPREAD_GAP_DP_VAL, MAX_SPREAD_GAP_DP_VAL)) }
+}
+
 fun loadHorizontalMargin(context: Context): Float {
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
     if (prefs.contains(HORIZONTAL_MARGIN_KEY)) {
@@ -456,6 +475,12 @@ fun loadFormatSettings(context: Context, bookId: String, isLocal: Boolean): Form
         prefs.getFloat(LETTER_SPACING_KEY, DEFAULT_LETTER_SPACING_VAL)
     }
 
+    val spreadGapDp = if (isLocal && prefs.contains(LOCAL_SPREAD_GAP_PREFIX + bookId)) {
+        prefs.getFloat(LOCAL_SPREAD_GAP_PREFIX + bookId, DEFAULT_SPREAD_GAP_DP_VAL)
+    } else {
+        loadSpreadGapDp(context)
+    }.coerceIn(MIN_SPREAD_GAP_DP_VAL, MAX_SPREAD_GAP_DP_VAL)
+
     return FormatSettings(
         fontSize = fontSize,
         lineHeight = lineHeight,
@@ -467,7 +492,8 @@ fun loadFormatSettings(context: Context, bookId: String, isLocal: Boolean): Form
         customPath = customPath,
         textAlign = textAlign,
         fontWeight = fontWeight.coerceIn(0, 1000),
-        letterSpacing = letterSpacing.coerceIn(-0.10f, 0.50f)
+        letterSpacing = letterSpacing.coerceIn(-0.10f, 0.50f),
+        spreadGapDp = spreadGapDp
     )
 }
 
@@ -582,7 +608,8 @@ fun saveReaderSettings(
     customFontPath: String?,
     textAlign: ReaderTextAlign,
     fontWeight: Int = DEFAULT_FONT_WEIGHT_VAL,
-    letterSpacing: Float = DEFAULT_LETTER_SPACING_VAL
+    letterSpacing: Float = DEFAULT_LETTER_SPACING_VAL,
+    spreadGapDp: Float = DEFAULT_SPREAD_GAP_DP_VAL
 ) {
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
     prefs.edit {
@@ -600,6 +627,7 @@ fun saveReaderSettings(
         putString(TEXT_ALIGN_KEY, textAlign.id)
         putInt(FONT_WEIGHT_KEY, fontWeight)
         putFloat(LETTER_SPACING_KEY, letterSpacing)
+        putFloat(SPREAD_GAP_KEY, spreadGapDp.coerceIn(MIN_SPREAD_GAP_DP_VAL, MAX_SPREAD_GAP_DP_VAL))
     }
 }
 
@@ -649,6 +677,9 @@ fun ReaderTextFormatPanel(
     onHorizontalMarginChange: (Float) -> Unit,
     currentVerticalMargin: Float,
     onVerticalMarginChange: (Float) -> Unit,
+    currentSpreadGapDp: Float,
+    onSpreadGapChange: (Float) -> Unit,
+    isTwoPageSpread: Boolean,
     currentFont: ReaderFont,
     currentFontWeight: Int,
     onFontWeightChange: (Int) -> Unit,
@@ -756,14 +787,21 @@ fun ReaderTextFormatPanel(
             FormatStepperRow(stringResource(R.string.label_vertical_margin), formatMargin(currentVerticalMargin),
                 { onVerticalMarginChange(stepFormatValue(currentVerticalMargin, -0.1f, 0f, 3f)) },
                 { onVerticalMarginChange(stepFormatValue(currentVerticalMargin, 0.1f, 0f, 3f)) }) { activeAdjustment = ReaderFormatAdjustment.VERTICAL_MARGIN }
+            if (isTwoPageSpread) {
+                FormatStepperRow(stringResource(R.string.label_spread_gap), formatSpreadGap(currentSpreadGapDp),
+                    { onSpreadGapChange((currentSpreadGapDp - SPREAD_GAP_STEP_DP_VAL).coerceAtLeast(MIN_SPREAD_GAP_DP_VAL)) },
+                    { onSpreadGapChange((currentSpreadGapDp + SPREAD_GAP_STEP_DP_VAL).coerceAtMost(MAX_SPREAD_GAP_DP_VAL)) }) { activeAdjustment = ReaderFormatAdjustment.SPREAD_GAP }
+            }
         }
     )
     activeAdjustment?.let { adjustment ->
         ReaderFormatAdjustmentDialog(
             adjustment, currentFontSize, currentFontWeight, currentLetterSpacing, currentLineHeight,
             currentParagraphGap, currentImageSize, currentHorizontalMargin, currentVerticalMargin,
+            currentSpreadGapDp,
             onFontSizeChange, onFontWeightChange, onLetterSpacingChange, onLineHeightChange,
-            onParagraphGapChange, onImageSizeChange, onHorizontalMarginChange, onVerticalMarginChange
+            onParagraphGapChange, onImageSizeChange, onHorizontalMarginChange, onVerticalMarginChange,
+            onSpreadGapChange
         ) { activeAdjustment = null }
     }
 }
@@ -775,7 +813,8 @@ private enum class ReaderFormatAdjustment(val title: String) {
     PARAGRAPH_GAP("Paragraph gap"),
     IMAGE_SIZE("Image size"),
     HORIZONTAL_MARGIN("Horizontal margin"),
-    VERTICAL_MARGIN("Vertical margin")
+    VERTICAL_MARGIN("Vertical margin"),
+    SPREAD_GAP("Spread gap")
 }
 
 @Composable
@@ -800,6 +839,7 @@ private fun ReaderFormatAdjustmentDialog(
     imageSize: Float,
     horizontalMargin: Float,
     verticalMargin: Float,
+    spreadGapDp: Float,
     onFontSizeChange: (Float) -> Unit,
     onFontWeightChange: (Int) -> Unit,
     onLetterSpacingChange: (Float) -> Unit,
@@ -808,6 +848,7 @@ private fun ReaderFormatAdjustmentDialog(
     onImageSizeChange: (Float) -> Unit,
     onHorizontalMarginChange: (Float) -> Unit,
     onVerticalMarginChange: (Float) -> Unit,
+    onSpreadGapChange: (Float) -> Unit,
     onDismiss: () -> Unit
 ) {
     val isWeight = adjustment == ReaderFormatAdjustment.FONT_WEIGHT
@@ -820,6 +861,7 @@ private fun ReaderFormatAdjustmentDialog(
         ReaderFormatAdjustment.IMAGE_SIZE -> imageSize
         ReaderFormatAdjustment.HORIZONTAL_MARGIN -> horizontalMargin
         ReaderFormatAdjustment.VERTICAL_MARGIN -> verticalMargin
+        ReaderFormatAdjustment.SPREAD_GAP -> spreadGapDp
     }
     val range = when (adjustment) {
         ReaderFormatAdjustment.FONT_SIZE -> 0.5f..3f
@@ -830,6 +872,7 @@ private fun ReaderFormatAdjustmentDialog(
         ReaderFormatAdjustment.IMAGE_SIZE -> 0.5f..2f
         ReaderFormatAdjustment.HORIZONTAL_MARGIN,
         ReaderFormatAdjustment.VERTICAL_MARGIN -> 0f..3f
+        ReaderFormatAdjustment.SPREAD_GAP -> MIN_SPREAD_GAP_DP_VAL..MAX_SPREAD_GAP_DP_VAL
     }
     fun update(raw: Float) {
         when (adjustment) {
@@ -841,6 +884,10 @@ private fun ReaderFormatAdjustmentDialog(
             ReaderFormatAdjustment.IMAGE_SIZE -> onImageSizeChange(stepFormatValue(raw, 0f, 0.5f, 2f))
             ReaderFormatAdjustment.HORIZONTAL_MARGIN -> onHorizontalMarginChange(stepFormatValue(raw, 0f, 0f, 3f))
             ReaderFormatAdjustment.VERTICAL_MARGIN -> onVerticalMarginChange(stepFormatValue(raw, 0f, 0f, 3f))
+            ReaderFormatAdjustment.SPREAD_GAP -> onSpreadGapChange(
+                ((raw / SPREAD_GAP_STEP_DP_VAL).roundToInt() * SPREAD_GAP_STEP_DP_VAL)
+                    .coerceIn(MIN_SPREAD_GAP_DP_VAL, MAX_SPREAD_GAP_DP_VAL)
+            )
         }
     }
     fun reset() {
@@ -853,6 +900,7 @@ private fun ReaderFormatAdjustmentDialog(
             ReaderFormatAdjustment.IMAGE_SIZE -> onImageSizeChange(DEFAULT_IMAGE_SIZE_VAL)
             ReaderFormatAdjustment.HORIZONTAL_MARGIN -> onHorizontalMarginChange(DEFAULT_HORIZONTAL_MARGIN_VAL)
             ReaderFormatAdjustment.VERTICAL_MARGIN -> onVerticalMarginChange(DEFAULT_VERTICAL_MARGIN_VAL)
+            ReaderFormatAdjustment.SPREAD_GAP -> onSpreadGapChange(DEFAULT_SPREAD_GAP_DP_VAL)
         }
     }
 
@@ -864,6 +912,7 @@ private fun ReaderFormatAdjustmentDialog(
             ReaderFormatAdjustment.LETTER_SPACING -> formatLetterSpacing(letterSpacing)
             ReaderFormatAdjustment.HORIZONTAL_MARGIN -> formatMargin(horizontalMargin)
             ReaderFormatAdjustment.VERTICAL_MARGIN -> formatMargin(verticalMargin)
+            ReaderFormatAdjustment.SPREAD_GAP -> formatSpreadGap(spreadGapDp)
             else -> formatMultiplier(value)
         },
         valueRange = range,
@@ -899,6 +948,8 @@ internal fun formatMargin(value: Float): String =
         value in 0.99f..1.01f -> "Original"
         else -> "%.1fx".format(value)
     }
+
+internal fun formatSpreadGap(valueDp: Float): String = "${valueDp.roundToInt()} dp"
 
 @Composable
 fun FontSelectionSheetContent(

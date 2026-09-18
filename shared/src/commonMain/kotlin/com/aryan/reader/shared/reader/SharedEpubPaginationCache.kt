@@ -369,6 +369,7 @@ class SharedEpubPaginationCache(
             settings.paragraphSpacing.roundCacheValue(),
             settings.imageScale.roundCacheValue(),
             settings.pageSpreadMode.name,
+            settings.pageSpreadGutterDp.roundCacheValue(),
             settings.customFontPath.orEmpty(),
             settings.hideImages
         )

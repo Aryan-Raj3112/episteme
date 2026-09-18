@@ -156,6 +156,7 @@ internal fun PaginatedReaderContent(
     isRightToLeftPagination: Boolean = false,
     isTwoPageSpread: Boolean = false,
     totalBookPageCount: Int = uiState.totalPageCount,
+    spreadGutterDp: Float = EpubPageSpread.SpreadGutterDp.toFloat(),
     effectiveBg: Color,
     effectiveText: Color,
     searchQuery: String,
@@ -265,17 +266,31 @@ internal fun PaginatedReaderContent(
     var pendingCrossPageSelection by remember { mutableStateOf<PendingCrossPageSelection?>(null) }
     var crossPageTriggerInfo by remember { mutableStateOf<Pair<Int, String>?>(null) }
 
+        // Fresh reads for the long-running turn tracker below: it only
+    // restarts when pagerState identity changes, so params read directly
+    // inside would go stale (e.g. totalBook stuck at 0, see EpubSpreadBlink
+    // spread_turn lines) and corrupt the cross-page selection anchor.
+    val latestTotalBookPages = rememberUpdatedState(totalBookPageCount)
+    val latestTwoPageSpread = rememberUpdatedState(isTwoPageSpread)
     LaunchedEffect(pagerState) {
         var previousSpread = pagerState.currentPage
         snapshotFlow { pagerState.currentPage }.collect { newSpread ->
+            val turnTotalBook = latestTotalBookPages.value
+            val turnTwoPage = latestTwoPageSpread.value
+            Timber.tag(EpubSpreadBlinkTag).d(
+                "spread_turn fromSpread=$previousSpread toSpread=$newSpread " +
+                    "fromBooks=${EpubPageSpread.visibleBookPages(previousSpread, turnTotalBook, turnTwoPage)} " +
+                    "toBooks=${EpubPageSpread.visibleBookPages(newSpread, turnTotalBook, turnTwoPage)} " +
+                    "totalBook=$turnTotalBook twoPage=$turnTwoPage"
+            )
             if (newSpread == previousSpread + 1) {
                 // Book-space anchor: the selection continues from the last book
                 // page of the outgoing spread (identical to the outgoing page
                 // itself when split view is off).
                 val fromBookPage = EpubPageSpread.visibleBookPages(
                     previousSpread,
-                    totalBookPageCount,
-                    isTwoPageSpread
+                    turnTotalBook,
+                    turnTwoPage
                 ).lastOrNull() ?: previousSpread
                 if (crossPageTriggerInfo != null && crossPageTriggerInfo!!.first == fromBookPage) {
                     pendingCrossPageSelection = PendingCrossPageSelection(fromPageIndex = fromBookPage)
@@ -295,10 +310,13 @@ internal fun PaginatedReaderContent(
         spreadPageModifier: Modifier,
         containerModifier: Modifier
     ) {
-        // Keyed by page: pager slots are recycled across page turns, so an
-        // unkeyed state would flash the previous page's content (and its
-        // highlights) until the fetch below completes.
-        var pageContent by remember(bookPageIndex, uiState.generation) { mutableStateOf<Page?>(null) }
+        // Keyed by book page (not generation): pager slots are recycled
+        // across page turns, so the key must change with the page to avoid
+        // flashing the previous page's content. Generation is deliberately
+        // excluded — background pagination bumps it per chapter, and resetting
+        // here would blank every visible page to the loading placeholder each
+        // time. The fetch below refreshes stale content without blanking.
+        var pageContent by remember(bookPageIndex) { mutableStateOf<Page?>(null) }
         var currentChapterPath by remember { mutableStateOf<String?>(null) }
         var pageLayoutCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
         val pageChapterIndex = onGetChapterIndex(bookPageIndex)
@@ -332,6 +350,13 @@ internal fun PaginatedReaderContent(
                 themeTextColor = effectiveText
             )
         }
+        // Blink diagnosis: fires only on placeholder<->content transitions
+        // (and first composition), never on plain recompositions.
+        LaunchedEffect(bookPageIndex, themedPageContent != null) {
+            Timber.tag(EpubSpreadBlinkTag).d(
+                "page_shown book=$bookPageIndex hasContent=${themedPageContent != null} gen=${uiState.generation}"
+            )
+        }
 
         if (pageUserHighlights.size != userHighlights.size) {
             Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
@@ -348,7 +373,14 @@ internal fun PaginatedReaderContent(
             }
             val fetchStartTime = if (DEBUG_PAGE_TURN_DIAG) System.currentTimeMillis() else 0L
 
-            pageContent = onGetPage(bookPageIndex)
+            val fetchBlinkStart = System.currentTimeMillis()
+            val freshPage = onGetPage(bookPageIndex)
+            Timber.tag(EpubSpreadBlinkTag).d(
+                "page_fetch book=$bookPageIndex gen=${uiState.generation} " +
+                    "null=${freshPage == null} blocks=${freshPage?.content?.size ?: -1} " +
+                    "ms=${System.currentTimeMillis() - fetchBlinkStart}"
+            )
+            pageContent = freshPage
 
             if (DEBUG_PAGE_TURN_DIAG) {
                 val fetchDuration = System.currentTimeMillis() - fetchStartTime
@@ -1671,7 +1703,8 @@ internal fun PaginatedReaderContent(
                                                     block = block,
                                                     density = density,
                                                     maxWidthDp = maxWidth,
-                                                    imageSizeMultiplier = imageSizeMultiplier
+                                                    imageSizeMultiplier = imageSizeMultiplier,
+                                                    maxHeightDp = maxHeight
                                                 )
                                                 val finalImageModifier = Modifier
                                                     .then(
@@ -2104,6 +2137,11 @@ internal fun PaginatedReaderContent(
                             isTwoPageSpread = isTwoPageSpread,
                             isRightToLeft = isRightToLeftPagination
                         )
+                        LaunchedEffect(spreadIndex, totalBookPageCount, isTwoPageSpread) {
+                            Timber.tag(EpubSpreadBlinkTag).d(
+                                "spread_slot spread=$spreadIndex books=$spreadBookPages totalBook=$totalBookPageCount twoPage=$isTwoPageSpread"
+                            )
+                        }
                         if (!isTwoPageSpread) {
                             SpreadBookPage(
                                 bookPageIndex = spreadIndex,
@@ -2114,7 +2152,7 @@ internal fun PaginatedReaderContent(
                             Row(
                                 modifier = Modifier.fillMaxSize().then(spreadPageModifier),
                                 horizontalArrangement = Arrangement.spacedBy(
-                                    EpubPageSpread.SpreadGutterDp.dp,
+                                    spreadGutterDp.dp,
                                     Alignment.CenterHorizontally
                                 ),
                                 verticalAlignment = Alignment.CenterVertically
@@ -2925,7 +2963,8 @@ internal fun RenderFlexChildBlock(
                     block = childBlock,
                     density = density,
                     maxWidthDp = maxWidth,
-                    imageSizeMultiplier = imageSizeMultiplier
+                    imageSizeMultiplier = imageSizeMultiplier,
+                    maxHeightDp = maxHeight
                 )
                 val imageModifier = Modifier
                     .then(

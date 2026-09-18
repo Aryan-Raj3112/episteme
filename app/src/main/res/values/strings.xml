@@ -1011,6 +1011,7 @@
     <string name="visual_options_epub_page_spread_desc">Show one page or two pages side by side. Only applies in paginated mode.</string>
     <string name="visual_options_epub_spread_single">Single</string>
     <string name="visual_options_epub_spread_two">Two pages</string>
+    <string name="label_spread_gap">Spread gap</string>
     <string name="reader_brightness_title">Brightness</string>
     <string name="reader_brightness_system">Use system brightness</string>
     <string name="reader_brightness_system_desc">Follows the device brightness setting.</string>

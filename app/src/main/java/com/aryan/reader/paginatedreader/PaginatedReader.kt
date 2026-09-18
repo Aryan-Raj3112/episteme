@@ -139,6 +139,7 @@ fun PaginatedReaderScreen(
     isPageTurnAnimationEnabled: Boolean,
     isRightToLeftPagination: Boolean = false,
     isTwoPageSpread: Boolean = false,
+    pageSpreadGutterDp: Float = EpubPageSpread.SpreadGutterDp.toFloat(),
     searchQuery: String,
     fontSizeMultiplier: Float,
     lineHeightMultiplier: Float,
@@ -393,7 +394,7 @@ fun PaginatedReaderScreen(
         // Two-page split view: each book page is laid out in half the viewport
         // (minus the inter-page gutter), matching the shared measured paginator
         // geometry. This repaginates (more, narrower pages) via textConstraints.
-        val spreadGutterPx = with(density) { EpubPageSpread.SpreadGutterDp.dp.roundToPx() }
+        val spreadGutterPx = with(density) { pageSpreadGutterDp.dp.roundToPx() }
         val pageSlotMaxWidthPx = if (isTwoPageSpread) {
             ((this.constraints.maxWidth - spreadGutterPx) / 2).coerceAtLeast(1)
         } else {
@@ -456,7 +457,7 @@ fun PaginatedReaderScreen(
             }
         }
 
-        val paginator = remember(book, bookId, textConstraints, isTwoPageSpread, layoutTextStyle, userTextAlign, debouncedLineHeightMult, debouncedParagraphGapMult, debouncedImageSizeMult, debouncedHideImages, debouncedVerticalMarginMult, debouncedBookReplacementSignature, debouncedBookReplacementFileId) {
+        val paginator = remember(book, bookId, textConstraints, isTwoPageSpread, pageSpreadGutterDp, layoutTextStyle, userTextAlign, debouncedLineHeightMult, debouncedParagraphGapMult, debouncedImageSizeMult, debouncedHideImages, debouncedVerticalMarginMult, debouncedBookReplacementSignature, debouncedBookReplacementFileId) {
         val userAgentStylesheet = UserAgentStylesheet.default
             var allRules = OptimizedCssRules()
             val allFontFaces = mutableListOf<FontFaceInfo>()
@@ -561,6 +562,9 @@ fun PaginatedReaderScreen(
                         if (page != null) {
                             val totalBookPages = (paginator as? BookPaginator)?.totalPageCount ?: 0
                             val spread = EpubPageSpread.bookPageToSpread(page, totalBookPages, isTwoPageSpread)
+                            Timber.tag(EpubSpreadBlinkTag).d(
+                                "restore book=$page spread=$spread totalBook=$totalBookPages twoPage=$isTwoPageSpread"
+                            )
                             pagerState.scrollToPage(spread)
                             paginator.onUserScrolledTo(page)
                             Timber.tag("POS_DIAG").i("Restoration: Pager scrolled to $spread (book page $page)")
@@ -593,11 +597,17 @@ fun PaginatedReaderScreen(
             launch {
                 snapshotFlow { paginator.totalPageCount }.collect { newTotalPageCount ->
                     Timber.tag("ReflowPaginationDiag").d("PaginatedReaderScreen: paginator.totalPageCount=$newTotalPageCount")
+                    Timber.tag(EpubSpreadBlinkTag).d(
+                        "paginator_total book=$newTotalPageCount " +
+                            "spreads=${EpubPageSpread.spreadCount(newTotalPageCount, isTwoPageSpread)} " +
+                            "twoPage=$isTwoPageSpread"
+                    )
                     totalPageCount = newTotalPageCount
                 }
             }
             launch { snapshotFlow { paginator.generation }.collect {
                 Timber.tag("ReflowPaginationDiag").d("PaginatedReaderScreen: paginator.generation=$it")
+                Timber.tag(EpubSpreadBlinkTag).d("paginator_generation gen=$it")
                 generation = it
             } }
         }
@@ -734,6 +744,7 @@ fun PaginatedReaderScreen(
             isRightToLeftPagination = isRightToLeftPagination,
             isTwoPageSpread = isTwoPageSpread,
             totalBookPageCount = totalPageCount,
+            spreadGutterDp = pageSpreadGutterDp,
             effectiveBg = effectiveBg,
             searchQuery = searchQuery,
             ttsHighlightInfo = ttsHighlightInfo,

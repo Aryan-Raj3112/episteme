@@ -46,6 +46,7 @@ class EpubReaderPreferencesAndAnnotationsTest {
         assertNull(format.customPath)
         assertFalse(loadNativeVerticalRenderer(context))
         assertEquals(ReaderPageSpreadMode.SINGLE, loadPageSpreadMode(context))
+        assertEquals(DEFAULT_SPREAD_GAP_DP_VAL, loadSpreadGapDp(context), 0.0001f)
     }
 
     @Test
@@ -182,6 +183,48 @@ class EpubReaderPreferencesAndAnnotationsTest {
         assertTrue(loadNativeVerticalRenderer(context))
         assertEquals(ReaderPageSpreadMode.TWO_PAGE, loadPageSpreadMode(context))
         assertEquals(0f, loadHorizontalMargin(context), 0.0001f)
+    }
+
+    @Test
+    fun `spread gap rounds trips globally and locally with coercion`() {
+        val prefs = TestSharedPreferences()
+        val context = contextWithPrefs(SETTINGS_PREFS_NAME to prefs)
+
+        saveSpreadGapDp(context, 32f)
+        assertEquals(32f, loadSpreadGapDp(context), 0.0001f)
+
+        saveSpreadGapDp(context, 500f)
+        assertEquals(MAX_SPREAD_GAP_DP_VAL, loadSpreadGapDp(context), 0.0001f)
+
+        saveLocalReaderSettings(
+            context = context,
+            bookId = "book",
+            fontSize = DEFAULT_FONT_SIZE_VAL,
+            lineHeight = DEFAULT_LINE_HEIGHT_VAL,
+            paragraphGap = DEFAULT_PARAGRAPH_GAP_VAL,
+            imageSize = DEFAULT_IMAGE_SIZE_VAL,
+            horizontalMargin = DEFAULT_HORIZONTAL_MARGIN_VAL,
+            verticalMargin = DEFAULT_VERTICAL_MARGIN_VAL,
+            fontFamily = ReaderFont.ORIGINAL,
+            customFontPath = null,
+            textAlign = ReaderTextAlign.DEFAULT,
+            spreadGapDp = 12f
+        )
+        assertEquals(12f, loadFormatSettings(context, bookId = "book", isLocal = true).spreadGapDp, 0.0001f)
+        saveReaderSettings(
+            context = context,
+            fontSize = DEFAULT_FONT_SIZE_VAL,
+            lineHeight = DEFAULT_LINE_HEIGHT_VAL,
+            paragraphGap = DEFAULT_PARAGRAPH_GAP_VAL,
+            imageSize = DEFAULT_IMAGE_SIZE_VAL,
+            horizontalMargin = DEFAULT_HORIZONTAL_MARGIN_VAL,
+            verticalMargin = DEFAULT_VERTICAL_MARGIN_VAL,
+            fontFamily = ReaderFont.ORIGINAL,
+            customFontPath = null,
+            textAlign = ReaderTextAlign.DEFAULT,
+            spreadGapDp = 24f
+        )
+        assertEquals(24f, loadFormatSettings(context, bookId = "book", isLocal = false).spreadGapDp, 0.0001f)
     }
 
     @Test

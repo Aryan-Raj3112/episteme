@@ -2,6 +2,13 @@
 package com.aryan.reader.paginatedreader
 
 /**
+ * Shared log tag for diagnosing page-blink / flash issues in the paginated
+ * reader (both single and two-page spread). Filter logcat with:
+ * `adb logcat | grep EpubSpreadBlink`
+ */
+const val EpubSpreadBlinkTag = "EpubSpreadBlink"
+
+/**
  * Spread math for the Android EPUB paginated reader's two-page split view.
  *
  * Mirrors the shared `ReaderSpreadLayout` semantics (even-aligned spreads,
@@ -16,8 +23,12 @@ package com.aryan.reader.paginatedreader
  *   disabled.
  */
 object EpubPageSpread {
-    /** Gutter between the two pages of a spread. Matches shared paginator/render gap. */
-    const val SpreadGutterDp = 28
+    /**
+     * Default gutter between the two pages of a spread, in dp. Adjustable via
+     * the format settings' Spread Gap control; kept in one place so the
+     * paginator slot math and the render Row spacing stay identical.
+     */
+    const val SpreadGutterDp = 20
 
     fun spreadCount(totalBookPages: Int, isTwoPageSpread: Boolean): Int {
         if (totalBookPages <= 0) return 0
@@ -50,6 +61,16 @@ object EpubPageSpread {
         } else {
             safeBookPage
         }
+    }
+
+    /**
+     * Raw spread for [bookPage] without clamping to a (possibly still growing)
+     * [totalBookPages]. Use for "wait until paginated" checks; normalize with
+     * [normalizeSpreadIndex] before scrolling.
+     */
+    fun rawBookPageToSpread(bookPage: Int, isTwoPageSpread: Boolean): Int {
+        if (!isTwoPageSpread) return bookPage.coerceAtLeast(0)
+        return (bookPage / 2).coerceAtLeast(0)
     }
 
     /** Book pages visible for [spreadIndex] in logical (LTR) order. */

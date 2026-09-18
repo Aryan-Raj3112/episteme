@@ -191,6 +191,7 @@ import com.aryan.reader.readerSliderChromeColors
 import com.aryan.reader.readerSliderToggleState
 import com.aryan.reader.paginatedreader.CssParser
 import com.aryan.reader.paginatedreader.EpubPageSpread
+import com.aryan.reader.paginatedreader.EpubSpreadBlinkTag
 import com.aryan.reader.paginatedreader.BookPaginator
 import com.aryan.reader.paginatedreader.HeaderBlock
 import com.aryan.reader.paginatedreader.IPaginator
@@ -922,14 +923,14 @@ fun EpubReaderHost(
     var showFontSelectionSheet by remember { mutableStateOf(false) }
     val fontSheetState = rememberModalBottomSheetState()
 
-    LaunchedEffect(format.currentFontSizeEm, format.currentLineHeight, format.currentParagraphGap, format.currentImageSize, format.currentHorizontalMargin, format.currentVerticalMargin, format.currentFontFamily, format.currentCustomFontPath, format.currentTextAlign, format.currentFontWeight, format.currentLetterSpacing, isFormatLocal) {
+    LaunchedEffect(format.currentFontSizeEm, format.currentLineHeight, format.currentParagraphGap, format.currentImageSize, format.currentHorizontalMargin, format.currentVerticalMargin, format.currentFontFamily, format.currentCustomFontPath, format.currentTextAlign, format.currentFontWeight, format.currentLetterSpacing, format.currentSpreadGapDp, isFormatLocal) {
         if (isFormatLocal) {
             saveLocalReaderSettings(
-                context, bookId, format.currentFontSizeEm, format.currentLineHeight, format.currentParagraphGap, format.currentImageSize, format.currentHorizontalMargin, format.currentVerticalMargin, format.currentFontFamily, format.currentCustomFontPath, format.currentTextAlign, format.currentFontWeight, format.currentLetterSpacing
+                context, bookId, format.currentFontSizeEm, format.currentLineHeight, format.currentParagraphGap, format.currentImageSize, format.currentHorizontalMargin, format.currentVerticalMargin, format.currentFontFamily, format.currentCustomFontPath, format.currentTextAlign, format.currentFontWeight, format.currentLetterSpacing, format.currentSpreadGapDp
             )
         } else {
             saveReaderSettings(
-                context, format.currentFontSizeEm, format.currentLineHeight, format.currentParagraphGap, format.currentImageSize, format.currentHorizontalMargin, format.currentVerticalMargin, format.currentFontFamily, format.currentCustomFontPath, format.currentTextAlign, format.currentFontWeight, format.currentLetterSpacing
+                context, format.currentFontSizeEm, format.currentLineHeight, format.currentParagraphGap, format.currentImageSize, format.currentHorizontalMargin, format.currentVerticalMargin, format.currentFontFamily, format.currentCustomFontPath, format.currentTextAlign, format.currentFontWeight, format.currentLetterSpacing, format.currentSpreadGapDp
             )
         }
     }
@@ -2208,20 +2209,25 @@ fun EpubReaderHost(
 
             @Suppress("SENSELESS_COMPARISON")
             if (pageToScrollTo != null) {
-                val targetSpread = bookPageToSpread(pageToScrollTo)
-            val readyPageCount = if (paginatedPagerState.pageCount <= targetSpread) {
+                val rawTargetSpread = EpubPageSpread.rawBookPageToSpread(pageToScrollTo, isTwoPageSpread)
+            val readyPageCount = if (paginatedPagerState.pageCount <= rawTargetSpread) {
                     Timber.tag(TAG_EPUB_PAGINATED_OPEN_DIAG).d(
-                        "restore_wait_page_count rawPage=$pageToScrollTo targetSpread=$targetSpread currentPageCount=${paginatedPagerState.pageCount} paginatorTotal=${bookPaginator?.totalPageCount}"
+                        "restore_wait_page_count rawPage=$pageToScrollTo targetSpread=$rawTargetSpread currentPageCount=${paginatedPagerState.pageCount} paginatorTotal=${bookPaginator?.totalPageCount}"
                     )
                     withTimeoutOrNull(2000L) {
                         snapshotFlow { paginatedPagerState.pageCount }
-                            .filter { it > targetSpread }
+                            .filter { it > rawTargetSpread }
                             .first()
                     } ?: paginatedPagerState.pageCount
                 } else {
                     paginatedPagerState.pageCount
                 }
-                val targetPage = targetSpread.coerceIn(0, (readyPageCount - 1).coerceAtLeast(0))
+                val targetPage = EpubPageSpread.normalizeSpreadIndex(rawTargetSpread, totalBookPageCount(), isTwoPageSpread)
+                    .coerceIn(0, (readyPageCount - 1).coerceAtLeast(0))
+                Timber.tag(EpubSpreadBlinkTag).d(
+                    "open_restore rawBook=$pageToScrollTo rawSpread=$rawTargetSpread spread=$targetPage " +
+                        "spreadCount=$readyPageCount totalBook=${totalBookPageCount()} twoPage=$isTwoPageSpread"
+                )
                 Timber.d("Scrolling to page: $targetPage")
                 Timber.tag(TAG_EPUB_PAGINATED_OPEN_DIAG).d(
                     "restore_scroll page=$targetPage rawPage=$pageToScrollTo pageCount=$readyPageCount locator=$restoreLocator"
@@ -2238,6 +2244,9 @@ fun EpubReaderHost(
 
             delay(100)
             isPagerInitialized = true
+            Timber.tag(EpubSpreadBlinkTag).d(
+                "open_veil_off spread=${paginatedPagerState.currentPage} spreadCount=${paginatedPagerState.pageCount} twoPage=$isTwoPageSpread"
+            )
             navigation.chapterToLoadOnSwitch = null
             Timber.tag(TAG_EPUB_PAGINATED_OPEN_DIAG).d(
                 "restore_complete currentPage=${paginatedPagerState.currentPage} pageCount=${paginatedPagerState.pageCount}"
@@ -5571,6 +5580,9 @@ fun EpubReaderHost(
                     onHorizontalMarginChange = { format.currentHorizontalMargin = it },
                     currentVerticalMargin = format.currentVerticalMargin,
                     onVerticalMarginChange = { format.currentVerticalMargin = it },
+                    currentSpreadGapDp = format.currentSpreadGapDp,
+                    onSpreadGapChange = { format.currentSpreadGapDp = it },
+                    isTwoPageSpread = isTwoPageSpread,
                     currentFont = format.currentFontFamily,
                     currentFontWeight = format.currentFontWeight,
                     onFontWeightChange = { format.currentFontWeight = it },
@@ -5595,6 +5607,7 @@ fun EpubReaderHost(
                         format.currentImageSize = DEFAULT_IMAGE_SIZE_VAL
                         format.currentHorizontalMargin = DEFAULT_HORIZONTAL_MARGIN_VAL
                         format.currentVerticalMargin = DEFAULT_VERTICAL_MARGIN_VAL
+                        format.currentSpreadGapDp = DEFAULT_SPREAD_GAP_DP_VAL
                         format.currentFontWeight = DEFAULT_FONT_WEIGHT_VAL
                         format.currentLetterSpacing = DEFAULT_LETTER_SPACING_VAL
                         format.currentFontFamily = ReaderFont.ORIGINAL

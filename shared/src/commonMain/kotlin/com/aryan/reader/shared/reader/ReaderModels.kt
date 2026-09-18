@@ -109,6 +109,7 @@ data class ReaderSettings(
     val pageInfoMode: PageInfoMode = PageInfoMode.DEFAULT,
     val pageInfoPosition: PageInfoPosition = PageInfoPosition.BOTTOM,
     val pageSpreadMode: ReaderPageSpreadMode = ReaderPageSpreadMode.SINGLE,
+    val pageSpreadGutterDp: Float = DefaultReaderPageSpreadGutterDp,
     val rightToLeftPagination: Boolean = false,
     val tapToNavigateEnabled: Boolean = true,
     val pageTurnAnimationEnabled: Boolean = false,
@@ -140,6 +141,13 @@ data class ReaderSettings(
  * no-op and pagination stays identical to rendering.
  */
 const val UncappedReaderPageWidthPx = 100_000
+
+/**
+ * Default gap between the two pages of a two-page spread, in dp. Applies to
+ * both the shared measured paginator slot math and the Android paginated
+ * reader. Adjustable via the format settings' Spread Gap control.
+ */
+const val DefaultReaderPageSpreadGutterDp = 20f
 
 fun ReaderSettings.withUncappedPageWidth(): ReaderSettings =
     copy(pageWidth = UncappedReaderPageWidthPx)
@@ -181,6 +189,7 @@ data class ReaderLayoutSignature(
     val paragraphSpacing: Float,
     val imageScale: Float,
     val pageSpreadMode: ReaderPageSpreadMode,
+    val pageSpreadGutterDp: Float,
     val customFontPath: String?,
     val hideImages: Boolean
 )
@@ -210,6 +219,7 @@ fun ReaderSettings.layoutSignature(): ReaderLayoutSignature {
         paragraphSpacing = paragraphSpacing,
         imageScale = imageScale,
         pageSpreadMode = pageSpreadMode,
+        pageSpreadGutterDp = pageSpreadGutterDp,
         customFontPath = customFontPath,
         hideImages = hideImages
     )

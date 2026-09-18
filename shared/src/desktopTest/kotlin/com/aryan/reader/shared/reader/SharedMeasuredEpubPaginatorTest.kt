@@ -48,7 +48,7 @@ class SharedMeasuredEpubPaginatorTest {
             viewport = ReaderViewportSpec(widthPx = 1_300, heightPx = 900)
         )
 
-        assertEquals(476, geometry.pageWidthPx)
+        assertEquals(480, geometry.pageWidthPx)
         assertEquals(820, geometry.pageHeightPx)
     }
 
@@ -146,8 +146,26 @@ class SharedMeasuredEpubPaginatorTest {
             viewport = ReaderViewportSpec(widthPx = 1_300, heightPx = 900)
         )
 
-        assertEquals(476, twoPageGeometry.pageWidthPx)
+        assertEquals(480, twoPageGeometry.pageWidthPx)
         assertEquals(820, twoPageGeometry.pageHeightPx)
+    }
+
+    @Test
+    fun `two page geometry honors a custom spread gutter`() {
+        val zeroGapGeometry = measuredPageGeometryFor(
+            settings = ReaderSettings(
+                pageWidth = 760,
+                horizontalMargin = 80,
+                verticalMargin = 40,
+                readingMode = ReaderReadingMode.PAGINATED,
+                pageSpreadMode = ReaderPageSpreadMode.TWO_PAGE,
+                pageSpreadGutterDp = 0f
+            ),
+            viewport = ReaderViewportSpec(widthPx = 1_300, heightPx = 900)
+        )
+
+        assertEquals(490, zeroGapGeometry.pageWidthPx)
+        assertEquals(820, zeroGapGeometry.pageHeightPx)
     }
 
     @Test

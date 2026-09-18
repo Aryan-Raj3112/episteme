@@ -76,6 +76,29 @@ class ReaderFormatSliderModelsTest {
     }
 
     @Test
+    fun spreadGapSliderUsesAbsoluteDpSteps() {
+        assertEquals(0f, AndroidEpubFormatSliders.spreadGap.minimum)
+        assertEquals(48f, AndroidEpubFormatSliders.spreadGap.maximum)
+        assertEquals(2f, AndroidEpubFormatSliders.spreadGap.step)
+        assertEquals(20f, AndroidEpubFormatSliders.spreadGap.default)
+        assertEquals(22f, AndroidEpubFormatSliders.spreadGap.step(21f, 0))
+        assertEquals(24f, AndroidEpubFormatSliders.spreadGap.step(21f, 1))
+        assertEquals(20f, AndroidEpubFormatSliders.spreadGap.snap(20.4f))
+        assertEquals(48f, AndroidEpubFormatSliders.spreadGap.snap(500f))
+    }
+
+    @Test
+    fun spreadGapRoundTripsThroughSliderValues() {
+        assertEquals(20f, ReaderSettings().pageSpreadGutterDp)
+        val settings = AndroidEpubFormatSliderValues(spreadGapDp = 32f).toReaderSettings()
+        assertEquals(32f, settings.pageSpreadGutterDp)
+        assertEquals(32f, settings.toAndroidEpubFormatSliderValues().spreadGapDp, 0.0001f)
+        val updated = ReaderSettings()
+            .withAndroidEpubFormatSliderValue(AndroidEpubFormatSlider.SPREAD_GAP, 12f)
+        assertEquals(12f, updated.pageSpreadGutterDp)
+    }
+
+    @Test
     fun migrationClampsOnlyFormatFieldsAndPreservesReaderPolicy() {
         val original = ReaderSettings(
             fontSize = 100,

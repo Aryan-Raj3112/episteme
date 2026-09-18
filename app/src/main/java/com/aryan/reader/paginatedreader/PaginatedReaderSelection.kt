@@ -1695,7 +1695,8 @@ internal fun computeImageRenderSizePx(
     block: ImageBlock,
     density: Density,
     maxWidthPx: Float,
-    imageSizeMultiplier: Float
+    imageSizeMultiplier: Float,
+    maxHeightPx: Float = Float.MAX_VALUE
 ): Pair<Float, Float> {
     val intrinsicWidth = block.intrinsicWidth
     val intrinsicHeight = block.intrinsicHeight
@@ -1718,20 +1719,34 @@ internal fun computeImageRenderSizePx(
     }
     scaledWidth = scaledWidth.coerceAtMost(maxWidthPx)
 
-    return scaledWidth to (scaledWidth * aspectRatio)
+    // Contain-fit: mirror the paginator so render matches measurement.
+    var scaledHeight = scaledWidth * aspectRatio
+    if (scaledHeight > maxHeightPx) {
+        scaledWidth = (maxHeightPx / aspectRatio).coerceAtLeast(0f)
+        scaledHeight = scaledWidth * aspectRatio
+    }
+
+    return scaledWidth to scaledHeight
 }
 
 internal fun computeImageRenderSizeDp(
     block: ImageBlock,
     density: Density,
     maxWidthDp: Dp,
-    imageSizeMultiplier: Float
+    imageSizeMultiplier: Float,
+    maxHeightDp: Dp = Dp.Unspecified
 ): Pair<Dp, Dp>? {
+    val maxHeightPx = if (maxHeightDp.isSpecified) {
+        with(density) { maxHeightDp.toPx() }
+    } else {
+        Float.MAX_VALUE
+    }
     val (widthPx, heightPx) = computeImageRenderSizePx(
         block = block,
         density = density,
         maxWidthPx = with(density) { maxWidthDp.toPx() },
-        imageSizeMultiplier = imageSizeMultiplier
+        imageSizeMultiplier = imageSizeMultiplier,
+        maxHeightPx = maxHeightPx
     )
     if (widthPx <= 0f || heightPx <= 0f) return null
     return with(density) { widthPx.toDp() to heightPx.toDp() }
@@ -1995,7 +2010,8 @@ internal fun WrappingContentLayout(
                 block = block.floatedImage,
                 density = density,
                 maxWidthPx = constraints.maxWidth.toFloat(),
-                imageSizeMultiplier = imageSizeMultiplier
+                imageSizeMultiplier = imageSizeMultiplier,
+                maxHeightPx = constraints.maxHeight.toFloat()
             )
         }
 

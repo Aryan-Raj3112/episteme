@@ -47,6 +47,7 @@ internal class EpubReaderFormatState(
     var currentVerticalMargin by mutableFloatStateOf(initialFormatSettings.verticalMargin)
     var currentFontWeight by mutableIntStateOf(initialFormatSettings.fontWeight)
     var currentLetterSpacing by mutableFloatStateOf(initialFormatSettings.letterSpacing)
+    var currentSpreadGapDp by mutableFloatStateOf(initialFormatSettings.spreadGapDp)
     var currentTextAlign by mutableStateOf(initialFormatSettings.textAlign)
     var currentFontFamily by mutableStateOf(initialFormatSettings.font)
     var currentCustomFontPath by mutableStateOf(initialFormatSettings.customPath)

@@ -1072,7 +1072,11 @@ private fun measuredPageGeometryTerms(
     val pageVerticalMargin = settings.resolvedVerticalMargin.scaleCssPx(scale)
     val configuredPageWidth = settings.pageWidth.scaleCssPx(scale).coerceAtLeast(1)
     val usesSpreadPageSlot = settings.usesMeasuredPaginatedSpreadPageSlot()
-    val gutter = if (usesSpreadPageSlot) MeasuredSpreadGutterPx.scaleCssPx(scale) else 0
+    val gutter = if (usesSpreadPageSlot) {
+        (settings.pageSpreadGutterDp * scale).roundToInt().coerceAtLeast(0)
+    } else {
+        0
+    }
     val singlePageContentWidth = (safeWidth - (pageHorizontalMargin * 2)).coerceAtLeast(1)
     val twoPageAvailableOuterWidth = ((safeWidth - gutter).coerceAtLeast(1) / 2).coerceAtLeast(1)
     val twoPageAvailableContentWidth = (twoPageAvailableOuterWidth - (pageHorizontalMargin * 2)).coerceAtLeast(1)
@@ -1155,9 +1159,7 @@ internal fun measureImageSize(
     return measuredWidth to coercedHeight
 }
 
-private const val MeasuredSpreadGutterPx = 28
-
-private fun ReaderSettings.usesMeasuredPaginatedSpreadPageSlot(): Boolean {
+    private fun ReaderSettings.usesMeasuredPaginatedSpreadPageSlot(): Boolean {
     return isTwoPageSpreadEnabled()
 }
 
