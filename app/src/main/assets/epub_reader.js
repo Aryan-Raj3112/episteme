@@ -192,7 +192,12 @@
                 text-align-last: auto !important;
                 letter-spacing: normal !important;
                 word-spacing: normal !important;
-                padding: 0.1em 0;
+                /* Vertical padding on inline markers grows the line box on
+                   WebKit and visibly shifts content when highlighting. */
+                padding: 0 !important;
+                margin: 0 !important;
+                border: 0 !important;
+                vertical-align: baseline !important;
                 border-radius: 3px;
                 -webkit-box-decoration-break: clone;
                 box-decoration-break: clone;
@@ -203,7 +208,35 @@
                 color: #E0E0E0 !important;
             }
 
-            /* User Highlights */
+            /* User Highlights: wrapping text must never change layout.
+               Publication CSS is injected verbatim, so pin every box/layout
+               property or a 'span padding' rule newly matches the
+               inserted marker and shifts content (iOS WebView report). */
+            span[class*="user-highlight-"],
+            mark.reader-user-highlight {
+                display: inline !important;
+                padding: 0 !important;
+                margin: 0 !important;
+                border: 0 !important;
+                outline: 0 !important;
+                box-shadow: none !important;
+                vertical-align: baseline !important;
+                line-height: inherit !important;
+                letter-spacing: inherit !important;
+                word-spacing: inherit !important;
+                text-indent: 0 !important;
+                float: none !important;
+                clear: none !important;
+                position: static !important;
+                left: auto !important;
+                right: auto !important;
+                top: auto !important;
+                bottom: auto !important;
+                transform: none !important;
+                border-radius: 2px;
+                -webkit-box-decoration-break: clone;
+                box-decoration-break: clone;
+            }
             .user-highlight-yellow {
                     background-color: rgba(251, 192, 45, 0.4); cursor: pointer;
                 }
@@ -245,8 +278,9 @@
                 }
                 .user-highlight-white {
                     background-color: rgba(255, 255, 255, 0.4); cursor: pointer;
-                    /* Optional: slight border so white is visible on white paper */
-                    border-bottom: 1px solid rgba(0,0,0,0.1);
+                    /* Optional: slight underline so white is visible on white paper.
+                       box-shadow (not border) so the marker stays layout-neutral. */
+                    box-shadow: inset 0 -1px 0 rgba(0,0,0,0.1);
                 }
 
                 /* Active State (Darkens slightly when pressed) */
@@ -258,6 +292,13 @@
                 background-color: rgba(160, 207, 241, 0.8);
                 color: black;
                 border-radius: 3px;
+                display: inline !important;
+                padding: 0 !important;
+                margin: 0 !important;
+                border: 0 !important;
+                vertical-align: baseline !important;
+                -webkit-box-decoration-break: clone;
+                box-decoration-break: clone;
             }
 
             html.dark-theme mark.search-highlight {

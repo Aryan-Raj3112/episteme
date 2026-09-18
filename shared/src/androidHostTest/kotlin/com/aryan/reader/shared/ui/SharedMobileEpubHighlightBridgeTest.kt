@@ -6,6 +6,7 @@ import com.aryan.reader.shared.UserHighlight
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class SharedMobileEpubHighlightBridgeTest {
@@ -36,6 +37,24 @@ class SharedMobileEpubHighlightBridgeTest {
 
         assertNotNull(highlight)
         assertEquals(HighlightStyle.WAVY_UNDERLINE, highlight.style)
+    }
+
+    @Test
+    fun `highlight shift bridge uses one common tag and method`() {
+        assertEquals("HIGHLIGHT_SHIFT", SharedMobileEpubHighlightShiftTag)
+        assertEquals("readerHighlightShiftLog", SharedMobileEpubHighlightShiftBridgeMethod)
+    }
+
+    @Test
+    fun `highlight shift message parses and rejects blanks`() {
+        val payload = """{"message":"HIGHLIGHT_SHIFT wrap_before ctx=create segs=1"}"""
+        assertEquals(
+            "HIGHLIGHT_SHIFT wrap_before ctx=create segs=1",
+            payload.sharedMobileEpubHighlightShiftMessageOrNull()
+        )
+        assertNull("{}".sharedMobileEpubHighlightShiftMessageOrNull())
+        assertNull("""{"message":"  "}""".sharedMobileEpubHighlightShiftMessageOrNull())
+        assertNull("not-json".sharedMobileEpubHighlightShiftMessageOrNull())
     }
 
     @Test

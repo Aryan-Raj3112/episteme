@@ -2053,9 +2053,20 @@ fun SharedMobileEpubReaderScreen(
                                         }
                                     }
                                     "readerHighlightCreated" -> payload.sharedMobileEpubHighlightOrNull()?.let { highlight ->
+                                        writeSharedReaderDiagnostic(
+                                            SharedMobileEpubHighlightShiftTag,
+                                            "HIGHLIGHT_SHIFT native_created id=${highlight.id} " +
+                                                "style=${highlight.style.id} color=${highlight.color.id} " +
+                                                "chapter=${highlight.chapterIndex} " +
+                                                "offsets=${highlight.locator.startOffset}..${highlight.locator.endOffset} " +
+                                                "textChars=${highlight.text.length}"
+                                        )
                                         highlights = highlights
                                             .filterNot { existing -> existing.cfi == highlight.cfi }
                                             .plus(highlight)
+                                    }
+                                    SharedMobileEpubHighlightShiftBridgeMethod -> payload.sharedMobileEpubHighlightShiftMessageOrNull()?.let { message ->
+                                        writeSharedReaderDiagnostic(SharedMobileEpubHighlightShiftTag, message)
                                     }
                                     "readerHighlightClicked" -> payload.sharedMobileEpubHighlightIdOrNull()?.let { id ->
                                         editingHighlight = highlights.firstOrNull { it.id == id }

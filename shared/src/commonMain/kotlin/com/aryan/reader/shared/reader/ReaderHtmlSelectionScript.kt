@@ -53,6 +53,24 @@ internal fun readerHtmlSelectionScript(): String = """
                     return;
                   }
                 }
+                // Registry-painted highlights have no DOM element to tap: resolve
+                // the tap point to a painted range instead (same bridge event).
+                try {
+                  if (typeof userHighlightRegistryUsable === 'function' && userHighlightRegistryUsable() &&
+                    typeof userHighlightIdFromPoint === 'function' && !menu.contains(target)) {
+                    var registryHitId = userHighlightIdFromPoint(event.clientX, event.clientY);
+                    if (registryHitId) {
+                      try {
+                        if (window.readerHighlightShiftLog) readerHighlightShiftLog('registry_hit', 'id=' + registryHitId);
+                      } catch (ignored) {}
+                      if (sendReaderHighlightClick(registryHitId)) {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        return;
+                      }
+                    }
+                  }
+                } catch (error) {}
                 var anchor = target.closest('a[href]');
                 if (!anchor || menu.contains(anchor)) return;
                 var href = anchor.getAttribute('href') || '';

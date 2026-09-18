@@ -60,6 +60,12 @@ internal fun readerDocumentStyles(
               /* iOS parity with Android's suppressed ActionMode: the reader page
                  draws its own selection menu, so never show WebKit's callout. */
               -webkit-touch-callout: none;
+              /* iOS WKWebView auto-inflates small text and reflows on DOM
+                 mutations (e.g. wrapping a highlight span). Android's
+                 epub_reader.js pins this to 100%; shared must do the same or
+                 creating a highlight visibly shifts content on iOS only. */
+              -webkit-text-size-adjust: 100%;
+              text-size-adjust: 100%;
             }
             html {
               scrollbar-color: var(--reader-scrollbar-thumb) var(--reader-scrollbar-track);
@@ -410,12 +416,47 @@ internal fun readerDocumentStyles(
               color: inherit;
               border-radius: 2px;
             }
+            /*
+             * Wrapping text in a highlight marker must never change layout.
+             * Publication CSS is injected verbatim above, so a rule like
+             * `span { padding: 2px }` or `span { display: inline-block }`
+             * would newly match the inserted marker and look exactly like
+             * "padding gets added and content shifts" when highlighting.
+             * Pin every box/layout property that affects inline flow; paint
+             * (background / text-decoration) stays in the per-color rules and
+             * inline style declarations below.
+             */
             span[class*="user-highlight-"],
-            mark.reader-user-highlight {
+            mark.reader-user-highlight,
+            .reader-user-highlight,
+            .reader-highlight {
+              display: inline !important;
+              padding: 0 !important;
+              margin: 0 !important;
+              border: 0 !important;
+              outline: 0 !important;
+              box-shadow: none !important;
+              vertical-align: baseline !important;
+              line-height: inherit !important;
+              letter-spacing: inherit !important;
+              word-spacing: inherit !important;
+              text-indent: 0 !important;
+              float: none !important;
+              clear: none !important;
+              position: static !important;
+              left: auto !important;
+              right: auto !important;
+              top: auto !important;
+              bottom: auto !important;
+              transform: none !important;
               border-radius: 2px;
-              cursor: pointer;
               -webkit-box-decoration-break: clone;
               box-decoration-break: clone;
+            }
+            span[class*="user-highlight-"],
+            mark.reader-user-highlight,
+            .reader-user-highlight {
+              cursor: pointer;
             }
             ::highlight(reader-tts-highlight) {
               background: rgba(125, 211, 252, 0.52);

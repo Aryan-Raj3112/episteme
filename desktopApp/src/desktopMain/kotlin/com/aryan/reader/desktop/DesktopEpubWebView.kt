@@ -171,6 +171,9 @@ internal fun rememberDesktopEpubBridgeHandlers(
             DesktopEpubBridgeHandler("readerDesktopHighlightMapLog") { params ->
                 logDesktopHighlightMap(params.readerSelectionDebugMessageOrNull() ?: params.logPreview(900))
             },
+            DesktopEpubBridgeHandler("readerHighlightShiftLog") { params ->
+                logEpubHighlightFlow(params.readerSelectionDebugMessageOrNull() ?: params.logPreview(2000))
+            },
             DesktopEpubBridgeHandler("readerPaginationLayoutLog") { params ->
                 logEpubPagination(params.readerPaginationLogMessageOrNull() ?: params.logPreview(900))
             },

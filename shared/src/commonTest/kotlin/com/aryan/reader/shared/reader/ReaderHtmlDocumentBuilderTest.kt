@@ -255,7 +255,7 @@ class ReaderHtmlDocumentBuilderTest {
             page = ReaderPage(0, 0, "One", "alpha beta", 0, 10),
             settings = ReaderSettings()
         )
-        val localWrapIndex = html.indexOf("wrapRangeTextSegments(localRange")
+        val localWrapIndex = html.indexOf("paintRangeWithUserHighlightRegistry(localRange")
         val bridgeSendIndex = html.indexOf("sendReaderHighlightCreated(payload, 0)")
 
         assertTrue(html.contains("function sendReaderHighlightCreated(payload, attempt)"))
@@ -280,7 +280,7 @@ class ReaderHtmlDocumentBuilderTest {
         assertTrue(html.contains("function applyHighlightTextFallback(highlight)"))
         assertTrue(html.contains("applyHighlightTextFallback(highlight);"))
         assertTrue(html.contains("normalizedRangeForText(content, expectedText, false)"))
-        assertTrue(html.contains("wrapRangeTextSegments(range, function ()"))
+        assertTrue(html.contains("paintRangeWithUserHighlightRegistry(range, paintParamsForHighlight("))
         assertFalse(html.contains("function paintUserHighlightRange("))
         assertFalse(html.contains("reader-user-highlight-layer"))
         assertFalse(html.contains("reader-user-highlight-rect"))
@@ -1161,7 +1161,7 @@ class ReaderHtmlDocumentBuilderTest {
         assertTrue(html.contains("var cfi = readerHighlightCfiForRange(firstSegment, lastSegment, chapterIndex, startOffset, endOffset);"))
         assertTrue(html.contains("return startPoint + '|' + endPoint;"))
         assertTrue(html.contains("payloads.forEach(function (payload)"))
-        assertTrue(html.contains("wrapRangeTextSegments(segment.range"))
+        assertTrue(html.contains("paintRangeWithUserHighlightRegistry(segment.range"))
     }
 
     @Test
@@ -1724,6 +1724,99 @@ class ReaderHtmlDocumentBuilderTest {
         assertTrue(html.contains("requestChunk"))
         assertTrue(html.contains("bridgeRetries"))
         assertTrue(html.contains("request(index);"))
+    }
+
+    @Test
+    fun `highlight markers are layout neutral so creating one cannot shift content`() {
+        val html = ReaderHtmlDocumentBuilder.verticalDocument(
+            book = repeatedWordBook("alpha beta"),
+            settings = ReaderSettings(readingMode = ReaderReadingMode.VERTICAL),
+        )
+
+        // Publication CSS is injected verbatim; highlight spans must pin every
+        // box/layout property or a `span { padding: ... }` rule newly matches
+        // the inserted marker (iOS "padding gets added and content shifts").
+        assertTrue(html.contains("span[class*=\"user-highlight-\"]"))
+        assertTrue(html.contains("display: inline !important;"))
+        assertTrue(html.contains("padding: 0 !important;"))
+        assertTrue(html.contains("margin: 0 !important;"))
+        assertTrue(html.contains("border: 0 !important;"))
+        assertTrue(html.contains("vertical-align: baseline !important;"))
+        assertTrue(html.contains("line-height: inherit !important;"))
+        assertTrue(html.contains("float: none !important;"))
+        assertTrue(html.contains("position: static !important;"))
+        // Paint-only properties must remain: background per palette, radius kept.
+        assertTrue(html.contains("border-radius: 2px;"))
+        assertTrue(html.contains(".user-highlight-yellow"))
+    }
+
+    @Test
+    fun `documents pin text size adjust so ios does not reflow on highlight dom mutation`() {
+        val html = ReaderHtmlDocumentBuilder.verticalDocument(
+            book = repeatedWordBook("alpha beta"),
+            settings = ReaderSettings(readingMode = ReaderReadingMode.VERTICAL),
+        )
+
+        // Android epub_reader.js pins this; WKWebView otherwise auto-inflates
+        // text and reflows when highlight spans are inserted.
+        assertTrue(html.contains("-webkit-text-size-adjust: 100%;"))
+        assertTrue(html.contains("text-size-adjust: 100%;"))
+    }
+
+    @Test
+    fun `highlight shift diagnostics share one tag and bridge method`() {
+        val navigation = readerHtmlNavigationScript("[]")
+        assertTrue(navigation.contains("HIGHLIGHT_SHIFT"))
+        assertTrue(navigation.contains("readerHighlightShiftLog"))
+        assertTrue(navigation.contains("readerHighlightShiftDocSnapshot"))
+        assertTrue(navigation.contains("readerHighlightShiftBlockSnapshot"))
+        assertTrue(navigation.contains("readerHighlightShiftMarkerSnapshot"))
+        assertTrue(navigation.contains("readerHighlightShiftRangeRects"))
+        assertTrue(navigation.contains("parts="))
+        assertTrue(navigation.contains("text-align-last"))
+    }
+
+    @Test
+    fun `user highlights paint without dom mutation when registry supported`() {
+        val annotation = readerHtmlAnnotationScript()
+        assertTrue(annotation.contains("window.CSS.highlights"))
+        assertTrue(annotation.contains("readerUserHighlightPaintName"))
+        assertTrue(annotation.contains("paintRangeWithUserHighlightRegistry"))
+        assertTrue(annotation.contains("reconcileUserHighlightRegistry"))
+        assertTrue(annotation.contains("adoptServerRenderedHighlightMarkers"))
+        assertTrue(annotation.contains("new Highlight()"))
+        assertTrue(annotation.contains("::highlight("))
+        // DOM-span path stays as fallback for engines without the API.
+        assertTrue(annotation.contains("function wrapRangeTextSegments"))
+    }
+
+    @Test
+    fun `registry highlight taps resolve through hit testing`() {
+        val selection = readerHtmlSelectionScript()
+        assertTrue(selection.contains("userHighlightIdFromPoint"))
+        assertTrue(selection.contains("caretRangeFromPoint"))
+    }
+
+    @Test
+    fun `highlight wrap and reconcile paths emit before after shift logs`() {
+        val annotation = readerHtmlAnnotationScript()
+        assertTrue(annotation.contains("wrap_before"))
+        assertTrue(annotation.contains("wrap_after"))
+        assertTrue(annotation.contains("create_before"))
+        assertTrue(annotation.contains("apply_create"))
+        assertTrue(annotation.contains("reconcile_before"))
+        assertTrue(annotation.contains("reconcile_after"))
+    }
+
+    @Test
+    fun `highlight inline style declarations never carry box padding`() {
+        val argb = 0xFF123456.toInt()
+        assertFalse(highlightStyleDeclarations(HighlightStyle.BACKGROUND, argb).contains("padding"))
+        assertFalse(highlightStyleDeclarations(HighlightStyle.UNDERLINE, argb).contains("padding"))
+        assertFalse(highlightStyleDeclarations(HighlightStyle.WAVY_UNDERLINE, argb).contains("padding"))
+        assertFalse(highlightStyleDeclarations(HighlightStyle.STRIKETHROUGH, argb).contains("padding"))
+        // Background highlights are paint-only: background color, no box metrics.
+        assertTrue(highlightStyleDeclarations(HighlightStyle.BACKGROUND, argb).contains("background-color"))
     }
 
     private fun repeatedWordBook(text: String): SharedEpubBook {

@@ -82,6 +82,22 @@ class EpubReaderTtsHighlightAssetTest {
         assertTrue(js.contains("letter-spacing: ${'$'}{newLetterSpacing}em !important;"))
     }
 
+    @Test
+    fun `asset has no backticks inside comments that would terminate template literals`() {
+        val js = epubReaderAsset().readText()
+
+        // A stray backtick inside the CSS template literal terminated the
+        // string early (Unexpected identifier 'span'), which killed the whole
+        // script block: every window.* reader function became "not a function".
+        val withoutBlockComments = js.replace(Regex("/\\*.*?\\*/", RegexOption.DOT_MATCHES_ALL), "")
+        val backticksInComments = js.count { it == '`' } - withoutBlockComments.count { it == '`' }
+        assertTrue("backticks inside /* */ comments would break template literals", backticksInComments == 0)
+        assertTrue(
+            "unbalanced backticks would break template literals",
+            withoutBlockComments.count { it == '`' } % 2 == 0
+        )
+    }
+
     private fun epubReaderAsset(): File {
         val candidates = listOf(
             File("src/main/assets/epub_reader.js"),

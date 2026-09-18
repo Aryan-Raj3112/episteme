@@ -93,6 +93,122 @@ internal fun readerHtmlNavigationScript(pageAnchorJson: String): String = """
                 }
               }
               window.readerDesktopHighlightMapLog = readerDesktopHighlightMapLog;
+              // Dedicated highlight-shift diagnostics (common tag HIGHLIGHT_SHIFT).
+              // Always posted to native AND console.log so a plain "reproduce +
+              // export logs" captures them without enabling diagnostic flags.
+              function readerHighlightShiftLog(stage, details) {
+                var line = 'HIGHLIGHT_SHIFT ' + stage + ' ' + (details || '');
+                try { console.log(line); } catch (error) {}
+                if (window.kmpJsBridge && window.kmpJsBridge.callNative) {
+                  try { window.kmpJsBridge.callNative('readerHighlightShiftLog', JSON.stringify({ message: line })); } catch (error) {}
+                }
+              }
+              window.readerHighlightShiftLog = readerHighlightShiftLog;
+              function readerHighlightShiftRound(value) {
+                var parsed = Number(value);
+                if (!Number.isFinite(parsed)) return 0;
+                return Math.round(parsed * 10) / 10;
+              }
+              function readerHighlightShiftRectList(rects, max) {
+                var limit = max || 6;
+                var output = [];
+                for (var i = 0; i < rects.length && i < limit; i++) {
+                  var rect = rects[i];
+                  if (!rect) continue;
+                  output.push(
+                    '[' + readerHighlightShiftRound(rect.left) + ',' +
+                    readerHighlightShiftRound(rect.top) + ',' +
+                    readerHighlightShiftRound(rect.width) + ',' +
+                    readerHighlightShiftRound(rect.height) + ']'
+                  );
+                }
+                return rects.length + ':' + output.join(';');
+              }
+              function readerHighlightShiftRangeRects(range) {
+                try {
+                  if (!range || range.collapsed) return 'collapsed';
+                  return readerHighlightShiftRectList(range.getClientRects());
+                } catch (error) {
+                  return 'error';
+                }
+              }
+              function readerHighlightShiftComputed(element, names) {
+                try {
+                  if (!element || !window.getComputedStyle) return '';
+                  var computed = window.getComputedStyle(element);
+                  if (!computed) return '';
+                  return names.map(function (name) {
+                    var value = '';
+                    try { value = computed.getPropertyValue(name) || ''; } catch (error) {}
+                    return name + '=' + String(value).replace(/\s+/g, ' ').trim().substring(0, 48);
+                  }).join(' ');
+                } catch (error) {
+                  return '';
+                }
+              }
+              function readerHighlightShiftBlockOf(node) {
+                try {
+                  var element = node && node.nodeType === Node.ELEMENT_NODE ? node : node && node.parentElement;
+                  if (!element || !element.closest) return null;
+                  return element.closest('p, li, blockquote, pre, h1, h2, h3, h4, h5, h6, td, th, figcaption, div, section, article');
+                } catch (error) {
+                  return null;
+                }
+              }
+              function readerHighlightShiftBlockSnapshot(element) {
+                try {
+                  if (!element) return 'null';
+                  var rect = element.getBoundingClientRect ? element.getBoundingClientRect() : null;
+                  var rectText = rect
+                    ? '[' + readerHighlightShiftRound(rect.left) + ',' + readerHighlightShiftRound(rect.top) + ',' +
+                      readerHighlightShiftRound(rect.width) + ',' + readerHighlightShiftRound(rect.height) + ']'
+                    : 'norect';
+                  var style = readerHighlightShiftComputed(element, [
+                    'display', 'text-align', 'text-align-last', 'text-justify', 'word-spacing', 'letter-spacing',
+                    'line-height', 'font-size', 'font-family', 'font-weight', 'white-space', 'word-break',
+                    'overflow-wrap', 'hyphens', 'direction', 'text-indent'
+                  ]);
+                  return readerElementLabel(element) + ' rect=' + rectText + ' ' + style;
+                } catch (error) {
+                  return 'error';
+                }
+              }
+              function readerHighlightShiftMarkerSnapshot(marker) {
+                try {
+                  if (!marker) return 'null';
+                  var rect = marker.getBoundingClientRect ? marker.getBoundingClientRect() : null;
+                  var rectText = rect
+                    ? '[' + readerHighlightShiftRound(rect.left) + ',' + readerHighlightShiftRound(rect.top) + ',' +
+                      readerHighlightShiftRound(rect.width) + ',' + readerHighlightShiftRound(rect.height) + ']'
+                    : 'norect';
+                  // Per-line boxes: a single word must be 1 fragment. More than 1
+                  // means the wrap pushed the word across a line break.
+                  var parts = '0:';
+                  try { parts = readerHighlightShiftRectList(marker.getClientRects(), 6); } catch (error) {}
+                  var len = 0;
+                  try { len = (marker.textContent || '').length; } catch (error) {}
+                  var style = readerHighlightShiftComputed(marker, [
+                    'display', 'padding-top', 'padding-right', 'padding-bottom', 'padding-left',
+                    'margin-top', 'margin-left', 'border-top-width', 'word-spacing', 'letter-spacing',
+                    'line-height', 'font-size', 'font-family', 'font-weight', 'font-style',
+                    'vertical-align', 'hyphens', 'box-decoration-break', '-webkit-box-decoration-break'
+                  ]);
+                  return 'class=' + (marker.className || '') + ' len=' + len + ' parts=' + parts +
+                    ' rect=' + rectText + ' ' + style;
+                } catch (error) {
+                  return 'error';
+                }
+              }
+              function readerHighlightShiftDocSnapshot() {
+                try {
+                  var root = document.scrollingElement || document.documentElement;
+                  var height = root ? root.scrollHeight : -1;
+                  return 'scroll=' + readerHighlightShiftRound(window.scrollX) + ',' + readerHighlightShiftRound(window.scrollY) +
+                    ' docH=' + height + ' inner=' + window.innerWidth + 'x' + window.innerHeight;
+                } catch (error) {
+                  return 'error';
+                }
+              }
               function readerDesktopPositionTraceLog(message) {
                 var line = 'EpistemeDesktopPositionTrace ' + message;
                 var delivered = false;
