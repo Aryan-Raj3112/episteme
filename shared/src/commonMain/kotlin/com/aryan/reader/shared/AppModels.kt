@@ -139,6 +139,19 @@ data class UserData(
     val email: String?
 )
 
+/**
+ * First-letter avatar text shared by every account surface. Apple sign-in
+ * never provides a photo and only sends the name/email on the first
+ * authorization, so account UI must always cope with partial identity.
+ */
+fun UserData.accountInitial(): String {
+    return (displayName ?: email ?: "E")
+        .trim()
+        .firstOrNull()
+        ?.uppercase()
+        ?: "E"
+}
+
 data class NavigationEvent(
     val route: String,
     val bookId: String? = null,

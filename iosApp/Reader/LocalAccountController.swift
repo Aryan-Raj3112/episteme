@@ -46,6 +46,13 @@ final class LocalAccountController: NSObject, ObservableObject {
 
     private static let googleDriveScope = "https://www.googleapis.com/auth/drive.appdata"
     private static let syncDeviceIDKey = "reader.ios.cloudSyncDeviceId.v1"
+    /// Last Apple-provided profile values seen on this device, per Firebase uid
+    /// (`appleDisplayName.<uid>`) plus the most recent one regardless of uid.
+    /// Apple sends name/email only on the first authorization (and never a
+    /// photo), so these backfill Firebase gaps after re-sign-ins that arrive
+    /// with nil identity. Firebase values always win when present.
+    private static let appleDisplayNameKey = "reader.ios.appleDisplayName.v1"
+    private static let appleEmailKey = "reader.ios.appleEmail.v1"
     private static let cloudSyncOutboxKey = "reader.ios.cloudSyncOutbox.v1"
     private static let cloudShelfObservationsKey = "reader.ios.cloudShelfObservations.v1"
     private static let cloudFontObservationsKey = "reader.ios.cloudFontObservations.v1"
@@ -2859,10 +2866,20 @@ final class LocalAccountController: NSObject, ObservableObject {
         }
         let user = Auth.auth().currentUser
         let providerIDs = Set(user?.providerData.map(\.providerID) ?? [])
+        let displayName = Self.nonBlank(user?.displayName)
+            ?? Self.cachedAppleIdentity(uid: user?.uid, baseKey: Self.appleDisplayNameKey)
+        let email = Self.nonBlank(user?.email)
+            ?? Self.cachedAppleIdentity(uid: user?.uid, baseKey: Self.appleEmailKey)
+        if let uid = user?.uid {
+            // Freshness write-through: a profile fixed elsewhere (or a newer
+            // Apple pass) replaces the stale cache for next time.
+            if let displayName { UserDefaults.standard.set(displayName, forKey: "\(Self.appleDisplayNameKey).\(uid)") }
+            if let email { UserDefaults.standard.set(email, forKey: "\(Self.appleEmailKey).\(uid)") }
+        }
         bridge?.updateAccountState(
             uid: user?.uid,
-            displayName: user?.displayName,
-            email: user?.email,
+            displayName: displayName,
+            email: email,
             photoUrl: user?.photoURL?.absoluteString,
             appleLinked: providerIDs.contains("apple.com"),
             googleLinked: providerIDs.contains("google.com"),
@@ -2981,6 +2998,34 @@ final class LocalAccountController: NSObject, ObservableObject {
         SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 
+    private static func nonBlank(_ value: String?) -> String? {
+        guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
+            return nil
+        }
+        return trimmed
+    }
+
+    private static func cachedAppleIdentity(uid: String?, baseKey: String) -> String? {
+        if let uid, let perAccount = nonBlank(UserDefaults.standard.string(forKey: "\(baseKey).\(uid)")) {
+            return perAccount
+        }
+        return nonBlank(UserDefaults.standard.string(forKey: baseKey))
+    }
+
+    /// Persists whatever identity this Apple pass carried. These arrive only
+    /// on the first authorization, so every sighting counts.
+    private static func rememberAppleIdentity(fullName: PersonNameComponents?, email: String?) {
+        let name = fullName.map {
+            PersonNameComponentsFormatter.localizedString(from: $0, style: .default)
+        }.flatMap(nonBlank)
+        if let name {
+            UserDefaults.standard.set(name, forKey: appleDisplayNameKey)
+        }
+        if let email = nonBlank(email) {
+            UserDefaults.standard.set(email, forKey: appleEmailKey)
+        }
+    }
+
     private static func presentingViewController() -> UIViewController? {
         let root = UIApplication.shared.connectedScenes
             .compactMap { $0 as? UIWindowScene }
@@ -3030,6 +3075,7 @@ extension LocalAccountController: ASAuthorizationControllerDelegate {
                 return
             }
             appleNonce = nil
+            Self.rememberAppleIdentity(fullName: appleCredential.fullName, email: appleCredential.email)
             let credential = OAuthProvider.appleCredential(
                 withIDToken: idToken,
                 rawNonce: nonce,
