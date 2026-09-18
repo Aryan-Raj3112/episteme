@@ -32,6 +32,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -39,10 +41,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.grid.items
@@ -2010,69 +2015,97 @@ internal fun SharedMobilePdfPageSlider(
     DisposableEffect(Unit) {
         onDispose { scrubJob?.cancel() }
     }
-    Surface(
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 4.dp,
-        shadowElevation = 4.dp
+    val maxPage = (pageCount - 1).coerceAtLeast(0)
+    // PDF pages have no reader theme — they render on a light (white) page,
+    // so derive chrome from a light page. Content (arrows) resolves to black
+    // and stays visible regardless of the app/material theme.
+    val sliderChrome = sharedReaderSliderChromeColors(
+        pageBackground = androidx.compose.ui.graphics.Color.White,
+        pageText = androidx.compose.ui.graphics.Color.Black,
+        themePrimary = MaterialTheme.colorScheme.primary,
+    )
+    val activeColor = sliderChrome.activeTrackColor
+    val inactiveColor = sliderChrome.inactiveTrackColor
+    val contentColor = sliderChrome.contentColor
+    // Android parity (PdfViewerScreen slider): bare bottom-chrome bar with
+    // prev/next steppers flanking a ReaderMinimalSlider — no card surface.
+    // Outer stacking padding stays caller-owned so the bar sits above the
+    // jump bar exactly like the benchmark.
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable(
+                indication = null,
+                interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+            ) {},
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .windowInsetsPadding(
+                    WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)
+                )
+                .padding(horizontal = 12.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             IconButton(
                 onClick = {
                     scrubJob?.cancel()
                     val target = pageIndex - 1
-                    onPageChange(target.coerceIn(0, pageCount - 1))
+                    onPageChange(target.coerceIn(0, maxPage))
                     onScrubPreview(null)
                 },
-                enabled = pageCount > 1 && pageIndex > 0
+                enabled = pageCount > 1 && pageIndex > 0,
+                modifier = Modifier.size(40.dp)
             ) {
                 Icon(
                     Icons.AutoMirrored.Filled.NavigateBefore,
                     contentDescription = "Previous page",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = if (pageIndex > 0) 0.9f else 0.32f)
+                    tint = contentColor.copy(alpha = if (pageIndex > 0) 0.9f else 0.32f)
                 )
             }
-            Slider(
-                value = if (pageCount > 1) sliderValue else 0f,
+            ReaderMinimalSlider(
+                value = (if (pageCount > 1) sliderValue else 0f).coerceIn(0f, maxPage.toFloat()),
                 onValueChange = { next ->
                     isScrubbing = true
                     sliderValue = next
-                    onScrubPreview(next.roundToInt().coerceIn(0, pageCount - 1))
+                    onScrubPreview(next.roundToInt().coerceIn(0, maxPage))
                     scrubJob?.cancel()
                     scrubJob = scope.launch {
                         delay(200)
-                        onPageChange(next.roundToInt().coerceIn(0, pageCount - 1))
+                        onPageChange(next.roundToInt().coerceIn(0, maxPage))
                     }
                 },
                 onValueChangeFinished = {
                     scrubJob?.cancel()
-                    onPageChange(sliderValue.roundToInt().coerceIn(0, pageCount - 1))
+                    onPageChange(sliderValue.roundToInt().coerceIn(0, maxPage))
                     isScrubbing = false
                     onScrubPreview(null)
                 },
-                valueRange = 0f..(pageCount - 1).coerceAtLeast(1).toFloat(),
-                steps = (pageCount - 2).coerceAtLeast(0),
+                valueRange = 0f..maxPage.coerceAtLeast(1).toFloat(),
                 enabled = pageCount > 1,
-                modifier = Modifier.weight(1f)
+                activeColor = activeColor,
+                inactiveColor = inactiveColor,
+                thumbColor = activeColor,
+                modifier = Modifier
+                    .weight(1f)
+                    .height(32.dp)
             )
             IconButton(
                 onClick = {
                     scrubJob?.cancel()
                     val target = pageIndex + 1
-                    onPageChange(target.coerceIn(0, pageCount - 1))
+                    onPageChange(target.coerceIn(0, maxPage))
                     onScrubPreview(null)
                 },
-                enabled = pageCount > 1 && pageIndex < pageCount - 1
+                enabled = pageCount > 1 && pageIndex < maxPage,
+                modifier = Modifier.size(40.dp)
             ) {
                 Icon(
                     Icons.AutoMirrored.Filled.NavigateNext,
                     contentDescription = "Next page",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = if (pageIndex < pageCount - 1) 0.9f else 0.32f)
+                    tint = contentColor.copy(alpha = if (pageIndex < maxPage) 0.9f else 0.32f)
                 )
             }
         }

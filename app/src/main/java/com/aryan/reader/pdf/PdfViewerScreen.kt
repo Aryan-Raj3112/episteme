@@ -7978,11 +7978,12 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
     val isPdfJumpHistoryVisible = showBottomBar && !searchState.isSearchActive && (jumpBackPage != null || jumpForwardPage != null)
     val pdfBottomChromePadding = 56.dp + effectiveNavBarForJumpBar
     val pdfSliderBottomPadding = pdfBottomChromePadding + if (isPdfJumpHistoryVisible) 40.dp else 0.dp
-    val pdfSliderPageBackground = if (activeTheme.backgroundColor == Color.Unspecified) Color.White else activeTheme.backgroundColor
-    val pdfSliderPageText = if (activeTheme.textColor == Color.Unspecified) Color.Black else activeTheme.textColor
+    // PDF pages have no reader theme — they render on a light (white) page.
+    // Derive slider chrome from a light page so the arrows resolve to black
+    // and stay visible regardless of the active reader/app theme.
     val pdfReaderSliderColors = readerSliderChromeColors(
-        pageBackground = pdfSliderPageBackground,
-        pageText = pdfSliderPageText,
+        pageBackground = Color.White,
+        pageText = Color.Black,
         themePrimary = MaterialTheme.colorScheme.primary
     )
     val pdfSliderMaxPage = (totalDisplayPages - 1).coerceAtLeast(0)

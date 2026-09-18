@@ -974,7 +974,7 @@ fun SharedMobilePdfReaderHost(
             SharedMobilePdfSystemUiMode.ALWAYS_HIDE -> 0.dp
         }
     }
-    val pdfBottomChromePadding = if (isSplitPane) 56.dp else 56.dp + effectiveBottomSystemInset
+    val pdfBottomChromePadding = sharedMobilePdfBottomChromePadding(effectiveBottomSystemInset, isSplitPane)
     // Android parity: standard top/bottom bars hide while annotating
     // (benchmark: showStandardBars = showBars && !isEditMode). The floating
     // annotation dock overlay owns edit-mode chrome instead.
@@ -989,7 +989,7 @@ fun SharedMobilePdfReaderHost(
     val isPdfTtsPlayingOrLoading =
         pdfTts.state == SharedMobileEpubLocalTtsState.SPEAKING || pendingTtsStart != null ||
             cloudTtsState.isLoading || cloudTtsState.isPlaying || cloudTtsState.isPaused
-    val pdfSliderBottomPadding = pdfBottomChromePadding + if (isJumpHistoryVisible) 40.dp else 0.dp
+    val pdfSliderBottomPadding = sharedMobilePdfSliderBottomPadding(pdfBottomChromePadding, isJumpHistoryVisible)
     // In Always Show mode vertical content is anchored below the status bar
     // so the first page never draws underneath it. In Sync with Menus the
     // content stays edge-to-edge under the status bar so showing the menu
@@ -2170,8 +2170,12 @@ fun SharedMobilePdfReaderHost(
                             )
                         },
                         onScrubPreview = { pdfSliderScrubbingPage = it },
+                        // Android parity (PdfViewerScreen slider): full-width
+                        // bare bar with inner 12/6.dp padding owned by the
+                        // slider itself. No outer horizontal inset — the bar
+                        // sits above the jump bar via bottom padding only.
                         modifier = Modifier
-                            .padding(start = 16.dp, end = 16.dp, bottom = pdfSliderBottomPadding)
+                            .padding(bottom = pdfSliderBottomPadding)
                     )
                 }
                 pdfSliderScrubbingPage?.let { scrubPage ->

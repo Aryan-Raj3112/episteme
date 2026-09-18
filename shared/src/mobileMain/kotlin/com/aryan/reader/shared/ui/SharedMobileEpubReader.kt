@@ -2541,12 +2541,41 @@ fun SharedMobileEpubReaderScreen(
                     )
                     }
                 }
+                // Android parity (EpubReaderScreen bottom stacking): toolbar
+                // (45.dp) at the screen bottom, jump bar (40.dp) directly above
+                // it, slider above the jump bar. Fixed 52/60.dp offsets ignored
+                // the home-indicator inset and overlapped when both bars showed,
+                // so derive the stack from the toolbar + safe inset like the
+                // benchmark (bottomPadding + 45.dp + jump).
+                val epubEffectiveBottomInset = if (!navigationUiHidden) {
+                    WindowInsets.safeDrawing.asPaddingValues().calculateBottomPadding()
+                } else {
+                    0.dp
+                }
+                val epubBottomChromePadding = sharedMobileEpubBottomChromePadding(epubEffectiveBottomInset)
+                val epubJumpVisible = showChrome && !showSearch && jumpHistory.hasJumpTargets
+                val epubPageInfoBottomVisible = pageInfoVisible &&
+                    settings.pageInfoPosition == PageInfoPosition.BOTTOM
+                // PageInfo lives in the bottom Column directly above the
+                // toolbar, so overlays must clear it to avoid overlap.
+                val epubPageInfoReserve = if (epubPageInfoBottomVisible) {
+                    SharedMobileEpubPageInfoBarContentHeight
+                } else {
+                    0.dp
+                }
+                // Preserve the existing TTS/auto-scroll lift so the jump bar
+                // still clears the floating TTS controls.
+                val epubTtsLift = if (localTts.isSessionActive || autoScrollModeActive) 68.dp else 0.dp
+                val epubJumpBottomPadding = sharedMobileEpubJumpBottomPadding(
+                    epubBottomChromePadding,
+                    epubPageInfoReserve,
+                    epubTtsLift
+                )
+                val epubSliderBottomPadding = sharedMobileEpubSliderBottomPadding(epubJumpBottomPadding, epubJumpVisible)
                 // Android parity (EpubJumpHistoryBar): slides+fades with the
                 // shared 200ms spec instead of popping.
                 AnimatedVisibility(
-                    visible = showChrome &&
-                        !showSearch &&
-                        jumpHistory.hasJumpTargets,
+                    visible = epubJumpVisible,
                     enter = slideInVertically(animationSpec = tween(motionPolicy.durationMillis(200))) { it } + fadeIn(animationSpec = tween(motionPolicy.durationMillis(200))),
                     exit = slideOutVertically(animationSpec = tween(motionPolicy.durationMillis(200))) { it } + fadeOut(animationSpec = tween(motionPolicy.durationMillis(200))),
                     modifier = Modifier.align(Alignment.BottomCenter)
@@ -2563,13 +2592,7 @@ fun SharedMobileEpubReaderScreen(
                         onForward = ::goForwardInJumpHistory,
                         onClear = { jumpHistory = jumpHistory.clear() },
                         modifier = Modifier
-                            .padding(
-                                bottom = if (localTts.isSessionActive || autoScrollModeActive) {
-                                    120.dp
-                                } else {
-                                    52.dp
-                                }
-                            )
+                            .padding(bottom = epubJumpBottomPadding)
                     )
                     }
                 }
@@ -2594,7 +2617,7 @@ fun SharedMobileEpubReaderScreen(
                             },
                             onScrubPositionChange = { sliderScrubPage = it },
                             modifier = Modifier
-                                .padding(bottom = 60.dp, start = 16.dp, end = 16.dp)
+                                .padding(bottom = epubSliderBottomPadding)
                         )
                     }
                 }

@@ -227,3 +227,39 @@ fun <T> SharedReaderOverflowSectionList(
         content(section)
     }
 }
+
+/**
+ * Bottom-chrome stacking shared by the mobile EPUB/PDF readers.
+ *
+ * Android benchmark: the bottom toolbar sits at the screen bottom, the jump
+ * bar (40.dp) sits directly above it, and the page slider sits above the
+ * jump bar. Keeping the heights and stacking in one place guarantees the
+ * slider can never overlap the jump bar in any chrome/safe-area state.
+ */
+val SharedReaderEpubBottomBarHeight = 45.dp
+val SharedReaderPdfBottomBarHeight = 56.dp
+val SharedReaderJumpBarHeight = 40.dp
+
+fun sharedMobileEpubBottomChromePadding(bottomInset: Dp): Dp =
+    SharedReaderEpubBottomBarHeight + bottomInset
+
+fun sharedMobileEpubJumpBottomPadding(
+    bottomChromePadding: Dp,
+    pageInfoReserve: Dp = 0.dp,
+    ttsLift: Dp = 0.dp,
+): Dp = bottomChromePadding + pageInfoReserve + ttsLift
+
+fun sharedMobileEpubSliderBottomPadding(
+    jumpBottomPadding: Dp,
+    isJumpVisible: Boolean,
+): Dp = jumpBottomPadding + if (isJumpVisible) SharedReaderJumpBarHeight else 0.dp
+
+fun sharedMobilePdfBottomChromePadding(
+    bottomInset: Dp,
+    isSplitPane: Boolean = false,
+): Dp = if (isSplitPane) SharedReaderPdfBottomBarHeight else SharedReaderPdfBottomBarHeight + bottomInset
+
+fun sharedMobilePdfSliderBottomPadding(
+    bottomChromePadding: Dp,
+    isJumpVisible: Boolean,
+): Dp = bottomChromePadding + if (isJumpVisible) SharedReaderJumpBarHeight else 0.dp
