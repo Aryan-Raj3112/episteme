@@ -10,6 +10,10 @@ private const val StackedDramaTableMinTextChars = 160
 private const val StackedDramaTableMaxLeadChars = 40
 private const val StackedTocTableMinRows = 6
 private const val StackedTocTableMinTextChars = 160
+// Stack a TOC-shaped table only when an entry is long enough to wrap badly in a
+// side-by-side column (CONTENTS summaries run 90+ chars); short illustration titles
+// (all under ~40 chars in the wild) stay beside their page reference.
+private const val StackedTocTableMinLongEntryChars = 64
 // Gutenberg illustration indexes use "Frontispiece." (13 chars) as the page
 // reference; keep the page-cell budget above that while still far below the
 // length of genuine two-column data cells.
@@ -36,8 +40,9 @@ private fun TableBlock.shouldStackDramaRowsForNarrowPagination(): Boolean {
 
 /**
  * Table-of-contents/index tables (Gutenberg CONTENTS/ILLUSTRATIONS): long tables whose rows
- * are either single heading cells or (entry text, short page reference) pairs. Side-by-side
- * on a phone they squeeze the entry text into a sliver; stacked full-width they read.
+ * are either single heading cells or (entry text, short page reference) pairs. Long entries
+ * side-by-side on a phone squeeze into a sliver, so they stack full-width; short index
+ * entries fit beside their page reference and stay side-by-side like other renderers.
  */
 fun TableBlock.shouldStackTocRowsForNarrowPagination(): Boolean {
     if (rows.size < StackedTocTableMinRows) return false
@@ -52,6 +57,15 @@ fun TableBlock.shouldStackTocRowsForNarrowPagination(): Boolean {
                 row[1].content.sumOf { it.paginationTextCharCount() } in 1..StackedTocTableMaxPageCellChars
         }
         if (entryPageRows != twoCellRows) return false
+        // Stack only when an entry is long enough to wrap badly side-by-side. Short
+        // index entries (illustration titles) render beside their page number.
+        // Single-column shapes (split fragments) skip this: they keep the TOC layout
+        // so fragments stay gapless and measure exactly as estimated.
+        val longEntry = rows.any { row ->
+            row.size == 2 &&
+                row[0].content.sumOf { it.paginationTextCharCount() } > StackedTocTableMinLongEntryChars
+        }
+        if (!longEntry) return false
     }
     val textChars = rows.sumOf { row -> row.sumOf { cell -> cell.content.sumOf { it.paginationTextCharCount() } } }
     if (textChars < StackedTocTableMinTextChars) return false

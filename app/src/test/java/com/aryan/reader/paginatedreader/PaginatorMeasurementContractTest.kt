@@ -275,7 +275,10 @@ class PaginatorMeasurementContractTest {
     }
 
     @Test
-    fun illustrationsStyleTablesWithFrontispieceRefStackRowsForNarrowPagination() {
+    fun illustrationsStyleTablesWithShortEntriesDoNotStackRowsForNarrowPagination() {
+        // Real ILLUSTRATIONS shape (colspan PAGE header, short titles, Frontispiece ref):
+        // entries fit beside their page number, so the table stays side-by-side instead
+        // of stacking the page reference beneath the title.
         val table = TableBlock(
             rows = listOf(
                 listOf(
@@ -289,21 +292,20 @@ class PaginatorMeasurementContractTest {
                         colspan = 2
                     )
                 ),
-                listOf(
-                    tableCell("Shooting a Leopard with a long descriptive caption for the plate."),
-                    tableCell("Frontispiece.")
-                ),
-                listOf(tableCell("The Royal Canoe on the river at dawn."), tableCell("15")),
-                listOf(tableCell("The Manga and the great prize of the hunt."), tableCell("25")),
-                listOf(tableCell("The Mpano near the forest clearing."), tableCell("29")),
-                listOf(tableCell("Felling Ebony-Trees with the whole party."), tableCell("31")),
-                listOf(tableCell("Bringing in the Wounded after the fight."), tableCell("43"))
+                listOf(tableCell("Shooting a Leopard"), tableCell("Frontispiece.")),
+                listOf(tableCell("The Royal Canoe"), tableCell("15")),
+                listOf(tableCell("The Manga"), tableCell("25")),
+                listOf(tableCell("The Mpano"), tableCell("29")),
+                listOf(tableCell("Felling Ebony-Trees"), tableCell("31")),
+                listOf(tableCell("Bringing in the Wounded"), tableCell("43")),
+                listOf(tableCell("Watching Birds and Monkeys"), tableCell("57"))
             ),
             blockIndex = 6
         )
 
-        assertTrue(table.shouldStackTocRowsForNarrowPagination())
-        assertTrue(table.shouldStackRowsForNarrowPagination())
+        assertFalse(table.shouldStackTocRowsForNarrowPagination())
+        assertFalse(table.shouldStackRowsForNarrowPagination())
+        assertEquals(table.rows, table.rowsForNarrowPaginationLayout())
     }
 
     @Test
