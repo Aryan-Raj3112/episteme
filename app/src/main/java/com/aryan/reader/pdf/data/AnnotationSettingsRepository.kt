@@ -147,6 +147,7 @@ class AnnotationSettingsRepository(context: Context) {
                 InkType.HIGHLIGHTER_ROUND -> ToolConfig("#8CFFEB3B".toColorInt(), 0.035f)
                 InkType.ERASER -> ToolConfig(android.graphics.Color.WHITE, 0.03f)
                 InkType.TEXT -> ToolConfig(android.graphics.Color.BLACK, 0.02f)
+                InkType.SELECT -> ToolConfig(android.graphics.Color.BLACK, 0.008f)
             }
         }
     }

@@ -56,6 +56,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -202,7 +203,7 @@ private data class PdfCameraAnchorSignature(
     val totalHeightPx: Float,
 )
 
-private data class PdfPageLayout(
+internal data class PdfPageLayout(
     val index: Int,
     val yPx: Int,
     val heightPx: Int,
@@ -253,6 +254,9 @@ private data class DividerLayout(val yPx: Int, val widthPx: Int, val heightPx: I
     val height: Float
         get() = heightPx.toFloat()
 }
+
+/** Page-sized transparent overlay for ink selection (drawn in doc px). */
+internal data class PdfSelectionOverlayLayout(val widthPx: Int, val heightPx: Int, val yPx: Int)
 
 @Suppress("UnusedVariable")
 @SuppressLint("UnusedBoxWithConstraintsScope", "BinaryOperationInTimber")
@@ -334,7 +338,28 @@ internal fun PdfVerticalReader(
     isBubbleZoomModeActive: Boolean = false,
     showPageGap: Boolean = true,
     showPageNumberOverlay: Boolean = true,
-    onDetectBubbles: suspend (Int, Bitmap) -> List<SpeechBubble> = { _, _ -> emptyList() }
+    onDetectBubbles: suspend (Int, Bitmap) -> List<SpeechBubble> = { _, _ -> emptyList() },
+    // Ink selection editing (SELECT tool).
+    inkSelection: PdfInkSelection = PdfInkSelection(),
+    isSelectionTransformActive: Boolean = false,
+    onSelectionTapResult: (pageIndex: Int, annotationId: String?) -> Unit = { _, _ -> },
+    onSelectionLassoResult: (pageIndex: Int, annotationIds: Set<String>) -> Unit = { _, _ -> },
+    onSelectionTransformStart: (pageIndex: Int) -> Unit = {},
+    onSelectionTransformUpdate: (pageIndex: Int, transform: PdfSelectionTransform) -> Unit = { _, _ -> },
+    onSelectionTransformEnd: (commit: Boolean) -> Unit = {},
+    onSelectionDelete: () -> Unit = {},
+    onSelectionDuplicate: () -> Unit = {},
+    onSelectionCopy: () -> Unit = {},
+    onSelectionPaste: (pageIndex: Int) -> Unit = {},
+    onSelectionColor: (androidx.compose.ui.graphics.Color) -> Unit = {},
+    onSelectionThickness: (Float) -> Unit = {},
+    onSelectionThicknessFinished: () -> Unit = {},
+    onSelectionClear: () -> Unit = {},
+    selectionEditColors: List<androidx.compose.ui.graphics.Color> = emptyList(),
+    selectionEditColor: androidx.compose.ui.graphics.Color? = null,
+    selectionEditThickness: Float = 0.008f,
+    selectionThicknessRange: ClosedFloatingPointRange<Float> = 0.001f..0.015f,
+    canSelectionPaste: Boolean = false,
 ) {
     DisposableEffect(state) {
         onDispose {
@@ -347,6 +372,8 @@ internal fun PdfVerticalReader(
     }
     var globalEraserPosition by remember { mutableStateOf<Offset?>(null) }
     var isStylusEraserOverride by remember { mutableStateOf(false) }
+    // In-progress SELECT lasso in document px (null when idle).
+    var selectLassoDocPoints by remember { mutableStateOf<List<Offset>?>(null) }
     val isDarkMode = activeTheme.isDark || activeTheme.id == "reverse"
     val effectiveReverseColorMode = if (activeTheme.id == "reverse") {
         reverseColorMode
@@ -1524,10 +1551,49 @@ internal fun PdfVerticalReader(
             layoutInfo,
             selectedTool,
             isStylusOnlyMode,
-            isHighlighterSnapEnabled
+            isHighlighterSnapEnabled,
+            inkSelection,
         ) {
             if (!isEditMode) return@pointerInput
             if (selectedTool == InkType.TEXT) return@pointerInput
+
+            if (selectedTool == InkType.SELECT) {
+                detectPdfInkSelectionGestures(
+                    layoutInfo = layoutInfo,
+                    cameraProvider = { PdfSelectionCamera(cameraZoom, cameraPanX, cameraPanY) },
+                    touchSlopPx = viewConfiguration.touchSlop,
+                    handleSlopPx = with(density) { 28.dp.toPx() },
+                    isStylusOnlyMode = isStylusOnlyMode,
+                    selection = inkSelection,
+                    annotationsProvider = { pageIndex ->
+                        allAnnotations()[pageIndex] ?: emptyList()
+                    },
+                    pageAspectProvider = { pageIndex ->
+                        layoutInfo.firstOrNull { it.index == pageIndex }
+                            ?.let { page -> if (page.height > 0f) page.width / page.height else 1f }
+                            ?: 1f
+                    },
+                    onTapResult = { pageIndex, annotationId ->
+                        onSelectionTapResult(pageIndex, annotationId)
+                    },
+                    onLassoResult = { pageIndex, annotationIds ->
+                        onSelectionLassoResult(pageIndex, annotationIds)
+                    },
+                    onLassoProgress = { docPoints ->
+                        selectLassoDocPoints = docPoints
+                    },
+                    onTransformStart = { pageIndex ->
+                        onSelectionTransformStart(pageIndex)
+                    },
+                    onTransformUpdate = { pageIndex, transform ->
+                        onSelectionTransformUpdate(pageIndex, transform)
+                    },
+                    onTransformEnd = { commit ->
+                        onSelectionTransformEnd(commit)
+                    },
+                )
+                return@pointerInput
+            }
 
             awaitEachGesture {
                 val down = awaitFirstDown(requireUnconsumed = false)
@@ -2265,8 +2331,8 @@ internal fun PdfVerticalReader(
                                                                         "velocity=${PdfVerticalPerfLog.f(this.velocity)} " +
                                                                         "bounds=${PdfVerticalPerfLog.xy(minPanY, headerHeightPx)}"
                                                                 )
-                                                            }
-                                                        }
+    }
+}
                                                     }
                                                 }
                                             }
@@ -2800,6 +2866,56 @@ internal fun PdfVerticalReader(
                                         ))
                             }
                         }
+                        // Ink selection overlay: page-sized transparent layer inside
+                        // the zoom/pan transform so doc px == local px. Sized to a
+                        // single page (never the full document: an 800-page doc is
+                        // ~1.2M px tall and cannot be represented in Constraints).
+                        if (selectedTool == InkType.SELECT) {
+                            val selectionPageIndex = inkSelection.pageIndex
+                            val lassoPageIndex = selectLassoDocPoints?.firstOrNull()?.let { docPoint ->
+                                layoutInfo.firstOrNull { page ->
+                                    docPoint.y >= page.y && docPoint.y <= (page.y + page.height)
+                                }?.index
+                            }
+                            val overlayPageIndex = selectionPageIndex ?: lassoPageIndex
+                            val overlayPage =
+                                layoutInfo.firstOrNull { it.index == overlayPageIndex }
+                            if (overlayPage != null && overlayPage.widthPx > 0 && overlayPage.heightPx > 0) {
+                                key(documentKey, "ink_selection_overlay", overlayPage.index) {
+                                    Box(
+                                        modifier = Modifier.layoutId(
+                                            PdfSelectionOverlayLayout(
+                                                widthPx = overlayPage.widthPx,
+                                                heightPx = overlayPage.heightPx,
+                                                yPx = overlayPage.yPx,
+                                            )
+                                        )
+                                    ) {
+                                        val overlaySelected =
+                                            if (selectionPageIndex == null) {
+                                                emptyList()
+                                            } else {
+                                                (allAnnotations()[selectionPageIndex] ?: emptyList())
+                                                    .filter { it.id in inkSelection.selectedIds }
+                                            }
+                                        PdfInkSelectionCanvas(
+                                            selectedAnnotations = overlaySelected,
+                                            selectionPage = PdfSelectionPageLayout(
+                                                index = overlayPage.index,
+                                                topDoc = overlayPage.y,
+                                                widthDoc = overlayPage.width,
+                                                heightDoc = overlayPage.height,
+                                            ),
+                                            pageWidthDoc = overlayPage.widthPx,
+                                            pageHeightDoc = overlayPage.heightPx,
+                                            lassoDocPoints = selectLassoDocPoints ?: emptyList(),
+                                            cameraZoom = cameraZoom,
+                                            modifier = Modifier.fillMaxSize(),
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
                 },
                 modifier = Modifier
@@ -2833,6 +2949,18 @@ internal fun PdfVerticalReader(
                                 val placeable = measurable.measure(
                                     Constraints.fixed(
                                         id.widthPx, id.heightPx
+                                    )
+                                )
+                                placeable.place(0, id.yPx)
+                            }
+
+                            is PdfSelectionOverlayLayout -> {
+                                // Single-page sized: always representable, unlike a
+                                // full-document layer on very long documents.
+                                val placeable = measurable.measure(
+                                    Constraints.fixed(
+                                        id.widthPx.coerceAtLeast(1),
+                                        id.heightPx.coerceAtLeast(1)
                                     )
                                 )
                                 placeable.place(0, id.yPx)
@@ -3168,6 +3296,75 @@ internal fun PdfVerticalReader(
                         onDragStart = {},
                         onDrag = { _, _ -> },
                         onDragEnd = {})
+                }
+            }
+        }
+
+        // Ink selection floating edit bar (SELECT tool only, hidden mid-gesture).
+        if (selectedTool == InkType.SELECT && !inkSelection.isEmpty &&
+            selectLassoDocPoints == null && !isSelectionTransformActive
+        ) {
+            val editPageIndex = inkSelection.pageIndex
+            val editPage = layoutInfo.firstOrNull { it.index == editPageIndex }
+            val editSelected = if (editPageIndex == null) {
+                emptyList()
+            } else {
+                (allAnnotations()[editPageIndex] ?: emptyList())
+                    .filter { it.id in inkSelection.selectedIds }
+            }
+            val editBounds = if (editSelected.isNotEmpty()) {
+                pdfSelectionUnionBounds(editSelected)
+            } else {
+                null
+            }
+            if (editPage != null && editBounds != null) {
+                val zoom = cameraZoom
+                val screenLeft = editBounds.left * editPage.width * zoom + cameraPanX
+                val screenRight = editBounds.right * editPage.width * zoom + cameraPanX
+                val screenTop =
+                    (editPage.y + editBounds.top * editPage.height) * zoom + cameraPanY
+                val screenBottom =
+                    (editPage.y + editBounds.bottom * editPage.height) * zoom + cameraPanY
+                // Keep clear of the rotate handle floating above the box.
+                val aboveY = screenTop - with(density) { 108.dp.toPx() }
+                val barTopY = if (aboveY > headerHeightPx) {
+                    aboveY
+                } else {
+                    screenBottom + with(density) { 12.dp.toPx() }
+                }
+                val halfScreen = screenWidth / 2f
+                val maxShift =
+                    (halfScreen - with(density) { 8.dp.toPx() }).coerceAtLeast(0f)
+                val xShift = (((screenLeft + screenRight) / 2f) - halfScreen)
+                    .coerceIn(-maxShift, maxShift)
+                Box(modifier = Modifier.fillMaxSize()) {
+                    PdfInkSelectionEditBar(
+                        colors = selectionEditColors,
+                        selectedColor = selectionEditColor,
+                        onColorSelected = onSelectionColor,
+                        thickness = selectionEditThickness,
+                        thicknessRange = selectionThicknessRange,
+                        onThicknessChange = onSelectionThickness,
+                        onThicknessChangeFinished = onSelectionThicknessFinished,
+                        canDuplicate = editSelected.isNotEmpty(),
+                        onDuplicate = onSelectionDuplicate,
+                        onCopy = onSelectionCopy,
+                        canPaste = canSelectionPaste,
+                        onPaste = {
+                            onSelectionPaste(editPageIndex ?: state.currentPage)
+                        },
+                        onDelete = onSelectionDelete,
+                        onClose = onSelectionClear,
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .offset {
+                                IntOffset(
+                                    xShift.roundToInt(),
+                                    barTopY.roundToInt(),
+                                )
+                            }
+                            .widthIn(max = with(density) { (screenWidth - 16.dp.toPx()).toDp() }),
+                    )
                 }
             }
         }

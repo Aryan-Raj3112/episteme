@@ -16,6 +16,30 @@ typealias SearchHighlightMode = com.aryan.reader.shared.SearchHighlightMode
 internal sealed interface HistoryAction {
     data class Add(val pageIndex: Int, val annotation: PdfAnnotation) : HistoryAction
     data class Remove(val items: Map<Int, List<PdfAnnotation>>) : HistoryAction
+    /** Paste / duplicate of several strokes in one undoable step. */
+    data class AddMany(val pageIndex: Int, val annotations: List<PdfAnnotation>) : HistoryAction
+    /** Geometry edit (move / scale / rotate) of existing strokes, restored by id. */
+    data class Transform(
+        val pageIndex: Int,
+        val before: List<PdfAnnotation>,
+        val after: List<PdfAnnotation>
+    ) : HistoryAction
+    /** Color / thickness edit of existing strokes, restored by id. */
+    data class StyleChange(
+        val pageIndex: Int,
+        val before: List<PdfAnnotation>,
+        val after: List<PdfAnnotation>
+    ) : HistoryAction
+}
+
+/** Restore [snapshot] versions (matched by id) into [current] page list. */
+internal fun restorePdfAnnotationsById(
+    current: List<PdfAnnotation>,
+    snapshot: List<PdfAnnotation>
+): List<PdfAnnotation> {
+    if (snapshot.isEmpty()) return current
+    val byId = snapshot.associateBy { it.id }
+    return current.map { annotation -> byId[annotation.id] ?: annotation }
 }
 
 internal typealias DockLocation = com.aryan.reader.shared.DockLocation

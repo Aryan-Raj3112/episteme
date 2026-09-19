@@ -3327,7 +3327,7 @@ internal fun PdfPageComposable(
                 isStylusOnlyMode,
                 isHighlighterSnapEnabled
             ) {
-                val canDraw = isEditMode && selectedTool != InkType.TEXT && !isScrolling && !isVerticalScroll && actualBitmapWidthPx > 0 && actualBitmapHeightPx > 0
+                val canDraw = isEditMode && selectedTool != InkType.TEXT && selectedTool != InkType.SELECT && !isScrolling && !isVerticalScroll && actualBitmapWidthPx > 0 && actualBitmapHeightPx > 0
 
                 if (!canDraw) {
                     return@pointerInput

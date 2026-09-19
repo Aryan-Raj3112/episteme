@@ -1013,6 +1013,10 @@ private fun PdfViewerScreenContent(
     val redoStack = surfaceState.redoStack
     val erasedAnnotationsFromStroke = surfaceState.erasedAnnotationsFromStroke
     var lastEraserPoint by surfaceState.lastEraserPoint
+    var inkSelection by surfaceState.inkSelection
+    var selectionClipboard by surfaceState.selectionClipboard
+    var selectionTransformSnapshot by surfaceState.selectionTransformSnapshot
+    var selectionStyleSnapshot by surfaceState.selectionStyleSnapshot
     var annotationSession by surfaceState.annotationSession
     val richTextRepository = surfaceState.richTextRepository
     val richTextController = surfaceState.richTextController
@@ -2287,6 +2291,10 @@ private fun PdfViewerScreenContent(
             "ui.sidecarLoad.reset bookId=$loadingBookId virtualCleared=true loadedLayoutBookId=$loadedPageLayoutBookId"
         )
         selectedTextBoxId = null
+        inkSelection = PdfInkSelection()
+        selectionClipboard = emptyList()
+        selectionTransformSnapshot = null
+        selectionStyleSnapshot = null
         undoStack.clear()
         redoStack.clear()
         erasedAnnotationsFromStroke.clear()
@@ -5961,6 +5969,12 @@ private fun PdfViewerDocumentSetup(
 
     var lastEraserPoint by remember { mutableStateOf<PdfPoint?>(null) }
 
+    // Ink selection editing (tap-to-edit + lasso). Single-page scope on mobile.
+    var inkSelection by remember { mutableStateOf(PdfInkSelection()) }
+    var selectionClipboard by remember { mutableStateOf<List<PdfAnnotation>>(emptyList()) }
+    var selectionTransformSnapshot by remember { mutableStateOf<List<PdfAnnotation>?>(null) }
+    var selectionStyleSnapshot by remember { mutableStateOf<List<PdfAnnotation>?>(null) }
+
     var annotationSession by remember { mutableStateOf(SharedPdfAnnotationSessionState()) }
 
     val richTextRepository = remember(context) { PdfRichTextRepository(context) }
@@ -6427,6 +6441,12 @@ private fun PdfViewerDocumentSetup(
     surfaceState.redoStack = redoStack
     surfaceState.erasedAnnotationsFromStroke = erasedAnnotationsFromStroke
     surfaceState.lastEraserPoint = pdfViewerMutableValue({ lastEraserPoint }, { lastEraserPoint = it })
+    surfaceState.inkSelection = pdfViewerMutableValue({ inkSelection }, { inkSelection = it })
+    surfaceState.selectionClipboard = pdfViewerMutableValue({ selectionClipboard }, { selectionClipboard = it })
+    surfaceState.selectionTransformSnapshot =
+        pdfViewerMutableValue({ selectionTransformSnapshot }, { selectionTransformSnapshot = it })
+    surfaceState.selectionStyleSnapshot =
+        pdfViewerMutableValue({ selectionStyleSnapshot }, { selectionStyleSnapshot = it })
     surfaceState.annotationSession = pdfViewerMutableValue({ annotationSession }, { annotationSession = it })
     surfaceState.richTextRepository = richTextRepository
     surfaceState.richTextController = richTextController
@@ -6640,6 +6660,10 @@ private class PdfViewerSurfaceState {
     lateinit var pageAspectRatios: PdfViewerMutableValue<List<Float>>
     lateinit var allAnnotations: PdfViewerMutableValue<Map<Int, List<PdfAnnotation>>>
     lateinit var lastEraserPoint: PdfViewerMutableValue<PdfPoint?>
+    lateinit var inkSelection: PdfViewerMutableValue<PdfInkSelection>
+    lateinit var selectionClipboard: PdfViewerMutableValue<List<PdfAnnotation>>
+    lateinit var selectionTransformSnapshot: PdfViewerMutableValue<List<PdfAnnotation>?>
+    lateinit var selectionStyleSnapshot: PdfViewerMutableValue<List<PdfAnnotation>?>
     var currentIsHighlighter: Boolean by androidx.compose.runtime.mutableStateOf(false)
     var currentSnapEnabled: Boolean by androidx.compose.runtime.mutableStateOf(false)
     lateinit var showToolSettings: PdfViewerMutableValue<Boolean>
@@ -6995,6 +7019,10 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
     var pageAspectRatios by surfaceState.pageAspectRatios
     var allAnnotations by surfaceState.allAnnotations
     var lastEraserPoint by surfaceState.lastEraserPoint
+    var inkSelection by surfaceState.inkSelection
+    var selectionClipboard by surfaceState.selectionClipboard
+    var selectionTransformSnapshot by surfaceState.selectionTransformSnapshot
+    var selectionStyleSnapshot by surfaceState.selectionStyleSnapshot
     val currentIsHighlighter = surfaceState.currentIsHighlighter
     val currentSnapEnabled = surfaceState.currentSnapEnabled
     var showToolSettings by surfaceState.showToolSettings
@@ -7261,7 +7289,7 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                                         showToolSettings = false
                                     } else {
                                         val effectiveTool = if (isEraserOverride) InkType.ERASER else currentSelectedTool
-                                        if (effectiveTool == InkType.TEXT) {
+                                        if (effectiveTool == InkType.TEXT || effectiveTool == InkType.SELECT) {
                                         } else if (effectiveTool == InkType.ERASER) {
                                             lastEraserPoint = point
                                             erasedAnnotationsFromStroke.clear()
@@ -7306,10 +7334,270 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                                 }
                             }
 
+                        // ---- Ink selection editing ops (SELECT tool) ----
+                        fun selectionAspectFor(pageIndex: Int): Float =
+                            displayPageRatios.getOrElse(pageIndex) { 1f }
+
+                        fun currentSelectedAnnotations(): List<PdfAnnotation> {
+                            val page = inkSelection.pageIndex ?: return emptyList()
+                            val ids = inkSelection.selectedIds
+                            if (ids.isEmpty()) return emptyList()
+                            return (allAnnotations[page] ?: emptyList()).filter { it.id in ids }
+                        }
+
+                        val onSelectionTapResult = { pageIndex: Int, annotationId: String? ->
+                            inkSelection = if (annotationId == null) {
+                                PdfInkSelection()
+                            } else {
+                                PdfInkSelection(pageIndex, setOf(annotationId))
+                            }
+                            selectionTransformSnapshot = null
+                            selectionStyleSnapshot = null
+                        }
+
+                        val onSelectionLassoResult = { pageIndex: Int, annotationIds: Set<String> ->
+                            inkSelection = if (annotationIds.isEmpty()) {
+                                PdfInkSelection()
+                            } else {
+                                PdfInkSelection(pageIndex, annotationIds)
+                            }
+                            selectionTransformSnapshot = null
+                            selectionStyleSnapshot = null
+                        }
+
+                        val onSelectionTransformStart = { pageIndex: Int ->
+                            selectionTransformSnapshot =
+                                (allAnnotations[pageIndex] ?: emptyList()).toList()
+                        }
+
+                        val onSelectionTransformUpdate =
+                            { pageIndex: Int, transform: PdfSelectionTransform ->
+                                val snapshot = selectionTransformSnapshot
+                                if (snapshot != null && !inkSelection.isEmpty) {
+                                    allAnnotations = allAnnotations + (pageIndex to applyPdfSelectionTransform(
+                                        snapshot,
+                                        inkSelection.selectedIds,
+                                        transform,
+                                        selectionAspectFor(pageIndex),
+                                    ))
+                                }
+                            }
+
+                        val onSelectionTransformEnd = { commit: Boolean ->
+                            val snapshot = selectionTransformSnapshot
+                            selectionTransformSnapshot = null
+                            if (commit && snapshot != null && !inkSelection.isEmpty) {
+                                val page = inkSelection.pageIndex ?: -1
+                                if (page >= 0) {
+                                    val after = (allAnnotations[page] ?: emptyList()).toList()
+                                    val beforeIds = snapshot.filter { it.id in inkSelection.selectedIds }
+                                    val afterIds = after.filter { it.id in inkSelection.selectedIds }
+                                    if (beforeIds != afterIds) {
+                                        undoStack.add(
+                                            HistoryAction.Transform(
+                                                pageIndex = page,
+                                                before = snapshot,
+                                                after = after,
+                                            )
+                                        )
+                                        redoStack.clear()
+                                        persistInkAnnotationsNow(
+                                            allAnnotations,
+                                            emptyList(),
+                                            "selection_transform"
+                                        )
+                                    }
+                                }
+                            } else if (!commit && snapshot != null && !inkSelection.isEmpty) {
+                                val page = inkSelection.pageIndex ?: -1
+                                if (page >= 0) {
+                                    allAnnotations = allAnnotations + (page to snapshot)
+                                }
+                            }
+                        }
+
+                        val onSelectionDelete = {
+                            val page = inkSelection.pageIndex
+                            val selected = currentSelectedAnnotations()
+                            if (page != null && selected.isNotEmpty()) {
+                                undoStack.add(HistoryAction.Remove(mapOf(page to selected)))
+                                redoStack.clear()
+                                allAnnotations = allAnnotations + (page to (
+                                    (allAnnotations[page] ?: emptyList()) - selected.toSet()
+                                    ))
+                                persistInkAnnotationsNow(
+                                    allAnnotations,
+                                    selected,
+                                    "selection_delete"
+                                )
+                                inkSelection = PdfInkSelection()
+                            }
+                        }
+
+                        val onSelectionDuplicate = {
+                            val page = inkSelection.pageIndex
+                            val selected = currentSelectedAnnotations()
+                            if (page != null && selected.isNotEmpty()) {
+                                val copies = selected.map { annotation ->
+                                    annotation.copy(
+                                        id = java.util.UUID.randomUUID().toString(),
+                                        points = annotation.points.map { point ->
+                                            point.copy(
+                                                x = (point.x + 0.03f).coerceIn(0f, 1f),
+                                                y = (point.y + 0.03f).coerceIn(0f, 1f),
+                                            )
+                                        },
+                                    )
+                                }
+                                allAnnotations = allAnnotations + (page to (
+                                    (allAnnotations[page] ?: emptyList()) + copies
+                                    ))
+                                undoStack.add(HistoryAction.AddMany(page, copies))
+                                redoStack.clear()
+                                persistInkAnnotationsNow(
+                                    allAnnotations,
+                                    emptyList(),
+                                    "selection_duplicate"
+                                )
+                                inkSelection = PdfInkSelection(page, copies.map { it.id }.toSet())
+                            }
+                        }
+
+                        val onSelectionCopy = {
+                            selectionClipboard = currentSelectedAnnotations().map { it.copy() }
+                        }
+
+                        val onSelectionPaste = { targetPage: Int ->
+                            val clipboard = selectionClipboard
+                            if (clipboard.isNotEmpty() && targetPage >= 0) {
+                                val pasteCount = undoStack.count { it is HistoryAction.AddMany }
+                                val offset = 0.03f * ((pasteCount % 5) + 1)
+                                val copies = clipboard.map { annotation ->
+                                    annotation.copy(
+                                        id = java.util.UUID.randomUUID().toString(),
+                                        pageIndex = targetPage,
+                                        points = annotation.points.map { point ->
+                                            point.copy(
+                                                x = (point.x + offset).coerceIn(0f, 1f),
+                                                y = (point.y + offset).coerceIn(0f, 1f),
+                                            )
+                                        },
+                                    )
+                                }
+                                allAnnotations = allAnnotations + (targetPage to (
+                                    (allAnnotations[targetPage] ?: emptyList()) + copies
+                                    ))
+                                undoStack.add(HistoryAction.AddMany(targetPage, copies))
+                                redoStack.clear()
+                                persistInkAnnotationsNow(
+                                    allAnnotations,
+                                    emptyList(),
+                                    "selection_paste"
+                                )
+                                inkSelection =
+                                    PdfInkSelection(targetPage, copies.map { it.id }.toSet())
+                            }
+                        }
+
+                        val onSelectionColor = { color: androidx.compose.ui.graphics.Color ->
+                            val page = inkSelection.pageIndex
+                            val selected = currentSelectedAnnotations()
+                            if (page != null && selected.isNotEmpty()) {
+                                val before = (allAnnotations[page] ?: emptyList()).toList()
+                                val next = before.map { annotation ->
+                                    if (annotation.id !in inkSelection.selectedIds) return@map annotation
+                                    val keepAlpha = annotation.inkType == InkType.HIGHLIGHTER ||
+                                        annotation.inkType == InkType.HIGHLIGHTER_ROUND
+                                    annotation.copy(
+                                        color = if (keepAlpha) {
+                                            color.copy(alpha = annotation.color.alpha)
+                                        } else {
+                                            color
+                                        }
+                                    )
+                                }
+                                if (next != before) {
+                                    allAnnotations = allAnnotations + (page to next)
+                                    undoStack.add(
+                                        HistoryAction.StyleChange(page, before, next)
+                                    )
+                                    redoStack.clear()
+                                    persistInkAnnotationsNow(
+                                        allAnnotations,
+                                        emptyList(),
+                                        "selection_style"
+                                    )
+                                }
+                            }
+                        }
+
+                        val onSelectionThickness = { thickness: Float ->
+                            val page = inkSelection.pageIndex
+                            if (page != null && !inkSelection.isEmpty) {
+                                if (selectionStyleSnapshot == null) {
+                                    selectionStyleSnapshot =
+                                        (allAnnotations[page] ?: emptyList()).toList()
+                                }
+                                val current = allAnnotations[page] ?: emptyList()
+                                allAnnotations = allAnnotations + (page to current.map { annotation ->
+                                    if (annotation.id !in inkSelection.selectedIds) annotation
+                                    else annotation.copy(strokeWidth = thickness)
+                                })
+                            }
+                        }
+
+                        val onSelectionThicknessFinished = {
+                            val snapshot = selectionStyleSnapshot
+                            selectionStyleSnapshot = null
+                            val page = inkSelection.pageIndex
+                            if (snapshot != null && page != null && !inkSelection.isEmpty) {
+                                val after = (allAnnotations[page] ?: emptyList()).toList()
+                                if (after != snapshot) {
+                                    undoStack.add(
+                                        HistoryAction.StyleChange(page, snapshot, after)
+                                    )
+                                    redoStack.clear()
+                                    persistInkAnnotationsNow(
+                                        allAnnotations,
+                                        emptyList(),
+                                        "selection_style"
+                                    )
+                                }
+                            }
+                        }
+
+                        val onSelectionClear = {
+                            inkSelection = PdfInkSelection()
+                            selectionTransformSnapshot = null
+                            selectionStyleSnapshot = null
+                        }
+
+                        val selectionEditColors = remember(
+                            surfaceState.penPalette,
+                            surfaceState.highlighterPalette
+                        ) {
+                            (surfaceState.penPalette + surfaceState.highlighterPalette).distinct()
+                        }
+                        val selectionEditState = remember(inkSelection, allAnnotations) {
+                            val selected = currentSelectedAnnotations()
+                            val color = selected.map { it.color.toArgb() and 0x00FFFFFF }.distinct()
+                                .singleOrNull()?.let { rgb ->
+                                    selected.first().color
+                                }
+                            val thickness = selected.firstOrNull()?.strokeWidth
+                                ?: currentStrokeWidthState
+                            val hasHighlighter = selected.any {
+                                it.inkType == InkType.HIGHLIGHTER || it.inkType == InkType.HIGHLIGHTER_ROUND
+                            }
+                            Triple(color, thickness, hasHighlighter)
+                        }
+
                         val onDrawStable = remember(isHighlighterSnapEnabled, isCurrentToolHighlighter, calculateSnappedPoint) {
                             { pageIndex: Int, point: PdfPoint, isEraserOverride: Boolean ->
                                 val effectiveTool = if (isEraserOverride) InkType.ERASER else currentSelectedTool
-                                if (effectiveTool == InkType.ERASER) {
+                                if (effectiveTool == InkType.SELECT) {
+                                    // SELECT gestures are owned by the selection handler; never draw.
+                                } else if (effectiveTool == InkType.ERASER) {
                                     val eraserStrokeWidth = resolveEraserStrokeWidth(
                                         isEraserOverride,
                                         currentStrokeWidthState,
@@ -7461,6 +7749,30 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                                 isStylusOnlyMode = isStylusOnlyMode,
                                 stylusButtonHovering = stylusButtonHovering,
                                 isEditMode = isDrawingActive,
+                                inkSelection = inkSelection,
+                                isSelectionTransformActive = selectionTransformSnapshot != null,
+                                onSelectionTapResult = onSelectionTapResult,
+                                onSelectionLassoResult = onSelectionLassoResult,
+                                onSelectionTransformStart = onSelectionTransformStart,
+                                onSelectionTransformUpdate = onSelectionTransformUpdate,
+                                onSelectionTransformEnd = onSelectionTransformEnd,
+                                onSelectionDelete = onSelectionDelete,
+                                onSelectionDuplicate = onSelectionDuplicate,
+                                onSelectionCopy = onSelectionCopy,
+                                onSelectionPaste = onSelectionPaste,
+                                onSelectionColor = onSelectionColor,
+                                onSelectionThickness = onSelectionThickness,
+                                onSelectionThicknessFinished = onSelectionThicknessFinished,
+                                onSelectionClear = onSelectionClear,
+                                selectionEditColors = selectionEditColors,
+                                selectionEditColor = selectionEditState.first,
+                                selectionEditThickness = selectionEditState.second,
+                                selectionThicknessRange = if (selectionEditState.third) {
+                                    0.01f..0.06f
+                                } else {
+                                    0.001f..0.015f
+                                },
+                                canSelectionPaste = selectionClipboard.isNotEmpty(),
                                 textBoxes = visibleTextBoxes,
                                 textBoxesByPage = visibleTextBoxesByPage,
                                 selectedTextBoxId = selectedTextBoxId,
@@ -8714,6 +9026,7 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
         var isScrollLocked by surfaceState.isScrollLocked
         var allAnnotations by surfaceState.allAnnotations
         var showToolSettings by surfaceState.showToolSettings
+        var inkSelection by surfaceState.inkSelection
         var showAllTextHighlights by surfaceState.showAllTextHighlights
         var isStylusOnlyMode by surfaceState.isStylusOnlyMode
         var isBubbleZoomModeActive by surfaceState.isBubbleZoomModeActive
@@ -9138,6 +9451,12 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                                     clickedTool
                                 )
                                 showToolSettings = false
+                                inkSelection = PdfInkSelection()
+                            } else if (clickedTool == InkType.SELECT) {
+                                annotationSettingsRepo.updateSelectedTool(
+                                    clickedTool
+                                )
+                                showToolSettings = false
                             } else if (selectedTool == clickedTool) {
                                 if (clickedTool == InkType.PEN || clickedTool == InkType.FOUNTAIN_PEN || clickedTool == InkType.PENCIL || clickedTool == InkType.HIGHLIGHTER || clickedTool == InkType.HIGHLIGHTER_ROUND || clickedTool == InkType.ERASER) {
                                     showToolSettings = !showToolSettings
@@ -9156,6 +9475,7 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                                     annotationSettingsRepo.updateSelectedTool(
                                         clickedTool
                                     )
+                                    inkSelection = PdfInkSelection()
                                 }
                             }
                         },
@@ -9187,6 +9507,37 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                                         }
                                         allAnnotations = currentAllAnnotations
 
+                                        redoStack.add(action)
+                                    }
+
+                                    is HistoryAction.AddMany -> {
+                                        val pageIndex = action.pageIndex
+                                        val ids = action.annotations.map { it.id }.toSet()
+                                        val pageAnnotations =
+                                            allAnnotations[pageIndex] ?: emptyList()
+                                        allAnnotations = allAnnotations + (
+                                            pageIndex to pageAnnotations.filterNot { it.id in ids }
+                                            )
+                                        redoStack.add(action)
+                                    }
+
+                                    is HistoryAction.Transform -> {
+                                        allAnnotations = allAnnotations + (
+                                            action.pageIndex to restorePdfAnnotationsById(
+                                                allAnnotations[action.pageIndex] ?: emptyList(),
+                                                action.before,
+                                            )
+                                            )
+                                        redoStack.add(action)
+                                    }
+
+                                    is HistoryAction.StyleChange -> {
+                                        allAnnotations = allAnnotations + (
+                                            action.pageIndex to restorePdfAnnotationsById(
+                                                allAnnotations[action.pageIndex] ?: emptyList(),
+                                                action.before,
+                                            )
+                                            )
                                         redoStack.add(action)
                                     }
                                 }
@@ -9224,11 +9575,43 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
 
                                         undoStack.add(action)
                                     }
+
+                                    is HistoryAction.AddMany -> {
+                                        val pageIndex = action.pageIndex
+                                        allAnnotations = allAnnotations + (
+                                            pageIndex to (
+                                                (allAnnotations[pageIndex] ?: emptyList()) +
+                                                    action.annotations
+                                                )
+                                            )
+                                        undoStack.add(action)
+                                    }
+
+                                    is HistoryAction.Transform -> {
+                                        allAnnotations = allAnnotations + (
+                                            action.pageIndex to restorePdfAnnotationsById(
+                                                allAnnotations[action.pageIndex] ?: emptyList(),
+                                                action.after,
+                                            )
+                                            )
+                                        undoStack.add(action)
+                                    }
+
+                                    is HistoryAction.StyleChange -> {
+                                        allAnnotations = allAnnotations + (
+                                            action.pageIndex to restorePdfAnnotationsById(
+                                                allAnnotations[action.pageIndex] ?: emptyList(),
+                                                action.after,
+                                            )
+                                            )
+                                        undoStack.add(action)
+                                    }
                                 }
                             }
                         },
                         onClose = {
                             richTextController?.clearSelection()
+                            inkSelection = PdfInkSelection()
                             isEditMode = false
                             isDockMinimized = false
                             showBars = true
@@ -10634,7 +11017,7 @@ private fun PdfViewerPaginationPage(
         remember(pageIndex) {
             { point: PdfPoint, isEraserOverride: Boolean ->
                 val effectiveTool = if (isEraserOverride) InkType.ERASER else currentSelectedTool
-                if (effectiveTool == InkType.TEXT) {
+                if (effectiveTool == InkType.TEXT || effectiveTool == InkType.SELECT) {
                 } else if (effectiveTool == InkType.ERASER) {
                     val eraserStrokeWidth = resolveEraserStrokeWidth(
                         isEraserOverride,
@@ -10680,7 +11063,7 @@ private fun PdfViewerPaginationPage(
                     showToolSettings = false
                 } else {
                     val effectiveTool = if (isEraserOverride) InkType.ERASER else currentSelectedTool
-                    if (effectiveTool == InkType.TEXT) {
+                    if (effectiveTool == InkType.TEXT || effectiveTool == InkType.SELECT) {
                     } else if (effectiveTool == InkType.ERASER) {
                         lastEraserPoint = point
                         erasedAnnotationsFromStroke.clear()

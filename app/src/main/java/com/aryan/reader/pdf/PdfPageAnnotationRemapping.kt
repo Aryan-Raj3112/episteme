@@ -120,6 +120,44 @@ internal fun remapPdfHistoryActionsForLayoutChange(
                 )
                 remappedItems.takeIf { it.isNotEmpty() }?.let(HistoryAction::Remove)
             }
+            is HistoryAction.Transform -> {
+                val mapping = buildPdfPageIndexMapping(
+                    currentLayout = currentLayout,
+                    updatedLayout = updatedLayout,
+                    sourcePageIndices = listOf(action.pageIndex)
+                )
+                val targetPageIndex = mapping[action.pageIndex] ?: return@mapNotNull null
+                action.copy(
+                    pageIndex = targetPageIndex,
+                    before = action.before.map { it.copy(pageIndex = targetPageIndex) },
+                    after = action.after.map { it.copy(pageIndex = targetPageIndex) },
+                )
+            }
+            is HistoryAction.AddMany -> {
+                val mapping = buildPdfPageIndexMapping(
+                    currentLayout = currentLayout,
+                    updatedLayout = updatedLayout,
+                    sourcePageIndices = listOf(action.pageIndex)
+                )
+                val targetPageIndex = mapping[action.pageIndex] ?: return@mapNotNull null
+                action.copy(
+                    pageIndex = targetPageIndex,
+                    annotations = action.annotations.map { it.copy(pageIndex = targetPageIndex) },
+                )
+            }
+            is HistoryAction.StyleChange -> {
+                val mapping = buildPdfPageIndexMapping(
+                    currentLayout = currentLayout,
+                    updatedLayout = updatedLayout,
+                    sourcePageIndices = listOf(action.pageIndex)
+                )
+                val targetPageIndex = mapping[action.pageIndex] ?: return@mapNotNull null
+                action.copy(
+                    pageIndex = targetPageIndex,
+                    before = action.before.map { it.copy(pageIndex = targetPageIndex) },
+                    after = action.after.map { it.copy(pageIndex = targetPageIndex) },
+                )
+            }
         }
     }
 }

@@ -5,7 +5,7 @@ enum class AnnotationType {
 }
 
 enum class InkType {
-    PEN, HIGHLIGHTER, HIGHLIGHTER_ROUND, ERASER, FOUNTAIN_PEN, PENCIL, TEXT
+    PEN, HIGHLIGHTER, HIGHLIGHTER_ROUND, ERASER, FOUNTAIN_PEN, PENCIL, TEXT, SELECT
 }
 
 data class PdfPoint(val x: Float, val y: Float, val timestamp: Long = 0L)

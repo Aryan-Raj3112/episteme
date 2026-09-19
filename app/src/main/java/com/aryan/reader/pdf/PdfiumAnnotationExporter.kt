@@ -449,6 +449,7 @@ internal object PdfiumAnnotationExporter {
             InkType.FOUNTAIN_PEN -> PdfInkTool.FOUNTAIN_PEN
             InkType.PENCIL -> PdfInkTool.PENCIL
             InkType.TEXT -> PdfInkTool.TEXT
+            InkType.SELECT -> PdfInkTool.PEN
         }
     }
 
